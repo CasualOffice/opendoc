@@ -158,20 +158,44 @@ pub struct Server {
     random: RandomState,
     minted: u64,
     admissions: Vec<Admission>,
+    /// The client opened with `initialize` (2025-11-25 or older): requests
+    /// without `_meta` are then answered as in that revision.
+    legacy: bool,
 }
 
 /// A JSON-RPC error.
 pub struct RpcError {
     pub code: i64,
     pub message: String,
+    /// The error's `data`; `null` when there is none.
+    pub data: Value,
 }
 
 fn rpc(code: i64, message: impl Into<String>) -> RpcError {
     RpcError {
         code,
         message: message.into(),
+        data: Value::Null,
     }
 }
+
+/// The 2026-07-28 request `_meta` keys (SEP-2575).
+const META_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
+const META_CLIENT_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
+const META_SERVER_INFO: &str = "io.modelcontextprotocol/serverInfo";
+
+/// Methods the stateless revision removed: a 2026-07-28 request for one is
+/// "method not found", while a client that opened with `initialize` keeps them.
+const REMOVED_IN_STATELESS: &[&str] = &[
+    "initialize",
+    "ping",
+    "logging/setLevel",
+    "resources/subscribe",
+    "resources/unsubscribe",
+];
+
+/// MCP 2026-07-28 `UnsupportedProtocolVersionError`.
+const UNSUPPORTED_VERSION: i64 = -32022;
 
 fn str_arg<'a>(args: &'a Map<String, Value>, key: &str) -> AiResult<&'a str> {
     args.get(key)
@@ -234,6 +258,7 @@ impl Server {
             random: RandomState::new(),
             minted: 0,
             admissions,
+            legacy: false,
         }
     }
 
@@ -389,7 +414,73 @@ impl Server {
     }
 
     /// Handles one JSON-RPC request. `None` result means "a notification".
+    ///
+    /// Two lifecycles share the one stdio stream (`docs/178` Q12). A client
+    /// that opens with `initialize` (2025-11-25 and older) is answered as
+    /// before, without per-request `_meta`. Every other request is a
+    /// 2026-07-28 stateless request (SEP-2575): its `_meta` must name a
+    /// protocol version and the client's capabilities (`-32602` otherwise),
+    /// the version must be one this server speaks (`-32022` with the
+    /// supported list otherwise), the removed methods are `-32601`, and the
+    /// result's `_meta` identifies the server. `server/discover` exists only
+    /// in the stateless revision, so it is always validated.
     pub fn handle(&mut self, method: &str, params: &Value) -> Result<Value, RpcError> {
+        let declared = params
+            .get("_meta")
+            .and_then(|meta| meta.get(META_VERSION))
+            .and_then(Value::as_str);
+        if declared.is_none() && method == "initialize" {
+            self.legacy = true;
+            return self.method(method, params);
+        }
+        if (declared.is_none() && self.legacy && method != "server/discover")
+            || declared.is_some_and(|version| version != PROTOCOL && SUPPORTED.contains(&version))
+        {
+            return self.method(method, params);
+        }
+        let Some(meta) = params.get("_meta").and_then(Value::as_object) else {
+            return Err(rpc(
+                -32602,
+                "a 2026-07-28 request carries `_meta` with the protocol version and the client's capabilities",
+            ));
+        };
+        let Some(version) = declared else {
+            return Err(rpc(-32602, format!("`_meta` needs `{META_VERSION}`")));
+        };
+        if version != PROTOCOL {
+            return Err(RpcError {
+                code: UNSUPPORTED_VERSION,
+                message: format!("protocol version {version} is not supported"),
+                data: json!({ "requested": version, "supported": SUPPORTED }),
+            });
+        }
+        if !meta
+            .get(META_CLIENT_CAPABILITIES)
+            .is_some_and(Value::is_object)
+        {
+            return Err(rpc(
+                -32602,
+                format!("`_meta` needs `{META_CLIENT_CAPABILITIES}`"),
+            ));
+        }
+        if REMOVED_IN_STATELESS.contains(&method) {
+            return Err(rpc(
+                -32601,
+                format!("method not found: {method} (removed in {PROTOCOL})"),
+            ));
+        }
+        let mut result = self.method(method, params)?;
+        if let Some(object) = result.as_object_mut() {
+            let meta = object.entry("_meta").or_insert_with(|| json!({}));
+            if let Some(meta) = meta.as_object_mut() {
+                meta.insert(META_SERVER_INFO.to_owned(), self.server_info());
+            }
+        }
+        Ok(result)
+    }
+
+    /// One method, once the lifecycle is settled.
+    fn method(&mut self, method: &str, params: &Value) -> Result<Value, RpcError> {
         let empty = Map::new();
         let params_map = params.as_object().unwrap_or(&empty);
         match method {
@@ -407,8 +498,15 @@ impl Server {
                     "instructions": self.instructions(),
                 }))
             }
+            // MCP 2026-07-28 makes `ttlMs` and `cacheScope` required on the
+            // discover result and every list result (the conformance suite's
+            // wire-schema check found them missing here, on `prompts/list`
+            // and on `resources/templates/list`). The catalogue is fixed per
+            // process but depends on the launch flags, so: private, no TTL.
             "server/discover" => Ok(json!({
                 "resultType": "complete",
+                "ttlMs": 0,
+                "cacheScope": "private",
                 "supportedVersions": SUPPORTED,
                 "capabilities": self.capabilities(),
                 "serverInfo": self.server_info(),
@@ -429,6 +527,14 @@ impl Server {
             "tools/call" => {
                 let name =
                     opt_str(params_map, "name").ok_or_else(|| rpc(-32602, "`name` is required"))?;
+                // SEP-2322: no tool here asks for input, so `inputResponses`
+                // is never needed; a malformed one is still a protocol error.
+                if params_map
+                    .get("inputResponses")
+                    .is_some_and(|responses| !responses.is_object())
+                {
+                    return Err(rpc(-32602, "`inputResponses` must be an object"));
+                }
                 let args = params_map
                     .get("arguments")
                     .and_then(Value::as_object)
@@ -439,17 +545,24 @@ impl Server {
             "resources/list" => Ok(self.resources_list()),
             "resources/templates/list" => Ok(json!({
                 "resultType": "complete",
+                "ttlMs": 0,
+                "cacheScope": "private",
                 "resourceTemplates": catalog::resource_templates(),
             })),
             "resources/read" => {
                 let uri =
                     opt_str(params_map, "uri").ok_or_else(|| rpc(-32602, "`uri` is required"))?;
-                self.resource_read(uri)
-                    .map_err(|error| rpc(-32002, error.to_string()))
+                // SEP-2164 (2026-07-28): an unknown resource is invalid params,
+                // naming the URI, no longer the older -32002.
+                self.resource_read(uri).map_err(|error| RpcError {
+                    code: -32602,
+                    message: error.to_string(),
+                    data: json!({ "uri": uri }),
+                })
             }
-            "prompts/list" => {
-                Ok(json!({ "resultType": "complete", "prompts": catalog::prompts() }))
-            }
+            "prompts/list" => Ok(
+                json!({ "resultType": "complete", "ttlMs": 0, "cacheScope": "private", "prompts": catalog::prompts() }),
+            ),
             "prompts/get" => {
                 let name =
                     opt_str(params_map, "name").ok_or_else(|| rpc(-32602, "`name` is required"))?;

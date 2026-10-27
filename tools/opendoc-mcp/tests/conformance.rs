@@ -63,7 +63,26 @@ impl Client {
         }
     }
 
-    fn request(&mut self, method: &str, params: Value) -> Value {
+    /// A 2026-07-28 stateless request: `_meta` names the protocol version and
+    /// the client's capabilities, as SEP-2575 requires of every request.
+    /// `initialize` is the older lifecycle and is sent as it was.
+    fn request(&mut self, method: &str, mut params: Value) -> Value {
+        if method != "initialize"
+            && let Some(object) = params.as_object_mut()
+        {
+            object.entry("_meta").or_insert_with(|| {
+                json!({
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": { "name": "conformance.rs", "version": "1" }
+                })
+            });
+        }
+        self.raw(method, params)
+    }
+
+    /// A request sent exactly as given.
+    fn raw(&mut self, method: &str, params: Value) -> Value {
         self.next += 1;
         let message =
             json!({ "jsonrpc": "2.0", "id": self.next, "method": method, "params": params });
@@ -784,4 +803,110 @@ fn an_unknown_toolset_stops_the_server_at_launch() {
         stderr.contains("unknown toolset rockets") && stderr.contains("tables"),
         "{stderr}"
     );
+}
+
+#[test]
+fn every_list_and_discover_result_carries_the_2026_07_28_cache_fields() {
+    // Found by the official conformance suite's wire-schema check
+    // (`docs/181` §12, lane generation): `ttlMs` and `cacheScope` are
+    // required on these results in MCP 2026-07-28.
+    let base = sandbox("cache");
+    let root = arg(&base.join("root"));
+    let mut client = Client::start(&["--root", &root]);
+    for method in [
+        "server/discover",
+        "tools/list",
+        "resources/list",
+        "resources/templates/list",
+        "prompts/list",
+    ] {
+        let result = client.result(method, json!({}));
+        assert!(result["ttlMs"].is_u64(), "{method} carries ttlMs: {result}");
+        assert!(
+            result["cacheScope"].is_string(),
+            "{method} carries cacheScope: {result}"
+        );
+    }
+}
+
+#[test]
+fn a_stateless_request_must_carry_its_meta_and_a_spoken_version() {
+    // MCP 2026-07-28 SEP-2575, as the official conformance suite's
+    // `server-stateless` scenario checks it (`docs/181` §12, lane generation).
+    let base = sandbox("stateless");
+    let root = arg(&base.join("root"));
+    let mut client = Client::start(&["--root", &root]);
+    let version = "io.modelcontextprotocol/protocolVersion";
+    let capabilities = "io.modelcontextprotocol/clientCapabilities";
+
+    let bare = client.raw("server/discover", json!({}));
+    assert_eq!(bare["error"]["code"], -32602, "no _meta: {bare}");
+    let bare = client.raw("tools/list", json!({}));
+    assert_eq!(
+        bare["error"]["code"], -32602,
+        "no initialize and no _meta: {bare}"
+    );
+    let no_version = client.raw("server/discover", json!({ "_meta": { capabilities: {} } }));
+    assert_eq!(no_version["error"]["code"], -32602);
+    let no_capabilities = client.raw(
+        "server/discover",
+        json!({ "_meta": { version: "2026-07-28" } }),
+    );
+    assert_eq!(no_capabilities["error"]["code"], -32602);
+    let unknown = client.raw(
+        "server/discover",
+        json!({ "_meta": { version: "v999.0.0", capabilities: {} } }),
+    );
+    assert_eq!(unknown["error"]["code"], -32022);
+    assert_eq!(unknown["error"]["data"]["requested"], "v999.0.0");
+    assert!(
+        unknown["error"]["data"]["supported"]
+            .as_array()
+            .is_some_and(|v| v.contains(&json!("2026-07-28")))
+    );
+    for removed in ["initialize", "ping", "resources/subscribe"] {
+        let reply = client.request(
+            removed,
+            json!({ "_meta": { version: "2026-07-28", capabilities: {} } }),
+        );
+        assert_eq!(reply["error"]["code"], -32601, "{removed}: {reply}");
+    }
+    let discover = client.result("server/discover", json!({}));
+    assert_eq!(
+        discover["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+        "opendoc-mcp"
+    );
+    let missing = client.request(
+        "resources/read",
+        json!({ "uri": "opendoc://documents/doc_nope/outline" }),
+    );
+    assert_eq!(missing["error"]["code"], -32602, "SEP-2164: {missing}");
+    let malformed = client.request(
+        "tools/call",
+        json!({ "name": "list_edit_kinds", "arguments": {}, "inputResponses": 5 }),
+    );
+    assert_eq!(
+        malformed["error"]["code"], -32602,
+        "SEP-2322: a malformed inputResponses is a protocol error: {malformed}"
+    );
+    assert_eq!(
+        missing["error"]["data"]["uri"],
+        "opendoc://documents/doc_nope/outline"
+    );
+}
+
+#[test]
+fn a_client_that_opens_with_initialize_keeps_the_older_lifecycle() {
+    // `docs/178` Q12: a 2025-11-25 client never sends `_meta`.
+    let base = sandbox("legacy");
+    let root = arg(&base.join("root"));
+    let mut client = Client::start(&["--root", &root]);
+    let init = client.raw(
+        "initialize",
+        json!({ "protocolVersion": "2025-11-25", "capabilities": {} }),
+    );
+    assert_eq!(init["result"]["protocolVersion"], "2025-11-25");
+    let listed = client.raw("tools/list", json!({}));
+    assert!(listed["result"]["tools"].is_array(), "{listed}");
+    assert_eq!(client.raw("ping", json!({}))["result"], json!({}));
 }

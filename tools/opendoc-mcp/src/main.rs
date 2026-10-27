@@ -114,11 +114,15 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Options, String> {
     })
 }
 
-fn reply(out: &mut impl Write, id: &Value, result: Result<Value, (i64, String)>) {
+fn reply(out: &mut impl Write, id: &Value, result: Result<Value, (i64, String, Value)>) {
     let message = match result {
         Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
-        Err((code, message)) => {
-            json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
+        Err((code, message, data)) => {
+            let mut error = json!({ "code": code, "message": message });
+            if !data.is_null() {
+                error["data"] = data;
+            }
+            json!({ "jsonrpc": "2.0", "id": id, "error": error })
         }
     };
     let _ = writeln!(out, "{message}");
@@ -151,7 +155,7 @@ fn main() {
             reply(
                 &mut out,
                 &Value::Null,
-                Err((-32600, "request too large".to_owned())),
+                Err((-32600, "request too large".to_owned(), Value::Null)),
             );
             continue;
         }
@@ -159,7 +163,7 @@ fn main() {
             reply(
                 &mut out,
                 &Value::Null,
-                Err((-32700, "parse error".to_owned())),
+                Err((-32700, "parse error".to_owned(), Value::Null)),
             );
             continue;
         };
@@ -174,7 +178,7 @@ fn main() {
         let params = message.get("params").cloned().unwrap_or(Value::Null);
         let result = server
             .handle(method, &params)
-            .map_err(|error| (error.code, error.message));
+            .map_err(|error| (error.code, error.message, error.data));
         reply(&mut out, id, result);
     }
 }

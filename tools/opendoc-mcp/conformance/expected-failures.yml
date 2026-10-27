@@ -1,0 +1,48 @@
+# Baseline for the official MCP conformance suite against opendoc-mcp
+# (@modelcontextprotocol/conformance 0.2.0-alpha.12, --spec-version 2026-07-28
+# --suite all), run through stdio-http-bridge.mjs. docs/181 §12, lane generation.
+#
+# Every scenario listed here fails ONLY because it drives a fixture the
+# suite's reference "everything" server ships (a tool, prompt or resource with
+# a fixed test name) or an optional feature this server does not declare.
+# None is a protocol defect; the defects the suite found are fixed and guarded
+# in tools/opendoc-mcp/tests/conformance.rs. A scenario that starts failing
+# and is not listed here is a regression. Not wired into CI (no new CI
+# dependency without the owner).
+server:
+  # Optional features not declared in this server's capabilities.
+  - completion-complete            # no `completions` capability; -32601 is the right answer
+  - tools-call-with-progress       # fixture tool emitting progress notifications
+  # Fixture tools the reference server ships (test_image_content, ...).
+  - tools-call-image
+  - tools-call-audio
+  - tools-call-embedded-resource
+  - tools-call-mixed-content
+  - json-schema-2020-12            # json_schema_2020_12_tool
+  - http-custom-header-server-validation  # a tool with x-mcp-header annotations
+  - server-stateless               # 2 checks only: test_missing_capability (-32021); the other 23 pass
+  # Fixture resources and prompts (test://static-text, test_simple_prompt, ...).
+  - resources-read-text
+  - resources-read-binary
+  - resources-templates-read
+  - prompts-get-simple
+  - prompts-get-with-args
+  - prompts-get-embedded-resource
+  - prompts-get-with-image
+  # SEP-2322 input-required fixtures: no opendoc tool asks the client for input.
+  - input-required-result-basic-elicitation
+  - input-required-result-basic-sampling
+  - input-required-result-basic-list-roots
+  - input-required-result-request-state
+  - input-required-result-multiple-input-requests
+  - input-required-result-multi-round
+  - input-required-result-non-tool-request
+  - input-required-result-result-type
+  - input-required-result-tampered-state
+  - input-required-result-capability-check
+  # These two pass every MUST and carry a SHOULD warning, which a baseline run
+  # counts as a failure: one expects the fixture tool to re-request missing
+  # input, the other expects the server to validate the values of responses
+  # to input requests, and this server never sends an input request.
+  - input-required-result-missing-input-response
+  - input-required-result-validate-input
