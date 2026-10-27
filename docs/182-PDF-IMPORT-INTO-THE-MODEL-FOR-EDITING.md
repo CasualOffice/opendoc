@@ -6,7 +6,7 @@ which only the owner can confirm (Q1).
 **Refines:** `131` (keeps its invariants PDFR-I1..I9, its OCR policy §11 and its finding
 families §16.1; replaces its native-evidence provider, its default output shape and its
 delivery order). **Builds on:** `98` and ADR-031 (the PDF writer), `135` (MF-I1..I7),
-`35` (dispositions), `47`/`52`/`53` (text boxes and page-anchored floats), `119`/`87`
+`35` (dispositions), `47` (text boxes, their body properties and page-anchored floats), `119`/`87`
 (custom geometry), `40` (fonts), `180` and ADR-073 (the worker), `181` (agents inherit the
 format through `open_document`).
 
@@ -250,7 +250,7 @@ leaves the device (PDFR-I6).
 | --- | --- | --- | --- |
 | G-1 | Embedded font programs are DOCX `.odttf` only (`EmbeddedFace` carries a `font_key` GUID and `part_name`) | `v1/properties.rs` `EmbeddedFace`; `casual-doc-layout/src/font_registry.rs:425` | P1 |
 | G-2 | `CustomGeometry` has no **even-odd fill rule**; caps of 1,024 commands and 64 paths per shape | `v1/custom_geometry.rs:43-46` | P1 (vector-heavy pages degrade and are reported until then) |
-| G-3 | Text boxes cannot rotate their text or write vertically | `docs/52` §"not built"; `docs/47` | P1 for rotated runs (else reported) |
+| G-3 | Text boxes cannot rotate their text or write vertically | `docs/47` (the body-properties "not built" list) | P1 for rotated runs (else reported) |
 | G-4 | No async/staged import; `SourceEnvelope` is not serialisable (cannot cross a worker) | `registry.rs:69`; ADR-073 | P2 (§6) |
 | G-5 | ~30 scripts render as notdef; Arabic/Indic shaping unverified; CJK/emoji fetched | `docs/109` FONT-01/02/03 | Substituted text in those scripts (embedded fonts cover the unedited text) |
 | G-6 | A model op to record "page carried over unchanged" is not needed: unchanged-ness is computed from the section's content digest against the import digest (`casual-doc-diff/src/identity.rs`), so no `Operation` is added (ADR-030 I2) | — | P4 |
