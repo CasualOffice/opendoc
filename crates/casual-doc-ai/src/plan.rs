@@ -16,9 +16,14 @@
 
 use std::collections::BTreeSet;
 
-use casual_doc_edit::{FormatDelta, Operation, Pos, Range};
+use casual_doc_command::edit::{AlignmentName, CellAlignment, CellRef, LineSpacingRule, ListKind};
+use casual_doc_command::paragraph::ParagraphChange;
+use casual_doc_command::table::TableEdit;
+use casual_doc_edit::{Operation, Pos, Range};
 use casual_doc_model::NodeId;
-use casual_doc_model::v1::{BlockNode, HighlightColor, Paragraph, RgbColor, StyleId, StyleKind};
+use casual_doc_model::v1::{
+    Alignment, BlockNode, NumberingRef, Paragraph, ParagraphProperties, StyleId, StyleKind, Table,
+};
 use casual_doc_review::ReviewIds;
 use casual_doc_review::body::build_review_revision_summaries;
 use casual_doc_review::lower::{self, InsertStyle, Lowered};
@@ -64,13 +69,32 @@ fn needs(edit: &Edit, mode: Mode) -> Profile {
     match edit {
         Edit::Comment { .. } | Edit::ResolveComment { .. } => Profile::Comment,
         Edit::Review { .. } => Profile::Review,
-        Edit::TableInsertRow { .. } | Edit::TableDeleteRow { .. } => Profile::Edit,
+        // Not trackable (the registry says why): only a direct edit, so `edit`.
+        Edit::TableInsertRow { .. }
+        | Edit::TableDeleteRow { .. }
+        | Edit::InsertTable { .. }
+        | Edit::TableInsertColumn { .. }
+        | Edit::TableDeleteColumn { .. }
+        | Edit::TableMergeCells { .. }
+        | Edit::TableSplitCell { .. }
+        | Edit::TableDelete { .. }
+        | Edit::TableSetCellFormat { .. }
+        | Edit::ClearFormatting { .. }
+        | Edit::RestartNumbering { .. }
+        | Edit::ContinueNumbering { .. } => Profile::Edit,
         Edit::InsertText { .. }
         | Edit::ReplaceText { .. }
         | Edit::DeleteText { .. }
         | Edit::InsertParagraphs { .. }
         | Edit::ApplyParagraphStyle { .. }
         | Edit::SetTextFormat { .. }
+        | Edit::RewriteBlock { .. }
+        | Edit::SetAlignment { .. }
+        | Edit::SetLineSpacing { .. }
+        | Edit::SetParagraphSpacing { .. }
+        | Edit::SetIndent { .. }
+        | Edit::SetList { .. }
+        | Edit::ChangeListLevel { .. }
         | Edit::SetCellText { .. } => match mode {
             Mode::Suggest => Profile::Suggest,
             Mode::Direct => Profile::Edit,
@@ -136,68 +160,6 @@ struct Outcome {
     error: Option<AiError>,
 }
 
-fn color(value: &str) -> AiResult<RgbColor> {
-    let hex = value.strip_prefix('#').unwrap_or(value);
-    if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(AiError::invalid("A colour is `#RRGGBB`."));
-    }
-    let channel = |at: usize| u8::from_str_radix(&hex[at..at + 2], 16).unwrap_or(0);
-    Ok(RgbColor {
-        r: channel(0),
-        g: channel(2),
-        b: channel(4),
-    })
-}
-
-fn highlight(value: &str) -> AiResult<HighlightColor> {
-    Ok(match value.to_ascii_lowercase().as_str() {
-        "none" => HighlightColor::None,
-        "black" => HighlightColor::Black,
-        "blue" => HighlightColor::Blue,
-        "cyan" => HighlightColor::Cyan,
-        "green" => HighlightColor::Green,
-        "magenta" => HighlightColor::Magenta,
-        "red" => HighlightColor::Red,
-        "yellow" => HighlightColor::Yellow,
-        "white" => HighlightColor::White,
-        "darkblue" => HighlightColor::DarkBlue,
-        "darkcyan" => HighlightColor::DarkCyan,
-        "darkgray" => HighlightColor::DarkGray,
-        "darkgreen" => HighlightColor::DarkGreen,
-        "darkmagenta" => HighlightColor::DarkMagenta,
-        "darkred" => HighlightColor::DarkRed,
-        "darkyellow" => HighlightColor::DarkYellow,
-        "lightgray" => HighlightColor::LightGray,
-        _ => {
-            return Err(AiError::invalid(
-                "That highlight colour is not one Word has.",
-            ));
-        }
-    })
-}
-
-fn delta(format: &TextFormat) -> AiResult<FormatDelta> {
-    let delta = FormatDelta {
-        bold: format.bold,
-        italic: format.italic,
-        underline: format.underline,
-        strike: format.strike,
-        size_half_points: match format.size {
-            Some(points) if (1.0..=1638.0).contains(&points) => Some((points * 2.0).round() as u32),
-            Some(_) => return Err(AiError::invalid("A size is between 1 and 1638 points.")),
-            None => None,
-        },
-        color: format.color.as_deref().map(color).transpose()?,
-        highlight: format.highlight.as_deref().map(highlight).transpose()?,
-        font: format.font.clone(),
-        ..FormatDelta::default()
-    };
-    if delta == FormatDelta::default() {
-        return Err(AiError::invalid("`format` sets nothing."));
-    }
-    Ok(delta)
-}
-
 fn style_id(state: &State, style: &str) -> AiResult<StyleId> {
     let styles = &state.document.definitions().styles;
     let by_id = style.parse::<NodeId>().ok().map(StyleId::new);
@@ -229,6 +191,96 @@ fn refuse_untracked(kind: &str, mode: Mode) -> AiResult<()> {
         }
         _ => Ok(()),
     }
+}
+
+/// A shared lowering's refusal as an agent reads it: the editor's sentence,
+/// without the host's `refused: ` marker and routing code. O(message).
+fn refusal(message: &str) -> AiError {
+    let (text, _) = casual_doc_edit::refusal::split(message);
+    AiError::invalid(text.strip_prefix("refused: ").unwrap_or(text).to_owned())
+}
+
+/// A clone of the table `id` names. O(document).
+fn table_of(state: &State, id: &str) -> AiResult<Table> {
+    find_table(&state.document, node_id(id)?)
+        .cloned()
+        .ok_or_else(|| AiError::new("anchor-not-found", "No table has that id at this revision."))
+}
+
+/// `cell` as physical (row, cell) indexes of `table`, if it is one. O(1).
+fn cell_of(table: &Table, cell: CellRef) -> AiResult<(usize, usize)> {
+    let (row, column) = (cell.row as usize, cell.column as usize);
+    table
+        .rows
+        .get(row)
+        .and_then(|r| r.cells.get(column))
+        .map(|_| (row, column))
+        .ok_or_else(|| AiError::invalid("That table has no such cell."))
+}
+
+/// Every paragraph on every surface in document order, as the editor orders
+/// them for its list commands. O(document).
+fn ordered_paragraphs(document: &casual_doc_model::v1::Document) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    for blocks in casual_doc_edit::surface_block_lists(document) {
+        casual_doc_review::body::visit_paragraphs(blocks, &mut |paragraph| out.push(paragraph.id));
+    }
+    out
+}
+
+/// The tracker for a paragraph-property lowering in `mode`: a `w:pPrChange`
+/// by the session's author when suggesting (the editor's own
+/// `track_paragraph_change`), nothing when direct.
+fn paragraph_track<'a>(
+    revisions: &'a mut casual_doc_review::body::RevisionIdAllocator,
+    mode: Mode,
+    author: Option<String>,
+    date: Option<String>,
+) -> impl FnMut(&ParagraphProperties, ParagraphProperties) -> Result<ParagraphProperties, String> + 'a
+{
+    move |current, next| match mode {
+        Mode::Suggest => {
+            lower::track_paragraph_change(revisions, author.clone(), date.clone(), current, next)
+        }
+        Mode::Direct => Ok(next),
+    }
+}
+
+/// Lowers a paragraph-property change on the paragraph `node` names through
+/// the one paragraph lowering the editor uses, after `leading` operations.
+/// Refuses a change that changes nothing. O(paragraph lookup).
+fn paragraph_change(
+    state: &mut State,
+    node: &str,
+    mode: Mode,
+    (author, date): (Option<String>, Option<String>),
+    leading: Vec<Operation>,
+    nodes: &mut Vec<NodeId>,
+    change: impl Fn(&mut ParagraphProperties),
+) -> AiResult<Vec<Operation>> {
+    let found = paragraph(&state.document, node)?;
+    let id = found.id;
+    let current = found.properties.get().clone();
+    nodes.push(id);
+    let mut track = paragraph_track(&mut state.revisions, mode, author, date);
+    let ops = casual_doc_command::paragraph::set_properties(
+        leading,
+        vec![(id, current.clone())],
+        change,
+        &mut track,
+    )
+    .map_err(|message| refusal(&message))?;
+    let unchanged = matches!(
+        ops.last(),
+        Some(Operation::SetParagraphProperties { properties, .. }) if **properties == current
+    );
+    if unchanged {
+        return Err(AiError::new(
+            "no-change",
+            "The paragraph already has that formatting.",
+        ));
+    }
+    Ok(ops)
 }
 
 /// Applies `edit` to `state`, committing each lowered step with `coalesce`
@@ -502,7 +554,9 @@ fn apply_edit(
             )?;
         }
         Edit::SetTextFormat { target, format } => {
-            let delta = delta(format)?;
+            // The one character-format lowering the editor's toolbar uses
+            // (`docs/181` §4.2 step 2).
+            let delta = casual_doc_command::format::delta(format).map_err(AiError::invalid)?;
             let resolved = resolve(&state.document, target)?;
             nodes.push(resolved.node);
             if resolved.start == resolved.end {
@@ -522,15 +576,450 @@ fn apply_edit(
                     ))?
                     .operations
                 }
-                Mode::Direct => vec![Operation::FormatText {
-                    range: Range {
-                        start: Pos::new(resolved.node, resolved.start),
-                        end: Pos::new(resolved.node, resolved.end),
-                    },
-                    delta,
-                }],
+                Mode::Direct => casual_doc_command::format::format_ranges(
+                    &[(resolved.node, resolved.start, resolved.end)],
+                    &delta,
+                ),
             };
             commit(state, ops)?;
+        }
+        Edit::ClearFormatting { target } => {
+            refuse_untracked(kind, mode)?;
+            let resolved = resolve(&state.document, target)?;
+            nodes.push(resolved.node);
+            if resolved.start == resolved.end {
+                return Err(AiError::invalid("The target is empty."));
+            }
+            commit(
+                state,
+                casual_doc_command::format::clear_ranges(&[(
+                    resolved.node,
+                    resolved.start,
+                    resolved.end,
+                )]),
+            )?;
+        }
+        Edit::RewriteBlock { target, markdown } => {
+            let whole = Anchor {
+                node: target.node.clone(),
+                ..Anchor::default()
+            };
+            // Refuses a paragraph whose offsets the edit path cannot address.
+            let resolved = resolve(&state.document, &whole)?;
+            let node = resolved.node;
+            nodes.push(node);
+            let rewrite = casual_doc_command::rewrite::parse(markdown, &node.to_string())
+                .map_err(AiError::invalid)?;
+            let current = paragraph_text(find(state, node)?);
+            // `docs/181` §4.3: a word-level diff (casual-doc-diff's, the one
+            // aligner the comparison feature uses), lowered edit by edit
+            // through the ordinary text lowerings, right to left so each
+            // edit's offsets are still the original text's.
+            let diff = casual_doc_diff::inline::diff_text(&current, &rewrite.text);
+            let mut changed = false;
+            for change in diff.edits.iter().rev() {
+                let (start, end) = change.left;
+                let new = &rewrite.text[change.right.0 as usize..change.right.1 as usize];
+                let at = node.to_string();
+                let ops = match (mode, change.removes(), change.adds()) {
+                    (Mode::Suggest, true, true) => {
+                        lowered(lower::suggest_replace(
+                            &state.document,
+                            ids!(state),
+                            &at,
+                            start,
+                            end,
+                            new,
+                            author.clone(),
+                            date.clone(),
+                        ))?
+                        .operations
+                    }
+                    (Mode::Suggest, true, false) => {
+                        lowered(lower::suggest_delete(
+                            &state.document,
+                            ids!(state),
+                            &at,
+                            start,
+                            end,
+                            author.clone(),
+                            date.clone(),
+                        ))?
+                        .operations
+                    }
+                    (Mode::Suggest, false, true) => {
+                        lowered(lower::suggest_insert(
+                            &state.document,
+                            ids!(state),
+                            &at,
+                            start,
+                            new,
+                            InsertStyle::Plain,
+                            author.clone(),
+                            date.clone(),
+                            None,
+                        ))?
+                        .operations
+                    }
+                    (Mode::Direct, removes, adds) => {
+                        let mut ops = Vec::new();
+                        if removes {
+                            ops.push(Operation::DeleteText {
+                                range: Range {
+                                    start: Pos::new(node, start),
+                                    end: Pos::new(node, end),
+                                },
+                            });
+                        }
+                        if adds {
+                            ops.push(Operation::InsertText {
+                                at: Pos::new(node, start),
+                                text: new.to_owned(),
+                            });
+                        }
+                        ops
+                    }
+                    (Mode::Suggest, false, false) => Vec::new(),
+                };
+                if !ops.is_empty() {
+                    commit(state, ops)?;
+                    changed = true;
+                }
+            }
+            if let Some(level) = rewrite.heading {
+                let style = style_id(state, &format!("Heading {level}"))?;
+                let has = find(state, node)?.properties.get().style_ref == Some(style);
+                if !has {
+                    let ops = paragraph_change(
+                        state,
+                        &target.node,
+                        mode,
+                        (author, date),
+                        Vec::new(),
+                        &mut Vec::new(),
+                        |p| ParagraphChange::Style(Some(style)).apply(p),
+                    )?;
+                    commit(state, ops)?;
+                    changed = true;
+                }
+            }
+            if !changed {
+                return Err(AiError::new(
+                    "no-change",
+                    "The rewrite is the paragraph's current content.",
+                ));
+            }
+        }
+        Edit::SetAlignment { target, alignment } => {
+            let value = match alignment {
+                AlignmentName::Start => Alignment::Start,
+                AlignmentName::Center => Alignment::Center,
+                AlignmentName::End => Alignment::End,
+                AlignmentName::Justify => Alignment::Justify,
+            };
+            let ops = paragraph_change(
+                state,
+                &target.node,
+                mode,
+                (author, date),
+                Vec::new(),
+                nodes,
+                |p| ParagraphChange::Alignment(value).apply(p),
+            )?;
+            commit(state, ops)?;
+        }
+        Edit::SetLineSpacing {
+            target,
+            rule,
+            value,
+        } => {
+            if !(0..=31_680).contains(value) {
+                return Err(AiError::invalid(
+                    "Line spacing is 0 to 31680 (percent, or twips).",
+                ));
+            }
+            let change = match rule {
+                LineSpacingRule::Multiple => ParagraphChange::LineSpacingMultiple(
+                    u16::try_from(*value).map_err(|_| AiError::invalid("Too large a multiple."))?,
+                ),
+                LineSpacingRule::Exact => ParagraphChange::LineSpacingFixed {
+                    twips: *value,
+                    at_least: false,
+                },
+                LineSpacingRule::AtLeast => ParagraphChange::LineSpacingFixed {
+                    twips: *value,
+                    at_least: true,
+                },
+            };
+            let ops = paragraph_change(
+                state,
+                &target.node,
+                mode,
+                (author, date),
+                Vec::new(),
+                nodes,
+                |p| change.apply(p),
+            )?;
+            commit(state, ops)?;
+        }
+        Edit::SetParagraphSpacing {
+            target,
+            before,
+            after,
+        } => {
+            if before.is_none() && after.is_none() {
+                return Err(AiError::invalid("Set `before`, `after` or both."));
+            }
+            let changes = [
+                before.map(ParagraphChange::SpaceBefore),
+                after.map(ParagraphChange::SpaceAfter),
+            ];
+            let ops = paragraph_change(
+                state,
+                &target.node,
+                mode,
+                (author, date),
+                Vec::new(),
+                nodes,
+                |p| changes.iter().flatten().for_each(|change| change.apply(p)),
+            )?;
+            commit(state, ops)?;
+        }
+        Edit::SetIndent {
+            target,
+            start,
+            end,
+            first_line,
+        } => {
+            if start.is_none() && end.is_none() && first_line.is_none() {
+                return Err(AiError::invalid(
+                    "Set `start`, `end`, `first_line` or some.",
+                ));
+            }
+            let changes = [
+                start.map(ParagraphChange::StartIndent),
+                end.map(ParagraphChange::EndIndent),
+                first_line.map(ParagraphChange::FirstLineIndent),
+            ];
+            let ops = paragraph_change(
+                state,
+                &target.node,
+                mode,
+                (author, date),
+                Vec::new(),
+                nodes,
+                |p| changes.iter().flatten().for_each(|change| change.apply(p)),
+            )?;
+            commit(state, ops)?;
+        }
+        Edit::SetList { target, kind: list } => {
+            let current = paragraph(&state.document, &target.node)?
+                .properties
+                .get()
+                .numbering;
+            let (leading, numbering) = match list {
+                ListKind::None => {
+                    if current.is_none() {
+                        return Err(AiError::new("no-change", "The paragraph is not in a list."));
+                    }
+                    (Vec::new(), None)
+                }
+                ListKind::Bullet | ListKind::Numbered => {
+                    let numbered = *list == ListKind::Numbered;
+                    // The editor's definition, joined if the document already
+                    // has it, so consecutive items share one list.
+                    let (instance, install) = match casual_doc_command::lists::existing_definition(
+                        &state.document,
+                        numbered,
+                    ) {
+                        Some(instance) => (instance, Vec::new()),
+                        None => {
+                            let ids = &mut state.ids;
+                            casual_doc_command::lists::new_definition(numbered, &mut || {
+                                ids.next_id().ok()
+                            })
+                            .map_err(|message| refusal(&message))?
+                        }
+                    };
+                    // An item already in a list keeps its level.
+                    let level = current.map_or(0, |numbering| numbering.level);
+                    (install, Some(NumberingRef { instance, level }))
+                }
+            };
+            let ops = paragraph_change(
+                state,
+                &target.node,
+                mode,
+                (author, date),
+                leading,
+                nodes,
+                |p| ParagraphChange::Numbering(numbering).apply(p),
+            )?;
+            commit(state, ops)?;
+        }
+        Edit::ChangeListLevel { target, delta } => {
+            if paragraph(&state.document, &target.node)?
+                .properties
+                .get()
+                .numbering
+                .is_none()
+            {
+                return Err(AiError::invalid(
+                    "list level adjustment requires a list paragraph",
+                ));
+            }
+            let ops = paragraph_change(
+                state,
+                &target.node,
+                mode,
+                (author, date),
+                Vec::new(),
+                nodes,
+                |p| ParagraphChange::ListLevel(*delta).apply(p),
+            )?;
+            commit(state, ops)?;
+        }
+        Edit::RestartNumbering { target, value } => {
+            refuse_untracked(kind, mode)?;
+            let node = paragraph(&state.document, &target.node)?.id;
+            nodes.push(node);
+            let ordered = ordered_paragraphs(&state.document);
+            let ids = &mut state.ids;
+            let ops = casual_doc_command::lists::restart(
+                &state.document,
+                &ordered,
+                node,
+                value.unwrap_or(1),
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            commit(state, ops)?;
+        }
+        Edit::ContinueNumbering { target } => {
+            refuse_untracked(kind, mode)?;
+            let node = paragraph(&state.document, &target.node)?.id;
+            nodes.push(node);
+            let ordered = ordered_paragraphs(&state.document);
+            let ops =
+                casual_doc_command::lists::continue_numbering(&state.document, &ordered, node)
+                    .map_err(|message| refusal(&message))?;
+            commit(state, ops)?;
+        }
+        Edit::InsertTable {
+            after,
+            rows,
+            columns,
+        } => {
+            refuse_untracked(kind, mode)?;
+            let node = paragraph(&state.document, &after.node)?.id;
+            nodes.push(node);
+            let index = casual_doc_command::table::body_index_after(&state.document, node);
+            let page = casual_doc_layout::document_layout::document_page_config(&state.document);
+            let width =
+                page.page_size.width.raw() - page.margin_start.raw() - page.margin_end.raw();
+            let ids = &mut state.ids;
+            let edit =
+                casual_doc_command::table::insert_table(index, *rows, *columns, width, &mut || {
+                    ids.next_id().ok()
+                })
+                .map_err(|message| refusal(&message))?;
+            commit(state, edit.operations)?;
+        }
+        Edit::TableInsertColumn { table, index } => {
+            refuse_untracked(kind, mode)?;
+            let found = table_of(state, table)?;
+            let ids = &mut state.ids;
+            let edit =
+                casual_doc_command::table::insert_column_at(&found, *index as usize, &mut || {
+                    ids.next_id().ok()
+                })
+                .map_err(|message| refusal(&message))?;
+            commit(state, edit.operations)?;
+        }
+        Edit::TableDeleteColumn { table, index } => {
+            refuse_untracked(kind, mode)?;
+            let found = table_of(state, table)?;
+            let index = *index as usize;
+            let edit = casual_doc_command::table::delete_columns(&found, 0, index, index)
+                .map_err(|message| refusal(&message))?;
+            commit(state, edit.operations)?;
+        }
+        Edit::TableMergeCells { table, from, to } => {
+            refuse_untracked(kind, mode)?;
+            let found = table_of(state, table)?;
+            let rect = casual_doc_command::table::cell_rect(
+                &found,
+                cell_of(&found, *from)?,
+                cell_of(&found, *to)?,
+            )
+            .map_err(|message| refusal(&message))?;
+            let ids = &mut state.ids;
+            let edit: TableEdit =
+                casual_doc_command::table::merge(&found, rect, &mut || ids.next_id().ok())
+                    .map_err(|message| refusal(&message))?;
+            commit(state, edit.operations)?;
+        }
+        Edit::TableSplitCell { table, cell } => {
+            refuse_untracked(kind, mode)?;
+            let found = table_of(state, table)?;
+            let (row, column) = cell_of(&found, *cell)?;
+            let ids = &mut state.ids;
+            let edit =
+                casual_doc_command::table::unmerge(&found, row, column, &mut || ids.next_id().ok())
+                    .map_err(|message| refusal(&message))?;
+            commit(state, edit.operations)?;
+        }
+        Edit::TableDelete { table } => {
+            refuse_untracked(kind, mode)?;
+            let found = table_of(state, table)?;
+            commit(state, casual_doc_command::table::delete_table(found.id))?;
+        }
+        Edit::TableSetCellFormat {
+            table,
+            from,
+            to,
+            shading,
+            vertical_alignment,
+        } => {
+            refuse_untracked(kind, mode)?;
+            if shading.is_none() && vertical_alignment.is_none() {
+                return Err(AiError::invalid(
+                    "Set `shading`, `vertical_alignment` or both.",
+                ));
+            }
+            let fill = match shading.as_deref() {
+                None => None,
+                Some("none") => Some(None),
+                Some(value) => Some(Some(
+                    casual_doc_command::format::parse_color(value)
+                        .ok_or_else(|| AiError::invalid("A colour is `#RRGGBB` or `none`."))?,
+                )),
+            };
+            let alignment = vertical_alignment.map(|alignment| {
+                casual_doc_command::table::cell_vertical_alignment(match alignment {
+                    CellAlignment::Top => "top",
+                    CellAlignment::Center => "center",
+                    CellAlignment::Bottom => "bottom",
+                })
+            });
+            let found = table_of(state, table)?;
+            let from = cell_of(&found, *from)?;
+            let to = to.map_or(Ok(from), |to| cell_of(&found, to))?;
+            // The editor's cell range: the rectangle grown to whole merged
+            // cells, each merged cell once.
+            let cells = casual_doc_command::table::range_cells(&found, from, to)
+                .map_err(|message| refusal(&message))?;
+            commit(
+                state,
+                casual_doc_command::table::set_cell_properties(cells, |p| {
+                    if let Some(fill) = fill {
+                        p.shading.fill = fill;
+                    }
+                    if let Some(alignment) = alignment {
+                        p.vertical_alignment = Some(alignment);
+                    }
+                }),
+            )?;
         }
         Edit::SetCellText {
             table,

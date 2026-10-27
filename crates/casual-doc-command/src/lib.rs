@@ -14,7 +14,9 @@
 //!   decides whether agents get it.
 //! - [`edit`]: the vocabulary as types; [`schema`]: the JSON Schema derived
 //!   from them, published by every front door.
-//! - [`table`]: the table-structure lowerings the editor and agents share.
+//! - the lowerings the editor and agents share, one module per family:
+//!   [`table`], [`format`] (character formatting), [`paragraph`], [`lists`],
+//!   and [`rewrite`] (the `rewrite_block` dialect).
 //!
 //! Every lowering here is pure: it reads the document and returns operations.
 //! Nothing in this crate applies an operation or builds a transaction; the
@@ -25,7 +27,11 @@
 
 pub mod coverage;
 pub mod edit;
+pub mod format;
+pub mod lists;
+pub mod paragraph;
 pub mod registry;
+pub mod rewrite;
 pub mod schema;
 pub mod table;
 

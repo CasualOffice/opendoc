@@ -584,21 +584,29 @@ fn discovery_describes_the_registry_and_the_profile_the_engine_enforces() {
     );
     let suggest_only = vec!["suggest".to_owned()];
     let both = vec!["suggest".to_owned(), "direct".to_owned()];
-    let expected: Vec<(String, Vec<String>)> = [
-        ("insert_text", &suggest_only),
-        ("replace_text", &suggest_only),
-        ("delete_text", &suggest_only),
-        ("set_text_format", &suggest_only),
-        ("insert_paragraphs", &suggest_only),
-        ("apply_paragraph_style", &suggest_only),
-        ("set_cell_text", &suggest_only),
-        ("comment", &both),
-        ("resolve_comment", &both),
-    ]
-    .iter()
-    .map(|(op, modes)| ((*op).to_owned(), (*modes).clone()))
-    .collect();
-    assert_eq!(admitted_modes(&kinds), expected, "{kinds}");
+    // Derived from the registry, so a new command is covered without editing
+    // this test: under `suggest`, a trackable command is admitted as a
+    // suggestion only; a comment command in either mode; everything that needs
+    // `edit` or `review` (untrackable structure, review decisions) not at all.
+    let expected: Vec<(String, Vec<String>)> = casual_doc_command::COMMANDS
+        .iter()
+        .filter_map(|command| match command.trackable {
+            casual_doc_command::Trackable::Yes => Some((command.id, &suggest_only)),
+            casual_doc_command::Trackable::NotApplicable
+                if command.family == casual_doc_command::Family::Review
+                    && command.id != "review" =>
+            {
+                Some((command.id, &both))
+            }
+            _ => None,
+        })
+        .map(|(op, modes)| (op.to_owned(), modes.clone()))
+        .collect();
+    let mut expected = expected;
+    expected.sort();
+    let mut admitted = admitted_modes(&kinds);
+    admitted.sort();
+    assert_eq!(admitted, expected, "{kinds}");
     let withheld: Vec<(&str, &str)> = kinds["withheld"]
         .as_array()
         .expect("withheld")
@@ -610,14 +618,16 @@ fn discovery_describes_the_registry_and_the_profile_the_engine_enforces() {
             )
         })
         .collect();
-    assert_eq!(
-        withheld,
-        [
-            ("table_insert_row", "profile"),
-            ("table_delete_row", "profile"),
-            ("review", "profile")
-        ]
-    );
+    // Everything not admitted is withheld, by the profile, in registry order.
+    let admitted_ids: Vec<&str> = expected.iter().map(|(op, _)| op.as_str()).collect();
+    let expected_withheld: Vec<(&str, &str)> = casual_doc_command::COMMANDS
+        .iter()
+        .filter(|command| !admitted_ids.contains(&command.id))
+        .map(|command| (command.id, "profile"))
+        .collect();
+    assert_eq!(withheld, expected_withheld);
+    assert!(withheld.contains(&("review", "profile")));
+    assert!(withheld.contains(&("table_insert_row", "profile")));
 
     // The engine agrees: a mode the listing withholds is refused by the profile.
     let doc = client.ok("open_document", json!({ "path": "contract.txt" }))["document"].clone();
@@ -671,7 +681,11 @@ fn discovery_describes_the_registry_and_the_profile_the_engine_enforces() {
     .expect("JSON");
     assert_eq!(
         casual_doc_command::schema::ops(&schema),
-        ["set_cell_text", "table_insert_row", "table_delete_row"]
+        casual_doc_command::COMMANDS
+            .iter()
+            .filter(|command| command.family == casual_doc_command::Family::Tables)
+            .map(|command| command.id)
+            .collect::<Vec<_>>()
     );
     let missing = client.request(
         "resources/read",
@@ -714,12 +728,11 @@ fn toolsets_limit_the_edit_families_and_the_read_tools_stay() {
         casual_doc_command::schema::ops(
             &apply["inputSchema"]["properties"]["plan"]["properties"]["edits"]["items"]
         ),
-        [
-            "insert_text",
-            "replace_text",
-            "delete_text",
-            "set_text_format"
-        ],
+        casual_doc_command::COMMANDS
+            .iter()
+            .filter(|command| command.family == casual_doc_command::Family::Text)
+            .map(|command| command.id)
+            .collect::<Vec<_>>(),
         "the published plan schema holds only the admitted families"
     );
     let kinds = client.ok("list_edit_kinds", json!({}));

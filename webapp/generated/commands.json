@@ -170,6 +170,148 @@
     },
     {
       "emits": [
+        "ClearFormatting"
+      ],
+      "example": {
+        "op": "clear_formatting",
+        "target": {
+          "exact": "notice period",
+          "node": "1:2"
+        }
+      },
+      "family": "text",
+      "id": "clear_formatting",
+      "summary": "Remove direct character formatting from the quoted text; the paragraph style stays.",
+      "trackable": "no",
+      "trackableReason": "Clearing formatting cannot be suggested yet: a suggested format change is recorded as the properties it sets, and clearing sets none. Use set_text_format with explicit values, or mode `direct`.",
+      "uiCommands": [
+        "format.clear"
+      ]
+    },
+    {
+      "emits": [
+        "DeleteText",
+        "InsertText",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "markdown": "Notice: the notice period is sixty (60) days without notice.",
+        "op": "rewrite_block",
+        "target": {
+          "node": "1:2"
+        }
+      },
+      "family": "paragraph",
+      "id": "rewrite_block",
+      "summary": "Rewrite one paragraph from read_blocks Markdown; only the words that differ change.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "SetParagraphProperties",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs"
+      ],
+      "example": {
+        "alignment": "center",
+        "op": "set_alignment",
+        "target": {
+          "node": "1:2"
+        }
+      },
+      "family": "paragraph",
+      "id": "set_alignment",
+      "summary": "Align a paragraph: start, center, end or justify.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": [
+        "paragraph.align.start",
+        "paragraph.align.center",
+        "paragraph.align.end",
+        "paragraph.align.justify"
+      ]
+    },
+    {
+      "emits": [
+        "SetParagraphProperties",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs"
+      ],
+      "example": {
+        "op": "set_line_spacing",
+        "rule": "multiple",
+        "target": {
+          "node": "1:2"
+        },
+        "value": 150
+      },
+      "family": "paragraph",
+      "id": "set_line_spacing",
+      "summary": "Set a paragraph's line spacing: a multiple of single, or an exact or minimum height in twips.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": [
+        "paragraph.spacing.100",
+        "paragraph.spacing.150",
+        "paragraph.spacing.200"
+      ]
+    },
+    {
+      "emits": [
+        "SetParagraphProperties",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs"
+      ],
+      "example": {
+        "after": 120,
+        "before": 240,
+        "op": "set_paragraph_spacing",
+        "target": {
+          "node": "1:2"
+        }
+      },
+      "family": "paragraph",
+      "id": "set_paragraph_spacing",
+      "summary": "Set the space before and/or after a paragraph, in twips.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "SetParagraphProperties",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs"
+      ],
+      "example": {
+        "first_line": -360,
+        "op": "set_indent",
+        "start": 720,
+        "target": {
+          "node": "1:2"
+        }
+      },
+      "family": "paragraph",
+      "id": "set_indent",
+      "summary": "Set a paragraph's start, end or first-line indent, in twips (a negative first line hangs).",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": [
+        "paragraph.indent.increase",
+        "paragraph.indent.decrease"
+      ]
+    },
+    {
+      "emits": [
         "InsertText",
         "DeleteText",
         "UpdateReviewState",
@@ -232,6 +374,241 @@
     },
     {
       "emits": [
+        "InsertTable"
+      ],
+      "example": {
+        "after": {
+          "node": "1:2"
+        },
+        "columns": 3,
+        "op": "insert_table",
+        "rows": 2
+      },
+      "family": "tables",
+      "id": "insert_table",
+      "summary": "Insert an empty table (rows x columns, with a thin grid) after an anchor's top-level block.",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.table"
+      ]
+    },
+    {
+      "emits": [
+        "InsertColumn",
+        "ReplaceTable"
+      ],
+      "example": {
+        "index": 1,
+        "op": "table_insert_column",
+        "table": "1:9"
+      },
+      "family": "tables",
+      "id": "table_insert_column",
+      "summary": "Insert an empty column at a grid index; a merged cell it lands inside grows to cover it.",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "table.insert.columnLeft",
+        "table.insert.columnRight"
+      ]
+    },
+    {
+      "emits": [
+        "DeleteColumn",
+        "ReplaceTable"
+      ],
+      "example": {
+        "index": 1,
+        "op": "table_delete_column",
+        "table": "1:9"
+      },
+      "family": "tables",
+      "id": "table_delete_column",
+      "summary": "Delete one grid column; a merged cell crossing it shrinks.",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "table.delete.column"
+      ]
+    },
+    {
+      "emits": [
+        "ReplaceTable"
+      ],
+      "example": {
+        "from": {
+          "column": 0,
+          "row": 0
+        },
+        "op": "table_merge_cells",
+        "table": "1:9",
+        "to": {
+          "column": 1,
+          "row": 0
+        }
+      },
+      "family": "tables",
+      "id": "table_merge_cells",
+      "summary": "Merge the rectangle between two cells into one; every cell's text moves into it in reading order.",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "table.merge"
+      ]
+    },
+    {
+      "emits": [
+        "ReplaceTable"
+      ],
+      "example": {
+        "cell": {
+          "column": 0,
+          "row": 0
+        },
+        "op": "table_split_cell",
+        "table": "1:9"
+      },
+      "family": "tables",
+      "id": "table_split_cell",
+      "summary": "Unmerge the merged cell a cell belongs to; its text stays in the top-left cell.",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "table.unmerge"
+      ]
+    },
+    {
+      "emits": [
+        "DeleteTable"
+      ],
+      "example": {
+        "op": "table_delete",
+        "table": "1:9"
+      },
+      "family": "tables",
+      "id": "table_delete",
+      "summary": "Delete a whole table.",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "table.delete.table"
+      ]
+    },
+    {
+      "emits": [
+        "SetTableCellProperties"
+      ],
+      "example": {
+        "from": {
+          "column": 0,
+          "row": 0
+        },
+        "op": "table_set_cell_format",
+        "shading": "#FFF2CC",
+        "table": "1:9",
+        "to": {
+          "column": 1,
+          "row": 0
+        },
+        "vertical_alignment": "center"
+      },
+      "family": "tables",
+      "id": "table_set_cell_format",
+      "summary": "Set the shading and/or vertical alignment of one cell or a rectangle of cells.",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "SetAbstractNumbering",
+        "SetNumberingInstance",
+        "SetParagraphProperties",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs"
+      ],
+      "example": {
+        "kind": "bullet",
+        "op": "set_list",
+        "target": {
+          "node": "1:2"
+        }
+      },
+      "family": "lists",
+      "id": "set_list",
+      "summary": "Make a paragraph a bulleted or numbered list item, or take it out of its list.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": [
+        "paragraph.list.bullet",
+        "paragraph.list.numbered"
+      ]
+    },
+    {
+      "emits": [
+        "SetParagraphProperties",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs"
+      ],
+      "example": {
+        "delta": 1,
+        "op": "change_list_level",
+        "target": {
+          "node": "1:3"
+        }
+      },
+      "family": "lists",
+      "id": "change_list_level",
+      "summary": "Move a list item down (positive) or up (negative) a number of levels.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "SetNumberingInstance",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "op": "restart_numbering",
+        "target": {
+          "node": "1:3"
+        },
+        "value": 1
+      },
+      "family": "lists",
+      "id": "restart_numbering",
+      "summary": "Restart numbering at a numbered list item, at 1 or a given value.",
+      "trackable": "no",
+      "trackableReason": "Restarting or continuing numbering cannot be suggested: it moves items to another numbering instance, which Word has no tracked-change record for. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "paragraph.list.restart"
+      ]
+    },
+    {
+      "emits": [
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "op": "continue_numbering",
+        "target": {
+          "node": "1:3"
+        }
+      },
+      "family": "lists",
+      "id": "continue_numbering",
+      "summary": "Continue numbering from the nearest earlier numbered list at the item's level.",
+      "trackable": "no",
+      "trackableReason": "Restarting or continuing numbering cannot be suggested: it moves items to another numbering instance, which Word has no tracked-change record for. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "paragraph.list.continue"
+      ]
+    },
+    {
+      "emits": [
         "UpdateReviewState",
         "SplitParagraph",
         "JoinParagraphs",
@@ -240,7 +617,7 @@
       "example": {
         "op": "comment",
         "target": {
-          "exact": "termination",
+          "exact": "notice period",
           "node": "1:2"
         },
         "text": "Aligned with the MSA, clause 9."
@@ -310,13 +687,19 @@
         "insert_text",
         "replace_text",
         "delete_text",
-        "set_text_format"
+        "set_text_format",
+        "clear_formatting"
       ],
       "name": "text"
     },
     {
       "commands": [
-        "insert_paragraphs"
+        "insert_paragraphs",
+        "rewrite_block",
+        "set_alignment",
+        "set_line_spacing",
+        "set_paragraph_spacing",
+        "set_indent"
       ],
       "name": "paragraph"
     },
@@ -330,9 +713,25 @@
       "commands": [
         "set_cell_text",
         "table_insert_row",
-        "table_delete_row"
+        "table_delete_row",
+        "insert_table",
+        "table_insert_column",
+        "table_delete_column",
+        "table_merge_cells",
+        "table_split_cell",
+        "table_delete",
+        "table_set_cell_format"
       ],
       "name": "tables"
+    },
+    {
+      "commands": [
+        "set_list",
+        "change_list_level",
+        "restart_numbering",
+        "continue_numbering"
+      ],
+      "name": "lists"
     },
     {
       "commands": [
@@ -371,10 +770,6 @@
     },
     {
       "id": "format.superscript",
-      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
-    },
-    {
-      "id": "format.clear",
       "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
     },
     {
@@ -478,30 +873,6 @@
       "reason": "Change case keeps each run's formatting, which replace_text would flatten; it arrives with rewrite_block (docs/181 §4.3)."
     },
     {
-      "id": "paragraph.align.start",
-      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
-    },
-    {
-      "id": "paragraph.align.center",
-      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
-    },
-    {
-      "id": "paragraph.align.end",
-      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
-    },
-    {
-      "id": "paragraph.align.justify",
-      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
-    },
-    {
-      "id": "paragraph.indent.increase",
-      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
-    },
-    {
-      "id": "paragraph.indent.decrease",
-      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
-    },
-    {
       "id": "paragraph.spacing.",
       "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
     },
@@ -534,23 +905,7 @@
       "reason": "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3)."
     },
     {
-      "id": "paragraph.list.bullet",
-      "reason": "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3)."
-    },
-    {
-      "id": "paragraph.list.numbered",
-      "reason": "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3)."
-    },
-    {
       "id": "paragraph.list.checklist",
-      "reason": "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3)."
-    },
-    {
-      "id": "paragraph.list.continue",
-      "reason": "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3)."
-    },
-    {
-      "id": "paragraph.list.restart",
       "reason": "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3)."
     },
     {
@@ -690,27 +1045,7 @@
       "reason": "Charts come last, behind the chart model work they need (docs/181 §4.2 step 7, docs/155)."
     },
     {
-      "id": "insert.table",
-      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
-    },
-    {
       "id": "table.",
-      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
-    },
-    {
-      "id": "table.insert.columnLeft",
-      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
-    },
-    {
-      "id": "table.insert.columnRight",
-      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
-    },
-    {
-      "id": "table.delete.column",
-      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
-    },
-    {
-      "id": "table.delete.table",
       "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
     },
     {
@@ -727,14 +1062,6 @@
     },
     {
       "id": "table.move.columnRight",
-      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
-    },
-    {
-      "id": "table.merge",
-      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
-    },
-    {
-      "id": "table.unmerge",
       "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
     },
     {
@@ -894,6 +1221,6 @@
       "reason": "No command deletes a comment yet; an agent resolves a thread with resolve_comment."
     }
   ],
-  "uiNotExposedCeiling": 137,
-  "vocabularyVersion": "1.0"
+  "uiNotExposedCeiling": 119,
+  "vocabularyVersion": "1.1"
 }
