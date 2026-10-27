@@ -39,16 +39,8 @@ use crate::text::{clip, paragraph_text, runs};
 /// or not at all.
 pub const PLAN_VERSION: u32 = 1;
 
-/// Whether edits become tracked suggestions or land directly.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum Mode {
-    /// Tracked changes authored by the session's identity. The default.
-    #[default]
-    Suggest,
-    /// Untracked edits; only under a profile that grants `edit`.
-    Direct,
-}
+// The vocabulary's types live in the capability registry (`docs/181` §2.1).
+pub use casual_doc_command::edit::{Decision, Edit, Mode, NewParagraph, TextFormat};
 
 /// A plan as an agent sends it.
 #[derive(Clone, Debug, Deserialize)]
@@ -67,161 +59,22 @@ pub struct EditPlan {
     pub idempotency_key: Option<String>,
 }
 
-/// One new paragraph for `insert_paragraphs`.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NewParagraph {
-    /// Its text.
-    #[serde(default)]
-    pub text: String,
-    /// A paragraph style, by name (for example `Heading 2`) or id.
-    #[serde(default)]
-    pub style: Option<String>,
-}
-
-/// Character formatting an agent may set.
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TextFormat {
-    /// Bold on or off.
-    #[serde(default)]
-    pub bold: Option<bool>,
-    /// Italic on or off.
-    #[serde(default)]
-    pub italic: Option<bool>,
-    /// Underline on or off.
-    #[serde(default)]
-    pub underline: Option<bool>,
-    /// Strikethrough on or off.
-    #[serde(default)]
-    pub strike: Option<bool>,
-    /// Size in points (half-point precision).
-    #[serde(default)]
-    pub size: Option<f32>,
-    /// Colour, `#RRGGBB`.
-    #[serde(default)]
-    pub color: Option<String>,
-    /// Highlight name (`yellow`, `green`, `cyan`, `magenta`, `blue`, `red`, …, `none`).
-    #[serde(default)]
-    pub highlight: Option<String>,
-    /// Font family.
-    #[serde(default)]
-    pub font: Option<String>,
-}
-
-/// Accept or reject.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum Decision {
-    /// Keep the change.
-    Accept,
-    /// Undo the change.
-    Reject,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
-enum Edit {
-    InsertText {
-        at: Anchor,
-        text: String,
-    },
-    ReplaceText {
-        target: Anchor,
-        text: String,
-    },
-    DeleteText {
-        target: Anchor,
-    },
-    InsertParagraphs {
-        after: Anchor,
-        paragraphs: Vec<NewParagraph>,
-    },
-    ApplyParagraphStyle {
-        target: Anchor,
-        style: String,
-    },
-    SetTextFormat {
-        target: Anchor,
-        format: TextFormat,
-    },
-    SetCellText {
-        table: String,
-        row: u32,
-        column: u32,
-        text: String,
-    },
-    TableInsertRow {
-        table: String,
-        index: u32,
-    },
-    TableDeleteRow {
-        table: String,
-        index: u32,
-    },
-    Comment {
-        target: Anchor,
-        text: String,
-        #[serde(default)]
-        reply_to: Option<String>,
-    },
-    ResolveComment {
-        id: String,
-        #[serde(default)]
-        resolved: Option<bool>,
-    },
-    Review {
-        decision: Decision,
-        #[serde(default)]
-        revisions: Vec<String>,
-        #[serde(default)]
-        all: bool,
-    },
-}
-
-impl Edit {
-    fn kind(&self) -> &'static str {
-        match self {
-            Self::InsertText { .. } => "insert_text",
-            Self::ReplaceText { .. } => "replace_text",
-            Self::DeleteText { .. } => "delete_text",
-            Self::InsertParagraphs { .. } => "insert_paragraphs",
-            Self::ApplyParagraphStyle { .. } => "apply_paragraph_style",
-            Self::SetTextFormat { .. } => "set_text_format",
-            Self::SetCellText { .. } => "set_cell_text",
-            Self::TableInsertRow { .. } => "table_insert_row",
-            Self::TableDeleteRow { .. } => "table_delete_row",
-            Self::Comment { .. } => "comment",
-            Self::ResolveComment { .. } => "resolve_comment",
-            Self::Review { .. } => "review",
-        }
-    }
-
-    /// The profile this edit needs in `mode` (`docs/178` §4.3's table).
-    fn needs(&self, mode: Mode) -> Profile {
-        match self {
-            Self::Comment { .. } | Self::ResolveComment { .. } => Profile::Comment,
-            Self::Review { .. } => Profile::Review,
-            Self::TableInsertRow { .. } | Self::TableDeleteRow { .. } => Profile::Edit,
-            _ => match mode {
-                Mode::Suggest => Profile::Suggest,
-                Mode::Direct => Profile::Edit,
-            },
-        }
-    }
-
-    fn inserted_bytes(&self) -> usize {
-        match self {
-            Self::InsertText { text, .. }
-            | Self::ReplaceText { text, .. }
-            | Self::SetCellText { text, .. }
-            | Self::Comment { text, .. } => text.len(),
-            Self::InsertParagraphs { paragraphs, .. } => paragraphs
-                .iter()
-                .map(|paragraph| paragraph.text.len())
-                .sum(),
-            _ => 0,
-        }
+/// The profile `edit` needs in `mode` (`docs/178` §4.3's table).
+fn needs(edit: &Edit, mode: Mode) -> Profile {
+    match edit {
+        Edit::Comment { .. } | Edit::ResolveComment { .. } => Profile::Comment,
+        Edit::Review { .. } => Profile::Review,
+        Edit::TableInsertRow { .. } | Edit::TableDeleteRow { .. } => Profile::Edit,
+        Edit::InsertText { .. }
+        | Edit::ReplaceText { .. }
+        | Edit::DeleteText { .. }
+        | Edit::InsertParagraphs { .. }
+        | Edit::ApplyParagraphStyle { .. }
+        | Edit::SetTextFormat { .. }
+        | Edit::SetCellText { .. } => match mode {
+            Mode::Suggest => Profile::Suggest,
+            Mode::Direct => Profile::Edit,
+        },
     }
 }
 
@@ -887,7 +740,7 @@ fn run(session: &Session, plan: &EditPlan) -> AiResult<(State, Vec<Outcome>)> {
         // The adapter's declaration: an edit the profile does not grant is
         // refused here with the tool-level code. The ENGINE check inside
         // `State::commit` is what actually holds the line.
-        let needed = edit.needs(plan.mode);
+        let needed = needs(edit, plan.mode);
         let result = if session.config().profile.grants(needed) {
             apply_edit(session, &mut state, edit, plan.mode, &mut first, &mut nodes)
         } else {

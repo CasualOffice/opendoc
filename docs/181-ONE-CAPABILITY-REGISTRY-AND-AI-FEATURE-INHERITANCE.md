@@ -335,6 +335,15 @@ ratchet keeping the direction one-way.
 - **Q6. Tracked table structure** (`178` Q11) — the largest single block in the ratchet; it
   decides whether table edits can ever be suggestions.
 
+## Owner decisions, 2026-10-28
+
+- **Complete `181` in one PR (#897)**; the owner will not merge it before it is complete.
+  PDF import (`182`) is not part of it and stays a proposal.
+- **Q2 — protocol:** keep the hand-rolled JSON-RPC layer; no `rmcp`. Revisit with M3.
+- **Q5 — bindings:** generated JSON Schema and TypeScript types now; the Python package
+  (pyo3) in a later PR with its own CI job.
+- **Q3 / Q4 — extras:** build `rewrite_block` (§4.3) and the private preview mode (§4.4).
+
 ## 10. Sources
 
 - Google Docs API request union: <https://developers.google.com/workspace/docs/api/reference/rest/v1/documents/request>

@@ -106,3 +106,26 @@ fn the_registry_applies_nothing_itself() {
         }
     }
 }
+
+#[test]
+fn the_edit_types_and_the_registry_name_the_same_commands_in_the_same_order() {
+    let schema = casual_doc_command::schema::edit();
+    let ops = casual_doc_command::schema::ops(&schema);
+    let ids: Vec<String> = COMMANDS.iter().map(|c| c.id.to_owned()).collect();
+    assert_eq!(
+        ops, ids,
+        "an Edit variant without a registry entry, or the reverse (docs/181 §2.1)"
+    );
+    for command in COMMANDS {
+        let edit: casual_doc_command::edit::Edit =
+            serde_json::from_str(command.example).expect("each example is a valid edit");
+        assert_eq!(
+            edit.kind(),
+            command.id,
+            "{}'s example parses as itself",
+            command.id
+        );
+        let one = casual_doc_command::schema::command(command.id).expect("its schema");
+        assert_eq!(one["properties"]["op"]["const"], command.id);
+    }
+}

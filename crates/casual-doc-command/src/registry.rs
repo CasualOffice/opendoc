@@ -76,6 +76,10 @@ pub struct Command {
     pub trackable: Trackable,
     /// A worked example: a complete, valid edit (anchors use placeholder ids).
     pub example: &'static str,
+    /// The editor command ids (`webapp/src/host_contract.mjs`) this command is
+    /// the agent-side twin of; held to the contract in both directions by
+    /// `webapp/tests/command_registry_parity.test.mjs` (`docs/181` G3).
+    pub ui_commands: &'static [&'static str],
 }
 
 const ROWS_NOT_TRACKABLE: &str = "Table rows cannot be suggested yet: tracked table structure is \
@@ -96,6 +100,7 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::Yes,
         example: r#"{"op":"insert_text","at":{"node":"1:2","exact":"days","side":"after"},"text":" (calendar)"}"#,
+        ui_commands: &[],
     },
     Command {
         id: "replace_text",
@@ -111,6 +116,7 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::Yes,
         example: r#"{"op":"replace_text","target":{"node":"1:2","exact":"thirty (30) days"},"text":"sixty (60) days"}"#,
+        ui_commands: &[],
     },
     Command {
         id: "delete_text",
@@ -125,6 +131,7 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::Yes,
         example: r#"{"op":"delete_text","target":{"node":"1:2","exact":" without notice"}}"#,
+        ui_commands: &[],
     },
     Command {
         id: "insert_paragraphs",
@@ -139,6 +146,7 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::Yes,
         example: r#"{"op":"insert_paragraphs","after":{"node":"1:2"},"paragraphs":[{"text":"Termination","style":"Heading 2"}]}"#,
+        ui_commands: &[],
     },
     Command {
         id: "apply_paragraph_style",
@@ -152,6 +160,7 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::Yes,
         example: r#"{"op":"apply_paragraph_style","target":{"node":"1:2"},"style":"Heading 1"}"#,
+        ui_commands: &[],
     },
     Command {
         id: "set_text_format",
@@ -166,6 +175,7 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::Yes,
         example: r#"{"op":"set_text_format","target":{"node":"1:2","exact":"Notice"},"format":{"bold":true}}"#,
+        ui_commands: &[],
     },
     Command {
         id: "set_cell_text",
@@ -181,6 +191,7 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::Yes,
         example: r#"{"op":"set_cell_text","table":"1:9","row":1,"column":0,"text":"Q3"}"#,
+        ui_commands: &[],
     },
     Command {
         id: "table_insert_row",
@@ -189,6 +200,7 @@ pub const COMMANDS: &[Command] = &[
         emits: &["InsertRow", "ReplaceTable"],
         trackable: Trackable::No(ROWS_NOT_TRACKABLE),
         example: r#"{"op":"table_insert_row","table":"1:9","index":1}"#,
+        ui_commands: &[],
     },
     Command {
         id: "table_delete_row",
@@ -197,6 +209,7 @@ pub const COMMANDS: &[Command] = &[
         emits: &["DeleteRow", "ReplaceTable"],
         trackable: Trackable::No(ROWS_NOT_TRACKABLE),
         example: r#"{"op":"table_delete_row","table":"1:9","index":1}"#,
+        ui_commands: &[],
     },
     Command {
         id: "comment",
@@ -210,6 +223,7 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::NotApplicable,
         example: r#"{"op":"comment","target":{"node":"1:2","exact":"termination"},"text":"Aligned with the MSA, clause 9."}"#,
+        ui_commands: &[],
     },
     Command {
         id: "resolve_comment",
@@ -223,6 +237,7 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::NotApplicable,
         example: r#"{"op":"resolve_comment","id":"1:40","resolved":true}"#,
+        ui_commands: &[],
     },
     Command {
         id: "review",
@@ -236,6 +251,7 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::NotApplicable,
         example: r#"{"op":"review","decision":"accept","revisions":["1:41"]}"#,
+        ui_commands: &[],
     },
 ];
 

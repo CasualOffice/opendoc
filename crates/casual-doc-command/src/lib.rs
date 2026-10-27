@@ -12,6 +12,8 @@
 //!   reached by a command or not exposed, with a reason. The classification is
 //!   an exhaustive `match`, so a new operation does not compile until someone
 //!   decides whether agents get it.
+//! - [`edit`]: the vocabulary as types; [`schema`]: the JSON Schema derived
+//!   from them, published by every front door.
 //! - [`table`]: the table-structure lowerings the editor and agents share.
 //!
 //! Every lowering here is pure: it reads the document and returns operations.
@@ -22,7 +24,9 @@
 #![forbid(unsafe_code)]
 
 pub mod coverage;
+pub mod edit;
 pub mod registry;
+pub mod schema;
 pub mod table;
 
 pub use registry::{COMMANDS, Command, Family, Trackable, find, ids};

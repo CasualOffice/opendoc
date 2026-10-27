@@ -70,13 +70,9 @@ fn plan() -> Value {
                 "type": "array",
                 "minItems": 1,
                 "maxItems": 500,
-                "items": {
-                    "type": "object",
-                    "required": ["op"],
-                    // The capability registry is the vocabulary (`docs/181`):
-                    // a client can refuse an unknown op before sending it.
-                    "properties": { "op": { "enum": casual_doc_command::ids() } }
-                }
+                // Generated from the edit types in the capability registry
+                // (`docs/181` G4): every op, its fields, their types.
+                "items": casual_doc_command::schema::edit()
             }
         },
         "required": ["base_revision", "edits"],

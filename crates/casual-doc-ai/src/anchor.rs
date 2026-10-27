@@ -11,59 +11,15 @@ use casual_doc_edit::find_paragraph_any;
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{Document, Paragraph};
 use casual_doc_review::body::NoteAnchorLengths;
-use serde::Deserialize;
 use serde_json::json;
 
 use crate::error::{AiError, AiResult};
 use crate::read::node_id;
 use crate::text::{clip, offset_spaces_agree, paragraph_text};
 
-/// Which side of the target an insertion goes.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum Side {
-    /// Before the quote (or at the paragraph's start).
-    Before,
-    /// After the quote (or at the paragraph's end). The default.
-    #[default]
-    After,
-}
-
-/// A byte range a program passes back exactly as `read`/`search` returned it.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct PosRange {
-    /// Start, UTF-8 bytes into the node's text.
-    pub start: u32,
-    /// End, exclusive.
-    pub end: u32,
-}
-
-/// A pointer at text an agent can produce and the server can check.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct Anchor {
-    /// A paragraph id returned by `get_outline`, `read_blocks` or `search`.
-    pub node: String,
-    /// The quoted text, matched inside `node` only.
-    #[serde(default)]
-    pub exact: Option<String>,
-    /// Text immediately before `exact`, to disambiguate.
-    #[serde(default)]
-    pub prefix: Option<String>,
-    /// Text immediately after `exact`, to disambiguate.
-    #[serde(default)]
-    pub suffix: Option<String>,
-    /// 1-based occurrence of `exact` among the matches that remain.
-    #[serde(default)]
-    pub occurrence: Option<u32>,
-    /// Offsets for programs only; never computed by a model.
-    #[serde(default)]
-    pub pos: Option<PosRange>,
-    /// For an insertion point: before or after the target.
-    #[serde(default)]
-    pub side: Option<Side>,
-}
+// The anchor types are part of the edit vocabulary, so they live with it in
+// the capability registry (`docs/181` §2.1); resolution stays here.
+pub use casual_doc_command::edit::{Anchor, PosRange, Side};
 
 /// A resolved anchor: a paragraph and a byte range of its text.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

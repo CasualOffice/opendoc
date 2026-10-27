@@ -215,11 +215,11 @@ fn the_server_lists_every_tool_and_every_tool_answers() {
             .iter()
             .find(|tool| tool["name"] == name)
             .expect("an edit tool");
+        let items = &tool["inputSchema"]["properties"]["plan"]["properties"]["edits"]["items"];
         assert_eq!(
-            tool["inputSchema"]["properties"]["plan"]["properties"]["edits"]["items"]["properties"]
-                ["op"]["enum"],
-            json!(casual_doc_command::ids()),
-            "{name} publishes the registry's ops"
+            casual_doc_command::schema::ops(items),
+            casual_doc_command::ids(),
+            "{name} publishes the registry's ops, each with its generated fields"
         );
     }
 

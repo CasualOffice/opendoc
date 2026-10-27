@@ -62,6 +62,7 @@ casual-doc-selection = { path = "crates/casual-doc-selection", version = "=0.0.1
 casual-doc-transaction = { path = "crates/casual-doc-transaction", version = "=0.0.1" }
 opendoc-viewer = { path = "crates/opendoc-viewer", version = "=0.0.1" }
 casual-doc-wasm = { path = "crates/casual-doc-wasm", version = "=0.0.1" }
+schemars = { version = "1.2.3", default-features = false, features = ["derive", "std"] }
 quick-xml = { version = "0.41.0", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.145"
