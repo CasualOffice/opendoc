@@ -206,6 +206,22 @@ fn the_server_lists_every_tool_and_every_tool_answers() {
         assert_eq!(tool["inputSchema"]["type"], "object", "{tool}");
         assert!(tool["annotations"]["readOnlyHint"].is_boolean());
     }
+    // `docs/181`: the published edit vocabulary is the capability registry,
+    // not a hand-kept list.
+    for name in ["preview_edits", "apply_edits"] {
+        let tool = listed["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .expect("an edit tool");
+        assert_eq!(
+            tool["inputSchema"]["properties"]["plan"]["properties"]["edits"]["items"]["properties"]
+                ["op"]["enum"],
+            json!(casual_doc_command::ids()),
+            "{name} publishes the registry's ops"
+        );
+    }
 
     // --- every tool, once ---
     let opened = client.ok("open_document", json!({ "path": "contract.txt" }));

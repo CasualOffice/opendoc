@@ -14,6 +14,7 @@ publish = false
 # never calls a model and opens no network connection.
 
 [dependencies]
+casual-doc-command.workspace = true
 casual-doc-diff.workspace = true
 casual-doc-edit.workspace = true
 casual-doc-io.workspace = true

@@ -18,9 +18,7 @@ use std::collections::BTreeSet;
 
 use casual_doc_edit::{FormatDelta, Operation, Pos, Range};
 use casual_doc_model::NodeId;
-use casual_doc_model::v1::{
-    BlockNode, HighlightColor, Paragraph, RgbColor, StyleId, StyleKind, TableCell, TableRow,
-};
+use casual_doc_model::v1::{BlockNode, HighlightColor, Paragraph, RgbColor, StyleId, StyleKind};
 use casual_doc_review::ReviewIds;
 use casual_doc_review::body::build_review_revision_summaries;
 use casual_doc_review::lower::{self, InsertStyle, Lowered};
@@ -36,26 +34,10 @@ use crate::session::{ChangeRecord, Session, State};
 use crate::structure::find_table;
 use crate::text::{clip, paragraph_text, runs};
 
-/// The vocabulary's version. A new edit kind is added to `EDIT_KINDS`, with
-/// its lowering, its capability and its OT tier, or not at all.
+/// The vocabulary's version. A new edit kind is an entry in the capability
+/// registry (`casual_doc_command::COMMANDS`, `docs/181`), with its lowering,
+/// or not at all.
 pub const PLAN_VERSION: u32 = 1;
-
-/// Every edit kind this version accepts. Anything else is `unknown-edit`,
-/// never ignored.
-pub const EDIT_KINDS: &[&str] = &[
-    "insert_text",
-    "replace_text",
-    "delete_text",
-    "insert_paragraphs",
-    "apply_paragraph_style",
-    "set_text_format",
-    "set_cell_text",
-    "table_insert_row",
-    "table_delete_row",
-    "comment",
-    "resolve_comment",
-    "review",
-];
 
 /// Whether edits become tracked suggestions or land directly.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
@@ -262,7 +244,9 @@ fn parse(session: &Session, plan: &EditPlan) -> AiResult<Vec<Edit>> {
     let mut bytes = 0usize;
     for (index, value) in plan.edits.iter().enumerate() {
         let kind = value.get("op").and_then(Value::as_str).unwrap_or("");
-        if !EDIT_KINDS.contains(&kind) {
+        // The registry is the vocabulary: anything it does not name is
+        // `unknown-edit`, never ignored.
+        if casual_doc_command::find(kind).is_none() {
             return Err(AiError::new(
                 "unknown-edit",
                 format!(
@@ -271,7 +255,7 @@ fn parse(session: &Session, plan: &EditPlan) -> AiResult<Vec<Edit>> {
                     clip(kind, 40)
                 ),
             )
-            .with_details(json!({ "index": index, "known": EDIT_KINDS })));
+            .with_details(json!({ "index": index, "known": casual_doc_command::ids() })));
         }
         let edit: Edit = serde_json::from_value(value.clone()).map_err(|error| {
             AiError::invalid(format!("Edit {index} (`{kind}`) is malformed: {error}."))
@@ -383,6 +367,17 @@ fn style_id(state: &State, style: &str) -> AiResult<StyleId> {
     )))
 }
 
+/// Refuses `kind` in suggest mode when the registry says it cannot be
+/// tracked, with the registry's own reason. O(commands).
+fn refuse_untracked(kind: &str, mode: Mode) -> AiResult<()> {
+    match casual_doc_command::find(kind).map(|command| command.trackable) {
+        Some(casual_doc_command::Trackable::No(reason)) if mode != Mode::Direct => {
+            Err(AiError::new("not-trackable", reason))
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Applies `edit` to `state`, committing each lowered step with `coalesce`
 /// (the first step of a plan opens the undo group, the rest continue it).
 fn apply_edit(
@@ -397,7 +392,21 @@ fn apply_edit(
     let author = Some(session.config().author.clone());
     let date = Some(session.date());
     let mut operations = 0usize;
+    let kind = edit.kind();
+    let declared = casual_doc_command::find(kind).map_or(&[][..], |command| command.emits);
     let mut commit = |state: &mut State, ops: Vec<Operation>| -> AiResult<()> {
+        // `docs/181` §3: a command emits only what the registry says it does,
+        // so the registry's coverage claims are true of the code. O(ops).
+        if let Some(op) = ops
+            .iter()
+            .find(|op| !declared.contains(&casual_doc_command::coverage::operation_name(op)))
+        {
+            return Err(AiError::engine(format!(
+                "`{kind}` lowered to `{}`, which the capability registry does not declare for \
+                 it.",
+                casual_doc_command::coverage::operation_name(op)
+            )));
+        }
         let coalesce = if *first {
             Coalesce::New
         } else {
@@ -714,85 +723,37 @@ fn apply_edit(
                 .map(|ops| ops + operations);
         }
         Edit::TableInsertRow { table, index } => {
-            if mode != Mode::Direct {
-                return Err(AiError::new(
-                    "not-trackable",
-                    "Table rows cannot be suggested yet (tracked table structure is not \
-                     modelled); use mode `direct` under a profile that grants `edit`.",
-                ));
-            }
-            let table_id = node_id(table)?;
-            let template = {
-                let found = find_table(&state.document, table_id).ok_or_else(|| {
+            refuse_untracked(kind, mode)?;
+            let found = find_table(&state.document, node_id(table)?)
+                .ok_or_else(|| {
                     AiError::new("anchor-not-found", "No table has that id at this revision.")
-                })?;
-                if *index as usize > found.rows.len() {
-                    return Err(AiError::invalid(
-                        "The row index is past the end of the table.",
-                    ));
-                }
-                found.rows[(*index as usize)
-                    .saturating_sub(1)
-                    .min(found.rows.len() - 1)]
-                .clone()
-            };
-            let mut next = || {
-                state
-                    .ids
-                    .next_id()
-                    .map_err(|_| AiError::new("over-limit", "The id space is exhausted."))
-            };
-            let mut cells = Vec::with_capacity(template.cells.len());
-            for cell in &template.cells {
-                let mut properties = cell.properties.clone();
-                properties.vertical_merge = None;
-                let paragraph_properties = cell
-                    .blocks
-                    .iter()
-                    .find_map(|block| match block {
-                        BlockNode::Paragraph(paragraph) => Some(paragraph.properties.clone()),
-                        _ => None,
-                    })
-                    .unwrap_or_default();
-                cells.push(TableCell {
-                    id: next()?,
-                    properties,
-                    blocks: vec![BlockNode::Paragraph(Paragraph {
-                        id: next()?,
-                        properties: paragraph_properties,
-                        inlines: Vec::new(),
-                    })],
-                });
-            }
-            let row = TableRow {
-                id: next()?,
-                properties: template.properties.clone(),
-                cells,
-            };
-            commit(
-                state,
-                vec![Operation::InsertRow {
-                    table: table_id,
-                    index: *index,
-                    row: Box::new(row),
-                }],
-            )?;
+                })?
+                .clone();
+            // The editor's own lowering: the merged-cell rule of `docs/171`
+            // and the InsertRow/ReplaceTable choice (`docs/181` §0).
+            let ids = &mut state.ids;
+            let edit =
+                casual_doc_command::table::insert_row_at(&found, *index as usize, &mut || {
+                    ids.next_id().ok()
+                })
+                .map_err(AiError::invalid)?;
+            commit(state, edit.operations)?;
         }
         Edit::TableDeleteRow { table, index } => {
-            if mode != Mode::Direct {
-                return Err(AiError::new(
-                    "not-trackable",
-                    "Table rows cannot be suggested yet; use mode `direct` under a profile that \
-                     grants `edit`.",
+            refuse_untracked(kind, mode)?;
+            let found = find_table(&state.document, node_id(table)?)
+                .ok_or_else(|| {
+                    AiError::new("anchor-not-found", "No table has that id at this revision.")
+                })?
+                .clone();
+            if *index as usize >= found.rows.len() {
+                return Err(AiError::invalid(
+                    "The row index is past the end of the table.",
                 ));
             }
-            commit(
-                state,
-                vec![Operation::DeleteRow {
-                    table: node_id(table)?,
-                    index: *index,
-                }],
-            )?;
+            let edit = casual_doc_command::table::delete_row(&found, *index as usize)
+                .map_err(AiError::invalid)?;
+            commit(state, edit.operations)?;
         }
         Edit::Comment {
             target,

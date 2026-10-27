@@ -193,6 +193,7 @@ checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
 name = "casual-doc-ai"
 version = "0.0.1"
 dependencies = [
+ "casual-doc-command",
  "casual-doc-diff",
  "casual-doc-edit",
  "casual-doc-io",
@@ -205,6 +206,14 @@ dependencies = [
  "serde",
  "serde_json",
  "zip",
+]
+
+[[package]]
+name = "casual-doc-command"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-edit",
+ "casual-doc-model",
 ]
 
 [[package]]
@@ -417,6 +426,7 @@ dependencies = [
 name = "casual-doc-wasm"
 version = "0.0.1"
 dependencies = [
+ "casual-doc-command",
  "casual-doc-diff",
  "casual-doc-edit",
  "casual-doc-export",
@@ -1671,6 +1681,7 @@ name = "opendoc-mcp"
 version = "0.0.1"
 dependencies = [
  "casual-doc-ai",
+ "casual-doc-command",
  "serde_json",
  "zip",
 ]

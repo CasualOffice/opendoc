@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/casual-doc-ai",
+    "crates/casual-doc-command",
     "crates/casual-doc-diff",
     "crates/casual-doc-edit",
     "crates/casual-doc-export",
@@ -40,6 +41,7 @@ authors = ["CasualOffice contributors"]
 
 [workspace.dependencies]
 casual-doc-ai = { path = "crates/casual-doc-ai", version = "=0.0.1" }
+casual-doc-command = { path = "crates/casual-doc-command", version = "=0.0.1" }
 casual-doc-diff = { path = "crates/casual-doc-diff", version = "=0.0.1" }
 casual-doc-edit = { path = "crates/casual-doc-edit", version = "=0.0.1" }
 casual-doc-export = { path = "crates/casual-doc-export", version = "=0.0.1" }

@@ -7685,32 +7685,14 @@ impl WasmDocument {
             .ok_or_else(|| "table not found".to_owned())?
             .clone();
         let ids = &mut self.edit_ids;
-        let (replacement, at) = casual_doc_edit::table_structure::insert_row(
-            &original,
-            index as usize,
-            below,
-            &mut || ids.next_id().ok(),
-        )?;
-        let row = replacement.rows[at].clone();
-        let caret = first_paragraph_of_row(&row).map_or(Pos::new(nid, 0), |p| Pos::new(p, 0));
-        // One row inserted and nothing else changed is the fine-grained operation
-        // a concurrent edit transforms against; anything more (a degenerate merge
-        // the normalisation repaired) is the whole-table replacement.
-        let mut without = replacement.clone();
-        without.rows.remove(at);
-        let ops = if without == original {
-            vec![Operation::InsertRow {
-                table,
-                index: at as u32,
-                row: Box::new(row),
-            }]
-        } else {
-            vec![Operation::ReplaceTable {
-                table,
-                replacement: Box::new(replacement),
-            }]
-        };
-        self.apply_action_caret_as(ops, caret, HistoryKind::TableStructure)
+        // The one lowering an agent's row insert uses too (`docs/181` §4.2).
+        let edit =
+            casual_doc_command::table::insert_row(&original, index as usize, below, &mut || {
+                ids.next_id().ok()
+            })?;
+        let caret = first_paragraph_of_row(&edit.table.rows[edit.row])
+            .map_or(Pos::new(nid, 0), |p| Pos::new(p, 0));
+        self.apply_action_caret_as(edit.operations, caret, HistoryKind::TableStructure)
     }
 
     /// Deletes the table row containing the caret's paragraph. Refuses to delete a
@@ -7734,26 +7716,12 @@ impl WasmDocument {
         let original = find_table(&self.document, table)
             .ok_or_else(|| "table not found".to_owned())?
             .clone();
-        let index = index as usize;
-        let replacement = casual_doc_edit::table_structure::delete_rows(&original, index, index)?;
+        // The one lowering an agent's row delete uses too (`docs/181` §4.2).
+        let edit = casual_doc_command::table::delete_row(&original, index as usize)?;
         // Caret: the row now at this spot, else the one before it.
-        let target = index.min(replacement.rows.len() - 1);
-        let caret = first_paragraph_of_row(&replacement.rows[target])
+        let caret = first_paragraph_of_row(&edit.table.rows[edit.row])
             .map_or_else(|| Pos::new(nid, 0), |p| Pos::new(p, 0));
-        let mut expected = original.clone();
-        expected.rows.remove(index);
-        let ops = if expected == replacement {
-            vec![Operation::DeleteRow {
-                table,
-                index: index as u32,
-            }]
-        } else {
-            vec![Operation::ReplaceTable {
-                table,
-                replacement: Box::new(replacement),
-            }]
-        };
-        self.apply_action_caret_as(ops, caret, HistoryKind::TableStructure)
+        self.apply_action_caret_as(edit.operations, caret, HistoryKind::TableStructure)
     }
 
     /// Inserts an empty column left or right of the caret's cell (`after` = to its

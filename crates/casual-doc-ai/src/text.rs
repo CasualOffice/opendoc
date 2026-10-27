@@ -116,7 +116,40 @@ pub fn runs(paragraph: &Paragraph, max_runs: usize) -> Vec<RunView> {
                     extra.pop();
                 }
                 InlineNode::Sdt(sdt) => walk(&sdt.inlines, extra, out, max),
-                _ => {}
+                // `docs/181` §2.2 (G2): every inline kind is classified, with no
+                // wildcard, so a new kind does not compile until someone decides
+                // whether runs show it. Not run text, by design: an empty run,
+                // a revision the markup view hides, layout characters, markers
+                // and anchors, and stories read through their own anchors
+                // (fields, drawings, objects, text boxes, notes, math; surfaces
+                // arrive with R2).
+                InlineNode::Run(_)
+                | InlineNode::Revision(_)
+                | InlineNode::Tab(_)
+                | InlineNode::Break(_)
+                | InlineNode::Symbol(_)
+                | InlineNode::HorizontalRule(_)
+                | InlineNode::NoBreakHyphen(_)
+                | InlineNode::SoftHyphen(_)
+                | InlineNode::PositionalTab(_)
+                | InlineNode::Drawing(_)
+                | InlineNode::AnchoredDrawing(_)
+                | InlineNode::EmbeddedObject(_)
+                | InlineNode::Field(_)
+                | InlineNode::TextBox(_)
+                | InlineNode::Group(_)
+                | InlineNode::Math(_)
+                | InlineNode::NoteReference(_)
+                | InlineNode::NoteNumberMark(_)
+                | InlineNode::CommentReference(_)
+                | InlineNode::CommentRangeStart(_)
+                | InlineNode::CommentRangeEnd(_)
+                | InlineNode::BookmarkStart(_)
+                | InlineNode::BookmarkEnd(_)
+                | InlineNode::FieldRangeStart(_)
+                | InlineNode::FieldRangeEnd(_)
+                | InlineNode::MoveRangeStart(_)
+                | InlineNode::MoveRangeEnd(_) => {}
             }
         }
     }

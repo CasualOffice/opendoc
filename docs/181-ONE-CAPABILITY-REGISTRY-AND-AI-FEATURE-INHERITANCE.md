@@ -1,6 +1,6 @@
 # 181 — One capability registry: every feature inherits its AI and MCP exposure
 
-**Status:** Design, proposed 2026-10-28. Nothing in it is built.
+**Status:** Design, proposed 2026-10-28. R0 and the tables step of R1 are built; what is and is not is in §12.
 **Decides:** ADR-075 (proposed). **Row:** `docs/109` RM-48.
 **Refines:** `178` and ADR-072 (§3 rule 2 "one schema", §4.3 rule 3 "the vocabulary is
 closed", and prerequisite A4). **Builds on:** `45` and ADR-030 (I1 to I4), `147` (transactions
@@ -355,7 +355,54 @@ ratchet keeping the direction one-way.
 - Not verified from a primary source, and not load-bearing here: the GitHub dynamic-toolsets
   meta-tool names; tool-count accuracy cliffs quoted in secondary posts.
 
-## 11. What this change is
+## 11. What the design change was
 
-Documentation only: this document, ADR-075 (proposed) and `docs/109` RM-48. No code, no
-dependency, no support claim.
+Documentation only: this document, ADR-075 (proposed) and `docs/109` RM-48.
+
+## 12. Built, 2026-10-28 (R0 and R1 step 1)
+
+**Built.**
+
+- `crates/casual-doc-command`, depending only on `casual-doc-model` and `casual-doc-edit`:
+  - `registry::COMMANDS`: the twelve existing edits, each with its id, family, summary,
+    the operations it may emit, its trackability (with the published reason when it is not)
+    and a worked example.
+  - `coverage::OPERATIONS`: all 67 operations, 10 reached and 57 not exposed, each with a
+    reason. One macro list expands into the list and into an exhaustive, wildcard-free
+    `match`, so the two cannot disagree and an unclassified operation does not compile.
+  - `table::{insert_row, insert_row_at, delete_row}`: the `docs/171` merged-cell rule plus
+    the InsertRow/DeleteRow-or-ReplaceTable choice, moved out of the editor's wasm methods.
+- The editor's `insertRow`/`deleteRow` and the AI layer's `table_insert_row`/
+  `table_delete_row` both call `casual_doc_command::table`. **The divergence in §0 is fixed:**
+  an agent's row inserted inside a vertical merge now continues it, and an agent deleting the
+  top row of a merge keeps the merged cell's text on the next row.
+- `casual-doc-ai` parses plans against the registry: `EDIT_KINDS` is gone and an `op` the
+  registry does not name is `unknown-edit`. The suggest-mode refusal for rows quotes the
+  registry's reason. **Declared emits are enforced:** the AI choke point refuses a lowering
+  that emits an operation its command does not declare, so `coverage` is true of the code.
+- `opendoc-mcp` publishes the registry's ids as the `op` enum of `preview_edits` and
+  `apply_edits`.
+- The AI layer's inline run walk (`text.rs`) is an exhaustive match (G2 for inlines; the
+  block walk already was).
+
+**Guards, each driven red by a mutation and restored:**
+
+| Guard | Mutation | Red |
+| --- | --- | --- |
+| Agent row insert grows the merge | The old AI insert (fresh row, `vertical_merge` cleared, raw `InsertRow`) | `left: Null, right: "continue"` |
+| Agent row delete keeps the merged text | The old raw `DeleteRow` | the new top row read `("", "continue")`, the text gone |
+| Declared emits are enforced | Drop `ReplaceTable` from `table_delete_row`'s `emits` | `engine-refused`: "`table_delete_row` lowered to `ReplaceTable`, which the capability registry does not declare" |
+| G1 reached ⇔ emitted | Mark `ClearFormatting` reached | "`ClearFormatting` is marked reached by agents, but no registry command emits it", and the ratchet count moved |
+| G1 exhaustive | Delete `SetDocumentBackground`'s line | `E0004: non-exhaustive patterns` in `coverage.rs` |
+| G2 inlines exhaustive | Delete the `Math` arm | `E0004` in `text.rs` |
+| G6 one mutation path | A second `Transaction::reserve(` in `plan.rs` | `left: ["session.rs", "plan.rs"]` |
+
+**Not built yet, and where it goes.**
+
+- The registry is a `const` table, not yet the `Command` trait of §2.1. The serde `Edit`
+  enum and its lowerings stay in `casual-doc-ai/src/plan.rs`; a test holds them to the
+  registry (every registry example parses as its own `op`). The trait and the macro that
+  generates the enum arrive with the next family moved in.
+- `UI_COMMANDS` and G3 (editor command ids ⇔ registry), G4 (generated schemas), G5 (suggest
+  round-trip over every command) and G7 beyond tables: R3 and later R1 steps.
+- The anchor resolver has not moved down; surfaces (R2) are not built.

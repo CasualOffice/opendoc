@@ -66,7 +66,18 @@ fn plan() -> Value {
             "base_revision": { "type": "integer" },
             "mode": { "enum": ["suggest", "direct"] },
             "idempotency_key": { "type": "string" },
-            "edits": { "type": "array", "minItems": 1, "maxItems": 500, "items": { "type": "object", "required": ["op"] } }
+            "edits": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 500,
+                "items": {
+                    "type": "object",
+                    "required": ["op"],
+                    // The capability registry is the vocabulary (`docs/181`):
+                    // a client can refuse an unknown op before sending it.
+                    "properties": { "op": { "enum": casual_doc_command::ids() } }
+                }
+            }
         },
         "required": ["base_revision", "edits"],
         "additionalProperties": false
