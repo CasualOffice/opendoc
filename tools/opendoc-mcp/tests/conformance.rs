@@ -10,7 +10,8 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use serde_json::{Value, json};
 
-/// The 20 tools at the widest profile, in `tools/list` order (`docs/178` §6.2).
+/// The 22 tools at the widest profile, in `tools/list` order (`docs/178` §6.2, plus
+/// the two discovery tools of `docs/181` §5.1).
 const ALL_TOOLS: &[&str] = &[
     "open_document",
     "close_document",
@@ -32,6 +33,8 @@ const ALL_TOOLS: &[&str] = &[
     "compare_documents",
     "compatibility_report",
     "validate_document",
+    "list_edit_kinds",
+    "describe_edit_kind",
 ];
 
 struct Client {
@@ -365,6 +368,17 @@ fn the_server_lists_every_tool_and_every_tool_answers() {
     assert_eq!(report["lossyByNature"], true);
     let valid = client.ok("validate_document", json!({ "document": doc }));
     assert_eq!(valid["valid"], true, "{valid}");
+    let kinds = client.ok("list_edit_kinds", json!({}));
+    assert_eq!(
+        kinds["withheld"],
+        json!([]),
+        "the review profile with no toolsets admits every op"
+    );
+    let described = client.ok("describe_edit_kind", json!({ "op": "replace_text" }));
+    assert_eq!(
+        described["schema"]["properties"]["op"]["const"],
+        "replace_text"
+    );
     client.ok("close_document", json!({ "document": doc }));
     let gone = client.refused("get_outline", json!({ "document": doc }));
     assert_eq!(gone["code"], "not-found");
@@ -402,7 +416,7 @@ fn a_suggest_profile_hides_review_and_its_direct_edits_are_refused() {
         .iter()
         .filter_map(|tool| tool["name"].as_str())
         .collect();
-    assert_eq!(names.len(), 19);
+    assert_eq!(names.len(), ALL_TOOLS.len() - 1);
     assert!(
         !names.contains(&"review_tracked_changes"),
         "an ungranted tool is not listed"
@@ -475,5 +489,299 @@ fn paths_outside_the_operator_roots_are_refused() {
         )["code"],
         "no-write-root",
         "the default is to write nothing to disk"
+    );
+}
+
+/// The names of the listed tools.
+fn tool_names(client: &mut Client) -> Vec<String> {
+    client.result("tools/list", json!({}))["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+        .collect()
+}
+
+/// `op` → the modes `list_edit_kinds` admits it in, for every admitted op.
+fn admitted_modes(kinds: &Value) -> Vec<(String, Vec<String>)> {
+    kinds["families"]
+        .as_array()
+        .expect("families")
+        .iter()
+        .flat_map(|family| family["ops"].as_array().expect("ops").iter())
+        .map(|op| {
+            let modes = op["modes"]
+                .as_array()
+                .expect("modes")
+                .iter()
+                .filter_map(|m| m.as_str().map(str::to_owned))
+                .collect();
+            (op["id"].as_str().expect("an id").to_owned(), modes)
+        })
+        .collect()
+}
+
+#[test]
+fn discovery_describes_the_registry_and_the_profile_the_engine_enforces() {
+    let base = sandbox("discovery");
+    let root = arg(&base.join("root"));
+    let mut client = Client::start(&["--root", &root, "--profile", "suggest"]);
+
+    // `docs/181` §5.1. What the session admits is asked of the AI layer's own
+    // capability check, so it is exactly what `apply_edits` would enforce:
+    // content edits as suggestions only, table rows (edit grant, never
+    // suggestible) not at all, comments in either mode, review not at all.
+    let kinds = client.ok("list_edit_kinds", json!({}));
+    assert_eq!(
+        kinds["vocabularyVersion"],
+        casual_doc_command::schema::VOCABULARY_VERSION
+    );
+    let suggest_only = vec!["suggest".to_owned()];
+    let both = vec!["suggest".to_owned(), "direct".to_owned()];
+    let expected: Vec<(String, Vec<String>)> = [
+        ("insert_text", &suggest_only),
+        ("replace_text", &suggest_only),
+        ("delete_text", &suggest_only),
+        ("set_text_format", &suggest_only),
+        ("insert_paragraphs", &suggest_only),
+        ("apply_paragraph_style", &suggest_only),
+        ("set_cell_text", &suggest_only),
+        ("comment", &both),
+        ("resolve_comment", &both),
+    ]
+    .iter()
+    .map(|(op, modes)| ((*op).to_owned(), (*modes).clone()))
+    .collect();
+    assert_eq!(admitted_modes(&kinds), expected, "{kinds}");
+    let withheld: Vec<(&str, &str)> = kinds["withheld"]
+        .as_array()
+        .expect("withheld")
+        .iter()
+        .map(|w| {
+            (
+                w["op"].as_str().expect("op"),
+                w["withheldBy"].as_str().expect("by"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        withheld,
+        [
+            ("table_insert_row", "profile"),
+            ("table_delete_row", "profile"),
+            ("review", "profile")
+        ]
+    );
+
+    // The engine agrees: a mode the listing withholds is refused by the profile.
+    let doc = client.ok("open_document", json!({ "path": "contract.txt" }))["document"].clone();
+    let node =
+        client.ok("search", json!({ "document": doc, "query": "thirty" }))["hits"][0]["node"]
+            .clone();
+    let refused = client.refused(
+        "apply_edits",
+        json!({ "document": doc, "plan": { "base_revision": 0, "mode": "direct",
+            "edits": [{ "op": "replace_text", "target": { "node": node, "exact": "thirty" }, "text": "sixty" }] } }),
+    );
+    assert_eq!(refused["details"]["firstCode"], "capability-withheld");
+
+    // One op: its generated schema, trackability and reason, and an example.
+    let rows = client.ok("describe_edit_kind", json!({ "op": "table_insert_row" }));
+    assert_eq!(
+        rows["schema"],
+        casual_doc_command::schema::command("table_insert_row").expect("registered")
+    );
+    assert_eq!(rows["trackable"], "no");
+    assert!(
+        rows["trackableReason"]
+            .as_str()
+            .is_some_and(|r| r.contains("Q11"))
+    );
+    assert_eq!(rows["example"]["op"], "table_insert_row");
+    assert_eq!(rows["admitted"], false);
+    assert_eq!(rows["withheldBy"], "profile");
+    let unknown = client.refused("describe_edit_kind", json!({ "op": "insert_rocket" }));
+    assert_eq!(unknown["code"], "unknown-edit");
+    assert!(unknown["details"]["known"].is_array());
+
+    // The per-family schema, as a resource template.
+    let templates = client.result("resources/templates/list", json!({}));
+    assert!(
+        templates["resourceTemplates"]
+            .as_array()
+            .expect("templates")
+            .iter()
+            .any(|t| t["uriTemplate"] == "opendoc://schema/edits/{family}")
+    );
+    let tables = client.result(
+        "resources/read",
+        json!({ "uri": "opendoc://schema/edits/tables" }),
+    );
+    let schema: Value = serde_json::from_str(
+        tables["contents"][0]["text"]
+            .as_str()
+            .expect("a text resource"),
+    )
+    .expect("JSON");
+    assert_eq!(
+        casual_doc_command::schema::ops(&schema),
+        ["set_cell_text", "table_insert_row", "table_delete_row"]
+    );
+    let missing = client.request(
+        "resources/read",
+        json!({ "uri": "opendoc://schema/edits/rockets" }),
+    );
+    assert!(missing["error"].is_object(), "{missing}");
+}
+
+#[test]
+fn toolsets_limit_the_edit_families_and_the_read_tools_stay() {
+    let base = sandbox("toolsets");
+    let root = arg(&base.join("root"));
+    let mut client = Client::start(&["--root", &root, "--profile", "edit", "--toolsets", "text"]);
+
+    // `docs/181` §5.2: read tools always; a tool that only makes edits of an
+    // excluded family is not listed.
+    let names = tool_names(&mut client);
+    for read in [
+        "open_document",
+        "get_outline",
+        "read_blocks",
+        "search",
+        "list_edit_kinds",
+    ] {
+        assert!(names.iter().any(|n| n == read), "{read} is listed");
+    }
+    assert!(
+        !names.iter().any(|n| n == "add_comment"),
+        "add_comment makes review-family edits"
+    );
+    let listed = client.result("tools/list", json!({}));
+    let apply = listed["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .find(|t| t["name"] == "apply_edits")
+        .expect("apply_edits is listed")
+        .clone();
+    assert_eq!(
+        casual_doc_command::schema::ops(
+            &apply["inputSchema"]["properties"]["plan"]["properties"]["edits"]["items"]
+        ),
+        [
+            "insert_text",
+            "replace_text",
+            "delete_text",
+            "set_text_format"
+        ],
+        "the published plan schema holds only the admitted families"
+    );
+    let kinds = client.ok("list_edit_kinds", json!({}));
+    assert_eq!(kinds["toolsets"], json!(["text"]));
+    let families: Vec<Value> = kinds["families"]
+        .as_array()
+        .expect("families")
+        .iter()
+        .map(|f| f["name"].clone())
+        .collect();
+    assert_eq!(families, [json!("text")]);
+
+    // Enforced, not only advertised: an op of another family is refused by
+    // apply and by preview, and nothing lands.
+    let tables = client.ok("open_document", json!({ "path": "table.docx" }))["document"].clone();
+    let table = client.ok("get_outline", json!({ "document": tables }))["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .find(|e| e["kind"] == "table")
+        .expect("a table")["node"]
+        .clone();
+    let plan = json!({ "base_revision": 0, "mode": "direct",
+        "edits": [{ "op": "table_insert_row", "table": table, "index": 1 }] });
+    for tool in ["apply_edits", "preview_edits"] {
+        let refused = client.refused(tool, json!({ "document": tables, "plan": plan }));
+        assert_eq!(refused["code"], "toolset-withheld", "{tool}: {refused}");
+        assert_eq!(refused["details"]["family"], "tables");
+    }
+    let read = client.ok("read_table", json!({ "document": tables, "table": table }));
+    assert_eq!(
+        read["rows"].as_array().map(Vec::len),
+        Some(2),
+        "nothing landed"
+    );
+    let comment = client.refused(
+        "add_comment",
+        json!({ "document": tables, "base_revision": 0, "target": { "node": table }, "text": "x" }),
+    );
+    assert_eq!(comment["code"], "toolset-withheld");
+
+    // An admitted family still works.
+    let doc = client.ok("open_document", json!({ "path": "contract.txt" }))["document"].clone();
+    let node =
+        client.ok("search", json!({ "document": doc, "query": "thirty" }))["hits"][0]["node"]
+            .clone();
+    client.ok(
+        "apply_edits",
+        json!({ "document": doc, "plan": { "base_revision": 0,
+            "edits": [{ "op": "replace_text", "target": { "node": node, "exact": "thirty" }, "text": "sixty" }] } }),
+    );
+}
+
+#[test]
+fn read_only_overrides_the_profile_in_either_order_and_admits_no_edit() {
+    let base = sandbox("readonly");
+    let root = arg(&base.join("root"));
+    for args in [
+        ["--read-only", "--profile", "review"],
+        ["--profile", "review", "--read-only"],
+    ] {
+        let mut client = Client::start(&["--root", &root, args[0], args[1], args[2]]);
+        let names = tool_names(&mut client);
+        for write in [
+            "apply_edits",
+            "add_comment",
+            "undo_change",
+            "review_tracked_changes",
+        ] {
+            assert!(
+                !names.iter().any(|n| n == write),
+                "{write} is hidden under --read-only ({args:?})"
+            );
+        }
+        let kinds = client.ok("list_edit_kinds", json!({}));
+        assert_eq!(kinds["readOnly"], true);
+        assert_eq!(kinds["profile"], "read");
+        assert_eq!(
+            kinds["families"],
+            json!([]),
+            "no edit is admitted ({args:?})"
+        );
+        let doc = client.ok("open_document", json!({ "path": "contract.txt" }))["document"].clone();
+        let refused = client.refused(
+            "apply_edits",
+            json!({ "document": doc, "plan": { "base_revision": 0, "edits": [] } }),
+        );
+        assert_eq!(refused["code"], "capability-withheld");
+    }
+}
+
+#[test]
+fn an_unknown_toolset_stops_the_server_at_launch() {
+    let base = sandbox("badtoolset");
+    let output = Command::new(env!("CARGO_BIN_EXE_opendoc-mcp"))
+        .args([
+            "--root",
+            &arg(&base.join("root")),
+            "--toolsets",
+            "text,rockets",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .expect("the server runs");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown toolset rockets") && stderr.contains("tables"),
+        "{stderr}"
     );
 }

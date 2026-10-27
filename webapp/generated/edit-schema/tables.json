@@ -1,0 +1,95 @@
+{
+  "description": "One edit of the `tables` family of the OpenDoc edit vocabulary 1.0.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "description": "Set the text of one table cell.",
+      "properties": {
+        "column": {
+          "description": "0-based cell in that row.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "set_cell_text",
+          "type": "string"
+        },
+        "row": {
+          "description": "0-based row.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "table": {
+          "description": "The table id.",
+          "type": "string"
+        },
+        "text": {
+          "description": "The new text.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "table",
+        "row",
+        "column",
+        "text"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Insert an empty row so it lands at `index`.",
+      "properties": {
+        "index": {
+          "description": "0 = above the first row, the row count = below the last.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "table_insert_row",
+          "type": "string"
+        },
+        "table": {
+          "description": "The table id.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "table",
+        "index"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Delete one row.",
+      "properties": {
+        "index": {
+          "description": "0-based row.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "table_delete_row",
+          "type": "string"
+        },
+        "table": {
+          "description": "The table id.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "table",
+        "index"
+      ],
+      "type": "object"
+    }
+  ]
+}

@@ -1,0 +1,193 @@
+{
+  "description": "One edit of the `review` family of the OpenDoc edit vocabulary 1.0.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "description": "Comment on the quoted text, or reply to a comment.",
+      "properties": {
+        "op": {
+          "const": "comment",
+          "type": "string"
+        },
+        "reply_to": {
+          "description": "A comment id to reply to.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target": {
+          "additionalProperties": false,
+          "description": "The text commented on.",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        },
+        "text": {
+          "description": "The comment.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "target",
+        "text"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Resolve or reopen a comment thread.",
+      "properties": {
+        "id": {
+          "description": "The comment id.",
+          "type": "string"
+        },
+        "op": {
+          "const": "resolve_comment",
+          "type": "string"
+        },
+        "resolved": {
+          "description": "`true` (the default) resolves, `false` reopens.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "id"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Accept or reject tracked changes.",
+      "properties": {
+        "all": {
+          "default": false,
+          "description": "Every revision in the document.",
+          "type": "boolean"
+        },
+        "decision": {
+          "description": "Accept or reject.",
+          "oneOf": [
+            {
+              "const": "accept",
+              "description": "Keep the change.",
+              "type": "string"
+            },
+            {
+              "const": "reject",
+              "description": "Undo the change.",
+              "type": "string"
+            }
+          ]
+        },
+        "op": {
+          "const": "review",
+          "type": "string"
+        },
+        "revisions": {
+          "description": "Revision ids.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "op",
+        "decision"
+      ],
+      "type": "object"
+    }
+  ]
+}

@@ -78,7 +78,9 @@ pub struct Command {
     pub example: &'static str,
     /// The editor command ids (`webapp/src/host_contract.mjs`) this command is
     /// the agent-side twin of; held to the contract in both directions by
-    /// `webapp/tests/command_registry_parity.test.mjs` (`docs/181` G3).
+    /// `webapp/tests/command_registry_parity.test.mjs` (`docs/181` G3). An id
+    /// ending in `.` names a whole value family (`style.` is every
+    /// `style.<name>`): the command takes that value as an argument.
     pub ui_commands: &'static [&'static str],
 }
 
@@ -100,7 +102,7 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::Yes,
         example: r#"{"op":"insert_text","at":{"node":"1:2","exact":"days","side":"after"},"text":" (calendar)"}"#,
-        ui_commands: &[],
+        ui_commands: &["edit.pasteText", "insert.symbol", "insert.emoji"],
     },
     Command {
         id: "replace_text",
@@ -116,7 +118,7 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::Yes,
         example: r#"{"op":"replace_text","target":{"node":"1:2","exact":"thirty (30) days"},"text":"sixty (60) days"}"#,
-        ui_commands: &[],
+        ui_commands: &["edit.replace"],
     },
     Command {
         id: "delete_text",
@@ -131,7 +133,7 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::Yes,
         example: r#"{"op":"delete_text","target":{"node":"1:2","exact":" without notice"}}"#,
-        ui_commands: &[],
+        ui_commands: &["edit.cut"],
     },
     Command {
         id: "insert_paragraphs",
@@ -160,7 +162,13 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::Yes,
         example: r#"{"op":"apply_paragraph_style","target":{"node":"1:2"},"style":"Heading 1"}"#,
-        ui_commands: &[],
+        ui_commands: &[
+            "paragraph.heading.1",
+            "paragraph.heading.2",
+            "paragraph.heading.3",
+            "paragraph.normal",
+            "style.",
+        ],
     },
     Command {
         id: "set_text_format",
@@ -175,7 +183,18 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::Yes,
         example: r#"{"op":"set_text_format","target":{"node":"1:2","exact":"Notice"},"format":{"bold":true}}"#,
-        ui_commands: &[],
+        ui_commands: &[
+            "format.bold",
+            "format.italic",
+            "format.underline",
+            "format.strike",
+            "format.color",
+            "format.highlight",
+            "format.family",
+            "format.family.",
+            "format.size",
+            "format.size.",
+        ],
     },
     Command {
         id: "set_cell_text",
@@ -200,7 +219,7 @@ pub const COMMANDS: &[Command] = &[
         emits: &["InsertRow", "ReplaceTable"],
         trackable: Trackable::No(ROWS_NOT_TRACKABLE),
         example: r#"{"op":"table_insert_row","table":"1:9","index":1}"#,
-        ui_commands: &[],
+        ui_commands: &["table.insert.rowAbove", "table.insert.rowBelow"],
     },
     Command {
         id: "table_delete_row",
@@ -209,7 +228,7 @@ pub const COMMANDS: &[Command] = &[
         emits: &["DeleteRow", "ReplaceTable"],
         trackable: Trackable::No(ROWS_NOT_TRACKABLE),
         example: r#"{"op":"table_delete_row","table":"1:9","index":1}"#,
-        ui_commands: &[],
+        ui_commands: &["table.delete.row"],
     },
     Command {
         id: "comment",
@@ -223,7 +242,7 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::NotApplicable,
         example: r#"{"op":"comment","target":{"node":"1:2","exact":"termination"},"text":"Aligned with the MSA, clause 9."}"#,
-        ui_commands: &[],
+        ui_commands: &["review.comment"],
     },
     Command {
         id: "resolve_comment",
@@ -237,7 +256,7 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::NotApplicable,
         example: r#"{"op":"resolve_comment","id":"1:40","resolved":true}"#,
-        ui_commands: &[],
+        ui_commands: &["review.comment.resolve"],
     },
     Command {
         id: "review",
@@ -251,7 +270,14 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::NotApplicable,
         example: r#"{"op":"review","decision":"accept","revisions":["1:41"]}"#,
-        ui_commands: &[],
+        ui_commands: &[
+            "review.acceptAtCaret",
+            "review.rejectAtCaret",
+            "review.acceptNext",
+            "review.rejectNext",
+            "review.acceptAll",
+            "review.rejectAll",
+        ],
     },
 ];
 
@@ -266,3 +292,185 @@ pub fn find(id: &str) -> Option<&'static Command> {
 pub fn ids() -> Vec<&'static str> {
     COMMANDS.iter().map(|command| command.id).collect()
 }
+
+// ---- Editor commands deliberately not agent-exposed (`docs/181` G3) --------
+
+const UI_HISTORY: &str = "Undo and redo walk the person's own history; an agent undoes its own change with the `undo_change` tool.";
+const UI_CLIPBOARD: &str = "Rich paste reads the person's clipboard; an agent inserts text with insert_text and formats it with set_text_format.";
+const UI_DIRECTION: &str =
+    "Paragraph direction arrives with the paragraph family (docs/181 §4.2 step 2).";
+const UI_CHARACTER: &str = "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2).";
+const UI_PAINTER: &str = "Format painter copies the caret's formatting, a gesture with no document-addressed equivalent; an agent sets formatting with set_text_format.";
+const UI_CASE: &str = "Change case keeps each run's formatting, which replace_text would flatten; it arrives with rewrite_block (docs/181 §4.3).";
+const UI_PARAGRAPH: &str = "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2).";
+const UI_LISTS: &str = "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3).";
+const UI_STYLE_DEFINITIONS: &str = "Redefining a style changes every paragraph that uses it; agents apply styles and do not define them yet (docs/181 §4.2 step 2).";
+const UI_REFERENCES: &str = "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4).";
+const UI_OBJECTS: &str = "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5).";
+const UI_CHARTS: &str =
+    "Charts come last, behind the chart model work they need (docs/181 §4.2 step 7, docs/155).";
+const UI_TABLES: &str = "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1).";
+const UI_NOTES: &str =
+    "Headers, footers, footnotes and endnotes need the surfaces of docs/181 §2.2 first (step 6).";
+const UI_SECTIONS: &str = "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6).";
+const UI_DOCUMENT: &str =
+    "Document-wide settings are not offered to agents; a person changes them.";
+const UI_BREAKS: &str = "Line, page and column breaks are inline structure no registry command emits yet (docs/181 §4.2).";
+const UI_MODE: &str = "Switches the editor's own editing mode, not the document; an agent's mode is its profile plus the plan's `mode`.";
+const UI_PROTECTION: &str =
+    "Protection and tracking settings are a person's decision, never an agent's.";
+const UI_COMMENT_DELETE: &str =
+    "No command deletes a comment yet; an agent resolves a thread with resolve_comment.";
+
+/// Editor command ids (`webapp/src/host_contract.mjs` `COMMAND_CONTRACT` and
+/// `COMMAND_FAMILIES`) that can change the document but that no registry
+/// command is the twin of, each with the sentence a user would read. An id
+/// ending in `.` is a whole value family.
+///
+/// `webapp/tests/command_registry_parity.test.mjs` holds this list, together
+/// with every command's `ui_commands`, to cover every such contract id exactly
+/// once (`docs/181` G3). It is a ratchet ([`UI_NOT_EXPOSED_CEILING`]): an entry
+/// leaves when a command names the id, and an addition needs an ADR line.
+pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
+    ("edit.undo", UI_HISTORY),
+    ("edit.redo", UI_HISTORY),
+    ("edit.paste", UI_CLIPBOARD),
+    ("format.direction.rtl", UI_DIRECTION),
+    ("format.direction.ltr", UI_DIRECTION),
+    ("format.subscript", UI_CHARACTER),
+    ("format.superscript", UI_CHARACTER),
+    ("format.clear", UI_CHARACTER),
+    ("format.grow", UI_CHARACTER),
+    ("format.shrink", UI_CHARACTER),
+    ("format.underline.", UI_CHARACTER),
+    ("format.character.allCaps", UI_CHARACTER),
+    ("format.character.smallCaps", UI_CHARACTER),
+    ("format.character.doubleStrike", UI_CHARACTER),
+    ("format.character.outline", UI_CHARACTER),
+    ("format.character.shadow", UI_CHARACTER),
+    ("format.character.emboss", UI_CHARACTER),
+    ("format.character.imprint", UI_CHARACTER),
+    ("format.character.dialog", UI_CHARACTER),
+    ("format.character.advanced", UI_CHARACTER),
+    ("format.character.border", UI_CHARACTER),
+    ("format.character.emphasis", UI_CHARACTER),
+    ("format.character.spacing", UI_CHARACTER),
+    ("format.character.scale", UI_CHARACTER),
+    ("format.character.position", UI_CHARACTER),
+    ("format.character.kerning", UI_CHARACTER),
+    ("format.character.ligatures", UI_CHARACTER),
+    ("format.painter", UI_PAINTER),
+    ("format.case.upper", UI_CASE),
+    ("format.case.lower", UI_CASE),
+    ("format.case.title", UI_CASE),
+    ("format.case.sentence", UI_CASE),
+    ("format.case.toggle", UI_CASE),
+    ("paragraph.align.start", UI_PARAGRAPH),
+    ("paragraph.align.center", UI_PARAGRAPH),
+    ("paragraph.align.end", UI_PARAGRAPH),
+    ("paragraph.align.justify", UI_PARAGRAPH),
+    ("paragraph.indent.increase", UI_PARAGRAPH),
+    ("paragraph.indent.decrease", UI_PARAGRAPH),
+    ("paragraph.spacing.", UI_PARAGRAPH),
+    ("paragraph.space.", UI_PARAGRAPH),
+    ("layout.paragraph", UI_PARAGRAPH),
+    ("layout.indent", UI_PARAGRAPH),
+    ("layout.spacing", UI_PARAGRAPH),
+    ("layout.tabStops", UI_PARAGRAPH),
+    ("insert.dropCap", UI_PARAGRAPH),
+    ("paragraph.list.settings", UI_LISTS),
+    ("paragraph.list.bullet", UI_LISTS),
+    ("paragraph.list.numbered", UI_LISTS),
+    ("paragraph.list.checklist", UI_LISTS),
+    ("paragraph.list.continue", UI_LISTS),
+    ("paragraph.list.restart", UI_LISTS),
+    ("paragraph.listFormat.", UI_LISTS),
+    ("style.manage", UI_STYLE_DEFINITIONS),
+    ("style.updateFromSelection", UI_STYLE_DEFINITIONS),
+    ("style.createFromSelection", UI_STYLE_DEFINITIONS),
+    ("insert.link", UI_REFERENCES),
+    ("insert.bookmark", UI_REFERENCES),
+    ("insert.field", UI_REFERENCES),
+    ("insert.field.", UI_REFERENCES),
+    ("reference.caption", UI_REFERENCES),
+    ("reference.crossReference", UI_REFERENCES),
+    ("reference.tableOfContents", UI_REFERENCES),
+    ("reference.updateToc.pageNumbers", UI_REFERENCES),
+    ("reference.updateToc.entire", UI_REFERENCES),
+    ("reference.updateFields", UI_REFERENCES),
+    ("reference.updateCaptionNumbers", UI_REFERENCES),
+    ("insert.image", UI_OBJECTS),
+    ("insert.shape", UI_OBJECTS),
+    ("insert.textbox", UI_OBJECTS),
+    ("layout.arrange.position", UI_OBJECTS),
+    ("layout.arrange.wrap", UI_OBJECTS),
+    ("layout.arrange.bringForward", UI_OBJECTS),
+    ("layout.arrange.sendBackward", UI_OBJECTS),
+    ("layout.arrange.bringToFront", UI_OBJECTS),
+    ("layout.arrange.sendToBack", UI_OBJECTS),
+    ("layout.arrange.group", UI_OBJECTS),
+    ("layout.arrange.ungroup", UI_OBJECTS),
+    ("layout.arrange.rotateRight", UI_OBJECTS),
+    ("layout.arrange.rotateLeft", UI_OBJECTS),
+    ("layout.arrange.flipHorizontal", UI_OBJECTS),
+    ("layout.arrange.flipVertical", UI_OBJECTS),
+    ("layout.arrange.inLine", UI_OBJECTS),
+    ("layout.arrange.addText", UI_OBJECTS),
+    ("object.", UI_OBJECTS),
+    ("insert.chart", UI_CHARTS),
+    ("insert.table", UI_TABLES),
+    ("table.", UI_TABLES),
+    ("table.insert.columnLeft", UI_TABLES),
+    ("table.insert.columnRight", UI_TABLES),
+    ("table.delete.column", UI_TABLES),
+    ("table.delete.table", UI_TABLES),
+    ("table.move.rowUp", UI_TABLES),
+    ("table.move.rowDown", UI_TABLES),
+    ("table.move.columnLeft", UI_TABLES),
+    ("table.move.columnRight", UI_TABLES),
+    ("table.merge", UI_TABLES),
+    ("table.unmerge", UI_TABLES),
+    ("table.split", UI_TABLES),
+    ("table.distribute.rows", UI_TABLES),
+    ("table.distribute.columns", UI_TABLES),
+    ("table.sort.ascending", UI_TABLES),
+    ("table.sort.descending", UI_TABLES),
+    ("table.column.grow", UI_TABLES),
+    ("table.column.shrink", UI_TABLES),
+    ("table.row.grow", UI_TABLES),
+    ("table.row.shrink", UI_TABLES),
+    ("table.cellFormat", UI_TABLES),
+    ("table.borderStyle", UI_TABLES),
+    ("table.properties", UI_TABLES),
+    ("table.style.none", UI_TABLES),
+    ("insert.header", UI_NOTES),
+    ("insert.footer", UI_NOTES),
+    ("insert.footnote", UI_NOTES),
+    ("insert.endnote", UI_NOTES),
+    ("layout.firstPageVariant", UI_NOTES),
+    ("layout.evenOddVariant", UI_NOTES),
+    ("layout.headerFooterSettings", UI_NOTES),
+    ("layout.pageSetup", UI_SECTIONS),
+    ("layout.margins", UI_SECTIONS),
+    ("layout.orientation", UI_SECTIONS),
+    ("layout.size", UI_SECTIONS),
+    ("layout.columns", UI_SECTIONS),
+    ("layout.break.section.nextPage", UI_SECTIONS),
+    ("layout.break.section.continuous", UI_SECTIONS),
+    ("layout.break.section.evenPage", UI_SECTIONS),
+    ("layout.break.section.oddPage", UI_SECTIONS),
+    ("layout.lineNumbers", UI_SECTIONS),
+    ("layout.watermark", UI_DOCUMENT),
+    ("insert.lineBreak", UI_BREAKS),
+    ("layout.break.page", UI_BREAKS),
+    ("layout.break.column", UI_BREAKS),
+    ("layout.blankPage", UI_BREAKS),
+    ("review.mode.editing", UI_MODE),
+    ("review.mode.suggesting", UI_MODE),
+    ("review.restrictEditing", UI_PROTECTION),
+    ("review.comment.delete", UI_COMMENT_DELETE),
+];
+
+/// The length of [`UI_NOT_EXPOSED`]. It may only fall: lower it when a command
+/// names an id; raising it needs an ADR line (`docs/181` §3).
+pub const UI_NOT_EXPOSED_CEILING: usize = 137;

@@ -9,12 +9,18 @@
 //! ```text
 //! opendoc-mcp --root ~/contracts [--root DIR]... [--write-root DIR]
 //!             [--profile read|comment|suggest|edit|review] [--author NAME]
-//!             [--allow-overwrite]
+//!             [--allow-overwrite] [--toolsets FAMILY[,FAMILY]...] [--read-only]
 //! ```
 //!
 //! The default profile is `read` and the default write root is none, so out of
 //! the box the server edits nothing and writes nothing to disk. Direct
 //! (untracked) edits need `--profile edit` or higher: the explicit grant.
+//!
+//! `--toolsets text,tables` admits only those edit families (`docs/181` §5.2):
+//! the read tools are always present, `apply_edits`/`preview_edits` refuse an
+//! op of another family with `toolset-withheld`, and a tool that only makes
+//! edits of an excluded family is not listed. `--read-only` overrides every
+//! other flag and is the `read` profile.
 
 #![forbid(unsafe_code)]
 
@@ -26,13 +32,16 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
 use casual_doc_ai::Profile;
+use casual_doc_command::Family;
+use casual_doc_command::schema;
 use serde_json::{Value, json};
 
 use crate::paths::Roots;
 use crate::server::{Options, Server};
 
 const USAGE: &str = "usage: opendoc-mcp --root DIR [--root DIR]... [--write-root DIR]... \
-[--profile read|comment|suggest|edit|review] [--author NAME] [--allow-overwrite]";
+[--profile read|comment|suggest|edit|review] [--author NAME] [--allow-overwrite] \
+[--toolsets FAMILY[,FAMILY]...] [--read-only]";
 
 /// Most bytes in one request line: a 1 MiB plan plus its JSON overhead.
 const MAX_LINE: usize = 4 * 1024 * 1024;
@@ -43,6 +52,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Options, String> {
     let mut profile = Profile::Read;
     let mut author = "AI assistant".to_owned();
     let mut allow_overwrite = false;
+    let mut toolsets: Option<Vec<Family>> = None;
+    let mut read_only = false;
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
         let mut value = |flag: &str| args.next().ok_or_else(|| format!("{flag} needs a value"));
@@ -60,6 +71,27 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Options, String> {
                 }
             }
             "--allow-overwrite" => allow_overwrite = true,
+            "--toolsets" => {
+                let list = value("--toolsets")?;
+                let chosen = toolsets.get_or_insert_with(Vec::new);
+                for name in list.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+                    let family = schema::family_named(name).ok_or_else(|| {
+                        let known: Vec<&str> =
+                            schema::families().iter().map(|f| f.name()).collect();
+                        format!(
+                            "unknown toolset {name}; the edit families are {}",
+                            known.join(", ")
+                        )
+                    })?;
+                    if !chosen.contains(&family) {
+                        chosen.push(family);
+                    }
+                }
+                if chosen.is_empty() {
+                    return Err("--toolsets needs at least one family".to_owned());
+                }
+            }
+            "--read-only" => read_only = true,
             "--help" | "-h" => return Err(USAGE.to_owned()),
             other => return Err(format!("unknown argument {other}\n{USAGE}")),
         }
@@ -67,11 +99,18 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Options, String> {
     if read.is_empty() && write.is_empty() {
         return Err(format!("at least one --root is required\n{USAGE}"));
     }
+    if read_only {
+        // `--read-only` wins over every other flag, in any order (GitHub MCP's
+        // rule, `docs/181` §5.2): it is the read profile, whatever was asked.
+        profile = Profile::Read;
+    }
     Ok(Options {
         roots: Roots::new(&read, &write)?,
         profile,
         author,
         allow_overwrite,
+        toolsets,
+        read_only,
     })
 }
 
