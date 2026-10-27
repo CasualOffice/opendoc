@@ -214,6 +214,7 @@ version = "0.0.1"
 dependencies = [
  "casual-doc-edit",
  "casual-doc-model",
+ "casual-doc-selection",
  "schemars",
  "serde",
  "serde_json",

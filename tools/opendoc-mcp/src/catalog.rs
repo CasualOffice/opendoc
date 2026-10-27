@@ -61,7 +61,14 @@ fn object(properties: Value, required: &[&str]) -> Value {
 fn plan() -> Value {
     json!({
         "type": "object",
-        "description": "An edit plan: base_revision (from any read), mode (suggest | direct), edits[] each with an `op` from: insert_text{at,text}, replace_text{target,text}, delete_text{target}, insert_paragraphs{after,paragraphs[{text,style}]}, apply_paragraph_style{target,style}, set_text_format{target,format{bold,italic,underline,strike,size,color,highlight,font}}, set_cell_text{table,row,column,text}, table_insert_row{table,index}, table_delete_row{table,index}, comment{target,text,reply_to}, resolve_comment{id,resolved}, review{decision,revisions[],all}. Anchors are {node, exact, prefix, suffix, occurrence, side}.",
+        // The op list is the registry's, so it cannot fall behind it; each op's
+        // fields are in the generated `items` schema below.
+        "description": format!(
+            "An edit plan: base_revision (from any read), mode (suggest | direct), edits[] each \
+             with an `op` from: {}. Each op's fields are in the items schema. Anchors are \
+             {{node, exact, prefix, suffix, occurrence, side}}.",
+            casual_doc_command::ids().join(", ")
+        ),
         "properties": {
             "base_revision": { "type": "integer" },
             "mode": { "enum": ["suggest", "direct"] },

@@ -415,3 +415,89 @@ Documentation only: this document, ADR-075 (proposed) and `docs/109` RM-48.
 - `UI_COMMANDS` and G3 (editor command ids ⇔ registry), G4 (generated schemas), G5 (suggest
   round-trip over every command) and G7 beyond tables: R3 and later R1 steps.
 - The anchor resolver has not moved down; surfaces (R2) are not built.
+
+### Lane families-a
+
+R1 steps 1 to 3 (tables, text + paragraph, lists), `rewrite_block` (§4.3) and guards G5 and
+G7.
+
+**Built.**
+
+- One lowering per family in `casual-doc-command`, called by the editor's wasm method and by
+  `casual-doc-ai` alike; selection and caret resolution stay in the wasm method:
+  - `table`: `insert_column_beside`/`insert_column_at`, `delete_column_of_cell`/
+    `delete_columns` (the InsertColumn/DeleteColumn-or-ReplaceTable choice and the caret
+    cell), `merge` + `cell_rect` (the selection's grow-to-whole-merged-cells rule),
+    `unmerge`, `delete_table`, `insert_table` + `body_index_after`, `range_cells` +
+    `set_cell_properties`, `cell_vertical_alignment`. The editor's `insertColumn`,
+    `deleteColumn`, `mergeTableSelection`/`mergeTableCellRange`, `splitMergedCell` (unmerge),
+    `deleteTable`, `insertTable` and every cell-format method call them.
+  - `format`: `delta` (an agent's `TextFormat`), `parse_color`, `parse_highlight`,
+    `half_points`, `format_ranges`, `clear_ranges`. The editor's `formatSelection`, every
+    run-format setter (`setHighlight`, `setFontSize`, colour, underline, baseline) and
+    `clearFormatting` call them; the AI layer's private `delta`/`color`/`highlight` are gone.
+  - `paragraph`: `ParagraphChange` (alignment, line spacing, space before/after, indents,
+    style, numbering, list level) and `set_properties`, with the caller's tracker (the
+    editor's Suggesting tracker, or `lower::track_paragraph_change` for an agent). Every
+    editor paragraph setter and the ruler's indent setters call it.
+  - `lists`: `level`, `install`, `new_definition`, `existing_definition`, `number_format`,
+    `restart`, `continue_numbering`. The editor's `toggleList`/checklist definitions,
+    `restartList`/`setListNumberingValue` and `continueList` call them.
+  - `rewrite`: the `read_blocks` line dialect (`{#id}` prefix, ATX heading marker, text).
+- Seventeen registry commands, each with `emits`, trackability, a working example and the
+  editor command ids it twins (`ui_commands`; the existing rows, styles and text-format
+  commands got theirs too): `clear_formatting`, `rewrite_block`, `set_alignment`,
+  `set_line_spacing`, `set_paragraph_spacing`, `set_indent`, `insert_table`,
+  `table_insert_column`, `table_delete_column`, `table_merge_cells`, `table_split_cell`,
+  `table_delete`, `table_set_cell_format`, `set_list`, `change_list_level`,
+  `restart_numbering`, `continue_numbering`. A new `lists` family.
+- Coverage: `InsertColumn`, `DeleteColumn`, `InsertTable`, `DeleteTable`,
+  `SetTableCellProperties`, `ClearFormatting`, `SetAbstractNumbering` and
+  `SetNumberingInstance` are reached; **`NOT_EXPOSED_CEILING` 57 → 49**.
+- `rewrite_block` diffs with `casual_doc_diff::inline::diff_text` (the comparison feature's
+  word-level anchored aligner, not a second LCS) and lowers each edit right to left through
+  `suggest_replace`/`suggest_delete`/`suggest_insert` (or `DeleteText`/`InsertText` direct);
+  a heading marker that names another level applies that heading style through the
+  paragraph lowering.
+- Registry examples are written against `EXAMPLE_PARAGRAPH` and `EXAMPLE_IDS`, so G5 runs
+  each one for real.
+
+**Guards, each driven red by a mutation and restored:**
+
+| Guard | Mutation | Red |
+| --- | --- | --- |
+| G5: every `Trackable::Yes` command round-trips (suggest → DOCX → reopen → revisions by the author → reject-all restores) | Mark `clear_formatting` `Trackable::Yes` (the registry line only) | `clear_formatting: no revision survived the DOCX save` |
+| G5, the restore half | `rewrite_block` suggest replacement lowered as a tracked delete plus an untracked `InsertText` | `rewrite_block: reject-all did not restore the document … "sixtythirty (6030) days"` |
+| `rewrite_block` is minimal and keeps formatting | Replace the word diff with one whole-paragraph edit | `one word, one replacement` (count); `bold the Markdown cannot say survives …` `left: []`; an unchanged rewrite no longer `no-change` |
+| G7 tables | `insertTable`'s content width off by one twip | `insert table: editor and command differ` |
+| G7 text | The editor's highlight table reads `gray` as yellow | `character_formatting_is_one_lowering…` `left != right` |
+| G7 paragraph | `setSpaceAfter` re-inlined, writing a negative value instead of clearing | `SpaceAfter(-1): editor and command differ` |
+| G7 lists | The editor's list definition built with eight levels | `toggle list: editor and command differ` |
+| G7 source half | `deleteTable` re-inlined as `vec![Operation::DeleteTable { table }]` | `lib.rs:7673: self.apply_action_caret(vec![Operation::DeleteTable {` |
+
+**Behaviour changes, deliberate.**
+
+- An agent's highlight now accepts `gray`/`grey` (the editor always did); an agent's font size
+  must be a half-point step (the editor's rule; it used to be rounded).
+- None for editor users: G7 holds the editor's operations equal to the command's on every
+  moved path.
+
+**Not built, and why.**
+
+- **Character styles.** The editor has no character-style application and `FormatDelta` has
+  no style field, so there is nothing to move; it needs an operation change in
+  `casual-doc-edit` first.
+- **Inline marks in `rewrite_block`.** `read_blocks` emits no bold/italic marks, so the
+  dialect has none (a `*` is text). Formatting is never dropped: kept words keep their runs.
+- **`splitMergedCell` with counts** (split one cell into an n×m grid) stays in the editor;
+  agents get unmerge only.
+- **Whole-table properties** (width, borders, style, alignment) stay not exposed.
+- **Defect found, not fixed (outside this lane's files):** a session whose profile is
+  `suggest` cannot suggest formatting or paragraph changes. `set_text_format` and
+  `apply_paragraph_style` (pre-existing) and the new paragraph and list commands are refused
+  by the engine with `session.suggestions-only-access`, because
+  `casual-doc-edit/src/protection.rs` `is_tracked_only` recognises only text revisions: a
+  run's `rPrChange` is not reverted by `before_projection`, and a `SetParagraphProperties`
+  carrying a `pPrChange` is not considered at all. G5 therefore runs under an `edit` profile
+  in suggest mode. The fix belongs in `is_tracked_only` (treat a property change whose
+  recorded prior equals the current base as tracked-only) with its own access tests.

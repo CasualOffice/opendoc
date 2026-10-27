@@ -25,18 +25,19 @@ pub enum Reach {
     NotExposed(&'static str),
 }
 
-const TABLES: &str = "Table structure beyond rows moves into the registry with the tables family (docs/181 §4.2 step 1).";
-const BLOCKS: &str = "Whole-block insertion and deletion need a block anchor kind; with rewrite_block (docs/181 §4.3).";
+const TABLES: &str = "Whole-table properties (width, borders, style, layout) are not offered to agents yet; cell formatting and structure are.";
+const BLOCKS: &str = "Whole-block insertion and deletion need a block anchor kind (docs/181 §4.2); rewrite_block edits one block in place.";
 const OBJECTS: &str = "Pictures, shapes and text boxes arrive with the images and objects family (docs/181 §4.2 step 5).";
 const DOCUMENT: &str = "Document-wide settings are not offered to agents; a person changes them.";
 const SECTIONS: &str = "Sections and page setup need the surfaces of docs/181 §2.2 first (step 6).";
-const DEFINITIONS: &str = "Style, numbering, media and chart definitions are written only as part of a command that needs them.";
+const DEFINITIONS: &str =
+    "Style, media and chart definitions are written only as part of a command that needs them.";
 const REFERENCES: &str =
     "Bookmarks, fields and the table of contents arrive with the links and fields family (step 4).";
 const NOTES: &str = "Notes and headers/footers need the surfaces of docs/181 §2.2 first (step 6).";
 const PROTECTION: &str =
     "Protection and tracking settings are a person's decision, never an agent's.";
-const INLINE: &str = "Inline structure an agent cannot express yet; links arrive with step 4, clear formatting with step 2.";
+const INLINE: &str = "Inline structure an agent cannot express yet; links and inline objects arrive with step 4 (docs/181 §4.2).";
 
 macro_rules! classify {
     ($($variant:ident => $reach:expr),* $(,)?) => {
@@ -62,16 +63,16 @@ classify! {
     SplitParagraph => Agent,
     JoinParagraphs => Agent,
     FormatText => Agent,
-    ClearFormatting => NotExposed(INLINE),
+    ClearFormatting => Agent,
     SetHyperlink => NotExposed(INLINE),
     SetInlines => NotExposed(INLINE),
     SetParagraphProperties => Agent,
     InsertRow => Agent,
     DeleteRow => Agent,
-    InsertColumn => NotExposed(TABLES),
-    DeleteColumn => NotExposed(TABLES),
-    DeleteTable => NotExposed(TABLES),
-    InsertTable => NotExposed(TABLES),
+    InsertColumn => Agent,
+    DeleteColumn => Agent,
+    DeleteTable => Agent,
+    InsertTable => Agent,
     InsertBlocks => NotExposed(BLOCKS),
     DeleteBlocks => NotExposed(BLOCKS),
     SetExtent => NotExposed(OBJECTS),
@@ -83,7 +84,7 @@ classify! {
     InsertObjectNode => NotExposed(OBJECTS),
     InsertInlineObject => NotExposed(OBJECTS),
     RemoveInlineObject => NotExposed(OBJECTS),
-    SetTableCellProperties => NotExposed(TABLES),
+    SetTableCellProperties => Agent,
     SetTableProperties => NotExposed(TABLES),
     ReplaceTable => Agent,
     SetCoreProperties => NotExposed(DOCUMENT),
@@ -91,8 +92,8 @@ classify! {
     SetSectionGeometry => NotExposed(SECTIONS),
     SpliceSectionBoundary => NotExposed(SECTIONS),
     SetStyleDefinition => NotExposed(DEFINITIONS),
-    SetAbstractNumbering => NotExposed(DEFINITIONS),
-    SetNumberingInstance => NotExposed(DEFINITIONS),
+    SetAbstractNumbering => Agent,
+    SetNumberingInstance => Agent,
     SetMediaReference => NotExposed(DEFINITIONS),
     SetChartDefinition => NotExposed(DEFINITIONS),
     SetDocumentProtection => NotExposed(PROTECTION),
@@ -128,7 +129,7 @@ classify! {
 
 /// The most operations that may be not exposed. Lower it when a family moves
 /// into the registry; raising it needs an ADR line (`docs/181` §3).
-pub const NOT_EXPOSED_CEILING: usize = 57;
+pub const NOT_EXPOSED_CEILING: usize = 49;
 
 /// The reach of the variant named `name`, if it is one. O(variants).
 #[must_use]
