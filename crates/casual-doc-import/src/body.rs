@@ -916,6 +916,10 @@ struct ContentFrame {
     pending_flip_v: bool,
     pending_rotation: Option<i32>,
     drawing_extra: bool,
+    /// The open `w:drawing` already became a text box: a lone, rectangular
+    /// `wps:txbx` shape is pushed as its own segment when the shape closes, so
+    /// `commit_drawing` finding no picture is not an omission.
+    drawing_emitted_text_box: bool,
     pict_depth: u32,
     pending_vml_names: Vec<Vec<u8>>,
     pending_graphic: PendingGraphic,
@@ -1152,6 +1156,10 @@ struct BodyParser<'a> {
     pending_flip_v: bool,
     pending_rotation: Option<i32>,
     drawing_extra: bool,
+    /// The open `w:drawing` already became a text box: a lone, rectangular
+    /// `wps:txbx` shape is pushed as its own segment when the shape closes, so
+    /// `commit_drawing` finding no picture is not an omission.
+    drawing_emitted_text_box: bool,
     /// Depth of an open `w:pict` (legacy VML picture); `pending_embed` holds its
     /// `v:imagedata@r:id` until the picture closes.
     pict_depth: u32,
@@ -1540,6 +1548,7 @@ impl<'a> BodyParser<'a> {
             pending_flip_v: false,
             pending_rotation: None,
             drawing_extra: false,
+            drawing_emitted_text_box: false,
             pict_depth: 0,
             vml_capture: None,
             vml_capture_depth: 0,
@@ -3232,6 +3241,7 @@ impl BodyParser<'_> {
                     self.pending_flip_v = false;
                     self.pending_rotation = None;
                     self.drawing_extra = false;
+                    self.drawing_emitted_text_box = false;
                     self.blipfill_depth = 0;
                     self.pending_graphic = PendingGraphic::default();
                     self.pending_anchor = None;
@@ -6322,6 +6332,21 @@ impl BodyParser<'_> {
         let own = core::mem::take(&mut shape.object_name);
         let name = Self::merge_object_name(docpr, own);
         self.record_object_name(shape.id, Some(name), ObjectName::GENERIC_TEXT_BOX);
+        // A lone text box is placed by `wp:anchor` (or inline) and sized by
+        // `wp:extent`; its own `a:xfrm` is the identity in every document Word
+        // writes. A translation, or a size that disagrees with the frame, is a
+        // transform the model does not use, so it is named rather than dropped
+        // in silence: HF-243's rule for a lone picture, applied to the text box.
+        if shape.offset != (PointEmu { x_emu: 0, y_emu: 0 }) {
+            self.reporter.report(b"off");
+        }
+        if shape.extent != ZERO_EXTENT
+            && self
+                .pending_extent
+                .is_some_and(|frame| frame != shape.extent)
+        {
+            self.reporter.report(b"ext");
+        }
         match self.pending_anchor.take() {
             Some(pending) => {
                 // A floating text box: carry its anchor + extent + fill/border.
@@ -6341,6 +6366,7 @@ impl BodyParser<'_> {
                     body_properties: shape.body_properties,
                     blocks,
                 }));
+                self.drawing_emitted_text_box = true;
             }
             None => {
                 // Preserve an inline shape's authored appearance and size. Do not
@@ -6360,6 +6386,7 @@ impl BodyParser<'_> {
                     body_properties: shape.body_properties,
                     blocks,
                 }));
+                self.drawing_emitted_text_box = true;
             }
         }
         Ok(())
@@ -6618,6 +6645,11 @@ impl BodyParser<'_> {
                 }
                 None => self.reporter.report(b"drawing"),
             },
+            // No picture, but the drawing's text box is already in the model
+            // (`commit_shape`): nothing was omitted. Reporting it here made the
+            // DOCX loss gate refuse to save any document holding a plain
+            // DrawingML text box (`docs/181` §12, lane families-b).
+            None if self.drawing_emitted_text_box => {}
             None => self.reporter.report(b"drawing"),
         }
     }
@@ -7647,6 +7679,7 @@ impl BodyParser<'_> {
             pending_flip_v: std::mem::take(&mut self.pending_flip_v),
             pending_rotation: self.pending_rotation.take(),
             drawing_extra: std::mem::take(&mut self.drawing_extra),
+            drawing_emitted_text_box: std::mem::take(&mut self.drawing_emitted_text_box),
             pict_depth: std::mem::take(&mut self.pict_depth),
             pending_vml_names: std::mem::take(&mut self.pending_vml_names),
             pending_graphic: std::mem::take(&mut self.pending_graphic),
@@ -7738,6 +7771,7 @@ impl BodyParser<'_> {
         self.pending_flip_v = frame.pending_flip_v;
         self.pending_rotation = frame.pending_rotation;
         self.drawing_extra = frame.drawing_extra;
+        self.drawing_emitted_text_box = frame.drawing_emitted_text_box;
         self.pict_depth = frame.pict_depth;
         self.pending_vml_names = frame.pending_vml_names;
         self.pending_graphic = frame.pending_graphic;
