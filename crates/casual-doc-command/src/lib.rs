@@ -15,7 +15,7 @@
 //! - [`edit`]: the vocabulary as types; [`schema`]: the JSON Schema derived
 //!   from them, published by every front door.
 //! - the lowerings the editor and agents share, one module per family:
-//!   [`table`], [`format`] (character formatting), [`paragraph`], [`lists`],
+//!   [`table`], [`format`](mod@format) (character formatting), [`paragraph`], [`lists`],
 //!   and [`rewrite`] (the `rewrite_block` dialect).
 //!
 //! Every lowering here is pure: it reads the document and returns operations.
