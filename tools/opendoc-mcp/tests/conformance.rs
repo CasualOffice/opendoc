@@ -322,7 +322,10 @@ fn the_server_lists_every_tool_and_every_tool_answers() {
         "read_blocks",
         json!({ "document": doc, "surface": "header:not-an-id" }),
     );
-    assert!(refused["code"].is_string(), "an unknown surface is refused: {refused}");
+    assert!(
+        refused["code"].is_string(),
+        "an unknown surface is refused: {refused}"
+    );
 
     let revision = opened["revision"].clone();
     let plan = json!({
