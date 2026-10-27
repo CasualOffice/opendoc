@@ -450,6 +450,7 @@ invariants
 invertible
 invocable
 journalled
+json
 kashida
 keepLines
 keepNext
