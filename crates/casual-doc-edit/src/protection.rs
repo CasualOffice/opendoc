@@ -625,10 +625,87 @@ pub(crate) fn is_tracked_only(document: &Document, op: &Operation) -> bool {
                     && revision_ids(current)
                         .into_iter()
                         .all(|id| revision_ids(&state.inlines).contains(&id))
+                    // The format-change twin of the line above: a run that carries a
+                    // tracked format change keeps it. Dropping one (restoring its prior)
+                    // projects alike, and is a rejection — `review`, not `suggest`.
+                    && format_changed_runs(current)
+                        .into_iter()
+                        .all(|id| format_changed_runs(&state.inlines).contains(&id))
             })
         }),
+        // A tracked paragraph-property change (`w:pPrChange`, Word's Suggesting
+        // formatting of a paragraph). It is a suggestion exactly when the paragraph
+        // as it stood before any tracked change is unchanged: rejecting it then
+        // restores the document, so nothing was changed untracked. An untracked change
+        // fails that by itself (its "before" is its new value), so no separate "has a
+        // change" test is needed — one was tried and no mutation could make it decide
+        // anything. The paragraph mark's own revision may not move.
+        Operation::SetParagraphProperties { node, properties } => {
+            current_properties(document, *node).is_some_and(|current| {
+                properties.mark_revision == current.mark_revision
+                    && paragraph_before(properties) == paragraph_before(current)
+                    // Someone else's pending change keeps its author: a suggester
+                    // extends a suggestion, never re-attributes or drops one.
+                    && current.prop_change.as_ref().is_none_or(|held| {
+                        properties.prop_change.as_ref().is_some_and(|proposed| {
+                            proposed.author == held.author
+                                && proposed.revision_id == held.revision_id
+                        })
+                    })
+            })
+        }
+        // A tracked paragraph split (Enter while Suggesting): the leading half's mark is
+        // a new tracked insertion and is otherwise the paragraph as it stood; the trailing
+        // half keeps the original mark. The trailing style may move to the style's
+        // `w:next` (Word's follow-on style at the end of a heading), which is the one
+        // property Enter itself changes. No text moves in or out: a split only adds a
+        // boundary, and rejecting the inserted mark joins it away again.
+        Operation::SplitParagraph {
+            at,
+            properties: Some(split),
+            ..
+        } => {
+            let inserted =
+                split.leading.mark_revision.as_ref().is_some_and(|mark| {
+                    mark.kind == casual_doc_model::v1::MarkRevisionKind::Insertion
+                });
+            inserted
+                && current_properties(document, at.node).is_some_and(|current| {
+                    let mut leading = split.leading.clone();
+                    leading.mark_revision = current.mark_revision.clone();
+                    let mut trailing = split.trailing.clone();
+                    trailing.style_ref = current.style_ref;
+                    leading == *current && trailing == *current
+                })
+        }
+        // A suggestion that makes a paragraph a list item needs a numbering definition to
+        // point at. ADDING one the document does not have changes nothing anyone sees —
+        // only the tracked paragraph change that refers to it does, and that is the
+        // suggestion a reviewer decides. Replacing or removing one is formatting, refused.
+        Operation::SetAbstractNumbering {
+            id,
+            definition: Some(_),
+        } => !document.definitions().abstract_numbering.contains_key(id),
+        Operation::SetNumberingInstance {
+            id,
+            instance: Some(_),
+        } => !document.definitions().numbering.contains_key(id),
         other => is_comment_only(document, other),
     }
+}
+
+/// `properties` as they stood before any tracked change to them: the recorded
+/// prior when there is one, else the properties themselves, never carrying a
+/// change or a mark revision (those are compared separately). O(1) clones of
+/// one property set.
+fn paragraph_before(properties: &ParagraphProperties) -> ParagraphProperties {
+    let mut before = properties
+        .prop_change
+        .as_ref()
+        .map_or_else(|| properties.clone(), |change| (*change.prior).clone());
+    before.prop_change = None;
+    before.mark_revision = None;
+    before
 }
 
 /// The paragraph `node`'s current inlines, on any surface.
@@ -663,12 +740,24 @@ fn without_comment_markers(inlines: &[InlineNode]) -> Vec<InlineNode> {
 /// dropped.
 ///
 /// An insertion contributes nothing; a deletion contributes its content, because deleted text
-/// is still in the document with a strike through it. So two inline lists have the same
-/// projection exactly when they describe the same original text under different review marks.
+/// is still in the document with a strike through it; a tracked format change
+/// (`w:rPrChange`) contributes its run with the recorded prior formatting, because that is
+/// how the run looked before. So two inline lists have the same projection exactly when they
+/// describe the same original text and formatting under different review marks.
 fn before_projection(inlines: &[InlineNode]) -> Vec<InlineNode> {
     let mut out = Vec::with_capacity(inlines.len());
     for inline in inlines {
         match inline {
+            InlineNode::Run(run) if run.properties.prop_change.is_some() => {
+                let mut before = run.clone();
+                let mut prior = run.properties.prop_change.as_ref().map_or_else(
+                    || (*run.properties).clone(),
+                    |change| (*change.prior).clone(),
+                );
+                prior.prop_change = None;
+                before.properties = prior.into();
+                out.push(InlineNode::Run(before));
+            }
             InlineNode::CommentReference(_)
             | InlineNode::CommentRangeStart(_)
             | InlineNode::CommentRangeEnd(_) => {}
@@ -787,6 +876,26 @@ pub(crate) fn is_review_only(document: &Document, op: &Operation) -> bool {
     // commenter's own class should answer — and, worse, a comment-marker-only change, which is
     // `comment`'s business and must not be reachable through this class instead.
     resolved_any
+}
+
+/// The ids of the runs in `inlines` that carry a tracked format change
+/// (`w:rPrChange`), including nested ones. O(inlines).
+fn format_changed_runs(inlines: &[InlineNode]) -> Vec<NodeId> {
+    fn collect(inlines: &[InlineNode], out: &mut Vec<NodeId>) {
+        for inline in inlines {
+            if let InlineNode::Run(run) = inline
+                && run.properties.prop_change.is_some()
+            {
+                out.push(run.id);
+            }
+            if let Some(children) = children_of(inline) {
+                collect(children, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    collect(inlines, &mut out);
+    out
 }
 
 /// Every revision node id in `inlines`, including nested ones.
@@ -2325,5 +2434,196 @@ mod tests {
                 );
             }
         }
+    }
+
+    // --- `docs/181` §12: tracked formatting, paragraph changes, splits and the
+    // numbering a suggested list needs are suggestions, and nothing else is. ---
+
+    use casual_doc_model::v1::{
+        AbstractNumbering, AbstractNumberingId, Alignment, MarkRevision, MarkRevisionKind,
+        NumberingInstance, NumberingInstanceId, PropChange,
+    };
+
+    fn change<P>(prior: P, author: &str) -> Option<Box<PropChange<P>>> {
+        Some(Box::new(PropChange {
+            author: Some(author.to_owned()),
+            date: None,
+            revision_id: Some("1".to_owned()),
+            editor_group: None,
+            prior: Box::new(prior),
+        }))
+    }
+
+    fn bold_run(id: u64, text: &str, tracked_by: Option<&str>) -> InlineNode {
+        let mut properties = RunProperties {
+            bold: Some(true),
+            ..RunProperties::default()
+        };
+        if let Some(author) = tracked_by {
+            properties.prop_change = change(RunProperties::default(), author);
+        }
+        InlineNode::Run(Run {
+            id: n(id),
+            properties: properties.into(),
+            text: text.to_owned(),
+        })
+    }
+
+    fn centred(tracked_by: Option<&str>) -> ParagraphProperties {
+        ParagraphProperties {
+            alignment: Some(Alignment::Center),
+            prop_change: tracked_by
+                .and_then(|author| change(ParagraphProperties::default(), author)),
+            ..ParagraphProperties::default()
+        }
+    }
+
+    #[test]
+    fn a_tracked_format_change_is_a_suggestion_and_an_untracked_one_is_not() {
+        let document = holding(vec![run(1, "abcdefgh")]);
+        let tracked = review(vec![bold_run(1, "abcdefgh", Some("Ada"))]);
+        let untracked = review(vec![bold_run(1, "abcdefgh", None)]);
+        assert!(
+            is_tracked_only(&document, &tracked),
+            "bold recorded over its prior"
+        );
+        assert!(
+            !is_tracked_only(&document, &untracked),
+            "bold with no rPrChange is an edit"
+        );
+    }
+
+    #[test]
+    fn a_suggester_cannot_drop_someone_elses_format_change() {
+        // Restoring the prior projects exactly like the tracked change, so only the
+        // survival check tells a rejection from a suggestion.
+        let document = holding(vec![bold_run(1, "abcdefgh", Some("Ada"))]);
+        let dropped = review(vec![run(1, "abcdefgh")]);
+        assert!(!is_tracked_only(&document, &dropped));
+    }
+
+    #[test]
+    fn a_tracked_paragraph_change_is_a_suggestion_and_must_record_the_real_prior() {
+        let document = holding(vec![run(1, "abcdefgh")]);
+        assert!(is_tracked_only(
+            &document,
+            &set_properties(centred(Some("Ada")))
+        ));
+        assert!(
+            !is_tracked_only(&document, &set_properties(centred(None))),
+            "centring with no pPrChange is an edit"
+        );
+        let mut lying = centred(Some("Ada"));
+        if let Some(change) = lying.prop_change.as_mut() {
+            change.prior.alignment = Some(Alignment::End);
+        }
+        assert!(
+            !is_tracked_only(&document, &set_properties(lying)),
+            "a prior the paragraph never had would make rejecting it an edit"
+        );
+    }
+
+    #[test]
+    fn a_suggester_extends_a_pending_paragraph_change_but_never_reattributes_it() {
+        let mut document = holding(vec![run(1, "abcdefgh")]);
+        if let Some(paragraph) = document.paragraph_mut(n(10)) {
+            paragraph.properties = centred(Some("Ada")).into();
+        }
+        let mut justified = centred(Some("Ada"));
+        justified.alignment = Some(Alignment::Justify);
+        assert!(is_tracked_only(
+            &document,
+            &set_properties(justified.clone())
+        ));
+        if let Some(change) = justified.prop_change.as_mut() {
+            change.author = Some("Grace".to_owned());
+        }
+        assert!(!is_tracked_only(&document, &set_properties(justified)));
+        assert!(
+            !is_tracked_only(&document, &set_properties(ParagraphProperties::default())),
+            "dropping the pending change is a rejection"
+        );
+    }
+
+    #[test]
+    fn a_tracked_split_is_a_suggestion_and_an_untracked_one_is_not() {
+        let document = holding(vec![run(1, "abcdefgh")]);
+        let split = |mark: Option<MarkRevisionKind>, trailing: ParagraphProperties| {
+            let leading = ParagraphProperties {
+                mark_revision: mark.map(|kind| {
+                    Box::new(MarkRevision {
+                        kind,
+                        author: Some("Ada".to_owned()),
+                        date: None,
+                        revision_id: Some("2".to_owned()),
+                    })
+                }),
+                ..ParagraphProperties::default()
+            };
+            Operation::SplitParagraph {
+                at: Pos::new(n(10), 4),
+                new_id: n(11),
+                properties: Some(Box::new(crate::SplitProperties { leading, trailing })),
+            }
+        };
+        let plain = ParagraphProperties::default;
+        assert!(is_tracked_only(
+            &document,
+            &split(Some(MarkRevisionKind::Insertion), plain())
+        ));
+        assert!(
+            !is_tracked_only(&document, &split(None, plain())),
+            "Enter, untracked"
+        );
+        assert!(
+            !is_tracked_only(&document, &split(Some(MarkRevisionKind::Deletion), plain())),
+            "a deleted mark is not an inserted one"
+        );
+        assert!(
+            !is_tracked_only(
+                &document,
+                &split(Some(MarkRevisionKind::Insertion), centred(None))
+            ),
+            "the trailing half may not be reformatted under cover of the split"
+        );
+    }
+
+    #[test]
+    fn a_suggester_may_add_a_numbering_definition_but_not_replace_one() {
+        let abstract_id = AbstractNumberingId::new(n(50));
+        let definition = AbstractNumbering {
+            levels: Vec::new(),
+            multi_level_type: None,
+            num_style_link: None,
+            style_link: None,
+        };
+        let add = Operation::SetAbstractNumbering {
+            id: abstract_id,
+            definition: Some(Box::new(definition.clone())),
+        };
+        let mut document = holding(vec![run(1, "abcdefgh")]);
+        assert!(is_tracked_only(&document, &add));
+        let instance_id = NumberingInstanceId::new(n(51));
+        let instance = Operation::SetNumberingInstance {
+            id: instance_id,
+            instance: Some(Box::new(NumberingInstance {
+                abstract_ref: abstract_id,
+                overrides: Vec::new(),
+            })),
+        };
+        assert!(is_tracked_only(&document, &instance));
+        document
+            .definitions_mut()
+            .abstract_numbering
+            .insert(abstract_id, definition);
+        assert!(
+            !is_tracked_only(&document, &add),
+            "replacing a definition is formatting"
+        );
+        let remove = Operation::SetAbstractNumbering {
+            id: abstract_id,
+            definition: None,
+        };
+        assert!(!is_tracked_only(&document, &remove));
     }
 }

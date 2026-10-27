@@ -230,7 +230,7 @@ fn every_trackable_command_round_trips_as_a_suggestion_and_rejecting_it_restores
     );
     let mut failures = Vec::new();
     for command in trackable {
-        let mut session = open(&base, "base.docx", Profile::Edit);
+        let mut session = open(&base, "base.docx", Profile::Suggest);
         let real = ids(&session);
         let mut example = command.example.to_owned();
         for (placeholder, id) in EXAMPLE_IDS.iter().zip(&real) {
