@@ -80,7 +80,10 @@ fn object(properties: Value, required: &[&str]) -> Value {
 fn plan() -> Value {
     json!({
         "type": "object",
-        "description": "An edit plan: base_revision (from any read), mode (suggest | direct), edits[] each with an `op` from: insert_text{at,text}, replace_text{target,text}, delete_text{target}, insert_paragraphs{after,paragraphs[{text,style}]}, apply_paragraph_style{target,style}, set_text_format{target,format{bold,italic,underline,strike,size,color,highlight,font}}, set_cell_text{table,row,column,text}, table_insert_row{table,index}, table_delete_row{table,index}, comment{target,text,reply_to}, resolve_comment{id,resolved}, review{decision,revisions[],all}. Anchors are {node, exact, prefix, suffix, occurrence, side}.",
+        // No op list in prose: the `items` schema below is generated from the
+        // registry, and `list_edit_kinds` / `describe_edit_kind` describe it
+        // (`docs/181` §5.1). The hand-kept sentence that stood here drifted.
+        "description": "An edit plan: base_revision (from any read), mode (suggest | direct), and edits[], each an object whose `op` names a command of the edit vocabulary. list_edit_kinds lists the ops this session admits; describe_edit_kind gives one op's schema and an example. Anchors are {node, exact, prefix, suffix, occurrence, side}.",
         "properties": {
             "base_revision": { "type": "integer" },
             "mode": { "enum": ["suggest", "direct"] },
@@ -383,16 +386,49 @@ pub fn tools() -> Vec<Tool> {
             description: "Model invariants, broken comment and note references, protection state.",
             input: || object(json!({ "document": doc() }), &["document"]),
         },
+        // Discovery over the edit vocabulary (`docs/181` §5.1): the tool list
+        // stays fixed while the vocabulary grows, and these two describe it.
+        Tool {
+            name: "list_edit_kinds",
+            title: "List edit kinds",
+            profile: Read,
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            description: "The edit families and ops this session admits (its profile and toolsets), each with a one-line summary, whether it can be a tracked suggestion and the modes it runs in, plus the vocabulary version. Call before building an edit plan.",
+            input: || object(json!({}), &[]),
+        },
+        Tool {
+            name: "describe_edit_kind",
+            title: "Describe an edit kind",
+            profile: Read,
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            description: "One op's generated JSON Schema, its trackability (and the reason when it cannot be suggested), a worked example, and whether this session admits it.",
+            input: || {
+                object(
+                    json!({ "op": { "type": "string", "description": "An op from list_edit_kinds, for example replace_text." } }),
+                    &["op"],
+                )
+            },
+        },
     ]
 }
 
-/// A tool's `tools/list` entry.
-pub fn describe(tool: &Tool) -> Value {
+/// A tool's `tools/list` entry. `edit_items` is the schema of one edit this
+/// session admits (the generated schema narrowed to its toolsets); it replaces
+/// the full vocabulary in the plan tools' `inputSchema`.
+pub fn describe(tool: &Tool, edit_items: &Value) -> Value {
+    let mut input = (tool.input)();
+    if let Some(items) = input.pointer_mut("/properties/plan/properties/edits/items") {
+        *items = edit_items.clone();
+    }
     json!({
         "name": tool.name,
         "title": tool.title,
         "description": tool.description,
-        "inputSchema": (tool.input)(),
+        "inputSchema": input,
         "outputSchema": { "type": "object" },
         "annotations": {
             "readOnlyHint": tool.read_only,
@@ -410,7 +446,8 @@ pub fn resource_templates() -> Value {
         { "uriTemplate": "opendoc://documents/{doc}/blocks/{node}", "name": "block", "mimeType": "application/json" },
         { "uriTemplate": "opendoc://documents/{doc}/pages/{n}.png", "name": "page", "mimeType": "image/png" },
         { "uriTemplate": "opendoc://documents/{doc}/report", "name": "report", "mimeType": "application/json" },
-        { "uriTemplate": "opendoc://documents/{doc}/exports/{name}", "name": "export" }
+        { "uriTemplate": "opendoc://documents/{doc}/exports/{name}", "name": "export" },
+        { "uriTemplate": "opendoc://schema/edits/{family}", "name": "edit-schema", "title": "The JSON Schema of one edit family", "mimeType": "application/schema+json" }
     ])
 }
 

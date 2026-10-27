@@ -1,0 +1,899 @@
+{
+  "commands": [
+    {
+      "emits": [
+        "InsertText",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "at": {
+          "exact": "days",
+          "node": "1:2",
+          "side": "after"
+        },
+        "op": "insert_text",
+        "text": " (calendar)"
+      },
+      "family": "text",
+      "id": "insert_text",
+      "summary": "Insert text at an anchor.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": [
+        "edit.pasteText",
+        "insert.symbol",
+        "insert.emoji"
+      ]
+    },
+    {
+      "emits": [
+        "DeleteText",
+        "InsertText",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "op": "replace_text",
+        "target": {
+          "exact": "thirty (30) days",
+          "node": "1:2"
+        },
+        "text": "sixty (60) days"
+      },
+      "family": "text",
+      "id": "replace_text",
+      "summary": "Replace the quoted text with new text.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": [
+        "edit.replace"
+      ]
+    },
+    {
+      "emits": [
+        "DeleteText",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "op": "delete_text",
+        "target": {
+          "exact": " without notice",
+          "node": "1:2"
+        }
+      },
+      "family": "text",
+      "id": "delete_text",
+      "summary": "Delete the quoted text.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": [
+        "edit.cut"
+      ]
+    },
+    {
+      "emits": [
+        "SplitParagraph",
+        "SetParagraphProperties",
+        "InsertText",
+        "UpdateReviewState",
+        "JoinParagraphs"
+      ],
+      "example": {
+        "after": {
+          "node": "1:2"
+        },
+        "op": "insert_paragraphs",
+        "paragraphs": [
+          {
+            "style": "Heading 2",
+            "text": "Termination"
+          }
+        ]
+      },
+      "family": "paragraph",
+      "id": "insert_paragraphs",
+      "summary": "Insert new paragraphs after an anchor's paragraph.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "SetParagraphProperties",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs"
+      ],
+      "example": {
+        "op": "apply_paragraph_style",
+        "style": "Heading 1",
+        "target": {
+          "node": "1:2"
+        }
+      },
+      "family": "styles",
+      "id": "apply_paragraph_style",
+      "summary": "Apply a paragraph style, by name or id.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": [
+        "paragraph.heading.1",
+        "paragraph.heading.2",
+        "paragraph.heading.3",
+        "paragraph.normal",
+        "style."
+      ]
+    },
+    {
+      "emits": [
+        "FormatText",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "format": {
+          "bold": true
+        },
+        "op": "set_text_format",
+        "target": {
+          "exact": "Notice",
+          "node": "1:2"
+        }
+      },
+      "family": "text",
+      "id": "set_text_format",
+      "summary": "Set bold, italic, underline, strike, size, colour, highlight or font on the quoted text.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": [
+        "format.bold",
+        "format.italic",
+        "format.underline",
+        "format.strike",
+        "format.color",
+        "format.highlight",
+        "format.family",
+        "format.family.",
+        "format.size",
+        "format.size."
+      ]
+    },
+    {
+      "emits": [
+        "InsertText",
+        "DeleteText",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "column": 0,
+        "op": "set_cell_text",
+        "row": 1,
+        "table": "1:9",
+        "text": "Q3"
+      },
+      "family": "tables",
+      "id": "set_cell_text",
+      "summary": "Set the text of one table cell.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "InsertRow",
+        "ReplaceTable"
+      ],
+      "example": {
+        "index": 1,
+        "op": "table_insert_row",
+        "table": "1:9"
+      },
+      "family": "tables",
+      "id": "table_insert_row",
+      "summary": "Insert an empty row at an index; a vertical merge it lands inside grows to cover it.",
+      "trackable": "no",
+      "trackableReason": "Table rows cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "table.insert.rowAbove",
+        "table.insert.rowBelow"
+      ]
+    },
+    {
+      "emits": [
+        "DeleteRow",
+        "ReplaceTable"
+      ],
+      "example": {
+        "index": 1,
+        "op": "table_delete_row",
+        "table": "1:9"
+      },
+      "family": "tables",
+      "id": "table_delete_row",
+      "summary": "Delete one row; a merged cell anchored in it keeps its content on the next row.",
+      "trackable": "no",
+      "trackableReason": "Table rows cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "table.delete.row"
+      ]
+    },
+    {
+      "emits": [
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "op": "comment",
+        "target": {
+          "exact": "termination",
+          "node": "1:2"
+        },
+        "text": "Aligned with the MSA, clause 9."
+      },
+      "family": "review",
+      "id": "comment",
+      "summary": "Comment on the quoted text, or reply to a comment.",
+      "trackable": "not-applicable",
+      "trackableReason": null,
+      "uiCommands": [
+        "review.comment"
+      ]
+    },
+    {
+      "emits": [
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "id": "1:40",
+        "op": "resolve_comment",
+        "resolved": true
+      },
+      "family": "review",
+      "id": "resolve_comment",
+      "summary": "Resolve or reopen a comment thread.",
+      "trackable": "not-applicable",
+      "trackableReason": null,
+      "uiCommands": [
+        "review.comment.resolve"
+      ]
+    },
+    {
+      "emits": [
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "decision": "accept",
+        "op": "review",
+        "revisions": [
+          "1:41"
+        ]
+      },
+      "family": "review",
+      "id": "review",
+      "summary": "Accept or reject named tracked changes, or all of them.",
+      "trackable": "not-applicable",
+      "trackableReason": null,
+      "uiCommands": [
+        "review.acceptAtCaret",
+        "review.rejectAtCaret",
+        "review.acceptNext",
+        "review.rejectNext",
+        "review.acceptAll",
+        "review.rejectAll"
+      ]
+    }
+  ],
+  "families": [
+    {
+      "commands": [
+        "insert_text",
+        "replace_text",
+        "delete_text",
+        "set_text_format"
+      ],
+      "name": "text"
+    },
+    {
+      "commands": [
+        "insert_paragraphs"
+      ],
+      "name": "paragraph"
+    },
+    {
+      "commands": [
+        "apply_paragraph_style"
+      ],
+      "name": "styles"
+    },
+    {
+      "commands": [
+        "set_cell_text",
+        "table_insert_row",
+        "table_delete_row"
+      ],
+      "name": "tables"
+    },
+    {
+      "commands": [
+        "comment",
+        "resolve_comment",
+        "review"
+      ],
+      "name": "review"
+    }
+  ],
+  "generatedBy": "cargo run -p casual-doc-command --bin opendoc-command-gen",
+  "uiNotExposed": [
+    {
+      "id": "edit.undo",
+      "reason": "Undo and redo walk the person's own history; an agent undoes its own change with the `undo_change` tool."
+    },
+    {
+      "id": "edit.redo",
+      "reason": "Undo and redo walk the person's own history; an agent undoes its own change with the `undo_change` tool."
+    },
+    {
+      "id": "edit.paste",
+      "reason": "Rich paste reads the person's clipboard; an agent inserts text with insert_text and formats it with set_text_format."
+    },
+    {
+      "id": "format.direction.rtl",
+      "reason": "Paragraph direction arrives with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.direction.ltr",
+      "reason": "Paragraph direction arrives with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.subscript",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.superscript",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.clear",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.grow",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.shrink",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.underline.",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.allCaps",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.smallCaps",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.doubleStrike",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.outline",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.shadow",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.emboss",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.imprint",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.dialog",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.advanced",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.border",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.emphasis",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.spacing",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.scale",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.position",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.kerning",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.ligatures",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.painter",
+      "reason": "Format painter copies the caret's formatting, a gesture with no document-addressed equivalent; an agent sets formatting with set_text_format."
+    },
+    {
+      "id": "format.case.upper",
+      "reason": "Change case keeps each run's formatting, which replace_text would flatten; it arrives with rewrite_block (docs/181 §4.3)."
+    },
+    {
+      "id": "format.case.lower",
+      "reason": "Change case keeps each run's formatting, which replace_text would flatten; it arrives with rewrite_block (docs/181 §4.3)."
+    },
+    {
+      "id": "format.case.title",
+      "reason": "Change case keeps each run's formatting, which replace_text would flatten; it arrives with rewrite_block (docs/181 §4.3)."
+    },
+    {
+      "id": "format.case.sentence",
+      "reason": "Change case keeps each run's formatting, which replace_text would flatten; it arrives with rewrite_block (docs/181 §4.3)."
+    },
+    {
+      "id": "format.case.toggle",
+      "reason": "Change case keeps each run's formatting, which replace_text would flatten; it arrives with rewrite_block (docs/181 §4.3)."
+    },
+    {
+      "id": "paragraph.align.start",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "paragraph.align.center",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "paragraph.align.end",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "paragraph.align.justify",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "paragraph.indent.increase",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "paragraph.indent.decrease",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "paragraph.spacing.",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "paragraph.space.",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "layout.paragraph",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "layout.indent",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "layout.spacing",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "layout.tabStops",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "insert.dropCap",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "paragraph.list.settings",
+      "reason": "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3)."
+    },
+    {
+      "id": "paragraph.list.bullet",
+      "reason": "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3)."
+    },
+    {
+      "id": "paragraph.list.numbered",
+      "reason": "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3)."
+    },
+    {
+      "id": "paragraph.list.checklist",
+      "reason": "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3)."
+    },
+    {
+      "id": "paragraph.list.continue",
+      "reason": "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3)."
+    },
+    {
+      "id": "paragraph.list.restart",
+      "reason": "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3)."
+    },
+    {
+      "id": "paragraph.listFormat.",
+      "reason": "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3)."
+    },
+    {
+      "id": "style.manage",
+      "reason": "Redefining a style changes every paragraph that uses it; agents apply styles and do not define them yet (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "style.updateFromSelection",
+      "reason": "Redefining a style changes every paragraph that uses it; agents apply styles and do not define them yet (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "style.createFromSelection",
+      "reason": "Redefining a style changes every paragraph that uses it; agents apply styles and do not define them yet (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "insert.link",
+      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
+    },
+    {
+      "id": "insert.bookmark",
+      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
+    },
+    {
+      "id": "insert.field",
+      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
+    },
+    {
+      "id": "insert.field.",
+      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
+    },
+    {
+      "id": "reference.caption",
+      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
+    },
+    {
+      "id": "reference.crossReference",
+      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
+    },
+    {
+      "id": "reference.tableOfContents",
+      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
+    },
+    {
+      "id": "reference.updateToc.pageNumbers",
+      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
+    },
+    {
+      "id": "reference.updateToc.entire",
+      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
+    },
+    {
+      "id": "reference.updateFields",
+      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
+    },
+    {
+      "id": "reference.updateCaptionNumbers",
+      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
+    },
+    {
+      "id": "insert.image",
+      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+    },
+    {
+      "id": "insert.shape",
+      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+    },
+    {
+      "id": "insert.textbox",
+      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+    },
+    {
+      "id": "layout.arrange.position",
+      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+    },
+    {
+      "id": "layout.arrange.wrap",
+      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+    },
+    {
+      "id": "layout.arrange.bringForward",
+      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+    },
+    {
+      "id": "layout.arrange.sendBackward",
+      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+    },
+    {
+      "id": "layout.arrange.bringToFront",
+      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+    },
+    {
+      "id": "layout.arrange.sendToBack",
+      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+    },
+    {
+      "id": "layout.arrange.group",
+      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+    },
+    {
+      "id": "layout.arrange.ungroup",
+      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+    },
+    {
+      "id": "layout.arrange.rotateRight",
+      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+    },
+    {
+      "id": "layout.arrange.rotateLeft",
+      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+    },
+    {
+      "id": "layout.arrange.flipHorizontal",
+      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+    },
+    {
+      "id": "layout.arrange.flipVertical",
+      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+    },
+    {
+      "id": "layout.arrange.inLine",
+      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+    },
+    {
+      "id": "layout.arrange.addText",
+      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+    },
+    {
+      "id": "object.",
+      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+    },
+    {
+      "id": "insert.chart",
+      "reason": "Charts come last, behind the chart model work they need (docs/181 §4.2 step 7, docs/155)."
+    },
+    {
+      "id": "insert.table",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.insert.columnLeft",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.insert.columnRight",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.delete.column",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.delete.table",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.move.rowUp",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.move.rowDown",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.move.columnLeft",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.move.columnRight",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.merge",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.unmerge",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.split",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.distribute.rows",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.distribute.columns",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.sort.ascending",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.sort.descending",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.column.grow",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.column.shrink",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.row.grow",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.row.shrink",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.cellFormat",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.borderStyle",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.properties",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.style.none",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "insert.header",
+      "reason": "Headers, footers, footnotes and endnotes need the surfaces of docs/181 §2.2 first (step 6)."
+    },
+    {
+      "id": "insert.footer",
+      "reason": "Headers, footers, footnotes and endnotes need the surfaces of docs/181 §2.2 first (step 6)."
+    },
+    {
+      "id": "insert.footnote",
+      "reason": "Headers, footers, footnotes and endnotes need the surfaces of docs/181 §2.2 first (step 6)."
+    },
+    {
+      "id": "insert.endnote",
+      "reason": "Headers, footers, footnotes and endnotes need the surfaces of docs/181 §2.2 first (step 6)."
+    },
+    {
+      "id": "layout.firstPageVariant",
+      "reason": "Headers, footers, footnotes and endnotes need the surfaces of docs/181 §2.2 first (step 6)."
+    },
+    {
+      "id": "layout.evenOddVariant",
+      "reason": "Headers, footers, footnotes and endnotes need the surfaces of docs/181 §2.2 first (step 6)."
+    },
+    {
+      "id": "layout.headerFooterSettings",
+      "reason": "Headers, footers, footnotes and endnotes need the surfaces of docs/181 §2.2 first (step 6)."
+    },
+    {
+      "id": "layout.pageSetup",
+      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
+    },
+    {
+      "id": "layout.margins",
+      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
+    },
+    {
+      "id": "layout.orientation",
+      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
+    },
+    {
+      "id": "layout.size",
+      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
+    },
+    {
+      "id": "layout.columns",
+      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
+    },
+    {
+      "id": "layout.break.section.nextPage",
+      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
+    },
+    {
+      "id": "layout.break.section.continuous",
+      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
+    },
+    {
+      "id": "layout.break.section.evenPage",
+      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
+    },
+    {
+      "id": "layout.break.section.oddPage",
+      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
+    },
+    {
+      "id": "layout.lineNumbers",
+      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
+    },
+    {
+      "id": "layout.watermark",
+      "reason": "Document-wide settings are not offered to agents; a person changes them."
+    },
+    {
+      "id": "insert.lineBreak",
+      "reason": "Line, page and column breaks are inline structure no registry command emits yet (docs/181 §4.2)."
+    },
+    {
+      "id": "layout.break.page",
+      "reason": "Line, page and column breaks are inline structure no registry command emits yet (docs/181 §4.2)."
+    },
+    {
+      "id": "layout.break.column",
+      "reason": "Line, page and column breaks are inline structure no registry command emits yet (docs/181 §4.2)."
+    },
+    {
+      "id": "layout.blankPage",
+      "reason": "Line, page and column breaks are inline structure no registry command emits yet (docs/181 §4.2)."
+    },
+    {
+      "id": "review.mode.editing",
+      "reason": "Switches the editor's own editing mode, not the document; an agent's mode is its profile plus the plan's `mode`."
+    },
+    {
+      "id": "review.mode.suggesting",
+      "reason": "Switches the editor's own editing mode, not the document; an agent's mode is its profile plus the plan's `mode`."
+    },
+    {
+      "id": "review.restrictEditing",
+      "reason": "Protection and tracking settings are a person's decision, never an agent's."
+    },
+    {
+      "id": "review.comment.delete",
+      "reason": "No command deletes a comment yet; an agent resolves a thread with resolve_comment."
+    }
+  ],
+  "uiNotExposedCeiling": 137,
+  "vocabularyVersion": "1.0"
+}

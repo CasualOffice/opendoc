@@ -93,9 +93,21 @@ fn commands_are_unique_and_a_trackable_one_may_emit_the_review_lowering() {
 
 #[test]
 fn the_registry_applies_nothing_itself() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    for entry in std::fs::read_dir(&src).expect("sources") {
-        let path = entry.expect("entry").path();
+    // Recursive: `src/schema/` and `src/bin/` are sources too.
+    let mut pending = vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
+    let mut files = Vec::new();
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).expect("sources") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                files.push(path);
+            }
+        }
+    }
+    assert!(files.len() > 5, "the scan found the sources");
+    for path in files {
         let text = std::fs::read_to_string(&path).expect("readable");
         for needle in ["Transaction::", "casual_doc_edit::apply(", "apply_group("] {
             assert!(
