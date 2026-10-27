@@ -1,0 +1,231 @@
+{
+  "description": "One edit of the `notes` family of the OpenDoc edit vocabulary 1.2.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "description": "Insert a footnote at an anchor, with its text.",
+      "properties": {
+        "at": {
+          "additionalProperties": false,
+          "description": "Where the reference mark goes.",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        },
+        "op": {
+          "const": "insert_footnote",
+          "type": "string"
+        },
+        "text": {
+          "description": "The note's text.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "at",
+        "text"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Insert an endnote at an anchor, with its text.",
+      "properties": {
+        "at": {
+          "additionalProperties": false,
+          "description": "Where the reference mark goes.",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        },
+        "op": {
+          "const": "insert_endnote",
+          "type": "string"
+        },
+        "text": {
+          "description": "The note's text.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "at",
+        "text"
+      ],
+      "type": "object"
+    }
+  ]
+}

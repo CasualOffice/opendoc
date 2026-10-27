@@ -17,12 +17,20 @@
 use std::collections::BTreeSet;
 
 use casual_doc_command::edit::{AlignmentName, CellAlignment, CellRef, LineSpacingRule, ListKind};
+use casual_doc_command::edit::{
+    BreakName, LineNumberRestartName, OrientationName, PageKind, PageNumberFormat, WatermarkAngle,
+};
 use casual_doc_command::paragraph::ParagraphChange;
 use casual_doc_command::table::TableEdit;
+use casual_doc_edit::RunningRegion;
 use casual_doc_edit::{Operation, Pos, Range};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, BlockNode, NumberingRef, Paragraph, ParagraphProperties, StyleId, StyleKind, Table,
+};
+use casual_doc_model::v1::{
+    BreakKind, HeaderFooterKind, LineNumberRestart, LineNumbering, NoteKind, NumberFormat,
+    PageOrientation, Rgba, SectionId, WatermarkLayout,
 };
 use casual_doc_review::ReviewIds;
 use casual_doc_review::body::build_review_revision_summaries;
@@ -81,7 +89,34 @@ fn needs(edit: &Edit, mode: Mode) -> Profile {
         | Edit::TableSetCellFormat { .. }
         | Edit::ClearFormatting { .. }
         | Edit::RestartNumbering { .. }
-        | Edit::ContinueNumbering { .. } => Profile::Edit,
+        | Edit::ContinueNumbering { .. }
+        | Edit::SetHyperlink { .. }
+        | Edit::RemoveHyperlink { .. }
+        | Edit::CreateBookmark { .. }
+        | Edit::RenameBookmark { .. }
+        | Edit::DeleteBookmark { .. }
+        | Edit::InsertField { .. }
+        | Edit::InsertImage { .. }
+        | Edit::SetAltText { .. }
+        | Edit::ResizeObject { .. }
+        | Edit::SetWrap { .. }
+        | Edit::CropImage { .. }
+        | Edit::DeleteObject { .. }
+        | Edit::SetShapeFill { .. }
+        | Edit::SetShapeOutline { .. }
+        | Edit::InsertFootnote { .. }
+        | Edit::InsertEndnote { .. }
+        | Edit::InsertBreak { .. }
+        | Edit::InsertSectionBreak { .. }
+        | Edit::SetPageSetup { .. }
+        | Edit::SetLineNumbering { .. }
+        | Edit::SetPageNumbering { .. }
+        | Edit::SetWatermark { .. }
+        | Edit::InsertHeader { .. }
+        | Edit::InsertFooter { .. }
+        | Edit::SetDifferentFirstPage { .. }
+        | Edit::SetDifferentOddEven { .. }
+        | Edit::InsertChart { .. } => Profile::Edit,
         Edit::InsertText { .. }
         | Edit::ReplaceText { .. }
         | Edit::DeleteText { .. }
@@ -281,6 +316,82 @@ fn paragraph_change(
         ));
     }
     Ok(ops)
+}
+
+/// The sections `ordinal` names (0-based, body order), or every section when
+/// it is `None`. O(sections).
+fn sections_of(state: &State, ordinal: Option<u32>) -> AiResult<Vec<SectionId>> {
+    let sections = &state.document.definitions().sections;
+    if sections.is_empty() {
+        return Err(AiError::invalid(
+            "This document declares no page setup, so it has no section to change.",
+        ));
+    }
+    match ordinal {
+        None => Ok(sections.iter().map(|boundary| boundary.id).collect()),
+        Some(ordinal) => casual_doc_command::sections::section_at(
+            &state.document,
+            ordinal as usize,
+        )
+        .map(|boundary| vec![boundary.id])
+        .ok_or_else(|| {
+            AiError::invalid(format!(
+                "There is no section {ordinal}; the document has {} (get_outline lists them).",
+                sections.len()
+            ))
+        }),
+    }
+}
+
+/// A `#RRGGBB` colour as an opaque model colour. O(1).
+fn rgba(value: &str) -> AiResult<Rgba> {
+    casual_doc_command::format::parse_color(value)
+        .map(casual_doc_command::objects::opaque)
+        .ok_or_else(|| AiError::invalid("A colour is `#RRGGBB`."))
+}
+
+/// Word's bookmark-name rule, which the editor's dialog leaves to the person
+/// and an agent must meet: a letter first, then letters, digits or `_`, at
+/// most 40 characters. O(name).
+fn bookmark_name(name: &str) -> AiResult<()> {
+    let mut chars = name.chars();
+    let first = chars.next().is_some_and(char::is_alphabetic);
+    if first && name.chars().count() <= 40 && chars.all(|c| c.is_alphanumeric() || c == '_') {
+        Ok(())
+    } else {
+        Err(AiError::invalid(
+            "A bookmark name starts with a letter and holds only letters, digits and `_`, at \
+             most 40 characters.",
+        ))
+    }
+}
+
+/// The bookmark called `name`. O(bookmarks).
+fn bookmark_called(state: &State, name: &str) -> AiResult<casual_doc_model::v1::BookmarkId> {
+    casual_doc_command::links::bookmark_named(&state.document, name).ok_or_else(|| {
+        AiError::new(
+            "anchor-not-found",
+            format!(
+                "No bookmark is named `{}`; get_outline lists them.",
+                clip(name, 80)
+            ),
+        )
+    })
+}
+
+/// A size in points as EMU, or the refusal naming `label`. O(1).
+fn emu(points: f64, label: &str) -> AiResult<i64> {
+    casual_doc_command::objects::points_to_emu(points)
+        .ok_or_else(|| AiError::invalid(format!("`{label}` is a positive size in points.")))
+}
+
+/// The pages a header or footer is for, as the model's kind. O(1).
+fn page_kind(pages: PageKind) -> HeaderFooterKind {
+    match pages {
+        PageKind::Default => HeaderFooterKind::Default,
+        PageKind::First => HeaderFooterKind::First,
+        PageKind::Even => HeaderFooterKind::Even,
+    }
 }
 
 /// Applies `edit` to `state`, committing each lowered step with `coalesce`
@@ -1097,6 +1208,610 @@ fn apply_edit(
                 .map_err(AiError::invalid)?;
             commit(state, edit.operations)?;
         }
+        Edit::SetHyperlink {
+            target,
+            url,
+            tooltip,
+        } => {
+            refuse_untracked(kind, mode)?;
+            casual_doc_command::links::agent_target(url).map_err(AiError::invalid)?;
+            let resolved = resolve(&state.document, target)?;
+            nodes.push(resolved.node);
+            if resolved.start == resolved.end {
+                return Err(AiError::invalid("A link needs a non-empty quote."));
+            }
+            let ids = &mut state.ids;
+            let ops = casual_doc_command::links::set_hyperlink(
+                resolved.node,
+                resolved.start,
+                resolved.end,
+                url,
+                tooltip.clone(),
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            commit(state, ops)?;
+        }
+        Edit::RemoveHyperlink { target } => {
+            refuse_untracked(kind, mode)?;
+            let resolved = resolve(&state.document, target)?;
+            nodes.push(resolved.node);
+            if resolved.start == resolved.end {
+                return Err(AiError::invalid("Quote the link's text exactly."));
+            }
+            commit(
+                state,
+                casual_doc_command::links::remove_hyperlink(
+                    resolved.node,
+                    resolved.start,
+                    resolved.end,
+                ),
+            )?;
+        }
+        Edit::CreateBookmark { target, name } => {
+            refuse_untracked(kind, mode)?;
+            bookmark_name(name)?;
+            if casual_doc_command::links::bookmark_named(&state.document, name).is_some() {
+                return Err(AiError::invalid(format!(
+                    "A bookmark named `{name}` exists; rename or delete it first."
+                )));
+            }
+            let resolved = resolve(&state.document, target)?;
+            nodes.push(resolved.node);
+            let ids = &mut state.ids;
+            let ops = casual_doc_command::links::create_bookmark(
+                name.clone(),
+                Pos::new(resolved.node, resolved.start),
+                Pos::new(resolved.node, resolved.end),
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            commit(state, ops)?;
+        }
+        Edit::RenameBookmark { name, new_name } => {
+            refuse_untracked(kind, mode)?;
+            bookmark_name(new_name)?;
+            let bookmark = bookmark_called(state, name)?;
+            if casual_doc_command::links::bookmark_named(&state.document, new_name).is_some() {
+                return Err(AiError::invalid(format!(
+                    "A bookmark named `{new_name}` exists already."
+                )));
+            }
+            commit(
+                state,
+                casual_doc_command::links::rename_bookmark(bookmark, new_name.clone()),
+            )?;
+        }
+        Edit::DeleteBookmark { name } => {
+            refuse_untracked(kind, mode)?;
+            let bookmark = bookmark_called(state, name)?;
+            commit(state, casual_doc_command::links::delete_bookmark(bookmark))?;
+        }
+        Edit::InsertField {
+            at,
+            kind: field,
+            result,
+        } => {
+            refuse_untracked(kind, mode)?;
+            let target = resolve(&state.document, at)?;
+            nodes.push(target.node);
+            let point = Pos::new(target.node, target.point(at.side.unwrap_or(Side::After)));
+            let ids = &mut state.ids;
+            let ops = casual_doc_command::fields::insert_field(
+                point,
+                field.token(),
+                result.clone().unwrap_or_default(),
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            commit(state, ops)?;
+        }
+        Edit::InsertImage {
+            at,
+            data,
+            content_type,
+            width_pt,
+            height_pt,
+            alt_text,
+        } => {
+            refuse_untracked(kind, mode)?;
+            let (media_type, _) = casual_doc_command::objects::image_part_type(content_type)
+                .ok_or_else(|| {
+                    AiError::invalid(
+                        "`content_type` is image/png, image/jpeg, image/gif, image/bmp, \
+                         image/tiff or image/webp.",
+                    )
+                })?;
+            let bytes = casual_doc_command::objects::decode_base64(
+                data,
+                casual_doc_command::objects::MAX_IMAGE_BYTES,
+            )
+            .map_err(AiError::invalid)?;
+            if !casual_doc_command::objects::bytes_are(media_type, &bytes) {
+                return Err(AiError::invalid(format!(
+                    "The data is not a {media_type} file."
+                )));
+            }
+            // The picture's own size where its header states it (96 DPI), so
+            // one given dimension keeps the proportions.
+            let natural =
+                casual_doc_command::objects::pixel_size(media_type, &bytes).map(|(w, h)| {
+                    (
+                        casual_doc_command::objects::pixels_to_emu(w),
+                        casual_doc_command::objects::pixels_to_emu(h),
+                    )
+                });
+            let (width, height) = match (width_pt, height_pt, natural) {
+                (Some(w), Some(h), _) => (emu(*w, "width_pt")?, emu(*h, "height_pt")?),
+                (Some(w), None, Some((nw, nh))) => {
+                    let w = emu(*w, "width_pt")?;
+                    (
+                        w,
+                        (i128::from(w) * i128::from(nh) / i128::from(nw)).max(1) as i64,
+                    )
+                }
+                (None, Some(h), Some((nw, nh))) => {
+                    let h = emu(*h, "height_pt")?;
+                    (
+                        (i128::from(h) * i128::from(nw) / i128::from(nh)).max(1) as i64,
+                        h,
+                    )
+                }
+                (None, None, Some(size)) => size,
+                _ => {
+                    return Err(AiError::invalid(
+                        "This picture's header does not state its size; give `width_pt` and \
+                         `height_pt`.",
+                    ));
+                }
+            };
+            let target = resolve(&state.document, at)?;
+            nodes.push(target.node);
+            let point = Pos::new(target.node, target.point(at.side.unwrap_or(Side::After)));
+            let ids = &mut state.ids;
+            let mut picture = casual_doc_command::objects::insert_picture(
+                point,
+                content_type,
+                width,
+                height,
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            if let Some(text) = alt_text.as_ref().filter(|text| !text.is_empty()) {
+                picture
+                    .operations
+                    .extend(casual_doc_command::objects::set_alt_text(
+                        picture.drawing,
+                        Some(text.clone()),
+                    ));
+            }
+            commit(state, picture.operations)?;
+            state.media.push((picture.part_name, bytes));
+        }
+        Edit::SetAltText { object, text } => {
+            refuse_untracked(kind, mode)?;
+            let text = text.clone().filter(|text| !text.is_empty());
+            commit(
+                state,
+                casual_doc_command::objects::set_alt_text(node_id(object)?, text),
+            )?;
+        }
+        Edit::ResizeObject {
+            object,
+            width_pt,
+            height_pt,
+        } => {
+            refuse_untracked(kind, mode)?;
+            let ops = casual_doc_command::objects::set_extent(
+                node_id(object)?,
+                emu(*width_pt, "width_pt")?,
+                emu(*height_pt, "height_pt")?,
+            )
+            .map_err(AiError::invalid)?;
+            commit(state, ops)?;
+        }
+        Edit::SetWrap { object, wrap } => {
+            refuse_untracked(kind, mode)?;
+            let ops = casual_doc_command::objects::set_wrap(
+                &state.document,
+                node_id(object)?,
+                wrap.token(),
+            )
+            .map_err(|message| refusal(&message))?;
+            commit(state, ops)?;
+        }
+        Edit::CropImage {
+            object,
+            left,
+            top,
+            right,
+            bottom,
+        } => {
+            refuse_untracked(kind, mode)?;
+            let insets = [*left, *top, *right, *bottom];
+            if insets.iter().any(|edge| !(0.0..=1.0).contains(edge)) {
+                return Err(AiError::invalid(
+                    "Each crop edge is a fraction from 0 to 1.",
+                ));
+            }
+            let crop = casual_doc_command::objects::crop(insets);
+            let crop = (!crop.is_identity()).then_some(crop);
+            commit(
+                state,
+                casual_doc_command::objects::set_crop(node_id(object)?, crop),
+            )?;
+        }
+        Edit::DeleteObject { object } => {
+            refuse_untracked(kind, mode)?;
+            commit(
+                state,
+                casual_doc_command::objects::delete_object(node_id(object)?),
+            )?;
+        }
+        Edit::SetShapeFill { shape, color } => {
+            refuse_untracked(kind, mode)?;
+            let color = match color.as_str() {
+                "none" => None,
+                value => Some(rgba(value)?),
+            };
+            commit(
+                state,
+                casual_doc_command::objects::set_shape_fill(node_id(shape)?, color),
+            )?;
+        }
+        Edit::SetShapeOutline {
+            shape,
+            color,
+            width_pt,
+        } => {
+            refuse_untracked(kind, mode)?;
+            let width = match width_pt {
+                Some(points) if points.is_finite() && *points >= 0.0 => {
+                    Some(*points * casual_doc_command::objects::EMU_PER_POINT as f64)
+                }
+                Some(_) => return Err(AiError::invalid("`width_pt` is a size in points.")),
+                None => None,
+            };
+            let ops = match color.as_deref() {
+                Some("none") => {
+                    if width.is_some() {
+                        return Err(AiError::invalid(
+                            "`none` removes the outline; it takes no `width_pt`.",
+                        ));
+                    }
+                    casual_doc_command::objects::set_shape_outline(
+                        &state.document,
+                        node_id(shape)?,
+                        None,
+                        None,
+                    )
+                }
+                None if width.is_none() => {
+                    return Err(AiError::invalid("Set `color`, `width_pt` or both."));
+                }
+                value => casual_doc_command::objects::set_shape_outline(
+                    &state.document,
+                    node_id(shape)?,
+                    value.map(rgba).transpose()?,
+                    width,
+                ),
+            };
+            commit(state, ops)?;
+        }
+        Edit::InsertFootnote { at, text } | Edit::InsertEndnote { at, text } => {
+            refuse_untracked(kind, mode)?;
+            if text.is_empty() {
+                return Err(AiError::invalid("`text` is empty."));
+            }
+            let note = if matches!(edit, Edit::InsertFootnote { .. }) {
+                NoteKind::Footnote
+            } else {
+                NoteKind::Endnote
+            };
+            let target = resolve(&state.document, at)?;
+            nodes.push(target.node);
+            let point = Pos::new(target.node, target.point(at.side.unwrap_or(Side::After)));
+            let ids = &mut state.ids;
+            let lowered =
+                casual_doc_command::notes::insert_note(note, point, Some(text), &mut || {
+                    ids.next_id().ok()
+                })
+                .map_err(|message| refusal(&message))?;
+            nodes.push(lowered.body);
+            commit(state, lowered.operations)?;
+        }
+        Edit::InsertBreak { at, kind: name } => {
+            refuse_untracked(kind, mode)?;
+            let target = resolve(&state.document, at)?;
+            nodes.push(target.node);
+            let point = Pos::new(target.node, target.point(at.side.unwrap_or(Side::After)));
+            let ids = &mut state.ids;
+            let mut mint = || ids.next_id().ok();
+            let ops = match name {
+                BreakName::BlankPage => {
+                    casual_doc_command::breaks::insert_blank_page(&state.document, point, &mut mint)
+                }
+                BreakName::Line | BreakName::Page | BreakName::Column => {
+                    let break_kind = match name {
+                        BreakName::Line => BreakKind::Line,
+                        BreakName::Page => BreakKind::Page,
+                        _ => BreakKind::Column,
+                    };
+                    casual_doc_command::breaks::insert_break(
+                        &state.document,
+                        point,
+                        break_kind,
+                        &mut mint,
+                    )
+                }
+            }
+            .map_err(|message| refusal(&message))?;
+            commit(state, ops)?;
+        }
+        Edit::InsertSectionBreak { at, start } => {
+            refuse_untracked(kind, mode)?;
+            let target = resolve(&state.document, at)?;
+            nodes.push(target.node);
+            let point = Pos::new(target.node, target.point(at.side.unwrap_or(Side::After)));
+            let start = casual_doc_command::breaks::section_start(start.token())
+                .ok_or_else(|| AiError::invalid("Unknown section start."))?;
+            let ids = &mut state.ids;
+            let lowered = casual_doc_command::breaks::section_break(
+                &state.document,
+                point,
+                start,
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            commit(state, lowered.operations)?;
+        }
+        Edit::SetPageSetup {
+            section,
+            width,
+            height,
+            orientation,
+            margins,
+            columns,
+            column_spacing,
+        } => {
+            refuse_untracked(kind, mode)?;
+            if width.is_none()
+                && height.is_none()
+                && orientation.is_none()
+                && margins.is_none()
+                && columns.is_none()
+                && column_spacing.is_none()
+            {
+                return Err(AiError::invalid(
+                    "Set the size, orientation, margins or columns to change.",
+                ));
+            }
+            for value in [*width, *height].into_iter().flatten() {
+                if !(1_440..=31_680).contains(&value) {
+                    return Err(AiError::invalid(
+                        "A page side is 1440 to 31680 twips (1 to 22 inches).",
+                    ));
+                }
+            }
+            let margins = margins.unwrap_or_default();
+            for value in [margins.top, margins.bottom, margins.left, margins.right]
+                .into_iter()
+                .flatten()
+            {
+                if !(0..=31_680).contains(&value) {
+                    return Err(AiError::invalid("A margin is 0 to 31680 twips."));
+                }
+            }
+            let mut ops = Vec::new();
+            for id in sections_of(state, *section)? {
+                let current = casual_doc_command::sections::boundary(&state.document, id)
+                    .ok_or_else(|| AiError::engine("A listed section is missing."))?
+                    .clone();
+                let mut size = current.page_size;
+                let landscape =
+                    |size: casual_doc_model::v1::PageSize| size.width_twips > size.height_twips;
+                // Word's orientation switch swaps the sides; explicit sides win.
+                if let Some(orientation) = orientation {
+                    let want = *orientation == OrientationName::Landscape;
+                    if landscape(size) != want && width.is_none() && height.is_none() {
+                        size = casual_doc_model::v1::PageSize {
+                            width_twips: size.height_twips,
+                            height_twips: size.width_twips,
+                        };
+                    }
+                }
+                size.width_twips = width.unwrap_or(size.width_twips);
+                size.height_twips = height.unwrap_or(size.height_twips);
+                let mut page_margins = current.page_margins;
+                page_margins.top_twips = margins.top.unwrap_or(page_margins.top_twips);
+                page_margins.bottom_twips = margins.bottom.unwrap_or(page_margins.bottom_twips);
+                page_margins.start_twips = margins.left.unwrap_or(page_margins.start_twips);
+                page_margins.end_twips = margins.right.unwrap_or(page_margins.end_twips);
+                if page_margins.start_twips + page_margins.end_twips >= size.width_twips
+                    || page_margins.top_twips + page_margins.bottom_twips >= size.height_twips
+                {
+                    return Err(AiError::invalid(
+                        "The margins leave no room for text on that page.",
+                    ));
+                }
+                let orientation_value = match orientation {
+                    Some(OrientationName::Portrait) => Some(PageOrientation::Portrait),
+                    Some(OrientationName::Landscape) => Some(PageOrientation::Landscape),
+                    None => current.orientation,
+                };
+                let new_columns = if columns.is_some() || column_spacing.is_some() {
+                    let mut layout = current.columns.clone();
+                    if let Some(count) = columns {
+                        if !(1..=45).contains(count) {
+                            return Err(AiError::invalid("A section has 1 to 45 columns."));
+                        }
+                        layout.count = *count;
+                        // A new count is equal-width columns, as Word's
+                        // presets make them.
+                        layout.equal_width = None;
+                        layout.columns = Vec::new();
+                    }
+                    if column_spacing.is_some() {
+                        layout.space_twips = *column_spacing;
+                    }
+                    Some(layout)
+                } else {
+                    None
+                };
+                ops.extend(casual_doc_command::sections::set_geometry(
+                    &state.document,
+                    id,
+                    size,
+                    page_margins,
+                    orientation_value,
+                    new_columns,
+                ));
+            }
+            commit(state, ops)?;
+        }
+        Edit::SetLineNumbering {
+            section,
+            count_by,
+            start,
+            restart,
+        } => {
+            refuse_untracked(kind, mode)?;
+            if !(0..=100).contains(count_by) {
+                return Err(AiError::invalid("`count_by` is 0 (off) to 100."));
+            }
+            let rule = if *count_by == 0 {
+                LineNumbering::default()
+            } else {
+                LineNumbering {
+                    count_by: Some(*count_by),
+                    start: *start,
+                    distance: None,
+                    restart: restart.map(|restart| match restart {
+                        LineNumberRestartName::EachPage => LineNumberRestart::NewPage,
+                        LineNumberRestartName::EachSection => LineNumberRestart::NewSection,
+                        LineNumberRestartName::Continuous => LineNumberRestart::Continuous,
+                    }),
+                }
+            };
+            let ops = sections_of(state, *section)?
+                .into_iter()
+                .flat_map(|id| casual_doc_command::sections::set_line_numbering(id, rule))
+                .collect();
+            commit(state, ops)?;
+        }
+        Edit::SetPageNumbering {
+            section,
+            format,
+            start,
+        } => {
+            refuse_untracked(kind, mode)?;
+            let format = format.map(|format| match format {
+                PageNumberFormat::Decimal => NumberFormat::Decimal,
+                PageNumberFormat::LowerRoman => NumberFormat::LowerRoman,
+                PageNumberFormat::UpperRoman => NumberFormat::UpperRoman,
+                PageNumberFormat::LowerLetter => NumberFormat::LowerLetter,
+                PageNumberFormat::UpperLetter => NumberFormat::UpperLetter,
+            });
+            let mut ops = Vec::new();
+            for id in sections_of(state, *section)? {
+                // The dialog's lowering writes the vertical alignment too; an
+                // agent's numbering keeps the section's own.
+                let alignment = casual_doc_command::sections::boundary(&state.document, id)
+                    .and_then(|boundary| boundary.vertical_alignment);
+                ops.extend(casual_doc_command::sections::set_section_layout(
+                    id,
+                    format.clone(),
+                    *start,
+                    alignment,
+                ));
+            }
+            commit(state, ops)?;
+        }
+        Edit::SetWatermark {
+            text,
+            color,
+            layout,
+            font,
+        } => {
+            refuse_untracked(kind, mode)?;
+            let watermark = match text.as_deref().filter(|text| !text.is_empty()) {
+                None => None,
+                Some(words) => Some(Box::new(casual_doc_command::sections::text_watermark(
+                    words.to_owned(),
+                    font.as_deref(),
+                    None,
+                    rgba(color.as_deref().unwrap_or("#C0C0C0"))?,
+                    false,
+                    false,
+                    match layout {
+                        Some(WatermarkAngle::Horizontal) => WatermarkLayout::Horizontal,
+                        _ => WatermarkLayout::Diagonal,
+                    },
+                    true,
+                ))),
+            };
+            sections_of(state, None)?;
+            commit(
+                state,
+                casual_doc_command::sections::set_watermark(&state.document, watermark),
+            )?;
+        }
+        Edit::InsertHeader { section, pages } | Edit::InsertFooter { section, pages } => {
+            refuse_untracked(kind, mode)?;
+            let region = if matches!(edit, Edit::InsertHeader { .. }) {
+                RunningRegion::Header
+            } else {
+                RunningRegion::Footer
+            };
+            let id = sections_of(state, Some(*section))?[0];
+            let page = page_kind(*pages);
+            if casual_doc_command::sections::has_running_content(
+                &state.document,
+                *section as usize,
+                region,
+                page,
+            ) {
+                return Err(AiError::invalid(
+                    "That section already shows one, its own or linked from an earlier section; \
+                     get_outline lists it, and insert_text writes into it.",
+                ));
+            }
+            let ids = &mut state.ids;
+            let lowered =
+                casual_doc_command::sections::create_running_content(id, region, page, &mut || {
+                    ids.next_id().ok()
+                })
+                .map_err(|message| refusal(&message))?;
+            nodes.push(lowered.caret.node);
+            commit(state, lowered.operations)?;
+        }
+        Edit::SetDifferentFirstPage { section, enabled } => {
+            refuse_untracked(kind, mode)?;
+            let id = sections_of(state, Some(*section))?[0];
+            commit(
+                state,
+                casual_doc_command::sections::set_title_page(id, *enabled),
+            )?;
+        }
+        Edit::SetDifferentOddEven { enabled } => {
+            refuse_untracked(kind, mode)?;
+            commit(
+                state,
+                casual_doc_command::sections::set_even_and_odd(*enabled),
+            )?;
+        }
+        Edit::InsertChart { at, kind: chart } => {
+            refuse_untracked(kind, mode)?;
+            let target = resolve(&state.document, at)?;
+            nodes.push(target.node);
+            let point = Pos::new(target.node, target.point(at.side.unwrap_or(Side::After)));
+            let ids = &mut state.ids;
+            let ops = casual_doc_command::charts::insert_chart(point, chart.token(), &mut || {
+                ids.next_id().ok()
+            })
+            .map_err(|message| refusal(&message))?;
+            commit(state, ops)?;
+        }
         Edit::Comment {
             target,
             text,
@@ -1371,7 +2086,7 @@ pub fn apply(session: &mut Session, plan: &EditPlan) -> AiResult<Value> {
     let mode = plan.mode;
     let redline = redline(session, &state, &outcomes);
     let before = session.revision();
-    session.state = state;
+    session.adopt(state);
     let change_id = format!("change-{}", group.get());
     session.changes.push(ChangeRecord {
         id: change_id.clone(),

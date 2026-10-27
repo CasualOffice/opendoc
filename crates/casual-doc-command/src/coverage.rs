@@ -27,17 +27,16 @@ pub enum Reach {
 
 const TABLES: &str = "Whole-table properties (width, borders, style, layout) are not offered to agents yet; cell formatting and structure are.";
 const BLOCKS: &str = "Whole-block insertion and deletion need a block anchor kind (docs/181 §4.2); rewrite_block edits one block in place.";
-const OBJECTS: &str = "Pictures, shapes and text boxes arrive with the images and objects family (docs/181 §4.2 step 5).";
+const OBJECTS: &str = "Grouping, moving an inline object, inserting into a group and text-box body properties are arrangement gestures not offered to agents yet; pictures and their formatting are (docs/181 §12, lane families-b).";
 const DOCUMENT: &str = "Document-wide settings are not offered to agents; a person changes them.";
-const SECTIONS: &str = "Sections and page setup need the surfaces of docs/181 §2.2 first (step 6).";
-const DEFINITIONS: &str =
-    "Style, media and chart definitions are written only as part of a command that needs them.";
-const REFERENCES: &str =
-    "Bookmarks, fields and the table of contents arrive with the links and fields family (step 4).";
-const NOTES: &str = "Notes and headers/footers need the surfaces of docs/181 §2.2 first (step 6).";
+const SECTIONS: &str = "Mirrored margins are a document-wide setting a person chooses; section page setup is offered (set_page_setup).";
+const DEFINITIONS: &str = "Style definitions are written only as part of a command that needs them; no agent command defines a style yet.";
+const REFERENCES: &str = "Removing a field, and the paragraph-spanning fields a table of contents is, are not offered yet: the contents lowering reads the paginated layout and is still inside the editor (docs/181 §12, lane families-b).";
+const NOTES: &str =
+    "Removing a note or a header/footer body is not offered yet; inserting them is.";
 const PROTECTION: &str =
     "Protection and tracking settings are a person's decision, never an agent's.";
-const INLINE: &str = "Inline structure an agent cannot express yet; links and inline objects arrive with step 4 (docs/181 §4.2).";
+const INLINE: &str = "Replacing a paragraph's whole inline list is a structural rewrite no agent command needs; rewrite_block diffs instead (docs/181 §4.3).";
 
 macro_rules! classify {
     ($($variant:ident => $reach:expr),* $(,)?) => {
@@ -64,7 +63,7 @@ classify! {
     JoinParagraphs => Agent,
     FormatText => Agent,
     ClearFormatting => Agent,
-    SetHyperlink => NotExposed(INLINE),
+    SetHyperlink => Agent,
     SetInlines => NotExposed(INLINE),
     SetParagraphProperties => Agent,
     InsertRow => Agent,
@@ -75,61 +74,64 @@ classify! {
     InsertTable => Agent,
     InsertBlocks => NotExposed(BLOCKS),
     DeleteBlocks => NotExposed(BLOCKS),
-    SetExtent => NotExposed(OBJECTS),
+    SetExtent => Agent,
     SetGroupGeometry => NotExposed(OBJECTS),
-    SetAnchor => NotExposed(OBJECTS),
-    SetImageCrop => NotExposed(OBJECTS),
-    SetObjectDescr => NotExposed(OBJECTS),
-    DeleteObject => NotExposed(OBJECTS),
+    SetAnchor => Agent,
+    SetImageCrop => Agent,
+    SetObjectDescr => Agent,
+    DeleteObject => Agent,
     InsertObjectNode => NotExposed(OBJECTS),
-    InsertInlineObject => NotExposed(OBJECTS),
+    InsertInlineObject => Agent,
     RemoveInlineObject => NotExposed(OBJECTS),
     SetTableCellProperties => Agent,
     SetTableProperties => NotExposed(TABLES),
     ReplaceTable => Agent,
     SetCoreProperties => NotExposed(DOCUMENT),
     UpdateReviewState => Agent,
-    SetSectionGeometry => NotExposed(SECTIONS),
-    SpliceSectionBoundary => NotExposed(SECTIONS),
+    SetSectionGeometry => Agent,
+    SpliceSectionBoundary => Agent,
     SetStyleDefinition => NotExposed(DEFINITIONS),
     SetAbstractNumbering => Agent,
     SetNumberingInstance => Agent,
-    SetMediaReference => NotExposed(DEFINITIONS),
-    SetChartDefinition => NotExposed(DEFINITIONS),
+    SetMediaReference => Agent,
+    SetChartDefinition => Agent,
     SetDocumentProtection => NotExposed(PROTECTION),
-    CreateBookmark => NotExposed(REFERENCES),
-    DeleteBookmark => NotExposed(REFERENCES),
-    RenameBookmark => NotExposed(REFERENCES),
-    InsertField => NotExposed(REFERENCES),
+    CreateBookmark => Agent,
+    DeleteBookmark => Agent,
+    RenameBookmark => Agent,
+    InsertField => Agent,
     RemoveField => NotExposed(REFERENCES),
     InsertFieldRange => NotExposed(REFERENCES),
     RemoveFieldRange => NotExposed(REFERENCES),
-    InsertNote => NotExposed(NOTES),
+    InsertNote => Agent,
     RemoveNote => NotExposed(NOTES),
-    CreateHeaderFooterBody => NotExposed(NOTES),
+    CreateHeaderFooterBody => Agent,
     RemoveHeaderFooterBody => NotExposed(NOTES),
-    SetSectionRunningRef => NotExposed(SECTIONS),
-    SetSectionTitlePage => NotExposed(SECTIONS),
-    SetSectionWatermark => NotExposed(SECTIONS),
-    SetSectionLineNumbering => NotExposed(SECTIONS),
-    SetSectionPageNumbering => NotExposed(SECTIONS),
-    SetSectionVerticalAlignment => NotExposed(SECTIONS),
-    SetEvenAndOddHeaders => NotExposed(SECTIONS),
-    SetShapeFill => NotExposed(OBJECTS),
-    SetShapeStroke => NotExposed(OBJECTS),
+    SetSectionRunningRef => Agent,
+    SetSectionTitlePage => Agent,
+    SetSectionWatermark => Agent,
+    SetSectionLineNumbering => Agent,
+    SetSectionPageNumbering => Agent,
+    SetSectionVerticalAlignment => Agent,
+    SetEvenAndOddHeaders => Agent,
+    SetShapeFill => Agent,
+    SetShapeStroke => Agent,
     SetTextBoxBody => NotExposed(OBJECTS),
-    SetObjectLocks => NotExposed(OBJECTS),
+    SetObjectLocks => Agent,
     SetDocumentBackground => NotExposed(DOCUMENT),
     SetMirroredMargins => NotExposed(SECTIONS),
     SetDefaultTabStop => NotExposed(DOCUMENT),
     RestoreDefaultTabStop => NotExposed(DOCUMENT),
     SetTrackRevisions => NotExposed(PROTECTION),
-    SetSectionFormProtection => NotExposed(PROTECTION),
+    // Emitted only by insert_section_break, which copies the split section's
+    // existing `w:formProt` to the new one (Word copies the whole `w:sectPr`);
+    // no command sets or lifts protection.
+    SetSectionFormProtection => Agent,
 }
 
 /// The most operations that may be not exposed. Lower it when a family moves
 /// into the registry; raising it needs an ADR line (`docs/181` §3).
-pub const NOT_EXPOSED_CEILING: usize = 49;
+pub const NOT_EXPOSED_CEILING: usize = 21;
 
 /// The reach of the variant named `name`, if it is one. O(variants).
 #[must_use]

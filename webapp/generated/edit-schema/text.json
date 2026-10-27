@@ -1,5 +1,5 @@
 {
-  "description": "One edit of the `text` family of the OpenDoc edit vocabulary 1.1.",
+  "description": "One edit of the `text` family of the OpenDoc edit vocabulary 1.2.",
   "oneOf": [
     {
       "additionalProperties": false,

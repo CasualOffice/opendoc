@@ -3,7 +3,7 @@
 // Regenerate: cargo run -p casual-doc-command --bin opendoc-command-gen
 
 /** The edit vocabulary version (docs/181 §4.1): a minor bump adds commands; a major bump changes or removes one. */
-export declare const VOCABULARY_VERSION: "1.1";
+export declare const VOCABULARY_VERSION: "1.2";
 
 /**
  * Insert text at an anchor.
@@ -804,6 +804,676 @@ export interface ContinueNumberingEdit {
 }
 
 /**
+ * Link the quoted text to an http(s), mailto, ftp or tel URL, or to a bookmark as `#name`.
+ *
+ * Family `links`; trackable: no. Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"set_hyperlink","target":{"node":"1:2","exact":"notice period"},"url":"https://example.com/terms"}
+ */
+export interface SetHyperlinkEdit {
+  op: "set_hyperlink";
+  /** The text to link (a non-empty quote). */
+  target: {
+    /** The quoted text, matched inside `node` only. */
+    exact?: string | null;
+    /** A paragraph id returned by `get_outline`, `read_blocks` or `search`. */
+    node: string;
+    /** 1-based occurrence of `exact` among the matches that remain. */
+    occurrence?: number | null;
+    /** Offsets for programs only; never computed by a model. */
+    pos?: {
+      /** End, exclusive. */
+      end: number;
+      /** Start, UTF-8 bytes into the node's text. */
+      start: number;
+    } | null;
+    /** Text immediately before `exact`, to disambiguate. */
+    prefix?: string | null;
+    /** For an insertion point: before or after the target. */
+    side?: "before" | "after" | null;
+    /** Text immediately after `exact`, to disambiguate. */
+    suffix?: string | null;
+  };
+  /** A tooltip shown on hover. */
+  tooltip?: string | null;
+  /**
+   * An `http`, `https`, `mailto`, `ftp` or `tel` URL, or `#` and a
+   * bookmark name.
+   */
+  url: string;
+}
+
+/**
+ * Remove the hyperlink whose text is exactly the quote; the text and its formatting stay.
+ *
+ * Family `links`; trackable: no. Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"remove_hyperlink","target":{"node":"1:3","exact":"First"}}
+ */
+export interface RemoveHyperlinkEdit {
+  op: "remove_hyperlink";
+  /** The linked text, exactly. */
+  target: {
+    /** The quoted text, matched inside `node` only. */
+    exact?: string | null;
+    /** A paragraph id returned by `get_outline`, `read_blocks` or `search`. */
+    node: string;
+    /** 1-based occurrence of `exact` among the matches that remain. */
+    occurrence?: number | null;
+    /** Offsets for programs only; never computed by a model. */
+    pos?: {
+      /** End, exclusive. */
+      end: number;
+      /** Start, UTF-8 bytes into the node's text. */
+      start: number;
+    } | null;
+    /** Text immediately before `exact`, to disambiguate. */
+    prefix?: string | null;
+    /** For an insertion point: before or after the target. */
+    side?: "before" | "after" | null;
+    /** Text immediately after `exact`, to disambiguate. */
+    suffix?: string | null;
+  };
+}
+
+/**
+ * Bookmark the quoted text (a letter, then letters, digits or _, at most 40).
+ *
+ * Family `links`; trackable: no. Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"create_bookmark","target":{"node":"1:2","exact":"thirty (30) days"},"name":"NoticePeriod"}
+ */
+export interface CreateBookmarkEdit {
+  op: "create_bookmark";
+  /**
+   * Its name: a letter first, then letters, digits or `_`, at most 40
+   * characters, as Word requires.
+   */
+  name: string;
+  /** What the bookmark spans. */
+  target: {
+    /** The quoted text, matched inside `node` only. */
+    exact?: string | null;
+    /** A paragraph id returned by `get_outline`, `read_blocks` or `search`. */
+    node: string;
+    /** 1-based occurrence of `exact` among the matches that remain. */
+    occurrence?: number | null;
+    /** Offsets for programs only; never computed by a model. */
+    pos?: {
+      /** End, exclusive. */
+      end: number;
+      /** Start, UTF-8 bytes into the node's text. */
+      start: number;
+    } | null;
+    /** Text immediately before `exact`, to disambiguate. */
+    prefix?: string | null;
+    /** For an insertion point: before or after the target. */
+    side?: "before" | "after" | null;
+    /** Text immediately after `exact`, to disambiguate. */
+    suffix?: string | null;
+  };
+}
+
+/**
+ * Rename a bookmark.
+ *
+ * Family `links`; trackable: no. Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"rename_bookmark","name":"Notice","new_name":"NoticeClause"}
+ */
+export interface RenameBookmarkEdit {
+  op: "rename_bookmark";
+  /** Its current name. */
+  name: string;
+  /** Its new name. */
+  new_name: string;
+}
+
+/**
+ * Delete a bookmark; the text it spans stays.
+ *
+ * Family `links`; trackable: no. Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"delete_bookmark","name":"Notice"}
+ */
+export interface DeleteBookmarkEdit {
+  op: "delete_bookmark";
+  /** Its name. */
+  name: string;
+}
+
+/**
+ * Insert a page-number, page-count, date, time, file-name or author field at an anchor.
+ *
+ * Family `fields`; trackable: no. Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"insert_field","at":{"node":"1:2","side":"after"},"kind":"page"}
+ */
+export interface InsertFieldEdit {
+  op: "insert_field";
+  /** Where. */
+  at: {
+    /** The quoted text, matched inside `node` only. */
+    exact?: string | null;
+    /** A paragraph id returned by `get_outline`, `read_blocks` or `search`. */
+    node: string;
+    /** 1-based occurrence of `exact` among the matches that remain. */
+    occurrence?: number | null;
+    /** Offsets for programs only; never computed by a model. */
+    pos?: {
+      /** End, exclusive. */
+      end: number;
+      /** Start, UTF-8 bytes into the node's text. */
+      start: number;
+    } | null;
+    /** Text immediately before `exact`, to disambiguate. */
+    prefix?: string | null;
+    /** For an insertion point: before or after the target. */
+    side?: "before" | "after" | null;
+    /** Text immediately after `exact`, to disambiguate. */
+    suffix?: string | null;
+  };
+  /** Which field. */
+  kind: "page" | "numpages" | "date" | "time" | "filename" | "author";
+  /**
+   * The displayed value of a date, time, file-name or author field
+   * (the engine reads no clock or file system); ignored for page
+   * numbers, which are computed.
+   */
+  result?: string | null;
+}
+
+/**
+ * Insert a picture (base64 PNG, JPEG, GIF, BMP, TIFF or WebP, at most 8 MiB) at an anchor.
+ *
+ * Family `objects`; trackable: no. Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"insert_image","at":{"node":"1:2","side":"after"},"data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==","content_type":"image/png","width_pt":36,"alt_text":"Company logo"}
+ */
+export interface InsertImageEdit {
+  op: "insert_image";
+  /** Alt text for readers who cannot see it. */
+  alt_text?: string | null;
+  /** Where. */
+  at: {
+    /** The quoted text, matched inside `node` only. */
+    exact?: string | null;
+    /** A paragraph id returned by `get_outline`, `read_blocks` or `search`. */
+    node: string;
+    /** 1-based occurrence of `exact` among the matches that remain. */
+    occurrence?: number | null;
+    /** Offsets for programs only; never computed by a model. */
+    pos?: {
+      /** End, exclusive. */
+      end: number;
+      /** Start, UTF-8 bytes into the node's text. */
+      start: number;
+    } | null;
+    /** Text immediately before `exact`, to disambiguate. */
+    prefix?: string | null;
+    /** For an insertion point: before or after the target. */
+    side?: "before" | "after" | null;
+    /** Text immediately after `exact`, to disambiguate. */
+    suffix?: string | null;
+  };
+  /**
+   * Its MIME type: image/png, image/jpeg, image/gif, image/bmp,
+   * image/tiff or image/webp; the bytes must be that format.
+   */
+  content_type: string;
+  /** The image bytes, standard base64, at most 8 MiB decoded. */
+  data: string;
+  /** Height in points; omitted, it keeps the picture's proportions. */
+  height_pt?: number | null;
+  /**
+   * Width in points; with `height` omitted too, the picture's own
+   * size at 96 DPI (PNG, GIF, JPEG and BMP state it).
+   */
+  width_pt?: number | null;
+}
+
+/**
+ * Set or clear an object's alt text.
+ *
+ * Family `objects`; trackable: no. Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"set_alt_text","object":"1:20","text":"Signature of the lessor"}
+ */
+export interface SetAltTextEdit {
+  op: "set_alt_text";
+  /** The object id `read_blocks` lists. */
+  object: string;
+  /** The alt text; omitted or empty clears it. */
+  text?: string | null;
+}
+
+/**
+ * Resize a picture, shape or text box, in points.
+ *
+ * Family `objects`; trackable: no. Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"resize_object","object":"1:20","width_pt":72,"height_pt":72}
+ */
+export interface ResizeObjectEdit {
+  op: "resize_object";
+  /** Height in points. */
+  height_pt: number;
+  /** The object id. */
+  object: string;
+  /** Width in points. */
+  width_pt: number;
+}
+
+/**
+ * Set how text wraps around a floating object.
+ *
+ * Family `objects`; trackable: no. Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"set_wrap","object":"1:20","wrap":"square"}
+ */
+export interface SetWrapEdit {
+  op: "set_wrap";
+  /** The object id. */
+  object: string;
+  /** The wrap. */
+  wrap: "square" | "tight" | "through" | "top_and_bottom" | "behind" | "front";
+}
+
+/**
+ * Crop a picture by the fraction of each edge to hide; all zero removes the crop.
+ *
+ * Family `objects`; trackable: no. Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"crop_image","object":"1:20","left":0.1,"top":0,"right":0.1,"bottom":0}
+ */
+export interface CropImageEdit {
+  op: "crop_image";
+  /** Bottom edge. */
+  bottom: number;
+  /** Left edge. */
+  left: number;
+  /** The picture id. */
+  object: string;
+  /** Right edge. */
+  right: number;
+  /** Top edge. */
+  top: number;
+}
+
+/**
+ * Delete a picture, shape, text box or group.
+ *
+ * Family `objects`; trackable: no. Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"delete_object","object":"1:20"}
+ */
+export interface DeleteObjectEdit {
+  op: "delete_object";
+  /** The object id. */
+  object: string;
+}
+
+/**
+ * Set a shape's fill to a colour, or remove it.
+ *
+ * Family `objects`; trackable: no. Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"set_shape_fill","shape":"1:20","color":"#FFF2CC"}
+ */
+export interface SetShapeFillEdit {
+  op: "set_shape_fill";
+  /** `#RRGGBB`, or `none` to remove the fill. */
+  color: string;
+  /** The shape id. */
+  shape: string;
+}
+
+/**
+ * Set a shape's or a picture's outline colour and/or weight, or remove it.
+ *
+ * Family `objects`; trackable: no. Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"set_shape_outline","shape":"1:20","color":"#1F3864","width_pt":1.5}
+ */
+export interface SetShapeOutlineEdit {
+  op: "set_shape_outline";
+  /** `#RRGGBB`, or `none` to remove the outline. */
+  color?: string | null;
+  /** The shape or picture id. */
+  shape: string;
+  /** Weight in points. */
+  width_pt?: number | null;
+}
+
+/**
+ * Insert a footnote with its text; the reference mark goes at the anchor.
+ *
+ * Family `notes`; trackable: no. Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"insert_footnote","at":{"node":"1:2","exact":"days","side":"after"},"text":"Calendar days, not business days."}
+ */
+export interface InsertFootnoteEdit {
+  op: "insert_footnote";
+  /** Where the reference mark goes. */
+  at: {
+    /** The quoted text, matched inside `node` only. */
+    exact?: string | null;
+    /** A paragraph id returned by `get_outline`, `read_blocks` or `search`. */
+    node: string;
+    /** 1-based occurrence of `exact` among the matches that remain. */
+    occurrence?: number | null;
+    /** Offsets for programs only; never computed by a model. */
+    pos?: {
+      /** End, exclusive. */
+      end: number;
+      /** Start, UTF-8 bytes into the node's text. */
+      start: number;
+    } | null;
+    /** Text immediately before `exact`, to disambiguate. */
+    prefix?: string | null;
+    /** For an insertion point: before or after the target. */
+    side?: "before" | "after" | null;
+    /** Text immediately after `exact`, to disambiguate. */
+    suffix?: string | null;
+  };
+  /** The note's text. */
+  text: string;
+}
+
+/**
+ * Insert an endnote with its text; the reference mark goes at the anchor.
+ *
+ * Family `notes`; trackable: no. Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"insert_endnote","at":{"node":"1:2","exact":"days","side":"after"},"text":"See the schedule of notice periods."}
+ */
+export interface InsertEndnoteEdit {
+  op: "insert_endnote";
+  /** Where the reference mark goes. */
+  at: {
+    /** The quoted text, matched inside `node` only. */
+    exact?: string | null;
+    /** A paragraph id returned by `get_outline`, `read_blocks` or `search`. */
+    node: string;
+    /** 1-based occurrence of `exact` among the matches that remain. */
+    occurrence?: number | null;
+    /** Offsets for programs only; never computed by a model. */
+    pos?: {
+      /** End, exclusive. */
+      end: number;
+      /** Start, UTF-8 bytes into the node's text. */
+      start: number;
+    } | null;
+    /** Text immediately before `exact`, to disambiguate. */
+    prefix?: string | null;
+    /** For an insertion point: before or after the target. */
+    side?: "before" | "after" | null;
+    /** Text immediately after `exact`, to disambiguate. */
+    suffix?: string | null;
+  };
+  /** The note's text. */
+  text: string;
+}
+
+/**
+ * Insert a line, page or column break, or a blank page, at an anchor.
+ *
+ * Family `sections`; trackable: no. Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"insert_break","at":{"node":"1:2","side":"after"},"kind":"page"}
+ */
+export interface InsertBreakEdit {
+  op: "insert_break";
+  /** Where. */
+  at: {
+    /** The quoted text, matched inside `node` only. */
+    exact?: string | null;
+    /** A paragraph id returned by `get_outline`, `read_blocks` or `search`. */
+    node: string;
+    /** 1-based occurrence of `exact` among the matches that remain. */
+    occurrence?: number | null;
+    /** Offsets for programs only; never computed by a model. */
+    pos?: {
+      /** End, exclusive. */
+      end: number;
+      /** Start, UTF-8 bytes into the node's text. */
+      start: number;
+    } | null;
+    /** Text immediately before `exact`, to disambiguate. */
+    prefix?: string | null;
+    /** For an insertion point: before or after the target. */
+    side?: "before" | "after" | null;
+    /** Text immediately after `exact`, to disambiguate. */
+    suffix?: string | null;
+  };
+  /** Which break. */
+  kind: "line" | "page" | "column" | "blank_page";
+}
+
+/**
+ * Start a new section at an anchor; it inherits the page setup, headers and footers.
+ *
+ * Family `sections`; trackable: no. Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"insert_section_break","at":{"node":"1:2","side":"after"},"start":"next_page"}
+ */
+export interface InsertSectionBreakEdit {
+  op: "insert_section_break";
+  /** Where; a top-level body paragraph. */
+  at: {
+    /** The quoted text, matched inside `node` only. */
+    exact?: string | null;
+    /** A paragraph id returned by `get_outline`, `read_blocks` or `search`. */
+    node: string;
+    /** 1-based occurrence of `exact` among the matches that remain. */
+    occurrence?: number | null;
+    /** Offsets for programs only; never computed by a model. */
+    pos?: {
+      /** End, exclusive. */
+      end: number;
+      /** Start, UTF-8 bytes into the node's text. */
+      start: number;
+    } | null;
+    /** Text immediately before `exact`, to disambiguate. */
+    prefix?: string | null;
+    /** For an insertion point: before or after the target. */
+    side?: "before" | "after" | null;
+    /** Text immediately after `exact`, to disambiguate. */
+    suffix?: string | null;
+  };
+  /** Where the new section starts. */
+  start: "next_page" | "continuous" | "even_page" | "odd_page";
+}
+
+/**
+ * Change a section's (or every section's) page size, orientation, margins or columns, in twips.
+ *
+ * Family `sections`; trackable: no. Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"set_page_setup","section":0,"orientation":"landscape","margins":{"left":1080,"right":1080}}
+ */
+export interface SetPageSetupEdit {
+  op: "set_page_setup";
+  /** Space between columns, twips. */
+  column_spacing?: number | null;
+  /** Number of text columns, 1 to 45. */
+  columns?: number | null;
+  /** Page height, twips (Letter is 15840, A4 16838). */
+  height?: number | null;
+  /** Margins, twips. */
+  margins?: {
+    /** Bottom margin, twips. */
+    bottom?: number | null;
+    /** Left (start) margin, twips. */
+    left?: number | null;
+    /** Right (end) margin, twips. */
+    right?: number | null;
+    /** Top margin, twips. */
+    top?: number | null;
+  } | null;
+  /** Orientation; a change swaps width and height unless both are given. */
+  orientation?: "portrait" | "landscape" | null;
+  /**
+   * The 0-based section (`get_outline` lists them); omitted, every
+   * section.
+   */
+  section?: number | null;
+  /** Page width, twips (Letter is 12240, A4 11906). */
+  width?: number | null;
+}
+
+/**
+ * Number a section's lines in the margin every N lines, or turn it off with 0.
+ *
+ * Family `sections`; trackable: no. Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"set_line_numbering","section":0,"count_by":1,"restart":"each_page"}
+ */
+export interface SetLineNumberingEdit {
+  op: "set_line_numbering";
+  /** Number every Nth line; 0 turns numbering off. */
+  count_by: number;
+  /** When numbering restarts (default each page). */
+  restart?: "each_page" | "each_section" | "continuous" | null;
+  /** The 0-based section; omitted, every section. */
+  section?: number | null;
+  /** The first number (default 1). */
+  start?: number | null;
+}
+
+/**
+ * Set a section's page-number format, and restart it at a number or continue.
+ *
+ * Family `sections`; trackable: no. Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"set_page_numbering","section":0,"format":"lower_roman","start":1}
+ */
+export interface SetPageNumberingEdit {
+  op: "set_page_numbering";
+  /** The format; omitted, decimal. */
+  format?: "decimal" | "lower_roman" | "upper_roman" | "lower_letter" | "upper_letter" | null;
+  /** The 0-based section; omitted, every section. */
+  section?: number | null;
+  /**
+   * Restart at this number; omitted, continue from the previous
+   * section.
+   */
+  start?: number | null;
+}
+
+/**
+ * Stamp a text watermark on every page, or remove it.
+ *
+ * Family `sections`; trackable: no. Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"set_watermark","text":"DRAFT"}
+ */
+export interface SetWatermarkEdit {
+  op: "set_watermark";
+  /** `#RRGGBB` (default light grey). */
+  color?: string | null;
+  /** The font family (default the document's). */
+  font?: string | null;
+  /** The angle (default diagonal). */
+  layout?: "diagonal" | "horizontal" | null;
+  /** The words; omitted or empty removes the watermark. */
+  text?: string | null;
+}
+
+/**
+ * Add an empty header to a section; read_blocks on its surface gives the paragraph to write into.
+ *
+ * Family `headers_footers`; trackable: no. Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"insert_header","section":0}
+ */
+export interface InsertHeaderEdit {
+  op: "insert_header";
+  /** Which pages it is for (default every page). */
+  pages?: "default" | "first" | "even";
+  /** The 0-based section (default 0). */
+  section?: number;
+}
+
+/**
+ * Add an empty footer to a section; read_blocks on its surface gives the paragraph to write into.
+ *
+ * Family `headers_footers`; trackable: no. Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"insert_footer","section":0}
+ */
+export interface InsertFooterEdit {
+  op: "insert_footer";
+  /** Which pages it is for (default every page). */
+  pages?: "default" | "first" | "even";
+  /** The 0-based section (default 0). */
+  section?: number;
+}
+
+/**
+ * Give a section's first page its own header and footer, or not.
+ *
+ * Family `headers_footers`; trackable: no. Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"set_different_first_page","section":0,"enabled":true}
+ */
+export interface SetDifferentFirstPageEdit {
+  op: "set_different_first_page";
+  /** On or off. */
+  enabled: boolean;
+  /** The 0-based section. */
+  section: number;
+}
+
+/**
+ * Give even and odd pages their own headers and footers, or not (document-wide).
+ *
+ * Family `headers_footers`; trackable: no. Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"set_different_odd_even","enabled":true}
+ */
+export interface SetDifferentOddEvenEdit {
+  op: "set_different_odd_even";
+  /** On or off. */
+  enabled: boolean;
+}
+
+/**
+ * Insert a chart (column, bar, line, area, scatter, pie or doughnut, plain, stacked or percent) with sample data at an anchor.
+ *
+ * Family `charts`; trackable: no. Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"insert_chart","at":{"node":"1:2","side":"after"},"kind":"column"}
+ */
+export interface InsertChartEdit {
+  op: "insert_chart";
+  /** Where. */
+  at: {
+    /** The quoted text, matched inside `node` only. */
+    exact?: string | null;
+    /** A paragraph id returned by `get_outline`, `read_blocks` or `search`. */
+    node: string;
+    /** 1-based occurrence of `exact` among the matches that remain. */
+    occurrence?: number | null;
+    /** Offsets for programs only; never computed by a model. */
+    pos?: {
+      /** End, exclusive. */
+      end: number;
+      /** Start, UTF-8 bytes into the node's text. */
+      start: number;
+    } | null;
+    /** Text immediately before `exact`, to disambiguate. */
+    prefix?: string | null;
+    /** For an insertion point: before or after the target. */
+    side?: "before" | "after" | null;
+    /** Text immediately after `exact`, to disambiguate. */
+    suffix?: string | null;
+  };
+  /** The chart family. */
+  kind: "column" | "column-stacked" | "column-percent" | "bar" | "bar-stacked" | "bar-percent" | "line" | "line-markers" | "line-stacked" | "line-percent" | "area" | "area-stacked" | "area-percent" | "scatter" | "scatter-smooth" | "pie" | "doughnut";
+}
+
+/**
  * Comment on the quoted text, or reply to a comment.
  *
  * Family `review`; trackable: not-applicable.
@@ -900,6 +1570,33 @@ export type EditOp =
   | "change_list_level"
   | "restart_numbering"
   | "continue_numbering"
+  | "set_hyperlink"
+  | "remove_hyperlink"
+  | "create_bookmark"
+  | "rename_bookmark"
+  | "delete_bookmark"
+  | "insert_field"
+  | "insert_image"
+  | "set_alt_text"
+  | "resize_object"
+  | "set_wrap"
+  | "crop_image"
+  | "delete_object"
+  | "set_shape_fill"
+  | "set_shape_outline"
+  | "insert_footnote"
+  | "insert_endnote"
+  | "insert_break"
+  | "insert_section_break"
+  | "set_page_setup"
+  | "set_line_numbering"
+  | "set_page_numbering"
+  | "set_watermark"
+  | "insert_header"
+  | "insert_footer"
+  | "set_different_first_page"
+  | "set_different_odd_even"
+  | "insert_chart"
   | "comment"
   | "resolve_comment"
   | "review";
@@ -932,12 +1629,39 @@ export type Edit =
   | ChangeListLevelEdit
   | RestartNumberingEdit
   | ContinueNumberingEdit
+  | SetHyperlinkEdit
+  | RemoveHyperlinkEdit
+  | CreateBookmarkEdit
+  | RenameBookmarkEdit
+  | DeleteBookmarkEdit
+  | InsertFieldEdit
+  | InsertImageEdit
+  | SetAltTextEdit
+  | ResizeObjectEdit
+  | SetWrapEdit
+  | CropImageEdit
+  | DeleteObjectEdit
+  | SetShapeFillEdit
+  | SetShapeOutlineEdit
+  | InsertFootnoteEdit
+  | InsertEndnoteEdit
+  | InsertBreakEdit
+  | InsertSectionBreakEdit
+  | SetPageSetupEdit
+  | SetLineNumberingEdit
+  | SetPageNumberingEdit
+  | SetWatermarkEdit
+  | InsertHeaderEdit
+  | InsertFooterEdit
+  | SetDifferentFirstPageEdit
+  | SetDifferentOddEvenEdit
+  | InsertChartEdit
   | CommentEdit
   | ResolveCommentEdit
   | ReviewEdit;
 
 /** The toolset families (docs/181 §5.2). */
-export type EditFamily = "text" | "paragraph" | "styles" | "tables" | "lists" | "review";
+export type EditFamily = "text" | "paragraph" | "styles" | "tables" | "lists" | "links" | "fields" | "objects" | "notes" | "sections" | "headers_footers" | "charts" | "review";
 
 /** The edits of each family. */
 export interface EditsByFamily {
@@ -946,5 +1670,12 @@ export interface EditsByFamily {
   styles: ApplyParagraphStyleEdit;
   tables: SetCellTextEdit | TableInsertRowEdit | TableDeleteRowEdit | InsertTableEdit | TableInsertColumnEdit | TableDeleteColumnEdit | TableMergeCellsEdit | TableSplitCellEdit | TableDeleteEdit | TableSetCellFormatEdit;
   lists: SetListEdit | ChangeListLevelEdit | RestartNumberingEdit | ContinueNumberingEdit;
+  links: SetHyperlinkEdit | RemoveHyperlinkEdit | CreateBookmarkEdit | RenameBookmarkEdit | DeleteBookmarkEdit;
+  fields: InsertFieldEdit;
+  objects: InsertImageEdit | SetAltTextEdit | ResizeObjectEdit | SetWrapEdit | CropImageEdit | DeleteObjectEdit | SetShapeFillEdit | SetShapeOutlineEdit;
+  notes: InsertFootnoteEdit | InsertEndnoteEdit;
+  sections: InsertBreakEdit | InsertSectionBreakEdit | SetPageSetupEdit | SetLineNumberingEdit | SetPageNumberingEdit | SetWatermarkEdit;
+  headers_footers: InsertHeaderEdit | InsertFooterEdit | SetDifferentFirstPageEdit | SetDifferentOddEvenEdit;
+  charts: InsertChartEdit;
   review: CommentEdit | ResolveCommentEdit | ReviewEdit;
 }

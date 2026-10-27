@@ -171,7 +171,7 @@ fn every_registered_command_is_an_edit_the_plan_accepts_and_nothing_else_is() {
     }
     let unknown: EditPlan = serde_json::from_value(json!({
         "base_revision": session.revision(),
-        "edits": [{ "op": "insert_chart" }],
+        "edits": [{ "op": "insert_signature" }],
     }))
     .expect("a well-formed plan");
     let refused = plan::apply(&mut session, &unknown).expect_err("not registered");

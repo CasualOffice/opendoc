@@ -1,0 +1,607 @@
+{
+  "description": "One edit of the `sections` family of the OpenDoc edit vocabulary 1.2.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "description": "Insert a line, page or column break, or a blank page, at an anchor.",
+      "properties": {
+        "at": {
+          "additionalProperties": false,
+          "description": "Where.",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        },
+        "kind": {
+          "description": "Which break.",
+          "oneOf": [
+            {
+              "const": "line",
+              "description": "A line break inside the paragraph (Shift+Enter).",
+              "type": "string"
+            },
+            {
+              "const": "page",
+              "description": "A page break; body paragraphs only.",
+              "type": "string"
+            },
+            {
+              "const": "column",
+              "description": "A column break; body paragraphs only.",
+              "type": "string"
+            },
+            {
+              "const": "blank_page",
+              "description": "Two page breaks, leaving one empty page; body paragraphs only.",
+              "type": "string"
+            }
+          ]
+        },
+        "op": {
+          "const": "insert_break",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "at",
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Start a new section at an anchor; it inherits the current section's\npage setup, headers and footers.",
+      "properties": {
+        "at": {
+          "additionalProperties": false,
+          "description": "Where; a top-level body paragraph.",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        },
+        "op": {
+          "const": "insert_section_break",
+          "type": "string"
+        },
+        "start": {
+          "description": "Where the new section starts.",
+          "oneOf": [
+            {
+              "const": "next_page",
+              "description": "On the next page.",
+              "type": "string"
+            },
+            {
+              "const": "continuous",
+              "description": "On the same page.",
+              "type": "string"
+            },
+            {
+              "const": "even_page",
+              "description": "On the next even page.",
+              "type": "string"
+            },
+            {
+              "const": "odd_page",
+              "description": "On the next odd page.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "at",
+        "start"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Change a section's page size, orientation, margins or columns.",
+      "properties": {
+        "column_spacing": {
+          "description": "Space between columns, twips.",
+          "format": "int32",
+          "maximum": 31680,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "columns": {
+          "description": "Number of text columns, 1 to 45.",
+          "format": "uint16",
+          "maximum": 45,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "height": {
+          "description": "Page height, twips (Letter is 15840, A4 16838).",
+          "format": "int32",
+          "maximum": 31680,
+          "minimum": 1440,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "margins": {
+          "additionalProperties": false,
+          "description": "Margins, twips.",
+          "properties": {
+            "bottom": {
+              "description": "Bottom margin, twips.",
+              "format": "int32",
+              "maximum": 31680,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "left": {
+              "description": "Left (start) margin, twips.",
+              "format": "int32",
+              "maximum": 31680,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "right": {
+              "description": "Right (end) margin, twips.",
+              "format": "int32",
+              "maximum": 31680,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "top": {
+              "description": "Top margin, twips.",
+              "format": "int32",
+              "maximum": 31680,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "set_page_setup",
+          "type": "string"
+        },
+        "orientation": {
+          "anyOf": [
+            {
+              "description": "Page orientation.",
+              "oneOf": [
+                {
+                  "const": "portrait",
+                  "description": "Taller than wide.",
+                  "type": "string"
+                },
+                {
+                  "const": "landscape",
+                  "description": "Wider than tall.",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Orientation; a change swaps width and height unless both are given."
+        },
+        "section": {
+          "description": "The 0-based section (`get_outline` lists them); omitted, every\nsection.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "width": {
+          "description": "Page width, twips (Letter is 12240, A4 11906).",
+          "format": "int32",
+          "maximum": 31680,
+          "minimum": 1440,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Number the lines of a section in the margin, or stop.",
+      "properties": {
+        "count_by": {
+          "description": "Number every Nth line; 0 turns numbering off.",
+          "format": "int32",
+          "maximum": 100,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "set_line_numbering",
+          "type": "string"
+        },
+        "restart": {
+          "anyOf": [
+            {
+              "description": "When margin line numbers start again.",
+              "oneOf": [
+                {
+                  "const": "each_page",
+                  "description": "On every page.",
+                  "type": "string"
+                },
+                {
+                  "const": "each_section",
+                  "description": "At every section.",
+                  "type": "string"
+                },
+                {
+                  "const": "continuous",
+                  "description": "Never.",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When numbering restarts (default each page)."
+        },
+        "section": {
+          "description": "The 0-based section; omitted, every section.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "start": {
+          "description": "The first number (default 1).",
+          "format": "int32",
+          "maximum": 32767,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "count_by"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Set how a section's pages are numbered.",
+      "properties": {
+        "format": {
+          "anyOf": [
+            {
+              "description": "A page-number format.",
+              "oneOf": [
+                {
+                  "const": "decimal",
+                  "description": "1, 2, 3.",
+                  "type": "string"
+                },
+                {
+                  "const": "lower_roman",
+                  "description": "i, ii, iii.",
+                  "type": "string"
+                },
+                {
+                  "const": "upper_roman",
+                  "description": "I, II, III.",
+                  "type": "string"
+                },
+                {
+                  "const": "lower_letter",
+                  "description": "a, b, c.",
+                  "type": "string"
+                },
+                {
+                  "const": "upper_letter",
+                  "description": "A, B, C.",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The format; omitted, decimal."
+        },
+        "op": {
+          "const": "set_page_numbering",
+          "type": "string"
+        },
+        "section": {
+          "description": "The 0-based section; omitted, every section.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "start": {
+          "description": "Restart at this number; omitted, continue from the previous\nsection.",
+          "format": "int32",
+          "maximum": 32767,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Stamp a text watermark on every page, or remove it.",
+      "properties": {
+        "color": {
+          "description": "`#RRGGBB` (default light grey).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "font": {
+          "description": "The font family (default the document's).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "layout": {
+          "anyOf": [
+            {
+              "description": "The angle of a watermark.",
+              "oneOf": [
+                {
+                  "const": "diagonal",
+                  "description": "Rising across the page (Word's default).",
+                  "type": "string"
+                },
+                {
+                  "const": "horizontal",
+                  "description": "Level with the text.",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The angle (default diagonal)."
+        },
+        "op": {
+          "const": "set_watermark",
+          "type": "string"
+        },
+        "text": {
+          "description": "The words; omitted or empty removes the watermark.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    }
+  ]
+}

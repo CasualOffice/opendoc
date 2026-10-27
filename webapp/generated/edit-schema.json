@@ -2473,6 +2473,2080 @@
     },
     {
       "additionalProperties": false,
+      "description": "Link the quoted text to a URL or a bookmark.",
+      "properties": {
+        "op": {
+          "const": "set_hyperlink",
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": false,
+          "description": "The text to link (a non-empty quote).",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        },
+        "tooltip": {
+          "description": "A tooltip shown on hover.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "description": "An `http`, `https`, `mailto`, `ftp` or `tel` URL, or `#` and a\nbookmark name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "target",
+        "url"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Remove the hyperlink whose text is exactly the quote; the text stays.",
+      "properties": {
+        "op": {
+          "const": "remove_hyperlink",
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": false,
+          "description": "The linked text, exactly.",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "op",
+        "target"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Bookmark the quoted text (or, with no quote, a point in the paragraph).",
+      "properties": {
+        "name": {
+          "description": "Its name: a letter first, then letters, digits or `_`, at most 40\ncharacters, as Word requires.",
+          "type": "string"
+        },
+        "op": {
+          "const": "create_bookmark",
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": false,
+          "description": "What the bookmark spans.",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "op",
+        "target",
+        "name"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Rename a bookmark.",
+      "properties": {
+        "name": {
+          "description": "Its current name.",
+          "type": "string"
+        },
+        "new_name": {
+          "description": "Its new name.",
+          "type": "string"
+        },
+        "op": {
+          "const": "rename_bookmark",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "name",
+        "new_name"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Delete a bookmark; the text it spans stays.",
+      "properties": {
+        "name": {
+          "description": "Its name.",
+          "type": "string"
+        },
+        "op": {
+          "const": "delete_bookmark",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "name"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Insert a field at an anchor.",
+      "properties": {
+        "at": {
+          "additionalProperties": false,
+          "description": "Where.",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        },
+        "kind": {
+          "description": "Which field.",
+          "oneOf": [
+            {
+              "const": "page",
+              "description": "The current page number (`PAGE`), recomputed at pagination.",
+              "type": "string"
+            },
+            {
+              "const": "numpages",
+              "description": "The page count (`NUMPAGES`), recomputed at pagination.",
+              "type": "string"
+            },
+            {
+              "const": "date",
+              "description": "The date (`DATE`); `result` is the date as it should read.",
+              "type": "string"
+            },
+            {
+              "const": "time",
+              "description": "The time (`TIME`); `result` is the time as it should read.",
+              "type": "string"
+            },
+            {
+              "const": "filename",
+              "description": "The file name (`FILENAME`); `result` is the name as it should read.",
+              "type": "string"
+            },
+            {
+              "const": "author",
+              "description": "The author (`AUTHOR`); `result` is the name as it should read.",
+              "type": "string"
+            }
+          ]
+        },
+        "op": {
+          "const": "insert_field",
+          "type": "string"
+        },
+        "result": {
+          "description": "The displayed value of a date, time, file-name or author field\n(the engine reads no clock or file system); ignored for page\nnumbers, which are computed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "at",
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Insert a picture at an anchor.",
+      "properties": {
+        "alt_text": {
+          "description": "Alt text for readers who cannot see it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "at": {
+          "additionalProperties": false,
+          "description": "Where.",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        },
+        "content_type": {
+          "description": "Its MIME type: image/png, image/jpeg, image/gif, image/bmp,\nimage/tiff or image/webp; the bytes must be that format.",
+          "type": "string"
+        },
+        "data": {
+          "description": "The image bytes, standard base64, at most 8 MiB decoded.",
+          "type": "string"
+        },
+        "height_pt": {
+          "description": "Height in points; omitted, it keeps the picture's proportions.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "insert_image",
+          "type": "string"
+        },
+        "width_pt": {
+          "description": "Width in points; with `height` omitted too, the picture's own\nsize at 96 DPI (PNG, GIF, JPEG and BMP state it).",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "at",
+        "data",
+        "content_type"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Set or clear an object's alt text.",
+      "properties": {
+        "object": {
+          "description": "The object id `read_blocks` lists.",
+          "type": "string"
+        },
+        "op": {
+          "const": "set_alt_text",
+          "type": "string"
+        },
+        "text": {
+          "description": "The alt text; omitted or empty clears it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "object"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Resize a picture, shape or text box.",
+      "properties": {
+        "height_pt": {
+          "description": "Height in points.",
+          "format": "double",
+          "type": "number"
+        },
+        "object": {
+          "description": "The object id.",
+          "type": "string"
+        },
+        "op": {
+          "const": "resize_object",
+          "type": "string"
+        },
+        "width_pt": {
+          "description": "Width in points.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "op",
+        "object",
+        "width_pt",
+        "height_pt"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Set how text wraps around a floating object.",
+      "properties": {
+        "object": {
+          "description": "The object id.",
+          "type": "string"
+        },
+        "op": {
+          "const": "set_wrap",
+          "type": "string"
+        },
+        "wrap": {
+          "description": "The wrap.",
+          "oneOf": [
+            {
+              "const": "square",
+              "description": "Around its bounding box.",
+              "type": "string"
+            },
+            {
+              "const": "tight",
+              "description": "Around its outline.",
+              "type": "string"
+            },
+            {
+              "const": "through",
+              "description": "Through its outline's gaps.",
+              "type": "string"
+            },
+            {
+              "const": "top_and_bottom",
+              "description": "Above and below only.",
+              "type": "string"
+            },
+            {
+              "const": "behind",
+              "description": "No wrap, behind the text.",
+              "type": "string"
+            },
+            {
+              "const": "front",
+              "description": "No wrap, over the text.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "object",
+        "wrap"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Crop a picture: the fraction (0 to 1) of each edge to hide; all zero\nremoves the crop.",
+      "properties": {
+        "bottom": {
+          "description": "Bottom edge.",
+          "format": "double",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "left": {
+          "description": "Left edge.",
+          "format": "double",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "object": {
+          "description": "The picture id.",
+          "type": "string"
+        },
+        "op": {
+          "const": "crop_image",
+          "type": "string"
+        },
+        "right": {
+          "description": "Right edge.",
+          "format": "double",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "top": {
+          "description": "Top edge.",
+          "format": "double",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "op",
+        "object",
+        "left",
+        "top",
+        "right",
+        "bottom"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Delete a picture, shape, text box or group.",
+      "properties": {
+        "object": {
+          "description": "The object id.",
+          "type": "string"
+        },
+        "op": {
+          "const": "delete_object",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "object"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Set a shape's fill.",
+      "properties": {
+        "color": {
+          "description": "`#RRGGBB`, or `none` to remove the fill.",
+          "type": "string"
+        },
+        "op": {
+          "const": "set_shape_fill",
+          "type": "string"
+        },
+        "shape": {
+          "description": "The shape id.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "shape",
+        "color"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Set a shape's or a picture's outline colour and/or weight.",
+      "properties": {
+        "color": {
+          "description": "`#RRGGBB`, or `none` to remove the outline.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "set_shape_outline",
+          "type": "string"
+        },
+        "shape": {
+          "description": "The shape or picture id.",
+          "type": "string"
+        },
+        "width_pt": {
+          "description": "Weight in points.",
+          "format": "double",
+          "maximum": 1584,
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "shape"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Insert a footnote at an anchor, with its text.",
+      "properties": {
+        "at": {
+          "additionalProperties": false,
+          "description": "Where the reference mark goes.",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        },
+        "op": {
+          "const": "insert_footnote",
+          "type": "string"
+        },
+        "text": {
+          "description": "The note's text.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "at",
+        "text"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Insert an endnote at an anchor, with its text.",
+      "properties": {
+        "at": {
+          "additionalProperties": false,
+          "description": "Where the reference mark goes.",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        },
+        "op": {
+          "const": "insert_endnote",
+          "type": "string"
+        },
+        "text": {
+          "description": "The note's text.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "at",
+        "text"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Insert a line, page or column break, or a blank page, at an anchor.",
+      "properties": {
+        "at": {
+          "additionalProperties": false,
+          "description": "Where.",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        },
+        "kind": {
+          "description": "Which break.",
+          "oneOf": [
+            {
+              "const": "line",
+              "description": "A line break inside the paragraph (Shift+Enter).",
+              "type": "string"
+            },
+            {
+              "const": "page",
+              "description": "A page break; body paragraphs only.",
+              "type": "string"
+            },
+            {
+              "const": "column",
+              "description": "A column break; body paragraphs only.",
+              "type": "string"
+            },
+            {
+              "const": "blank_page",
+              "description": "Two page breaks, leaving one empty page; body paragraphs only.",
+              "type": "string"
+            }
+          ]
+        },
+        "op": {
+          "const": "insert_break",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "at",
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Start a new section at an anchor; it inherits the current section's\npage setup, headers and footers.",
+      "properties": {
+        "at": {
+          "additionalProperties": false,
+          "description": "Where; a top-level body paragraph.",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        },
+        "op": {
+          "const": "insert_section_break",
+          "type": "string"
+        },
+        "start": {
+          "description": "Where the new section starts.",
+          "oneOf": [
+            {
+              "const": "next_page",
+              "description": "On the next page.",
+              "type": "string"
+            },
+            {
+              "const": "continuous",
+              "description": "On the same page.",
+              "type": "string"
+            },
+            {
+              "const": "even_page",
+              "description": "On the next even page.",
+              "type": "string"
+            },
+            {
+              "const": "odd_page",
+              "description": "On the next odd page.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "at",
+        "start"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Change a section's page size, orientation, margins or columns.",
+      "properties": {
+        "column_spacing": {
+          "description": "Space between columns, twips.",
+          "format": "int32",
+          "maximum": 31680,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "columns": {
+          "description": "Number of text columns, 1 to 45.",
+          "format": "uint16",
+          "maximum": 45,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "height": {
+          "description": "Page height, twips (Letter is 15840, A4 16838).",
+          "format": "int32",
+          "maximum": 31680,
+          "minimum": 1440,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "margins": {
+          "additionalProperties": false,
+          "description": "Margins, twips.",
+          "properties": {
+            "bottom": {
+              "description": "Bottom margin, twips.",
+              "format": "int32",
+              "maximum": 31680,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "left": {
+              "description": "Left (start) margin, twips.",
+              "format": "int32",
+              "maximum": 31680,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "right": {
+              "description": "Right (end) margin, twips.",
+              "format": "int32",
+              "maximum": 31680,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "top": {
+              "description": "Top margin, twips.",
+              "format": "int32",
+              "maximum": 31680,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "set_page_setup",
+          "type": "string"
+        },
+        "orientation": {
+          "anyOf": [
+            {
+              "description": "Page orientation.",
+              "oneOf": [
+                {
+                  "const": "portrait",
+                  "description": "Taller than wide.",
+                  "type": "string"
+                },
+                {
+                  "const": "landscape",
+                  "description": "Wider than tall.",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Orientation; a change swaps width and height unless both are given."
+        },
+        "section": {
+          "description": "The 0-based section (`get_outline` lists them); omitted, every\nsection.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "width": {
+          "description": "Page width, twips (Letter is 12240, A4 11906).",
+          "format": "int32",
+          "maximum": 31680,
+          "minimum": 1440,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Number the lines of a section in the margin, or stop.",
+      "properties": {
+        "count_by": {
+          "description": "Number every Nth line; 0 turns numbering off.",
+          "format": "int32",
+          "maximum": 100,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "set_line_numbering",
+          "type": "string"
+        },
+        "restart": {
+          "anyOf": [
+            {
+              "description": "When margin line numbers start again.",
+              "oneOf": [
+                {
+                  "const": "each_page",
+                  "description": "On every page.",
+                  "type": "string"
+                },
+                {
+                  "const": "each_section",
+                  "description": "At every section.",
+                  "type": "string"
+                },
+                {
+                  "const": "continuous",
+                  "description": "Never.",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When numbering restarts (default each page)."
+        },
+        "section": {
+          "description": "The 0-based section; omitted, every section.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "start": {
+          "description": "The first number (default 1).",
+          "format": "int32",
+          "maximum": 32767,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "count_by"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Set how a section's pages are numbered.",
+      "properties": {
+        "format": {
+          "anyOf": [
+            {
+              "description": "A page-number format.",
+              "oneOf": [
+                {
+                  "const": "decimal",
+                  "description": "1, 2, 3.",
+                  "type": "string"
+                },
+                {
+                  "const": "lower_roman",
+                  "description": "i, ii, iii.",
+                  "type": "string"
+                },
+                {
+                  "const": "upper_roman",
+                  "description": "I, II, III.",
+                  "type": "string"
+                },
+                {
+                  "const": "lower_letter",
+                  "description": "a, b, c.",
+                  "type": "string"
+                },
+                {
+                  "const": "upper_letter",
+                  "description": "A, B, C.",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The format; omitted, decimal."
+        },
+        "op": {
+          "const": "set_page_numbering",
+          "type": "string"
+        },
+        "section": {
+          "description": "The 0-based section; omitted, every section.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "start": {
+          "description": "Restart at this number; omitted, continue from the previous\nsection.",
+          "format": "int32",
+          "maximum": 32767,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Stamp a text watermark on every page, or remove it.",
+      "properties": {
+        "color": {
+          "description": "`#RRGGBB` (default light grey).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "font": {
+          "description": "The font family (default the document's).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "layout": {
+          "anyOf": [
+            {
+              "description": "The angle of a watermark.",
+              "oneOf": [
+                {
+                  "const": "diagonal",
+                  "description": "Rising across the page (Word's default).",
+                  "type": "string"
+                },
+                {
+                  "const": "horizontal",
+                  "description": "Level with the text.",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The angle (default diagonal)."
+        },
+        "op": {
+          "const": "set_watermark",
+          "type": "string"
+        },
+        "text": {
+          "description": "The words; omitted or empty removes the watermark.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Add an empty header to a section, ready for insert_text.",
+      "properties": {
+        "op": {
+          "const": "insert_header",
+          "type": "string"
+        },
+        "pages": {
+          "default": "default",
+          "description": "Which pages it is for (default every page).",
+          "oneOf": [
+            {
+              "const": "default",
+              "description": "Every page that has no first-page or even-page variant (the default).",
+              "type": "string"
+            },
+            {
+              "const": "first",
+              "description": "The section's first page (needs a different first page).",
+              "type": "string"
+            },
+            {
+              "const": "even",
+              "description": "Even pages (needs different odd and even pages).",
+              "type": "string"
+            }
+          ]
+        },
+        "section": {
+          "default": 0,
+          "description": "The 0-based section (default 0).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Add an empty footer to a section, ready for insert_text.",
+      "properties": {
+        "op": {
+          "const": "insert_footer",
+          "type": "string"
+        },
+        "pages": {
+          "default": "default",
+          "description": "Which pages it is for (default every page).",
+          "oneOf": [
+            {
+              "const": "default",
+              "description": "Every page that has no first-page or even-page variant (the default).",
+              "type": "string"
+            },
+            {
+              "const": "first",
+              "description": "The section's first page (needs a different first page).",
+              "type": "string"
+            },
+            {
+              "const": "even",
+              "description": "Even pages (needs different odd and even pages).",
+              "type": "string"
+            }
+          ]
+        },
+        "section": {
+          "default": 0,
+          "description": "The 0-based section (default 0).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Give a section's first page its own header and footer, or not.",
+      "properties": {
+        "enabled": {
+          "description": "On or off.",
+          "type": "boolean"
+        },
+        "op": {
+          "const": "set_different_first_page",
+          "type": "string"
+        },
+        "section": {
+          "description": "The 0-based section.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op",
+        "section",
+        "enabled"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Give even and odd pages their own headers and footers, or not\n(document-wide).",
+      "properties": {
+        "enabled": {
+          "description": "On or off.",
+          "type": "boolean"
+        },
+        "op": {
+          "const": "set_different_odd_even",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "enabled"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Insert a chart with sample data at an anchor.",
+      "properties": {
+        "at": {
+          "additionalProperties": false,
+          "description": "Where.",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        },
+        "kind": {
+          "description": "The chart family.",
+          "oneOf": [
+            {
+              "const": "column",
+              "description": "Vertical bars side by side.",
+              "type": "string"
+            },
+            {
+              "const": "column-stacked",
+              "description": "Vertical bars stacked.",
+              "type": "string"
+            },
+            {
+              "const": "column-percent",
+              "description": "Vertical bars stacked to 100%.",
+              "type": "string"
+            },
+            {
+              "const": "bar",
+              "description": "Horizontal bars side by side.",
+              "type": "string"
+            },
+            {
+              "const": "bar-stacked",
+              "description": "Horizontal bars stacked.",
+              "type": "string"
+            },
+            {
+              "const": "bar-percent",
+              "description": "Horizontal bars stacked to 100%.",
+              "type": "string"
+            },
+            {
+              "const": "line",
+              "description": "Lines.",
+              "type": "string"
+            },
+            {
+              "const": "line-markers",
+              "description": "Lines with markers.",
+              "type": "string"
+            },
+            {
+              "const": "line-stacked",
+              "description": "Stacked lines.",
+              "type": "string"
+            },
+            {
+              "const": "line-percent",
+              "description": "Lines stacked to 100%.",
+              "type": "string"
+            },
+            {
+              "const": "area",
+              "description": "Areas.",
+              "type": "string"
+            },
+            {
+              "const": "area-stacked",
+              "description": "Stacked areas.",
+              "type": "string"
+            },
+            {
+              "const": "area-percent",
+              "description": "Areas stacked to 100%.",
+              "type": "string"
+            },
+            {
+              "const": "scatter",
+              "description": "X/Y points.",
+              "type": "string"
+            },
+            {
+              "const": "scatter-smooth",
+              "description": "X/Y points joined by smooth lines.",
+              "type": "string"
+            },
+            {
+              "const": "pie",
+              "description": "A pie.",
+              "type": "string"
+            },
+            {
+              "const": "doughnut",
+              "description": "A doughnut.",
+              "type": "string"
+            }
+          ]
+        },
+        "op": {
+          "const": "insert_chart",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "at",
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
       "description": "Comment on the quoted text, or reply to a comment.",
       "properties": {
         "op": {

@@ -644,3 +644,135 @@ tools without a `surface` argument (the library tests carry the surface cases).
   carrying a `pPrChange` is not considered at all. G5 therefore runs under an `edit` profile
   in suggest mode. The fix belongs in `is_tracked_only` (treat a property change whose
   recorded prior equals the current base as tracked-only) with its own access tests.
+
+### Lane families-b
+
+R1 steps 4 to 7 (§4.2) as far as the editor has a lowering: links, bookmarks and fields;
+pictures and object formatting; notes, breaks, sections, page setup, headers and footers;
+chart insertion. Plus the text-box save defect the surfaces lane found.
+
+**Built.**
+
+- One lowering per gesture in `casual-doc-command`, called by the editor's wasm method and
+  by `casual-doc-ai`; caret, selection and page resolution stay in the wasm method:
+  - `links`: `target` (`#name` is a bookmark, anything else a URL as written),
+    `set_hyperlink`/`link_range`, `remove_hyperlink`, `create_bookmark`, `rename_bookmark`,
+    `delete_bookmark`, `bookmark_named`, and `agent_target` (below). The editor's
+    `setHyperlink`, `removeHyperlink`, the three bookmark methods and rich paste's links call
+    them.
+  - `fields`: `common_field` (the editor's `parse_common_field` table) and `insert_field`.
+  - `notes`: `insert_note` (an agent may give the body's text in the same edit).
+  - `breaks`: `insert_break` (line, page, column; the site refusal for page and column),
+    `insert_blank_page`, `section_break` (site, inheritance, form protection, ids).
+  - `sections`: `set_geometry`, `set_line_numbering`, `set_section_layout`, `text_watermark`,
+    `set_watermark` (every section, as Word writes it), `set_title_page`, `set_even_and_odd`,
+    `create_running_content`, `has_running_content`.
+  - `objects`: `insert_picture` (registration, drawing and Word's aspect lock in one step;
+    returns the part name the caller writes the bytes to), `set_extent`, `wrapped`/`set_wrap`
+    and the float anchor walk (`anchor_of`, which the editor now calls for every object-anchor
+    read), `crop`/`set_crop`, `set_alt_text`, `delete_object`, `set_shape_fill`,
+    `stroke_base`/`set_shape_outline`, `image_part_type`.
+  - `charts`: `insert_chart`, with `chart_group_for_kind`, `default_chart_projection` and
+    the rest of the sample-projection code moved out of `lib.rs` whole; `chart.rs` reads them
+    from here.
+- Twenty-seven registry commands, all `Trackable::No` with a published reason, each with an
+  example that runs for real: `set_hyperlink`, `remove_hyperlink`, `create_bookmark`,
+  `rename_bookmark`, `delete_bookmark`, `insert_field`, `insert_image`, `set_alt_text`,
+  `resize_object`, `set_wrap`, `crop_image`, `delete_object`, `set_shape_fill`,
+  `set_shape_outline`, `insert_footnote`, `insert_endnote`, `insert_break`,
+  `insert_section_break`, `set_page_setup`, `set_line_numbering`, `set_page_numbering`,
+  `set_watermark`, `insert_header`, `insert_footer`, `set_different_first_page`,
+  `set_different_odd_even`, `insert_chart`. Seven new families: `links`, `fields`,
+  `objects`, `notes`, `sections`, `headers_footers`, `charts`. Vocabulary **1.2**, 56
+  commands.
+- Coverage: 28 operations moved to reached; **`NOT_EXPOSED_CEILING` 49 → 21**. G3:
+  27 contract ids now have a twin; **`UI_NOT_EXPOSED_CEILING` 119 → 91**. The objects
+  commands also name the `object.` family's members (`object.altText`, `object.crop`,
+  `object.delete`, `object.fill`, `object.outline`, `object.wrap`); the family row stays
+  listed, with that reason, because its arrangement members are not exposed.
+- **How an agent supplies a picture:** base64 in the edit (`data`) with its MIME type,
+  decoded strictly (`objects::decode_base64`, RFC 4648 alphabet, padding checked) and refused
+  past 8 MiB decoded before decoding; the bytes must carry the signature of the type they
+  claim; the size is given in points or read from the header (PNG, GIF, JPEG, BMP at 96 DPI;
+  one side given keeps the proportions). There is no resource-reference scheme for MCP
+  clients to point at yet, and base64 is what every client can send. The bytes ride on the
+  plan's state (`State::media`) and join the session's resources only when the plan commits
+  (`Session::adopt`), so a preview or a refused plan writes none; the picture's bytes are not
+  counted against the 1 MiB plan text ceiling.
+- **Agent-only bounds** (the editor trusts the person, an agent's input is untrusted):
+  link targets are `http`, `https`, `mailto`, `ftp`, `tel` or `#bookmark`, never
+  `javascript:`, `file:` or `data:` (R6); bookmark names follow Word's rule (a letter, then
+  letters, digits or `_`, at most 40) and must be unique; a header or footer is refused when
+  the section already shows one, its own or linked; page sides and margins are bounded and
+  must leave room for text; an orientation change swaps the sides unless both are given, as
+  Word's does; `set_page_numbering` keeps the section's vertical alignment (the dialog's
+  lowering writes both).
+- **The text-box save defect is fixed in the importer** (`casual-doc-import/src/body.rs`): a
+  lone rectangular `wps:wsp` text box is pushed as its own segment when the shape closes, and
+  `commit_drawing` then found no picture and reported the `w:drawing` omitted, which the DOCX
+  loss gate turned into a refused save. A real false positive, not an artefact of minimal
+  XML: three of the eight committed text-box fixtures (`floating-text-box`, `vml-shapes`,
+  `wrap-text-sides`) refused to save through `casual-doc-ai`. No Word-authored text-box
+  fixture exists under `fixtures/` (every one is generated, with no `docProps/app.xml`), so
+  the guard uses the shape Word writes (`mc:AlternateContent` with the VML fallback). The
+  false finding had been masking a real silent loss, which HF-243's attribute gate caught at
+  once: a lone text box's own `a:xfrm` off/ext is not modelled; it is now reported when it
+  is not the identity, as a lone picture's is. `picture-hyperlink` still reports one
+  `drawing`, which is real (an `a:hlinkClick` to a missing relationship).
+- `suggest_roundtrip.rs` gained a guard over every `Trackable::No` command: its example runs
+  in direct mode against the G5 fixture (which now also holds a picture, a hyperlink and a
+  bookmark, built through the registry's own commands), changes the document, saves to DOCX
+  without loss and reopens. Five examples cannot change that fixture and are listed with the
+  refusal they must still produce: `clear_formatting` (nothing to clear), `table_split_cell`
+  (no merge), `continue_numbering` (no earlier list), `set_wrap` (the picture is inline) and
+  `set_shape_fill` (no shape; agents cannot insert one).
+
+**Guards, each driven red by a mutation and restored:**
+
+| Guard | Mutation | Red |
+| --- | --- | --- |
+| Text box drawing reports nothing | the quiet arm in `commit_drawing` disabled | `a text box (floating false) that lost nothing reported: {"drawing"}` |
+| Text box translation is named | the `off` report disabled | `a translated text box (floating false) was dropped in silence: {}`; the attribute gate names `off/@x`, `off/@y` on `floating-text-box.docx`, `vml-shapes.docx` |
+| Every untracked example applies, saves, reopens | `sections::set_watermark` emits nothing | `set_watermark: refused in direct mode: … "no-change"` |
+| An agent's picture reaches the package | `Session::adopt` drops the bytes | `the DOCX save loses nothing: … "docx.export.media.missing_bytes"` |
+| Agent links refuse scripts | `agent_target` admits every scheme | the `javascript:` link applied (`"marks": ["underline", "link"]`) |
+| A header is added once | `has_running_content` looks at no section | the second `insert_header` applied (`"refusal": Null`) |
+| G7 links | the editor's `setHyperlink` drops the tooltip | `link https://example.com/: editor and command differ` (`tooltip: None`) |
+| G7 notes | the editor's footnote reference one byte later | `Footnote: editor and command differ` (`offset: 2`) |
+| G7 sections | the editor inverts the watermark's semi-transparency | `watermark: editor and command differ` |
+| G7 objects | the editor swaps the picture's width and height | `picture: editor and command differ` (`width_emu: 457200, height_emu: 914400`) |
+| G7 charts | the editor inserts a doughnut when asked for a pie | `pie chart: editor and command differ` |
+| G7 source half | `setFirstPageVariant` re-inlined | `lib.rs:4690: vec![Operation::SetSectionTitlePage {` |
+
+The source scan now also refuses a constructed `SetHyperlink`, `RenameBookmark`,
+`DeleteBookmark`, `InsertNote`, `SpliceSectionBoundary`, section-property, header/footer,
+crop, alt-text, fill or stroke operation, an inline `Break`, `insert_break_op(`,
+`section_break_ops(`, and a re-defined `default_chart_projection`/`chart_group_for_kind`.
+`CreateBookmark`, `InsertField`, `SetExtent`, `SetMediaReference` and `DeleteObject` are not
+in it: cross-references, captions, group resizing, picture bullets, Change Picture and
+group-member deletion build them for gestures that have not moved.
+
+**Behaviour changes.** None for editor users: G7 holds every moved method's operations equal
+to the command's. Rich paste's links now go through `links::link_range` (same operations).
+
+**Left `NotExposed`, and why** (21 operations, 91 editor ids):
+
+- **Table of contents, captions, cross-references, update fields and caption numbers**
+  (`InsertFieldRange`, `RemoveFieldRange`, `RemoveField`, `InsertBlocks`, `DeleteBlocks`,
+  `SetInlines`): the contents lowering reads the paginated layout for its page labels and the
+  heading cascade inside `toc.rs`; captions and cross-references carry the caption-sequence
+  and reference-bookmark logic in `references.rs`. Each can move (the page labels become an
+  argument the editor and `casual-doc-ai`'s layout both supply), but not as a thin cut; it is
+  the next step of this family.
+- **Chart data editing** (`setChartData`, `chart.rs`'s patch model): agents insert charts
+  with sample data and cannot yet change the data.
+- **Equations and content controls:** the editor has no insertion gesture for either, so
+  there is nothing to move; an agent command would be new engine work, not a shared lowering.
+- **Shapes and text boxes inserted, and arrangement** (position, z-order, grouping,
+  rotation, flips, inline/floating, Add Text; `SetGroupGeometry`, `InsertObjectNode`,
+  `RemoveInlineObject`, `SetTextBoxBody`): not offered yet. A text box's *text* is reachable:
+  its paragraphs are a surface (lane surfaces) and the text commands edit them.
+- **Removing a note or a header/footer body**, mirrored margins, header/footer distances,
+  and the document-wide and protection settings: unchanged reasons in `coverage.rs` and
+  `UI_NOT_EXPOSED`.
+- **Picture watermarks** (the `media` form of `setWatermark`): an agent stamps text only.

@@ -22,6 +22,20 @@ pub enum Family {
     Tables,
     /// Bulleted and numbered lists.
     Lists,
+    /// Hyperlinks and bookmarks.
+    Links,
+    /// Fields (page numbers, dates, document properties).
+    Fields,
+    /// Pictures, shapes and text boxes as objects.
+    Objects,
+    /// Footnotes and endnotes.
+    Notes,
+    /// Breaks, sections, page setup, line numbering and the watermark.
+    Sections,
+    /// Headers, footers and their page variants.
+    HeadersFooters,
+    /// Charts.
+    Charts,
     /// Comments, tracked changes and their decisions.
     Review,
 }
@@ -36,6 +50,13 @@ impl Family {
             Self::Styles => "styles",
             Self::Tables => "tables",
             Self::Lists => "lists",
+            Self::Links => "links",
+            Self::Fields => "fields",
+            Self::Objects => "objects",
+            Self::Notes => "notes",
+            Self::Sections => "sections",
+            Self::HeadersFooters => "headers_footers",
+            Self::Charts => "charts",
             Self::Review => "review",
         }
     }
@@ -102,6 +123,19 @@ const NUMBERING_NOT_TRACKABLE: &str = "Restarting or continuing numbering cannot
      moves items to another numbering instance, which Word has no tracked-change record for. \
      Use mode `direct` under a profile that grants `edit`.";
 
+const INLINE_NOT_TRACKABLE: &str = "Links, bookmarks, fields, pictures, notes and breaks cannot \
+     be suggested yet: the review lowering tracks text, paragraph marks and properties, not the \
+     insertion or removal of inline structure. Use mode `direct` under a profile that grants \
+     `edit`.";
+
+const OBJECT_NOT_TRACKABLE: &str = "Object size, wrap, crop, alt text, fill, outline and deletion \
+     cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under \
+     a profile that grants `edit`.";
+
+const SECTION_NOT_TRACKABLE: &str = "Page setup, section breaks, headers, footers and the \
+     watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not \
+     modelled. Use mode `direct` under a profile that grants `edit`.";
+
 /// The paragraph text every command's `example` quotes, as paragraph
 /// `EXAMPLE_IDS[0]`. The suggest round-trip guard (`docs/181` G5) builds a
 /// document from these and runs every trackable example against it, so an
@@ -109,8 +143,13 @@ const NUMBERING_NOT_TRACKABLE: &str = "Restarting or continuing numbering cannot
 pub const EXAMPLE_PARAGRAPH: &str = "Notice: the notice period is thirty (30) days without notice.";
 
 /// The placeholder ids examples use: a paragraph holding
-/// [`EXAMPLE_PARAGRAPH`], a numbered list item after it, and a 2x2 table.
-pub const EXAMPLE_IDS: [&str; 3] = ["1:2", "1:3", "1:9"];
+/// [`EXAMPLE_PARAGRAPH`], a numbered list item after it, a 2x2 table, and a
+/// picture in the list item. The example fixture also holds a bookmark named
+/// [`EXAMPLE_BOOKMARK`] and a hyperlink over the list item's word `First`.
+pub const EXAMPLE_IDS: [&str; 4] = ["1:2", "1:3", "1:9", "1:20"];
+
+/// The bookmark the example fixture holds, which the bookmark examples name.
+pub const EXAMPLE_BOOKMARK: &str = "Notice";
 
 /// Every command, in the fixed order agents see them.
 pub const COMMANDS: &[Command] = &[
@@ -457,6 +496,275 @@ pub const COMMANDS: &[Command] = &[
         ui_commands: &["paragraph.list.continue"],
     },
     Command {
+        id: "set_hyperlink",
+        family: Family::Links,
+        summary: "Link the quoted text to an http(s), mailto, ftp or tel URL, or to a bookmark as `#name`.",
+        emits: &["SetHyperlink"],
+        trackable: Trackable::No(INLINE_NOT_TRACKABLE),
+        example: r#"{"op":"set_hyperlink","target":{"node":"1:2","exact":"notice period"},"url":"https://example.com/terms"}"#,
+        ui_commands: &["insert.link"],
+    },
+    Command {
+        id: "remove_hyperlink",
+        family: Family::Links,
+        summary: "Remove the hyperlink whose text is exactly the quote; the text and its formatting stay.",
+        emits: &["SetHyperlink"],
+        trackable: Trackable::No(INLINE_NOT_TRACKABLE),
+        example: r#"{"op":"remove_hyperlink","target":{"node":"1:3","exact":"First"}}"#,
+        ui_commands: &[],
+    },
+    Command {
+        id: "create_bookmark",
+        family: Family::Links,
+        summary: "Bookmark the quoted text (a letter, then letters, digits or _, at most 40).",
+        emits: &["CreateBookmark"],
+        trackable: Trackable::No(INLINE_NOT_TRACKABLE),
+        example: r#"{"op":"create_bookmark","target":{"node":"1:2","exact":"thirty (30) days"},"name":"NoticePeriod"}"#,
+        ui_commands: &["insert.bookmark"],
+    },
+    Command {
+        id: "rename_bookmark",
+        family: Family::Links,
+        summary: "Rename a bookmark.",
+        emits: &["RenameBookmark"],
+        trackable: Trackable::No(INLINE_NOT_TRACKABLE),
+        example: r#"{"op":"rename_bookmark","name":"Notice","new_name":"NoticeClause"}"#,
+        ui_commands: &[],
+    },
+    Command {
+        id: "delete_bookmark",
+        family: Family::Links,
+        summary: "Delete a bookmark; the text it spans stays.",
+        emits: &["DeleteBookmark"],
+        trackable: Trackable::No(INLINE_NOT_TRACKABLE),
+        example: r#"{"op":"delete_bookmark","name":"Notice"}"#,
+        ui_commands: &[],
+    },
+    Command {
+        id: "insert_field",
+        family: Family::Fields,
+        summary: "Insert a page-number, page-count, date, time, file-name or author field at an anchor.",
+        emits: &["InsertField"],
+        trackable: Trackable::No(INLINE_NOT_TRACKABLE),
+        example: r#"{"op":"insert_field","at":{"node":"1:2","side":"after"},"kind":"page"}"#,
+        ui_commands: &["insert.field", "insert.field."],
+    },
+    Command {
+        id: "insert_image",
+        family: Family::Objects,
+        summary: "Insert a picture (base64 PNG, JPEG, GIF, BMP, TIFF or WebP, at most 8 MiB) at an anchor.",
+        emits: &[
+            "SetMediaReference",
+            "InsertInlineObject",
+            "SetObjectLocks",
+            "SetObjectDescr",
+        ],
+        trackable: Trackable::No(INLINE_NOT_TRACKABLE),
+        example: r#"{"op":"insert_image","at":{"node":"1:2","side":"after"},"data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==","content_type":"image/png","width_pt":36,"alt_text":"Company logo"}"#,
+        ui_commands: &["insert.image"],
+    },
+    Command {
+        id: "set_alt_text",
+        family: Family::Objects,
+        summary: "Set or clear an object's alt text.",
+        emits: &["SetObjectDescr"],
+        trackable: Trackable::No(OBJECT_NOT_TRACKABLE),
+        example: r#"{"op":"set_alt_text","object":"1:20","text":"Signature of the lessor"}"#,
+        ui_commands: &["object.altText"],
+    },
+    Command {
+        id: "resize_object",
+        family: Family::Objects,
+        summary: "Resize a picture, shape or text box, in points.",
+        emits: &["SetExtent"],
+        trackable: Trackable::No(OBJECT_NOT_TRACKABLE),
+        example: r#"{"op":"resize_object","object":"1:20","width_pt":72,"height_pt":72}"#,
+        ui_commands: &[],
+    },
+    Command {
+        id: "set_wrap",
+        family: Family::Objects,
+        summary: "Set how text wraps around a floating object.",
+        emits: &["SetAnchor"],
+        trackable: Trackable::No(OBJECT_NOT_TRACKABLE),
+        example: r#"{"op":"set_wrap","object":"1:20","wrap":"square"}"#,
+        ui_commands: &["layout.arrange.wrap", "object.wrap"],
+    },
+    Command {
+        id: "crop_image",
+        family: Family::Objects,
+        summary: "Crop a picture by the fraction of each edge to hide; all zero removes the crop.",
+        emits: &["SetImageCrop"],
+        trackable: Trackable::No(OBJECT_NOT_TRACKABLE),
+        example: r#"{"op":"crop_image","object":"1:20","left":0.1,"top":0,"right":0.1,"bottom":0}"#,
+        ui_commands: &["object.crop"],
+    },
+    Command {
+        id: "delete_object",
+        family: Family::Objects,
+        summary: "Delete a picture, shape, text box or group.",
+        emits: &["DeleteObject"],
+        trackable: Trackable::No(OBJECT_NOT_TRACKABLE),
+        example: r#"{"op":"delete_object","object":"1:20"}"#,
+        ui_commands: &["object.delete"],
+    },
+    Command {
+        id: "set_shape_fill",
+        family: Family::Objects,
+        summary: "Set a shape's fill to a colour, or remove it.",
+        emits: &["SetShapeFill"],
+        trackable: Trackable::No(OBJECT_NOT_TRACKABLE),
+        example: r##"{"op":"set_shape_fill","shape":"1:20","color":"#FFF2CC"}"##,
+        ui_commands: &["object.fill"],
+    },
+    Command {
+        id: "set_shape_outline",
+        family: Family::Objects,
+        summary: "Set a shape's or a picture's outline colour and/or weight, or remove it.",
+        emits: &["SetShapeStroke"],
+        trackable: Trackable::No(OBJECT_NOT_TRACKABLE),
+        example: r##"{"op":"set_shape_outline","shape":"1:20","color":"#1F3864","width_pt":1.5}"##,
+        ui_commands: &["object.outline"],
+    },
+    Command {
+        id: "insert_footnote",
+        family: Family::Notes,
+        summary: "Insert a footnote with its text; the reference mark goes at the anchor.",
+        emits: &["InsertNote"],
+        trackable: Trackable::No(INLINE_NOT_TRACKABLE),
+        example: r#"{"op":"insert_footnote","at":{"node":"1:2","exact":"days","side":"after"},"text":"Calendar days, not business days."}"#,
+        ui_commands: &["insert.footnote"],
+    },
+    Command {
+        id: "insert_endnote",
+        family: Family::Notes,
+        summary: "Insert an endnote with its text; the reference mark goes at the anchor.",
+        emits: &["InsertNote"],
+        trackable: Trackable::No(INLINE_NOT_TRACKABLE),
+        example: r#"{"op":"insert_endnote","at":{"node":"1:2","exact":"days","side":"after"},"text":"See the schedule of notice periods."}"#,
+        ui_commands: &["insert.endnote"],
+    },
+    Command {
+        id: "insert_break",
+        family: Family::Sections,
+        summary: "Insert a line, page or column break, or a blank page, at an anchor.",
+        emits: &["InsertInlineObject"],
+        trackable: Trackable::No(INLINE_NOT_TRACKABLE),
+        example: r#"{"op":"insert_break","at":{"node":"1:2","side":"after"},"kind":"page"}"#,
+        ui_commands: &[
+            "insert.lineBreak",
+            "layout.break.page",
+            "layout.break.column",
+            "layout.blankPage",
+        ],
+    },
+    Command {
+        id: "insert_section_break",
+        family: Family::Sections,
+        summary: "Start a new section at an anchor; it inherits the page setup, headers and footers.",
+        emits: &[
+            "SpliceSectionBoundary",
+            "SetParagraphProperties",
+            "SplitParagraph",
+            "SetSectionFormProtection",
+        ],
+        trackable: Trackable::No(SECTION_NOT_TRACKABLE),
+        example: r#"{"op":"insert_section_break","at":{"node":"1:2","side":"after"},"start":"next_page"}"#,
+        ui_commands: &[
+            "layout.break.section.nextPage",
+            "layout.break.section.continuous",
+            "layout.break.section.evenPage",
+            "layout.break.section.oddPage",
+        ],
+    },
+    Command {
+        id: "set_page_setup",
+        family: Family::Sections,
+        summary: "Change a section's (or every section's) page size, orientation, margins or columns, in twips.",
+        emits: &["SetSectionGeometry"],
+        trackable: Trackable::No(SECTION_NOT_TRACKABLE),
+        example: r#"{"op":"set_page_setup","section":0,"orientation":"landscape","margins":{"left":1080,"right":1080}}"#,
+        ui_commands: &[
+            "layout.pageSetup",
+            "layout.margins",
+            "layout.orientation",
+            "layout.size",
+            "layout.columns",
+        ],
+    },
+    Command {
+        id: "set_line_numbering",
+        family: Family::Sections,
+        summary: "Number a section's lines in the margin every N lines, or turn it off with 0.",
+        emits: &["SetSectionLineNumbering"],
+        trackable: Trackable::No(SECTION_NOT_TRACKABLE),
+        example: r#"{"op":"set_line_numbering","section":0,"count_by":1,"restart":"each_page"}"#,
+        ui_commands: &["layout.lineNumbers"],
+    },
+    Command {
+        id: "set_page_numbering",
+        family: Family::Sections,
+        summary: "Set a section's page-number format, and restart it at a number or continue.",
+        emits: &["SetSectionPageNumbering", "SetSectionVerticalAlignment"],
+        trackable: Trackable::No(SECTION_NOT_TRACKABLE),
+        example: r#"{"op":"set_page_numbering","section":0,"format":"lower_roman","start":1}"#,
+        ui_commands: &[],
+    },
+    Command {
+        id: "set_watermark",
+        family: Family::Sections,
+        summary: "Stamp a text watermark on every page, or remove it.",
+        emits: &["SetSectionWatermark"],
+        trackable: Trackable::No(SECTION_NOT_TRACKABLE),
+        example: r#"{"op":"set_watermark","text":"DRAFT"}"#,
+        ui_commands: &["layout.watermark"],
+    },
+    Command {
+        id: "insert_header",
+        family: Family::HeadersFooters,
+        summary: "Add an empty header to a section; read_blocks on its surface gives the paragraph to write into.",
+        emits: &["CreateHeaderFooterBody", "SetSectionRunningRef"],
+        trackable: Trackable::No(SECTION_NOT_TRACKABLE),
+        example: r#"{"op":"insert_header","section":0}"#,
+        ui_commands: &["insert.header"],
+    },
+    Command {
+        id: "insert_footer",
+        family: Family::HeadersFooters,
+        summary: "Add an empty footer to a section; read_blocks on its surface gives the paragraph to write into.",
+        emits: &["CreateHeaderFooterBody", "SetSectionRunningRef"],
+        trackable: Trackable::No(SECTION_NOT_TRACKABLE),
+        example: r#"{"op":"insert_footer","section":0}"#,
+        ui_commands: &["insert.footer"],
+    },
+    Command {
+        id: "set_different_first_page",
+        family: Family::HeadersFooters,
+        summary: "Give a section's first page its own header and footer, or not.",
+        emits: &["SetSectionTitlePage"],
+        trackable: Trackable::No(SECTION_NOT_TRACKABLE),
+        example: r#"{"op":"set_different_first_page","section":0,"enabled":true}"#,
+        ui_commands: &["layout.firstPageVariant"],
+    },
+    Command {
+        id: "set_different_odd_even",
+        family: Family::HeadersFooters,
+        summary: "Give even and odd pages their own headers and footers, or not (document-wide).",
+        emits: &["SetEvenAndOddHeaders"],
+        trackable: Trackable::No(SECTION_NOT_TRACKABLE),
+        example: r#"{"op":"set_different_odd_even","enabled":true}"#,
+        ui_commands: &["layout.evenOddVariant"],
+    },
+    Command {
+        id: "insert_chart",
+        family: Family::Charts,
+        summary: "Insert a chart (column, bar, line, area, scatter, pie or doughnut, plain, stacked or percent) with sample data at an anchor.",
+        emits: &["InsertInlineObject", "SetChartDefinition"],
+        trackable: Trackable::No(INLINE_NOT_TRACKABLE),
+        example: r#"{"op":"insert_chart","at":{"node":"1:2","side":"after"},"kind":"column"}"#,
+        ui_commands: &["insert.chart"],
+    },
+    Command {
         id: "comment",
         family: Family::Review,
         summary: "Comment on the quoted text, or reply to a comment.",
@@ -531,17 +839,12 @@ const UI_CASE: &str = "Change case keeps each run's formatting, which replace_te
 const UI_PARAGRAPH: &str = "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2).";
 const UI_LISTS: &str = "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3).";
 const UI_STYLE_DEFINITIONS: &str = "Redefining a style changes every paragraph that uses it; agents apply styles and do not define them yet (docs/181 §4.2 step 2).";
-const UI_REFERENCES: &str = "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4).";
-const UI_OBJECTS: &str = "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5).";
-const UI_CHARTS: &str =
-    "Charts come last, behind the chart model work they need (docs/181 §4.2 step 7, docs/155).";
+const UI_REFERENCES: &str = "Captions, cross-references, the table of contents and updating fields read the paginated layout or the caption sequences; their lowerings are still inside the editor (docs/181 §12, lane families-b). Links, bookmarks and fields are offered.";
+const UI_OBJECTS: &str = "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are.";
+const UI_OBJECT_MENU: &str = "The object menus are one contract family; its members that change a picture or shape (object.altText, object.crop, object.delete, object.fill, object.outline, object.wrap) are named by the objects commands, the rest are arrangement.";
+const UI_HEADER_FOOTER_SETTINGS: &str = "The Header & Footer options dialog also writes the header and footer distances, which agents are not offered; its toggles and page numbering are (set_different_first_page, set_different_odd_even, set_page_numbering).";
 const UI_TABLES: &str = "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1).";
-const UI_NOTES: &str =
-    "Headers, footers, footnotes and endnotes need the surfaces of docs/181 §2.2 first (step 6).";
-const UI_SECTIONS: &str = "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6).";
-const UI_DOCUMENT: &str =
-    "Document-wide settings are not offered to agents; a person changes them.";
-const UI_BREAKS: &str = "Line, page and column breaks are inline structure no registry command emits yet (docs/181 §4.2).";
+
 const UI_MODE: &str = "Switches the editor's own editing mode, not the document; an agent's mode is its profile plus the plan's `mode`.";
 const UI_PROTECTION: &str =
     "Protection and tracking settings are a person's decision, never an agent's.";
@@ -603,10 +906,6 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
     ("style.manage", UI_STYLE_DEFINITIONS),
     ("style.updateFromSelection", UI_STYLE_DEFINITIONS),
     ("style.createFromSelection", UI_STYLE_DEFINITIONS),
-    ("insert.link", UI_REFERENCES),
-    ("insert.bookmark", UI_REFERENCES),
-    ("insert.field", UI_REFERENCES),
-    ("insert.field.", UI_REFERENCES),
     ("reference.caption", UI_REFERENCES),
     ("reference.crossReference", UI_REFERENCES),
     ("reference.tableOfContents", UI_REFERENCES),
@@ -614,11 +913,9 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
     ("reference.updateToc.entire", UI_REFERENCES),
     ("reference.updateFields", UI_REFERENCES),
     ("reference.updateCaptionNumbers", UI_REFERENCES),
-    ("insert.image", UI_OBJECTS),
     ("insert.shape", UI_OBJECTS),
     ("insert.textbox", UI_OBJECTS),
     ("layout.arrange.position", UI_OBJECTS),
-    ("layout.arrange.wrap", UI_OBJECTS),
     ("layout.arrange.bringForward", UI_OBJECTS),
     ("layout.arrange.sendBackward", UI_OBJECTS),
     ("layout.arrange.bringToFront", UI_OBJECTS),
@@ -631,8 +928,7 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
     ("layout.arrange.flipVertical", UI_OBJECTS),
     ("layout.arrange.inLine", UI_OBJECTS),
     ("layout.arrange.addText", UI_OBJECTS),
-    ("object.", UI_OBJECTS),
-    ("insert.chart", UI_CHARTS),
+    ("object.", UI_OBJECT_MENU),
     ("table.", UI_TABLES),
     ("table.move.rowUp", UI_TABLES),
     ("table.move.rowDown", UI_TABLES),
@@ -651,28 +947,7 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
     ("table.borderStyle", UI_TABLES),
     ("table.properties", UI_TABLES),
     ("table.style.none", UI_TABLES),
-    ("insert.header", UI_NOTES),
-    ("insert.footer", UI_NOTES),
-    ("insert.footnote", UI_NOTES),
-    ("insert.endnote", UI_NOTES),
-    ("layout.firstPageVariant", UI_NOTES),
-    ("layout.evenOddVariant", UI_NOTES),
-    ("layout.headerFooterSettings", UI_NOTES),
-    ("layout.pageSetup", UI_SECTIONS),
-    ("layout.margins", UI_SECTIONS),
-    ("layout.orientation", UI_SECTIONS),
-    ("layout.size", UI_SECTIONS),
-    ("layout.columns", UI_SECTIONS),
-    ("layout.break.section.nextPage", UI_SECTIONS),
-    ("layout.break.section.continuous", UI_SECTIONS),
-    ("layout.break.section.evenPage", UI_SECTIONS),
-    ("layout.break.section.oddPage", UI_SECTIONS),
-    ("layout.lineNumbers", UI_SECTIONS),
-    ("layout.watermark", UI_DOCUMENT),
-    ("insert.lineBreak", UI_BREAKS),
-    ("layout.break.page", UI_BREAKS),
-    ("layout.break.column", UI_BREAKS),
-    ("layout.blankPage", UI_BREAKS),
+    ("layout.headerFooterSettings", UI_HEADER_FOOTER_SETTINGS),
     ("review.mode.editing", UI_MODE),
     ("review.mode.suggesting", UI_MODE),
     ("review.restrictEditing", UI_PROTECTION),
@@ -681,4 +956,4 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
 
 /// The length of [`UI_NOT_EXPOSED`]. It may only fall: lower it when a command
 /// names an id; raising it needs an ADR line (`docs/181` §3).
-pub const UI_NOT_EXPOSED_CEILING: usize = 119;
+pub const UI_NOT_EXPOSED_CEILING: usize = 91;
