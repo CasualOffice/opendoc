@@ -3,6 +3,9 @@
 **Status:** Design, proposed 2026-10-24. A1 (shared review lowering), M1 and M2 over stdio are
 built; what is built and what is not is in §15.
 **Decides:** ADR-072 (proposed). **Row:** `docs/109` RM-47.
+**Refined by:** `181` and ADR-075 (proposed 2026-10-28): how every later feature reaches
+this surface through one capability registry, with generated schemas (A4) and exhaustive
+coverage guards.
 **Builds on:** `45` and ADR-030 (the four seams, I1 to I4), `132` and ADR-035 (the document
 assistance layer, which this refines for MCP), `176` and ADR-071 (the Native/headless SDK
 this is built on), `05` (SDK API), `175` and ADR-070 (host-attested identity, JWT grants),

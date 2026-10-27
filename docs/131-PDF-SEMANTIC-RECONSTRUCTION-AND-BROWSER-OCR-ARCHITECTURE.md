@@ -10,7 +10,10 @@ not supported, and not part of the current v1 commitment. No implementation is
 authorized by this document.
 **Date:** 2026-09-27
 **Tracker:** PDFR-000
-**Proposed ADR:** ADR-034
+**Proposed ADR:** ADR-034, superseded by ADR-076 (proposed 2026-10-28). `docs/182` keeps
+this document's invariants (§6), OCR policy (§11) and finding families (§16.1), and replaces
+its native-evidence provider (hayro in Rust, not PDF.js), its default output (fixed-layout
+frames, with reflow as an explicit conversion) and its delivery order.
 **Depends on:** docs 14, 15, 18, 21, 35, 56, 83, 94, 98, 111, 113, and
 116; `casual-doc-io`; `casual-doc-wasm`; the schema-v1 model and semantic DOCX
 writer.

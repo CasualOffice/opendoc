@@ -75,6 +75,7 @@ FORMCHECKBOX
 FORMDROPDOWN
 FORMTEXT
 Firefox
+Foxit
 Frontend
 GIF
 GPL
@@ -117,15 +118,18 @@ LayoutNG
 LibreOffice
 Lifecycle
 Linebender
+Liveblocks
 MAX
 MCP
 MFIO
 MIT
+MPL
 MSRV
 MVP
 MediaReference
 MiB
 Microsoft
+MinerU
 Myers
 NUL
 NUMPAGES
@@ -158,6 +162,7 @@ OpenDocument
 OpenType
 PDF
 PDFR
+PDFium
 PDFs
 PNG
 PNGs
@@ -179,6 +184,7 @@ RFC
 RFL
 RGB
 RGBA
+RPC
 RSS
 RTF
 RTL
@@ -198,6 +204,7 @@ SHA
 SIL
 SVG
 SaaS
+Schemas
 Sdt
 ShareDB
 SharePoint
@@ -268,6 +275,7 @@ allowlisted
 alt
 altChunk
 app
+args
 arity
 arrowing
 ary
@@ -417,6 +425,7 @@ handoff
 hardcoded
 hardcodes
 harfrust
+hayro
 hideMark
 hlinkClick
 hostable
@@ -455,6 +464,7 @@ lockfile
 lookups
 loopback
 lossy
+lowerings
 macOS
 margined
 max
@@ -464,6 +474,7 @@ memoized
 meta
 metafile
 metafiles
+microsoft
 microtask
 midrange
 min
@@ -480,6 +491,7 @@ namespace
 namespaces
 natively
 nav
+ness
 newline
 newtype
 nginx
@@ -622,6 +634,7 @@ tombstoning
 toolchain
 tooltip
 tooltips
+trackability
 trackpad
 trendline
 trendlines
@@ -649,6 +662,7 @@ unmerged
 unmodeled
 unmodelled
 unobservable
+unopenable
 unpassworded
 unreferenced
 unrepresentable
@@ -682,3 +696,4 @@ widthless
 workaround
 worktree
 xml
+xref
