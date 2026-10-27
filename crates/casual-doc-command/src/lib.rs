@@ -16,7 +16,9 @@
 //!   from them, published by every front door.
 //! - the lowerings the editor and agents share, one module per family:
 //!   [`table`], [`format`](mod@format) (character formatting), [`paragraph`], [`lists`],
-//!   and [`rewrite`] (the `rewrite_block` dialect).
+//!   [`rewrite`] (the `rewrite_block` dialect), [`links`] (hyperlinks and
+//!   bookmarks), [`fields`], [`objects`] (pictures and shapes), [`notes`],
+//!   [`breaks`], [`sections`] (page setup and running content) and [`charts`].
 //!
 //! Every lowering here is pure: it reads the document and returns operations.
 //! Nothing in this crate applies an operation or builds a transaction; the
@@ -25,14 +27,21 @@
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
+pub mod breaks;
+pub mod charts;
 pub mod coverage;
 pub mod edit;
+pub mod fields;
 pub mod format;
+pub mod links;
 pub mod lists;
+pub mod notes;
+pub mod objects;
 pub mod paragraph;
 pub mod registry;
 pub mod rewrite;
 pub mod schema;
+pub mod sections;
 pub mod table;
 
 pub use registry::{COMMANDS, Command, Family, Trackable, find, ids};

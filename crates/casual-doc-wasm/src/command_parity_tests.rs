@@ -15,8 +15,12 @@
 
 use casual_doc_command::paragraph::{ParagraphChange, set_properties, untracked};
 use casual_doc_command::{format, lists, table as command};
-use casual_doc_edit::Operation;
+// The step 4-6 families (lane families-b), on their own line per the
+// parallel-lane import rule.
+use casual_doc_command::{breaks, fields, links, notes, objects, sections};
+use casual_doc_edit::{Operation, Pos};
 use casual_doc_model::v1::{BlockNode, HighlightColor, NumberingRef, ParagraphProperties, Table};
+use casual_doc_model::v1::{BreakKind, NoteKind};
 use casual_doc_model::{IdGenerator, NodeId};
 
 use crate::{WasmDocument, open_document};
@@ -393,6 +397,464 @@ fn lists_are_one_lowering_for_the_editor_and_agents() {
     );
 }
 
+/// A one-section LibreOffice-written document: body paragraphs, footnotes,
+/// a `w:sectPr`.
+const SECTIONED: &[u8] = include_bytes!("../../../fixtures/corpus/real-producer-footnotes.docx");
+
+/// The first body paragraph that holds text, as an id string.
+fn first_text_paragraph(d: &WasmDocument) -> NodeId {
+    d.document
+        .body()
+        .iter()
+        .find_map(|block| match block {
+            BlockNode::Paragraph(paragraph)
+                if !crate::node_plain_text(&paragraph.inlines).is_empty() =>
+            {
+                Some(paragraph.id)
+            }
+            _ => None,
+        })
+        .expect("a text paragraph")
+}
+
+#[test]
+fn links_bookmarks_and_fields_are_one_lowering_for_the_editor_and_agents() {
+    let (mut d, nodes) = text_document("alpha beta\ngamma delta\n");
+    let (a, b) = (nodes[0], nodes[1]);
+    let (sa, sb) = (a.to_string(), b.to_string());
+
+    for (target, tooltip) in [
+        ("https://example.com/", Some("Example".to_owned())),
+        ("#Clause", None),
+    ] {
+        let mut expected_ids = ids(&d);
+        let expected = links::set_hyperlink(
+            a,
+            0,
+            5,
+            target,
+            tooltip.clone(),
+            &mut mint(&mut expected_ids),
+        )
+        .expect("lowers");
+        d.set_hyperlink(&sa, 0, 5, target.to_owned(), tooltip)
+            .expect("the editor links");
+        assert_eq!(
+            committed(&d),
+            expected,
+            "link {target}: editor and command differ"
+        );
+    }
+    d.remove_hyperlink(&sa, 0, 5).expect("the editor unlinks");
+    assert_eq!(
+        committed(&d),
+        links::remove_hyperlink(a, 0, 5),
+        "unlink: editor and command differ"
+    );
+
+    // A bookmark across two paragraphs, then renamed and deleted.
+    let mut expected_ids = ids(&d);
+    let expected = links::create_bookmark(
+        "Mark".to_owned(),
+        Pos::new(a, 6),
+        Pos::new(b, 5),
+        &mut mint(&mut expected_ids),
+    )
+    .expect("lowers");
+    d.create_bookmark(&sa, 6, &sb, 5, "Mark".to_owned())
+        .expect("the editor bookmarks");
+    assert_eq!(
+        committed(&d),
+        expected,
+        "bookmark: editor and command differ"
+    );
+    let Some(Operation::CreateBookmark { bookmark, .. }) = committed(&d).first().cloned() else {
+        panic!("the bookmark was created");
+    };
+    d.rename_bookmark(&bookmark.node_id().to_string(), "Renamed".to_owned())
+        .expect("renames");
+    assert_eq!(
+        committed(&d),
+        links::rename_bookmark(bookmark, "Renamed".to_owned())
+    );
+    d.delete_bookmark(&bookmark.node_id().to_string())
+        .expect("deletes");
+    assert_eq!(committed(&d), links::delete_bookmark(bookmark));
+
+    for kind in fields::KINDS {
+        let mut expected_ids = ids(&d);
+        let expected = fields::insert_field(
+            Pos::new(b, 0),
+            kind,
+            "cached".to_owned(),
+            &mut mint(&mut expected_ids),
+        )
+        .expect("lowers");
+        d.insert_field(&sb, 0, kind, Some("cached".to_owned()))
+            .expect("the editor inserts a field");
+        assert_eq!(
+            committed(&d),
+            expected,
+            "field {kind}: editor and command differ"
+        );
+    }
+}
+
+#[test]
+fn notes_and_breaks_are_one_lowering_for_the_editor_and_agents() {
+    let mut d = open_document(SECTIONED).expect("the fixture opens");
+    let p = first_text_paragraph(&d);
+    let sp = p.to_string();
+
+    for kind in [NoteKind::Footnote, NoteKind::Endnote] {
+        let mut expected_ids = ids(&d);
+        let expected = notes::insert_note(kind, Pos::new(p, 1), None, &mut mint(&mut expected_ids))
+            .expect("lowers")
+            .operations;
+        match kind {
+            NoteKind::Footnote => drop(d.insert_footnote(&sp, 1).expect("footnote")),
+            NoteKind::Endnote => drop(d.insert_endnote(&sp, 1).expect("endnote")),
+        }
+        assert_eq!(
+            committed(&d),
+            expected,
+            "{kind:?}: editor and command differ"
+        );
+    }
+
+    let mut expected_ids = ids(&d);
+    let expected = breaks::insert_break(
+        &d.document,
+        Pos::new(p, 2),
+        BreakKind::Line,
+        &mut mint(&mut expected_ids),
+    )
+    .expect("lowers");
+    d.insert_line_break(&sp, 2).expect("line break");
+    assert_eq!(
+        committed(&d),
+        expected,
+        "line break: editor and command differ"
+    );
+
+    for (name, kind) in [("page", BreakKind::Page), ("column", BreakKind::Column)] {
+        let mut expected_ids = ids(&d);
+        let expected = breaks::insert_break(
+            &d.document,
+            Pos::new(p, 2),
+            kind,
+            &mut mint(&mut expected_ids),
+        )
+        .expect("lowers");
+        d.insert_break_inner(&sp, 2, name).expect("break");
+        assert_eq!(
+            committed(&d),
+            expected,
+            "{name} break: editor and command differ"
+        );
+    }
+
+    let mut expected_ids = ids(&d);
+    let expected =
+        breaks::insert_blank_page(&d.document, Pos::new(p, 2), &mut mint(&mut expected_ids))
+            .expect("lowers");
+    d.insert_blank_page(&sp, 2).expect("blank page");
+    assert_eq!(
+        committed(&d),
+        expected,
+        "blank page: editor and command differ"
+    );
+
+    let mut expected_ids = ids(&d);
+    let expected = breaks::section_break(
+        &d.document,
+        Pos::new(p, 1),
+        casual_doc_model::v1::SectionType::Continuous,
+        &mut mint(&mut expected_ids),
+    )
+    .expect("lowers")
+    .operations;
+    d.insert_section_break_inner(&sp, 1, "continuous")
+        .expect("section break");
+    assert_eq!(
+        committed(&d),
+        expected,
+        "section break: editor and command differ"
+    );
+}
+
+#[test]
+fn page_setup_and_running_content_are_one_lowering_for_the_editor_and_agents() {
+    let mut d = open_document(SECTIONED).expect("the fixture opens");
+    let p = first_text_paragraph(&d).to_string();
+    let first = d.document.definitions().sections[0].clone();
+
+    // Page setup: the dialog's payload, widened, written back.
+    let mut payload: serde_json::Value =
+        serde_json::from_str(&d.page_setup()).expect("page setup JSON");
+    payload["pageSize"]["widthTwips"] = serde_json::json!(15_840);
+    payload["pageSize"]["heightTwips"] = serde_json::json!(12_240);
+    payload["orientation"] = serde_json::json!("landscape");
+    payload
+        .as_object_mut()
+        .expect("an object")
+        .remove("columns");
+    let expected = sections::set_geometry(
+        &d.document,
+        first.id,
+        casual_doc_model::v1::PageSize {
+            width_twips: 15_840,
+            height_twips: 12_240,
+        },
+        first.page_margins,
+        Some(casual_doc_model::v1::PageOrientation::Landscape),
+        None,
+    );
+    d.set_page_setup(&payload.to_string()).expect("page setup");
+    assert_eq!(
+        committed(&d),
+        expected,
+        "page setup: editor and command differ"
+    );
+
+    let mut payload: serde_json::Value =
+        serde_json::from_str(&d.line_numbering(&p)).expect("line numbering JSON");
+    payload["countBy"] = serde_json::json!(5);
+    payload["start"] = serde_json::json!(1);
+    d.set_line_numbering(&payload.to_string())
+        .expect("line numbers");
+    assert_eq!(
+        committed(&d),
+        sections::set_line_numbering(
+            first.id,
+            casual_doc_model::v1::LineNumbering {
+                count_by: Some(5),
+                start: Some(1),
+                distance: None,
+                restart: None,
+            }
+        ),
+        "line numbering: editor and command differ"
+    );
+
+    let layout = serde_json::json!({
+        "section": first.id.node_id().to_string(),
+        "verticalAlignment": "center",
+        "pageNumberFormat": "lowerRoman",
+        "pageNumberStart": 3,
+    });
+    d.set_section_layout(&layout.to_string())
+        .expect("section layout");
+    assert_eq!(
+        committed(&d),
+        sections::set_section_layout(
+            first.id,
+            Some(casual_doc_model::v1::NumberFormat::LowerRoman),
+            Some(3),
+            Some(casual_doc_model::v1::PageVerticalAlignment::Center),
+        ),
+        "section layout: editor and command differ"
+    );
+
+    let mut payload: serde_json::Value =
+        serde_json::from_str(&d.watermark(&p)).expect("watermark JSON");
+    payload["kind"] = serde_json::json!("text");
+    payload["text"] = serde_json::json!("DRAFT");
+    payload["font"] = serde_json::json!("Arial");
+    payload["color"] = serde_json::json!("#c0c0c0");
+    payload["layout"] = serde_json::json!("horizontal");
+    let expected = sections::set_watermark(
+        &d.document,
+        Some(Box::new(sections::text_watermark(
+            "DRAFT".to_owned(),
+            Some("Arial"),
+            None,
+            casual_doc_command::objects::opaque(casual_doc_model::v1::RgbColor {
+                r: 0xc0,
+                g: 0xc0,
+                b: 0xc0,
+            }),
+            false,
+            false,
+            casual_doc_model::v1::WatermarkLayout::Horizontal,
+            payload["semiTransparent"].as_bool().unwrap_or(false),
+        ))),
+    );
+    d.set_watermark(&payload.to_string()).expect("watermark");
+    assert_eq!(
+        committed(&d),
+        expected,
+        "watermark: editor and command differ"
+    );
+
+    // A header for page 1, before any page variant exists.
+    let mut expected_ids = ids(&d);
+    let expected = sections::create_running_content(
+        first.id,
+        casual_doc_edit::RunningRegion::Header,
+        casual_doc_model::v1::HeaderFooterKind::Default,
+        &mut mint(&mut expected_ids),
+    )
+    .expect("lowers")
+    .operations;
+    d.create_running_content_inner("header", 1)
+        .expect("a header");
+    assert_eq!(committed(&d), expected, "header: editor and command differ");
+
+    d.set_first_page_variant(true, 1).expect("first page");
+    assert_eq!(committed(&d), sections::set_title_page(first.id, true));
+    d.set_even_odd_variant(true).expect("odd and even");
+    assert_eq!(committed(&d), sections::set_even_and_odd(true));
+}
+
+/// The first inline object `InsertInlineObject` placed in a commit.
+fn inserted_object(ops: &[Operation]) -> casual_doc_model::v1::InlineNode {
+    ops.iter()
+        .find_map(|op| match op {
+            Operation::InsertInlineObject { node, .. } => Some(node.as_ref().clone()),
+            _ => None,
+        })
+        .expect("an inserted object")
+}
+
+#[test]
+fn pictures_and_objects_are_one_lowering_for_the_editor_and_agents() {
+    use casual_doc_model::v1::{GroupChild, InlineNode, Rgba};
+
+    let (mut d, nodes) = text_document("alpha\nbeta\n");
+    let a = nodes[0];
+    let sa = a.to_string();
+    let png = objects::decode_base64(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==",
+        1024,
+    )
+    .expect("a PNG");
+
+    let mut expected_ids = ids(&d);
+    let picture = objects::insert_picture(
+        // At the paragraph's end, so deleting it later leaves one run (a
+        // deletion that would leave two mergeable runs is the host's to fix).
+        Pos::new(a, 5),
+        "image/png",
+        914_400,
+        457_200,
+        &mut mint(&mut expected_ids),
+    )
+    .expect("lowers");
+    d.insert_image(
+        &sa,
+        5,
+        png.clone(),
+        914_400.0,
+        457_200.0,
+        "image/png".to_owned(),
+    )
+    .expect("the editor inserts a picture");
+    assert_eq!(
+        committed(&d),
+        picture.operations,
+        "picture: editor and command differ"
+    );
+    assert_eq!(
+        d.resources.get(&picture.part_name),
+        Some(png.as_slice()),
+        "the bytes are written under the part the lowering names"
+    );
+    let image = picture.drawing;
+    let si = image.to_string();
+
+    d.set_object_extent(&si, 457_200.0, 228_600.0)
+        .expect("resize");
+    assert_eq!(
+        committed(&d),
+        objects::set_extent(image, 457_200, 228_600).expect("lowers")
+    );
+    d.set_image_crop(&si, Some(vec![0.1, 0.0, 0.25, 0.0]))
+        .expect("crop");
+    assert_eq!(
+        committed(&d),
+        objects::set_crop(image, Some(objects::crop([0.1, 0.0, 0.25, 0.0])))
+    );
+    d.set_object_descr(&si, Some("A dot".to_owned()))
+        .expect("alt text");
+    assert_eq!(
+        committed(&d),
+        objects::set_alt_text(image, Some("A dot".to_owned()))
+    );
+    let navy = Rgba {
+        r: 0x1f,
+        g: 0x38,
+        b: 0x64,
+        a: 255,
+    };
+    let expected = objects::set_shape_outline(&d.document, image, Some(navy), Some(19_050.0));
+    d.set_shape_outline(&si, Some("#1f3864".to_owned()), Some(19_050.0))
+        .expect("outline");
+    assert_eq!(
+        committed(&d),
+        expected,
+        "outline: editor and command differ"
+    );
+    d.delete_object(&si).expect("delete");
+    assert_eq!(committed(&d), objects::delete_object(image));
+
+    // A floating text box's wrap.
+    d.insert_text_box(&sa, 0).expect("a text box");
+    let InlineNode::TextBox(text_box) = inserted_object(&committed(&d)) else {
+        panic!("a text box");
+    };
+    let expected = objects::set_wrap(&d.document, text_box.id, "tight").expect("lowers");
+    d.set_object_wrap(&text_box.id.to_string(), "tight")
+        .expect("wrap");
+    assert_eq!(committed(&d), expected, "wrap: editor and command differ");
+
+    // A shape's fill.
+    d.insert_shape(&sa, 0, "rect").expect("a shape");
+    let InlineNode::Group(group) = inserted_object(&committed(&d)) else {
+        panic!("a shape group");
+    };
+    let Some(GroupChild::Shape(shape)) = group.children.first() else {
+        panic!("a shape child");
+    };
+    d.set_shape_fill(&shape.id.to_string(), Some("#fff2cc".to_owned()))
+        .expect("fill");
+    assert_eq!(
+        committed(&d),
+        objects::set_shape_fill(
+            shape.id,
+            Some(Rgba {
+                r: 0xff,
+                g: 0xf2,
+                b: 0xcc,
+                a: 255,
+            })
+        ),
+        "fill: editor and command differ"
+    );
+}
+
+#[test]
+fn chart_insertion_is_one_lowering_for_the_editor_and_agents() {
+    let (mut d, nodes) = text_document("alpha\nbeta\n");
+    let a = nodes[0];
+    for kind in casual_doc_command::charts::KINDS {
+        let mut expected_ids = ids(&d);
+        let expected = casual_doc_command::charts::insert_chart(
+            Pos::new(a, 5),
+            kind,
+            &mut mint(&mut expected_ids),
+        )
+        .expect("lowers");
+        d.insert_chart(&a.to_string(), 5, kind)
+            .expect("the editor inserts a chart");
+        assert_eq!(
+            committed(&d),
+            expected,
+            "{kind} chart: editor and command differ"
+        );
+    }
+}
+
 /// The production lines of the editor's sources: a test module, whole-file
 /// (`*_tests.rs`) or trailing (`#[cfg(test)] mod …`), is not production.
 fn production_lines() -> Vec<(String, usize, String)> {
@@ -462,6 +924,33 @@ fn the_editor_builds_no_moved_lowering_itself() {
         "Operation::DeleteTable {",
         "Operation::SetTableCellProperties {",
         "Operation::ClearFormatting {",
+        // Lane families-b: links, bookmarks, fields, notes, breaks, sections,
+        // running content, pictures and object formatting.
+        // (`CreateBookmark`, `InsertField`, `SetExtent`, `SetMediaReference`
+        // and `DeleteObject` are not listed: cross-references, captions, group
+        // resizing, picture bullets, Change Picture and group-member deletion
+        // build them for their own gestures, which have not moved.)
+        "Operation::SetHyperlink {",
+        "Operation::RenameBookmark {",
+        "Operation::DeleteBookmark {",
+        "Operation::InsertNote {",
+        "Operation::SpliceSectionBoundary {",
+        "Operation::SetSectionGeometry {",
+        "Operation::SetSectionLineNumbering {",
+        "Operation::SetSectionPageNumbering {",
+        "Operation::SetSectionWatermark {",
+        "Operation::SetSectionTitlePage {",
+        "Operation::SetEvenAndOddHeaders {",
+        "Operation::CreateHeaderFooterBody {",
+        "Operation::SetImageCrop {",
+        "Operation::SetObjectDescr {",
+        "Operation::SetShapeFill {",
+        "Operation::SetShapeStroke {",
+        "fn default_chart_projection(",
+        "fn chart_group_for_kind(",
+        "InlineNode::Break(Break {",
+        "insert_break_op(",
+        "section_break_ops(",
     ];
     let mut found = Vec::new();
     for (file, number, line) in production_lines() {

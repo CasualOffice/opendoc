@@ -115,6 +115,12 @@ pub(crate) struct State {
     pub(crate) ids: IdGenerator,
     pub(crate) revisions: RevisionIdAllocator,
     next_transaction: u128,
+    /// Picture bytes a plan wrote (`insert_image`), by package part name. The
+    /// model holds the reference through a `SetMediaReference` in the same
+    /// commit; the bytes join the session's resources only when the plan
+    /// commits ([`Session::adopt`]), so a preview or a refused plan writes
+    /// none. Empty between plans.
+    pub(crate) media: Vec<(String, Vec<u8>)>,
 }
 
 impl State {
@@ -409,6 +415,7 @@ impl Session {
                 ids,
                 revisions,
                 next_transaction: 0,
+                media: Vec::new(),
             },
             config,
             resources: imported.resources,
@@ -427,6 +434,22 @@ impl Session {
     #[must_use]
     pub fn document(&self) -> &Document {
         &self.state.document
+    }
+
+    /// Makes `state` (a plan's committed clone) the session's, moving the
+    /// picture bytes it wrote into the resources the model now references.
+    /// O(pictures written).
+    pub(crate) fn adopt(&mut self, mut state: State) {
+        for (part, bytes) in std::mem::take(&mut state.media) {
+            self.resources.insert(part, bytes);
+        }
+        self.state = state;
+    }
+
+    /// The bytes of the package part `part`, if the session holds it.
+    #[must_use]
+    pub fn resource(&self, part: &str) -> Option<&[u8]> {
+        self.resources.get(part)
     }
 
     /// The session's configuration.

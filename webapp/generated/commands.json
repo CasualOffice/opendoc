@@ -609,6 +609,543 @@
     },
     {
       "emits": [
+        "SetHyperlink"
+      ],
+      "example": {
+        "op": "set_hyperlink",
+        "target": {
+          "exact": "notice period",
+          "node": "1:2"
+        },
+        "url": "https://example.com/terms"
+      },
+      "family": "links",
+      "id": "set_hyperlink",
+      "summary": "Link the quoted text to an http(s), mailto, ftp or tel URL, or to a bookmark as `#name`.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.link"
+      ]
+    },
+    {
+      "emits": [
+        "SetHyperlink"
+      ],
+      "example": {
+        "op": "remove_hyperlink",
+        "target": {
+          "exact": "First",
+          "node": "1:3"
+        }
+      },
+      "family": "links",
+      "id": "remove_hyperlink",
+      "summary": "Remove the hyperlink whose text is exactly the quote; the text and its formatting stay.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "CreateBookmark"
+      ],
+      "example": {
+        "name": "NoticePeriod",
+        "op": "create_bookmark",
+        "target": {
+          "exact": "thirty (30) days",
+          "node": "1:2"
+        }
+      },
+      "family": "links",
+      "id": "create_bookmark",
+      "summary": "Bookmark the quoted text (a letter, then letters, digits or _, at most 40).",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.bookmark"
+      ]
+    },
+    {
+      "emits": [
+        "RenameBookmark"
+      ],
+      "example": {
+        "name": "Notice",
+        "new_name": "NoticeClause",
+        "op": "rename_bookmark"
+      },
+      "family": "links",
+      "id": "rename_bookmark",
+      "summary": "Rename a bookmark.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "DeleteBookmark"
+      ],
+      "example": {
+        "name": "Notice",
+        "op": "delete_bookmark"
+      },
+      "family": "links",
+      "id": "delete_bookmark",
+      "summary": "Delete a bookmark; the text it spans stays.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "InsertField"
+      ],
+      "example": {
+        "at": {
+          "node": "1:2",
+          "side": "after"
+        },
+        "kind": "page",
+        "op": "insert_field"
+      },
+      "family": "fields",
+      "id": "insert_field",
+      "summary": "Insert a page-number, page-count, date, time, file-name or author field at an anchor.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.field",
+        "insert.field."
+      ]
+    },
+    {
+      "emits": [
+        "SetMediaReference",
+        "InsertInlineObject",
+        "SetObjectLocks",
+        "SetObjectDescr"
+      ],
+      "example": {
+        "alt_text": "Company logo",
+        "at": {
+          "node": "1:2",
+          "side": "after"
+        },
+        "content_type": "image/png",
+        "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==",
+        "op": "insert_image",
+        "width_pt": 36
+      },
+      "family": "objects",
+      "id": "insert_image",
+      "summary": "Insert a picture (base64 PNG, JPEG, GIF, BMP, TIFF or WebP, at most 8 MiB) at an anchor.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.image"
+      ]
+    },
+    {
+      "emits": [
+        "SetObjectDescr"
+      ],
+      "example": {
+        "object": "1:20",
+        "op": "set_alt_text",
+        "text": "Signature of the lessor"
+      },
+      "family": "objects",
+      "id": "set_alt_text",
+      "summary": "Set or clear an object's alt text.",
+      "trackable": "no",
+      "trackableReason": "Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "object.altText"
+      ]
+    },
+    {
+      "emits": [
+        "SetExtent"
+      ],
+      "example": {
+        "height_pt": 72,
+        "object": "1:20",
+        "op": "resize_object",
+        "width_pt": 72
+      },
+      "family": "objects",
+      "id": "resize_object",
+      "summary": "Resize a picture, shape or text box, in points.",
+      "trackable": "no",
+      "trackableReason": "Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "SetAnchor"
+      ],
+      "example": {
+        "object": "1:20",
+        "op": "set_wrap",
+        "wrap": "square"
+      },
+      "family": "objects",
+      "id": "set_wrap",
+      "summary": "Set how text wraps around a floating object.",
+      "trackable": "no",
+      "trackableReason": "Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "layout.arrange.wrap",
+        "object.wrap"
+      ]
+    },
+    {
+      "emits": [
+        "SetImageCrop"
+      ],
+      "example": {
+        "bottom": 0,
+        "left": 0.1,
+        "object": "1:20",
+        "op": "crop_image",
+        "right": 0.1,
+        "top": 0
+      },
+      "family": "objects",
+      "id": "crop_image",
+      "summary": "Crop a picture by the fraction of each edge to hide; all zero removes the crop.",
+      "trackable": "no",
+      "trackableReason": "Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "object.crop"
+      ]
+    },
+    {
+      "emits": [
+        "DeleteObject"
+      ],
+      "example": {
+        "object": "1:20",
+        "op": "delete_object"
+      },
+      "family": "objects",
+      "id": "delete_object",
+      "summary": "Delete a picture, shape, text box or group.",
+      "trackable": "no",
+      "trackableReason": "Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "object.delete"
+      ]
+    },
+    {
+      "emits": [
+        "SetShapeFill"
+      ],
+      "example": {
+        "color": "#FFF2CC",
+        "op": "set_shape_fill",
+        "shape": "1:20"
+      },
+      "family": "objects",
+      "id": "set_shape_fill",
+      "summary": "Set a shape's fill to a colour, or remove it.",
+      "trackable": "no",
+      "trackableReason": "Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "object.fill"
+      ]
+    },
+    {
+      "emits": [
+        "SetShapeStroke"
+      ],
+      "example": {
+        "color": "#1F3864",
+        "op": "set_shape_outline",
+        "shape": "1:20",
+        "width_pt": 1.5
+      },
+      "family": "objects",
+      "id": "set_shape_outline",
+      "summary": "Set a shape's or a picture's outline colour and/or weight, or remove it.",
+      "trackable": "no",
+      "trackableReason": "Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "object.outline"
+      ]
+    },
+    {
+      "emits": [
+        "InsertNote"
+      ],
+      "example": {
+        "at": {
+          "exact": "days",
+          "node": "1:2",
+          "side": "after"
+        },
+        "op": "insert_footnote",
+        "text": "Calendar days, not business days."
+      },
+      "family": "notes",
+      "id": "insert_footnote",
+      "summary": "Insert a footnote with its text; the reference mark goes at the anchor.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.footnote"
+      ]
+    },
+    {
+      "emits": [
+        "InsertNote"
+      ],
+      "example": {
+        "at": {
+          "exact": "days",
+          "node": "1:2",
+          "side": "after"
+        },
+        "op": "insert_endnote",
+        "text": "See the schedule of notice periods."
+      },
+      "family": "notes",
+      "id": "insert_endnote",
+      "summary": "Insert an endnote with its text; the reference mark goes at the anchor.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.endnote"
+      ]
+    },
+    {
+      "emits": [
+        "InsertInlineObject"
+      ],
+      "example": {
+        "at": {
+          "node": "1:2",
+          "side": "after"
+        },
+        "kind": "page",
+        "op": "insert_break"
+      },
+      "family": "sections",
+      "id": "insert_break",
+      "summary": "Insert a line, page or column break, or a blank page, at an anchor.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.lineBreak",
+        "layout.break.page",
+        "layout.break.column",
+        "layout.blankPage"
+      ]
+    },
+    {
+      "emits": [
+        "SpliceSectionBoundary",
+        "SetParagraphProperties",
+        "SplitParagraph",
+        "SetSectionFormProtection"
+      ],
+      "example": {
+        "at": {
+          "node": "1:2",
+          "side": "after"
+        },
+        "op": "insert_section_break",
+        "start": "next_page"
+      },
+      "family": "sections",
+      "id": "insert_section_break",
+      "summary": "Start a new section at an anchor; it inherits the page setup, headers and footers.",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "layout.break.section.nextPage",
+        "layout.break.section.continuous",
+        "layout.break.section.evenPage",
+        "layout.break.section.oddPage"
+      ]
+    },
+    {
+      "emits": [
+        "SetSectionGeometry"
+      ],
+      "example": {
+        "margins": {
+          "left": 1080,
+          "right": 1080
+        },
+        "op": "set_page_setup",
+        "orientation": "landscape",
+        "section": 0
+      },
+      "family": "sections",
+      "id": "set_page_setup",
+      "summary": "Change a section's (or every section's) page size, orientation, margins or columns, in twips.",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "layout.pageSetup",
+        "layout.margins",
+        "layout.orientation",
+        "layout.size",
+        "layout.columns"
+      ]
+    },
+    {
+      "emits": [
+        "SetSectionLineNumbering"
+      ],
+      "example": {
+        "count_by": 1,
+        "op": "set_line_numbering",
+        "restart": "each_page",
+        "section": 0
+      },
+      "family": "sections",
+      "id": "set_line_numbering",
+      "summary": "Number a section's lines in the margin every N lines, or turn it off with 0.",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "layout.lineNumbers"
+      ]
+    },
+    {
+      "emits": [
+        "SetSectionPageNumbering",
+        "SetSectionVerticalAlignment"
+      ],
+      "example": {
+        "format": "lower_roman",
+        "op": "set_page_numbering",
+        "section": 0,
+        "start": 1
+      },
+      "family": "sections",
+      "id": "set_page_numbering",
+      "summary": "Set a section's page-number format, and restart it at a number or continue.",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "SetSectionWatermark"
+      ],
+      "example": {
+        "op": "set_watermark",
+        "text": "DRAFT"
+      },
+      "family": "sections",
+      "id": "set_watermark",
+      "summary": "Stamp a text watermark on every page, or remove it.",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "layout.watermark"
+      ]
+    },
+    {
+      "emits": [
+        "CreateHeaderFooterBody",
+        "SetSectionRunningRef"
+      ],
+      "example": {
+        "op": "insert_header",
+        "section": 0
+      },
+      "family": "headers_footers",
+      "id": "insert_header",
+      "summary": "Add an empty header to a section; read_blocks on its surface gives the paragraph to write into.",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.header"
+      ]
+    },
+    {
+      "emits": [
+        "CreateHeaderFooterBody",
+        "SetSectionRunningRef"
+      ],
+      "example": {
+        "op": "insert_footer",
+        "section": 0
+      },
+      "family": "headers_footers",
+      "id": "insert_footer",
+      "summary": "Add an empty footer to a section; read_blocks on its surface gives the paragraph to write into.",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.footer"
+      ]
+    },
+    {
+      "emits": [
+        "SetSectionTitlePage"
+      ],
+      "example": {
+        "enabled": true,
+        "op": "set_different_first_page",
+        "section": 0
+      },
+      "family": "headers_footers",
+      "id": "set_different_first_page",
+      "summary": "Give a section's first page its own header and footer, or not.",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "layout.firstPageVariant"
+      ]
+    },
+    {
+      "emits": [
+        "SetEvenAndOddHeaders"
+      ],
+      "example": {
+        "enabled": true,
+        "op": "set_different_odd_even"
+      },
+      "family": "headers_footers",
+      "id": "set_different_odd_even",
+      "summary": "Give even and odd pages their own headers and footers, or not (document-wide).",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "layout.evenOddVariant"
+      ]
+    },
+    {
+      "emits": [
+        "InsertInlineObject",
+        "SetChartDefinition"
+      ],
+      "example": {
+        "at": {
+          "node": "1:2",
+          "side": "after"
+        },
+        "kind": "column",
+        "op": "insert_chart"
+      },
+      "family": "charts",
+      "id": "insert_chart",
+      "summary": "Insert a chart (column, bar, line, area, scatter, pie or doughnut, plain, stacked or percent) with sample data at an anchor.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.chart"
+      ]
+    },
+    {
+      "emits": [
         "UpdateReviewState",
         "SplitParagraph",
         "JoinParagraphs",
@@ -732,6 +1269,68 @@
         "continue_numbering"
       ],
       "name": "lists"
+    },
+    {
+      "commands": [
+        "set_hyperlink",
+        "remove_hyperlink",
+        "create_bookmark",
+        "rename_bookmark",
+        "delete_bookmark"
+      ],
+      "name": "links"
+    },
+    {
+      "commands": [
+        "insert_field"
+      ],
+      "name": "fields"
+    },
+    {
+      "commands": [
+        "insert_image",
+        "set_alt_text",
+        "resize_object",
+        "set_wrap",
+        "crop_image",
+        "delete_object",
+        "set_shape_fill",
+        "set_shape_outline"
+      ],
+      "name": "objects"
+    },
+    {
+      "commands": [
+        "insert_footnote",
+        "insert_endnote"
+      ],
+      "name": "notes"
+    },
+    {
+      "commands": [
+        "insert_break",
+        "insert_section_break",
+        "set_page_setup",
+        "set_line_numbering",
+        "set_page_numbering",
+        "set_watermark"
+      ],
+      "name": "sections"
+    },
+    {
+      "commands": [
+        "insert_header",
+        "insert_footer",
+        "set_different_first_page",
+        "set_different_odd_even"
+      ],
+      "name": "headers_footers"
+    },
+    {
+      "commands": [
+        "insert_chart"
+      ],
+      "name": "charts"
     },
     {
       "commands": [
@@ -925,124 +1524,96 @@
       "reason": "Redefining a style changes every paragraph that uses it; agents apply styles and do not define them yet (docs/181 §4.2 step 2)."
     },
     {
-      "id": "insert.link",
-      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
-    },
-    {
-      "id": "insert.bookmark",
-      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
-    },
-    {
-      "id": "insert.field",
-      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
-    },
-    {
-      "id": "insert.field.",
-      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
-    },
-    {
       "id": "reference.caption",
-      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
+      "reason": "Captions, cross-references, the table of contents and updating fields read the paginated layout or the caption sequences; their lowerings are still inside the editor (docs/181 §12, lane families-b). Links, bookmarks and fields are offered."
     },
     {
       "id": "reference.crossReference",
-      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
+      "reason": "Captions, cross-references, the table of contents and updating fields read the paginated layout or the caption sequences; their lowerings are still inside the editor (docs/181 §12, lane families-b). Links, bookmarks and fields are offered."
     },
     {
       "id": "reference.tableOfContents",
-      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
+      "reason": "Captions, cross-references, the table of contents and updating fields read the paginated layout or the caption sequences; their lowerings are still inside the editor (docs/181 §12, lane families-b). Links, bookmarks and fields are offered."
     },
     {
       "id": "reference.updateToc.pageNumbers",
-      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
+      "reason": "Captions, cross-references, the table of contents and updating fields read the paginated layout or the caption sequences; their lowerings are still inside the editor (docs/181 §12, lane families-b). Links, bookmarks and fields are offered."
     },
     {
       "id": "reference.updateToc.entire",
-      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
+      "reason": "Captions, cross-references, the table of contents and updating fields read the paginated layout or the caption sequences; their lowerings are still inside the editor (docs/181 §12, lane families-b). Links, bookmarks and fields are offered."
     },
     {
       "id": "reference.updateFields",
-      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
+      "reason": "Captions, cross-references, the table of contents and updating fields read the paginated layout or the caption sequences; their lowerings are still inside the editor (docs/181 §12, lane families-b). Links, bookmarks and fields are offered."
     },
     {
       "id": "reference.updateCaptionNumbers",
-      "reason": "Hyperlinks, bookmarks, fields, captions, cross-references and the table of contents arrive with the links and fields family (docs/181 §4.2 step 4)."
-    },
-    {
-      "id": "insert.image",
-      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+      "reason": "Captions, cross-references, the table of contents and updating fields read the paginated layout or the caption sequences; their lowerings are still inside the editor (docs/181 §12, lane families-b). Links, bookmarks and fields are offered."
     },
     {
       "id": "insert.shape",
-      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
     },
     {
       "id": "insert.textbox",
-      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
     },
     {
       "id": "layout.arrange.position",
-      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
-    },
-    {
-      "id": "layout.arrange.wrap",
-      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
     },
     {
       "id": "layout.arrange.bringForward",
-      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
     },
     {
       "id": "layout.arrange.sendBackward",
-      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
     },
     {
       "id": "layout.arrange.bringToFront",
-      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
     },
     {
       "id": "layout.arrange.sendToBack",
-      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
     },
     {
       "id": "layout.arrange.group",
-      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
     },
     {
       "id": "layout.arrange.ungroup",
-      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
     },
     {
       "id": "layout.arrange.rotateRight",
-      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
     },
     {
       "id": "layout.arrange.rotateLeft",
-      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
     },
     {
       "id": "layout.arrange.flipHorizontal",
-      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
     },
     {
       "id": "layout.arrange.flipVertical",
-      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
     },
     {
       "id": "layout.arrange.inLine",
-      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
     },
     {
       "id": "layout.arrange.addText",
-      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
     },
     {
       "id": "object.",
-      "reason": "Pictures, shapes, text boxes and their arrangement arrive with the images and objects family (docs/181 §4.2 step 5)."
-    },
-    {
-      "id": "insert.chart",
-      "reason": "Charts come last, behind the chart model work they need (docs/181 §4.2 step 7, docs/155)."
+      "reason": "The object menus are one contract family; its members that change a picture or shape (object.altText, object.crop, object.delete, object.fill, object.outline, object.wrap) are named by the objects commands, the rest are arrangement."
     },
     {
       "id": "table.",
@@ -1117,92 +1688,8 @@
       "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
     },
     {
-      "id": "insert.header",
-      "reason": "Headers, footers, footnotes and endnotes need the surfaces of docs/181 §2.2 first (step 6)."
-    },
-    {
-      "id": "insert.footer",
-      "reason": "Headers, footers, footnotes and endnotes need the surfaces of docs/181 §2.2 first (step 6)."
-    },
-    {
-      "id": "insert.footnote",
-      "reason": "Headers, footers, footnotes and endnotes need the surfaces of docs/181 §2.2 first (step 6)."
-    },
-    {
-      "id": "insert.endnote",
-      "reason": "Headers, footers, footnotes and endnotes need the surfaces of docs/181 §2.2 first (step 6)."
-    },
-    {
-      "id": "layout.firstPageVariant",
-      "reason": "Headers, footers, footnotes and endnotes need the surfaces of docs/181 §2.2 first (step 6)."
-    },
-    {
-      "id": "layout.evenOddVariant",
-      "reason": "Headers, footers, footnotes and endnotes need the surfaces of docs/181 §2.2 first (step 6)."
-    },
-    {
       "id": "layout.headerFooterSettings",
-      "reason": "Headers, footers, footnotes and endnotes need the surfaces of docs/181 §2.2 first (step 6)."
-    },
-    {
-      "id": "layout.pageSetup",
-      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
-    },
-    {
-      "id": "layout.margins",
-      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
-    },
-    {
-      "id": "layout.orientation",
-      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
-    },
-    {
-      "id": "layout.size",
-      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
-    },
-    {
-      "id": "layout.columns",
-      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
-    },
-    {
-      "id": "layout.break.section.nextPage",
-      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
-    },
-    {
-      "id": "layout.break.section.continuous",
-      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
-    },
-    {
-      "id": "layout.break.section.evenPage",
-      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
-    },
-    {
-      "id": "layout.break.section.oddPage",
-      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
-    },
-    {
-      "id": "layout.lineNumbers",
-      "reason": "Page setup, columns, section breaks and line numbering need the surfaces of docs/181 §2.2 first (step 6)."
-    },
-    {
-      "id": "layout.watermark",
-      "reason": "Document-wide settings are not offered to agents; a person changes them."
-    },
-    {
-      "id": "insert.lineBreak",
-      "reason": "Line, page and column breaks are inline structure no registry command emits yet (docs/181 §4.2)."
-    },
-    {
-      "id": "layout.break.page",
-      "reason": "Line, page and column breaks are inline structure no registry command emits yet (docs/181 §4.2)."
-    },
-    {
-      "id": "layout.break.column",
-      "reason": "Line, page and column breaks are inline structure no registry command emits yet (docs/181 §4.2)."
-    },
-    {
-      "id": "layout.blankPage",
-      "reason": "Line, page and column breaks are inline structure no registry command emits yet (docs/181 §4.2)."
+      "reason": "The Header & Footer options dialog also writes the header and footer distances, which agents are not offered; its toggles and page numbering are (set_different_first_page, set_different_odd_even, set_page_numbering)."
     },
     {
       "id": "review.mode.editing",
@@ -1221,6 +1708,6 @@
       "reason": "No command deletes a comment yet; an agent resolves a thread with resolve_comment."
     }
   ],
-  "uiNotExposedCeiling": 119,
-  "vocabularyVersion": "1.1"
+  "uiNotExposedCeiling": 91,
+  "vocabularyVersion": "1.2"
 }

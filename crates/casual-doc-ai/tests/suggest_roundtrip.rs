@@ -15,9 +15,9 @@
 use casual_doc_ai::plan::{self, EditPlan};
 use casual_doc_ai::read::{self, ReadFormat};
 use casual_doc_ai::{Clock, ExportFormat, Profile, Session, SessionConfig};
-use casual_doc_command::registry::{EXAMPLE_IDS, EXAMPLE_PARAGRAPH};
+use casual_doc_command::registry::{EXAMPLE_BOOKMARK, EXAMPLE_IDS, EXAMPLE_PARAGRAPH};
 use casual_doc_command::{COMMANDS, Trackable};
-use casual_doc_model::v1::BlockNode;
+use casual_doc_model::v1::{BlockNode, InlineNode};
 use serde_json::{Value, json};
 
 const AUTHOR: &str = "Claude (AI)";
@@ -49,9 +49,15 @@ fn save(session: &Session) -> Vec<u8> {
         .bytes
 }
 
+/// The paragraph the fixture's picture sits in.
+const PICTURE_PARAGRAPH: &str = "Signed:";
+
+/// A 1x1 PNG, as the `insert_image` example carries it.
+const PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+
 /// The ids the examples' placeholders stand for, in `EXAMPLE_IDS` order: the
-/// example paragraph, the numbered item after it, and the table.
-fn ids(session: &Session) -> [String; 3] {
+/// example paragraph, the numbered item after it, the table, and the picture.
+fn ids(session: &Session) -> [String; 4] {
     let blocks = read::read_blocks(session, None, None, Some(20_000), ReadFormat::Json)
         .expect("the body reads");
     let blocks = blocks["blocks"].as_array().expect("blocks").clone();
@@ -63,11 +69,35 @@ fn ids(session: &Session) -> [String; 3] {
             .expect("the fixture block")
             .to_owned()
     };
+    let picture = session
+        .document()
+        .body()
+        .iter()
+        .find_map(|block| match block {
+            BlockNode::Paragraph(paragraph) => {
+                paragraph.inlines.iter().find_map(|inline| match inline {
+                    InlineNode::Drawing(drawing) => Some(drawing.id.to_string()),
+                    _ => None,
+                })
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
     [
         id_of(&|b| b["text"] == EXAMPLE_PARAGRAPH),
         id_of(&|b| b["text"] == "First item"),
         id_of(&|b| b["kind"] == "table"),
+        picture,
     ]
+}
+
+/// `example` with its placeholder ids pointed at `session`'s blocks.
+fn example_for(session: &Session, example: &str) -> Value {
+    let mut example = example.to_owned();
+    for (placeholder, id) in EXAMPLE_IDS.iter().zip(ids(session)) {
+        example = example.replace(&format!("\"{placeholder}\""), &format!("\"{id}\""));
+    }
+    serde_json::from_str(&example).expect("the example is JSON")
 }
 
 /// A minimal Word file: the example paragraph and "First item", with the
@@ -135,8 +165,10 @@ fn word_file() -> Vec<u8> {
     zip.finish().expect("a zip").into_inner()
 }
 
-/// The fixture: the example paragraph, a numbered item, a filled 2x2 table,
-/// saved as DOCX so every run starts from a Word file.
+/// The fixture: the example paragraph, a numbered item (with a hyperlink over
+/// `First` and the bookmark `EXAMPLE_BOOKMARK` over `item`), a filled 2x2
+/// table, and a paragraph holding a picture, saved as DOCX so every run starts
+/// from a Word file. Built through the registry's own commands.
 fn fixture() -> Vec<u8> {
     let mut session = open(&word_file(), "examples.docx", Profile::Edit);
     let blocks = read::read_blocks(&session, None, None, Some(20_000), ReadFormat::Json)
@@ -149,12 +181,35 @@ fn fixture() -> Vec<u8> {
         &mut session,
         "direct",
         json!([
+            { "op": "insert_paragraphs", "after": { "node": item },
+              "paragraphs": [{ "text": PICTURE_PARAGRAPH }] },
             { "op": "set_list", "target": { "node": item }, "kind": "numbered" },
             { "op": "insert_table", "after": { "node": item }, "rows": 2, "columns": 2 },
+            { "op": "set_hyperlink", "target": { "node": item, "exact": "First" },
+              "url": "https://example.com/first" },
+            { "op": "create_bookmark", "target": { "node": item, "exact": "item" },
+              "name": EXAMPLE_BOOKMARK },
         ]),
     )
     .expect("the fixture builds");
-    let [_, _, table] = ids(&session);
+    let blocks = read::read_blocks(&session, None, None, Some(20_000), ReadFormat::Json)
+        .expect("the body reads");
+    let signed = blocks["blocks"]
+        .as_array()
+        .expect("blocks")
+        .iter()
+        .find(|block| block["text"] == PICTURE_PARAGRAPH)
+        .and_then(|block| block["id"].as_str())
+        .expect("the picture paragraph")
+        .to_owned();
+    apply(
+        &mut session,
+        "direct",
+        json!([{ "op": "insert_image", "at": { "node": signed, "side": "after" },
+                 "data": PNG_BASE64, "content_type": "image/png", "width_pt": 36 }]),
+    )
+    .expect("the picture inserts");
+    let [_, _, table, _] = ids(&session);
     let cells: Vec<Value> = (0..2)
         .flat_map(|row| (0..2).map(move |column| (row, column)))
         .map(|(row, column)| {
@@ -231,12 +286,7 @@ fn every_trackable_command_round_trips_as_a_suggestion_and_rejecting_it_restores
     let mut failures = Vec::new();
     for command in trackable {
         let mut session = open(&base, "base.docx", Profile::Suggest);
-        let real = ids(&session);
-        let mut example = command.example.to_owned();
-        for (placeholder, id) in EXAMPLE_IDS.iter().zip(&real) {
-            example = example.replace(&format!("\"{placeholder}\""), &format!("\"{id}\""));
-        }
-        let edit: Value = serde_json::from_str(&example).expect("the example is JSON");
+        let edit = example_for(&session, command.example);
         if let Err(error) = apply(&mut session, "suggest", json!([edit])) {
             failures.push(format!(
                 "{}: refused in suggest mode: {error:?}",
@@ -288,4 +338,126 @@ fn every_trackable_command_round_trips_as_a_suggestion_and_rejecting_it_restores
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Examples that cannot change the fixture, each with what they must still
+/// do: `Some(text)` is the refusal they produce (so the edit parsed and
+/// resolved, and was refused for that reason, not for a malformed field);
+/// `None` is an edit that applies and has nothing to change.
+const DIRECT_EXCEPTIONS: &[(&str, Option<&str>)] = &[
+    // The example text carries no direct formatting in the fixture.
+    ("clear_formatting", None),
+    // The fixture's table has no merged cell.
+    ("table_split_cell", Some("not merged")),
+    // The fixture has one numbered list, so there is none earlier to join.
+    ("continue_numbering", Some("no earlier numbered list")),
+    // The fixture's picture is inline; agents cannot float one yet
+    // (`layout.arrange.inLine` is not exposed).
+    ("set_wrap", Some("Only a floating object has text wrapping")),
+    // A fill belongs to a shape; agents cannot insert one yet.
+    ("set_shape_fill", Some("engine")),
+];
+
+/// `docs/181` §12 (lane families-b): every command that is not trackable runs
+/// its own registry example for real, in direct mode, against the fixture, and
+/// the result saves to DOCX without loss and reopens. G5 covers the trackable
+/// ones; this covers the rest, so a registry example is a working edit, and a
+/// lowering that writes something the writer cannot save (a picture whose bytes
+/// never reached the package) fails here.
+#[test]
+fn every_untracked_command_applies_directly_saves_and_reopens() {
+    let base = fixture();
+    let untracked: Vec<_> = COMMANDS
+        .iter()
+        .filter(|command| matches!(command.trackable, Trackable::No(_)))
+        .collect();
+    assert!(
+        untracked.len() >= 30,
+        "the guard runs over the registry, so it must see the untracked commands"
+    );
+    let mut failures = Vec::new();
+    for command in untracked {
+        let mut session = open(&base, "base.docx", Profile::Edit);
+        let before = session.digest();
+        let edit = example_for(&session, command.example);
+        let result = apply(&mut session, "direct", json!([edit]));
+        if let Some((_, expected)) = DIRECT_EXCEPTIONS.iter().find(|(id, _)| *id == command.id) {
+            match (result, expected) {
+                (Ok(_), None) if session.digest() == before => {}
+                (Err(error), Some(reason)) => {
+                    let text = format!("{error:?}");
+                    if text.contains("malformed") || !text.contains(reason) {
+                        failures.push(format!(
+                            "{}: refused for another reason: {text}",
+                            command.id
+                        ));
+                    }
+                }
+                (outcome, _) => failures.push(format!(
+                    "{}: listed as unable to change the fixture, but: {outcome:?}; drop the \
+                     exception",
+                    command.id
+                )),
+            }
+            continue;
+        }
+        if let Err(error) = result {
+            failures.push(format!("{}: refused in direct mode: {error:?}", command.id));
+            continue;
+        }
+        if session.digest() == before {
+            failures.push(format!("{}: applied but changed nothing", command.id));
+            continue;
+        }
+        let saved = match session.export(ExportFormat::Docx, &[]) {
+            Ok(exported) => exported.bytes,
+            Err(error) => {
+                failures.push(format!("{}: the DOCX save refused: {error:?}", command.id));
+                continue;
+            }
+        };
+        if let Err(error) = Session::open(&saved, "direct.docx", SessionConfig::default()) {
+            failures.push(format!(
+                "{}: the saved DOCX does not reopen: {error:?}",
+                command.id
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The picture an agent inserts reaches the package: its bytes are the part the
+/// drawing names, after a save and a reopen.
+#[test]
+fn an_agent_picture_is_saved_with_its_bytes() {
+    let base = fixture();
+    let session = open(&base, "base.docx", Profile::Review);
+    let picture = session
+        .document()
+        .body()
+        .iter()
+        .find_map(|block| match block {
+            BlockNode::Paragraph(paragraph) => {
+                paragraph.inlines.iter().find_map(|inline| match inline {
+                    InlineNode::Drawing(drawing) => Some(drawing.media),
+                    _ => None,
+                })
+            }
+            _ => None,
+        })
+        .expect("the fixture's picture survived the save");
+    let part = session
+        .document()
+        .definitions()
+        .media
+        .get(&picture)
+        .map(|reference| reference.part_name.clone())
+        .expect("the picture names its media part");
+    let png = casual_doc_command::objects::decode_base64(PNG_BASE64, 1024)
+        .expect("the example is base64");
+    assert_eq!(
+        session.resource(&part),
+        Some(png.as_slice()),
+        "the reopened package holds the picture's bytes at {part}"
+    );
 }

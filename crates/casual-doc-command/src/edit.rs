@@ -174,6 +174,278 @@ pub enum ListKind {
     None,
 }
 
+/// A common field.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum FieldName {
+    /// The current page number (`PAGE`), recomputed at pagination.
+    Page,
+    /// The page count (`NUMPAGES`), recomputed at pagination.
+    Numpages,
+    /// The date (`DATE`); `result` is the date as it should read.
+    Date,
+    /// The time (`TIME`); `result` is the time as it should read.
+    Time,
+    /// The file name (`FILENAME`); `result` is the name as it should read.
+    Filename,
+    /// The author (`AUTHOR`); `result` is the name as it should read.
+    Author,
+}
+
+impl FieldName {
+    /// The editor's field-kind token. O(1).
+    #[must_use]
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::Page => "page",
+            Self::Numpages => "numpages",
+            Self::Date => "date",
+            Self::Time => "time",
+            Self::Filename => "filename",
+            Self::Author => "author",
+        }
+    }
+}
+
+/// A break.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum BreakName {
+    /// A line break inside the paragraph (Shift+Enter).
+    Line,
+    /// A page break; body paragraphs only.
+    Page,
+    /// A column break; body paragraphs only.
+    Column,
+    /// Two page breaks, leaving one empty page; body paragraphs only.
+    BlankPage,
+}
+
+/// Where a new section starts.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SectionStart {
+    /// On the next page.
+    NextPage,
+    /// On the same page.
+    Continuous,
+    /// On the next even page.
+    EvenPage,
+    /// On the next odd page.
+    OddPage,
+}
+
+impl SectionStart {
+    /// The editor's token. O(1).
+    #[must_use]
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::NextPage => "nextPage",
+            Self::Continuous => "continuous",
+            Self::EvenPage => "evenPage",
+            Self::OddPage => "oddPage",
+        }
+    }
+}
+
+/// Page orientation.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum OrientationName {
+    /// Taller than wide.
+    Portrait,
+    /// Wider than tall.
+    Landscape,
+}
+
+/// Page margins in twips; each one omitted keeps its value.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Margins {
+    /// Top margin, twips.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 0, max = 31680))]
+    pub top: Option<i32>,
+    /// Bottom margin, twips.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 0, max = 31680))]
+    pub bottom: Option<i32>,
+    /// Left (start) margin, twips.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 0, max = 31680))]
+    pub left: Option<i32>,
+    /// Right (end) margin, twips.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 0, max = 31680))]
+    pub right: Option<i32>,
+}
+
+/// A page-number format.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum PageNumberFormat {
+    /// 1, 2, 3.
+    Decimal,
+    /// i, ii, iii.
+    LowerRoman,
+    /// I, II, III.
+    UpperRoman,
+    /// a, b, c.
+    LowerLetter,
+    /// A, B, C.
+    UpperLetter,
+}
+
+/// When margin line numbers start again.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum LineNumberRestartName {
+    /// On every page.
+    EachPage,
+    /// At every section.
+    EachSection,
+    /// Never.
+    Continuous,
+}
+
+/// The angle of a watermark.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum WatermarkAngle {
+    /// Rising across the page (Word's default).
+    Diagonal,
+    /// Level with the text.
+    Horizontal,
+}
+
+/// Which pages of a section a header or footer is for.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum PageKind {
+    /// Every page that has no first-page or even-page variant (the default).
+    #[default]
+    Default,
+    /// The section's first page (needs a different first page).
+    First,
+    /// Even pages (needs different odd and even pages).
+    Even,
+}
+
+/// How text wraps around a floating object.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum WrapName {
+    /// Around its bounding box.
+    Square,
+    /// Around its outline.
+    Tight,
+    /// Through its outline's gaps.
+    Through,
+    /// Above and below only.
+    TopAndBottom,
+    /// No wrap, behind the text.
+    Behind,
+    /// No wrap, over the text.
+    Front,
+}
+
+impl WrapName {
+    /// The editor's token. O(1).
+    #[must_use]
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::Square => "square",
+            Self::Tight => "tight",
+            Self::Through => "through",
+            Self::TopAndBottom => "topAndBottom",
+            Self::Behind => "behind",
+            Self::Front => "front",
+        }
+    }
+}
+
+/// A chart family this build paints.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+pub enum ChartKind {
+    /// Vertical bars side by side.
+    #[serde(rename = "column")]
+    Column,
+    /// Vertical bars stacked.
+    #[serde(rename = "column-stacked")]
+    ColumnStacked,
+    /// Vertical bars stacked to 100%.
+    #[serde(rename = "column-percent")]
+    ColumnPercent,
+    /// Horizontal bars side by side.
+    #[serde(rename = "bar")]
+    Bar,
+    /// Horizontal bars stacked.
+    #[serde(rename = "bar-stacked")]
+    BarStacked,
+    /// Horizontal bars stacked to 100%.
+    #[serde(rename = "bar-percent")]
+    BarPercent,
+    /// Lines.
+    #[serde(rename = "line")]
+    Line,
+    /// Lines with markers.
+    #[serde(rename = "line-markers")]
+    LineMarkers,
+    /// Stacked lines.
+    #[serde(rename = "line-stacked")]
+    LineStacked,
+    /// Lines stacked to 100%.
+    #[serde(rename = "line-percent")]
+    LinePercent,
+    /// Areas.
+    #[serde(rename = "area")]
+    Area,
+    /// Stacked areas.
+    #[serde(rename = "area-stacked")]
+    AreaStacked,
+    /// Areas stacked to 100%.
+    #[serde(rename = "area-percent")]
+    AreaPercent,
+    /// X/Y points.
+    #[serde(rename = "scatter")]
+    Scatter,
+    /// X/Y points joined by smooth lines.
+    #[serde(rename = "scatter-smooth")]
+    ScatterSmooth,
+    /// A pie.
+    #[serde(rename = "pie")]
+    Pie,
+    /// A doughnut.
+    #[serde(rename = "doughnut")]
+    Doughnut,
+}
+
+impl ChartKind {
+    /// The editor's token (`casual_doc_command::charts::KINDS`). O(1).
+    #[must_use]
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::Column => "column",
+            Self::ColumnStacked => "column-stacked",
+            Self::ColumnPercent => "column-percent",
+            Self::Bar => "bar",
+            Self::BarStacked => "bar-stacked",
+            Self::BarPercent => "bar-percent",
+            Self::Line => "line",
+            Self::LineMarkers => "line-markers",
+            Self::LineStacked => "line-stacked",
+            Self::LinePercent => "line-percent",
+            Self::Area => "area",
+            Self::AreaStacked => "area-stacked",
+            Self::AreaPercent => "area-percent",
+            Self::Scatter => "scatter",
+            Self::ScatterSmooth => "scatter-smooth",
+            Self::Pie => "pie",
+            Self::Doughnut => "doughnut",
+        }
+    }
+}
+
 /// Accept or reject.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -406,6 +678,281 @@ pub enum Edit {
         /// The list item.
         target: Anchor,
     },
+    /// Link the quoted text to a URL or a bookmark.
+    SetHyperlink {
+        /// The text to link (a non-empty quote).
+        target: Anchor,
+        /// An `http`, `https`, `mailto`, `ftp` or `tel` URL, or `#` and a
+        /// bookmark name.
+        url: String,
+        /// A tooltip shown on hover.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tooltip: Option<String>,
+    },
+    /// Remove the hyperlink whose text is exactly the quote; the text stays.
+    RemoveHyperlink {
+        /// The linked text, exactly.
+        target: Anchor,
+    },
+    /// Bookmark the quoted text (or, with no quote, a point in the paragraph).
+    CreateBookmark {
+        /// What the bookmark spans.
+        target: Anchor,
+        /// Its name: a letter first, then letters, digits or `_`, at most 40
+        /// characters, as Word requires.
+        name: String,
+    },
+    /// Rename a bookmark.
+    RenameBookmark {
+        /// Its current name.
+        name: String,
+        /// Its new name.
+        new_name: String,
+    },
+    /// Delete a bookmark; the text it spans stays.
+    DeleteBookmark {
+        /// Its name.
+        name: String,
+    },
+    /// Insert a field at an anchor.
+    InsertField {
+        /// Where.
+        at: Anchor,
+        /// Which field.
+        kind: FieldName,
+        /// The displayed value of a date, time, file-name or author field
+        /// (the engine reads no clock or file system); ignored for page
+        /// numbers, which are computed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<String>,
+    },
+    /// Insert a picture at an anchor.
+    InsertImage {
+        /// Where.
+        at: Anchor,
+        /// The image bytes, standard base64, at most 8 MiB decoded.
+        data: String,
+        /// Its MIME type: image/png, image/jpeg, image/gif, image/bmp,
+        /// image/tiff or image/webp; the bytes must be that format.
+        content_type: String,
+        /// Width in points; with `height` omitted too, the picture's own
+        /// size at 96 DPI (PNG, GIF, JPEG and BMP state it).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        width_pt: Option<f64>,
+        /// Height in points; omitted, it keeps the picture's proportions.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        height_pt: Option<f64>,
+        /// Alt text for readers who cannot see it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        alt_text: Option<String>,
+    },
+    /// Set or clear an object's alt text.
+    SetAltText {
+        /// The object id `read_blocks` lists.
+        object: String,
+        /// The alt text; omitted or empty clears it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+    },
+    /// Resize a picture, shape or text box.
+    ResizeObject {
+        /// The object id.
+        object: String,
+        /// Width in points.
+        width_pt: f64,
+        /// Height in points.
+        height_pt: f64,
+    },
+    /// Set how text wraps around a floating object.
+    SetWrap {
+        /// The object id.
+        object: String,
+        /// The wrap.
+        wrap: WrapName,
+    },
+    /// Crop a picture: the fraction (0 to 1) of each edge to hide; all zero
+    /// removes the crop.
+    CropImage {
+        /// The picture id.
+        object: String,
+        /// Left edge.
+        #[schemars(range(min = 0, max = 1))]
+        left: f64,
+        /// Top edge.
+        #[schemars(range(min = 0, max = 1))]
+        top: f64,
+        /// Right edge.
+        #[schemars(range(min = 0, max = 1))]
+        right: f64,
+        /// Bottom edge.
+        #[schemars(range(min = 0, max = 1))]
+        bottom: f64,
+    },
+    /// Delete a picture, shape, text box or group.
+    DeleteObject {
+        /// The object id.
+        object: String,
+    },
+    /// Set a shape's fill.
+    SetShapeFill {
+        /// The shape id.
+        shape: String,
+        /// `#RRGGBB`, or `none` to remove the fill.
+        color: String,
+    },
+    /// Set a shape's or a picture's outline colour and/or weight.
+    SetShapeOutline {
+        /// The shape or picture id.
+        shape: String,
+        /// `#RRGGBB`, or `none` to remove the outline.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
+        /// Weight in points.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(range(min = 0, max = 1584))]
+        width_pt: Option<f64>,
+    },
+    /// Insert a footnote at an anchor, with its text.
+    InsertFootnote {
+        /// Where the reference mark goes.
+        at: Anchor,
+        /// The note's text.
+        text: String,
+    },
+    /// Insert an endnote at an anchor, with its text.
+    InsertEndnote {
+        /// Where the reference mark goes.
+        at: Anchor,
+        /// The note's text.
+        text: String,
+    },
+    /// Insert a line, page or column break, or a blank page, at an anchor.
+    InsertBreak {
+        /// Where.
+        at: Anchor,
+        /// Which break.
+        kind: BreakName,
+    },
+    /// Start a new section at an anchor; it inherits the current section's
+    /// page setup, headers and footers.
+    InsertSectionBreak {
+        /// Where; a top-level body paragraph.
+        at: Anchor,
+        /// Where the new section starts.
+        start: SectionStart,
+    },
+    /// Change a section's page size, orientation, margins or columns.
+    SetPageSetup {
+        /// The 0-based section (`get_outline` lists them); omitted, every
+        /// section.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        section: Option<u32>,
+        /// Page width, twips (Letter is 12240, A4 11906).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(range(min = 1440, max = 31680))]
+        width: Option<i32>,
+        /// Page height, twips (Letter is 15840, A4 16838).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(range(min = 1440, max = 31680))]
+        height: Option<i32>,
+        /// Orientation; a change swaps width and height unless both are given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        orientation: Option<OrientationName>,
+        /// Margins, twips.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        margins: Option<Margins>,
+        /// Number of text columns, 1 to 45.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(range(min = 1, max = 45))]
+        columns: Option<u16>,
+        /// Space between columns, twips.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(range(min = 0, max = 31680))]
+        column_spacing: Option<i32>,
+    },
+    /// Number the lines of a section in the margin, or stop.
+    SetLineNumbering {
+        /// The 0-based section; omitted, every section.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        section: Option<u32>,
+        /// Number every Nth line; 0 turns numbering off.
+        #[schemars(range(min = 0, max = 100))]
+        count_by: i32,
+        /// The first number (default 1).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(range(min = 1, max = 32767))]
+        start: Option<i32>,
+        /// When numbering restarts (default each page).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        restart: Option<LineNumberRestartName>,
+    },
+    /// Set how a section's pages are numbered.
+    SetPageNumbering {
+        /// The 0-based section; omitted, every section.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        section: Option<u32>,
+        /// The format; omitted, decimal.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        format: Option<PageNumberFormat>,
+        /// Restart at this number; omitted, continue from the previous
+        /// section.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(range(min = 0, max = 32767))]
+        start: Option<i32>,
+    },
+    /// Stamp a text watermark on every page, or remove it.
+    SetWatermark {
+        /// The words; omitted or empty removes the watermark.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        /// `#RRGGBB` (default light grey).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
+        /// The angle (default diagonal).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        layout: Option<WatermarkAngle>,
+        /// The font family (default the document's).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        font: Option<String>,
+    },
+    /// Add an empty header to a section, ready for insert_text.
+    InsertHeader {
+        /// The 0-based section (default 0).
+        #[serde(default)]
+        section: u32,
+        /// Which pages it is for (default every page).
+        #[serde(default)]
+        pages: PageKind,
+    },
+    /// Add an empty footer to a section, ready for insert_text.
+    InsertFooter {
+        /// The 0-based section (default 0).
+        #[serde(default)]
+        section: u32,
+        /// Which pages it is for (default every page).
+        #[serde(default)]
+        pages: PageKind,
+    },
+    /// Give a section's first page its own header and footer, or not.
+    SetDifferentFirstPage {
+        /// The 0-based section.
+        section: u32,
+        /// On or off.
+        enabled: bool,
+    },
+    /// Give even and odd pages their own headers and footers, or not
+    /// (document-wide).
+    SetDifferentOddEven {
+        /// On or off.
+        enabled: bool,
+    },
+    /// Insert a chart with sample data at an anchor.
+    InsertChart {
+        /// Where.
+        at: Anchor,
+        /// The chart family.
+        kind: ChartKind,
+    },
     /// Comment on the quoted text, or reply to a comment.
     Comment {
         /// The text commented on.
@@ -468,6 +1015,33 @@ impl Edit {
             Self::ChangeListLevel { .. } => "change_list_level",
             Self::RestartNumbering { .. } => "restart_numbering",
             Self::ContinueNumbering { .. } => "continue_numbering",
+            Self::SetHyperlink { .. } => "set_hyperlink",
+            Self::RemoveHyperlink { .. } => "remove_hyperlink",
+            Self::CreateBookmark { .. } => "create_bookmark",
+            Self::RenameBookmark { .. } => "rename_bookmark",
+            Self::DeleteBookmark { .. } => "delete_bookmark",
+            Self::InsertField { .. } => "insert_field",
+            Self::InsertImage { .. } => "insert_image",
+            Self::SetAltText { .. } => "set_alt_text",
+            Self::ResizeObject { .. } => "resize_object",
+            Self::SetWrap { .. } => "set_wrap",
+            Self::CropImage { .. } => "crop_image",
+            Self::DeleteObject { .. } => "delete_object",
+            Self::SetShapeFill { .. } => "set_shape_fill",
+            Self::SetShapeOutline { .. } => "set_shape_outline",
+            Self::InsertFootnote { .. } => "insert_footnote",
+            Self::InsertEndnote { .. } => "insert_endnote",
+            Self::InsertBreak { .. } => "insert_break",
+            Self::InsertSectionBreak { .. } => "insert_section_break",
+            Self::SetPageSetup { .. } => "set_page_setup",
+            Self::SetLineNumbering { .. } => "set_line_numbering",
+            Self::SetPageNumbering { .. } => "set_page_numbering",
+            Self::SetWatermark { .. } => "set_watermark",
+            Self::InsertHeader { .. } => "insert_header",
+            Self::InsertFooter { .. } => "insert_footer",
+            Self::SetDifferentFirstPage { .. } => "set_different_first_page",
+            Self::SetDifferentOddEven { .. } => "set_different_odd_even",
+            Self::InsertChart { .. } => "insert_chart",
             Self::Comment { .. } => "comment",
             Self::ResolveComment { .. } => "resolve_comment",
             Self::Review { .. } => "review",
@@ -481,7 +1055,20 @@ impl Edit {
             Self::InsertText { text, .. }
             | Self::ReplaceText { text, .. }
             | Self::SetCellText { text, .. }
+            | Self::InsertFootnote { text, .. }
+            | Self::InsertEndnote { text, .. }
             | Self::Comment { text, .. } => text.len(),
+            Self::SetHyperlink { url, tooltip, .. } => {
+                url.len() + tooltip.as_ref().map_or(0, String::len)
+            }
+            Self::CreateBookmark { name, .. } => name.len(),
+            Self::RenameBookmark { new_name, .. } => new_name.len(),
+            Self::InsertField { result, .. } => result.as_ref().map_or(0, String::len),
+            Self::SetAltText { text, .. } => text.as_ref().map_or(0, String::len),
+            Self::SetWatermark { text, .. } => text.as_ref().map_or(0, String::len),
+            // A picture's bytes are bounded per edit (`objects::MAX_IMAGE_BYTES`),
+            // not by the plan's text ceiling; its alt text is text.
+            Self::InsertImage { alt_text, .. } => alt_text.as_ref().map_or(0, String::len),
             Self::RewriteBlock { markdown, .. } => markdown.len(),
             Self::InsertParagraphs { paragraphs, .. } => paragraphs
                 .iter()
@@ -508,6 +1095,24 @@ impl Edit {
             | Self::ChangeListLevel { .. }
             | Self::RestartNumbering { .. }
             | Self::ContinueNumbering { .. }
+            | Self::RemoveHyperlink { .. }
+            | Self::DeleteBookmark { .. }
+            | Self::ResizeObject { .. }
+            | Self::SetWrap { .. }
+            | Self::CropImage { .. }
+            | Self::DeleteObject { .. }
+            | Self::SetShapeFill { .. }
+            | Self::SetShapeOutline { .. }
+            | Self::InsertBreak { .. }
+            | Self::InsertSectionBreak { .. }
+            | Self::SetPageSetup { .. }
+            | Self::SetLineNumbering { .. }
+            | Self::SetPageNumbering { .. }
+            | Self::InsertHeader { .. }
+            | Self::InsertFooter { .. }
+            | Self::SetDifferentFirstPage { .. }
+            | Self::SetDifferentOddEven { .. }
+            | Self::InsertChart { .. }
             | Self::ResolveComment { .. }
             | Self::Review { .. } => 0,
         }
