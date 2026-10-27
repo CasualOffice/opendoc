@@ -1,4 +1,4 @@
-// A large, editable DOCX, generated rather than committed (`docs/180` §2).
+// A large, editable DOCX, generated rather than committed (`docs/architecture/180` §2).
 //
 // The open path has two regimes (`docs/113`): a body at or under the engine's
 // whole-layout ceiling is laid out whole and is EDITABLE; past it the body is

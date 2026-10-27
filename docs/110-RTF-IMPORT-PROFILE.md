@@ -21,7 +21,7 @@ exporter would need so it can be added without reworking the import seam.
 ### Why RTF is in scope
 
 RTF is a word-processing document interchange format, which is squarely inside
-the product scope in `docs/10` and the working contract: *documents — DOCX, ODT,
+the product scope in `docs/tracker/completed/retired-documents.md#doc-10` and the working contract: *documents — DOCX, ODT,
 TXT, JSON snapshot, and remaining document interchange formats.* It is also the
 format most commonly produced by legacy line-of-business systems, mail-merge
 tools and clinical/legal record exporters, so a document runtime that cannot

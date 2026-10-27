@@ -9,7 +9,7 @@ repository.workspace = true
 authors.workspace = true
 publish = false
 
-# `docs/179`, ADR-073 (Proposed). This crate paints the SAME display list
+# `docs/architecture/179`, ADR-073 (Proposed). This crate paints the SAME display list
 # `casual-doc-render` paints, and nothing depends on it by default: the editor's
 # wasm build and every native host keep the CPU raster unless they opt in. The
 # CPU raster stays the default and the golden reference; this backend is checked
@@ -21,11 +21,11 @@ publish = false
 # * `gpu`        — `vello_hybrid` on `wgpu` 29: the CPU builds sparse strips and
 #                  the GPU does the fine rasterization. Native Metal, Vulkan and
 #                  DX12, and WebGPU in a browser. The WebGL2 painter is
-#                  `vello_hybrid/webgl` and is not wired yet (`docs/179` §7).
+#                  `vello_hybrid/webgl` and is not wired yet (`docs/architecture/179` §7).
 # * `sparse-cpu` — `vello_cpu`: the same sparse-strip pipeline on the CPU. It is
 #                  how the encoder is checked on a machine with no GPU adapter
 #                  (CI's Linux runners), and the measured CPU alternative in
-#                  `docs/179` §4.
+#                  `docs/architecture/179` §4.
 #
 # Versions are the `vello_common` 0.2 family because it is the newest that keeps
 # the workspace MSRV (1.88): `vello_cpu` 0.3 and `vello` 0.11 need 1.89.

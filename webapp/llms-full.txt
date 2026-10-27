@@ -323,7 +323,7 @@ reject structurally valid packages with unusual office-document part names.
 > binds by content type, fail-closed. `word/document.xml` becomes an optional
 > fast-path heuristic. The Phase 0 three-part requirement above is superseded for
 > the Phase 1A read path; see `36-ADR-027-ACCEPTANCE-RECORD.md` (R1) and
-> `37-PHASE-1A-DECISION-RESEARCH.md`.
+> `tracker/completed/retired-documents.md#doc-37`.
 
 ## Package Path Rules
 
@@ -3664,7 +3664,7 @@ Before implementation:
 1. Read the relevant docs in `docs/`.
 2. Write or update the design note for the work.
 3. Discuss and finalize the approach.
-4. Add or update the tracker item in `docs/14-EXECUTION-TRACKER.md`.
+4. Add or update the row in `docs/109-BACKLOG.md`, the single working queue.
 5. Identify required tests, compatibility impact, and CI gates.
 
 During implementation:

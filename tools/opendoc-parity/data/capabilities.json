@@ -5120,7 +5120,7 @@
         "localeKey": "DE.Views.TableSettingsAdvanced.textAltDescription"
       },
       "rank": 3,
-      "note": "Ours are live fields in the properties inspector writing w:tblCaption and w:tblDescription, bounded to 255 bytes and undoable (docs/74)."
+      "note": "Ours are live fields in the properties inspector writing w:tblCaption and w:tblDescription, bounded to 255 bytes and undoable (docs/72, table metadata section)."
     },
     {
       "id": "table.autofit",
@@ -5845,7 +5845,7 @@
         }
       },
       "rank": 1,
-      "note": "We are ahead here: table.sort.ascending and table.sort.descending sort the rows on the caret's column through doc.sortTable, on the ribbon, the Table menu and the palette (docs/73). ONLYOFFICE's document editor has no table sort at all."
+      "note": "We are ahead here: table.sort.ascending and table.sort.descending sort the rows on the caret's column through doc.sortTable, on the ribbon, the Table menu and the palette (docs/72, table sorting section). ONLYOFFICE's document editor has no table sort at all."
     },
     {
       "id": "table.split-cell",

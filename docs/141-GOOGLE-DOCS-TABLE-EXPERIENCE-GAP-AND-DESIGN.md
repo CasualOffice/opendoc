@@ -1758,7 +1758,7 @@ disproves it, and §6 files them.
 | **89** | deferral: *"no-wrap/fit-text"* | **half** shipped — `w:noWrap` is consumed; `fit_text` has **zero** consumers (recipe: `grep -rn fit_text crates/casual-doc-layout crates/casual-doc-render \| wc -l` → 0), so that half is still honest | `fn cell_no_wrap_applies` in `flow.rs` |
 | **91** | deferral: *"floating tables"* | shipped for top-level body tables | `crates/casual-doc-layout/src/table_float.rs` |
 
-**Accurate as written:** `docs/92`, `docs/74`, `docs/75`. `docs/90`'s four remaining deferrals
+**Accurate as written:** `docs/92`, the metadata and formula notes now in `docs/72`. `docs/90`'s four remaining deferrals
 (natural-size media probing, chart/OLE parsing, anchored floats in table width, Word's full
 preferred-width negotiation) could not be disproved and are marked **UNVERIFIED** — `docs/105`
 OO-014 independently records charts as undrawn, which is consistent with them still standing.
@@ -1811,7 +1811,7 @@ and reconcile FID-L-13 between `105` and `109`.
 
 **Doc corrections (§5):** `docs/49` compatibility boundary and its final paragraph; `docs/50`
 deferrals 3 and 4; `docs/70`'s group count, its ribbon-scroll rule, and seven of its eight
-deferrals; `docs/72`'s follow-up paragraph; `docs/73`'s opening sentence plus the two drifts and
+deferrals; `docs/72`'s follow-up paragraph; `docs/72`'s table-sorting opening sentence plus the two drifts and
 the missing refusal; `docs/89`'s three shipped deferrals and the half-shipped fourth; `docs/91`'s
 floating-table deferral. **`docs/70` is the one that matters most**, because it is the only
 interaction document of the eleven and its deferral list is what a lane would read before
@@ -1824,8 +1824,7 @@ one-flag change, which will matter for OT granularity, ADR-033); merge-tolerant
 `row_band_size`/`col_band_size` (TBL-30).
 
 **Test rows:** TBL-37 (nothing drags a column) and TBL-38 (the table formula UI has zero
-coverage — `grep -rn 'tableFormula' webapp/tests/` returns nothing, so the whole of `docs/75`'s
-UI is unexercised in the webapp suite).
+coverage — `grep -rn 'tableFormula' webapp/tests/` returns nothing, so the whole of `docs/72`'s formula UI is unexercised in the webapp suite).
 
 ---
 

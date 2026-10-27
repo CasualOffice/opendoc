@@ -231,7 +231,7 @@ specific process debt `99` §6 calls out.
 
 **Owner assessment, 2026-09-15:** *code quality and UI/UX are not production or
 enterprise quality as of now.* That is an assessment of the **current state**, not a change
-of target — `10-PROJECT-GOAL-AND-STANDARDS.md` and AGENTS.md still set production-grade as
+of target — `tracker/completed/retired-documents.md#doc-10` and AGENTS.md still set production-grade as
 the baseline, and the memory rule that OpenDoc is never framed as an MVP still holds. The
 gap between the standard and the state is what this class tracks.
 

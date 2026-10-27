@@ -9,7 +9,7 @@ Before implementation:
 1. Read the relevant docs in `docs/`.
 2. Write or update the design note for the work.
 3. Discuss and finalize the approach.
-4. Add or update the tracker item in `docs/14-EXECUTION-TRACKER.md`.
+4. Add or update the row in `docs/109-BACKLOG.md`, the single working queue.
 5. Identify required tests, compatibility impact, and CI gates.
 
 During implementation:

@@ -3,7 +3,7 @@
 //! Two jobs. It checks the encoder on a machine with no GPU — `vello_hybrid`
 //! and `vello_cpu` build the same sparse strips from the same commands, so an
 //! encoder mistake shows here exactly as it would on the GPU — and it is the
-//! measured CPU alternative to `tiny-skia` in `docs/179` §4. It is not the
+//! measured CPU alternative to `tiny-skia` in `docs/architecture/179` §4. It is not the
 //! reference: `casual-doc-render` is.
 
 use casual_doc_layout::display::DisplayList;

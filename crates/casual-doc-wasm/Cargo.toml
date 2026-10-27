@@ -21,7 +21,7 @@ crate-type = ["cdylib", "rlib"]
 # deterministic complete bundle.
 default = ["web-host-fonts"]
 web-host-fonts = ["casual-doc-layout/external-web-fonts"]
-# Opt-in second raster (`docs/179`, ADR-073 Proposed): `renderPageSparse`, the
+# Opt-in second raster (`docs/architecture/179`, ADR-073 Proposed): `renderPageSparse`, the
 # same page through `casual-doc-render-gpu`'s sparse-strip encoder on
 # `vello_cpu`. OFF by default and not built by `webapp/build.sh`, so the shipped
 # module and `renderPage` are unchanged; a host that builds with it gets one more

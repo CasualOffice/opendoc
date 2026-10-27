@@ -86,7 +86,7 @@ function fakeEngine(pagesCount = 6, { language = "", unknownWord = null } = {}) 
       asked.caretRect.push(node);
       return [paragraphs[index.get(node)].page, 0, 0, 2, 20];
     },
-    // The one call a scan makes (`docs/180` E2): the rows on the window's
+    // The one call a scan makes (`docs/architecture/180` E2): the rows on the window's
     // pages. Each row's text and language count as read, under the names the
     // older per-paragraph calls were recorded under, so the window-extent
     // guards below keep their meaning.
@@ -1051,7 +1051,7 @@ test("a mark is placed from the run's TEXT box, never from the line box", async 
   );
 });
 
-// `docs/180` E2, `109` HF-411: a scan and its paint make a constant number of
+// `docs/architecture/180` E2, `109` HF-411: a scan and its paint make a constant number of
 // engine calls however many paragraphs and marks the window holds. The walk
 // this replaced asked `caretRect` once per paragraph, and the painter asked
 // `decorationRects` once per mark; in the engine each of those built the

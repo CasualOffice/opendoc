@@ -1,6 +1,6 @@
 [package]
 name = "render-wasm-bench"
-description = "Times the CPU raster and the sparse-strip encoder inside WebAssembly (docs/179 §2); not a workspace member"
+description = "Times the CPU raster and the sparse-strip encoder inside WebAssembly (docs/architecture/179 §2); not a workspace member"
 version = "0.0.0"
 edition = "2024"
 license = "Apache-2.0"
@@ -9,7 +9,7 @@ publish = false
 # Deliberately OUTSIDE the workspace (its own `[workspace]` below): it is a
 # measuring harness built for `wasm32-unknown-unknown` with raw exports and no
 # wasm-bindgen, so `node bench.mjs` can time it with `performance.now()`. It
-# never ships and no gate builds it. Recipe: `docs/179` §2.
+# never ships and no gate builds it. Recipe: `docs/architecture/179` §2.
 
 [lib]
 crate-type = ["cdylib"]

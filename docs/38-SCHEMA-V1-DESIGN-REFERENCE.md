@@ -5,8 +5,9 @@
 **Decision basis:** ADR-027 (`36-ADR-027-ACCEPTANCE-RECORD.md`), ADR-014 (grapheme
 positions), ADR-018 (strict bounded JSON), disposition taxonomy
 (`35-DISPOSITION-TAXONOMY.md`).
-**Supersedes for import:** `22-NORMALIZED-SCHEMA-V0.md` is retained as the v0
-baseline; v1 is a superset reached by a deterministic, total v0→v1 migration.
+**Supersedes for import:** the v0 baseline is recoverable through the
+[retirement index](tracker/completed/retired-documents.md#doc-22); v1 is a
+superset reached by a deterministic, total v0→v1 migration.
 
 ## About this document
 
@@ -83,7 +84,7 @@ accepted.
 
 **Evidence:** ECMA-376 (WordprocessingML, OPC, Markup Compatibility,
 Transitional), ISO/IEC 29500-1:2016, Microsoft WordprocessingML + OPC docs.
-Competitor study and fidelity boundaries: `33-DOCX-ENGINE-COMPETITOR-RESEARCH.md`,
+Competitor study and fidelity boundaries: `tracker/completed/retired-documents.md#doc-33`,
 `34-OOXML-FIDELITY-ARCHITECTURE.md`. The importer follows relationship *types*
 and resolved targets, never conventional ZIP paths.
 

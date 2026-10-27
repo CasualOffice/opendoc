@@ -1,6 +1,6 @@
 // Ticking a checkbox in a form.
 //
-// `docs/118` §2. The owner's Medical Incident Report Form carries eight
+// `docs/118-DOCUMENT-AUDIT-2026-09-22.md` §2. The owner's Medical Incident Report Form carries eight
 // `w14:checkbox` content controls. Measured against the real file: click,
 // Space and double-click were all no-ops, so the document opened, rendered
 // correctly, and was read-only in the one way that matters — it is a form, and
@@ -147,7 +147,7 @@ test("a form checkbox is announced as a checkbox, named by the text beside it", 
   page,
   consoleErrors,
 }) => {
-  // `docs/118` §3 row 2, `docs/120`. Measured on the owner's Medical Incident
+  // `docs/118-DOCUMENT-AUDIT-2026-09-22.md` §3 row 2, `docs/120`. Measured on the owner's Medical Incident
   // Report form before this: the mirror carried the raw `U+F0A3` / `U+F052`
   // Wingdings 2 code points, which a screen reader reads as NOTHING, and no
   // `role` attribute appeared anywhere in `#a11yDocument`. Since #578 the

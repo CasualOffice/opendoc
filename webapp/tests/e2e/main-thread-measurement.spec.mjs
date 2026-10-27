@@ -1,4 +1,4 @@
-// The committed probe behind `docs/180` §2's tables (RM-13).
+// The committed probe behind `docs/architecture/180` §2's tables (RM-13).
 //
 // A published number is generated from a committed artifact or it is not
 // published (`SKILL.md` §9). This is that artifact for the main-thread blocking
@@ -108,7 +108,7 @@ async function openFile(page, file, paragraphs) {
 /**
  * `MAIN_THREAD_PROFILE=1`: a sampled CPU profile of one more keystroke, printed
  * as the JavaScript frames with the most inclusive time — which host code the
- * keystroke's time is spent under (`docs/180` §2.3). wasm frames are anonymous
+ * keystroke's time is spent under (`docs/architecture/180` §2.3). wasm frames are anonymous
  * in a release build, so they are attributed to the JS binding that called them.
  */
 async function profileKeystroke(page, name) {
@@ -158,7 +158,7 @@ function rowText(label, m) {
   return `| ${label} | ${m.worst} ms | ${m.tti} ms | ${over.length} | [${over.slice(0, 12).join(", ")}${over.length > 12 ? ", …" : ""}] |`;
 }
 
-test.describe("main-thread blocking, measured (docs/180 §2)", () => {
+test.describe("main-thread blocking, measured (docs/architecture/180 §2)", () => {
   test.setTimeout(600_000);
 
   test("open, paste and style change on sample.docx and the large fixture", async ({ page }) => {
@@ -181,7 +181,7 @@ test.describe("main-thread blocking, measured (docs/180 §2)", () => {
         // `beforeinput`, the event the editor's text input path consumes, so the
         // measurement is of the edit and not of Playwright's typing. The first
         // is measured apart because it is the one that pays for anything the
-        // open left undone (`docs/180` §2.2).
+        // open left undone (`docs/architecture/180` §2.2).
         await page.locator(".page-wrap .page").first().click({ position: { x: 120, y: 140 } });
         for (const [ordinal, key] of [["first", "x"], ["second", "y"]]) {
           await observe(page);

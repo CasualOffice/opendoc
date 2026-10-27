@@ -1,6 +1,6 @@
 //! What a worker could hand the main thread instead of the open itself.
 //!
-//! The committed artifact behind `docs/180` §3.2. A worker that imports and lays
+//! The committed artifact behind `docs/architecture/180` §3.2. A worker that imports and lays
 //! a document out only helps the editor if the main thread can then ADOPT the
 //! result for less than it would cost to compute it, because the editor's
 //! editing path holds the document synchronously on the main thread (ADR-073).

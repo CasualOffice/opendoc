@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://opendoc.casualoffice.org"><img src="https://img.shields.io/badge/demo-opendoc.casualoffice.org-3355c4.svg" alt="Live demo" /></a>
-  <a href="docs/06-ROADMAP-AND-DELIVERY.md"><img src="https://img.shields.io/badge/status-pre--release-orange.svg" alt="Status: pre-release" /></a>
+  <a href="docs/168-WORD-AND-DOCS-RIVAL-PLAN.md"><img src="https://img.shields.io/badge/status-pre--release-orange.svg" alt="Status: pre-release" /></a>
   <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.88%2B-black.svg?logo=rust" alt="Rust 1.88+" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0" /></a>
 </p>
@@ -307,16 +307,21 @@ MSRV.
 
 ## Documentation
 
-The numbered documents in [`docs/`](docs/) are the source of truth for architecture,
-behaviour and compatibility ([index](docs/00-README.md)). Good entry points:
+The [documentation map](docs/00-README.md) points to the current contracts and
+the single backlog. Numbered research and design records preserve the reasons
+behind decisions; check code and tests before treating an older status claim as
+current. Good entry points:
 
 [Architecture](docs/02-ARCHITECTURE.md) ·
+[Feature architecture](docs/architecture/README.md) ·
 [Decisions (ADRs)](docs/08-ADR-REGISTER.md) ·
+[Current decisions](docs/decisions/current.md) ·
 [SDK API](docs/05-SDK-API-SPEC.md) ·
 [Editor architecture](docs/56-EDITOR-SHELL-AND-RENDER-ARCHITECTURE.md) ·
 [Collaboration protocol](docs/152-COLLABORATION-PROTOCOL-SESSION-AND-IDENTITY.md) ·
 [Deployment](docs/162-DEPLOYMENT-CONTAINERS-AND-CONFIGURATION.md) ·
-[Roadmap](docs/106-ONLYOFFICE-ALTERNATIVE-ROADMAP.md) ·
+[Word and Docs plan](docs/168-WORD-AND-DOCS-RIVAL-PLAN.md) ·
+[Tracker](docs/tracker/README.md) ·
 [Backlog](docs/109-BACKLOG.md)
 
 ## Contributing

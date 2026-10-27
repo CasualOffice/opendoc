@@ -4,7 +4,7 @@
 **CI provider:** GitHub Actions
 **Development toolchain:** Rust 1.96.0
 **MSRV:** Rust 1.88.0
-**Last updated:** 2026-09-28
+**Last updated:** 2026-10-26
 
 ## Purpose
 
@@ -40,6 +40,12 @@ Every pull request and push to `main` runs required checks with stable job names
 - `platform`;
 - `dependency-policy`;
 - `repository-policy`.
+
+The unit-test gate also checks documentation links and the tracker: relative
+links in `docs/`, queue order and counts, unique IDs across `109` and
+`tracker/completed.md`, and byte-for-byte freshness of the generated pending
+and in-progress views. A status change in
+`109` requires `node webapp/tools/build-tracker-views.mjs` in the same change.
 
 Scheduled CI adds dependency advisories and a bounded seeded DOCX package fuzz
 campaign. Pull-request CI builds the format-neutral ZIP, DOCX, and ODT package

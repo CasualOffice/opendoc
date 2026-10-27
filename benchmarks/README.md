@@ -72,6 +72,6 @@ Do not record serial numbers, hardware UUIDs, usernames, home paths, or other
 device identifiers.
 
 Baseline updates follow
-`docs/29-BENCHMARK-AND-BASELINE-HARNESS.md`. Generate a new report path, review
+`docs/tracker/completed/retired-documents.md#doc-29`. Generate a new report path, review
 the metric and environment differences, then replace the committed baseline as
 an intentional source change.

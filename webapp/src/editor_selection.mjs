@@ -184,7 +184,7 @@ export function createSelection(ed) {
   /** Non-blocking side effect of an authoritative caret placement
    *  (REVIEW-GAP-005, docs/81): if the resulting caret lands inside a
    *  commented range, expand/surface that comment's card. This never touches
-   *  `selection` — document hit-testing (docs/80) is always the sole source
+   *  `selection` — document hit-testing (docs/tracker/completed/retired-documents.md#doc-80) is always the sole source
    *  of truth for where the caret lands; card expansion is derived from the
    *  resulting caret, never the other way around, and never blocks or delays
    *  caret placement. */

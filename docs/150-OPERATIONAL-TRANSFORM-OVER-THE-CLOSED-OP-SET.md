@@ -727,7 +727,7 @@ do is be frozen while the shapes it already carries are moving.
 
 ## 11. What this transform commits us to about collaborative undo
 
-`opencalc`'s `docs/69` settles collaborative undo for a spreadsheet and is the reference. Undo
+the sibling opencalc repository's decision 69 settles collaborative undo for a spreadsheet and is the reference. Undo
 is not implemented here, but transform constrains it, and these are the commitments:
 
 1. **An undo is an ordinary operation.** `147` already made undo "apply the inverse as a new

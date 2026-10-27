@@ -264,7 +264,7 @@ mod presence;
 // write and the gate that decides when the write survives a save.
 mod chart;
 
-// The opt-in sparse-strip raster (`docs/179`, ADR-073 Proposed): one more export
+// The opt-in sparse-strip raster (`docs/architecture/179`, ADR-073 Proposed): one more export
 // with `renderPage`'s contract, compiled only with the `sparse-raster` feature.
 #[cfg(feature = "sparse-raster")]
 mod sparse_raster;
@@ -3664,7 +3664,7 @@ impl WasmDocument {
     /// (1-based), in document order, as a JSON array of
     /// `{"node": id, "text": plain text, "language": shared w:lang or ""}` —
     /// everything a proofing pass reads about the visible pages, in **one**
-    /// call (`docs/180` E2, `109` HF-411).
+    /// call (`docs/architecture/180` E2, `109` HF-411).
     ///
     /// It replaces a host walk that made about five engine calls per paragraph
     /// (`hitTest`, `moveCaret`, `caretRect`, `paragraphLength`, `copyText`,
@@ -3699,7 +3699,7 @@ impl WasmDocument {
 
     /// Decoration rectangles ([`decorationRects`](Self::decoration_rects)) for
     /// many single-paragraph ranges on pages `first_page..=last_page`, answered
-    /// from one build of those pages' line boxes (`docs/180` E2, `109`
+    /// from one build of those pages' line boxes (`docs/architecture/180` E2, `109`
     /// HF-411).
     ///
     /// `ranges_json` is `[[node, start, end], …]`. The result is flat: for each
@@ -23427,7 +23427,7 @@ fn open_document_as(bytes: &[u8], selection: FormatSelection) -> Result<WasmDocu
 /// to reach the windowed path would be slow enough not to be run, and would
 /// have nothing affordable to compare the result against.
 /// Lays the whole body out **through the galley cache**, so the shaping this
-/// pass does is the shaping the next edit resumes from (`docs/180` E1, `109`
+/// pass does is the shaping the next edit resumes from (`docs/architecture/180` E1, `109`
 /// HF-410).
 ///
 /// Pattern: a warm cache. Every whole layout outside the edit path — the
@@ -23554,7 +23554,7 @@ fn open_document_bounded(
     };
     // The whole layout is built through the galley cache the document keeps,
     // so the first edit resumes from this pass instead of shaping every
-    // paragraph again (`docs/180` §2.2 and E1, `109` HF-410).
+    // paragraph again (`docs/architecture/180` §2.2 and E1, `109` HF-410).
     let mut galley_cache = GalleyCache::new();
     let layout = if windowed {
         match WindowedBody::open(&document, &shaper) {
@@ -26013,7 +26013,7 @@ impl ParagraphCounts {
 }
 
 /// The word, character and paragraph totals, kept **incrementally**
-/// (`docs/180` §2.3 and E2, `109` HF-412).
+/// (`docs/architecture/180` §2.3 and E2, `109` HF-412).
 ///
 /// Pattern: incremental computation over a dirty set. `documentStats` walked
 /// every paragraph of every surface and allocated its text on every call, and
@@ -42292,7 +42292,7 @@ mod tests {
         (opened_shaping, work)
     }
 
-    /// **One shaping pass per full layout** (`docs/180` §2.2 and E1, `109`
+    /// **One shaping pass per full layout** (`docs/architecture/180` §2.2 and E1, `109`
     /// HF-410). Every whole layout outside the edit path is built through the
     /// galley cache, so the first keystroke after it resumes from that pass
     /// instead of shaping the document a second time — measured at 3.1 s for
@@ -42366,7 +42366,7 @@ mod tests {
         PARAGRAPHS_COUNTED.with(std::cell::Cell::get)
     }
 
-    /// **`documentStats` after a keystroke is `O(edit)`** (`docs/180` §2.3, E2,
+    /// **`documentStats` after a keystroke is `O(edit)`** (`docs/architecture/180` §2.3, E2,
     /// `109` HF-412): 93 ms per keystroke at 20,000 paragraphs when it
     /// recounted the document. Doubling test on the paragraphs counted.
     #[test]
@@ -42432,7 +42432,7 @@ mod tests {
         )
     }
 
-    /// **Proofing the visible pages is `O(window)`** (`docs/180` §2.3, E2,
+    /// **Proofing the visible pages is `O(window)`** (`docs/architecture/180` §2.3, E2,
     /// `109` HF-411). The host walk this replaces called `caretRect` once per
     /// paragraph, and that built the whole document's line boxes each time:
     /// 466 ms per keystroke at 20,000 paragraphs. Doubling test on the blocks

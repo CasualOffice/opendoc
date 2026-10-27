@@ -1257,7 +1257,7 @@ impl<'a> LayoutSnapshot<'a> {
 }
 
 // ---------------------------------------------------------------------------
-// Page-window geometry (`docs/180` E2, `109` HF-411)
+// Page-window geometry (`docs/architecture/180` E2, `109` HF-411)
 // ---------------------------------------------------------------------------
 
 /// The line boxes of a contiguous run of pages, built **once** and then asked
@@ -1268,7 +1268,7 @@ impl<'a> LayoutSnapshot<'a> {
 /// which is `O(document)` per call. A host that marks every misspelling on
 /// screen made one such call per mark, and its paragraph walk made one
 /// `caret_rect` call per paragraph to learn which page it was on: measured at
-/// 466 ms per keystroke on a 20,000-paragraph document (`docs/180` §2.3). A
+/// 466 ms per keystroke on a 20,000-paragraph document (`docs/architecture/180` §2.3). A
 /// window answers every question about the pages on screen from one
 /// `O(window)` build.
 ///
