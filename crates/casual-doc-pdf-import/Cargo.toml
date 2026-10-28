@@ -37,7 +37,10 @@ casual-doc-ocr.workspace = true
 hayro = { version = "0.8.0", default-features = false, features = ["simd"] }
 
 [features]
-default = ["paddle"]
+# OCR providers are opt-in: the editor's build links no OCR runtime until a host
+# turns a provider on (`casual-doc-io/pdf-ocr`). The plumbing types compile
+# without one, and a scan then reports `ocr_unavailable`.
+default = []
 # The providers, enabled through this crate: PP-OCRv5 (the default), ocrs
 # (the fallback) and the heron layout model.
 paddle = ["casual-doc-ocr/paddle"]

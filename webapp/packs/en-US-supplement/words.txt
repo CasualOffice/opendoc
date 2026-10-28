@@ -137,7 +137,6 @@ timezones
 tokenisation
 tokeniser
 tokenization
-tokenizer
 tokenizers
 toolchains
 unbundle
