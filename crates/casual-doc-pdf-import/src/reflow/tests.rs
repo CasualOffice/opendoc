@@ -1541,9 +1541,22 @@ fn breaks_pdf() -> Vec<u8> {
         "only the last line, which ends the paragraph, stops short.",
     ];
     let second = format!(
-        "{}{}{}{}",
+        "{}{}{}{}{}",
         text("F3", 16.0, 72.0, 720.0, 20.0, &["Chapter Two"]),
         text("F6", 10.0, 72.0, 690.0, 12.0, &justified),
+        // As wide as the column, but ragged: its lines end at different x.
+        text(
+            "F6",
+            10.0,
+            72.0,
+            630.0,
+            12.0,
+            &[
+                "A ragged paragraph in the same face reaches the right edge once",
+                "and then stops short of it on the lines that",
+                "follow, the way unjustified text does.",
+            ],
+        ),
         text("F2", 11.0, 72.0, 600.0, 14.0, &PROSE[..4]),
         text(
             "F2",
