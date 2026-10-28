@@ -9,12 +9,15 @@
 //! - the document and its media;
 //! - the `pdf.import.*` report, mapped once ([`pdf_session_artifact`]);
 //! - the [`SourceEnvelope`] holding the original bytes (the exact save) and
-//!   the byte-preserving save's [`Baseline`], computed here from the document
-//!   the session will edit.
+//!   the byte-preserving save's baseline: the `casual-doc-pdf-wire`
+//!   `Baseline` bytes the importer computed, kept opaque and handed back to
+//!   the planner at save, so this module never digests a document;
+//! - what OCR did ([`pdf_ocr_record`]).
 //!
 //! and saves it ([`export_pdf_session`]): the original back when unchanged or
-//! undone, an incremental update when that is safe (the hayro half through a
-//! [`PdfRevisionReader`]), the semantic writer, reported, otherwise.
+//! undone, an incremental update when that is safe (the plan and the hayro
+//! half through a [`PdfSavePlanner`], the overlay and the update's writer
+//! here), the semantic writer, reported, otherwise.
 //!
 //! The package is checked before anything is built from it: its own codec is
 //! bounded, the original handed in beside it must have the length and FNV-1a
@@ -25,10 +28,10 @@ use std::sync::Arc;
 
 use casual_doc_model::SnapshotLimits;
 use casual_doc_model::v1::Document;
-use casual_doc_pdf_wire::{Finding, ImportPackage, OcrSummary, Outcome, SourceMap, fnv1a64};
+use casual_doc_pdf_wire::{Finding, ImportPackage, OcrSummary, Outcome, fnv1a64};
 
-pub use crate::pdf_preserve::PdfRevisionReader;
-use crate::pdf_preserve::{Baseline, Fallback, ORIGINAL_WRITTEN_BACK, preserve};
+pub use crate::pdf_preserve::PdfSavePlanner;
+use crate::pdf_preserve::{Fallback, ORIGINAL_WRITTEN_BACK, Planned, plan_and_write};
 use crate::{
     AdapterError, CompatibilityEntry, CompatibilityReport, DocumentResources, ExportArtifact,
     ExportMode, ExportRequest, FeatureLocation, FormatId, FormatProfile, ImportArtifact,
@@ -41,7 +44,8 @@ use crate::{
 #[derive(Debug)]
 pub(crate) struct PdfSourceState {
     pub(crate) original: Option<Arc<Vec<u8>>>,
-    pub(crate) baseline: Option<Baseline>,
+    /// The encoded `casual-doc-pdf-wire` `Baseline`: opaque here.
+    pub(crate) baseline: Option<Vec<u8>>,
     /// What OCR did, reduced to what the editor's summary shows (no
     /// recognised text). Present for every PDF-origin session.
     pub(crate) ocr: OcrSummary,
@@ -57,7 +61,7 @@ pub(crate) struct SessionParts<'a> {
     pub(crate) document: Document,
     pub(crate) resources: DocumentResources,
     pub(crate) findings: &'a [Finding],
-    pub(crate) sources: SourceMap,
+    pub(crate) baseline: Option<Vec<u8>>,
     pub(crate) original: Option<Arc<Vec<u8>>>,
     pub(crate) ocr: OcrSummary,
     #[cfg(feature = "pdf-import")]
@@ -70,20 +74,22 @@ fn pdf_format() -> FormatId {
 
 /// The import artifact of a PDF-origin session: the document, its media, the
 /// report and the retained source. `original` is `None` when the host did not
-/// ask to retain it. O(document): the baseline's projection.
+/// ask to retain it; `baseline` is the encoded `casual-doc-pdf-wire`
+/// `Baseline` the importer computed (`casual-doc-pdf-save::baseline`), `None`
+/// when there is none, and then no edited save preserves. O(findings).
 #[must_use]
 pub fn pdf_session_artifact(
     document: Document,
     resources: DocumentResources,
     findings: &[Finding],
-    sources: SourceMap,
+    baseline: Option<Vec<u8>>,
     original: Option<Arc<Vec<u8>>>,
 ) -> ImportArtifact {
     session_artifact(SessionParts {
         document,
         resources,
         findings,
-        sources,
+        baseline,
         original,
         ocr: OcrSummary::default(),
         #[cfg(feature = "pdf-import")]
@@ -91,13 +97,13 @@ pub fn pdf_session_artifact(
     })
 }
 
-/// [`pdf_session_artifact`] with what OCR did. O(document).
+/// [`pdf_session_artifact`] with what OCR did. O(findings).
 pub(crate) fn session_artifact(parts: SessionParts<'_>) -> ImportArtifact {
     let SessionParts {
         document,
         resources,
         findings,
-        sources,
+        baseline,
         original,
         ocr,
         #[cfg(feature = "pdf-import")]
@@ -131,10 +137,8 @@ pub(crate) fn session_artifact(parts: SessionParts<'_>) -> ImportArtifact {
             .collect(),
     };
     report.sort();
-    let baseline = original
-        .is_some()
-        .then(|| Baseline::new(&document, sources))
-        .flatten();
+    // A baseline without the original it describes preserves nothing.
+    let baseline = baseline.filter(|_| original.is_some());
     let format = pdf_format();
     ImportArtifact {
         document,
@@ -190,8 +194,40 @@ pub fn import_pdf_package(
         document,
         resources,
         findings: &package.findings,
-        sources: package.sources,
+        baseline: (!package.baseline.is_empty()).then_some(package.baseline),
         original: Some(Arc::new(original)),
+        ocr: package.ocr,
+        #[cfg(feature = "pdf-import")]
+        ocr_detail: None,
+    }))
+}
+
+/// Opens the PDF module's reflowed package ("Convert to flowing document",
+/// `docs/182` §4.2, §18) as a new document: its document, media and the
+/// reflow's own inference report. It retains no original and no baseline, so
+/// it is not a PDF-origin session: saved as PDF it is the semantic writer, and
+/// it cannot be converted again. O(document).
+///
+/// # Errors
+///
+/// A malformed package, or a document the snapshot importer refuses.
+pub fn import_pdf_reflow_package(
+    package: &[u8],
+    limits: SnapshotLimits,
+) -> Result<ImportArtifact, AdapterError> {
+    let package = ImportPackage::decode(package).map_err(|e| AdapterError::new(e.to_string()))?;
+    let document = Document::from_json(&package.document_json, limits)
+        .map_err(|e| AdapterError::new(format!("the converted PDF's document: {e}")))?;
+    let mut resources = DocumentResources::default();
+    for (name, bytes) in package.resources {
+        resources.insert(name, bytes);
+    }
+    Ok(session_artifact(SessionParts {
+        document,
+        resources,
+        findings: &package.findings,
+        baseline: None,
+        original: None,
         ocr: package.ocr,
         #[cfg(feature = "pdf-import")]
         ocr_detail: None,
@@ -223,9 +259,10 @@ pub fn pdf_retained_original(source: &SourceEnvelope) -> Option<&[u8]> {
 /// - `ExactIfUnchanged` on an unchanged session: the original, byte for byte;
 /// - otherwise, a session whose content equals the import's: the original,
 ///   reported `pdf.export.original_written_back`;
-/// - otherwise an incremental update when it is safe, the hayro half through
-///   `reader`; with no reader, or when it is not safe, `semantic(request)`
-///   plus `pdf.export.preserve_fallback.<reason>`.
+/// - otherwise `planner`'s answer (`casual-doc-pdf-save`): the original back,
+///   reported `pdf.export.original_written_back`, for an edit undone; an
+///   incremental update when it is safe; with no planner, or when it is not
+///   safe, `semantic(request)` plus `pdf.export.preserve_fallback.<reason>`.
 ///
 /// O(document) at save.
 ///
@@ -234,7 +271,7 @@ pub fn pdf_retained_original(source: &SourceEnvelope) -> Option<&[u8]> {
 /// The semantic writer's.
 pub fn export_pdf_session(
     request: ExportRequest<'_>,
-    reader: Option<&dyn PdfRevisionReader>,
+    planner: Option<&dyn PdfSavePlanner>,
     semantic: &dyn Fn(ExportRequest<'_>) -> Result<ExportArtifact, AdapterError>,
 ) -> Result<ExportArtifact, AdapterError> {
     let state = request.source.and_then(|s| s.state::<PdfSourceState>());
@@ -259,37 +296,33 @@ pub fn export_pdf_session(
         return Ok(artifact(bytes.to_vec(), CompatibilityReport::default()));
     }
     // Edited (or asked to preserve): keep the original when that is safe.
-    let fallback = match (original, state.and_then(|s| s.baseline.as_ref()), reader) {
-        (Some(original), Some(baseline), reader) => {
-            if baseline.unchanged(request.document) {
-                let mut report = CompatibilityReport::default();
-                report.entries.push(CompatibilityEntry {
-                    feature: ORIGINAL_WRITTEN_BACK.to_owned(),
-                    occurrences: 1,
-                    location: FeatureLocation::default(),
-                    model_outcome: ModelOutcome::Mapped,
-                    retention_outcome: RetentionOutcome::Preserved,
-                });
-                return Ok(artifact(original.to_vec(), report));
-            }
-            match reader {
-                Some(reader) => {
-                    match preserve(
-                        request.document,
-                        request.resources,
-                        original,
-                        baseline,
-                        reader,
-                    ) {
-                        Ok((bytes, report)) => return Ok(artifact(bytes, report)),
-                        Err(fallback) => fallback,
-                    }
+    let fallback = match (original, state.and_then(|s| s.baseline.as_deref()), planner) {
+        (Some(original), Some(baseline), Some(planner)) => {
+            match plan_and_write(
+                planner,
+                request.document,
+                request.resources,
+                original,
+                baseline,
+            ) {
+                Planned::WriteBack => {
+                    let mut report = CompatibilityReport::default();
+                    report.entries.push(CompatibilityEntry {
+                        feature: ORIGINAL_WRITTEN_BACK.to_owned(),
+                        occurrences: 1,
+                        location: FeatureLocation::default(),
+                        model_outcome: ModelOutcome::Mapped,
+                        retention_outcome: RetentionOutcome::Preserved,
+                    });
+                    return Ok(artifact(original.to_vec(), report));
                 }
-                // The PDF module is not loaded (or the host has no reader):
-                // said, not silently semantic.
-                None => Fallback::new("pdf_module_unavailable"),
+                Planned::Written(bytes, report) => return Ok(artifact(bytes, report)),
+                Planned::Fallback(fallback) => fallback,
             }
         }
+        // The PDF module is not loaded (or the host has no planner): said,
+        // not silently semantic.
+        (Some(_), Some(_), None) => Fallback::new("pdf_module_unavailable"),
         _ => Fallback::no_retained_source(),
     };
     let mut exported = semantic(request)?;

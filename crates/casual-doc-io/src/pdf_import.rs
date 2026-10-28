@@ -43,7 +43,7 @@ use casual_doc_pdf_import::{OcrOptions, OcrSummary};
 use casual_doc_pdf_import::{PdfReadLimits, probe_pdf};
 
 use crate::pdf_source::{
-    PdfRevisionReader, PdfSourceState, SessionParts, export_pdf_session, pdf_retained_original,
+    PdfSavePlanner, PdfSourceState, SessionParts, export_pdf_session, pdf_retained_original,
     session_artifact,
 };
 use crate::{
@@ -64,19 +64,29 @@ pub fn pdf_ocr_summary(source: &SourceEnvelope) -> Option<&OcrSummary> {
         .and_then(|state| state.ocr_detail.as_ref())
 }
 
-/// The hayro half of the byte-preserving save, in process: the reader opens
-/// the original and prepares the edited pages (`docs/182` §17a). What the
-/// browser's PDF module answers through the host.
+/// The planning half of the byte-preserving save, in process
+/// (`docs/182` §17a): `casual-doc-pdf-save` compares the document with the
+/// import's baseline, and the reader opens the original and prepares the
+/// edited pages. What the browser's PDF module answers through the host.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct InProcessRevisionReader;
+pub struct InProcessSavePlanner;
 
-impl PdfRevisionReader for InProcessRevisionReader {
-    fn read(
+impl PdfSavePlanner for InProcessSavePlanner {
+    fn plan(
         &self,
         original: &Arc<Vec<u8>>,
-        request: &casual_doc_pdf_wire::RevisionRequest,
-    ) -> Result<casual_doc_pdf_wire::RevisionParts, casual_doc_pdf_wire::Refusal> {
-        casual_doc_pdf_read::revision::read_for_save(original.clone(), request)
+        baseline: &[u8],
+        document: &casual_doc_model::v1::Document,
+    ) -> casual_doc_pdf_wire::SaveAnswer {
+        let Ok(baseline) = casual_doc_pdf_wire::Baseline::decode(baseline) else {
+            return casual_doc_pdf_wire::SaveAnswer::Refused(casual_doc_pdf_wire::Refusal {
+                reason: "baseline_malformed".to_owned(),
+                page: None,
+            });
+        };
+        casual_doc_pdf_save::plan(document, &baseline, &|request| {
+            casual_doc_pdf_read::revision::read_for_save(original.clone(), request)
+        })
     }
 }
 
@@ -196,7 +206,16 @@ fn adapter_error(error: PdfImportError) -> AdapterError {
 
 fn artifact(imported: PdfImport, retain_source: bool, _format: FormatId) -> ImportArtifact {
     let findings = casual_doc_pdf_import::wire::findings(&imported.report);
-    let sources = casual_doc_pdf_import::wire::sources(&imported.sources);
+    // The baseline is only worth computing when the original is kept for it.
+    let baseline = retain_source
+        .then(|| {
+            casual_doc_pdf_save::baseline(
+                &imported.document,
+                casual_doc_pdf_import::wire::sources(&imported.sources),
+            )
+        })
+        .flatten()
+        .map(|baseline| baseline.encode());
     let ocr = casual_doc_pdf_import::wire::ocr(&imported.ocr);
     let mut resources = DocumentResources::default();
     for (name, bytes) in imported.resources {
@@ -206,7 +225,7 @@ fn artifact(imported: PdfImport, retain_source: bool, _format: FormatId) -> Impo
         document: imported.document,
         resources,
         findings: &findings,
-        sources,
+        baseline,
         original: retain_source.then_some(imported.original),
         ocr,
         ocr_detail: Some(imported.ocr),
@@ -237,7 +256,7 @@ impl FormatExporter for PdfImportAdapter {
     }
 
     fn export(&self, request: ExportRequest<'_>) -> Result<ExportArtifact, AdapterError> {
-        export_pdf_session(request, Some(&InProcessRevisionReader), &|request| {
+        export_pdf_session(request, Some(&InProcessSavePlanner), &|request| {
             self.writer.export(request)
         })
     }

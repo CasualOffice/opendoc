@@ -80,7 +80,7 @@ pub use casual_doc_pdf_import::{PdfReadLimits, Progress as PdfImportProgress};
 #[cfg(feature = "pdf-source")]
 pub use casual_doc_pdf_wire as pdf_wire;
 #[cfg(feature = "pdf-import")]
-pub use pdf_import::InProcessRevisionReader;
+pub use pdf_import::InProcessSavePlanner;
 #[cfg(feature = "pdf-import")]
 pub use pdf_import::{
     PdfImportAdapter, PdfStagedImport, builtin_registry_with_pdf_import, enable_pdf_import,
@@ -90,7 +90,9 @@ pub use pdf_import::{
 pub use pdf_source::pdf_ocr_record;
 #[cfg(feature = "pdf-source")]
 pub use pdf_source::{
-    PdfRevisionReader, export_pdf_session, import_pdf_package, pdf_retained_original,
+    PdfSavePlanner, export_pdf_session, import_pdf_package, pdf_retained_original,
     pdf_session_artifact,
 };
+#[cfg(feature = "pdf-source")]
+pub use pdf_source::import_pdf_reflow_package;
 pub use text::{PlainTextAdapter, PlainTextLimits};

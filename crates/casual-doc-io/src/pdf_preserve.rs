@@ -1,65 +1,43 @@
-//! The byte-preserving PDF save (`docs/182` §7, P4): what an edited
-//! PDF-origin session writes when the original can be kept.
-//!
-//! # The decision, page by page
-//!
-//! At import the adapter records a [`Baseline`]: the content digest of every
-//! page's section, of each frame on it, and of the rest of the document, plus
-//! the [`SourceMap`] (page objects, and the show operators each frame's glyphs
-//! came from). At save, the same digests are taken of the document as it is
-//! now. Unchanged-ness is **computed**, never recorded by an edit (G-6: no
-//! `Operation` is added, ADR-030 I2):
-//!
-//! - a page whose section digest equals the import's is **carried over**: the
-//!   update writes nothing for it, so its objects are the original's, byte for
-//!   byte;
-//! - an edited page keeps its content stream except the show operators of the
-//!   frames that were edited or deleted, which are removed (`remove_shows`),
-//!   and gains an overlay Form XObject drawing the edited and added frames'
-//!   text with the writer's text layer;
-//! - the result is an incremental update appended to the original.
-//!
-//! Anything this cannot prove safe falls back to the semantic writer, and the
-//! fallback is **reported** with its reason ([`Fallback`]): a changed picture,
-//! shape or section setting; a frame that is not plain text; an operator that
-//! also paints a kept frame; content the two tokenizers disagree about; a
-//! changed style table or a new header; a page count that moved.
-//!
-//! The digests are the diff crate's content projection (`casual-doc-diff`
-//! `projection`/`hash`, the machinery behind `identity::content_digest`): the
-//! same definition of "same content" the version history uses.
+//! The writing half of the byte-preserving PDF save (`docs/182` §7, P4): what
+//! an edited PDF-origin session writes when the original can be kept.
 //!
 //! # Two halves, two modules (`docs/182` §17a)
 //!
-//! Everything here is hayro-free: the plan (which pages changed, which show
-//! operators to remove), the layout of the overlay and the update's writer.
-//! What needs the PDF parser — opening the original's last revision, reading
-//! the edited pages' parts, removing the shows — is behind
-//! [`PdfRevisionReader`], answered in process by `casual-doc-pdf-read` when
-//! the `pdf-import` feature is on, and in the browser by the lazily loaded PDF
-//! module, through the host. The request and the answer are
-//! `casual-doc-pdf-wire` bytes, so the editor's main module never links
-//! hayro.
+//! The **plan** (which pages changed, which show operators to remove, which
+//! paragraphs the overlay draws, or why nothing can be preserved) is
+//! `casual-doc-pdf-save`'s, behind [`PdfSavePlanner`]: in process when the
+//! `pdf-import` feature is on, and in the browser by the lazily loaded PDF
+//! module, which also does the hayro half (opening the original's last
+//! revision, reading the edited pages' parts, removing the shows). Its answer
+//! is a `casual-doc-pdf-wire` [`SaveAnswer`].
 //!
-//! Complexity: O(document) at save (one projection, one pagination, the
-//! original's prefix copy); never per edit.
+//! What is **here** is what needs the layout engine, which only the editor's
+//! main module has: the edited pages laid out by the same pagination pass the
+//! semantic writer uses, their display lists reduced to the overlay frames'
+//! glyph runs, and the incremental update written by `casual-doc-pdf`'s
+//! `write_incremental_update`. Everything here is hayro-free and digest-free,
+//! so the main module links neither.
+//!
+//! Anything that cannot be written safely falls back to the semantic writer,
+//! and the fallback is **reported** with its reason ([`Fallback`]).
+//!
+//! Complexity: O(document) at save (one pagination, the original's prefix
+//! copy); never per edit.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use casual_doc_diff::hash::ContentHasher;
-use casual_doc_diff::projection::{Projector, StoryKey, ValueHashes};
 use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::display::{DisplayList, PaintItem};
 use casual_doc_layout::document_layout::paginate_document;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_model::NodeId;
-use casual_doc_model::v1::{BlockNode, BreakKind, Document, InlineNode, TextBox};
+use casual_doc_model::v1::Document;
 use casual_doc_pdf::{
     DocumentText, EditedPage, IncrementalBase, PdfPage, PdfSeverity, RegistryFontSource,
     write_incremental_update,
 };
-use casual_doc_pdf_wire::{RevisionParts, RevisionRequest, SourceMap};
+use casual_doc_pdf_wire::{PlannedPage, RevisionParts, SaveAnswer};
 
 use crate::pdf::ResourceMedia;
 use crate::{
@@ -85,19 +63,18 @@ pub(crate) const CERTIFICATION_INVALIDATED: &str = "pdf.export.certification_inv
 /// written back exactly.
 pub(crate) const ORIGINAL_WRITTEN_BACK: &str = "pdf.export.original_written_back";
 
-/// The hayro half of the save: opens the original's last revision and reads
-/// the requested pages with their shows removed (`docs/182` §17a).
-pub trait PdfRevisionReader {
-    /// Answers `request` against `original`.
-    ///
-    /// # Errors
-    ///
-    /// The reader's refusal; the save falls back and reports it.
-    fn read(
-        &self,
-        original: &Arc<Vec<u8>>,
-        request: &RevisionRequest,
-    ) -> Result<RevisionParts, casual_doc_pdf_wire::Refusal>;
+/// The planning half of the save (`casual-doc-pdf-save`, `docs/182` §17a):
+/// compares `document` with the import's `baseline` (the encoded
+/// `casual-doc-pdf-wire` `Baseline` the session kept) and, for an edit it can
+/// preserve, reads the edited pages of `original` with their shows removed.
+///
+/// In process this is `InProcessSavePlanner` (feature `pdf-import`); in the
+/// browser it is the PDF module, called through the host.
+pub trait PdfSavePlanner {
+    /// The plan: write the original back, refuse with a reason, or the pages
+    /// to rewrite with their parts. A planner that fails answers
+    /// [`SaveAnswer::Refused`]; the save then falls back and reports it.
+    fn plan(&self, original: &Arc<Vec<u8>>, baseline: &[u8], document: &Document) -> SaveAnswer;
 }
 
 /// Why the save fell back to the semantic writer.
@@ -117,14 +94,14 @@ impl Fallback {
         }
     }
 
-    fn on(reason: &str, page: usize) -> Self {
+    pub(crate) fn on(reason: &str, page: usize) -> Self {
         Self {
             reason: reason.to_owned(),
             page: Some(page),
         }
     }
 
-    fn refused(refusal: casual_doc_pdf_wire::Refusal) -> Self {
+    pub(crate) fn refused(refusal: casual_doc_pdf_wire::Refusal) -> Self {
         Self {
             reason: refusal.reason,
             page: refusal.page.map(|page| page as usize),
@@ -156,180 +133,6 @@ impl Fallback {
     }
 }
 
-/// One section's digests.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct SectionDigest {
-    /// Everything on the page: its blocks' projection hashes and its section
-    /// properties.
-    whole: u128,
-    /// Everything but the text frames (the anchor paragraph's properties, its
-    /// pictures and shapes, the section properties), when the section is the
-    /// one anchor paragraph a fixed-layout page is.
-    fixed: Option<u128>,
-    /// Each text frame's digest, keyed by its node.
-    frames: BTreeMap<NodeId, u128>,
-}
-
-/// The document reduced to what the save compares.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Digest {
-    document: u128,
-    definitions: u128,
-    stories: u128,
-    sections: Vec<SectionDigest>,
-}
-
-/// What the import recorded, for the save to compare against.
-#[derive(Debug)]
-pub(crate) struct Baseline {
-    digest: Digest,
-    sources: SourceMap,
-}
-
-impl Baseline {
-    /// Records the import. O(document). `None` when the imported document
-    /// cannot be digested (its body does not project), so no save preserves.
-    pub(crate) fn new(document: &Document, sources: SourceMap) -> Option<Self> {
-        Some(Self {
-            digest: digest(document)?,
-            sources,
-        })
-    }
-
-    /// Whether `document` says exactly what the import did.
-    pub(crate) fn unchanged(&self, document: &Document) -> bool {
-        casual_doc_diff::content_digest(document) == self.digest.document
-    }
-}
-
-/// O(document): one projection pass and one walk of the body.
-fn digest(document: &Document) -> Option<Digest> {
-    let mut projector = Projector::new();
-    while !projector.step(document, usize::MAX) {}
-    let (projection, _, _) = projector.finish();
-    let mut values = ValueHashes::default();
-
-    let mut stories = ContentHasher::new();
-    let mut body = None;
-    for slot in &projection.stories {
-        match &slot.key {
-            StoryKey::Body => body = Some(slot),
-            // Neither PDF writer carries comments, so a comment changes
-            // nothing either save writes.
-            StoryKey::Comment(_) => {}
-            key => {
-                stories.write_str(&format!("{key:?}"));
-                stories.write_u128(slot.content_hash);
-            }
-        }
-    }
-    let body = body?;
-
-    let mut definitions = document.definitions().clone();
-    let section_props = std::mem::take(&mut definitions.sections);
-    let definitions = values.hash_value(&definitions);
-
-    let blocks = document.body();
-    if blocks.len() != body.root_count as usize {
-        return None;
-    }
-    let mut sections = Vec::new();
-    let mut start = 0;
-    for (at, block) in blocks.iter().enumerate() {
-        let ends = match block {
-            BlockNode::Paragraph(paragraph) => paragraph.properties.section_break,
-            _ => None,
-        };
-        let last = at + 1 == blocks.len();
-        if ends.is_none() && !last {
-            continue;
-        }
-        let properties = match ends {
-            Some(id) => section_props.iter().find(|s| s.id == id)?,
-            None => section_props.last()?,
-        };
-        let props_hash = values.hash_value(properties);
-        let mut whole = ContentHasher::new();
-        whole.write_u128(props_hash);
-        for index in start..=at {
-            let projected = projection
-                .blocks
-                .get(body.first_root as usize + index)
-                .filter(|b| b.sibling_index as usize == index)?;
-            whole.write_u128(projected.subtree_hash);
-        }
-        let (fixed, frames) = match &blocks[start..=at] {
-            [BlockNode::Paragraph(paragraph)] => {
-                let mut fixed = ContentHasher::new();
-                fixed.write_u128(props_hash);
-                fixed.write_u128(values.hash_value(&*paragraph.properties));
-                let mut frames = BTreeMap::new();
-                for inline in &paragraph.inlines {
-                    match inline {
-                        InlineNode::TextBox(frame) => {
-                            frames.insert(frame.id, values.hash_value(&**frame));
-                        }
-                        other => fixed.write_u128(values.hash_value(other)),
-                    }
-                }
-                (Some(fixed.finish()), frames)
-            }
-            _ => (None, BTreeMap::new()),
-        };
-        sections.push(SectionDigest {
-            whole: whole.finish(),
-            fixed,
-            frames,
-        });
-        start = at + 1;
-    }
-    Some(Digest {
-        document: casual_doc_diff::content_digest(document),
-        definitions,
-        stories: stories.finish(),
-        sections,
-    })
-}
-
-/// Whether a frame is text a glyph-run overlay draws completely: paragraphs of
-/// runs, tabs and line breaks with no numbering (a list marker is not a run of
-/// the paragraph), no fill, border or link on the box, and nothing else.
-fn text_only(frame: &TextBox) -> bool {
-    frame.fill.is_none()
-        && frame.border.is_none()
-        && frame.hyperlink.is_none()
-        && frame.blocks.iter().all(|block| match block {
-            BlockNode::Paragraph(paragraph) => {
-                let p = &paragraph.properties;
-                p.numbering.is_none()
-                    && p.style_ref.is_none()
-                    && p.drop_cap_frame.is_none()
-                    && p.section_break.is_none()
-                    && paragraph.inlines.iter().all(|inline| match inline {
-                        InlineNode::Run(_)
-                        | InlineNode::Tab(_)
-                        | InlineNode::BookmarkStart(_)
-                        | InlineNode::BookmarkEnd(_)
-                        | InlineNode::CommentRangeStart(_)
-                        | InlineNode::CommentRangeEnd(_)
-                        | InlineNode::CommentReference(_) => true,
-                        InlineNode::Break(b) => b.kind == BreakKind::Line,
-                        _ => false,
-                    })
-            }
-            _ => false,
-        })
-}
-
-/// The paragraph nodes of a text-only frame.
-fn paragraphs_of(frame: &TextBox, into: &mut BTreeSet<NodeId>) {
-    for block in &frame.blocks {
-        if let BlockNode::Paragraph(paragraph) = block {
-            into.insert(paragraph.id);
-        }
-    }
-}
-
 /// The page's paint reduced to the overlay frames' glyph runs. Clip and layer
 /// brackets are kept so a run inside one stays inside it. O(paint items).
 fn overlay_list(list: &DisplayList, paragraphs: &BTreeSet<NodeId>) -> DisplayList {
@@ -350,131 +153,37 @@ fn overlay_list(list: &DisplayList, paragraphs: &BTreeSet<NodeId>) -> DisplayLis
     }
 }
 
-/// One edited page's plan.
-struct PagePlan {
-    index: usize,
-    remove: BTreeSet<u32>,
-    paragraphs: BTreeSet<NodeId>,
-    removed_frames: usize,
-}
 
-/// Writes the incremental update, or says why it cannot. O(document).
-pub(crate) fn preserve(
+/// Writes the incremental update the planner's [`SaveAnswer::Update`]
+/// describes, or says why it cannot: the edited pages laid out, their
+/// overlays drawn, the update appended to `original`. O(document).
+fn write_update(
     document: &Document,
     resources: &DocumentResources,
     original: &Arc<Vec<u8>>,
-    baseline: &Baseline,
-    reader: &dyn PdfRevisionReader,
+    revision: RevisionParts,
+    plans: &[PlannedPage],
 ) -> Result<(Vec<u8>, CompatibilityReport), Fallback> {
-    let now = digest(document).ok_or(Fallback::new("body_not_projectable"))?;
-    let before = &baseline.digest;
-    if now.definitions != before.definitions {
-        return Err(Fallback::new("definitions_changed"));
-    }
-    if now.stories != before.stories {
-        return Err(Fallback::new("stories_changed"));
-    }
-    if now.sections.len() != before.sections.len()
-        || baseline.sources.pages.len() != before.sections.len()
-    {
+    if revision.pages.len() != plans.len() {
         return Err(Fallback::new("page_count_changed"));
     }
-
-    let mut plans = Vec::new();
-    for (index, (now, before)) in now.sections.iter().zip(&before.sections).enumerate() {
-        if now.whole == before.whole {
-            continue;
-        }
-        if now.fixed.is_none() || now.fixed != before.fixed {
-            return Err(Fallback::on("page_objects_changed", index));
-        }
-        let source = &baseline.sources.pages[index];
-        if source.shows.is_none() {
-            return Err(Fallback::on("page_operators_unnumbered", index));
-        }
-        let origins: BTreeMap<NodeId, &casual_doc_pdf_wire::FrameSource> = baseline
-            .sources
-            .frames
-            .iter()
-            .filter(|frame| frame.page as usize == index)
-            .filter_map(|frame| Some((NodeId::new(frame.frame).ok()?, frame)))
-            .collect();
-        let mut remove = BTreeSet::new();
-        let mut removed = BTreeSet::new();
-        for (frame, digest) in &before.frames {
-            if now.frames.get(frame) == Some(digest) {
-                continue;
-            }
-            let origin = origins
-                .get(frame)
-                .ok_or(Fallback::on("frame_origin_unknown", index))?;
-            if !origin.complete {
-                return Err(Fallback::on("frame_text_not_removable", index));
-            }
-            remove.extend(origin.shows.iter().copied());
-            removed.insert(*frame);
-        }
-        // An operator that painted a kept frame too cannot be removed.
-        for (frame, origin) in &origins {
-            if !removed.contains(frame) && origin.shows.iter().any(|s| remove.contains(s)) {
-                return Err(Fallback::on("operator_shared_with_kept_frame", index));
-            }
-        }
-        let mut paragraphs = BTreeSet::new();
-        let anchor =
-            section_anchor(document, index).ok_or(Fallback::on("page_objects_changed", index))?;
-        for inline in &anchor.inlines {
-            if let InlineNode::TextBox(frame) = inline
-                && before.frames.get(&frame.id) != now.frames.get(&frame.id)
-            {
-                if !text_only(frame) {
-                    return Err(Fallback::on("frame_not_text_only", index));
-                }
-                paragraphs_of(frame, &mut paragraphs);
-            }
-        }
-        plans.push(PagePlan {
-            index,
-            remove,
-            paragraphs,
-            removed_frames: removed.len(),
-        });
-    }
-
-    // The hayro half (`PdfRevisionReader`): the file, the page count, each
-    // page's object, its parts, the shows removed — refused in that order.
-    let request = RevisionRequest {
-        expected_pages: u32::try_from(baseline.sources.pages.len()).unwrap_or(u32::MAX),
-        pages: plans
-            .iter()
-            .map(|plan| casual_doc_pdf_wire::PageRequest {
-                index: u32::try_from(plan.index).unwrap_or(u32::MAX),
-                object: baseline.sources.pages[plan.index].object,
-                remove: plan.remove.iter().copied().collect(),
-            })
-            .collect(),
-    };
-    let revision = reader.read(original, &request).map_err(Fallback::refused)?;
-    if revision.page_count as usize != baseline.sources.pages.len()
-        || revision.pages.len() != plans.len()
-    {
-        return Err(Fallback::new("page_count_changed"));
-    }
+    let page_count = revision.page_count as usize;
     let tail = revision.tail;
     let shaper = ParleyShaper::new();
     let laid_out = paginate_document(document, &shaper);
-    if laid_out.pages.len() != baseline.sources.pages.len() {
+    if laid_out.pages.len() != page_count {
         return Err(Fallback::new("pagination_changed"));
     }
-    let mut parts = Vec::with_capacity(plans.len());
-    let mut lists = Vec::with_capacity(plans.len());
+    let mut pages = Vec::with_capacity(plans.len());
     for (plan, page_parts) in plans.iter().zip(revision.pages) {
-        let index = plan.index;
-        if page_parts.index as usize != index {
+        let index = plan.index as usize;
+        if page_parts.index != plan.index {
             return Err(Fallback::on("page_object_moved", index));
         }
-        let kept = page_parts.kept_content.clone();
-        let laid = &laid_out.pages[index];
+        let laid = laid_out
+            .pages
+            .get(index)
+            .ok_or(Fallback::on("pagination_changed", index))?;
         let size = laid.page_size;
         let (width, height) = page_parts.display_size;
         if (f64::from(size.width.raw()) / 20.0 - width).abs() > 1.0
@@ -482,11 +191,12 @@ pub(crate) fn preserve(
         {
             return Err(Fallback::on("page_size_changed", index));
         }
-        lists.push((size, overlay_list(&compose_page(laid), &plan.paragraphs)));
-        parts.push((page_parts, kept));
-    }
-    let mut pages = Vec::with_capacity(plans.len());
-    for ((page_parts, kept), (size, list)) in parts.into_iter().zip(&lists) {
+        let paragraphs: BTreeSet<NodeId> = plan
+            .paragraphs
+            .iter()
+            .filter_map(|id| NodeId::new(*id).ok())
+            .collect();
+        let list = overlay_list(&compose_page(laid), &paragraphs);
         let mut form_name = "OpenDocEdit".to_owned();
         let mut n = 0;
         while page_parts
@@ -503,7 +213,7 @@ pub(crate) fn preserve(
             resource_entries: page_parts.resource_entries,
             xobject_entries: page_parts.xobject_entries,
             form_name,
-            kept_content: kept,
+            kept_content: page_parts.kept_content,
             user_from_display: page_parts.user_from_display,
             overlay: PdfPage {
                 width: size.width,
@@ -549,11 +259,11 @@ pub(crate) fn preserve(
     ));
     report.entries.push(entry(
         PAGE_CARRIED_OVER,
-        baseline.sources.pages.len() - plans.len(),
+        page_count.saturating_sub(plans.len()),
         ModelOutcome::Mapped,
         RetentionOutcome::Preserved,
     ));
-    let removed: usize = plans.iter().map(|p| p.removed_frames).sum();
+    let removed: usize = plans.iter().map(|p| p.removed_frames as usize).sum();
     if removed > 0 {
         // Privacy, stated rather than implied: an incremental update keeps
         // the earlier revision, so the replaced text is still in the file.
@@ -599,25 +309,33 @@ pub(crate) fn preserve(
     Ok((export.bytes, report))
 }
 
-/// The anchor paragraph of section `index`, when that section is one
-/// paragraph. O(body blocks).
-fn section_anchor(document: &Document, index: usize) -> Option<&casual_doc_model::v1::Paragraph> {
-    let mut section = 0;
-    let mut start = 0;
-    let blocks = document.body();
-    for (at, block) in blocks.iter().enumerate() {
-        let ends = matches!(block, BlockNode::Paragraph(p) if p.properties.section_break.is_some());
-        if !ends && at + 1 != blocks.len() {
-            continue;
+/// What a planner's answer becomes at save.
+#[derive(Debug)]
+pub(crate) enum Planned {
+    /// The original, unchanged (an edit undone).
+    WriteBack,
+    /// The update's bytes and report.
+    Written(Vec<u8>, CompatibilityReport),
+    /// Fall back to the semantic writer, reporting why.
+    Fallback(Fallback),
+}
+
+/// Runs `planner` and, for an update, writes it. O(document).
+pub(crate) fn plan_and_write(
+    planner: &dyn PdfSavePlanner,
+    document: &Document,
+    resources: &DocumentResources,
+    original: &Arc<Vec<u8>>,
+    baseline: &[u8],
+) -> Planned {
+    match planner.plan(original, baseline, document) {
+        SaveAnswer::WriteBack => Planned::WriteBack,
+        SaveAnswer::Refused(refusal) => Planned::Fallback(Fallback::refused(refusal)),
+        SaveAnswer::Update { parts, pages } => {
+            match write_update(document, resources, original, parts, &pages) {
+                Ok((bytes, report)) => Planned::Written(bytes, report),
+                Err(fallback) => Planned::Fallback(fallback),
+            }
         }
-        if section == index {
-            return match &blocks[start..=at] {
-                [BlockNode::Paragraph(paragraph)] => Some(paragraph),
-                _ => None,
-            };
-        }
-        section += 1;
-        start = at + 1;
     }
-    None
 }
