@@ -343,3 +343,67 @@ licence with revenue thresholds; 2.5 weights tagged AGPL); Marker/Surya weights
 
 Documentation only: this document, ADR-076 (proposed, superseding the proposed ADR-034) and
 `docs/109` RM-49. No code, no dependency, no scope change until Q1 is answered.
+
+## 16a. Model gaps G-1/G-2 — built
+
+Branch `lane/pdf-model-gaps`. Both gaps of §9 that sit in the model, layout, render and
+DOCX writer; the reader and importer crates are untouched.
+
+**G-1, the font-program slot.** `Definitions::font_programs: Vec<EmbeddedFontProgram>`
+(`v1/properties.rs`, `#[non_exhaustive]`, built with `EmbeddedFontProgram::new` and
+`with_*`): family, `FontProgramStyle` (the four `w:embed*` slots), `FontProgramFormat`
+(`TrueType`, `OpenTypeCff`, `BareCff`), `part_name`, `subsetted`, `source_name`. The bytes are
+a resource-map part, unobfuscated, exactly like `MediaReference` and `.odttf` faces — not a
+model field, so a snapshot stays the size of its metadata. Validated (non-empty, bounded,
+at most `MAX_FONT_PROGRAMS` = 4,096). Serde default; omitted when empty.
+
+- **Layout.** `register_embedded_fonts` registers programs after the `.odttf` faces, in the
+  same top tier, under the same aggregate budget and the same failure report. The model's
+  style is authoritative over the face's own OS/2 (a PDF subset's often is wrong). A bare CFF
+  is reported `unsupported-format` (the importer must wrap it as `OTTO`); bytes contradicting
+  the declared format are `not-sfnt`; absent bytes are `missing-part`. No host change: the wasm
+  host already passes its resource map.
+- **DOCX.** A TrueType program is embedded as `word/fonts/program{n}.odttf`, obfuscated per
+  ECMA-376 Part 1 §17.8.1 with a `w:fontKey` derived deterministically from the program, under
+  its family's `w:font` (the document's own entry when one exists, in schema slot order).
+  Not carried, and reported: CFF-flavoured or bare CFF (`docx.export.font_program.not_carried`
+  — `.odttf` is obfuscated TrueType, and this writer does not claim a consumer reads CFF
+  from one), absent bytes (`…missing_bytes`), a second subset of a slot already filled
+  (`…slot_taken`).
+
+**G-2, the fill rule.** `CustomGeometry::fill_rule: FillRule` (`NonZero` default, `EvenOdd`),
+serde default, omitted when non-zero. `CustomGeometry` is now `#[non_exhaustive]` with a
+builder (`from_paths`, `with_guides`, `with_handles`, `with_connections`, `with_text_rect`,
+`with_fill_rule`); the one cross-crate literal (`casual-doc-import/src/vml_map.rs`) moved to it.
+
+- **Render.** The rule rides `AnchorPath::fill_rule` into `ShapeGeometry::Path::fill_rule`;
+  tiny-skia fills with `FillRule::EvenOdd` for it. The PDF writer (`casual-doc-pdf`) emits
+  `f*`/`W*` for it. **Not yet:** `casual-doc-render-gpu` fills every path non-zero (its
+  `SparseCanvas` has no fill-rule parameter); an even-odd ring paints solid there.
+- **DOCX.** DrawingML cannot state a rule: `CT_Path2D` (§20.1.9.15) has only `w`, `h`, `fill`,
+  `stroke`, `extrusionOk`, and the standard does not say which rule a consumer applies. So the
+  writer emits a geometry for which the question does not arise: `CustomGeometry::to_non_zero`
+  (`v1/fill_rule.rs`) re-orients each filled path's subpaths by nesting parity — the
+  contour-orientation normalisation font tools apply — which makes every winding number 0 or
+  ±1, where the rules agree. When subpaths cross or touch, a subpath self-intersects, a
+  coordinate is a guide name, or an open stroked subpath would have to reverse, it writes the
+  geometry as authored and reports `docx.export.custom_geometry.even_odd_fill`
+  (`degraded`, `not_retained`, charged to the part it was written in). Curves are tested at 8
+  chords each.
+
+**Guards, each driven red by a mutation:**
+
+| Guard | Mutation | Red output |
+| --- | --- | --- |
+| `fill_rule.rs` `a_same_wound_hole_is_reversed_so_non_zero_keeps_it`, `nesting_parity_decides_each_orientation`, `a_reversed_cubic_keeps_its_shape` | never flip a subpath | `the centre is a hole` left 2, right 0; `(75.0, 75.0)` left true, right false |
+| `v1/tests.rs` `a_snapshot_without_a_fill_rule_reads_as_non_zero_and_even_odd_round_trips` | drop `skip_serializing_if` on `fill_rule` | `a non-zero geometry writes what it was read from: {…"fillRule":"nonZero"}` |
+| `render/tests/even_odd_fill.rs` `an_even_odd_path_paints_its_inner_square_as_a_hole` (whole page: model → layout → tiny-skia) | renderer fills even-odd with `Winding`; separately, layout drops the geometry's rule | `under even-odd the same-wound inner square is a hole, got [255, 0, 0, 255]` (both) |
+| `…a_non_zero_path_fills_its_same_wound_inner_square` | renderer fills every path even-odd | `…is filled, got [255, 255, 255, 255]` |
+| `layout/tests/embedded_fonts.rs` four `font_program` tests | skip the programs loop | `faces` left 0, right 1 / 2; failures left `[]`, right `[NotSfnt, MissingPart]` |
+| `…a_bold_font_program_serves_bold_runs` | register every program regular | `bold=false picked the program its style declares`. The first version stayed green under this mutation (registration order coincided with style); it now crosses the bytes and registers bold first |
+| `export/tests/pdf_model_gaps.rs` `a_truetype_font_program_is_embedded_as_an_obfuscated_odttf` | XOR with the key un-reversed | `an independent ECMA-376 decoder recovers the program` left ≠ right |
+| `…an_uncarried_font_program_is_reported_by_reason` | skip the TrueType check | the two `not_carried` entries missing. Its format and signature halves are redundant for these inputs, so it is mutated whole |
+| `…an_even_odd_ring_is_written_re_wound_so_its_hole_survives` | write the authored geometry | the reversed inner square absent from `document.xml` |
+| `…an_even_odd_geometry_that_cannot_be_re_wound_is_reported` | drop the loss note | left `[]`, right `[("docx.export.custom_geometry.even_odd_fill", Some("word/document.xml"))]` |
+
+The `snapshot_without_font_programs` test pins the G-1 serde default and validation.

@@ -201,6 +201,7 @@ fn sheet(run: &GlyphRun) -> DisplayList {
                 },
             ],
             closed: true,
+            fill_rule: casual_doc_model::v1::FillRule::NonZero,
         },
         fill: Some(Fill::Solid(rgba(120, 200, 120, 255))),
         stroke: Some(ShapeOutline {

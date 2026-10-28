@@ -377,6 +377,7 @@ mod tests {
             SourceFile::new("v1/custom_geometry.rs", include_str!("custom_geometry.rs")),
             SourceFile::new("v1/definitions.rs", include_str!("definitions.rs")),
             SourceFile::new("v1/document.rs", include_str!("document.rs")),
+            SourceFile::new("v1/fill_rule.rs", include_str!("fill_rule.rs")),
             SourceFile::new(
                 "v1/geometry_program.rs",
                 include_str!("geometry_program.rs"),

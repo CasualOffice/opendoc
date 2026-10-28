@@ -91,6 +91,8 @@ use zip::{CompressionMethod, DateTime, ZipWriter};
 use crate::ExportError;
 // Own line (anti-conflict): legacy VML written back as its source.
 use crate::legacy_vml::LegacyVmlWrites;
+// Own line (anti-conflict): `docs/182` G-1.
+use crate::font_programs::ProgramEmbed;
 use crate::report::{Disposition, DocxExport, ModelOutcome, Reporter};
 // Own `use` line, kept out of the sorted block above: the repo's parallel-PR
 // rule, so two lanes adding imports here do not collide in one list.
@@ -854,8 +856,16 @@ pub fn export_package_with_options(
     // content (byte-identical to the earlier slices otherwise).
     let mut extras: Vec<ExtraPart> = Vec::new();
     let mut font_rels: Vec<RelEntry> = Vec::new();
-    if !definitions.font_table.is_empty() {
-        let (bytes, rels) = font_table_xml(&definitions.font_table, media, &mut reporter)?;
+    // Font programs from a non-DOCX source (`docs/182` G-1): the ones this
+    // package can carry, already obfuscated; the rest are reported here.
+    let font_programs = crate::font_programs::plan(definitions, media, &mut reporter);
+    if !definitions.font_table.is_empty() || !font_programs.is_empty() {
+        let (bytes, rels) = font_table_xml(
+            &definitions.font_table,
+            &font_programs,
+            media,
+            &mut reporter,
+        )?;
         font_rels = rels;
         extras.push(ExtraPart::new(
             "word/fontTable.xml",
@@ -1444,6 +1454,9 @@ pub fn export_package_with_options(
                     parts.push(face.part_name.clone(), bytes.clone());
                 }
             }
+        }
+        for program in &font_programs {
+            parts.push(program.part_name.clone(), program.bytes.clone());
         }
     }
     // The page background is no longer a finding: `document_xml` emits
@@ -3276,8 +3289,14 @@ fn write_watermark_picture_shape(
 /// be announced anyway, with a `/font` relationship and a zero-byte part behind
 /// it, so Word was told the document embedded a face it could not load (FID-R-06);
 /// the face is now left out of all three places at once and reported.
+///
+/// `programs` are the non-DOCX font programs the package carries
+/// (`crate::font_programs::plan`): each is filed under the `w:font` of its family
+/// — the document's own entry when there is one, else an entry made for it after
+/// the document's — in its style's `w:embed*` slot, in schema order.
 fn font_table_xml(
     fonts: &[FontDescriptor],
+    programs: &[ProgramEmbed],
     media: &BTreeMap<String, Vec<u8>>,
     reporter: &mut Reporter,
 ) -> Result<(Vec<u8>, Vec<RelEntry>), ExportError> {
@@ -3333,7 +3352,10 @@ fn font_table_xml(
                 .map_err(pkg)?;
         }
         // Embedded faces: emit each `w:embed*` with its verbatim relationship id
-        // (into `fontTable.xml.rels`) and font key, and record the rel.
+        // (into `fontTable.xml.rels`) and font key, and record the rel. A font
+        // program of this family joins them in its own slot; `plan` already
+        // refused one whose slot a face holds, so slots never repeat.
+        let mut embeds: Vec<(&'static str, &str, &str, bool, &str)> = Vec::new();
         for (name, face) in font.embedded.faces() {
             if !media.contains_key(&face.part_name) {
                 reporter.record_part(
@@ -3343,24 +3365,93 @@ fn font_table_xml(
                 );
                 continue;
             }
-            let mut child = start(name);
-            child.push_attribute(("r:id", face.relationship_id.as_str()));
-            child.push_attribute(("w:fontKey", face.font_key.as_str()));
-            if face.subsetted {
-                child.push_attribute(("w:subsetted", "true"));
-            }
-            w.write_event(Event::Empty(child)).map_err(pkg)?;
-            font_rels.push((
-                face.relationship_id.clone(),
-                media_target(&face.part_name).to_owned(),
+            embeds.push((
+                name,
+                face.relationship_id.as_str(),
+                face.font_key.as_str(),
+                face.subsetted,
+                face.part_name.as_str(),
             ));
         }
+        for program in programs
+            .iter()
+            .filter(|program| program.family == font.name)
+        {
+            embeds.push(program_embed(program));
+        }
+        write_embeds(&mut w, &mut embeds, &mut font_rels)?;
+        w.write_event(Event::End(BytesEnd::new("w:font")))
+            .map_err(pkg)?;
+    }
+    // Families only a font program names get an entry of their own, in the
+    // order the programs first name them.
+    let mut made: Vec<&str> = Vec::new();
+    for program in programs {
+        let family = program.family.as_str();
+        if made.contains(&family) || fonts.iter().any(|font| font.name == family) {
+            continue;
+        }
+        made.push(family);
+        let mut el = start("w:font");
+        el.push_attribute(("w:name", family));
+        w.write_event(Event::Start(el)).map_err(pkg)?;
+        let mut embeds: Vec<_> = programs
+            .iter()
+            .filter(|program| program.family == family)
+            .map(program_embed)
+            .collect();
+        write_embeds(&mut w, &mut embeds, &mut font_rels)?;
         w.write_event(Event::End(BytesEnd::new("w:font")))
             .map_err(pkg)?;
     }
     w.write_event(Event::End(BytesEnd::new("w:fonts")))
         .map_err(pkg)?;
     Ok((finish(w), font_rels))
+}
+
+/// One `w:embed*` to write: element, relationship id, font key, subsetted,
+/// part name.
+type EmbedEntry<'a> = (&'static str, &'a str, &'a str, bool, &'a str);
+
+fn program_embed(program: &ProgramEmbed) -> EmbedEntry<'_> {
+    (
+        program.style.embed_element(),
+        program.relationship_id.as_str(),
+        program.font_key.as_str(),
+        program.subsetted,
+        program.part_name.as_str(),
+    )
+}
+
+/// Writes `embeds` in the schema's `w:embedRegular`, `w:embedBold`,
+/// `w:embedItalic`, `w:embedBoldItalic` order (ECMA-376 `CT_Font`), recording
+/// each relationship.
+fn write_embeds(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    embeds: &mut [EmbedEntry<'_>],
+    font_rels: &mut Vec<RelEntry>,
+) -> Result<(), ExportError> {
+    const ORDER: [&str; 4] = [
+        "w:embedRegular",
+        "w:embedBold",
+        "w:embedItalic",
+        "w:embedBoldItalic",
+    ];
+    embeds.sort_by_key(|(name, ..)| ORDER.iter().position(|slot| slot == name));
+    for (name, relationship_id, font_key, subsetted, part_name) in embeds.iter() {
+        let mut child = start(name);
+        child.push_attribute(("r:id", *relationship_id));
+        child.push_attribute(("w:fontKey", *font_key));
+        if *subsetted {
+            child.push_attribute(("w:subsetted", "true"));
+        }
+        w.write_event(Event::Empty(child)).map_err(pkg)?;
+        font_rels.push((
+            (*relationship_id).to_owned(),
+            media_target(part_name).to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// Emits a `fontTable.xml.rels` carrying the embedded-font `/font` relationships
@@ -7950,6 +8041,7 @@ fn write_wgp(
                         .as_ref()
                         .map(|(id, tip)| (id.as_str(), tip.as_deref())),
                     ObjectLabel::of(ctx.defs, shape.id, ObjectName::GENERIC_SHAPE),
+                    ctx.legacy,
                 )?;
             }
             GroupChild::Group(nested) => write_wgp(w, nested, "wpg:grpSp", ctx)?,
@@ -8086,6 +8178,7 @@ fn write_group_shape(
     shape: &GroupShape,
     hlink: Option<(&str, Option<&str>)>,
     label: ObjectLabel<'_>,
+    legacy: &LegacyVmlWrites,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("wps:wsp"))).map_err(pkg)?;
     let mut c_nv_pr = start("wps:cNvPr");
@@ -8118,8 +8211,19 @@ fn write_group_shape(
     // Without this the shape is rewritten to `prst="rect"` on every save, which
     // is the one place this row actually DESTROYS data rather than mis-drawing
     // it (docs/119 §2).
+    //
+    // DrawingML cannot state a fill rule (`CT_Path2D`, ECMA-376 §20.1.9.15), so
+    // an even-odd geometry (`docs/182` G-2) is written re-wound to paint the same
+    // under either rule; when no winding does that, it is written as authored
+    // and the rule is reported as not carried.
     if let Some(path) = &shape.path {
-        write_cust_geom(w, path, &shape.adjustments)?;
+        match path.to_non_zero() {
+            Ok(rewound) => write_cust_geom(w, &rewound, &shape.adjustments)?,
+            Err(_) => {
+                legacy.note_fill_rule_loss();
+                write_cust_geom(w, path, &shape.adjustments)?;
+            }
+        }
     } else {
         let preset = shape
             .preset

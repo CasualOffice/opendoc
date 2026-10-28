@@ -816,7 +816,7 @@ impl<'a> Transcriber<'a> {
                 out.geometry(geometry);
                 self.alpha(out, color.a);
                 out.set_fill_color(*color);
-                out.op("f");
+                out.op(if even_odd(geometry) { "f*" } else { "f" });
             }
             Some(Fill::Gradient(gradient)) => self.gradient(out, geometry, gradient),
             None => {}
@@ -842,9 +842,9 @@ impl<'a> Transcriber<'a> {
             // path's ends along its tangents.
             let ends = match geometry {
                 ShapeGeometry::Line { from, to } => Some(((*from, *to), (*to, *from))),
-                ShapeGeometry::Path { commands, closed } if !*closed => {
-                    casual_doc_layout::display::open_path_ends(commands)
-                }
+                ShapeGeometry::Path {
+                    commands, closed, ..
+                } if !*closed => casual_doc_layout::display::open_path_ends(commands),
                 _ => None,
             };
             if let Some(((start, start_toward), (end, end_from))) = ends {
@@ -888,7 +888,7 @@ impl<'a> Transcriber<'a> {
         self.shadings.push((name.clone(), dictionary));
         out.op("q");
         out.geometry(geometry);
-        out.op("W n");
+        out.op(if even_odd(geometry) { "W* n" } else { "W n" });
         out.bytes
             .extend_from_slice(format!("{} sh\nQ\n", pdf_name(&name)).as_bytes());
     }
@@ -911,6 +911,18 @@ struct ImageLook<'a> {
     crop: Option<&'a CropRect>,
     transform: Option<&'a ShapeTransform>,
     opacity: Option<u32>,
+}
+
+/// Whether a shape's fill uses the even-odd rule (`docs/182` G-2): PDF's `f*`
+/// and `W*`. Every other primitive is one contour, where the rules agree.
+fn even_odd(geometry: &ShapeGeometry) -> bool {
+    matches!(
+        geometry,
+        ShapeGeometry::Path {
+            fill_rule: casual_doc_model::v1::FillRule::EvenOdd,
+            ..
+        }
+    )
 }
 
 impl Content {
@@ -1111,7 +1123,9 @@ impl Content {
             ShapeGeometry::Rect { rect } => self.path_rect(*rect),
             ShapeGeometry::Ellipse { rect } => self.path_ellipse(*rect),
             ShapeGeometry::RoundedRect { rect, radius } => self.path_rounded_rect(*rect, *radius),
-            ShapeGeometry::Path { commands, closed } => self.path_commands(commands, *closed),
+            ShapeGeometry::Path {
+                commands, closed, ..
+            } => self.path_commands(commands, *closed),
             ShapeGeometry::Line { from, to } => self.line(*from, *to),
         }
     }

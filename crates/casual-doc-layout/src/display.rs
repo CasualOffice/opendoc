@@ -8,6 +8,8 @@
 //! pixels (the device scale has already been applied when the list was built).
 
 use casual_doc_model::v1::{CropRect, DashStyle, LineEnd};
+// Own line (anti-conflict): a path's fill rule (`docs/182` G-2).
+use casual_doc_model::v1::FillRule;
 use serde::{Deserialize, Serialize};
 
 use crate::text::GlyphRun;
@@ -301,6 +303,11 @@ pub enum ShapeGeometry {
         /// [`PathCommand::Close`] instead and leaves this `false`, because one
         /// path may close a subpath and go on to draw another.
         closed: bool,
+        /// Which points the fill covers where subpaths nest or overlap. Non-zero
+        /// for every DrawingML geometry; even-odd only where the source stated it
+        /// (`docs/182` G-2). Omitted from the serialized list when non-zero.
+        #[serde(default, skip_serializing_if = "FillRule::is_non_zero")]
+        fill_rule: FillRule,
     },
     /// A straight line / connector.
     Line {

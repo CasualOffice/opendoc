@@ -25,6 +25,8 @@ use super::{Chart, ChartId};
 use super::ObjectName;
 // Own line (anti-conflict): the legacy VML side table's entry.
 use super::LegacyVml;
+
+use super::EmbeddedFontProgram;
 // Own line (anti-conflict): the shape theme-style side table's key.
 use crate::NodeId;
 
@@ -1958,6 +1960,13 @@ pub struct Definitions {
     /// byte-identically.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub font_table: Vec<FontDescriptor>,
+    /// Embedded font programs from a non-DOCX source (`docs/182` gap G-1), in
+    /// source order — a PDF's `FontFile2`/`FontFile3` faces. A DOCX `.odttf`
+    /// face stays on its [`FontDescriptor`]; this is the slot for bytes that
+    /// never were one. Additive: omitted when empty so existing snapshots
+    /// serialize byte-identically.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub font_programs: Vec<EmbeddedFontProgram>,
     /// Theme font scheme (`theme1.xml` `a:fontScheme`) against which theme font
     /// slots resolve. Additive: omitted when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]

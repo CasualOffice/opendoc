@@ -57,10 +57,7 @@ pub(crate) fn custom_geometry(geometry: &VmlGeometry) -> Option<CustomGeometry> 
                 .collect(),
         })
         .collect();
-    let custom = CustomGeometry {
-        paths,
-        ..CustomGeometry::default()
-    };
+    let custom = CustomGeometry::from_paths(paths);
     (custom.check(&[]).is_ok() && GeometryProgram::compile(&[], &custom).is_ok()).then_some(custom)
 }
 

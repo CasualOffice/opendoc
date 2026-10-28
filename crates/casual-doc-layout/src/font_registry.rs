@@ -38,6 +38,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use casual_doc_model::v1::Document;
+// Own line (anti-conflict): non-DOCX font programs (`docs/182` G-1).
+use casual_doc_model::v1::FontProgramFormat;
 use fontique::Blob;
 
 use crate::shape::ParleyShaper;
@@ -264,6 +266,10 @@ pub enum EmbeddedFaceError {
     /// The bytes are a plausible sfnt but the shaper's font collection refused
     /// them (unparseable tables).
     NotRegistrable,
+    /// A font program in a format no shaper here can register — a bare CFF
+    /// table with no sfnt wrapper (`FontProgramFormat::BareCff`, `docs/182`
+    /// G-1). The run keeps its substitute and the loss is reported.
+    UnsupportedFormat,
 }
 
 impl EmbeddedFaceError {
@@ -279,6 +285,7 @@ impl EmbeddedFaceError {
             Self::BudgetExceeded => "budget-exceeded",
             Self::NotSfnt => "not-sfnt",
             Self::NotRegistrable => "not-registrable",
+            Self::UnsupportedFormat => "unsupported-format",
         }
     }
 }
@@ -297,9 +304,10 @@ impl fmt::Display for EmbeddedFaceError {
 pub struct EmbeddedFaceFailure {
     /// The `w:font/@w:name` family the face belongs to.
     pub family: String,
-    /// The `w:embed*` element the face came from (`w:embedRegular`, …).
+    /// The `w:embed*` element the face came from (`w:embedRegular`, …) — for
+    /// an `EmbeddedFontProgram`, the slot its style corresponds to.
     pub slot: &'static str,
-    /// The `.odttf` package part name.
+    /// The `.odttf` package part name, or a font program's resource key.
     pub part_name: String,
     /// Why the face was rejected.
     pub error: EmbeddedFaceError,
@@ -483,7 +491,76 @@ pub fn register_embedded_fonts_bounded<'bytes>(
             }
         }
     }
+    // Font programs from a non-DOCX source (`docs/182` G-1): the same tier, the
+    // same budget and the same report, but plain bytes — nothing to de-obfuscate.
+    for program in &document.definitions().font_programs {
+        let slot = program.style.embed_element();
+        let decoded = part_bytes(&program.part_name)
+            .ok_or(EmbeddedFaceError::MissingPart)
+            .and_then(|bytes| {
+                if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > budget {
+                    Err(EmbeddedFaceError::BudgetExceeded)
+                } else {
+                    font_program_bytes(program.format, bytes)
+                }
+            });
+        let error = match decoded {
+            Ok(bytes) => {
+                budget = budget.saturating_sub(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+                let (bold, italic) = program.style.attributes();
+                let ids =
+                    shaper.register_embedded_face(bytes.to_vec(), &program.family, bold, italic);
+                if ids.is_empty() {
+                    Some(EmbeddedFaceError::NotRegistrable)
+                } else {
+                    outcome.faces += ids.len();
+                    if !outcome.families.contains(&program.family) {
+                        outcome.families.push(program.family.clone());
+                    }
+                    None
+                }
+            }
+            Err(error) => Some(error),
+        };
+        if let Some(error) = error {
+            outcome.failures.push(EmbeddedFaceFailure {
+                family: program.family.clone(),
+                slot,
+                part_name: program.part_name.clone(),
+                error,
+            });
+        }
+    }
     outcome
+}
+
+/// Checks a font program's bytes against the format the model says they are,
+/// before the shaper sees them. Hostile input is bounded here exactly as an
+/// `.odttf` is: the per-face size cap, then the sfnt signature the declared
+/// format requires (a TrueType program must not arrive as `OTTO`, or the model
+/// is describing something else).
+///
+/// Complexity: O(1); only the first four bytes are read.
+fn font_program_bytes(format: FontProgramFormat, bytes: &[u8]) -> Result<&[u8], EmbeddedFaceError> {
+    if bytes.len() > MAX_EMBEDDED_FACE_BYTES {
+        return Err(EmbeddedFaceError::TooLarge);
+    }
+    let signature = bytes.first_chunk::<4>();
+    let matches = match format {
+        FontProgramFormat::TrueType => {
+            matches!(signature, Some(b"\x00\x01\x00\x00" | b"true" | b"ttcf"))
+        }
+        FontProgramFormat::OpenTypeCff => matches!(signature, Some(b"OTTO")),
+        // No shaper here reads a bare CFF table; the importer wraps it into an
+        // `OTTO` sfnt, or this reports it. A future format is reported the same
+        // way rather than guessed at.
+        _ => return Err(EmbeddedFaceError::UnsupportedFormat),
+    };
+    if matches {
+        Ok(bytes)
+    } else {
+        Err(EmbeddedFaceError::NotSfnt)
+    }
 }
 
 /// The `(bold, italic)` a `w:embed*` slot name declares. The slot — not the
@@ -765,6 +842,7 @@ mod tests {
             (EmbeddedFaceError::BudgetExceeded, "budget-exceeded"),
             (EmbeddedFaceError::NotSfnt, "not-sfnt"),
             (EmbeddedFaceError::NotRegistrable, "not-registrable"),
+            (EmbeddedFaceError::UnsupportedFormat, "unsupported-format"),
         ] {
             assert_eq!(error.as_str(), id);
             assert_eq!(error.to_string(), id);
