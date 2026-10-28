@@ -924,6 +924,9 @@ export function hostConfig(view = globalThis) {
     // `docs/178` §9). Absent, an assistant's edits are tracked suggestions; never a way
     // to widen the grant, only to say which of the granted modes an assistant may use.
     ai: params?.get("ai") ?? null,
+    // The host's opt-in to WebMCP (`?aiTools=webmcp`, `docs/178` §9 item 2): register
+    // `editor.ai`'s tools with a browser agent. Off when absent; `ai_webmcp.mjs`.
+    aiTools: params?.get("aiTools") ?? null,
     framed,
   };
 }

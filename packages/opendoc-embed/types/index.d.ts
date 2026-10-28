@@ -365,7 +365,20 @@ export interface AiResult {
   revision?: number | null;
   access?: "none" | "read" | "comment" | "suggest" | "review";
   direct?: boolean;
+  /** On `access()`: whether the assistant's tools are offered to a browser agent
+   *  through WebMCP (`ai-tools="webmcp"`, `docs/178` §9). */
+  webmcp?: WebMcpStatus | null;
   refusal?: Refusal & { aiCode?: string };
+}
+
+/** WebMCP, as `ai.access().webmcp` reports it. `off`: the host did not opt in;
+ *  `unavailable`: the browser has no `document.modelContext` (no polyfill is
+ *  shipped); `unregistered`: the editor unmounted. `tools` are the names
+ *  registered now, filtered by the same grant as `access`. */
+export interface WebMcpStatus {
+  state: "off" | "unavailable" | "pending" | "registered" | "failed" | "unregistered";
+  reason: string | null;
+  tools: readonly string[];
 }
 
 /** `editor.ai`: the in-page assistant's door (`docs/178` §9). `preview` shows the

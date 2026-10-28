@@ -1005,3 +1005,112 @@ arguments are invalid at once (the label check now follows the enum parses).
   `a_one_entry_table_of_contents_still_updates_after_a_docx_round_trip`; without the inline
   path the reopened contents is refused. An importer-side promotion was tried first and
   reverted, because it broke `docs/128` §2c's two guards.
+
+### Lane webmcp
+
+`178` §9 item 2 (M4): a browser agent discovers the editor's tools through WebMCP. Owner
+decision 2026-10-29: build it now, opt-in behind a flag, off by default, tracking the draft.
+
+**The API, verified at the primary sources on 2026-10-29.** The Web Machine Learning CG's
+Draft Community Group Report of 27 October 2026 (<https://webmachinelearning.github.io/webmcp/>,
+not a W3C standard): `Document.modelContext` (secure contexts) with
+`registerTool(tool, {exposedTo?, signal?})`, `getTools()` and `executeTool()`; a tool is
+`{name, title?, description, inputSchema?, execute, annotations?}`; `execute(input, {signal})`
+resolves to any value, which the browser serialises to JSON; the annotations are
+`readOnlyHint`, `untrustedContentHint`, `consequentialHint` and `debugging`, all `false` by
+default and advisory; a tool name is held to 128 characters. There is **no**
+`unregisterTool`: the `signal` "unregisters the tool when aborted". Chrome's imperative API
+page (<https://developer.chrome.com/docs/ai/webmcp/imperative-api>, updated 2026-10-16) shows
+the same `document.modelContext.registerTool`, removal "with `AbortSignal`", and from Chrome 153
+an abort that no longer breaks an execution in flight. `178` §11.3's citation said 20 October;
+the draft has moved on once since, which is why this is opt-in and tracks it.
+
+**Built** (`webapp/src/ai_webmcp.mjs`, started by `createAssistant`, so `main.js` is untouched).
+
+- **Opt-in:** `ai-tools="webmcp"` on `<opendoc-editor>` (written into the frame's URL as
+  `?aiTools=webmcp`; any other value is dropped and reported `unknown` on
+  `opendoc-capabilities`), or `?aiTools=webmcp` on `editor.html`, read by `hostConfig()`, the one
+  configuration channel. **Off by default.** Feature-detected: with no `document.modelContext`
+  nothing runs and no polyfill is shipped. The host reads the state on `ai.access().webmcp`:
+  `{state: off | unavailable | pending | registered | failed | unregistered, reason, tools}`.
+- **Tools wrap `editor.ai` and nothing else.** Reads call `ai.read`; every edit tool calls
+  `ai.preview`, which compiles in `casual-doc-ai`'s one compiler and opens the private card.
+  No tool calls `apply` or `accept`, so an agent can only propose and the person decides with
+  Accept or Discard. The tool result is `{status: "awaiting-person", previewId, wouldApply,
+  preview}`.
+- **The edit schema is selected, never written:** `generated/edit-schema.json`'s own branches,
+  filtered by `generated/commands.json`'s trackability and `plan.rs`'s `needs` (comments need
+  `comment`, `review` needs `review`). Both files are fetched only when a host opted in.
+- **Gating, from `ai.access()` (the grant, never a role name):**
+
+| Access (role) | Tools | Edit types in `propose_edits` |
+| --- | --- | --- |
+| `none` (`preview`) | none | — |
+| `read` (`readonly`) | `get_outline`, `read_blocks`, `search`, `list_comments`, `list_tracked_changes` | — |
+| `comment` (`commentor`) | + `add_comment`, `propose_edits` | `comment`, `resolve_comment` |
+| `suggest` (`edit`) | same | + every trackable type; with `?ai=direct`, every type and `mode: direct` |
+| `review` (`owner`) | + `review_tracked_changes` (the `review` type only) | as `suggest` |
+
+- **Hints:** the five reads carry `readOnlyHint` and `untrustedContentHint` (document text is
+  data, `178` §5.8); the three edit tools carry `untrustedContentHint` because the preview echoes
+  document text; `review_tracked_changes`, and `propose_edits` under a direct grant, carry
+  `consequentialHint`. Descriptions are fixed English in one `MODEL_TEXT` table: model-facing
+  API text, like the tool names and `tools/opendoc-mcp`'s descriptions, so not routed through
+  `t()`, and no document text ever reaches one.
+- **Lifetime:** one `AbortController` per registration. `sync()` re-derives the list from the
+  grant and, when it moved, aborts the old signal and registers what is left; every call
+  re-asks the grant first, so a narrowed grant is never outrun by a stale registration. A
+  failed `registerTool` aborts the half list. `pagehide`, which an `<opendoc-editor>` unmount
+  (its frame blanked) and a closed tab both fire, unregisters everything.
+- **Inside an embed** the tools are registered in the frame's document; the host page holds
+  none and the host contract does not forward them.
+- Documented in `packages/opendoc-embed/README.md` (attribute row and a WebMCP paragraph), the
+  element's own attribute list, the generated typings (`WebMcpStatus`), and the regenerated
+  embedding and playground pages (their attribute count is 11).
+
+**Guards, each driven red** (`tests/ai_webmcp.test.mjs`, `tests/e2e/webmcp.spec.mjs` against a
+fake `document.modelContext` shaped as the draft specifies):
+
+| Guard | Mutation | Red |
+| --- | --- | --- |
+| Each role registers exactly its row | reads-only cut-off moved to `read` | the matrix differs: `readonly` gained `add_comment`, `propose_edits` |
+| Reads are read-only and untrusted | `untrustedContentHint` dropped from reads | `get_outline` annotations differ |
+| A direct grant is consequential | `consequentialHint: false` always | `false !== true` |
+| Direct-only types need the grant | trackability ignored under `suggest` | `propose_edits` offered `Set(60)`, not the trackable set |
+| Narrowing aborts the old registration | the old controller not aborted | the tool list differs after the grant narrowed |
+| A call re-asks the grant | the `admits` check removed | the stale call answered `ok: true` |
+| Unmount unregisters | `dispose` does not abort | `7 !== 0` tools left |
+| A failed registration leaves nothing | the half list not aborted | `2 !== 0` tools left |
+| Edit tools only propose | `propose_edits` calls `apply` | "a WebMCP tool must never call apply" |
+| No WebMCP, nothing happens, and the host is told | no feature detection | state `failed`, not `unavailable` |
+| An input cannot choose another read | `{tool, ...args}` order | the read went to `comments` |
+| The element writes the opt-in | the `set` removed | `null !== 'webmcp'` |
+| An unknown value turns it off | the `delete` removed | `'webmcp' !== null` |
+| `hostConfig` reads it | `aiTools: null` | `null !== 'webmcp'` |
+| e2e: opt-in registers | `createAssistant` never starts WebMCP | `Cannot read properties of null (reading 'state')` |
+| e2e: default registers none | the opt-in check removed | 10 tools registered on the default page |
+| e2e: readonly gets reads only | reads-only cut-off moved to `read` | one extra tool |
+| e2e: the edit tool shows the card, the document waits for Accept | `propose_edits` calls `apply` | `Expected: true, Received: false` |
+| e2e: unmount unregisters, in the frame | the `pagehide` listener removed | no `-name` entries after the element was removed |
+
+**Not built, and why.**
+
+- **No `mount({ ai: { webmcp: true } })` option:** there is no `mount()` API (`main.js` has no
+  mount seam, HF-109); the element attribute and the URL are the two opt-in surfaces.
+- **No forward to the host page** (out of scope by the brief): a host that wants an agent on
+  its own page to reach a framed editor would need the host contract to re-register the tools
+  there.
+- **No runtime role change triggers a re-sync today:** the grant is resolved once per page
+  (`HOST_CAPS`), and a remount is a new frame. `sync()` and the per-call check exist for the
+  day a grant can narrow live.
+- An edit tool does not wait for the person's decision; it returns at once with
+  `awaiting-person`, and the agent reads the outcome back (`list_tracked_changes`). The
+  `ai-decision` event tells the host.
+- `pagehide` disposes for good, so a page restored from the back/forward cache offers no tools
+  until reloaded.
+- `exposedTo`, `title` and the `debugging` annotation are not used; `getTools`/`executeTool`
+  are the agent's side and are not called.
+- Tested against a fake: the browser in CI has no `document.modelContext` (Chrome ships it
+  behind an origin trial), so no run here talks to a real browser agent.
+- `178` §13's tool-name question (Q7) stands: `propose_edits` is a new name because it never
+  applies, unlike MCP's `apply_edits`.
