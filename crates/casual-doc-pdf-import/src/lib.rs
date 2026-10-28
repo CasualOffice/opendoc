@@ -31,9 +31,14 @@
 #![forbid(unsafe_code)]
 
 mod fixed;
+pub mod fonts;
 pub mod group;
+mod links;
 pub mod ocr;
+pub mod reflow;
 pub mod report;
+#[cfg(test)]
+mod synth;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -44,7 +49,12 @@ use casual_doc_pdf_read::PdfSource;
 pub use casual_doc_pdf_read::{PdfReadError, PdfReadLimits, probe_pdf};
 
 pub use ocr::{OcrOptions, OcrSummary, OcrTextPlacement, PageClass, PageLayout};
+pub use reflow::{PdfSourceState, Reflowed};
 pub use report::{PdfFinding, PdfImportReport, PdfModelOutcome};
+
+/// Mixed into the id namespace of a reflowed document, so its ids are
+/// deterministic (PDFR-I8) and distinct from the fixed-layout document's.
+const REFLOW_NAMESPACE: u64 = 0x5245_464c_4f57_0001;
 
 /// Why an import failed. Carries no document text.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -143,6 +153,11 @@ pub struct PdfImport {
     /// Line-against-block comparisons the grouping made: a work counter for
     /// complexity tests, never a time.
     pub comparisons: u64,
+    /// The PDF source state (`docs/182` §3, the I4 sidecar): what
+    /// [`PdfImport::reflow`] reads, so conversion needs no second parse.
+    pub source: PdfSourceState,
+    /// The id namespace of this import (the bytes' hash).
+    pub namespace: u64,
     /// Page objects and frame operators (`docs/182` P4).
     pub sources: SourceMap,
     /// What OCR classified, read and skipped, and which model read it.
@@ -150,6 +165,26 @@ pub struct PdfImport {
     /// Layout regions per page (P6), when the host supplied a layout
     /// provider; empty otherwise. Evidence for reflow, not structure.
     pub layout: Vec<PageLayout>,
+}
+
+impl PdfImport {
+    /// "Convert to flowing document" (`docs/182` §4.2, §18): a **new**
+    /// document of paragraphs, headings, lists, tables, header/footer parts,
+    /// footnotes and column sections, built from this import's source state.
+    /// The fixed-layout document is untouched. Pure and deterministic: the
+    /// same import reflows to the same document. This is the stable entry
+    /// point the editor, MCP and SDK lanes call. O(document log document).
+    ///
+    /// # Errors
+    ///
+    /// [`PdfImportError::Model`] if the result fails validation (a defect).
+    pub fn reflow(&self) -> Result<Reflowed, PdfImportError> {
+        reflow::build(
+            &self.source,
+            &self.resources,
+            self.namespace ^ REFLOW_NAMESPACE,
+        )
+    }
 }
 
 /// Where a job is.
@@ -183,6 +218,8 @@ pub struct ImportJob {
     ocr: ocr::OcrStage,
     next_page: usize,
     state: State,
+    sidecar: PdfSourceState,
+    namespace: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -237,12 +274,19 @@ impl ImportJob {
         let namespace = namespace_of(&bytes);
         let source = PdfSource::open(bytes, limits)?;
         let builder = fixed::Builder::new(namespace, source.active_content());
+        let sidecar = PdfSourceState {
+            structure: source.structure_tree(),
+            active: source.active_content().clone(),
+            ..PdfSourceState::default()
+        };
         Ok(Self {
             source,
             builder: Some(builder),
             ocr: ocr::OcrStage::new(ocr),
             next_page: 0,
             state: State::Running,
+            sidecar,
+            namespace,
         })
     }
 
@@ -267,11 +311,15 @@ impl ImportJob {
             let result = self
                 .source
                 .page_evidence(index)
+                .and_then(|page| Ok((page, self.source.annotations(index)?)))
                 .map_err(PdfImportError::from)
-                .and_then(|mut page| {
+                .and_then(|(mut page, annotations)| {
                     self.ocr
                         .page(&mut page, self.source.bytes(), builder.findings_mut())?;
-                    builder.page(&page, self.source.fonts())
+                    builder.page(&page, self.source.fonts(), &annotations)?;
+                    self.sidecar
+                        .record(&page, annotations, group::LayoutParams::PDFMINER);
+                    Ok(())
                 });
             match result {
                 Ok(()) => {}
@@ -327,6 +375,15 @@ impl ImportJob {
         let mut builder = self.builder.take().expect("a done job has a builder");
         let comparisons = builder.comparisons;
         let sources = std::mem::take(&mut builder.sources);
+        let mut sidecar = std::mem::take(&mut self.sidecar);
+        sidecar.fonts = self.source.fonts().clone();
+        sidecar.font_family = builder.font_family.clone();
+        sidecar.font_programs = builder.programs.clone();
+        for (page, bounds, media) in std::mem::take(&mut builder.placed_images) {
+            if let Some(record) = sidecar.pages.get_mut(page) {
+                record.images.push(reflow::SourceImage { bounds, media });
+            }
+        }
         let (document, resources, report) = builder.finish()?;
         Ok(PdfImport {
             document,
@@ -335,6 +392,8 @@ impl ImportJob {
             original: self.source.bytes().clone(),
             pages: self.source.page_count(),
             comparisons,
+            source: sidecar,
+            namespace: self.namespace,
             sources,
             ocr: std::mem::take(&mut self.ocr.summary),
             layout: std::mem::take(&mut self.ocr.layout),

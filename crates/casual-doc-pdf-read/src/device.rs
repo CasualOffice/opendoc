@@ -485,6 +485,10 @@ impl<'a> Device<'a> for Collector<'_> {
                 text: glyph.as_unicode().map(bf_text),
                 origin,
                 advance,
+                glyph: match &**glyph {
+                    Glyph::Outline(outline) => Some(outline.glyph_id().to_u32()),
+                    Glyph::Type3(_) => None,
+                },
             });
         }
         // Type3 glyphs carry no advance; take it from the next glyph's origin.

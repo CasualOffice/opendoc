@@ -413,6 +413,7 @@ dependencies = [
  "casual-doc-render",
  "flate2",
  "hayro",
+ "read-fonts 0.40.2",
  "skrifa 0.43.2",
 ]
 
