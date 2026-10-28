@@ -26,8 +26,10 @@ mod odt;
 mod pdf;
 #[cfg(feature = "pdf-import")]
 mod pdf_import;
-#[cfg(feature = "pdf-import")]
+#[cfg(feature = "pdf-source")]
 mod pdf_preserve;
+#[cfg(feature = "pdf-source")]
+mod pdf_source;
 mod registry;
 mod report;
 mod rtf;
@@ -62,8 +64,17 @@ pub use rtf::RtfAdapter;
 // Own lines, kept out of any sorted block (the repo's parallel-PR rule).
 #[cfg(feature = "pdf-import")]
 pub use casual_doc_pdf_import::{PdfReadLimits, Progress as PdfImportProgress};
+#[cfg(feature = "pdf-source")]
+pub use casual_doc_pdf_wire as pdf_wire;
+#[cfg(feature = "pdf-import")]
+pub use pdf_import::InProcessRevisionReader;
 #[cfg(feature = "pdf-import")]
 pub use pdf_import::{
     PdfImportAdapter, PdfStagedImport, builtin_registry_with_pdf_import, enable_pdf_import,
+};
+#[cfg(feature = "pdf-source")]
+pub use pdf_source::{
+    PdfRevisionReader, export_pdf_session, import_pdf_package, pdf_retained_original,
+    pdf_session_artifact,
 };
 pub use text::{PlainTextAdapter, PlainTextLimits};

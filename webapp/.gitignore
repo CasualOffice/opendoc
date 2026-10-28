@@ -1,5 +1,6 @@
 # wasm/site build output — rebuilt locally and in CI; chrome fonts stay tracked.
 /pkg/
+/pkg-pdf/
 /assets/*
 !/assets/fonts/
 !/assets/fonts/*

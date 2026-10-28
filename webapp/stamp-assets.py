@@ -41,6 +41,10 @@ from pathlib import Path
 
 GLUE = "pkg/casual_doc_wasm.js"
 WASM = "casual_doc_wasm_bg.wasm"
+# The lazily loaded PDF module (`docs/182` §17a): imported by `pdf_module.mjs`,
+# so it is in the import map, and its glue fetches its own wasm.
+PDF_GLUE = "pkg-pdf/casual_doc_wasm_pdf.js"
+PDF_WASM = "casual_doc_wasm_pdf_bg.wasm"
 
 # Static file types a page or stylesheet can reference. Page links (`.html`) are
 # deliberately absent: they are navigations with canonical URLs, not assets, and
@@ -57,6 +61,8 @@ def module_files(root: Path) -> list[str]:
     )
     if (root / GLUE).exists():
         found.append(GLUE)
+    if (root / PDF_GLUE).exists():
+        found.append(PDF_GLUE)
     return found
 
 
@@ -122,11 +128,11 @@ def stamp_stylesheet(css: str, build: str) -> str:
     )
 
 
-def stamp_glue(js: str, build: str) -> str:
-    pattern = re.compile(r"(['\"])" + re.escape(WASM) + r"(?:\?v=[^'\"]*)?\1")
-    stamped, count = pattern.subn(lambda m: f"{m.group(1)}{WASM}?v={build}{m.group(1)}", js)
+def stamp_glue(js: str, build: str, wasm: str = WASM, glue: str = GLUE) -> str:
+    pattern = re.compile(r"(['\"])" + re.escape(wasm) + r"(?:\?v=[^'\"]*)?\1")
+    stamped, count = pattern.subn(lambda m: f"{m.group(1)}{wasm}?v={build}{m.group(1)}", js)
     if count == 0:
-        raise SystemExit(f"stamp-assets: no '{WASM}' literal in {GLUE}; wasm-bindgen output changed")
+        raise SystemExit(f"stamp-assets: no '{wasm}' literal in {glue}; wasm-bindgen output changed")
     return stamped
 
 
@@ -146,6 +152,12 @@ def main() -> None:
     glue = root / GLUE
     if glue.exists():
         glue.write_text(stamp_glue(glue.read_text(encoding="utf-8"), build), encoding="utf-8")
+    pdf_glue = root / PDF_GLUE
+    if pdf_glue.exists():
+        pdf_glue.write_text(
+            stamp_glue(pdf_glue.read_text(encoding="utf-8"), build, PDF_WASM, PDF_GLUE),
+            encoding="utf-8",
+        )
     print(
         f"stamp-assets: {len(pages)} page(s), {len(stylesheets)} stylesheet(s), "
         f"{len(modules)} module(s), build {build}"

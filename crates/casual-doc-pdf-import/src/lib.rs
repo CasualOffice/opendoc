@@ -34,6 +34,7 @@ mod fixed;
 pub mod group;
 pub mod ocr;
 pub mod report;
+pub mod wire;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -250,6 +251,13 @@ impl ImportJob {
     #[must_use]
     pub fn page_count(&self) -> usize {
         self.source.page_count()
+    }
+
+    /// Predefined CMaps the file names that no source has yet
+    /// (`casual_doc_pdf_read::provision`, `docs/182` §17a). O(fonts).
+    #[must_use]
+    pub fn missing_cmaps(&self) -> Vec<String> {
+        self.source.missing_cmaps()
     }
 
     /// Does at most `budget` pages (at least one). O(budget pages).

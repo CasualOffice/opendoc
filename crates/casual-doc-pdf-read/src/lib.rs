@@ -31,13 +31,14 @@ pub mod content;
 mod device;
 mod evidence;
 mod limits;
+pub mod provision;
 pub mod revision;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
-use hayro_interpret::{Context, InterpreterCache, InterpreterSettings, TransformExt};
+use hayro_interpret::{Context, InterpreterCache, TransformExt};
 use hayro_syntax::{LoadPdfError, Pdf};
 use kurbo::Rect;
 
@@ -74,6 +75,10 @@ pub enum PdfReadError {
     },
     /// A page index past the end.
     NoSuchPage(usize),
+    /// A page needs predefined CMaps (`UniJIS-UCS2-H`, …) the host did not
+    /// provide (`provision`, `docs/182` §17a). Its text would be unreadable,
+    /// so the page is refused rather than imported without it.
+    CMapUnavailable(Vec<String>),
 }
 
 impl fmt::Display for PdfReadError {
@@ -90,6 +95,11 @@ impl fmt::Display for PdfReadError {
                 allowed,
             } => write!(f, "limit {limit} exceeded: {observed} > {allowed}"),
             Self::NoSuchPage(index) => write!(f, "no page {index}"),
+            Self::CMapUnavailable(names) => write!(
+                f,
+                "the PDF needs character maps this editor was not given ({}) (pdf.import.cmap_unavailable)",
+                names.join(", ")
+            ),
         }
     }
 }
@@ -120,6 +130,8 @@ pub struct PdfSource {
     font_index: BTreeMap<u128, usize>,
     /// Fonts whose program extraction was already attempted.
     programs_tried: BTreeSet<usize>,
+    /// Predefined CMaps the fonts name (`provision`).
+    required_cmaps: BTreeSet<String>,
 }
 
 impl fmt::Debug for PdfSource {
@@ -170,6 +182,7 @@ impl PdfSource {
         }
         admit::bound_decoded_streams(&pdf, &limits)?;
         let active = admit::active_content(&pdf);
+        let required_cmaps = admit::required_cmaps(&pdf);
         Ok(Self {
             pdf,
             bytes,
@@ -178,7 +191,26 @@ impl PdfSource {
             fonts: DocumentFonts::default(),
             font_index: BTreeMap::new(),
             programs_tried: BTreeSet::new(),
+            required_cmaps,
         })
+    }
+
+    /// The predefined CMaps this file's Type0 fonts name, found at admission,
+    /// so a host can fetch them before the first page
+    /// ([`provision::provide_cmap`]). O(1).
+    #[must_use]
+    pub fn required_cmaps(&self) -> &BTreeSet<String> {
+        &self.required_cmaps
+    }
+
+    /// [`Self::required_cmaps`] that no source has yet. O(required).
+    #[must_use]
+    pub fn missing_cmaps(&self) -> Vec<String> {
+        self.required_cmaps
+            .iter()
+            .filter(|name| !provision::has_cmap(name))
+            .cloned()
+            .collect()
     }
 
     /// The number of pages. O(1).
@@ -236,11 +268,13 @@ impl PdfSource {
         };
         let (width, height) = page.render_dimensions();
         admit::learn_fonts(page, &mut self.fonts, &mut self.font_index, &self.limits)?;
-        let settings = InterpreterSettings {
+        // The host's faces and CMaps, never hayro's bundled ones (`provision`).
+        let misses = provision::Misses::default();
+        let settings = hayro_interpret::InterpreterSettings {
             // Annotations are counted at admission and reported; their
             // appearance streams are not page content in a fixed-layout import.
             render_annotations: false,
-            ..InterpreterSettings::default()
+            ..provision::settings_recording(misses.clone())
         };
         let cache = InterpreterCache::new();
         let mut context = Context::new(
@@ -281,6 +315,13 @@ impl PdfSource {
             &mut collector,
         );
         let (items, notes) = collector.finish()?;
+        let missing: Vec<String> = misses
+            .lock()
+            .map(|names| names.iter().cloned().collect())
+            .unwrap_or_default();
+        if !missing.is_empty() {
+            return Err(PdfReadError::CMapUnavailable(missing));
+        }
         let rotation = match page.rotation() {
             hayro_syntax::page::Rotation::None => 0,
             hayro_syntax::page::Rotation::Horizontal => 90,

@@ -29,6 +29,7 @@ casual-doc-pdf-import = { workspace = true, optional = true }
 # crate is added to Cargo.lock.
 casual-doc-pdf-read = { workspace = true, optional = true }
 casual-doc-diff = { workspace = true, optional = true }
+casual-doc-pdf-wire = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -36,9 +37,21 @@ default = []
 # `enable_pdf_import` / `builtin_registry_with_pdf_import`; the plain built-in
 # registry never imports PDF, whatever features are on.
 pdf-import = [
+    "pdf-source",
     "dep:casual-doc-pdf-import",
     "dep:casual-doc-pdf-read",
+    # A native host gets the standard 14 from the Liberation faces and
+    # predefined CMaps from hayro-cmap's bundle (`docs/182` §17a).
+    "casual-doc-pdf-read/liberation-faces",
+    "casual-doc-pdf-read/embedded-cmaps",
+]
+# The hayro-free half of a PDF-origin session (`docs/182` §17a): the retained
+# original, the byte-preserving save's plan and writer, and opening a session
+# from the PDF module's package. What the editor's main WebAssembly module
+# links: no reader, no importer, no hayro.
+pdf-source = [
     "dep:casual-doc-diff",
+    "dep:casual-doc-pdf-wire",
 ]
 
 [dev-dependencies]

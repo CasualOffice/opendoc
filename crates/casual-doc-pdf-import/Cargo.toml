@@ -17,13 +17,19 @@ casual-doc-pdf-read.workspace = true
 # before registering it for editing (docs/182 G-1). Already in the tree (the
 # renderer); pure Rust, WASM-clean.
 skrifa = "0.43"
+# What a finished import becomes for the editor's main module (`wire`,
+# `docs/182` §17a). No dependencies.
+casual-doc-pdf-wire.workspace = true
 # The OCR and layout provider seam (docs/182 P5/P6). Without features it is
 # traits and evidence types only; the host picks a provider.
 casual-doc-ocr.workspace = true
 # Selective rasterisation of the regions OCR reads (docs/182 §20): hayro's own
 # renderer over the bytes the reader admitted. Was the oracle's dev-dependency;
 # Apache-2.0 OR MIT, pure Rust, WASM-clean.
-hayro = "0.8.0"
+# Default features off: they bundle the standard-14 faces and the predefined
+# CMaps, which the reader now takes from the host (`casual-doc-pdf-read`
+# `provision`, `docs/182` §17a). `simd` is kept for the native raster.
+hayro = { version = "0.8.0", default-features = false, features = ["simd"] }
 
 [features]
 default = ["paddle"]
@@ -34,6 +40,13 @@ ocrs = ["casual-doc-ocr/ocrs"]
 layout-heron = ["casual-doc-ocr/layout-heron"]
 
 [dev-dependencies]
+# The tests run the reader with the in-tree fallbacks a native host enables
+# (Liberation for the standard 14, hayro-cmap's bundle for predefined CMaps).
+casual-doc-pdf-read = { workspace = true, features = ["liberation-faces", "embedded-cmaps"] }
+# The oracle renders the ORIGINAL with hayro's own defaults (its bundled
+# faces), a renderer we did not configure; a dev-dependency, so the editor's
+# PDF module never links them.
+hayro = "0.8.0"
 # The model-gated tests (tests/ocr.rs) build both providers.
 casual-doc-ocr = { workspace = true, features = ["paddle", "ocrs", "layout-heron"] }
 # Builds the synthetic scan (an image-only PDF) in tests/ocr.rs.

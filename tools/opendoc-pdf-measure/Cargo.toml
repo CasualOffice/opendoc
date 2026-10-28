@@ -16,7 +16,10 @@ publish = false
 casual-doc-io.workspace = true
 # The candidate native-evidence provider (docs/182 §3.1). Apache-2.0 OR MIT.
 hayro-syntax = "0.8.0"
-hayro-interpret = "0.8.0"
+hayro-interpret = { version = "0.8.0", default-features = false }
+# The reader's face and CMap resolvers (`docs/182` §17a), with the native
+# fallbacks a headless host uses.
+casual-doc-pdf-read = { workspace = true, features = ["liberation-faces", "embedded-cmaps"] }
 kurbo = "0.13"
 # Heap peak per page. A `#[global_allocator]` declared in safe code; the one
 # `unsafe impl GlobalAlloc` lives in this MIT crate (about 60 lines, reviewed).

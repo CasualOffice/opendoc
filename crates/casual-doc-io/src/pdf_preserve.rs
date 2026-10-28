@@ -29,6 +29,18 @@
 //! `projection`/`hash`, the machinery behind `identity::content_digest`): the
 //! same definition of "same content" the version history uses.
 //!
+//! # Two halves, two modules (`docs/182` §17a)
+//!
+//! Everything here is hayro-free: the plan (which pages changed, which show
+//! operators to remove), the layout of the overlay and the update's writer.
+//! What needs the PDF parser — opening the original's last revision, reading
+//! the edited pages' parts, removing the shows — is behind
+//! [`PdfRevisionReader`], answered in process by `casual-doc-pdf-read` when
+//! the `pdf-import` feature is on, and in the browser by the lazily loaded PDF
+//! module, through the host. The request and the answer are
+//! `casual-doc-pdf-wire` bytes, so the editor's main module never links
+//! hayro.
+//!
 //! Complexity: O(document) at save (one projection, one pagination, the
 //! original's prefix copy); never per edit.
 
@@ -47,9 +59,7 @@ use casual_doc_pdf::{
     DocumentText, EditedPage, IncrementalBase, PdfPage, PdfSeverity, RegistryFontSource,
     write_incremental_update,
 };
-use casual_doc_pdf_import::SourceMap;
-use casual_doc_pdf_read::content::remove_shows;
-use casual_doc_pdf_read::revision::PdfRevision;
+use casual_doc_pdf_wire::{RevisionParts, RevisionRequest, SourceMap};
 
 use crate::pdf::ResourceMedia;
 use crate::{
@@ -75,24 +85,49 @@ pub(crate) const CERTIFICATION_INVALIDATED: &str = "pdf.export.certification_inv
 /// written back exactly.
 pub(crate) const ORIGINAL_WRITTEN_BACK: &str = "pdf.export.original_written_back";
 
+/// The hayro half of the save: opens the original's last revision and reads
+/// the requested pages with their shows removed (`docs/182` §17a).
+pub trait PdfRevisionReader {
+    /// Answers `request` against `original`.
+    ///
+    /// # Errors
+    ///
+    /// The reader's refusal; the save falls back and reports it.
+    fn read(
+        &self,
+        original: &Arc<Vec<u8>>,
+        request: &RevisionRequest,
+    ) -> Result<RevisionParts, casual_doc_pdf_wire::Refusal>;
+}
+
 /// Why the save fell back to the semantic writer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Fallback {
     /// A stable reason id.
-    pub(crate) reason: &'static str,
+    pub(crate) reason: String,
     /// The page it concerns, when it concerns one.
     pub(crate) page: Option<usize>,
 }
 
 impl Fallback {
-    fn new(reason: &'static str) -> Self {
-        Self { reason, page: None }
+    pub(crate) fn new(reason: &str) -> Self {
+        Self {
+            reason: reason.to_owned(),
+            page: None,
+        }
     }
 
-    fn on(reason: &'static str, page: usize) -> Self {
+    fn on(reason: &str, page: usize) -> Self {
         Self {
-            reason,
+            reason: reason.to_owned(),
             page: Some(page),
+        }
+    }
+
+    fn refused(refusal: casual_doc_pdf_wire::Refusal) -> Self {
+        Self {
+            reason: refusal.reason,
+            page: refusal.page.map(|page| page as usize),
         }
     }
 
@@ -110,7 +145,7 @@ impl Fallback {
             location: FeatureLocation {
                 part_name: self.page.map(|page| format!("page {}", page + 1)),
                 namespace: None,
-                local_name: Some(self.reason.to_owned()),
+                local_name: Some(self.reason.clone()),
                 attribute_name: None,
             },
             // The save is correct (the semantic writer renders the model), but
@@ -329,6 +364,7 @@ pub(crate) fn preserve(
     resources: &DocumentResources,
     original: &Arc<Vec<u8>>,
     baseline: &Baseline,
+    reader: &dyn PdfRevisionReader,
 ) -> Result<(Vec<u8>, CompatibilityReport), Fallback> {
     let now = digest(document).ok_or(Fallback::new("body_not_projectable"))?;
     let before = &baseline.digest;
@@ -356,12 +392,12 @@ pub(crate) fn preserve(
         if source.shows.is_none() {
             return Err(Fallback::on("page_operators_unnumbered", index));
         }
-        let origins: BTreeMap<NodeId, &casual_doc_pdf_import::FrameSource> = baseline
+        let origins: BTreeMap<NodeId, &casual_doc_pdf_wire::FrameSource> = baseline
             .sources
             .frames
             .iter()
-            .filter(|frame| frame.page == index)
-            .map(|frame| (frame.frame, frame))
+            .filter(|frame| frame.page as usize == index)
+            .filter_map(|frame| Some((NodeId::new(frame.frame).ok()?, frame)))
             .collect();
         let mut remove = BTreeSet::new();
         let mut removed = BTreeSet::new();
@@ -405,11 +441,26 @@ pub(crate) fn preserve(
         });
     }
 
-    let revision = PdfRevision::open(original.clone()).map_err(|r| Fallback::new(r.id()))?;
-    if revision.page_count() != baseline.sources.pages.len() {
+    // The hayro half (`PdfRevisionReader`): the file, the page count, each
+    // page's object, its parts, the shows removed — refused in that order.
+    let request = RevisionRequest {
+        expected_pages: u32::try_from(baseline.sources.pages.len()).unwrap_or(u32::MAX),
+        pages: plans
+            .iter()
+            .map(|plan| casual_doc_pdf_wire::PageRequest {
+                index: u32::try_from(plan.index).unwrap_or(u32::MAX),
+                object: baseline.sources.pages[plan.index].object,
+                remove: plan.remove.iter().copied().collect(),
+            })
+            .collect(),
+    };
+    let revision = reader.read(original, &request).map_err(Fallback::refused)?;
+    if revision.page_count as usize != baseline.sources.pages.len()
+        || revision.pages.len() != plans.len()
+    {
         return Err(Fallback::new("page_count_changed"));
     }
-    let tail = revision.tail().clone();
+    let tail = revision.tail;
     let shaper = ParleyShaper::new();
     let laid_out = paginate_document(document, &shaper);
     if laid_out.pages.len() != baseline.sources.pages.len() {
@@ -417,16 +468,12 @@ pub(crate) fn preserve(
     }
     let mut parts = Vec::with_capacity(plans.len());
     let mut lists = Vec::with_capacity(plans.len());
-    for plan in &plans {
+    for (plan, page_parts) in plans.iter().zip(revision.pages) {
         let index = plan.index;
-        if revision.page_object(index) != baseline.sources.pages[index].object {
+        if page_parts.index as usize != index {
             return Err(Fallback::on("page_object_moved", index));
         }
-        let page_parts = revision
-            .page_parts(index)
-            .map_err(|r| Fallback::on(r.id(), index))?;
-        let kept = remove_shows(&page_parts.content, &plan.remove)
-            .map_err(|r| Fallback::on(r.id(), index))?;
+        let kept = page_parts.kept_content.clone();
         let laid = &laid_out.pages[index];
         let size = laid.page_size;
         let (width, height) = page_parts.display_size;
@@ -442,7 +489,11 @@ pub(crate) fn preserve(
     for ((page_parts, kept), (size, list)) in parts.into_iter().zip(&lists) {
         let mut form_name = "OpenDocEdit".to_owned();
         let mut n = 0;
-        while page_parts.xobject_names.contains(form_name.as_bytes()) {
+        while page_parts
+            .xobject_names
+            .iter()
+            .any(|name| name.as_slice() == form_name.as_bytes())
+        {
             n += 1;
             form_name = format!("OpenDocEdit{n}");
         }
@@ -463,7 +514,7 @@ pub(crate) fn preserve(
     }
 
     let base = IncrementalBase {
-        prev_xref: tail.startxref,
+        prev_xref: usize::try_from(tail.startxref).map_err(|_| Fallback::new("xref_unreadable"))?,
         size: tail.size,
         root: String::from_utf8_lossy(&tail.root).into_owned(),
         info: tail

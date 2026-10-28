@@ -408,6 +408,73 @@ impl PdfRevision {
     }
 }
 
+/// The hayro half of a byte-preserving save (`docs/182` §19, §17a): opens the
+/// original's last revision, checks the page count and each requested page's
+/// object against what the import recorded, reads those pages' parts and
+/// removes the requested shows. The refusals and their order are the ones the
+/// in-process save always had: the file (`xref_unreadable`, `encrypted`),
+/// `page_count_changed`, then per page `page_object_moved`, the page's own
+/// refusal, the rewrite's.
+///
+/// O(original) to open, plus O(decoded content) of the requested pages.
+///
+/// # Errors
+///
+/// The first [`casual_doc_pdf_wire::Refusal`].
+pub fn read_for_save(
+    original: Arc<Vec<u8>>,
+    request: &casual_doc_pdf_wire::RevisionRequest,
+) -> Result<casual_doc_pdf_wire::RevisionParts, casual_doc_pdf_wire::Refusal> {
+    use casual_doc_pdf_wire as wire;
+    let refuse = |reason: &str, page: Option<u32>| wire::Refusal {
+        reason: reason.to_owned(),
+        page,
+    };
+    let revision = PdfRevision::open(original).map_err(|r| refuse(r.id(), None))?;
+    if revision.page_count() != request.expected_pages as usize {
+        return Err(refuse("page_count_changed", None));
+    }
+    let mut pages = Vec::with_capacity(request.pages.len());
+    for page in &request.pages {
+        let index = page.index as usize;
+        if revision.page_object(index) != page.object {
+            return Err(refuse("page_object_moved", Some(page.index)));
+        }
+        let parts = revision
+            .page_parts(index)
+            .map_err(|r| refuse(r.id(), Some(page.index)))?;
+        let remove: BTreeSet<u32> = page.remove.iter().copied().collect();
+        let kept = crate::content::remove_shows(&parts.content, &remove)
+            .map_err(|r| refuse(r.id(), Some(page.index)))?;
+        pages.push(wire::PageParts {
+            index: page.index,
+            object: parts.object,
+            entries: parts.entries,
+            resource_entries: parts.resource_entries,
+            xobject_entries: parts.xobject_entries,
+            xobject_names: parts.xobject_names.into_iter().collect(),
+            kept_content: kept,
+            user_from_display: parts.user_from_display,
+            display_size: parts.display_size,
+        });
+    }
+    let tail = revision.tail();
+    Ok(wire::RevisionParts {
+        page_count: u32::try_from(revision.page_count()).unwrap_or(u32::MAX),
+        tail: wire::RevisionTail {
+            startxref: tail.startxref as u64,
+            size: tail.size,
+            root: tail.root.clone(),
+            info: tail.info.clone(),
+            id_first: tail.id_first.clone(),
+            xref_stream: tail.xref_stream,
+            signed: tail.signed,
+            certified: tail.certified,
+        },
+        pages,
+    })
+}
+
 fn object_pair(id: ObjectIdentifier) -> Option<(u32, u16)> {
     Some((
         u32::try_from(id.obj_number).ok()?,
