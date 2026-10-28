@@ -172,6 +172,8 @@ pub(crate) struct Builder {
     pending: Option<(Paragraph, SectionId)>,
     /// Line-against-block comparisons made by grouping (the work counter).
     pub(crate) comparisons: u64,
+    /// Where each page and frame came from (`docs/182` P4).
+    pub(crate) sources: crate::SourceMap,
 }
 
 impl Builder {
@@ -228,6 +230,7 @@ impl Builder {
             programs: Vec::new(),
             pending: None,
             comparisons: 0,
+            sources: crate::SourceMap::default(),
         }
     }
 
@@ -249,6 +252,10 @@ impl Builder {
         fonts: &DocumentFonts,
     ) -> Result<(), PdfImportError> {
         let section = self.section(page)?;
+        self.sources.pages.push(crate::PageSource {
+            object: page.object,
+            shows: page.shows,
+        });
         let notes = &page.notes;
         let at = Some(page.index);
         self.findings.record(
@@ -695,9 +702,18 @@ impl Builder {
             inlines: paragraph_inlines,
         };
         let z = self.next_z();
+        let id = self.id()?;
+        let chars = || block.lines.iter().flat_map(|line| &line.chars);
+        let shows: BTreeSet<u32> = chars().filter_map(|c| c.show).collect();
+        self.sources.frames.push(crate::FrameSource {
+            page: self.sources.pages.len().saturating_sub(1),
+            frame: id,
+            shows: shows.into_iter().collect(),
+            complete: chars().all(|c| c.show.is_some()),
+        });
         inlines.push(InlineNode::TextBox(Box::new(TextBox {
             hyperlink: None,
-            id: self.id()?,
+            id,
             anchor: Some(page_anchor(x, top)),
             relative_height: Some(z),
             extent: Some(Extent {

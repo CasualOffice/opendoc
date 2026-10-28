@@ -26,6 +26,8 @@ mod odt;
 mod pdf;
 #[cfg(feature = "pdf-import")]
 mod pdf_import;
+#[cfg(feature = "pdf-import")]
+mod pdf_preserve;
 mod registry;
 mod report;
 mod rtf;

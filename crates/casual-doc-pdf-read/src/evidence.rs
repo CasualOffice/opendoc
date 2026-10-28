@@ -110,6 +110,12 @@ pub struct GlyphRunEvidence {
     pub mcid: Option<i32>,
     /// Whether the run sits in `/Artifact` marked content (page furniture).
     pub artifact: bool,
+    /// The page content's show operator that painted this run (its index
+    /// among the page stream's `Tj`/`TJ`/`'`/`"`, `docs/182` P4), or `None`
+    /// when a form XObject painted it or the page's operators could not be
+    /// numbered. A byte-preserving save removes exactly these operators for an
+    /// edited frame.
+    pub show: Option<u32>,
 }
 
 /// One path command, in page space.
@@ -235,6 +241,13 @@ pub struct PageEvidence {
     pub notes: PageNotes,
     /// Operators in the page's own content stream.
     pub operators: u64,
+    /// The page object's number and generation (`docs/182` P4).
+    pub object: Option<(u32, u16)>,
+    /// How many show operators the page stream has, when every glyph run of
+    /// the page stream carries its [`GlyphRunEvidence::show`]; `None` when the
+    /// operators could not be numbered (the two tokenizers disagreed, or the
+    /// stream already used the marker tag).
+    pub shows: Option<u32>,
 }
 
 /// What an embedded font program is.

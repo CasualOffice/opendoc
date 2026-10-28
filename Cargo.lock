@@ -307,6 +307,7 @@ dependencies = [
 name = "casual-doc-io"
 version = "0.0.1"
 dependencies = [
+ "casual-doc-diff",
  "casual-doc-export",
  "casual-doc-import",
  "casual-doc-layout",
@@ -315,7 +316,9 @@ dependencies = [
  "casual-doc-ooxml",
  "casual-doc-pdf",
  "casual-doc-pdf-import",
+ "casual-doc-pdf-read",
  "casual-doc-rtf",
+ "hayro",
  "zip",
 ]
 

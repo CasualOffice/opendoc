@@ -85,6 +85,40 @@ impl From<PdfReadError> for PdfImportError {
     }
 }
 
+/// Where each imported page and text frame came from in the original file:
+/// what a byte-preserving save (`docs/182` §7, P4) needs to carry an unchanged
+/// page over and to remove exactly an edited frame's operators.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SourceMap {
+    /// One per page, in page order.
+    pub pages: Vec<PageSource>,
+    /// One per text frame, in build order.
+    pub frames: Vec<FrameSource>,
+}
+
+/// One page's origin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PageSource {
+    /// The page object's number and generation.
+    pub object: Option<(u32, u16)>,
+    /// The page stream's show-operator count, when every run is numbered.
+    pub shows: Option<u32>,
+}
+
+/// One text frame's origin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FrameSource {
+    /// The page index.
+    pub page: usize,
+    /// The `TextBox` node the frame became.
+    pub frame: casual_doc_model::NodeId,
+    /// The show operators that painted its glyphs, ascending.
+    pub shows: Vec<u32>,
+    /// Whether every glyph has a known show (none came from a form XObject or
+    /// an un-numbered page): only then can the frame's text be removed.
+    pub complete: bool,
+}
+
 /// A finished import.
 #[derive(Debug)]
 pub struct PdfImport {
@@ -101,6 +135,8 @@ pub struct PdfImport {
     /// Line-against-block comparisons the grouping made: a work counter for
     /// complexity tests, never a time.
     pub comparisons: u64,
+    /// Page objects and frame operators (`docs/182` P4).
+    pub sources: SourceMap,
 }
 
 /// Where a job is.
@@ -250,8 +286,9 @@ impl ImportJob {
                 }
             }
         }
-        let builder = self.builder.take().expect("a done job has a builder");
+        let mut builder = self.builder.take().expect("a done job has a builder");
         let comparisons = builder.comparisons;
+        let sources = std::mem::take(&mut builder.sources);
         let (document, resources, report) = builder.finish()?;
         Ok(PdfImport {
             document,
@@ -260,6 +297,7 @@ impl ImportJob {
             original: self.source.bytes().clone(),
             pages: self.source.page_count(),
             comparisons,
+            sources,
         })
     }
 }

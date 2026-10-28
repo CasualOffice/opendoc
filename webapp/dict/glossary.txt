@@ -260,6 +260,7 @@ WordprocessingML
 XML
 XMP
 XOR
+XObject
 XObjects
 XWPF
 Yjs
@@ -634,6 +635,7 @@ tblpPr
 teardown
 textbox
 tickable
+tokenizer
 tombstoned
 tombstoning
 toolchain

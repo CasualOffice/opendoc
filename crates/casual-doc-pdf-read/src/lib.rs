@@ -27,9 +27,11 @@
 #![forbid(unsafe_code)]
 
 mod admit;
+pub mod content;
 mod device;
 mod evidence;
 mod limits;
+pub mod revision;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -260,7 +262,24 @@ impl PdfSource {
                 y1: f64::from(height),
             },
         );
-        hayro_interpret::interpret_page(page, &mut context, &mut collector);
+        // Number the page stream's show operators by interpreting an
+        // instrumented copy (`content::instrument`): identical paint, plus a
+        // marked-content pair per show the device reads back. When the two
+        // tokenizers disagree the original stream is interpreted as is and the
+        // page is not preservable (`shows: None`). Annotations are not page
+        // content here, so `interpret` is exactly `interpret_page`'s first half.
+        let stream = page.page_stream().unwrap_or(&[]);
+        let instrumented = content::tokenize(stream)
+            .filter(|ops| content::agrees_with_hayro(stream, ops))
+            .and_then(|ops| content::instrument(stream, &ops));
+        let shows = instrumented.as_ref().map(|(_, shows)| *shows);
+        let ops_source: &[u8] = instrumented.as_ref().map_or(stream, |(bytes, _)| bytes);
+        hayro_interpret::interpret(
+            hayro_syntax::content::TypedIter::new(ops_source),
+            page.resources(),
+            &mut context,
+            &mut collector,
+        );
         let (items, notes) = collector.finish()?;
         let rotation = match page.rotation() {
             hayro_syntax::page::Rotation::None => 0,
@@ -276,6 +295,13 @@ impl PdfSource {
             items,
             notes,
             operators,
+            object: page.raw().obj_id().and_then(|id| {
+                Some((
+                    u32::try_from(id.obj_number).ok()?,
+                    u16::try_from(id.gen_number).ok()?,
+                ))
+            }),
+            shows,
         })
     }
 }
