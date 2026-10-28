@@ -381,6 +381,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "casual-doc-pdf-import"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-model",
+ "casual-doc-pdf-read",
+]
+
+[[package]]
+name = "casual-doc-pdf-read"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-pdf",
+ "flate2",
+ "hayro-interpret",
+ "hayro-syntax",
+ "kurbo 0.13.1",
+ "png 0.18.1",
+]
+
+[[package]]
 name = "casual-doc-render"
 version = "0.0.1"
 dependencies = [
