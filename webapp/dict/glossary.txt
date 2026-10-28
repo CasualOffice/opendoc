@@ -75,6 +75,7 @@ FORMCHECKBOX
 FORMDROPDOWN
 FORMTEXT
 Firefox
+Flate
 Foxit
 Frontend
 GIF
@@ -83,6 +84,7 @@ GPU
 GUID
 GiB
 GitHub
+Glyphs
 HMAC
 HTML
 HTTP
@@ -596,6 +598,7 @@ sectPr
 selectable
 serde
 serializer
+sfnt
 shaper
 shippable
 skia

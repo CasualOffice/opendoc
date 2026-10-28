@@ -178,7 +178,6 @@ currently assigned. Rows stay in their queue order.
 | 192 | RM-05 | — | Complete ODT beyond the current bounded subset | Open |
 | 193 | RM-06 | — | HTML, Markdown, EPUB and FB2 import/export; DOTX/OTT templates | Open |
 | 194 | RM-07 | — | Tagged PDF and PDF/A | Open |
-| 195 | RM-49 | — | PDF into the model for editing (owner, 2026-10-28): fixed-layout import (each page a section of page-anchored text boxes, pictures and shape groups, paragraphs through the body pipeline), reflow as an explicit "Convert to flowing document", native evidence parsed in Rust by `hayro` (PDFium fallback), a resumable cancellable import job, exact/semantic save then a byte-preserving incremental update | Open (owner decision) |
 | 196 | FOLD-003 | P2 | A windowed body cannot be folded at all, so folding is withheld on exactly the documents an outline matters most for | Open |
 | 197 | FOLD-005 | P2 | RTF import drops every heading's identity, so the outline panel, folding, the TOC field and Go-to-heading are all empty on an imported `.rtf` | Open |
 | 199 | RM-19 | P2 | Typing aids and special characters: autoCorrect engine, replace table and options dialog; AutoFormat as you type; Spaces, hyphens and shortcut characters; Symbols by code and math shorthand | Open |
