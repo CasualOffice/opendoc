@@ -16,6 +16,8 @@
 //!   editor's own lowering; direct edits only under a profile that grants
 //!   `edit`; preview equals apply.
 //! - [`compare`]: budgeted structural comparison.
+//! - [`editor`]: the live editor's entry point: a plan compiled to its
+//!   operations and redline, committed by nobody (`docs/181` §4.4).
 //!
 //! This crate never calls a model, holds no credential, and opens no network
 //! connection. The MCP server (`tools/opendoc-mcp`) is a thin adapter over it;
@@ -26,6 +28,7 @@
 
 pub mod anchor;
 pub mod compare;
+pub mod editor;
 pub mod error;
 pub mod limits;
 pub mod plan;

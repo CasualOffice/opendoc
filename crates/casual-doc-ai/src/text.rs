@@ -78,11 +78,26 @@ fn marks_of(properties: &RunProperties, extra: &[&'static str]) -> Vec<&'static 
 /// O(inlines).
 #[must_use]
 pub fn runs(paragraph: &Paragraph, max_runs: usize) -> Vec<RunView> {
+    runs_in(paragraph, max_runs, false)
+}
+
+/// [`runs`] with pending **deletions** too, each marked `deleted`: the redline
+/// a preview shows (`docs/178` §4.3, "insertions and deletions marked").
+/// [`runs`] leaves them out because anchors resolve against the text without
+/// them; a person deciding on a change has to see what it removes.
+/// O(inlines).
+#[must_use]
+pub fn redline_runs(paragraph: &Paragraph, max_runs: usize) -> Vec<RunView> {
+    runs_in(paragraph, max_runs, true)
+}
+
+fn runs_in(paragraph: &Paragraph, max_runs: usize, deletions: bool) -> Vec<RunView> {
     fn walk(
         inlines: &[InlineNode],
         extra: &mut Vec<&'static str>,
         out: &mut Vec<RunView>,
         max: usize,
+        deletions: bool,
     ) {
         for inline in inlines {
             if out.len() >= max {
@@ -98,13 +113,15 @@ pub fn runs(paragraph: &Paragraph, max_runs: usize) -> Vec<RunView> {
                 }),
                 InlineNode::Hyperlink(link) => {
                     extra.push("link");
-                    walk(&link.inlines, extra, out, max);
+                    walk(&link.inlines, extra, out, max, deletions);
                     extra.pop();
                 }
                 InlineNode::Revision(revision)
                     if revision
                         .kind
-                        .contributes_to(ReviewProjection::FinalWithMarkup) =>
+                        .contributes_to(ReviewProjection::FinalWithMarkup)
+                        || (deletions
+                            && revision.kind.contributes_to(ReviewProjection::Original)) =>
                 {
                     let mark = match revision.kind {
                         casual_doc_model::v1::RevisionKind::Deletion
@@ -112,10 +129,10 @@ pub fn runs(paragraph: &Paragraph, max_runs: usize) -> Vec<RunView> {
                         _ => "inserted",
                     };
                     extra.push(mark);
-                    walk(&revision.inlines, extra, out, max);
+                    walk(&revision.inlines, extra, out, max, deletions);
                     extra.pop();
                 }
-                InlineNode::Sdt(sdt) => walk(&sdt.inlines, extra, out, max),
+                InlineNode::Sdt(sdt) => walk(&sdt.inlines, extra, out, max, deletions),
                 // `docs/181` §2.2 (G2): every inline kind is classified, with no
                 // wildcard, so a new kind does not compile until someone decides
                 // whether runs show it. Not run text, by design: an empty run,
@@ -154,7 +171,13 @@ pub fn runs(paragraph: &Paragraph, max_runs: usize) -> Vec<RunView> {
         }
     }
     let mut out = Vec::new();
-    walk(&paragraph.inlines, &mut Vec::new(), &mut out, max_runs);
+    walk(
+        &paragraph.inlines,
+        &mut Vec::new(),
+        &mut out,
+        max_runs,
+        deletions,
+    );
     out
 }
 

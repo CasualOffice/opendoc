@@ -24,6 +24,7 @@ import { createCompatibilityFindings } from "./compat_findings.mjs";
 import { INSERT_REASON_KEYS, listNumberingStates, reflectEnablement } from "./control_reasons.mjs";
 import { attachHostBridge } from "./host_bridge.mjs";
 import { createHostSession } from "./host_session.mjs";
+import { createAssistant } from "./ai_assistant.mjs";
 import {
   buildPageBand,
   pageBandPitch,
@@ -2956,12 +2957,10 @@ boot();
 
 createChromeModes(ed);
 // ---- The host contract: one session, two transports (`docs/126` phase 2) ----
-// `window.opendoc` is the in-process transport, and `attachHostBridge` puts THAT
-// SAME OBJECT behind `postMessage`, so the two can never answer differently.
-// Commands, events, refusals and gating all come from `host_contract.mjs`. The
-// registry handed over is the PALETTE's, so the API reaches what a person can
-// reach and no more; the gate runs before dispatch, because the API is a fourth
-// enforcement layer and must not be the unlocked one.
+// `window.opendoc` is the in-process transport, and `attachHostBridge` puts THAT SAME OBJECT
+// behind `postMessage`, so the two can never answer differently. Commands, events, refusals
+// and gating come from `host_contract.mjs`; the registry is the PALETTE's, so the API reaches
+// what a person can, and the gate runs before dispatch. `ai` is `editor.ai` (`docs/181` §4.4).
 hostSession = createHostSession({
   capabilities: HOST_CAPS,
   registry: () => editorCommands({ surface: "palette" }),
@@ -2970,6 +2969,7 @@ hostSession = createHostSession({
   dirty: () => documentIsDirty(),
   selection: () => (selection ? { anchor: { ...selection.anchor }, focus: { ...selection.focus }, hasRange: hasRange() } : null),
   document: () => ({ name: currentName, format: currentSourceFormat }),
+  ai: createAssistant(ed, { onDecision: (detail) => hostSession?.noteAiDecision(detail) }),
 });
 window.opendoc = hostSession;
 attachHostBridge({ session: hostSession, view: window });

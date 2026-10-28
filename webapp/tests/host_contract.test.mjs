@@ -19,6 +19,7 @@ import { readFileSync } from "node:fs";
 
 import { ROLES, resolveCapabilities } from "../src/capabilities.mjs";
 import {
+  AI_METHODS,
   COMMAND_CONTRACT,
   COMMAND_FAMILIES,
   CONTRACT_VERSION,
@@ -160,6 +161,7 @@ test("every declared event's detail is exactly what the session emits", async ()
   session.noteWrite("save", { format: "docx", name: "a.docx", bytes: 12 });
   session.noteWrite("export", { format: "pdf", name: "a.pdf", bytes: 34 });
   session.noteError("threw", "why", "edit.undo");
+  session.noteAiDecision({ previewId: 3, decision: "accepted", revision: 7, reason: null });
   await session.execute("nope.nope");
   for (const event of HOST_EVENTS) {
     const detail = seen.get(event.name);
@@ -534,7 +536,7 @@ function wire({ hostOrigin = EDITOR_ORIGIN, search = "" } = {}) {
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 /** A bridge plus a client over one session. */
-function connect({ role = "owner", search = "", hostOrigin = EDITOR_ORIGIN, ran = [] } = {}) {
+function connect({ role = "owner", search = "", hostOrigin = EDITOR_ORIGIN, ran = [], ai = null } = {}) {
   const { host, editor } = wire({ hostOrigin, search });
   const session = createHostSession({
     capabilities: resolveCapabilities({ mode: role, framed: true }),
@@ -542,6 +544,7 @@ function connect({ role = "owner", search = "", hostOrigin = EDITOR_ORIGIN, ran 
     withheldMessage: () => "WITHHELD",
     revision: () => 11,
     dirty: () => false,
+    ai,
   });
   const bridge = attachHostBridge({ session, view: editor });
   const client = createHostClient({
@@ -814,4 +817,53 @@ test("the contract stays readable by the Rust facade's parity test", () => {
     new RegExp(`^export const CONTRACT_VERSION = ${CONTRACT_VERSION};$`, "m"),
     "CONTRACT_VERSION must stay a plain integer literal",
   );
+});
+
+// ── `editor.ai` (`docs/178` §9, `docs/181` §4.4) ──────────────────────────────
+
+/** A stand-in assistant: answers as `ai_assistant.mjs` does, records its calls. */
+function fakeAssistant(calls = []) {
+  const answer = (method) => (...args) => {
+    calls.push([method, ...args]);
+    if (method === "accept") {
+      return { ok: false, refusal: { code: "engine-refused", command: "ai.accept", requires: null, message: "STALE", aiCode: "ai.preview-stale" } };
+    }
+    return { ok: true, method, args };
+  };
+  return Object.fromEntries(AI_METHODS.map((method) => [method, answer(method)]));
+}
+
+test("the ai verb reaches the assistant identically in process and over postMessage", async () => {
+  const calls = [];
+  const { session, client } = connect({ ai: fakeAssistant(calls) });
+  const plan = { base_revision: 4, edits: [{ op: "insert_text" }] };
+  for (const method of AI_METHODS) {
+    assert.equal(typeof session.ai[method], "function", `session.ai.${method}`);
+    assert.equal(typeof client.ai[method], "function", `client.ai.${method}`);
+  }
+  const inProcess = await session.ai.preview(plan);
+  const wired = await client.ai.preview(plan);
+  assert.deepEqual(wired, inProcess, "the frame boundary changes nothing");
+  assert.deepEqual(await client.ai("read", { tool: "outline" }), await session.ai.read({ tool: "outline" }));
+  assert.deepEqual(calls.map(([method]) => method), ["preview", "preview", "read", "read"]);
+});
+
+test("an ai refusal is a value AND an announced refusal, on both transports", async () => {
+  const { session, client } = connect({ ai: fakeAssistant() });
+  const heard = [];
+  session.on("refusal", (event) => heard.push(event.detail.code));
+  const result = await client.ai.accept();
+  assert.equal(result.ok, false);
+  assert.equal(result.refusal.code, "engine-refused");
+  assert.equal(result.refusal.aiCode, "ai.preview-stale");
+  assert.deepEqual(heard, ["engine-refused"], "a listening host learns what an awaiting host learns");
+});
+
+test("an unknown ai method is a bad request, and no assistant is unavailable", async () => {
+  const withAssistant = connect({ ai: fakeAssistant() });
+  assert.equal((await withAssistant.session.ai.call("evaluate", [])).refusal.code, "bad-request");
+  assert.equal((await withAssistant.client.ai("evaluate")).refusal.code, "bad-request");
+  const without = connect();
+  assert.equal((await without.session.ai.preview({})).refusal.code, "unavailable");
+  assert.equal((await without.client.ai.preview({})).refusal.code, "unavailable");
 });

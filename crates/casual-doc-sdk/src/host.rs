@@ -86,11 +86,15 @@ pub enum HostEvent {
     /// A comment that mentions people has been ordered: tell them. Answered with
     /// [`HostRequest::MentionAnswer`].
     Mention,
+    /// The person accepted or discarded an assistant's private preview (`docs/181` §4.4).
+    /// Carries the preview id, the decision, the revision after it and, for a refused
+    /// Accept, the refusal code.
+    AiDecision,
 }
 
 impl HostEvent {
     /// Every host event, in the order the contract declares them.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Ready,
         Self::Change,
         Self::Selection,
@@ -100,6 +104,7 @@ impl HostEvent {
         Self::Refusal,
         Self::DirectoryQuery,
         Self::Mention,
+        Self::AiDecision,
     ];
 
     /// The event's name on the wire, which is also its name in the editor.
@@ -115,6 +120,7 @@ impl HostEvent {
             Self::Refusal => "refusal",
             Self::DirectoryQuery => "directory-query",
             Self::Mention => "mention",
+            Self::AiDecision => "ai-decision",
         }
     }
 }
@@ -245,11 +251,14 @@ pub enum HostRequest {
     DirectoryAnswer,
     /// The host's answer to a [`HostEvent::Mention`], by its `qid`.
     MentionAnswer,
+    /// The in-page assistant's door (`docs/178` §9, `docs/181` §4.4): one verb whose
+    /// `method` reads, previews privately, applies, accepts or discards an edit plan.
+    Ai,
 }
 
 impl HostRequest {
     /// Every request verb, in the order the contract declares them.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Describe,
         Self::Execute,
         Self::Query,
@@ -257,6 +266,7 @@ impl HostRequest {
         Self::Identify,
         Self::DirectoryAnswer,
         Self::MentionAnswer,
+        Self::Ai,
     ];
 
     /// The verb's spelling on the wire.
@@ -270,6 +280,7 @@ impl HostRequest {
             Self::Identify => "identify",
             Self::DirectoryAnswer => "directory.answer",
             Self::MentionAnswer => "mention.answer",
+            Self::Ai => "ai",
         }
     }
 }

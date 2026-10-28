@@ -13147,3 +13147,71 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
 .shared-link-dialog { max-width: min(560px, 90vw); border: 1px solid var(--line); border-radius: 8px; padding: 24px; }
 .shared-link-dialog label { display: block; }
 .shared-link-dialog input { display: block; width: 100%; margin: 12px 0; }
+
+/* ---- `editor.ai`: an assistant's private preview (`ai_assistant.mjs`, docs/181 §4.4) ----
+   A card of its own beside the document, as Docs shows Gemini's proposal and Word
+   Copilot's: non-modal, so the reader can still scroll and read the page it changes,
+   and never light-dismissed, because a stray click must not throw a proposal away.
+   The redline sits on the PAPER layer (white in both themes, the document's own
+   surface), so its insert and delete colours are the ones the page uses. */
+.ai-preview {
+  position: fixed;
+  top: calc(var(--chrome-bottom) + var(--space-3));
+  right: var(--space-3);
+  z-index: var(--z-inspector);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  box-sizing: border-box;
+  width: min(380px, calc(100vw - 2 * var(--space-3)));
+  max-height: calc(100vh - var(--chrome-bottom) - 2 * var(--space-3));
+  padding: var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-popover);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-popover);
+  font-size: var(--fs-body);
+}
+.ai-preview[hidden] { display: none; }
+.ai-preview-title { margin: 0; font-size: 15px; font-weight: 600; }
+.ai-preview-private,
+.ai-preview-mode,
+.ai-preview-blocked { margin: 0; color: var(--muted); font-size: var(--fs-small); line-height: 1.45; }
+.ai-preview-blocks {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+.ai-preview-block {
+  margin: 0 0 var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--paper-ink);
+}
+.ai-preview-new { display: block; margin-bottom: 4px; color: color-mix(in srgb, var(--paper-ink) 72%, var(--paper)); font-size: var(--fs-small); }
+.ai-preview-text { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
+.ai-preview-text ins { color: var(--paper-insert); text-decoration: underline; }
+.ai-preview-text del { color: var(--paper-delete); text-decoration: line-through; }
+.ai-preview-refusals { margin: 0; padding-left: 18px; color: var(--danger); font-size: var(--fs-small); }
+.ai-preview-refusals[hidden],
+.ai-preview-blocked[hidden] { display: none; }
+.ai-preview-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.ai-preview-actions .dialog-button { min-height: 32px; }
+@media (max-width: 600px) {
+  .ai-preview {
+    top: auto;
+    right: var(--space-2);
+    bottom: var(--space-2);
+    left: var(--space-2);
+    width: auto;
+    max-height: 60vh;
+  }
+  .ai-preview-actions .dialog-button { min-height: 44px; flex: 1 1 0; }
+}

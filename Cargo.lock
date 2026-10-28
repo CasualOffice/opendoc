@@ -430,6 +430,7 @@ dependencies = [
 name = "casual-doc-wasm"
 version = "0.0.1"
 dependencies = [
+ "casual-doc-ai",
  "casual-doc-command",
  "casual-doc-diff",
  "casual-doc-edit",

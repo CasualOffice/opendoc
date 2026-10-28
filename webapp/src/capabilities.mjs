@@ -920,6 +920,10 @@ export function hostConfig(view = globalThis) {
     // because a transport's own input belongs to the transport — and because a
     // refusal is only useful where there is something to say it to.
     room: params?.get("room") ?? null,
+    // The host's explicit grant of DIRECT edits to its in-page assistant (`?ai=direct`,
+    // `docs/178` §9). Absent, an assistant's edits are tracked suggestions; never a way
+    // to widen the grant, only to say which of the granted modes an assistant may use.
+    ai: params?.get("ai") ?? null,
     framed,
   };
 }

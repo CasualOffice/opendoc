@@ -102,11 +102,22 @@ const WASM = fileURLToPath(new URL("../pkg/casual_doc_wasm_bg.wasm", import.meta
 // opt-level-3 reference above is stale for the CODE ceiling: THIS engine at
 // opt-level 3 measured 14,144,617 B of code, so a dropped `z` still fails by
 // 1.6 MB with the ceiling at 12,480,000.
-const MAX_TOTAL_BYTES = 26_400_000;
+// `editor.ai`'s private preview (`docs/181` §4.4, lane preview), measured both
+// sides with `build.sh`'s wasm-pack settings on 2026-10-28: the base (72bcdab1, the
+// registry families merged) is 26,388,318 B with a 12,461,432 B code section — the
+// old ceilings had 11,682 B and 18,568 B left; with the assistant 26,883,062 B with
+// 12,906,928 B — +494,744 B, +445,496 B of it code (1.9%). That is `casual-doc-ai`
+// linked into the editor: the plan compiler (every edit's serde shape and lowering
+// dispatch, the anchor resolver, the redline) and the five reads, which is the
+// point of "one compiler": the editor runs the code the MCP server runs instead of
+// a second, smaller lowering. Recorded for the owner's decision rather than
+// absorbed; about 128 KiB of headroom is restored on both, and the code ceiling
+// stays below the opt-level-3 measurement (14,144,617 B) so a dropped `z` fails.
+const MAX_TOTAL_BYTES = 27_010_000;
 /** What the browser then compiles. Measured: 10,594,266 B (#805); 11,585,101 B
  *  after §19; 12,349,976 B with HF-360, whose opt-level-3 build is 14,144,617 B,
  *  so a dropped `z` still lands far outside this. */
-const MAX_CODE_BYTES = 12_480_000;
+const MAX_CODE_BYTES = 13_035_000;
 /** The engine is actually in here: a stub or a truncated file must not pass. */
 const MIN_CODE_BYTES = 3_000_000;
 

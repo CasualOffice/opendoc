@@ -168,6 +168,8 @@ const EVENT_WHEN = Object.freeze({
     "When the reader types `@` and at least one more character in a comment, and the frame was opened with `directory=1`. Answer with `directory.answer`.",
   mention:
     "When a comment that mentions people has been ordered (acknowledged in a room, saved standalone). Answer with `mention.answer`.",
+  "ai-decision":
+    "When the person accepts or discards an assistant's private preview (`ai.preview`), or an Accept is refused because the document moved on.",
 });
 
 /** What each refusal code means, and which layer decided it.

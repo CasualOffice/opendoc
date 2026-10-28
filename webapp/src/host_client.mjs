@@ -21,7 +21,7 @@
 // a guard asserts that for this file and for the bridge.
 //
 // No English, and no DOM beyond the frame the host hands in.
-import { HOST_EVENT_NAMES, PROTOCOL, isEditorEnvelope } from "./host_contract.mjs";
+import { AI_METHODS, HOST_EVENT_NAMES, PROTOCOL, isEditorEnvelope } from "./host_contract.mjs";
 
 /** How long a request waits before it is abandoned, in milliseconds.
  *
@@ -68,7 +68,7 @@ export function createHostClient({ frame, editorOrigin, view = globalThis, timeo
     if (!waiter) return;
     pending.delete(rid);
     clearTimeout(waiter.timer);
-    if (waiter.type === "execute" || waiter.type === "identify") {
+    if (waiter.type === "execute" || waiter.type === "identify" || waiter.type === "ai") {
       // `execute` and `identify` resolve whatever came back, refusal included:
       // "a refused command must say so in its RESULT" means a host branches on
       // the value, never on a rejection.
@@ -111,15 +111,16 @@ export function createHostClient({ frame, editorOrigin, view = globalThis, timeo
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(rid);
-        if (type === "execute" || type === "identify") {
+        if (type === "execute" || type === "identify" || type === "ai") {
+          const command = type === "identify" ? "identify" : type === "ai" ? `ai.${body.method}` : (body.id ?? null);
           resolve(
             Object.freeze({
               ok: false,
-              command: type === "identify" ? "identify" : (body.id ?? null),
+              command,
               revision: null,
               refusal: Object.freeze({
                 code: "timeout",
-                command: type === "identify" ? "identify" : (body.id ?? null),
+                command,
                 requires: null,
                 message: "",
               }),
@@ -183,8 +184,13 @@ export function createHostClient({ frame, editorOrigin, view = globalThis, timeo
               ? (qid, people, more = false) => send(type, { qid, people, more })
               : type === "mention.answer"
                 ? (qid, status) => send(type, { qid, status })
-                : () => send(type);
+                : type === "ai"
+                  ? (method, ...args) => send("ai", { method, args })
+                  : () => send(type);
   }
+  // `client.ai.preview(plan)` as well as `client.ai("preview", plan)`: the same
+  // spelling the in-process session offers, from the same method list.
+  for (const method of AI_METHODS) client.ai[method] = (...args) => client.ai(method, ...args);
   /** Serves a host directory (`docs/175` §7.2) over this client: answers every
    *  `directory-query` with `directory.search` and every `mention` with
    *  `directory.notify`. What the `<opendoc-editor>` element does with its
