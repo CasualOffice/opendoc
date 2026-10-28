@@ -37,7 +37,7 @@ pub mod text;
 use std::collections::{BTreeMap, BTreeSet};
 
 use casual_doc_model::v1::Document;
-use casual_doc_pdf_read::{AnnotationEvidence, AnnotationKind, Bounds, LinkTarget};
+use casual_doc_pdf_read::{AnnotationEvidence, AnnotationKind, Bounds, LinkTarget, StructNode};
 
 pub use record::{PdfSourceState, Rule, SourceBlock, SourceImage, SourcePage};
 
@@ -208,6 +208,110 @@ pub struct Element {
     pub role: Option<String>,
     /// Column region (document-wide index into `Flow::regions`).
     pub region: Option<usize>,
+    /// The structure elements from the root down to the leaf's owner.
+    pub lineage: Vec<StructNode>,
+}
+
+/// The ordinal of the nearest `role` element on a lineage.
+fn nearest(lineage: &[StructNode], roles: &[&str]) -> Option<u32> {
+    lineage
+        .iter()
+        .rev()
+        .find(|n| roles.contains(&n.role.as_str()))
+        .map(|n| n.ordinal)
+}
+
+/// A tagged table (`Table`/`TR`/`TH`/`TD`, ISO 32000-1 §14.8.4.3.4): the
+/// consecutive elements under one `Table` element, rows by `TR`, cells by
+/// `TD`/`TH`, each in structure order. Column edges are each column's
+/// leftmost cell edge. O(elements in the table log).
+fn tagged_table(cells: Vec<Element>) -> Element {
+    let mut rows: Vec<(Option<u32>, Vec<(Option<u32>, Vec<ILine>, (f64, f64))>)> = Vec::new();
+    let page = cells[0].page;
+    let (mut x0, mut y0, mut x1, mut y1) = (
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    );
+    let leaf = cells.iter().filter_map(|c| c.leaf).min();
+    let region = cells[0].region;
+    for cell in cells {
+        x0 = x0.min(cell.rect.x0);
+        y0 = y0.min(cell.rect.y0);
+        x1 = x1.max(cell.rect.x1);
+        y1 = y1.max(cell.rect.y1);
+        let row = nearest(&cell.lineage, &["TR"]);
+        let td = nearest(&cell.lineage, &["TD", "TH"]);
+        let EKind::Text(lines) = cell.kind else {
+            continue;
+        };
+        if rows.last().is_none_or(|r| r.0 != row) {
+            rows.push((row, Vec::new()));
+        }
+        let cells = &mut rows.last_mut().expect("pushed").1;
+        match cells.last_mut() {
+            Some((id, existing, bounds)) if *id == td && td.is_some() => {
+                bounds.0 = bounds.0.min(cell.rect.x0);
+                bounds.1 = bounds.1.max(cell.rect.x1);
+                existing.extend(lines);
+            }
+            _ => cells.push((td, lines, (cell.rect.x0, cell.rect.x1))),
+        }
+    }
+    let columns = rows.iter().map(|r| r.1.len()).max().unwrap_or(1);
+    let mut edges = vec![f64::INFINITY; columns];
+    for (_, cells) in &rows {
+        for (k, (_, _, (left, _))) in cells.iter().enumerate() {
+            edges[k] = edges[k].min(*left);
+        }
+    }
+    let mut widths: Vec<f64> = (0..columns)
+        .map(|k| {
+            let next = edges.get(k + 1).copied().unwrap_or(x1);
+            (next - edges[k]).max(12.0)
+        })
+        .collect();
+    if widths.is_empty() {
+        widths.push((x1 - x0).max(12.0));
+    }
+    let table = ITable {
+        rows: rows
+            .into_iter()
+            .map(|(_, cells)| {
+                let n = cells.len();
+                cells
+                    .into_iter()
+                    .enumerate()
+                    .map(|(k, (_, lines, (left, right)))| tables::ICell {
+                        lines,
+                        // A short row's last cell spans the remaining columns.
+                        span: if k + 1 == n {
+                            u32::try_from(columns - k).unwrap_or(1)
+                        } else {
+                            1
+                        },
+                        vmerge: None,
+                        x0: left,
+                        x1: right,
+                    })
+                    .collect()
+            })
+            .collect(),
+        columns: widths,
+        ruled: false,
+        bounds: (x0, y0, x1, y1),
+    };
+    Element {
+        page,
+        rect: Rect { x0, y0, x1, y1 },
+        kind: EKind::Table(table),
+        leaf,
+        struct_element: None,
+        role: Some("Table".to_owned()),
+        region,
+        lineage: Vec::new(),
+    }
 }
 
 /// A column region and the page it is on.
@@ -219,17 +323,43 @@ pub struct Region {
     pub columns: order::ColumnRegion,
 }
 
-/// Header or footer content: lines grouped by baseline.
+/// Which pages a header or footer part serves (`w:headerReference@w:type`).
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum Variant {
+    /// Every page (odd pages, when even pages have their own).
+    Default,
+    /// Even pages (`evenAndOddHeaders`).
+    Even,
+    /// The first page (`titlePg`).
+    First,
+}
+
+/// One header or footer part: lines grouped by baseline.
+#[derive(Clone, Debug, Default)]
+pub struct Part {
+    /// Rows of lines sharing a baseline.
+    pub rows: Vec<Vec<ILine>>,
+    /// Character positions holding the page number: `(row, line, start, end)`.
+    pub numbers: Vec<(usize, usize, usize, usize)>,
+}
+
+/// The header and footer parts, keyed by (is footer, variant).
 #[derive(Clone, Debug, Default)]
 pub struct Furniture {
-    /// Top band, rows of (line, page number token present).
-    pub header: Vec<Vec<ILine>>,
-    /// Bottom band.
-    pub footer: Vec<Vec<ILine>>,
-    /// Character positions holding the page number: `(row, line, start, end)`.
-    pub header_page_numbers: Vec<(usize, usize, usize, usize)>,
-    /// The same for the footer.
-    pub footer_page_numbers: Vec<(usize, usize, usize, usize)>,
+    /// The parts.
+    pub parts: BTreeMap<(bool, Variant), Part>,
+    /// The first page has its own parts.
+    pub title_page: bool,
+    /// Even pages have their own parts.
+    pub even_odd: bool,
+}
+
+/// How a repeated band key repeats.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Repeat {
+    All,
+    OddPages,
+    EvenPages,
 }
 
 /// A link annotation placed on characters.
@@ -303,6 +433,9 @@ pub(crate) struct Flow {
     pub page_size: (f64, f64),
     /// Body text bounds: left, top, right, bottom (the margins).
     pub body: (f64, f64, f64, f64),
+    /// Per page, where its body content ends (the lowest text or table
+    /// edge), for page-break inference.
+    pub page_bottoms: Vec<f64>,
 }
 
 /// The font key of a character, through the families the fixed build chose.
@@ -380,19 +513,35 @@ fn furniture(
         None,
     );
     let need = ((pages as f64) * FURNITURE_REPEAT).ceil().max(2.0) as usize;
+    // Pages 1, 3, 5... (indices 0, 2, 4...) are odd; a key on only one
+    // parity, on at least half of those pages, is an even/odd variant.
+    let need_parity = |count: usize| ((count as f64) * FURNITURE_REPEAT).ceil().max(2.0) as usize;
+    let (odd_pages, even_pages) = (pages.div_ceil(2), pages / 2);
     let mut content = Furniture::default();
     let mut inferred = 0;
     // Per band: (first baseline, left edge, lines, carries the page number).
     type Row = (f64, f64, Vec<ILine>, bool);
-    let mut rows: [Vec<Row>; 2] = [Vec::new(), Vec::new()];
+    let mut keyed: Vec<(bool, Repeat, BTreeSet<usize>, Row)> = Vec::new();
     for ((top_band, _, _), occurrences) in &seen {
         let artifact = occurrences
             .iter()
             .any(|(p, b)| state.pages[*p].blocks[*b].artifact);
         let distinct: BTreeSet<usize> = occurrences.iter().map(|(p, _)| *p).collect();
-        if !(artifact || distinct.len() >= need) {
+        let repeat = if pages >= 4
+            && distinct.iter().all(|p| p % 2 == 0)
+            && distinct.len() >= need_parity(odd_pages)
+        {
+            Repeat::OddPages
+        } else if pages >= 4
+            && distinct.iter().all(|p| p % 2 == 1)
+            && distinct.len() >= need_parity(even_pages)
+        {
+            Repeat::EvenPages
+        } else if artifact || distinct.len() >= need {
+            Repeat::All
+        } else {
             continue;
-        }
+        };
         for (p, b) in occurrences {
             out[*p].insert(*b);
         }
@@ -421,7 +570,45 @@ fn furniture(
             });
         let first = lines.first().map_or(0.0, |l| l.baseline);
         let x = block.block.x0;
-        rows[usize::from(!*top_band)].push((first, x, lines, numbered));
+        keyed.push((!*top_band, repeat, distinct, (first, x, lines, numbered)));
+    }
+    content.even_odd = keyed.iter().any(|k| k.1 == Repeat::EvenPages);
+    // The first page is different when a band's every-page content skips it
+    // (a title page) on a document long enough to tell.
+    content.title_page = pages >= 3
+        && [false, true].iter().any(|footer| {
+            let band: Vec<_> = keyed
+                .iter()
+                .filter(|k| k.0 == *footer && k.1 != Repeat::EvenPages)
+                .collect();
+            !band.is_empty() && band.iter().all(|k| !k.2.contains(&0))
+        });
+    let mut rows: BTreeMap<(bool, Variant), Vec<Row>> = BTreeMap::new();
+    for (footer, repeat, distinct, row) in keyed {
+        let mut variants = Vec::new();
+        match repeat {
+            Repeat::All => {
+                variants.push(Variant::Default);
+                if content.even_odd {
+                    variants.push(Variant::Even);
+                }
+            }
+            Repeat::OddPages => variants.push(Variant::Default),
+            Repeat::EvenPages => variants.push(Variant::Even),
+        }
+        if content.title_page && distinct.contains(&0) {
+            variants.push(Variant::First);
+        }
+        for variant in variants {
+            rows.entry((footer, variant)).or_default().push(row.clone());
+        }
+    }
+    if content.title_page {
+        for footer in [false, true] {
+            if rows.contains_key(&(footer, Variant::Default)) {
+                rows.entry((footer, Variant::First)).or_default();
+            }
+        }
     }
     findings.record(
         report::HEADER_FOOTER_INFERRED,
@@ -429,7 +616,7 @@ fn furniture(
         inferred,
         None,
     );
-    for (band, list) in rows.iter_mut().enumerate() {
+    for (key, list) in &mut rows {
         list.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
         let mut grouped: Vec<Vec<ILine>> = Vec::new();
         let mut numbers: Vec<(usize, usize, usize, usize)> = Vec::new();
@@ -474,13 +661,13 @@ fn furniture(
                 grouped[row].push(line);
             }
         }
-        if band == 0 {
-            content.header = grouped;
-            content.header_page_numbers = numbers;
-        } else {
-            content.footer = grouped;
-            content.footer_page_numbers = numbers;
-        }
+        content.parts.insert(
+            *key,
+            Part {
+                rows: grouped,
+                numbers,
+            },
+        );
     }
     (out, content)
 }
@@ -681,10 +868,31 @@ pub fn build(
                 page_tables.push(table);
             }
         }
-        // Footnotes leave the body.
+        // Footnotes leave the body; a note the previous page left open
+        // continues in this page's note area.
+        if flow
+            .notes
+            .last()
+            .is_some_and(|n| n.page + 1 == page.index && notes::open(n))
+        {
+            let more =
+                notes::continuation(&mut lines_only, page.height, body_size, &mut work.notes);
+            if !more.is_empty() {
+                findings.record(
+                    report::FOOTNOTE_INFERRED,
+                    Outcome::Mapped,
+                    1,
+                    Some(page.index),
+                );
+                if let Some(note) = flow.notes.last_mut() {
+                    note.lines.extend(more);
+                }
+            }
+        }
         let first_note = flow.notes.len();
         let notes = notes::footnotes(
             &mut lines_only,
+            page.index,
             page.height,
             body_size,
             first_note,
@@ -712,6 +920,16 @@ pub fn build(
             tables::whitespace_candidates(&views, &mut work.tables)
         };
         for candidate in candidates {
+            // Cells a tagged `Table` owns are its; the tree decides them.
+            if candidate.elements.iter().any(|&e| {
+                texts[e]
+                    .1
+                    .and_then(|m| leaves.get(&(page.index, m)))
+                    .and_then(|&i| state.structure.as_ref().map(|t| &t.leaves[i]))
+                    .is_some_and(|leaf| nearest(&leaf.lineage, &["Table"]).is_some())
+            }) {
+                continue;
+            }
             if candidate.confidence >= tables::TABLE_CONFIDENCE && candidate.rows >= 3 {
                 let columns: Vec<(Vec<ILine>, (f64, f64))> = candidate
                     .elements
@@ -811,6 +1029,7 @@ pub fn build(
                 struct_element: node.map(|n| n.element()),
                 role: node.map(|n| n.role().to_owned()),
                 region: None,
+                lineage: node.map(|n| n.lineage.clone()).unwrap_or_default(),
             });
         }
         for table in page_tables {
@@ -830,6 +1049,7 @@ pub fn build(
                 struct_element: None,
                 role: None,
                 region: None,
+                lineage: Vec::new(),
             });
         }
         for image in &page.images {
@@ -847,10 +1067,13 @@ pub fn build(
                 struct_element: None,
                 role: None,
                 region: None,
+                lineage: Vec::new(),
             });
         }
+        let mut page_bottom = f64::NEG_INFINITY;
         for e in &elements {
             if matches!(e.kind, EKind::Text(_) | EKind::Table(_)) {
+                page_bottom = page_bottom.max(e.rect.y1);
                 bx0 = bx0.min(e.rect.x0);
                 by0 = by0.min(e.rect.y0);
                 bx1 = bx1.max(e.rect.x1);
@@ -858,6 +1081,7 @@ pub fn build(
             }
         }
 
+        flow.page_bottoms.push(page_bottom);
         // Reading order: XY-Cut++ always (it also finds the column regions);
         // the structure tree overrides the order when it covers the page.
         let rects: Vec<Rect> = elements.iter().map(|e| e.rect).collect();
@@ -901,11 +1125,40 @@ pub fn build(
             ordered.order.clone()
         };
         let mut slots: Vec<Option<Element>> = elements.into_iter().map(Some).collect();
+        let mut tagged_tables = 0;
+        let mut pending: Vec<Element> = Vec::new();
+        let mut pending_table: Option<u32> = None;
         for i in sequence {
-            if let Some(e) = slots[i].take() {
-                flow.elements.push(e);
+            let Some(e) = slots[i].take() else {
+                continue;
+            };
+            // Elements under one tagged `Table` become one table.
+            let table = if use_tags && matches!(e.kind, EKind::Text(_)) {
+                nearest(&e.lineage, &["Table"])
+            } else {
+                None
+            };
+            if pending_table.is_some() && table != pending_table {
+                flow.elements
+                    .push(tagged_table(std::mem::take(&mut pending)));
+                tagged_tables += 1;
+            }
+            pending_table = table;
+            match table {
+                Some(_) => pending.push(e),
+                None => flow.elements.push(e),
             }
         }
+        if !pending.is_empty() {
+            flow.elements.push(tagged_table(pending));
+            tagged_tables += 1;
+        }
+        findings.record(
+            report::TABLE_INFERRED,
+            Outcome::Mapped,
+            tagged_tables,
+            Some(page.index),
+        );
     }
     findings.record(
         report::READING_ORDER_INFERRED,

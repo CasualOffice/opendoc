@@ -21,13 +21,13 @@ use casual_doc_model::v1::{
     TableProperties, TableRow, TableRowProperties, TableWidth, VerticalAlignment, VerticalMerge,
     WidthType,
 };
-use casual_doc_model::v1::{BorderEdge, TableBorders};
+use casual_doc_model::v1::{BorderEdge, NoteNumberRestart, NoteProperties, TableBorders};
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_pdf_read::{LinkTarget, RenderMode};
 
 use super::tables::ITable;
 use super::text::{self, FontKey, Marker, StyleSheet};
-use super::{EKind, Flow, ILine, PChar, PdfSourceState, ReflowWork, Reflowed};
+use super::{EKind, Flow, ILine, PChar, PdfSourceState, ReflowWork, Reflowed, Variant};
 use crate::PdfImportError;
 use crate::report::{self, Findings, PdfModelOutcome as Outcome};
 
@@ -51,11 +51,19 @@ struct IPara {
     role: Option<String>,
     centred: bool,
     end_aligned: bool,
+    /// Every line but the last runs from the column's left to its right.
+    justified: bool,
+    /// The page before ended early: this paragraph starts a new page.
+    page_break: bool,
     list: Option<(NumberingInstanceId, u8)>,
     marker_len: usize,
     heading: Option<u8>,
     bookmark: Vec<usize>,
     last_line: Option<ILine>,
+    /// The outermost tagged `L` this paragraph sits in, and how many `L`
+    /// elements deep it is.
+    list_root: Option<u32>,
+    list_depth: u8,
 }
 
 // Transient (one per paragraph, dropped at emission), so the size of the
@@ -310,7 +318,12 @@ impl Emitter<'_> {
             } else if para.end_aligned {
                 properties.alignment = Some(Alignment::End);
                 properties.indentation = None;
+            } else if para.justified {
+                properties.alignment = Some(Alignment::Justify);
             }
+        }
+        if para.page_break {
+            properties.page_break_before = Some(true);
         }
         let chars = &para.chars[para.marker_len.min(para.chars.len())..];
         let start = chars
@@ -559,6 +572,25 @@ fn shape(
     )
 }
 
+/// A page is "ended early" when its content stops above this share of the
+/// body's height.
+pub const PAGE_BREAK_FILL: f64 = 0.75;
+
+/// Justified: at least three lines, every line but the last ending at the
+/// same right edge (within a point) at the column's right, and the last line
+/// shorter. Ragged-right text does not end every line within a point. O(lines).
+fn justified(lines: &[&ILine], column_left: f64, column_right: f64) -> bool {
+    if lines.len() < 3 {
+        return false;
+    }
+    let (body, last) = lines.split_at(lines.len() - 1);
+    let right = body.iter().map(|l| l.x1).fold(f64::NEG_INFINITY, f64::max);
+    let width = (column_right - column_left).max(1.0);
+    body.iter().all(|l| (l.x1 - right).abs() <= 1.0)
+        && column_right - right <= 0.05 * width
+        && last[0].x1 < right - 2.0 * last[0].size.max(1.0)
+}
+
 /// Emits the document. O(characters + elements log elements).
 #[allow(clippy::too_many_lines)]
 pub(crate) fn emit(
@@ -576,7 +608,21 @@ pub(crate) fn emit(
     let mut multi_line = 0;
     let page_width = flow.page_size.0;
     // Paragraphs: segment each text element, then join across elements.
+    let mut last_page: Option<usize> = None;
+    let mut page_breaks = 0;
+    let mut justified_count = 0;
+    let (_, body_top, _, body_bottom) = flow.body;
     for element in &flow.elements {
+        // A page whose content stopped well above the body's bottom ended
+        // in a break: the next page's first new paragraph starts a page.
+        let new_page = last_page.is_some_and(|p| p != element.page);
+        let broke = new_page
+            && last_page
+                .and_then(|p| flow.page_bottoms.get(p))
+                .is_some_and(|bottom| {
+                    *bottom < body_top + PAGE_BREAK_FILL * (body_bottom - body_top)
+                });
+        last_page = Some(element.page);
         match &element.kind {
             EKind::Text(lines) => {
                 let (left, right) = {
@@ -616,6 +662,13 @@ pub(crate) fn emit(
                     if refs.len() > 1 {
                         multi_line += 1;
                     }
+                    let page_break = broke && n == 0;
+                    page_breaks += u32::from(page_break);
+                    let justified = {
+                        let s = shape(&refs, &flow, element.region, page_width);
+                        justified(&refs, s.3, s.4) && !s.5 && !s.6
+                    };
+                    justified_count += u32::from(justified);
                     let (first_x0, rest_x0, _, column_left, column_right, centred, end_aligned) =
                         shape(&refs, &flow, element.region, page_width);
                     let heading = element.role.as_deref().and_then(|role| match role {
@@ -643,6 +696,17 @@ pub(crate) fn emit(
                         end_aligned,
                         heading,
                         last_line: refs.last().map(|l| (*l).clone()),
+                        justified,
+                        page_break,
+                        list_root: element
+                            .lineage
+                            .iter()
+                            .find(|n| n.role == "L")
+                            .map(|n| n.ordinal),
+                        list_depth: u8::try_from(
+                            element.lineage.iter().filter(|n| n.role == "L").count(),
+                        )
+                        .unwrap_or(u8::MAX),
                         ..IPara::default()
                     }));
                 }
@@ -651,6 +715,18 @@ pub(crate) fn emit(
             EKind::Image(image) => items.push(Item::Image(image.clone(), element.region)),
         }
     }
+    findings.record(
+        report::PAGE_BREAK_INFERRED,
+        Outcome::Mapped,
+        page_breaks,
+        None,
+    );
+    findings.record(
+        report::JUSTIFICATION_INFERRED,
+        Outcome::Mapped,
+        justified_count,
+        None,
+    );
     findings.record(
         report::PARAGRAPH_BOUNDARY_INFERRED,
         Outcome::Mapped,
@@ -689,7 +765,7 @@ pub(crate) fn emit(
     };
 
     // Lists, then headings for what is not a list.
-    let list_items = lists(&mut items, &mut emitter)?;
+    let list_items = tagged_lists(&mut items, &mut emitter)? + lists(&mut items, &mut emitter)?;
     findings.record(report::LIST_INFERRED, Outcome::Mapped, list_items, None);
     let mut headings = 0;
     for item in &mut items {
@@ -869,14 +945,16 @@ pub(crate) fn emit(
     let (bx0, by0, bx1, by1) = flow.body;
     let header_top = flow
         .furniture
-        .header
-        .first()
+        .parts
+        .get(&(false, Variant::Default))
+        .and_then(|part| part.rows.first())
         .and_then(|row| row.first())
         .map(|l| l.top);
     let footer_bottom = flow
         .furniture
-        .footer
-        .last()
+        .parts
+        .get(&(true, Variant::Default))
+        .and_then(|part| part.rows.last())
         .and_then(|row| row.last())
         .map(|l| l.bottom);
     let margins = PageMargins {
@@ -889,23 +967,43 @@ pub(crate) fn emit(
         gutter_twips: None,
     };
 
-    // Header and footer parts.
-    let header_part = furniture_part(
-        &mut emitter,
-        &flow.furniture.header,
-        &flow.furniture.header_page_numbers,
-        page_w,
-        margins,
-    )?;
-    let footer_part = furniture_part(
-        &mut emitter,
-        &flow.furniture.footer,
-        &flow.furniture.footer_page_numbers,
-        page_w,
-        margins,
-    )?;
-    let header = header_part.as_ref().map(|(id, _)| *id);
-    let footer = footer_part.as_ref().map(|(id, _)| *id);
+    // Header and footer parts: default, even and first-page variants.
+    let mut parts: Vec<(bool, HeaderFooterKind, HeaderFooterId, HeaderFooter)> = Vec::new();
+    for ((footer, variant), part) in &flow.furniture.parts {
+        let kind = match variant {
+            Variant::Default => HeaderFooterKind::Default,
+            Variant::Even => HeaderFooterKind::Even,
+            Variant::First => HeaderFooterKind::First,
+        };
+        let (id, content) =
+            match furniture_part(&mut emitter, &part.rows, &part.numbers, page_w, margins)? {
+                Some(built) => built,
+                // An empty first-page part: the title page shows nothing there.
+                None => (
+                    HeaderFooterId::new(emitter.id()?),
+                    HeaderFooter {
+                        blocks: vec![BlockNode::Paragraph(Paragraph {
+                            id: emitter.id()?,
+                            properties: ParagraphProperties::default().into(),
+                            inlines: Vec::new(),
+                        })],
+                    },
+                ),
+            };
+        parts.push((*footer, kind, id, content));
+    }
+    let refs = |footer: bool| -> Vec<HeaderFooterRef> {
+        parts
+            .iter()
+            .filter(|p| p.0 == footer)
+            .map(|p| HeaderFooterRef {
+                kind: p.1,
+                reference: p.2,
+            })
+            .collect()
+    };
+    let (header_refs, footer_refs) = (refs(false), refs(true));
+    let title_page = flow.furniture.title_page.then_some(true);
 
     let mut body: Vec<BlockNode> = Vec::new();
     let mut sections: Vec<SectionBoundary> = Vec::new();
@@ -930,24 +1028,10 @@ pub(crate) fn emit(
                 equal_width: (shape.0 > 1).then_some(true),
                 columns: Vec::new(),
             },
-            headers: header
-                .map(|h| {
-                    vec![HeaderFooterRef {
-                        kind: HeaderFooterKind::Default,
-                        reference: h,
-                    }]
-                })
-                .unwrap_or_default(),
-            footers: footer
-                .map(|f| {
-                    vec![HeaderFooterRef {
-                        kind: HeaderFooterKind::Default,
-                        reference: f,
-                    }]
-                })
-                .unwrap_or_default(),
+            headers: header_refs.clone(),
+            footers: footer_refs.clone(),
             section_type: (!first).then_some(SectionType::Continuous),
-            title_page: None,
+            title_page,
             vertical_alignment: None,
             page_numbering: casual_doc_model::v1::PageNumbering::default(),
             doc_grid: casual_doc_model::v1::DocGrid::default(),
@@ -1040,6 +1124,20 @@ pub(crate) fn emit(
     );
     let last = section(&mut emitter, current_shape, sections.is_empty())?;
     sections.push(last);
+    // Footnote numbering that reproduces the PDF's own markers.
+    match note_numbering(&flow.notes) {
+        Some(props) => {
+            for section in &mut sections {
+                section.footnote_props = props.clone();
+            }
+        }
+        None => findings.record(
+            report::FOOTNOTE_MARKER_RENUMBERED,
+            Outcome::Degraded,
+            flow.notes.len() as u32,
+            None,
+        ),
+    }
     if body.is_empty() {
         body.push(BlockNode::Paragraph(Paragraph {
             id: emitter.id()?,
@@ -1172,12 +1270,14 @@ pub(crate) fn emit(
             out_resources.insert(media.part_name.clone(), bytes.clone());
         }
     }
-    if let Some((id, part)) = header_part {
-        definitions.headers.insert(id, part);
+    for (footer, _, id, part) in parts {
+        if footer {
+            definitions.footers.insert(id, part);
+        } else {
+            definitions.headers.insert(id, part);
+        }
     }
-    if let Some((id, part)) = footer_part {
-        definitions.footers.insert(id, part);
-    }
+    definitions.settings.even_and_odd_headers = flow.furniture.even_odd;
     let document_id = emitter.id()?;
     let document = Document::new(document_id, body, definitions)
         .map_err(|error| PdfImportError::Model(error.to_string()))?;
@@ -1227,11 +1327,127 @@ type Found = Option<(Marker, usize, f64, f64)>;
 /// kind, with a hanging indent (`docs/182` §4.2; `docs/131` §10.5: a visual
 /// bullet alone does not make a list). Returns how many items became list
 /// paragraphs. O(paragraphs).
+/// Tagged lists (`L`/`LI`/`Lbl`/`LBody`, ISO 32000-1 §14.8.4.3.3): the
+/// consecutive paragraphs under one outermost `L` are one list, each nested
+/// `L` one level deeper. A level's format is its first item's marker (the
+/// `Lbl` text, put back on its line by `attach_markers`), a bullet when it has
+/// none. The tree, not the hanging indent, decides membership. O(paragraphs).
+fn tagged_lists(items: &mut [Item], emitter: &mut Emitter<'_>) -> Result<u32, PdfImportError> {
+    let mut count = 0;
+    let mut i = 0;
+    while i < items.len() {
+        let root = match &items[i] {
+            Item::Para(p) => p.list_root,
+            _ => None,
+        };
+        let Some(root) = root else {
+            i += 1;
+            continue;
+        };
+        let mut j = i;
+        while j < items.len() && matches!(&items[j], Item::Para(p) if p.list_root == Some(root)) {
+            j += 1;
+        }
+        let mut levels: BTreeMap<u8, NumberingLevel> = BTreeMap::new();
+        let mut placed: Vec<(usize, u8, usize)> = Vec::new();
+        for (k, item) in items.iter().enumerate().take(j).skip(i) {
+            let Item::Para(p) = item else { continue };
+            let at = p.list_depth.saturating_sub(1).min(8);
+            let parsed = text::marker(&p.chars, false);
+            let marker_x0 = p.chars.first().map_or(p.first_x0, |c| c.x0);
+            let (n, text_x0) = match &parsed {
+                Some((_, n)) => (*n, p.chars.get(*n).map_or(marker_x0, |c| c.x0)),
+                None => (0, p.first_x0),
+            };
+            levels.entry(at).or_insert_with(|| {
+                let indent = (text_x0 - p.column_left).max(18.0 * f64::from(at + 1));
+                let hanging = if parsed.is_some() {
+                    (text_x0 - marker_x0).max(0.0)
+                } else {
+                    18.0
+                };
+                match parsed.map(|m| m.0) {
+                    Some(Marker::Number {
+                        value,
+                        format,
+                        pattern,
+                    }) => level(
+                        format,
+                        pattern.replace("%1", &format!("%{}", at + 1)),
+                        at,
+                        u16::try_from(value).unwrap_or(1),
+                        indent,
+                        hanging,
+                    ),
+                    Some(Marker::Bullet(glyph)) => level(
+                        NumberFormat::Bullet,
+                        glyph.to_string(),
+                        at,
+                        1,
+                        indent,
+                        hanging,
+                    ),
+                    None => level(
+                        NumberFormat::Bullet,
+                        "\u{2022}".to_owned(),
+                        at,
+                        1,
+                        indent,
+                        hanging,
+                    ),
+                }
+            });
+            placed.push((k, at, n));
+        }
+        let deepest = levels.keys().copied().max().unwrap_or(0);
+        for at in 0..=deepest {
+            levels.entry(at).or_insert_with(|| {
+                level(
+                    NumberFormat::Bullet,
+                    "\u{2022}".to_owned(),
+                    at,
+                    1,
+                    36.0 * f64::from(at + 1),
+                    18.0,
+                )
+            });
+        }
+        let abstract_id = AbstractNumberingId::new(emitter.id()?);
+        let instance = NumberingInstanceId::new(emitter.id()?);
+        emitter.definitions.abstract_numbering.insert(
+            abstract_id,
+            AbstractNumbering {
+                levels: levels.into_values().collect(),
+                multi_level_type: None,
+                num_style_link: None,
+                style_link: None,
+            },
+        );
+        emitter.definitions.numbering.insert(
+            instance,
+            NumberingInstance {
+                abstract_ref: abstract_id,
+                overrides: Vec::new(),
+            },
+        );
+        for (k, at, n) in placed {
+            if let Item::Para(p) = &mut items[k] {
+                p.list = Some((instance, at));
+                p.marker_len = n;
+                count += 1;
+            }
+        }
+        i = j;
+    }
+    Ok(count)
+}
+
 fn lists(items: &mut [Item], emitter: &mut Emitter<'_>) -> Result<u32, PdfImportError> {
     let mut found: Vec<Found> = Vec::with_capacity(items.len());
     let mut previous_letter = false;
     for item in items.iter() {
         let parsed = match item {
+            Item::Para(p) if p.list.is_some() => None,
             Item::Para(p) => text::marker(&p.chars, previous_letter).map(|(m, n)| {
                 let marker_x0 = p.chars.first().map_or(0.0, |c| c.x0);
                 let text_x0 = p.chars.get(n).map_or(marker_x0, |c| c.x0);
@@ -1518,6 +1734,66 @@ fn normalize(inlines: Vec<InlineNode>) -> Vec<InlineNode> {
         }
     }
     out
+}
+
+/// The value a footnote marker stands for in its sequence: digits for
+/// themselves, the `chicago` marks (`*` `†` `‡` `§`, then doubled) for their
+/// position. `None` for anything else.
+fn marker_value(marker: &str) -> Option<(bool, u32)> {
+    if let Ok(v) = marker.parse::<u32>() {
+        return Some((false, v));
+    }
+    let mut chars = marker.chars();
+    let first = chars.next()?;
+    let index = ['*', '\u{2020}', '\u{2021}', '\u{a7}']
+        .iter()
+        .position(|c| *c == first)?;
+    let repeats = marker.chars().count();
+    marker.chars().all(|c| c == first).then(|| {
+        (
+            true,
+            u32::try_from(index + 1 + 4 * (repeats - 1)).unwrap_or(u32::MAX),
+        )
+    })
+}
+
+/// The footnote properties that print the PDF's markers: a number or
+/// `chicago` format, starting where the PDF starts, continuous or restarting
+/// on each page. `None` when the markers follow no such rule (they are then
+/// renumbered and reported). O(notes).
+fn note_numbering(notes: &[super::notes::INote]) -> Option<NoteProperties> {
+    if notes.is_empty() {
+        return Some(NoteProperties::default());
+    }
+    let values: Vec<(bool, u32, usize)> = notes
+        .iter()
+        .map(|n| marker_value(&n.marker).map(|(s, v)| (s, v, n.page)))
+        .collect::<Option<_>>()?;
+    let symbols = values[0].0;
+    if values.iter().any(|v| v.0 != symbols) {
+        return None;
+    }
+    let continuous = values.windows(2).all(|w| w[1].1 == w[0].1 + 1);
+    let each_page = values.windows(2).all(|w| {
+        if w[1].2 == w[0].2 {
+            w[1].1 == w[0].1 + 1
+        } else {
+            w[1].1 == values[0].1
+        }
+    });
+    let restart = if continuous {
+        None
+    } else if each_page {
+        Some(NoteNumberRestart::EachPage)
+    } else {
+        return None;
+    };
+    Some(NoteProperties {
+        position: None,
+        number_format: symbols.then(|| NumberFormat::Other("chicago".to_owned())),
+        number_start: (values[0].1 != 1).then(|| i32::try_from(values[0].1).unwrap_or(1)),
+        number_restart: restart,
+    })
 }
 
 /// Gives every run in a note paragraph without a size the note's own size.

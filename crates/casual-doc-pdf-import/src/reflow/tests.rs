@@ -1229,3 +1229,378 @@ fn replies_thread_onto_their_note_and_free_text_is_drawn() {
     assert_eq!(run.properties.size_half_points, Some(28));
     assert!(matches!(run.properties.color, Some(Color::Rgb(c)) if (c.r, c.g, c.b) == (255, 0, 0)));
 }
+
+// --- Tagged tables and lists -------------------------------------------------
+
+/// A tagged 2x2 table whose two rows are too few for the whitespace
+/// detector, and a tagged list whose nested item sits at the same x as its
+/// parent: only the tree can make the table a table and the nested item
+/// level 2.
+fn tagged_structure_pdf() -> Vec<u8> {
+    let mut pdf = synth::Pdf::default();
+    let root = pdf.reserve();
+    let mut content = String::new();
+    let mut mcid = 0;
+    let mut mark = |role: &str, text_op: String| {
+        let out = format!("/{role} <</MCID {mcid}>> BDC\n{text_op}EMC\n");
+        mcid += 1;
+        (mcid - 1, out)
+    };
+    let cell = |x: f64, y: f64, t: &str| text("F2", 10.0, x, y, 12.0, &[t]);
+    let mut ids = Vec::new();
+    for (x, y, t) in [
+        (72.0, 700.0, "Name"),
+        (250.0, 700.0, "Qty"),
+        (72.0, 686.0, "Apples"),
+        (250.0, 686.0, "3"),
+    ] {
+        let (id, op) = mark("TD", cell(x, y, t));
+        content.push_str(&op);
+        ids.push(id);
+    }
+    let items = [
+        ("1.", "First item", 640.0),
+        ("2.", "Second item", 626.0),
+        ("a.", "Nested item", 612.0),
+        ("3.", "Third item", 598.0),
+    ];
+    let mut list_ids = Vec::new();
+    for (lbl, body, y) in items {
+        let (l, op) = mark("Lbl", cell(72.0, y, lbl));
+        content.push_str(&op);
+        let (b, op) = mark("LBody", cell(90.0, y, body));
+        content.push_str(&op);
+        list_ids.push((l, b));
+    }
+    fn el(pdf: &mut synth::Pdf, root: u32, role: &str, kids: String) -> u32 {
+        pdf.add(format!(
+            "<< /Type /StructElem /S /{role} /P {root} 0 R /Pg {{page0}} /K {kids} >>"
+        ))
+    }
+    fn li(pdf: &mut synth::Pdf, root: u32, (l, b): (i32, i32), extra: String) -> u32 {
+        let lbl = el(pdf, root, "Lbl", l.to_string());
+        let body = el(pdf, root, "LBody", b.to_string());
+        el(pdf, root, "LI", format!("[{lbl} 0 R {body} 0 R {extra}]"))
+    }
+    let tds: Vec<u32> = ids
+        .iter()
+        .map(|m| el(&mut pdf, root, "TD", m.to_string()))
+        .collect();
+    let tr1 = el(
+        &mut pdf,
+        root,
+        "TR",
+        format!("[{} 0 R {} 0 R]", tds[0], tds[1]),
+    );
+    let tr2 = el(
+        &mut pdf,
+        root,
+        "TR",
+        format!("[{} 0 R {} 0 R]", tds[2], tds[3]),
+    );
+    let table = el(&mut pdf, root, "Table", format!("[{tr1} 0 R {tr2} 0 R]"));
+    let li1 = li(&mut pdf, root, list_ids[0], String::new());
+    let nested_li = li(&mut pdf, root, list_ids[2], String::new());
+    let nested = el(&mut pdf, root, "L", format!("[{nested_li} 0 R]"));
+    let li2 = li(&mut pdf, root, list_ids[1], format!("{nested} 0 R"));
+    let li3 = li(&mut pdf, root, list_ids[3], String::new());
+    let list = el(
+        &mut pdf,
+        root,
+        "L",
+        format!("[{li1} 0 R {li2} 0 R {li3} 0 R]"),
+    );
+    pdf.set(
+        root,
+        format!("<< /Type /StructTreeRoot /K [{table} 0 R {list} 0 R] >>"),
+    );
+    synth::document_in(
+        &mut pdf,
+        &[Page::new(content)],
+        "",
+        &format!("/MarkInfo << /Marked true >> /StructTreeRoot {root} 0 R"),
+        |_| "/StructParents 0".to_owned(),
+    )
+}
+
+#[test]
+fn tagged_tables_and_nested_lists_follow_the_structure_tree() {
+    let (_, reflowed) = reflow_of(tagged_structure_pdf());
+    let document = &reflowed.document;
+    assert_eq!(
+        cell_texts(document, 0),
+        vec![vec!["Name", "Qty"], vec!["Apples", "3"]]
+    );
+    let definitions = document.definitions();
+    let listed: Vec<(String, u8, Option<NumberFormat>)> = paragraphs(document)
+        .iter()
+        .filter_map(|p| {
+            let n = p.properties.numbering?;
+            let instance = definitions.numbering.get(&n.instance)?;
+            let abs = definitions.abstract_numbering.get(&instance.abstract_ref)?;
+            Some((
+                para_text(p),
+                n.level,
+                abs.levels[usize::from(n.level)].num_fmt.clone(),
+            ))
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        vec![
+            ("First item".to_owned(), 0, Some(NumberFormat::Decimal)),
+            ("Second item".to_owned(), 0, Some(NumberFormat::Decimal)),
+            ("Nested item".to_owned(), 1, Some(NumberFormat::LowerLetter)),
+            ("Third item".to_owned(), 0, Some(NumberFormat::Decimal)),
+        ]
+    );
+}
+
+// --- Continued footnotes and symbol markers ----------------------------------
+
+fn continued_notes_pdf() -> Vec<u8> {
+    let first = format!(
+        "BT /F2 11 Tf 72 700 Td (The committee approved the plan) Tj /F2 7 Tf 3 Ts (*) Tj 0 Ts /F2 11 Tf ( and the budget) Tj /F2 7 Tf 3 Ts (\\206) Tj 0 Ts /F2 11 Tf (.) Tj ET\n{}{}",
+        text("F2", 11.0, 72.0, 660.0, 14.0, &PROSE),
+        text(
+            "F2",
+            8.0,
+            72.0,
+            120.0,
+            10.0,
+            &["* A short note.", "\u{2020} The second note runs on and"],
+        )
+    );
+    let first = first.replace('\u{2020}', "\\206");
+    let second = format!(
+        "BT /F2 11 Tf 72 700 Td (Another body line on the second page) Tj /F2 7 Tf 3 Ts (*) Tj 0 Ts ET\n{}{}{}",
+        text("F2", 11.0, 72.0, 660.0, 14.0, &PROSE),
+        text(
+            "F2",
+            8.0,
+            72.0,
+            150.0,
+            10.0,
+            &["continues here on page two."]
+        ),
+        text(
+            "F2",
+            8.0,
+            72.0,
+            110.0,
+            10.0,
+            &["* A note of the second page."]
+        ),
+    );
+    synth::document(&[Page::new(first), Page::new(second)], "", "")
+}
+
+#[test]
+fn a_footnote_continues_onto_the_next_page_and_symbol_markers_are_kept() {
+    let (_, reflowed) = reflow_of(continued_notes_pdf());
+    let document = &reflowed.document;
+    let notes: Vec<String> = document
+        .definitions()
+        .footnotes
+        .iter()
+        .map(|(_, note)| match &note.blocks[0] {
+            BlockNode::Paragraph(p) => para_text(p).trim().to_owned(),
+            _ => String::new(),
+        })
+        .collect();
+    assert_eq!(
+        notes,
+        vec![
+            "A short note.",
+            "The second note runs on and continues here on page two.",
+            "A note of the second page.",
+        ]
+    );
+    assert!(!texts(document).join("\n").contains("continues here"));
+    let props = &document.definitions().sections[0].footnote_props;
+    assert_eq!(
+        props.number_format,
+        Some(NumberFormat::Other("chicago".to_owned()))
+    );
+    assert_eq!(
+        props.number_restart,
+        Some(casual_doc_model::v1::NoteNumberRestart::EachPage)
+    );
+    assert!(!reflowed.report.has(report::FOOTNOTE_MARKER_RENUMBERED));
+}
+
+// --- First-page and even/odd headers ------------------------------------------
+
+/// Five pages: a title page with no running head, then a head that
+/// alternates between even pages (left) and odd pages (right); a footer on
+/// every page.
+fn variant_headers_pdf() -> Vec<u8> {
+    let pages: Vec<Page> = (0..5)
+        .map(|i| {
+            let head = match i {
+                0 => String::new(),
+                i if i % 2 == 1 => text("F1", 9.0, 72.0, 750.0, 11.0, &["Even running head"]),
+                _ => text("F1", 9.0, 450.0, 750.0, 11.0, &["Odd running head"]),
+            };
+            Page::new(format!(
+                "{head}{}{}",
+                text(
+                    "F2",
+                    11.0,
+                    72.0,
+                    700.0,
+                    14.0,
+                    &PROSE[(i % 4) * 2..(i % 4) * 2 + 2]
+                ),
+                text("F1", 9.0, 290.0, 30.0, 11.0, &[&format!("Page {}", i + 1)]),
+            ))
+        })
+        .collect();
+    synth::document(&pages, "", "")
+}
+
+#[test]
+fn first_page_and_even_odd_headers_become_their_own_parts() {
+    use casual_doc_model::v1::HeaderFooterKind;
+    let (_, reflowed) = reflow_of(variant_headers_pdf());
+    let definitions = reflowed.document.definitions();
+    let section = &definitions.sections[0];
+    let part_text = |blocks: &[BlockNode]| {
+        blocks
+            .iter()
+            .filter_map(|b| match b {
+                BlockNode::Paragraph(p) => Some(para_text(p)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("|")
+    };
+    let headers: Vec<(HeaderFooterKind, String)> = section
+        .headers
+        .iter()
+        .map(|r| {
+            (
+                r.kind,
+                part_text(&definitions.headers.get(&r.reference).unwrap().blocks),
+            )
+        })
+        .collect();
+    assert_eq!(
+        headers,
+        vec![
+            (HeaderFooterKind::Default, "Odd running head".to_owned()),
+            (HeaderFooterKind::Even, "Even running head".to_owned()),
+            (HeaderFooterKind::First, String::new()),
+        ]
+    );
+    let footers: Vec<(HeaderFooterKind, String)> = section
+        .footers
+        .iter()
+        .map(|r| {
+            (
+                r.kind,
+                part_text(&definitions.footers.get(&r.reference).unwrap().blocks),
+            )
+        })
+        .collect();
+    assert_eq!(
+        footers,
+        vec![
+            (HeaderFooterKind::Default, "Page {1}".to_owned()),
+            (HeaderFooterKind::Even, "Page {1}".to_owned()),
+            (HeaderFooterKind::First, "Page {1}".to_owned()),
+        ]
+    );
+    assert_eq!(section.title_page, Some(true));
+    assert!(definitions.settings.even_and_odd_headers);
+    assert!(
+        !texts(&reflowed.document)
+            .join("\n")
+            .contains("running head")
+    );
+}
+
+// --- Page breaks and justification --------------------------------------------
+
+fn breaks_pdf() -> Vec<u8> {
+    let first = format!(
+        "{}{}",
+        text("F3", 16.0, 72.0, 720.0, 20.0, &["Chapter One"]),
+        text(
+            "F2",
+            11.0,
+            72.0,
+            690.0,
+            14.0,
+            &["A short chapter that ends near the top of its page."]
+        ),
+    );
+    let justified = [
+        "Every line of this paragraph is exactly as long as the others are,",
+        "so its right edge is straight; the typesetter set it justified and",
+        "only the last line, which ends the paragraph, stops short.",
+    ];
+    let second = format!(
+        "{}{}{}{}{}",
+        text("F3", 16.0, 72.0, 720.0, 20.0, &["Chapter Two"]),
+        text("F6", 10.0, 72.0, 690.0, 12.0, &justified),
+        // As wide as the column, but ragged: its lines end at different x.
+        text(
+            "F6",
+            10.0,
+            72.0,
+            630.0,
+            12.0,
+            &[
+                "A ragged paragraph in the same face reaches the right edge once",
+                "and then stops short of it on the lines that",
+                "follow, the way unjustified text does.",
+            ],
+        ),
+        text("F2", 11.0, 72.0, 600.0, 14.0, &PROSE[..4]),
+        text(
+            "F2",
+            11.0,
+            72.0,
+            80.0,
+            14.0,
+            &["The last line of the body, low on the page."]
+        ),
+    );
+    synth::document(&[Page::new(first), Page::new(second)], "", "")
+}
+
+#[test]
+fn a_page_that_ends_early_keeps_its_break_and_justified_text_stays_justified() {
+    use casual_doc_model::v1::Alignment;
+    let (_, reflowed) = reflow_of(breaks_pdf());
+    let paras: Vec<(String, Option<bool>, Option<Alignment>)> = paragraphs(&reflowed.document)
+        .iter()
+        .map(|p| {
+            (
+                para_text(p),
+                p.properties.page_break_before,
+                p.properties.alignment,
+            )
+        })
+        .filter(|(t, ..)| !t.is_empty())
+        .collect();
+    let find = |prefix: &str| {
+        paras
+            .iter()
+            .find(|p| p.0.starts_with(prefix))
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(find("Chapter Two").1, Some(true), "{paras:?}");
+    assert_eq!(find("Chapter One").1, None);
+    assert_eq!(find("The quick brown").1, None);
+    assert_eq!(find("Every line").2, Some(Alignment::Justify));
+    assert_eq!(
+        find("The quick brown").2,
+        None,
+        "ragged-right prose is not justified"
+    );
+    assert!(reflowed.report.has(report::PAGE_BREAK_INFERRED));
+    assert!(reflowed.report.has(report::JUSTIFICATION_INFERRED));
+}

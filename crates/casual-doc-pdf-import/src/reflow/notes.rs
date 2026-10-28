@@ -39,6 +39,54 @@ pub struct INote {
     pub marker: String,
     /// The body lines, the marker removed.
     pub lines: Vec<ILine>,
+    /// The page it starts on.
+    pub page: usize,
+}
+
+/// Whether a note's text stops mid-sentence, so the next page's note area
+/// may continue it.
+#[must_use]
+pub fn open(note: &INote) -> bool {
+    let text: String = note
+        .lines
+        .last()
+        .map(|l| l.chars.iter().map(|c| c.text.as_str()).collect())
+        .unwrap_or_default();
+    !text
+        .trim_end()
+        .ends_with(['.', '!', '?', ':', ';', '"', '\u{201d}', ')'])
+}
+
+/// A note continued from the previous page (Word and LaTeX both break long
+/// notes): when the previous page's last note stopped mid-sentence, the
+/// topmost note-area block of this page that starts with no marker is its
+/// continuation. Returns its lines, taken out of `elements`. O(elements).
+pub fn continuation(
+    elements: &mut [Vec<ILine>],
+    page_height: f64,
+    body_size: f64,
+    work: &mut u64,
+) -> Vec<ILine> {
+    let mut best: Option<(usize, f64)> = None;
+    for (e, lines) in elements.iter().enumerate() {
+        *work += 1;
+        let Some(first) = lines.first() else {
+            continue;
+        };
+        let size = super::dominant_size(lines);
+        if first.top < NOTE_REGION * page_height || size > NOTE_SIZE_FACTOR * body_size {
+            continue;
+        }
+        if best.is_none_or(|(_, top)| first.top < top) {
+            best = Some((e, first.top));
+        }
+    }
+    match best {
+        Some((e, _)) if leading_marker(&elements[e][0]).is_none() => {
+            std::mem::take(&mut elements[e])
+        }
+        _ => Vec::new(),
+    }
 }
 
 fn is_marker_text(text: &str) -> bool {
@@ -96,6 +144,7 @@ fn leading_marker(line: &ILine) -> Option<(String, usize)> {
 /// O(characters + lines log lines).
 pub fn footnotes(
     elements: &mut [Vec<ILine>],
+    page: usize,
     page_height: f64,
     body_size: f64,
     first_note: usize,
@@ -178,6 +227,7 @@ pub fn footnotes(
                         INote {
                             marker: m,
                             lines: vec![line],
+                            page,
                         },
                         r,
                     ));
