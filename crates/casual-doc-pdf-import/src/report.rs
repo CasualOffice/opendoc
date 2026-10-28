@@ -109,7 +109,12 @@ pub const FEATURES: &[&str] = &[
     IMAGE_REENCODED,
     IMAGE_UNDECODABLE,
     INVISIBLE_TEXT,
+    NATIVE_OCR_CONFLICT,
     NATIVE_TEXT_INVALID,
+    OCR_APPLIED,
+    OCR_LIMIT_REACHED,
+    OCR_LOW_CONFIDENCE,
+    OCR_UNAVAILABLE,
     OPTIONAL_CONTENT_FLATTENED,
     PAGE_SIZE_CLAMPED,
     PARAGRAPH_BOUNDARY_INFERRED,
@@ -152,8 +157,26 @@ pub const IMAGE_REENCODED: &str = "pdf.import.image_reencoded";
 pub const IMAGE_UNDECODABLE: &str = "pdf.import.image_undecodable";
 /// Render mode 3 (invisible) text, imported as hidden runs.
 pub const INVISIBLE_TEXT: &str = "pdf.import.invisible_text";
-/// Glyphs with no Unicode mapping (imported as U+FFFD; OCR is P5).
+/// An optical word read where valid native text already is, and the two
+/// disagree. The native text is kept (PDFR-I2); the count says how often the
+/// page's pixels and its text layer differ.
+pub const NATIVE_OCR_CONFLICT: &str = "pdf.import.native_ocr_conflict";
+/// Glyphs with no Unicode mapping: imported as U+FFFD, or, when OCR read the
+/// place they are drawn, replaced by the optical text (`ocr_applied`).
 pub const NATIVE_TEXT_INVALID: &str = "pdf.import.native_text_invalid";
+/// Regions (pictures, or runs with no Unicode) read by OCR. The text is
+/// inferred from pixels, so it is reported even when every word is confident.
+pub const OCR_APPLIED: &str = "pdf.import.ocr_applied";
+/// Regions or lines that needed OCR and were not read because a page, pixel,
+/// line or time budget ran out, or the provider failed on them.
+pub const OCR_LIMIT_REACHED: &str = "pdf.import.ocr_limit_reached";
+/// Optical words under the low-confidence threshold (kept), or under the
+/// floor (dropped).
+pub const OCR_LOW_CONFIDENCE: &str = "pdf.import.ocr_low_confidence";
+/// Regions that need OCR when the host supplied no recognition model: their
+/// text is not in the document (pictures stay pictures; unmapped runs stay
+/// U+FFFD).
+pub const OCR_UNAVAILABLE: &str = "pdf.import.ocr_unavailable";
 /// Optional content (layers) flattened to its default visibility.
 pub const OPTIONAL_CONTENT_FLATTENED: &str = "pdf.import.optional_content_flattened";
 /// A page larger than the model's 22-inch section bound.
