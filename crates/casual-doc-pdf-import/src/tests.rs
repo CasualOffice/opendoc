@@ -569,3 +569,156 @@ fn rotated_text_becomes_turned_frames_and_a_rotated_page_is_landscape() {
         "the rotated page's text is turned with it"
     );
 }
+
+/// On-curve points of `c`'s outline at a 1000-unit em, through skrifa.
+fn on_curve_points(font: &[u8], c: char) -> Vec<(i32, i32)> {
+    use skrifa::MetadataProvider;
+    use skrifa::outline::{DrawSettings, OutlinePen};
+    use skrifa::prelude::{LocationRef, Size};
+    #[derive(Default)]
+    struct Points(Vec<(i32, i32)>);
+    impl OutlinePen for Points {
+        fn move_to(&mut self, x: f32, y: f32) {
+            self.0.push((x.round() as i32, y.round() as i32));
+        }
+        fn line_to(&mut self, x: f32, y: f32) {
+            self.0.push((x.round() as i32, y.round() as i32));
+        }
+        fn quad_to(&mut self, _: f32, _: f32, x: f32, y: f32) {
+            self.0.push((x.round() as i32, y.round() as i32));
+        }
+        fn curve_to(&mut self, _: f32, _: f32, _: f32, _: f32, x: f32, y: f32) {
+            self.0.push((x.round() as i32, y.round() as i32));
+        }
+        fn close(&mut self) {}
+    }
+    let face = skrifa::FontRef::new(font).expect("an sfnt");
+    let gid = face.charmap().map(c).expect("mapped");
+    let mut points = Points::default();
+    face.outline_glyphs()
+        .get(gid)
+        .expect("an outline")
+        .draw(
+            DrawSettings::unhinted(Size::new(1000.0), LocationRef::default()),
+            &mut points,
+        )
+        .expect("draws");
+    points.0
+}
+
+/// The CJK test subset (a CID-keyed CFF inside an OTF), and three of its
+/// characters with their CIDs and advances in 1000 units.
+fn cjk_subset() -> (Vec<u8>, Vec<u8>, Vec<(char, u16, i64)>) {
+    use skrifa::MetadataProvider;
+    use skrifa::raw::TableProvider;
+    let otf = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/fonts/NotoSansCJK-TestSubset.otf"),
+    )
+    .expect("the CJK test subset");
+    let face = skrifa::FontRef::new(&otf).unwrap();
+    let cff = face
+        .table_data(skrifa::raw::types::Tag::new(b"CFF "))
+        .unwrap()
+        .as_bytes()
+        .to_vec();
+    let program = skrifa::raw::ps::cff::CffFontRef::new_cff(&cff, 0, None).unwrap();
+    assert!(program.is_cid());
+    let charset = program.charset().unwrap();
+    let upem = f64::from(face.head().unwrap().units_per_em());
+    let metrics = face.glyph_metrics(
+        skrifa::instance::Size::unscaled(),
+        skrifa::instance::LocationRef::default(),
+    );
+    let chars: Vec<(char, u16, i64)> = face
+        .charmap()
+        .mappings()
+        .filter(|(c, _)| *c > 0x3000)
+        .take(3)
+        .map(|(c, gid)| {
+            let cid = charset.string_id(gid).unwrap().to_u16();
+            let w = metrics.advance_width(gid).unwrap_or(0.0);
+            (
+                char::from_u32(c).unwrap(),
+                cid,
+                (f64::from(w) * 1000.0 / upem).round() as i64,
+            )
+        })
+        .collect();
+    assert_eq!(chars.len(), 3);
+    (otf, cff, chars)
+}
+
+/// A Type0 font over a CID-keyed CFF (`FontFile3` / `CIDFontType0C`),
+/// Identity-H, with a ToUnicode CMap, drawing the subset's three characters.
+fn cid_cff_pdf() -> Vec<u8> {
+    use crate::synth::{Page, Pdf, document_in};
+    let (_, cff, chars) = cjk_subset();
+    let mut pdf = Pdf::default();
+    let file = pdf.stream("/Subtype /CIDFontType0C", &cff);
+    let bfchar: String = chars
+        .iter()
+        .map(|(c, cid, _)| format!("<{cid:04X}> <{:04X}>\n", u32::from(*c)))
+        .collect();
+    let cmap = format!(
+        "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n{} beginbfchar\n{bfchar}endbfchar\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n",
+        chars.len()
+    );
+    let to_unicode = pdf.stream("", cmap.as_bytes());
+    let descriptor = pdf.add(format!(
+        "<< /Type /FontDescriptor /FontName /SynthCjk /Flags 4 /FontBBox [-1000 -300 2000 1100] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 700 /StemV 80 /FontFile3 {file} 0 R >>"
+    ));
+    let widths: String = chars
+        .iter()
+        .map(|(_, cid, w)| format!("{cid} [{w}] "))
+        .collect();
+    let descendant = pdf.add(format!(
+        "<< /Type /Font /Subtype /CIDFontType0 /BaseFont /SynthCjk /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor {descriptor} 0 R /W [{widths}] >>"
+    ));
+    let font = pdf.add(format!(
+        "<< /Type /Font /Subtype /Type0 /BaseFont /SynthCjk /Encoding /Identity-H /DescendantFonts [{descendant} 0 R] /ToUnicode {to_unicode} 0 R >>"
+    ));
+    let codes: String = chars
+        .iter()
+        .map(|(_, cid, _)| format!("{cid:04X}"))
+        .collect();
+    let content = format!("BT /K1 24 Tf 72 700 Td <{codes}> Tj ET\n");
+    document_in(
+        &mut pdf,
+        &[Page::new(content)],
+        &format!("/Font << /K1 {font} 0 R >>"),
+        "",
+        |_| String::new(),
+    )
+}
+
+#[test]
+fn a_cid_keyed_cff_is_wrapped_from_the_glyphs_the_page_drew() {
+    use casual_doc_model::v1::FontProgramFormat;
+    let (otf, _, chars) = cjk_subset();
+    let imported = import_pdf(cid_cff_pdf(), PdfReadLimits::default()).unwrap();
+    let programs = &imported.document.definitions().font_programs;
+    assert_eq!(
+        programs.iter().map(|p| p.format).collect::<Vec<_>>(),
+        vec![FontProgramFormat::OpenTypeCff],
+        "{:?}",
+        imported.report.findings
+    );
+    assert!(!imported.report.has(report::FONT_SUBSTITUTED));
+    let wrapped = &imported.resources[&programs[0].part_name];
+    for (c, _, _) in &chars {
+        assert_eq!(
+            on_curve_points(wrapped, *c),
+            on_curve_points(&otf, *c),
+            "{c:?} draws with the producer's own outline"
+        );
+    }
+    let shaper = casual_doc_layout::shape::ParleyShaper::new();
+    let outcome = casual_doc_layout::font_registry::register_embedded_fonts(
+        &shaper,
+        &imported.document,
+        |part| imported.resources.get(part).map(Vec::as_slice),
+    );
+    assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
+    assert_eq!(outcome.faces, 1);
+}

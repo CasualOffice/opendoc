@@ -623,6 +623,7 @@ fn optical_run(words: &[PageWord], line: &Bounds, placement: OcrTextPlacement) -
                     y: baseline,
                 },
                 advance: (word.bounds.x0 - previous.x1).max(0.0),
+                glyph: None,
             });
         }
         let count = word.text.chars().count().max(1);
@@ -635,6 +636,7 @@ fn optical_run(words: &[PageWord], line: &Bounds, placement: OcrTextPlacement) -
                     y: baseline,
                 },
                 advance,
+                glyph: None,
             });
         }
     }

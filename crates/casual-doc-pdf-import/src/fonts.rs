@@ -160,17 +160,47 @@ fn unicode_map<'a>(names: impl Iterator<Item = (GlyphId, &'a str)>) -> Vec<(u32,
 ///
 /// # Errors
 ///
-/// A [`WrapRefusal`] when the program cannot be wrapped correctly.
+/// A [`WrapRefusal`] when the program cannot be wrapped correctly;
+/// [`WrapRefusal::CidKeyed`] for a CID-keyed program, which takes
+/// [`wrap_cid_cff`] and the glyphs the PDF drew.
 pub fn wrap_bare_cff(
     cff: &[u8],
     family: &str,
     bold: bool,
     italic: bool,
 ) -> Result<Vec<u8>, WrapRefusal> {
+    wrap_cff(cff, family, bold, italic, None)
+}
+
+/// Wraps a bare **CID-keyed** CFF program (`CIDFontType0C`) as an `OTTO`
+/// font. A CID-keyed program has no glyph names; its characters are the ones
+/// the PDF drew with it, `glyphs` mapping each to the glyph index it was drawn
+/// with (`GlyphEvidence::glyph`). The `cmap` holds exactly those, so the text
+/// on the page shapes with the producer's own outlines and a character the
+/// page never drew falls back to a substitute. O(glyphs).
+///
+/// # Errors
+///
+/// A [`WrapRefusal`]; [`WrapRefusal::NoNames`] when `glyphs` maps nothing the
+/// program holds.
+pub fn wrap_cid_cff(
+    cff: &[u8],
+    family: &str,
+    bold: bool,
+    italic: bool,
+    glyphs: &BTreeMap<char, u16>,
+) -> Result<Vec<u8>, WrapRefusal> {
+    wrap_cff(cff, family, bold, italic, Some(glyphs))
+}
+
+fn wrap_cff(
+    cff: &[u8],
+    family: &str,
+    bold: bool,
+    italic: bool,
+    drawn: Option<&BTreeMap<char, u16>>,
+) -> Result<Vec<u8>, WrapRefusal> {
     let font = CffFontRef::new_cff(cff, 0, None).map_err(|_| WrapRefusal::Unreadable)?;
-    if font.is_cid() {
-        return Err(WrapRefusal::CidKeyed);
-    }
     let glyphs = font.num_glyphs();
     if glyphs == 0 {
         return Err(WrapRefusal::Unreadable);
@@ -185,26 +215,46 @@ pub fn wrap_bare_cff(
             .filter(|s| (16..=16_384).contains(s))
             .ok_or(WrapRefusal::Matrix)?,
     };
-    let charset = font.charset().ok_or(WrapRefusal::Unreadable)?;
-    let mut names: Vec<(GlyphId, String)> = Vec::with_capacity(glyphs as usize);
-    for gid in 0..glyphs {
-        let gid = GlyphId::new(gid);
-        if let Ok(sid) = charset.string_id(gid)
-            && let Some(bytes) = font.string(sid)
-        {
-            names.push((gid, String::from_utf8_lossy(bytes).into_owned()));
+    let cmap: Vec<(u32, u16)> = if font.is_cid() {
+        let Some(drawn) = drawn else {
+            return Err(WrapRefusal::CidKeyed);
+        };
+        drawn
+            .iter()
+            .filter(|(_, gid)| **gid != 0 && u32::from(**gid) < glyphs)
+            .map(|(c, gid)| (u32::from(*c), *gid))
+            .collect()
+    } else {
+        let charset = font.charset().ok_or(WrapRefusal::Unreadable)?;
+        let mut names: Vec<(GlyphId, String)> = Vec::with_capacity(glyphs as usize);
+        for gid in 0..glyphs {
+            let gid = GlyphId::new(gid);
+            if let Ok(sid) = charset.string_id(gid)
+                && let Some(bytes) = font.string(sid)
+            {
+                names.push((gid, String::from_utf8_lossy(bytes).into_owned()));
+            }
         }
-    }
-    let cmap = unicode_map(names.iter().map(|(g, n)| (*g, n.as_str())));
+        unicode_map(names.iter().map(|(g, n)| (*g, n.as_str())))
+    };
     if cmap.is_empty() {
         return Err(WrapRefusal::NoNames);
     }
-    let subfont = font.subfont(0, &[]).map_err(|_| WrapRefusal::Unreadable)?;
+    // A CID-keyed program has a Private DICT per font dict (`FDSelect`).
+    let mut subfonts: BTreeMap<u16, _> = BTreeMap::new();
     let mut metrics = Vec::with_capacity(glyphs as usize);
     for gid in 0..glyphs {
+        let gid = GlyphId::new(gid);
+        let index = font.subfont_index(gid).unwrap_or(0);
+        if !subfonts.contains_key(&index) {
+            let subfont = font
+                .subfont(index, &[])
+                .map_err(|_| WrapRefusal::Unreadable)?;
+            subfonts.insert(index, subfont);
+        }
         let mut outline = Outline::default();
         let advance = font
-            .evaluate_charstring(&subfont, GlyphId::new(gid), &[], &mut outline)
+            .evaluate_charstring(&subfonts[&index], gid, &[], &mut outline)
             .map_err(|_| WrapRefusal::Unreadable)?;
         metrics.push(outline.metric(advance));
     }

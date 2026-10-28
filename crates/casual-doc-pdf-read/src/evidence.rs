@@ -89,6 +89,11 @@ pub struct GlyphEvidence {
     pub origin: Point,
     /// Advance along the baseline, in points (from the PDF's widths).
     pub advance: f64,
+    /// The glyph's index in its font program (hayro's `glyph_id`), when the
+    /// font is an outline font; `None` for Type3 glyphs and for synthesized
+    /// evidence (OCR). It is what maps a CID-keyed program's glyphs to the
+    /// characters the PDF drew with them (`docs/182` §18.5).
+    pub glyph: Option<u32>,
 }
 
 /// A run of glyphs sharing font, size, colour, mode and orientation.

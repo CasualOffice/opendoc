@@ -515,10 +515,25 @@ impl Builder {
         // first time it was seen: the check that a wrapped program's glyph
         // names tell the truth (`fonts::advances_agree`).
         let mut advances: BTreeMap<usize, BTreeMap<char, f64>> = BTreeMap::new();
+        // The glyph each single character was drawn with, for a CID-keyed
+        // program's cmap (`fonts::wrap_cid_cff`); a character drawn with two
+        // different glyphs makes the font's mapping untrustworthy.
+        let mut drawn: BTreeMap<usize, BTreeMap<char, u16>> = BTreeMap::new();
+        let mut ambiguous: BTreeSet<usize> = BTreeSet::new();
         for run in runs {
             let chars = used.entry(run.font).or_default();
             let placed = advances.entry(run.font).or_default();
+            let glyph_of = drawn.entry(run.font).or_default();
             for glyph in &run.glyphs {
+                if let (Some(text), Some(id)) = (&glyph.text, glyph.glyph) {
+                    let mut it = text.chars();
+                    if let (Some(c), None, Ok(id)) = (it.next(), it.next(), u16::try_from(id))
+                        && !c.is_whitespace()
+                        && *glyph_of.entry(c).or_insert(id) != id
+                    {
+                        ambiguous.insert(run.font);
+                    }
+                }
                 if let Some(text) = &glyph.text {
                     chars.extend(
                         text.chars()
@@ -571,7 +586,18 @@ impl Builder {
             // advances agree with where the PDF placed the characters.
             let converted = match &font.program {
                 Some((FontProgramKind::BareCff, bytes)) => {
-                    Some(fonts::wrap_bare_cff(bytes, &family, font.bold, font.italic))
+                    match fonts::wrap_bare_cff(bytes, &family, font.bold, font.italic) {
+                        Err(fonts::WrapRefusal::CidKeyed) if !ambiguous.contains(&index) => {
+                            Some(fonts::wrap_cid_cff(
+                                bytes,
+                                &family,
+                                font.bold,
+                                font.italic,
+                                drawn.get(&index).unwrap_or(&BTreeMap::new()),
+                            ))
+                        }
+                        other => Some(other),
+                    }
                 }
                 Some((FontProgramKind::Other, bytes)) if fonts::is_type1(bytes) => {
                     Some(fonts::convert_type1(bytes, &family, font.bold, font.italic))
