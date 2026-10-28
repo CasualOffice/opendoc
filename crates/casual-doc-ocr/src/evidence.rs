@@ -58,7 +58,9 @@ pub struct OcrWord {
 pub struct OcrLine {
     /// The words, never empty.
     pub words: Vec<OcrWord>,
-    /// The line's box (the union of what detection found for it).
+    /// The line's box: horizontally what was read, vertically the ink's
+    /// extent inside the detected box ([`crate::Raster::ink_rows`]), so its
+    /// height is ascender to descender whatever the detector's padding.
     pub bounds: OcrBox,
 }
 

@@ -26,14 +26,16 @@ casual-doc-ocr.workspace = true
 hayro = "0.8.0"
 
 [features]
-# The ocrs recognition provider and the heron layout provider, re-exported for
-# hosts that want them through this crate.
+default = ["paddle"]
+# The providers, enabled through this crate: PP-OCRv5 (the default), ocrs
+# (the fallback) and the heron layout model.
+paddle = ["casual-doc-ocr/paddle"]
 ocrs = ["casual-doc-ocr/ocrs"]
 layout-heron = ["casual-doc-ocr/layout-heron"]
 
 [dev-dependencies]
 # The model-gated tests (tests/ocr.rs) build both providers.
-casual-doc-ocr = { workspace = true, features = ["ocrs", "layout-heron"] }
+casual-doc-ocr = { workspace = true, features = ["paddle", "ocrs", "layout-heron"] }
 # Builds the synthetic scan (an image-only PDF) in tests/ocr.rs.
 flate2 = "1.1"
 # DOCX save and reopen for the edit round trip (no PDF feature needed there).

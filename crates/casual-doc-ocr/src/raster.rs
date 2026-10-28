@@ -80,6 +80,31 @@ impl Raster {
         u64::from(self.width) * u64::from(self.height)
     }
 
+    /// The vertical extent of the ink in a box: the first and last rows
+    /// (pixel edges) holding a pixel darker than mid-grey, within `x0..x1`
+    /// and `y0..y1`. `None` when the box holds no ink. Providers report this
+    /// as a line's height, so a line's box means the same thing (ascender to
+    /// descender of what is drawn) whatever a detector's padding.
+    /// O(box pixels).
+    #[must_use]
+    pub fn ink_rows(&self, x0: f32, y0: f32, x1: f32, y1: f32) -> Option<(f32, f32)> {
+        let clamp = |v: f32, max: u32| (v.max(0.0) as u32).min(max);
+        let (xa, xb) = (clamp(x0, self.width), clamp(x1.ceil(), self.width));
+        let (ya, yb) = (clamp(y0, self.height), clamp(y1.ceil(), self.height));
+        let inked = |y: u32| {
+            (xa..xb).any(|x| {
+                let i = ((y * self.width + x) * 3) as usize;
+                let sum = u32::from(self.rgb[i])
+                    + u32::from(self.rgb[i + 1])
+                    + u32::from(self.rgb[i + 2]);
+                sum < 3 * 128
+            })
+        };
+        let top = (ya..yb).find(|&y| inked(y))?;
+        let bottom = (ya..yb).rev().find(|&y| inked(y))?;
+        Some((top as f32, (bottom + 1) as f32))
+    }
+
     /// The RGB bytes.
     #[must_use]
     pub fn rgb(&self) -> &[u8] {

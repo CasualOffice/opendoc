@@ -62,9 +62,11 @@ use crate::report::{self, Findings, PdfModelOutcome as Outcome};
 pub const OCR_FONT: usize = usize::MAX;
 
 /// Glyphs of a word are spread evenly over its box; the em size is the line
-/// box height times this. Measured with the `ocrs` models on the prose
-/// fixture scanned at 200 dpi and read at 150: see `docs/182` §20.4.
-pub const EM_PER_LINE_BOX: f64 = 1.0;
+/// box height times this. A line box's height is its ink's extent
+/// (`Raster::ink_rows`), ascender to descender: measured on the prose fixture
+/// at 0.97 em (Helvetica Bold heading) and 0.86 em (Times body), so 1.1 puts
+/// both within 10% (`docs/182` §20.4).
+pub const EM_PER_LINE_BOX: f64 = 1.1;
 
 /// Smallest picture side (points) that is worth recognising.
 const MIN_REGION_SIDE: f64 = 8.0;

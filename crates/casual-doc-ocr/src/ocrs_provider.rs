@@ -271,7 +271,9 @@ impl OcrProvider for OcrsProvider {
             let Some(rect) = bounding_rect(line.iter()) else {
                 continue;
             };
-            let (y0, y1) = (rect.top(), rect.bottom());
+            let (y0, y1) = raster
+                .ink_rows(rect.left(), rect.top(), rect.right(), rect.bottom())
+                .unwrap_or((rect.top(), rect.bottom()));
             let words = words(&chars, y0, y1);
             let Some(first) = words.first() else {
                 continue;

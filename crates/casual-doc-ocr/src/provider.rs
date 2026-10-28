@@ -92,6 +92,7 @@ pub trait OcrProvider: Send + Sync {
 }
 
 /// Checks the pixel bound shared by every provider.
+#[cfg_attr(not(any(feature = "ocrs", feature = "paddle")), allow(dead_code))]
 pub(crate) fn check_pixels(raster: &Raster, limits: &OcrLimits) -> Result<(), OcrError> {
     if raster.pixels() > limits.max_pixels {
         return Err(OcrError::Limit {

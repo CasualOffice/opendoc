@@ -12,7 +12,8 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-# Recognition (feature `ocrs`): Robert Knight's ocrs pipeline on his rten
+# Recognition (feature `paddle`, the default): PP-OCRv5 graphs on rten.
+# Recognition (feature `ocrs`, the fallback): Robert Knight's ocrs pipeline on his rten
 # inference engine. All MIT OR Apache-2.0, pure Rust, built for
 # wasm32-unknown-unknown (rten runs single-threaded there). The engine only:
 # the published ocrs weights are CC-BY-SA-4.0 and are never committed or
@@ -25,7 +26,10 @@ rten-tensor = { version = "0.26.0", optional = true }
 sha2 = { version = "0.10.9", optional = true }
 
 [features]
-default = []
+# PP-OCRv5 is the default provider (owner decision 2026-10-29).
+default = ["paddle"]
+# The PP-OCRv5 recognition provider: DB detection and CTC recognition on rten.
+paddle = ["dep:rten", "dep:rten-tensor", "dep:sha2"]
 # The ocrs recognition provider.
 ocrs = ["dep:ocrs", "dep:rten", "dep:rten-imageproc", "dep:rten-tensor", "dep:sha2"]
 # The docling-layout-heron layout provider (docs/182 P6).

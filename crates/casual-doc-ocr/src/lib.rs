@@ -10,11 +10,13 @@
 //! decides where to rasterise and merges the result under native-first
 //! precedence (PDFR-I2).
 //!
-//! **One Rust path, headless and in WebAssembly.** The recognition provider
-//! (feature `ocrs`) runs Robert Knight's `ocrs` pipeline on the `rten`
-//! inference engine, both MIT OR Apache-2.0 and pure Rust, so the Native SDK,
-//! the MCP server, CI and the browser run the same code — the reason
-//! `docs/182` §3.1 chose hayro over PDF.js. The layout provider (feature
+//! **One Rust path, headless and in WebAssembly.** The default recognition
+//! provider (feature `paddle`, owner decision 2026-10-29) runs PaddleOCR
+//! PP-OCRv5 — Apache-2.0 weights, multilingual including CJK — on Robert
+//! Knight's `rten` inference engine (MIT OR Apache-2.0, pure Rust), so the
+//! Native SDK, the MCP server, CI and the browser run the same code — the
+//! reason `docs/182` §3.1 chose hayro over PDF.js. The fallback provider
+//! (feature `ocrs`) runs the `ocrs` pipeline on the same engine. The layout provider (feature
 //! `layout-heron`) runs Docling's `docling-layout-heron` RT-DETRv2 export
 //! (Apache-2.0) on the same engine.
 //!
@@ -48,12 +50,14 @@ pub mod layout;
 mod provider;
 mod raster;
 
-#[cfg(any(feature = "ocrs", feature = "layout-heron"))]
+#[cfg(any(feature = "ocrs", feature = "layout-heron", feature = "paddle"))]
 mod digest;
 #[cfg(feature = "layout-heron")]
 mod heron;
 #[cfg(feature = "ocrs")]
 mod ocrs_provider;
+#[cfg(feature = "paddle")]
+mod paddle;
 
 pub use evidence::{Determinism, OcrBox, OcrLine, OcrPage, OcrWord, ProviderManifest};
 #[cfg(not(target_family = "wasm"))]
@@ -69,3 +73,5 @@ pub use raster::Raster;
 pub use heron::HeronLayout;
 #[cfg(feature = "ocrs")]
 pub use ocrs_provider::OcrsProvider;
+#[cfg(feature = "paddle")]
+pub use paddle::{PaddleOcr, RecognitionPack};

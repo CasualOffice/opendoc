@@ -21,7 +21,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use casual_doc_model::v1::{BlockNode, Document, InlineNode};
 use casual_doc_ocr::{
     CancelToken, HeuristicLayout, Interrupt, LayoutProvider, OcrBox, OcrError, OcrLimits, OcrLine,
-    OcrPage, OcrProvider, OcrWord, OcrsProvider, ProviderManifest, Raster, RegionKind, Stop,
+    OcrPage, OcrProvider, OcrWord, OcrsProvider, PaddleOcr, ProviderManifest, Raster,
+    RecognitionPack, RegionKind, Stop,
 };
 use casual_doc_pdf_import::report;
 use casual_doc_pdf_import::{
@@ -742,42 +743,88 @@ fn page_text(imported: &PdfImport, page: usize) -> String {
     out
 }
 
+/// PP-OCRv5, the default provider: `OPENDOC_PADDLE_MODELS` holds the
+/// `paddle2onnx` conversions of PaddlePaddle's own weights (`det.onnx`,
+/// `rec.onnx` + `rec.dict.txt` for the multilingual Chinese/English/Japanese
+/// pack, `latin_rec.onnx` + `latin_rec.dict.txt` for the Latin pack), made
+/// by `fetch-test-models.sh`. The conversion is not byte-reproducible across
+/// `paddle2onnx` versions, so the source weights are pinned there, not here.
+fn paddle_provider(packs: &[&str]) -> Option<Arc<PaddleOcr>> {
+    let Some(dir) = std::env::var_os("OPENDOC_PADDLE_MODELS") else {
+        eprintln!(
+            "skipped: OPENDOC_PADDLE_MODELS is not set (run crates/casual-doc-ocr/fetch-test-models.sh)"
+        );
+        return None;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    let read = |name: &str| std::fs::read(dir.join(name)).expect(name);
+    let packs = packs
+        .iter()
+        .map(|pack| RecognitionPack {
+            name: (*pack).to_owned(),
+            model: read(&format!("{pack}.onnx")),
+            dictionary: String::from_utf8(read(&format!("{pack}.dict.txt"))).unwrap(),
+        })
+        .collect();
+    Some(Arc::new(
+        PaddleOcr::from_model_bytes(read("det.onnx"), packs).expect("the PP-OCRv5 models load"),
+    ))
+}
+
+/// Every provider whose models are present: PP-OCRv5 with the multilingual
+/// pack, PP-OCRv5 with two packs, and ocrs.
+fn model_providers() -> Vec<(&'static str, Arc<dyn OcrProvider>)> {
+    let mut out: Vec<(&'static str, Arc<dyn OcrProvider>)> = Vec::new();
+    if let Some(p) = paddle_provider(&["rec"]) {
+        out.push(("pp-ocrv5", p));
+    }
+    if let Some(p) = paddle_provider(&["rec", "latin_rec"]) {
+        out.push(("pp-ocrv5 two packs", p));
+    }
+    if let Some(p) = ocrs_provider() {
+        out.push(("ocrs", p));
+    }
+    out
+}
+
 #[test]
 fn a_scanned_page_imports_with_its_text_when_a_model_is_supplied() {
-    let Some(provider) = ocrs_provider() else {
-        return;
-    };
     let source = fixture("synthetic-prose.pdf");
     let native = import_pdf(source.clone(), PdfReadLimits::default()).unwrap();
     let expected = page_text(&native, 0);
     let scan = scan_pdf(&[render_grey(&source, 0, 200.0)], "");
-    let imported =
-        import_pdf_with_ocr(scan, PdfReadLimits::default(), with_model(provider)).expect("imports");
-    assert_eq!(imported.ocr.classes, vec![Some(PageClass::Raster)]);
-    let got = page_text(&imported, 0);
-    let score = similarity(&expected, &got);
-    eprintln!("scan similarity {score:.4}\nexpected:\n{expected}\ngot:\n{got}");
-    assert!(
-        score >= SCAN_SIMILARITY,
-        "OCR text similarity {score:.4} < {SCAN_SIMILARITY}\nexpected:\n{expected}\ngot:\n{got}"
-    );
-    assert!(imported.report.has(report::OCR_APPLIED));
-    assert_eq!(
-        pictures(&imported.document),
-        1,
-        "the scan is kept under its text"
-    );
-    // The frames: the heading and the two paragraphs, as natively, at about
-    // the native sizes (18 pt and 11 pt).
-    let (native_sizes, ocr_sizes) = (frame_sizes(&native, 0), frame_sizes(&imported, 0));
-    eprintln!("native frame sizes {native_sizes:?}, OCR {ocr_sizes:?}");
-    assert_eq!(ocr_sizes.len(), native_sizes.len(), "{got}");
-    for (n, o) in native_sizes.iter().zip(&ocr_sizes) {
-        let ratio = f64::from(*o) / f64::from(*n);
-        assert!((0.8..=1.25).contains(&ratio), "size {o} vs native {n}");
+    for (name, provider) in model_providers() {
+        let imported =
+            import_pdf_with_ocr(scan.clone(), PdfReadLimits::default(), with_model(provider))
+                .expect("imports");
+        assert_eq!(imported.ocr.classes, vec![Some(PageClass::Raster)]);
+        let got = page_text(&imported, 0);
+        let score = similarity(&expected, &got);
+        eprintln!("{name}: scan similarity {score:.4}\ngot:\n{got}");
+        assert!(
+            score >= SCAN_SIMILARITY,
+            "{name}: OCR text similarity {score:.4} < {SCAN_SIMILARITY}\nexpected:\n{expected}\ngot:\n{got}"
+        );
+        assert!(imported.report.has(report::OCR_APPLIED));
+        assert_eq!(
+            pictures(&imported.document),
+            1,
+            "the scan is kept under its text"
+        );
+        // The frames: the heading and the two paragraphs, as natively, at
+        // about the native sizes (18 pt and 11 pt).
+        let (native_sizes, ocr_sizes) = (frame_sizes(&native, 0), frame_sizes(&imported, 0));
+        eprintln!("{name}: native frame sizes {native_sizes:?}, OCR {ocr_sizes:?}");
+        assert_eq!(ocr_sizes.len(), native_sizes.len(), "{name}: {got}");
+        for (n, o) in native_sizes.iter().zip(&ocr_sizes) {
+            let ratio = f64::from(*o) / f64::from(*n);
+            assert!(
+                (0.8..=1.25).contains(&ratio),
+                "{name}: size {o} vs native {n}"
+            );
+        }
+        assert!(imported.ocr.provider.is_some(), "the manifest is recorded");
     }
-    let manifest = imported.ocr.provider.expect("recorded");
-    assert_eq!(manifest.provider, "ocrs");
 }
 
 /// The first run's size (half points) of each frame on `page`.
@@ -800,7 +847,7 @@ fn frame_sizes(imported: &PdfImport, page: usize) -> Vec<u32> {
         .collect()
 }
 
-fn with_model(provider: Arc<OcrsProvider>) -> OcrOptions {
+fn with_model(provider: Arc<dyn OcrProvider>) -> OcrOptions {
     OcrOptions {
         provider: Some(provider),
         ..OcrOptions::default()
@@ -809,70 +856,73 @@ fn with_model(provider: Arc<OcrsProvider>) -> OcrOptions {
 
 #[test]
 fn the_same_model_and_input_give_the_same_document() {
-    let Some(provider) = ocrs_provider() else {
-        return;
-    };
     let source = fixture("synthetic-prose.pdf");
     let scan = scan_pdf(&[render_grey(&source, 0, 150.0)], "");
-    let a = import_pdf_with_ocr(
-        scan.clone(),
-        PdfReadLimits::default(),
-        with_model(provider.clone()),
-    )
-    .unwrap();
-    let b = import_pdf_with_ocr(scan, PdfReadLimits::default(), with_model(provider)).unwrap();
-    assert_eq!(a.document, b.document, "PDFR-I8 on this target");
-    assert_eq!(a.report, b.report);
-    assert_eq!(a.ocr, b.ocr);
+    for (name, provider) in model_providers() {
+        let a = import_pdf_with_ocr(
+            scan.clone(),
+            PdfReadLimits::default(),
+            with_model(provider.clone()),
+        )
+        .unwrap();
+        let b = import_pdf_with_ocr(scan.clone(), PdfReadLimits::default(), with_model(provider))
+            .unwrap();
+        assert_eq!(a.document, b.document, "{name}: PDFR-I8 on this target");
+        assert_eq!(a.report, b.report, "{name}");
+        assert_eq!(a.ocr, b.ocr, "{name}");
+    }
 }
 
 #[test]
-fn the_model_provider_honours_its_pixel_line_and_cancel_bounds() {
-    let Some(provider) = ocrs_provider() else {
-        return;
-    };
+fn the_model_providers_honour_their_pixel_line_and_cancel_bounds() {
     let (w, h, grey) = render_grey(&fixture("synthetic-prose.pdf"), 0, 150.0);
     let rgb: Vec<u8> = grey.iter().flat_map(|&g| [g, g, g]).collect();
     let raster = Raster::from_rgb(w, h, rgb).unwrap();
-    // Pixels: refused before any model runs.
-    let tight = OcrLimits {
-        max_pixels: u64::from(w * h) - 1,
-        ..OcrLimits::default()
-    };
-    assert!(matches!(
-        provider.recognize(&raster, &tight, &casual_doc_ocr::Never),
-        Err(OcrError::Limit {
-            limit: "max_pixels",
-            ..
-        })
-    ));
-    // Lines: two read, the rest counted.
-    let two = OcrLimits {
-        max_lines: 2,
-        ..OcrLimits::default()
-    };
-    let page = provider
-        .recognize(&raster, &two, &casual_doc_ocr::Never)
-        .unwrap();
-    assert_eq!(page.lines.len(), 2);
-    assert!(page.lines_skipped >= 7, "{}", page.lines_skipped);
-    // Cancel after detection and one line.
-    struct CancelAfter(AtomicU32);
-    impl Interrupt for CancelAfter {
-        fn poll(&self) -> Option<Stop> {
-            (self.0.fetch_add(1, Ordering::SeqCst) >= 2).then_some(Stop::Cancelled)
+    for (name, provider) in model_providers() {
+        // Pixels: refused before any model runs.
+        let tight = OcrLimits {
+            max_pixels: u64::from(w * h) - 1,
+            ..OcrLimits::default()
+        };
+        assert!(
+            matches!(
+                provider.recognize(&raster, &tight, &casual_doc_ocr::Never),
+                Err(OcrError::Limit {
+                    limit: "max_pixels",
+                    ..
+                })
+            ),
+            "{name}"
+        );
+        // Lines: two read, the rest counted.
+        let two = OcrLimits {
+            max_lines: 2,
+            ..OcrLimits::default()
+        };
+        let page = provider
+            .recognize(&raster, &two, &casual_doc_ocr::Never)
+            .unwrap();
+        assert_eq!(page.lines.len(), 2, "{name}");
+        assert!(page.lines_skipped >= 7, "{name}: {}", page.lines_skipped);
+        // Cancel after detection and one line.
+        struct CancelAfter(AtomicU32);
+        impl Interrupt for CancelAfter {
+            fn poll(&self) -> Option<Stop> {
+                (self.0.fetch_add(1, Ordering::SeqCst) >= 2).then_some(Stop::Cancelled)
+            }
         }
+        let cancel = CancelAfter(AtomicU32::new(0));
+        assert_eq!(
+            provider.recognize(&raster, &OcrLimits::default(), &cancel),
+            Err(OcrError::Cancelled),
+            "{name}"
+        );
+        assert_eq!(
+            cancel.0.load(Ordering::SeqCst),
+            3,
+            "{name}: stopped at the second line"
+        );
     }
-    let cancel = CancelAfter(AtomicU32::new(0));
-    assert_eq!(
-        provider.recognize(&raster, &OcrLimits::default(), &cancel),
-        Err(OcrError::Cancelled)
-    );
-    assert_eq!(
-        cancel.0.load(Ordering::SeqCst),
-        3,
-        "stopped at the second line"
-    );
 }
 
 #[test]
