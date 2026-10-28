@@ -519,3 +519,159 @@ builder (`from_paths`, `with_guides`, `with_handles`, `with_connections`, `with_
 | `…an_even_odd_geometry_that_cannot_be_re_wound_is_reported` | drop the loss note | left `[]`, right `[("docx.export.custom_geometry.even_odd_fill", Some("word/document.xml"))]` |
 
 The `snapshot_without_font_programs` test pins the G-1 serde default and validation.
+
+## 18. P3 built: reflow, wrapped CFF and Type1 programs, links and annotations
+
+Branch `lane/pdf-p3-reflow` (from `502ff112`). Headless: the engine, its API and its
+guards. No editor or MCP surface is wired (that is the P2 lane's and the session
+layer's, and the decision below says where it goes).
+
+### 18.1 Reflow: "Convert to flowing document" (§4.2, §5.3)
+
+`PdfImport::reflow()` (and the pure `reflow::build(state, resources, namespace)`)
+returns a **new** validated `v1::Document` with its own resources and report; the
+fixed-layout document is not touched (a test asserts it is equal before and after,
+and that two runs are equal: PDFR-I8). It reads only `PdfImport::source`, the
+`PdfSourceState` sidecar the import job now fills while it builds the frames:
+per page, text grouped by pdfminer's margins *within* each marked-content
+sequence (so a block never straddles two structure elements), ruling lines (thin
+filled rectangles and stroked axis-aligned segments), the pictures by the part the
+fixed build stored them under (referenced, not copied), the annotations, and
+counts of what reflow cannot place; per document, the fonts and the programs the
+fixed build registered, the structure tree and the active-content inventory. No
+second parse.
+
+| Pass | Where | Known pattern | Reported |
+| --- | --- | --- | --- |
+| Page furniture: blocks in the top/bottom 10% repeated on ≥ half the pages (and ≥ 2), digit runs normalised so page 9 and page 10 match, plus `/Artifact` content in those bands; a page number equal to the page index becomes a `PAGE` field; pieces on one baseline become one paragraph with centre/right tab stops | `reflow/mod.rs` | repetition across pages + `/Artifact` (§2) | `header_footer_inferred`; artifacts elsewhere `artifact_omitted` |
+| Ruled grids: union-find over rule intersections, a component with ≥ 2 rules each way and ≥ 2 cells is a grid; missing inner borders become `grid_span` / `vertical_merge`; every character goes to the cell holding its centre | `reflow/tables.rs` | union-find; interval index per grid line | `table_inferred` |
+| Whitespace tables: lines sharing a baseline in disjoint blocks link the blocks; `confidence = aligned share × (1 − prose share) × min(1, rows/3)`; ≥ 0.75 is a table, 0.4–0.75 stays paragraphs | `reflow/tables.rs` | — | `table_inferred`; below threshold `table_topology_degraded` |
+| Footnotes: superscript runs (≤ 0.8 of the line's size, raised) matched to lower-half, smaller-than-body blocks whose lines start with the same marker, the note below its reference; the reference becomes a `NoteReference` | `reflow/notes.rs` | index by marker text | `footnote_inferred` |
+| Reading order: the structure tree when ≥ 80% of a page's text elements are tagged (untagged ones keep their XY position after the tagged one before them); else XY-Cut++ | `reflow/mod.rs`, `reflow/order.rs` | XY-Cut++ (arXiv 2504.10258): pre-mask cross-layout elements, density-driven recursive cut, re-insertion | `reading_order_inferred` (XY-cut pages only) |
+| Paragraphs: break at a marker, a font change, a gap > 0.6 line, a short line ending a sentence, a first-line indent; join lines with a space; de-hyphenate a letter-hyphen-lowercase join; continue a paragraph across a column or page when it ran to the column's end without terminal punctuation and the next starts lowercase in the same font, or when both pieces belong to the same structure element | `reflow/text.rs`, `reflow/emit.rs` | — | `paragraph_boundary_inferred`, `dehyphenation_inferred` |
+| Styles: every character votes for its (family, size, bold, italic); the winner is Normal; a larger (×1.15) or bolder key whose paragraphs are ≥ 80% short (≤ 3 lines, ≤ 200 characters, not prose-ending) is a heading level, ranked by size then weight. A tagged `H1`–`H6` (through the `RoleMap`) decides outright, and font clusters never classify a tagged paragraph | `reflow/text.rs` | clustering (§2) | `style_inferred`, `heading_inferred` |
+| Lists: a marker set an indent tab from its text is put back on its line first (pdfminer splits it off); runs of bullet/enumerator paragraphs of one kind with a hanging indent (a continuation aligned with the text, or two items whose markers and text starts align), numbers consecutive per level; levels by marker position; one abstract definition per run with the geometry's indent and hanging | `reflow/mod.rs`, `reflow/emit.rs` | — | `list_inferred` |
+| Columns: a vertical cut whose parts are tall and of similar width is a column region; a change of column count starts a continuous section with `SectionColumns` | `reflow/order.rs`, `reflow/emit.rs` | — | `columns_inferred` |
+
+Also reported: `vector_omitted` (vector art that is not a rule), `text_rotated`
+(rotated runs are reflowed upright where they start, never dropped),
+`tag_structure_ignored` (a truncated tree, or a tagged file no page could be
+ordered by), and the link and note families of §18.3.
+
+**Command registry: not registered, on purpose.** `casual-doc-command`'s registry
+declares edits: each entry lowers to `Operation`s on the open document, enforced at
+the AI layer's choke point (`emits`). Reflow is not an edit: it creates a second
+document from the import's source state, which an open session does not carry once
+the document is saved as DOCX, and no `Operation` replaces a document (ADR-030 I2).
+It is a session-level operation beside `open_document`, so it belongs in the session
+layer (`opendoc-mcp`'s tools, the Native SDK, the editor's File menu), each calling
+`PdfImport::reflow()`. None of those is this lane's.
+
+### 18.2 Fonts: bare CFF and Type1 made OpenType (§5.4, closing §16.4)
+
+`fonts.rs`, on read-fonts (MIT/Apache, already under skrifa; the `agl` feature is
+enabled, no new crate or version):
+
+- **Bare CFF** (`FontFile3`/`Type1C`) is *wrapped*: its bytes become the `CFF `
+  table of an `OTTO` sfnt whose `head`, `hhea`, `maxp` 0.5, `OS/2` v4, `name`,
+  `cmap` (format 4, and 12 above the BMP), `post` 3.0 and `hmtx` are built from the
+  program (advances from its charstrings, bounds from its outlines). Outlines and
+  hints are the producer's, byte for byte.
+- **Type1** (`FontFile`) is *converted*: read-fonts' Type1 interpreter evaluates each
+  charstring (subroutines and `seac` flattened) and the outline is re-encoded as an
+  unhinted Type2 charstring in a CFF this module writes. Outlines are exact; hints
+  are dropped.
+- The `cmap` comes from glyph names through the Adobe Glyph List. A program is
+  registered only if that `cmap` covers every character drawn **and** its advances
+  agree (5%, at most 10% of characters off) with where the PDF placed them, so a
+  glyph name that lies cannot draw the wrong letter silently.
+- **A reader gap found on the way:** hayro hands the device no program for a simple
+  `/Type1` font (`OutlineFont::font_data` is `None` for `Type1`), so the common
+  bare-CFF case never reached the importer; P1's `BareCff` was only ever a CID-keyed
+  Type0. `admit.rs` now reads a simple Type1 font's `FontFile3`/`FontFile` from its
+  descriptor, bounded by `max_font_program_bytes`.
+
+### 18.3 Links and annotations (both outputs)
+
+`casual-doc-pdf-read` gains `annots.rs` (`PdfSource::annotations(page)`: kind,
+rectangle in page space, author, contents, ISO 8601 date; links resolved: `URI`,
+`GoTo`, `/Dest`, named destinations through `/Dests` and the `/Names /Dests` tree;
+`javascript:`, `vbscript:`, `file:` and `data:` URIs and non-navigation actions are
+`Blocked`) and `structure.rs` (`PdfSource::structure_tree()`, the tree flattened in
+reading order with each leaf's role lineage, `RoleMap` applied, cycles refused,
+bounded). `device.rs` and `evidence.rs` are untouched.
+
+- A link becomes a hyperlink over the characters whose centre its rectangle holds,
+  in the fixed frames and in reflow (`hyperlink_inferred`); a `GoTo`/`Dest` becomes
+  an internal hyperlink to a `_PdfDestN` bookmark at the frame (fixed) or paragraph
+  (reflow) at the destination's top (`bookmark_inferred`); a link to nothing, a
+  blocked one, or one over no text is `link_unresolved`.
+- A `Text` or `FreeText` note becomes a comment with its author, date and text,
+  anchored on the nearest frame (fixed) or line (reflow): `comment_inferred`.
+- Every other annotation is `annotation_omitted`; popups count with their note.
+  Admission's blanket `annotation_omitted` for links and notes is gone: each page now
+  reports what it did not import.
+
+### 18.4 Guards, each driven red by a mutation (SKILL §4)
+
+Fixtures are rights-safe synthetic PDFs written by `src/synth.rs` from constants in
+the test (P0's approach; generated rather than committed, so P0's
+`fixtures/pdf/measurement.json` does not move). Font fixtures are Caladea's own
+outlines (Apache-2.0, bundled) re-encoded as a bare CFF and as an eexec-encrypted
+Type1 program.
+
+| Guard | Mutation | Red output |
+| --- | --- | --- |
+| `fonts` `a_bare_cff_is_wrapped_as_an_otto_font_skrifa_reads_with_the_same_outlines` | cmap off by one glyph | `outline of 'H'` left `[(174, -7), (78, 23), …]` right `[(481, 317), (206, 317), …]` |
+| `fonts` `a_type1_program_is_converted_with_the_same_outlines_and_advances` | Type2 curve's second control point relative to the start, not the first control | `outline of 'H'` left `[…, (328, 37), (320, 0), …]` right `[…, (304, 37), (299, 0), …]` |
+| `a_wrapped_program_whose_advances_contradict_the_pdf_is_substituted` | advances always agree | `assertion failed: …font_programs.is_empty()` |
+| `bare_cff_and_type1_programs_are_made_opentype_and_register_for_layout` (layout registers both, 0 failures) | `admit.rs` reads no simple-Type1 program | left `[]` right `[("SynthCff", OpenTypeCff), ("SynthType1", OpenTypeCff)]` |
+| `order` `two_columns_read_column_by_column_under_a_spanning_title` | no pre-mask; separately, never a column cut | left `[0, 1, 4, 2, 5, 3, 6]` right `[0, 1, 2, 3, 4, 5, 6]` (both) |
+| `order` `ordering_work_doubles_when_the_elements_double` | gap-beside-a-mask check scans every earlier span | `two columns: ratio 3.96 (255503 -> 1011003)` |
+| `a_tagged_pdf_reflows_in_its_structure_tree_order` (paint and geometry agree with each other and disagree with the tree; the H1 is in the body font) | structure tree ignored | left `[(heading 1, "Tagged heading…"), (None, "Read last…"), (None, "Read first…")]` right `[(None, "Read first…"), (heading 1, …), (None, "Read last…")]` |
+| `headings_become_styles_and_lines_become_paragraphs` | no heading level from font clusters; separately, line-end hyphen kept | left `(None, "Annual Synthetic Review")` right `(Some("heading 1"), …)`; `"…while the compre-hension of the committee…"` |
+| `a_lone_numbered_line_is_not_a_list` | any marker run is a list | `assertion failed: paragraphs(…).iter().all(\|p\| p.properties.numbering.is_none())` |
+| `ruling_grids_and_aligned_columns_become_tables` | no line is placed in a grid | first table left `[["Item","Qty","Price"], …]` right `[["R1C1","R1C2","R1C3"], …]` |
+| `two_column_prose_on_a_shared_grid_is_not_a_table` | prose share ignored in the confidence | `assertion failed: …all(\|b\| !matches!(b, BlockNode::Table(_)))` |
+| `repeated_top_and_bottom_lines_become_header_and_footer_parts` | repetition never enough | body contains `Synthetic Quarterly Report` |
+| `superscripts_matched_to_bottom_blocks_become_footnotes` | superscript threshold 0.5 | body left 3 paragraphs right 1: `"…the plan1 and then…", "1 The plan is synthetic.", …` |
+| `a_numbered_line_at_the_bottom_with_no_reference_stays_body_text` | a note needs no reference | `assertion failed: …footnotes.is_empty()` |
+| `column_bands_become_section_columns_and_read_column_by_column` | no column regions; separately, no paragraph continues into the next element | `the title's section, then the columns'` left 1 right 2; left `"…over the last quarter"` right `"…over the last quarter and agreed that every number was written here."` |
+| `links_become_hyperlinks_and_notes_become_comments_in_both_outputs` | no character under a link; bookmark always on the anchor paragraph; notes not made comments | `fixed: []`; left `None` right `Some("Appendix")`; `fixed` left 0 right 1 |
+| `the_loss_report_names_every_construct_reflow_could_not_keep` (exact set of non-mapped findings; nothing visible dropped) | vector art not reported; separately, rotated text dropped | `vector_omitted` missing from the set; the body lacks `Sideways note` |
+| `furniture_and_note_work_doubles_when_the_pages_double` | repetition found by scanning every earlier block | `furniture: ratio 3.82 (880 -> 3360)` |
+| `footnote_work_doubles_when_the_notes_on_a_page_double` | references re-scanned for every note line | `notes: ratio 3.41 (14292 -> 48692)` |
+| `table_work_doubles_when_the_rows_double` | every rule against every rule; separately, every line searches every grid | `tables: ratio 3.67 (2247 -> 8247)`; `ratio 3.20 (1047 -> 3347)` |
+| `marker_and_paragraph_work_doubles_when_the_items_double` | each marker scans every earlier line | `paragraphs: ratio 3.94 (23249 -> 91499)` |
+| `annots` `pdf_dates_become_iso_8601_with_their_offset`, `text_strings_decode_utf16_and_pdfdoc` | (written red: a non-digit after the year parsed as a date; `\r` dropped before it became `\n`) | left `Some("2026-01-01T00:00:00Z")` right `None`; left `"ab"` right `"a\nb"` |
+
+**Defects the guards found in the code, not mutations:** the first ruled-table pass
+scanned every line of the page per grid and every rule per cell border
+(`tables: ratio 3.36 (922 -> 3097)`); it is now one pass over the lines with grids
+sorted by top and a running maximum of bottoms, and an interval index per grid line.
+The page-doubling test came out *sub*-linear (`order: ratio 1.64`) because page 9's
+footer and page 10's normalised differently (`#` against `##`); digit runs now
+normalise to one `#`. The grid and marker searches also gained the explicit bounds
+their binary searches had only implied.
+
+### 18.5 Not built, and why
+
+- **CID-keyed CFF** (`CIDFontType0C`) stays substituted: its code-to-glyph mapping
+  is the PDF's CMap, and `GlyphEvidence` carries no glyph id. Wrapping it needs a
+  glyph id per glyph in the evidence (`device.rs`/`evidence.rs`, the other lane's):
+  **requested field: `GlyphEvidence::glyph: Option<u32>`** (hayro's `glyph_id()`).
+- **Type1 hints** are dropped in conversion (outlines exact; hinted small-size
+  rasterisation differs). A Type1 matrix other than `[0.001 0 0 0.001 0 0]`, or a
+  program whose names miss the AGL, stays substituted.
+- **Reflow, not yet:** tables from tagged `Table`/`TR`/`TD` roles (tables come from
+  geometry; the roles order them); list nesting from `L`/`LI` (markers are still
+  parsed); footnotes continued across pages; note symbols kept (`*`, `†` are
+  renumbered); first-page and even/odd header variants; page breaks; justification
+  (start, centre and end are inferred); floating pictures (pictures are inline in
+  reading order); vector art; XY-Cut++'s label priorities (no layout model, P6);
+  `reading_order_ambiguous` is not emitted.
+- **Annotations, not yet:** reply threads (`/IRT`) are separate comments, not
+  threaded; a `FreeText` note's visible text is not drawn in fixed layout (it is
+  the comment's text); links over rotated text.
+- **Reach:** no editor command, MCP tool or SDK call invokes `reflow()` (§18.1);
+  `docs/109` is not edited by this lane.

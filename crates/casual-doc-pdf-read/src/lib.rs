@@ -27,9 +27,11 @@
 #![forbid(unsafe_code)]
 
 mod admit;
+mod annots;
 mod device;
 mod evidence;
 mod limits;
+mod structure;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -39,12 +41,14 @@ use hayro_interpret::{Context, InterpreterCache, InterpreterSettings, TransformE
 use hayro_syntax::{LoadPdfError, Pdf};
 use kurbo::Rect;
 
+pub use annots::{AnnotationEvidence, AnnotationKind, LinkTarget, pdf_date, text_string};
 pub use evidence::{
     ActiveContent, Bounds, DocumentFonts, FontEvidence, FontProgramKind, GlyphEvidence,
     GlyphRunEvidence, ImageEvidence, ImageFormat, PageEvidence, PageNotes, PaintEvidence,
     PathCommand, PathEvidence, Point, RenderMode, Rgba8, StrokeEvidence,
 };
 pub use limits::PdfReadLimits;
+pub use structure::{StructLeaf, StructNode, StructureTree};
 
 /// The password the reader opens every file with. An unencrypted file ignores
 /// it; an encrypted one fails decryption, even when its user password is

@@ -146,7 +146,8 @@ fn every_construct_file_imports_and_reports_its_losses() {
                 report::ACTIVE_CONTENT_BLOCKED,
                 report::ATTACHMENT_OMITTED,
                 report::FORM_OMITTED,
-                report::ANNOTATION_OMITTED,
+                // Its Launch link is not navigable: not imported, reported.
+                report::LINK_UNRESOLVED,
             ],
         ),
     ];
@@ -375,6 +376,121 @@ fn an_embedded_program_with_a_cmap_is_registered_and_its_bytes_carried() {
     // The runs name the registered family.
     let frames = frames(pages(&imported.document)[0]);
     assert_eq!(frames[0], "Embedded Caladea");
+}
+
+/// A PDF drawing "Habe" with a bare CFF program (`FontFile3` / `Type1C`) and
+/// again with a Type1 program (`FontFile`), both Caladea's own outlines
+/// (`fonts::test_support`); the PDF widths are the advances times
+/// `widths_scale`.
+fn wrapped_fonts_pdf(widths_scale: f64) -> Vec<u8> {
+    use crate::fonts::test_support::{bare_cff, glyphs, type1};
+    use crate::synth::{Page, Pdf, document_in, text};
+    let chars = "Habe";
+    let advances = glyphs(chars);
+    let widths: Vec<String> = (32u8..=126)
+        .map(|code| {
+            let c = char::from(code);
+            let w = advances
+                .iter()
+                .find(|g| g.1 == Some(c))
+                .map_or(0.0, |g| f64::from(g.2) * widths_scale);
+            format!("{}", w.round() as i64)
+        })
+        .collect();
+    let widths = widths.join(" ");
+    let mut pdf = Pdf::default();
+    let cff = pdf.stream("/Subtype /Type1C", &bare_cff(chars));
+    let t1 = type1(chars);
+    let marker = b"currentfile eexec\n";
+    let clear = t1.windows(marker.len()).position(|w| w == marker).unwrap() + marker.len();
+    let zeros = t1.windows(64).position(|w| w == [b'0'; 64]).unwrap();
+    let t1_file = pdf.stream(
+        &format!(
+            "/Length1 {clear} /Length2 {} /Length3 {}",
+            zeros - clear,
+            t1.len() - zeros
+        ),
+        &t1,
+    );
+    let mut fonts = String::from("/Font << ");
+    for (name, key, file, entry) in [
+        ("SynthCff", "C1", cff, "FontFile3"),
+        ("SynthType1", "C2", t1_file, "FontFile"),
+    ] {
+        let descriptor = pdf.add(format!(
+            "<< /Type /FontDescriptor /FontName /{name} /Flags 34 /FontBBox [-200 -250 1200 950] /ItalicAngle 0 /Ascent 900 /Descent -250 /CapHeight 650 /StemV 80 /{entry} {file} 0 R >>"
+        ));
+        let font = pdf.add(format!(
+            "<< /Type /Font /Subtype /Type1 /BaseFont /{name} /FirstChar 32 /LastChar 126 /Widths [{widths}] /Encoding /WinAnsiEncoding /FontDescriptor {descriptor} 0 R >>"
+        ));
+        fonts.push_str(&format!("/{key} {font} 0 R "));
+    }
+    fonts.push_str(">>");
+    let content = format!(
+        "{}{}",
+        text("C1", 24.0, 72.0, 700.0, 28.0, &["Habe"]),
+        text("C2", 24.0, 72.0, 640.0, 28.0, &["Habe"]),
+    );
+    document_in(&mut pdf, &[Page::new(content)], &fonts, "", |_| {
+        String::new()
+    })
+}
+
+#[test]
+fn bare_cff_and_type1_programs_are_made_opentype_and_register_for_layout() {
+    use casual_doc_model::v1::FontProgramFormat;
+    let imported = import_pdf(wrapped_fonts_pdf(1.0), PdfReadLimits::default()).unwrap();
+    let programs = &imported.document.definitions().font_programs;
+    assert_eq!(
+        programs
+            .iter()
+            .map(|p| (p.family.as_str(), p.format))
+            .collect::<Vec<_>>(),
+        vec![
+            ("SynthCff", FontProgramFormat::OpenTypeCff),
+            ("SynthType1", FontProgramFormat::OpenTypeCff),
+        ],
+        "{:?}",
+        imported.report.findings
+    );
+    assert_eq!(
+        imported
+            .report
+            .get(report::FONT_EMBEDDED)
+            .unwrap()
+            .occurrences,
+        2
+    );
+    assert!(!imported.report.has(report::FONT_SUBSTITUTED));
+    for program in programs {
+        assert!(imported.resources[&program.part_name].starts_with(b"OTTO"));
+    }
+    // The layout engine registers both (it reports a bare CFF as
+    // `unsupported-format`, so registering is the proof of the wrap).
+    let shaper = casual_doc_layout::shape::ParleyShaper::new();
+    let outcome = casual_doc_layout::font_registry::register_embedded_fonts(
+        &shaper,
+        &imported.document,
+        |part| imported.resources.get(part).map(Vec::as_slice),
+    );
+    assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
+    assert_eq!(outcome.faces, 2);
+}
+
+#[test]
+fn a_wrapped_program_whose_advances_contradict_the_pdf_is_substituted() {
+    // The PDF says every glyph is 40% wider than the program draws it: the
+    // names cannot be trusted to name the drawn characters.
+    let imported = import_pdf(wrapped_fonts_pdf(1.4), PdfReadLimits::default()).unwrap();
+    assert!(imported.document.definitions().font_programs.is_empty());
+    assert_eq!(
+        imported
+            .report
+            .get(report::FONT_SUBSTITUTED)
+            .unwrap()
+            .occurrences,
+        2
+    );
 }
 
 #[test]

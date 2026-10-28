@@ -99,33 +99,49 @@ impl Findings {
 pub const FEATURES: &[&str] = &[
     ACTIVE_CONTENT_BLOCKED,
     ANNOTATION_OMITTED,
+    ARTIFACT_OMITTED,
     ATTACHMENT_OMITTED,
+    BOOKMARK_INFERRED,
     CLIP_IGNORED,
+    COLUMNS_INFERRED,
+    COMMENT_INFERRED,
+    DEHYPHENATION_INFERRED,
     ENCRYPTED_UNSUPPORTED,
     FONT_EMBEDDED,
     FONT_SUBSTITUTED,
+    FOOTNOTE_INFERRED,
     FORM_OMITTED,
+    HEADER_FOOTER_INFERRED,
+    HEADING_INFERRED,
+    HYPERLINK_INFERRED,
     IMAGE_CLIP_IGNORED,
     IMAGE_REENCODED,
     IMAGE_UNDECODABLE,
     INVISIBLE_TEXT,
+    LINK_UNRESOLVED,
+    LIST_INFERRED,
     NATIVE_TEXT_INVALID,
     OPTIONAL_CONTENT_FLATTENED,
     PAGE_SIZE_CLAMPED,
     PARAGRAPH_BOUNDARY_INFERRED,
     PATTERN_FLATTENED,
     READING_ORDER_INFERRED,
+    STYLE_INFERRED,
+    TABLE_INFERRED,
+    TABLE_TOPOLOGY_DEGRADED,
     TAG_STRUCTURE_IGNORED,
     TEXT_RENDER_MODE_DEGRADED,
     TEXT_ROTATED,
     TRANSPARENCY_FLATTENED,
     TYPE3_GLYPHS_SUBSTITUTED,
+    VECTOR_OMITTED,
     VECTOR_SPLIT,
 ];
 
 /// JavaScript, launch and other non-navigation actions: never run.
 pub const ACTIVE_CONTENT_BLOCKED: &str = "pdf.import.active_content_blocked";
-/// Annotations (comments, links, stamps) are not imported in P1.
+/// Annotations that are neither links nor notes (highlights, stamps, ink,
+/// shapes), and notes with no text or nothing to anchor on, are not imported.
 pub const ANNOTATION_OMITTED: &str = "pdf.import.annotation_omitted";
 /// Embedded files are never extracted.
 pub const ATTACHMENT_OMITTED: &str = "pdf.import.attachment_omitted";
@@ -164,7 +180,9 @@ pub const PARAGRAPH_BOUNDARY_INFERRED: &str = "pdf.import.paragraph_boundary_inf
 pub const PATTERN_FLATTENED: &str = "pdf.import.pattern_flattened";
 /// Frames ordered by content-stream order.
 pub const READING_ORDER_INFERRED: &str = "pdf.import.reading_order_inferred";
-/// A tagged PDF's structure tree is not used by fixed-layout import.
+/// A tagged PDF's structure tree is not used: by fixed-layout import, which
+/// has no reading order to give, or by reflow when the tree is truncated or
+/// covers too little of a page to order it.
 pub const TAG_STRUCTURE_IGNORED: &str = "pdf.import.tag_structure_ignored";
 /// Stroke-only text drawn filled.
 pub const TEXT_RENDER_MODE_DEGRADED: &str = "pdf.import.text_render_mode_degraded";
@@ -176,3 +194,46 @@ pub const TRANSPARENCY_FLATTENED: &str = "pdf.import.transparency_flattened";
 pub const TYPE3_GLYPHS_SUBSTITUTED: &str = "pdf.import.type3_glyphs_substituted";
 /// A path over the model's per-shape command bound, split into several shapes.
 pub const VECTOR_SPLIT: &str = "pdf.import.vector_split";
+/// Reflow: `/Artifact` content outside the header and footer bands (backgrounds,
+/// watermarks) is not page content in a flowing document and is left out.
+pub const ARTIFACT_OMITTED: &str = "pdf.import.artifact_omitted";
+/// A link's in-document destination placed as a bookmark at the paragraph
+/// (reflow) or frame (fixed layout) nearest the destination.
+pub const BOOKMARK_INFERRED: &str = "pdf.import.bookmark_inferred";
+/// Reflow: a column region became a section with `SectionColumns`.
+pub const COLUMNS_INFERRED: &str = "pdf.import.columns_inferred";
+/// A Text or FreeText annotation became a comment, anchored on the text
+/// nearest its rectangle (the anchor is inferred; author, date and text are
+/// the annotation's).
+pub const COMMENT_INFERRED: &str = "pdf.import.comment_inferred";
+/// Reflow: a line-end hyphen between letters was removed when joining the
+/// lines (the next line starts lowercase).
+pub const DEHYPHENATION_INFERRED: &str = "pdf.import.dehyphenation_inferred";
+/// Reflow: a superscript marker matched to a bottom-of-page block became a
+/// footnote (symbol markers are renumbered by the model).
+pub const FOOTNOTE_INFERRED: &str = "pdf.import.footnote_inferred";
+/// Reflow: repeated top or bottom content, or `/Artifact` content in those
+/// bands, became a header or footer part.
+pub const HEADER_FOOTER_INFERRED: &str = "pdf.import.header_footer_inferred";
+/// Reflow: a paragraph was given a heading style from its font cluster.
+pub const HEADING_INFERRED: &str = "pdf.import.heading_inferred";
+/// A link annotation became a hyperlink over the characters its rectangle
+/// covers.
+pub const HYPERLINK_INFERRED: &str = "pdf.import.hyperlink_inferred";
+/// A link whose target is not navigable (a refused scheme, a destination
+/// naming nothing) or whose rectangle covers no text was not imported.
+pub const LINK_UNRESOLVED: &str = "pdf.import.link_unresolved";
+/// Reflow: a bullet or enumerator with a hanging indent became a numbered
+/// or bulleted list item.
+pub const LIST_INFERRED: &str = "pdf.import.list_inferred";
+/// Reflow: font clusters became the style sheet (Normal and Heading n).
+pub const STYLE_INFERRED: &str = "pdf.import.style_inferred";
+/// Reflow: a ruling-line grid, or whitespace-aligned columns above the
+/// confidence threshold, became a table.
+pub const TABLE_INFERRED: &str = "pdf.import.table_inferred";
+/// Reflow: whitespace-aligned columns scored below the table threshold and
+/// were kept as paragraphs.
+pub const TABLE_TOPOLOGY_DEGRADED: &str = "pdf.import.table_topology_degraded";
+/// Reflow: vector art that is not a table rule is not placed in a flowing
+/// document.
+pub const VECTOR_OMITTED: &str = "pdf.import.vector_omitted";

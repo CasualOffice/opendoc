@@ -12,7 +12,9 @@ use hayro_syntax::object::{Array, Dict, Name, Object, Stream};
 use hayro_syntax::page::Page;
 
 use crate::limits::check;
-use crate::{ActiveContent, DocumentFonts, FontEvidence, PdfReadError, PdfReadLimits};
+use crate::{
+    ActiveContent, DocumentFonts, FontEvidence, FontProgramKind, PdfReadError, PdfReadLimits,
+};
 
 /// Inflates `raw` into a counting sink and returns how many bytes it decodes
 /// to, stopping as soon as the count passes `cap`. Memory is O(1): one 64 KiB
@@ -261,9 +263,55 @@ fn learn_font_dict(
         }
         check("max_fonts", fonts.fonts.len() as u64 + 1, limits.max_fonts)?;
         index.insert(cache_key, fonts.fonts.len());
-        fonts.fonts.push(font_identity(&font));
+        let mut identity = font_identity(&font);
+        identity.program = simple_type1_program(&font, limits)?;
+        fonts.fonts.push(identity);
     }
     Ok(())
+}
+
+/// The embedded program of a simple `Type1` font, read from its descriptor.
+///
+/// hayro hands the device the program of TrueType and Type0 fonts but not of
+/// simple Type1 fonts (`OutlineFont::font_data` returns `None` for them), so
+/// the importer would see a bare CFF (`FontFile3` / `Type1C`) or a Type1
+/// program (`FontFile`) as "not embedded". Read here instead, bounded by
+/// `max_font_program_bytes` (the stream already passed the bomb pre-pass).
+/// The importer wraps or converts it (`casual-doc-pdf-import::fonts`).
+/// O(program bytes).
+fn simple_type1_program(
+    font: &Dict<'_>,
+    limits: &PdfReadLimits,
+) -> Result<Option<(FontProgramKind, Vec<u8>)>, PdfReadError> {
+    if !(name_is(font, b"Subtype", b"Type1") || name_is(font, b"Subtype", b"MMType1")) {
+        return Ok(None);
+    }
+    let Some(descriptor) = font.get::<Dict<'_>>(b"FontDescriptor") else {
+        return Ok(None);
+    };
+    let (stream, kind) = if let Some(stream) = descriptor.get::<Stream<'_>>(b"FontFile3")
+        && name_is(stream.dict(), b"Subtype", b"Type1C")
+    {
+        (stream, FontProgramKind::BareCff)
+    } else if let Some(stream) = descriptor.get::<Stream<'_>>(b"FontFile") {
+        (stream, FontProgramKind::Other)
+    } else {
+        return Ok(None);
+    };
+    let Ok(bytes) = stream.decoded() else {
+        return Ok(None);
+    };
+    check(
+        "max_font_program_bytes",
+        bytes.len() as u64,
+        limits.max_font_program_bytes,
+    )?;
+    let kind = match (kind, bytes.first()) {
+        (FontProgramKind::BareCff, Some(1)) => FontProgramKind::BareCff,
+        (FontProgramKind::BareCff, _) => FontProgramKind::Other,
+        (kind, _) => kind,
+    };
+    Ok(Some((kind, bytes.into_owned())))
 }
 
 fn learn_from_forms(

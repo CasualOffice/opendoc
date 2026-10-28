@@ -31,15 +31,23 @@ use casual_doc_model::v1::{
     TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxInsets, VerticalAnchor,
     VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
 };
+use casual_doc_model::v1::{
+    Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, Comment, CommentId, CommentRangeEnd,
+    CommentRangeStart, CommentReference, ExternalTarget, Hyperlink, HyperlinkTarget,
+    InternalTarget,
+};
 use casual_doc_model::v1::{EmbeddedFontProgram, FillRule, FontProgramFormat, FontProgramStyle};
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_pdf_read::{
-    ActiveContent, DocumentFonts, FontEvidence, FontProgramKind, GlyphRunEvidence, ImageEvidence,
-    ImageFormat, PageEvidence, PaintEvidence, PathCommand, PathEvidence, RenderMode,
+    ActiveContent, AnnotationEvidence, Bounds, DocumentFonts, FontEvidence, FontProgramKind,
+    GlyphRunEvidence, ImageEvidence, ImageFormat, LinkTarget, PageEvidence, PaintEvidence,
+    PathCommand, PathEvidence, RenderMode,
 };
 
 use crate::PdfImportError;
+use crate::fonts;
 use crate::group::{self, ASCENT, Block, LayoutParams};
+use crate::links;
 use crate::report::{self, Findings, PdfModelOutcome as Outcome};
 
 /// EMU per point.
@@ -147,6 +155,27 @@ fn substitute_family(font: &FontEvidence) -> String {
     }
 }
 
+/// The family, bold and italic a run drawn with font `index` is given: the
+/// registered program's family when there is one, else the substitute.
+/// Shared with reflow so both outputs name the same faces. O(1).
+pub(crate) fn run_font(
+    index: usize,
+    fonts: &DocumentFonts,
+    registered: &BTreeMap<usize, String>,
+) -> (String, bool, bool) {
+    let font = fonts.fonts.get(index);
+    let family = registered
+        .get(&index)
+        .cloned()
+        .or_else(|| font.map(substitute_family))
+        .unwrap_or_else(|| "Arial".to_owned());
+    (
+        family,
+        font.is_some_and(|f| f.bold),
+        font.is_some_and(|f| f.italic),
+    )
+}
+
 /// A finished build: the document, its media and the report.
 pub(crate) type Built = (Document, BTreeMap<String, Vec<u8>>, crate::PdfImportReport);
 
@@ -162,16 +191,28 @@ pub(crate) struct Builder {
     /// Font index -> whether its program was registered.
     font_embedded: BTreeMap<usize, bool>,
     /// Font index -> the family its runs name, when embedded.
-    font_family: BTreeMap<usize, String>,
+    pub(crate) font_family: BTreeMap<usize, String>,
     /// Embedded fonts a later page drew characters outside of.
     font_partial: BTreeSet<usize>,
+    /// Font index -> the resource part holding its registered program.
+    font_part: BTreeMap<usize, String>,
     /// The programs registered (`Definitions::font_programs`).
-    programs: Vec<EmbeddedFontProgram>,
+    pub(crate) programs: Vec<EmbeddedFontProgram>,
+    /// Every picture placed: page, bounds after the clip, its media
+    /// reference (the reflow sidecar references these, never copies them).
+    pub(crate) placed_images: Vec<(usize, Bounds, MediaReference)>,
     /// The previous page's anchor paragraph, waiting for the next page so it
     /// can carry the section break that ends its page.
     pending: Option<(Paragraph, SectionId)>,
     /// Line-against-block comparisons made by grouping (the work counter).
     pub(crate) comparisons: u64,
+    /// This page's navigable links, and whether each covered any text.
+    page_links: Vec<(Bounds, LinkTarget)>,
+    page_links_used: Vec<bool>,
+    /// In-document destinations, by bookmark: (bookmark, name, page, top).
+    destinations: Vec<(BookmarkId, String, usize, Option<f64>)>,
+    /// Comments from notes.
+    comments: Vec<(CommentId, Comment)>,
 }
 
 impl Builder {
@@ -193,12 +234,6 @@ impl Builder {
             report::FORM_OMITTED,
             Outcome::Omitted,
             active.form_fields,
-            None,
-        );
-        findings.record(
-            report::ANNOTATION_OMITTED,
-            Outcome::Omitted,
-            active.annotations + active.links,
             None,
         );
         findings.record(
@@ -225,9 +260,15 @@ impl Builder {
             font_embedded: BTreeMap::new(),
             font_family: BTreeMap::new(),
             font_partial: BTreeSet::new(),
+            font_part: BTreeMap::new(),
             programs: Vec::new(),
+            placed_images: Vec::new(),
             pending: None,
             comparisons: 0,
+            page_links: Vec::new(),
+            page_links_used: Vec::new(),
+            destinations: Vec::new(),
+            comments: Vec::new(),
         }
     }
 
@@ -247,8 +288,12 @@ impl Builder {
         &mut self,
         page: &PageEvidence,
         fonts: &DocumentFonts,
+        annotations: &[AnnotationEvidence],
     ) -> Result<(), PdfImportError> {
         let section = self.section(page)?;
+        let sorted = links::sort(annotations, &mut self.findings, page.index);
+        self.page_links_used = vec![false; sorted.links.len()];
+        self.page_links = sorted.links;
         let notes = &page.notes;
         let at = Some(page.index);
         self.findings.record(
@@ -308,6 +353,24 @@ impl Builder {
                     self.image(image, page.index, &mut inlines)?;
                 }
             }
+        }
+        let used = self.page_links_used.iter().filter(|u| **u).count() as u32;
+        let unused = self.page_links_used.len() as u32 - used;
+        self.findings.record(
+            report::HYPERLINK_INFERRED,
+            Outcome::Mapped,
+            used,
+            Some(page.index),
+        );
+        self.findings.record(
+            report::LINK_UNRESOLVED,
+            Outcome::Omitted,
+            unused,
+            Some(page.index),
+        );
+        self.page_links.clear();
+        for note in sorted.notes {
+            self.comment(note, &mut inlines, page.index)?;
         }
         let paragraph = Paragraph {
             id: self.id()?,
@@ -407,14 +470,26 @@ impl Builder {
     /// O(characters on the page).
     fn decide_fonts(&mut self, runs: &[&GlyphRunEvidence], fonts: &DocumentFonts, page: usize) {
         let mut used: BTreeMap<usize, BTreeSet<char>> = BTreeMap::new();
+        // The advance (in em) each single-character glyph was placed at, the
+        // first time it was seen: the check that a wrapped program's glyph
+        // names tell the truth (`fonts::advances_agree`).
+        let mut advances: BTreeMap<usize, BTreeMap<char, f64>> = BTreeMap::new();
         for run in runs {
             let chars = used.entry(run.font).or_default();
+            let placed = advances.entry(run.font).or_default();
             for glyph in &run.glyphs {
                 if let Some(text) = &glyph.text {
                     chars.extend(
                         text.chars()
                             .filter(|c| !c.is_whitespace() && !c.is_control()),
                     );
+                    let mut it = text.chars();
+                    if let (Some(c), None) = (it.next(), it.next())
+                        && !c.is_whitespace()
+                        && run.size > 0.0
+                    {
+                        placed.entry(c).or_insert(glyph.advance / run.size);
+                    }
                 }
             }
         }
@@ -423,9 +498,14 @@ impl Builder {
                 continue;
             };
             if let Some(embedded) = self.font_embedded.get(&index).copied() {
+                // The registered program (a wrapped one, for a CFF or Type1
+                // source), not the PDF's bytes, decides what it covers.
                 if embedded
                     && !self.font_partial.contains(&index)
-                    && let Some((_, bytes)) = &font.program
+                    && let Some(bytes) = self
+                        .font_part
+                        .get(&index)
+                        .and_then(|part| self.resources.get(part))
                     && !covers(bytes, &chars)
                 {
                     self.font_partial.insert(index);
@@ -445,11 +525,30 @@ impl Builder {
                 (false, true) => FontProgramStyle::Italic,
                 (false, false) => FontProgramStyle::Regular,
             };
-            let candidate = match &font.program {
-                Some((FontProgramKind::TrueType, bytes)) => {
+            // A bare CFF is wrapped and a Type1 program converted into an
+            // `OTTO` font (`fonts.rs`); either is registered only when its
+            // advances agree with where the PDF placed the characters.
+            let converted = match &font.program {
+                Some((FontProgramKind::BareCff, bytes)) => {
+                    Some(fonts::wrap_bare_cff(bytes, &family, font.bold, font.italic))
+                }
+                Some((FontProgramKind::Other, bytes)) if fonts::is_type1(bytes) => {
+                    Some(fonts::convert_type1(bytes, &family, font.bold, font.italic))
+                }
+                _ => None,
+            }
+            .and_then(Result::ok)
+            .filter(|otf| {
+                advances
+                    .get(&index)
+                    .is_none_or(|placed| fonts::advances_agree(otf, placed))
+            });
+            let candidate = match (&font.program, &converted) {
+                (_, Some(otf)) => Some((FontProgramFormat::OpenTypeCff, "otf", otf)),
+                (Some((FontProgramKind::TrueType, bytes)), _) => {
                     Some((FontProgramFormat::TrueType, "ttf", bytes))
                 }
-                Some((FontProgramKind::OpenTypeCff, bytes)) => {
+                (Some((FontProgramKind::OpenTypeCff, bytes)), _) => {
                     Some((FontProgramFormat::OpenTypeCff, "otf", bytes))
                 }
                 _ => None,
@@ -465,6 +564,7 @@ impl Builder {
                     let part_name =
                         format!("pdf/fonts/font{}.{extension}", self.programs.len() + 1);
                     self.resources.insert(part_name.clone(), bytes.clone());
+                    self.font_part.insert(index, part_name.clone());
                     let mut program =
                         EmbeddedFontProgram::new(family.clone(), style, format, part_name)
                             .with_subsetted(true);
@@ -492,12 +592,7 @@ impl Builder {
 
     fn run_properties(&mut self, style: group::Style, fonts: &DocumentFonts) -> RunProperties {
         let font = fonts.fonts.get(style.font);
-        let family = self
-            .font_family
-            .get(&style.font)
-            .cloned()
-            .or_else(|| font.map(substitute_family))
-            .unwrap_or_else(|| "Arial".to_owned());
+        let (family, _, _) = run_font(style.font, fonts, &self.font_family);
         let named = Some(FontRef::Named(FontName { name: family }));
         RunProperties {
             font_ref: named.clone(),
@@ -653,12 +748,19 @@ impl Builder {
                     kind: BreakKind::Line,
                 }));
             }
+            let link_of: Vec<Option<usize>> = line
+                .chars
+                .iter()
+                .map(|c| links::link_at(&self.page_links, c.x0, c.x1, c.baseline, c.size))
+                .collect();
             let mut at = 0;
             while at < line.chars.len() {
                 let style = line.chars[at].style;
+                let link = link_of[at];
                 let mut text = String::new();
                 while let Some(c) = line.chars.get(at)
                     && c.style == style
+                    && link_of[at] == link
                 {
                     text.push_str(&c.text);
                     at += 1;
@@ -667,11 +769,32 @@ impl Builder {
                     continue;
                 }
                 let properties = self.run_properties(style, fonts);
-                paragraph_inlines.push(InlineNode::Run(Run {
+                let run = InlineNode::Run(Run {
                     id: self.id()?,
                     properties: properties.into(),
                     text,
-                }));
+                });
+                match link {
+                    Some(index) => {
+                        self.page_links_used[index] = true;
+                        let target = self.link_target(index)?;
+                        match paragraph_inlines.last_mut() {
+                            Some(InlineNode::Hyperlink(h)) if h.target == target => {
+                                h.inlines.push(run);
+                            }
+                            _ => {
+                                paragraph_inlines.push(InlineNode::Hyperlink(Box::new(Hyperlink {
+                                    id: self.id()?,
+                                    history: matches!(target, HyperlinkTarget::External(_)),
+                                    target,
+                                    tooltip: None,
+                                    inlines: vec![run],
+                                })))
+                            }
+                        }
+                    }
+                    None => paragraph_inlines.push(run),
+                }
             }
         }
         let paragraph = Paragraph {
@@ -718,6 +841,125 @@ impl Builder {
             },
             blocks: vec![BlockNode::Paragraph(paragraph)],
         })));
+        Ok(())
+    }
+
+    /// The hyperlink target of this page's link `index`; an in-document
+    /// destination gets a bookmark, placed at `finish`. O(1).
+    fn link_target(&mut self, index: usize) -> Result<HyperlinkTarget, PdfImportError> {
+        match self.page_links[index].1.clone() {
+            LinkTarget::Uri(url) => Ok(HyperlinkTarget::External(ExternalTarget {
+                url,
+                anchor: None,
+            })),
+            LinkTarget::Page { page, top } => {
+                let existing = self
+                    .destinations
+                    .iter()
+                    .find(|d| d.2 == page && d.3 == top)
+                    .map(|d| d.1.clone());
+                let name = match existing {
+                    Some(name) => name,
+                    None => {
+                        let name = format!("_PdfDest{}", self.destinations.len() + 1);
+                        let id = BookmarkId::new(self.id()?);
+                        self.destinations.push((id, name.clone(), page, top));
+                        name
+                    }
+                };
+                Ok(HyperlinkTarget::Internal(InternalTarget { anchor: name }))
+            }
+            LinkTarget::Unresolved | LinkTarget::Blocked => {
+                unreachable!("links::sort keeps navigable links only")
+            }
+        }
+    }
+
+    /// Anchors a note's comment on the frame nearest it on this page: the
+    /// frame's text becomes the comment's range. O(frames on the page).
+    fn comment(
+        &mut self,
+        note: links::NoteAnnotation,
+        inlines: &mut [InlineNode],
+        page: usize,
+    ) -> Result<(), PdfImportError> {
+        let (cx, cy) = (
+            (note.rect.x0 + note.rect.x1) / 2.0,
+            (note.rect.y0 + note.rect.y1) / 2.0,
+        );
+        let nearest = inlines
+            .iter_mut()
+            .filter_map(|inline| match inline {
+                InlineNode::TextBox(frame) => {
+                    frame_bounds(frame).map(|b| (links::distance(&b, cx, cy), frame))
+                }
+                _ => None,
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        let Some((_, frame)) = nearest else {
+            self.findings
+                .record(report::ANNOTATION_OMITTED, Outcome::Omitted, 1, Some(page));
+            return Ok(());
+        };
+        let Some(BlockNode::Paragraph(paragraph)) = frame.blocks.first_mut() else {
+            self.findings
+                .record(report::ANNOTATION_OMITTED, Outcome::Omitted, 1, Some(page));
+            return Ok(());
+        };
+        let comment = CommentId::new(self.id()?);
+        paragraph.inlines.insert(
+            0,
+            InlineNode::CommentRangeStart(CommentRangeStart {
+                id: self.id()?,
+                comment,
+            }),
+        );
+        paragraph
+            .inlines
+            .push(InlineNode::CommentRangeEnd(CommentRangeEnd {
+                id: self.id()?,
+                comment,
+            }));
+        paragraph
+            .inlines
+            .push(InlineNode::CommentReference(CommentReference {
+                id: self.id()?,
+                comment,
+            }));
+        let mut body = Vec::new();
+        for line in note.text.split('\n') {
+            body.push(BlockNode::Paragraph(Paragraph {
+                id: self.id()?,
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![InlineNode::Run(Run {
+                    id: self.id()?,
+                    properties: RunProperties::default().into(),
+                    text: line.to_owned(),
+                })],
+            }));
+        }
+        let author = note
+            .author
+            .map(|a| a.chars().take(255).collect::<String>())
+            .filter(|a| !a.is_empty());
+        let initials = author.as_ref().map(|a| {
+            a.split_whitespace()
+                .filter_map(|w| w.chars().next())
+                .take(4)
+                .collect::<String>()
+        });
+        self.comments.push((
+            comment,
+            Comment {
+                blocks: body,
+                author,
+                initials: initials.filter(|i| !i.is_empty()),
+                date: note.date,
+                ..Comment::default()
+            },
+        ));
+        self.findings
+            .record(report::COMMENT_INFERRED, Outcome::Mapped, 1, Some(page));
         Ok(())
     }
 
@@ -780,7 +1022,17 @@ impl Builder {
                 part_name: part_name.clone(),
             },
         ));
-        self.resources.insert(part_name, image.bytes.clone());
+        self.resources
+            .insert(part_name.clone(), image.bytes.clone());
+        self.placed_images.push((
+            page,
+            placed,
+            MediaReference {
+                relationship_id: format!("rIdPdfImage{n}"),
+                media_type: media_type.to_owned(),
+                part_name,
+            },
+        ));
         let z = self.next_z();
         let rotation = (!upright).then(|| (image.rotation_degrees * 60_000.0).round() as i32);
         inlines.push(InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
@@ -960,11 +1212,84 @@ impl Builder {
             definitions.media.insert(id, reference);
         }
         definitions.sections = std::mem::take(&mut self.sections);
-        definitions.font_programs = std::mem::take(&mut self.programs);
+        definitions.font_programs = self.programs.clone();
+        for (id, comment) in std::mem::take(&mut self.comments) {
+            definitions.comments.insert(id, comment);
+        }
+        let destinations = std::mem::take(&mut self.destinations);
+        let placed = destinations.len() as u32;
+        for (bookmark, name, page, top) in destinations {
+            definitions.bookmarks.insert(bookmark, Bookmark { name });
+            let start = InlineNode::BookmarkStart(BookmarkStart {
+                id: self.id()?,
+                bookmark,
+            });
+            let end = InlineNode::BookmarkEnd(BookmarkEnd {
+                id: self.id()?,
+                bookmark,
+            });
+            place_bookmark(self.body.get_mut(page), top, start, end);
+        }
+        self.findings
+            .record(report::BOOKMARK_INFERRED, Outcome::Mapped, placed, None);
         let document_id = self.id()?;
         let document = Document::new(document_id, std::mem::take(&mut self.body), definitions)
             .map_err(|error| PdfImportError::Model(error.to_string()))?;
         Ok((document, self.resources, self.findings.finish()))
+    }
+}
+
+/// The page-space bounds of a page-anchored frame, in points.
+fn frame_bounds(frame: &TextBox) -> Option<Bounds> {
+    let anchor = frame.anchor.as_ref()?;
+    let (HorizontalPosition::Offset(x), VerticalPosition::Offset(y)) =
+        (&anchor.horizontal.position, &anchor.vertical.position)
+    else {
+        return None;
+    };
+    let extent = frame.extent?;
+    let pt = |emu: i64| emu as f64 / EMU_PER_PT;
+    Some(Bounds {
+        x0: pt(*x),
+        y0: pt(*y),
+        x1: pt(*x + extent.width_emu),
+        y1: pt(*y + extent.height_emu),
+    })
+}
+
+/// Puts a bookmark at the start of the frame on the page nearest at or below
+/// `top` (the first frame when the destination states no top), else at the
+/// start of the page's anchor paragraph. O(frames on the page).
+fn place_bookmark(
+    page: Option<&mut BlockNode>,
+    top: Option<f64>,
+    start: InlineNode,
+    end: InlineNode,
+) {
+    let Some(BlockNode::Paragraph(anchor)) = page else {
+        return;
+    };
+    let target = anchor
+        .inlines
+        .iter_mut()
+        .filter_map(|inline| match inline {
+            InlineNode::TextBox(frame) => frame_bounds(frame).map(|b| (b.y0, b.y1, frame)),
+            _ => None,
+        })
+        .filter(|(_, bottom, _)| top.is_none_or(|t| *bottom >= t))
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    match target.and_then(|(_, _, frame)| match frame.blocks.first_mut() {
+        Some(BlockNode::Paragraph(p)) => Some(p),
+        _ => None,
+    }) {
+        Some(paragraph) => {
+            paragraph.inlines.insert(0, end);
+            paragraph.inlines.insert(0, start);
+        }
+        None => {
+            anchor.inlines.insert(0, end);
+            anchor.inlines.insert(0, start);
+        }
     }
 }
 
