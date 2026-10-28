@@ -89,7 +89,9 @@ pub(crate) fn plan(
             part_names.insert(face.part_name.clone());
             // The writer emits a face only when its bytes are supplied, so only
             // those occupy the slot.
-            if media.contains_key(&face.part_name) {
+            if media.contains_key(&face.part_name)
+                && crate::semantic::is_writable_part_name(&face.part_name, true)
+            {
                 taken.insert((font.name.clone(), slot_style(element)));
             }
         }

@@ -689,6 +689,7 @@ vMerge
 val
 validator
 var
+vello
 vendored
 verifier
 vertAlign

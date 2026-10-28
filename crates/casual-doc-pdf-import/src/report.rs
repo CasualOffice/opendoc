@@ -168,7 +168,8 @@ pub const READING_ORDER_INFERRED: &str = "pdf.import.reading_order_inferred";
 pub const TAG_STRUCTURE_IGNORED: &str = "pdf.import.tag_structure_ignored";
 /// Stroke-only text drawn filled.
 pub const TEXT_RENDER_MODE_DEGRADED: &str = "pdf.import.text_render_mode_degraded";
-/// Rotated text placed upright (text boxes cannot rotate yet, `docs/182` G-3).
+/// Rotated text imported in a frame turned by its angle (`docs/182` G-3).
+/// Mapped, not a loss: reported because the frame is the importer's choice.
 pub const TEXT_ROTATED: &str = "pdf.import.text_rotated";
 /// Opacity, soft masks and blend modes flattened to opaque normal paint.
 pub const TRANSPARENCY_FLATTENED: &str = "pdf.import.transparency_flattened";

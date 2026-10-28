@@ -248,10 +248,52 @@ fn media_extension(part_name: &str) -> String {
         .unwrap_or_else(|| "bin".to_owned())
 }
 
-/// The `word/`-relative target for a media relationship, e.g.
-/// `word/media/image1.png` -> `media/image1.png`.
-fn media_target(part_name: &str) -> &str {
-    part_name.strip_prefix("word/").unwrap_or(part_name)
+/// The target a relationship in a `word/` part's `_rels` writes for the
+/// package part `part_name`: `word/media/image1.png` -> `media/image1.png`, and
+/// a part anywhere else -> `../<part_name>`.
+///
+/// Every part whose relationships route through here lives directly in `word/`
+/// (`document.xml`, headers, footers, notes, `numbering.xml`, `fontTable.xml`),
+/// so a relative target resolves against `word/`. Stripping a `word/` prefix
+/// and otherwise writing the name as it stood was right only for parts INSIDE
+/// `word/`: a picture stored at `media/x.png` was written to the ZIP at
+/// `media/x.png` while its relationship said `media/x.png`, which resolves to
+/// `word/media/x.png` — a dangling reference the export reported as a clean
+/// save, and that only a round-trip census caught (`docs/182` §16.3). The name
+/// must already be a writable part name (`is_writable_part_name`).
+///
+/// Complexity: O(name).
+fn word_relative_target(part_name: &str) -> String {
+    match part_name.strip_prefix("word/") {
+        Some(inside) => inside.to_owned(),
+        None => format!("../{part_name}"),
+    }
+}
+
+/// Whether `part_name` can be written as a ZIP entry that a relationship can
+/// name and a reader resolves back to the same part (ECMA-376 Part 2 §6.2.2,
+/// in the subset this writer needs): non-empty segments, no `.`/`..` segment,
+/// no leading `/`, no backslash, and not a name the package's own machinery
+/// owns (`[Content_Types].xml`, any `_rels` part).
+///
+/// A binary part (a picture, an embedded face) is also refused when it ends in
+/// `.xml`: every part this writer GENERATES is XML, so a picture under such a
+/// name can collide with one, and `PartList::push` keeps the first of two
+/// entries under one name in silence.
+///
+/// Complexity: O(name).
+pub(crate) fn is_writable_part_name(part_name: &str, binary: bool) -> bool {
+    let lower = part_name.to_ascii_lowercase();
+    !part_name.is_empty()
+        && !part_name.starts_with('/')
+        && !part_name.contains('\\')
+        && part_name
+            .split('/')
+            .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+        && lower != "[content_types].xml"
+        && !lower.split('/').any(|segment| segment == "_rels")
+        && !lower.ends_with(".rels")
+        && !(binary && lower.ends_with(".xml"))
 }
 
 /// A package part beyond `document.xml` (fontTable, theme, styles, …): its part
@@ -1450,7 +1492,9 @@ pub fn export_package_with_options(
         );
         for font in &definitions.font_table {
             for (_, face) in font.embedded.faces() {
-                if let Some(bytes) = media.get(&face.part_name) {
+                if is_writable_part_name(&face.part_name, true)
+                    && let Some(bytes) = media.get(&face.part_name)
+                {
                     parts.push(face.part_name.clone(), bytes.clone());
                 }
             }
@@ -1506,7 +1550,16 @@ fn available_media(
 ) -> DefinitionMap<MediaId, MediaReference> {
     let mut available = DefinitionMap::default();
     for (id, reference) in definitions.media.iter() {
-        if media.contains_key(&reference.part_name) {
+        if !is_writable_part_name(&reference.part_name, true) {
+            // A name no relationship can address without it resolving to some
+            // other part (or that would shadow a generated part) is dropped
+            // with the same completeness as missing bytes, and named.
+            reporter.record_part(
+                "docx.export.media.invalid_part_name",
+                &reference.part_name,
+                Disposition::OmittedNotRetained,
+            );
+        } else if media.contains_key(&reference.part_name) {
             available.insert(*id, reference.clone());
         } else {
             // Charged to the PART: one part can be reached through several
@@ -2221,7 +2274,7 @@ fn rels_part_name(part_name: &str) -> String {
 ///
 /// # The target is relative to the part's own folder, and that is why it matches
 ///
-/// An embedded target is `media_target(part_name)`, which strips the leading
+/// An embedded target is `word_relative_target(part_name)`, relative to
 /// `word/`. Every part that calls this lives directly in `word/`, so its `_rels`
 /// companion is `word/_rels/<part>.rels` and resolves relative targets against
 /// `word/` — the same base `word/_rels/document.xml.rels` resolves against. A
@@ -2947,7 +3000,7 @@ fn watermark_shape<'a>(
                 image_rel_id: Some(reference.relationship_id.clone()),
                 image_rel: Some((
                     reference.relationship_id.clone(),
-                    media_target(&reference.part_name).to_owned(),
+                    word_relative_target(&reference.part_name),
                 )),
                 page_size: section.page_size,
             })
@@ -3357,6 +3410,14 @@ fn font_table_xml(
         // refused one whose slot a face holds, so slots never repeat.
         let mut embeds: Vec<(&'static str, &str, &str, bool, &str)> = Vec::new();
         for (name, face) in font.embedded.faces() {
+            if !is_writable_part_name(&face.part_name, true) {
+                reporter.record_part(
+                    "docx.export.embedded_font.invalid_part_name",
+                    &face.part_name,
+                    Disposition::OmittedNotRetained,
+                );
+                continue;
+            }
             if !media.contains_key(&face.part_name) {
                 reporter.record_part(
                     "docx.export.embedded_font.missing_bytes",
@@ -3448,7 +3509,7 @@ fn write_embeds(
         w.write_event(Event::Empty(child)).map_err(pkg)?;
         font_rels.push((
             (*relationship_id).to_owned(),
-            media_target(part_name).to_owned(),
+            word_relative_target(part_name),
         ));
     }
     Ok(())
@@ -4467,7 +4528,7 @@ fn numbering_xml(
         let relationship = format!("rIdPictureBullet{id}");
         own_media.push((
             relationship.clone(),
-            media_target(&reference.part_name).to_owned(),
+            word_relative_target(&reference.part_name),
         ));
         let mut bullet = start("w:numPicBullet");
         bullet.push_attribute(("w:numPicBulletId", id.to_string().as_str()));
@@ -6555,8 +6616,7 @@ fn write_drop_cap_frame(
 /// One embedded-object part relationship to emit in `document.xml.rels`:
 /// (relationship id, relationship type URI, `word/`-relative target, full
 /// package part name). The part name is carried alongside the target because the
-/// target alone cannot be turned back into it — `media_target` only strips a
-/// `word/` prefix when there is one — and the loss report has to name the part,
+/// target alone cannot be turned back into it without resolving `../` — and the loss report has to name the part,
 /// not the relationship's view of it.
 type EmbeddedRelEntry = (String, String, String, String);
 
@@ -6674,7 +6734,7 @@ fn part_media(
         .map(|reference| {
             (
                 reference.relationship_id.clone(),
-                media_target(&reference.part_name).to_owned(),
+                word_relative_target(&reference.part_name),
             )
         })
         .collect()
@@ -6863,7 +6923,7 @@ fn push_embedded_part(
         out.push((
             part.relationship_id.clone(),
             part.relationship_type.clone(),
-            media_target(&part.part_name).to_owned(),
+            word_relative_target(&part.part_name),
             part.part_name.clone(),
         ));
     }
@@ -9367,6 +9427,14 @@ fn write_text_box_body_properties(
     properties: &TextBoxBodyProperties,
 ) -> Result<(), ExportError> {
     let mut body = start("wps:bodyPr");
+    // `rot` and `vert` lead, in the schema's attribute order (`docs/182` G-3).
+    let rotation = properties.text_rotation.to_string();
+    if properties.text_rotation != 0 {
+        body.push_attribute(("rot", rotation.as_str()));
+    }
+    if properties.vertical_text != casual_doc_model::v1::TextBoxVerticalText::Horizontal {
+        body.push_attribute(("vert", properties.vertical_text.token()));
+    }
     let insets = properties.insets;
     let left = insets.left_emu.to_string();
     let top = insets.top_emu.to_string();

@@ -240,7 +240,18 @@ main document body.
 
 ### Compatibility boundary
 
-This slice does not implement text rotation/vertical writing, `anchorCtr`,
+Text rotation and vertical writing are built for FLOATING and GROUPED text
+boxes (`docs/182` §16b): `wps:bodyPr@rot` and `@vert` (every
+`ST_TextVerticalType` token retained) and a group child's `a:xfrm@rot` turn the
+text through one layer about the frame centre, with vertical lines wrapping at
+the frame's height and hit-testing mapped back through the turn. A lone
+floating text box whose shape is rotated or flipped is imported as a group of
+one so its `a:xfrm` survives. Not yet: an INLINE text box's `vert`/`rot` (laid
+out horizontally), the stacked `wordArtVert` readings and `eaVert`'s upright
+East Asian glyphs (both laid out as a plain quarter turn or horizontally), and
+VML `layout-flow`.
+
+This slice does not implement `anchorCtr`,
 columns inside a text body, preset text warp, exact vertical ellipsis generation,
 or automatic computation of a missing `normAutofit@fontScale`. Legacy VML
 `inset`, CSS positioning, and VML-specific overflow remain in the later VML

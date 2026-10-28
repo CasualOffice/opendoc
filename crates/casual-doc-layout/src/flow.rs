@@ -16334,6 +16334,7 @@ mod tests {
                 horizontal_overflow: TextBoxHorizontalOverflow::Clip,
                 vertical_overflow: TextBoxVerticalOverflow::Clip,
                 auto_fit: TextBoxAutoFit::None,
+                ..TextBoxBodyProperties::default()
             },
             blocks: inner.clone(),
         }));

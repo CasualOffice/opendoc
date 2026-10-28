@@ -70,6 +70,9 @@ impl SparseCanvas for CpuCanvas<'_> {
     fn set_stroke(&mut self, stroke: Stroke) {
         self.context.set_stroke(stroke);
     }
+    fn set_fill_rule(&mut self, rule: vello_common::peniko::Fill) {
+        self.context.set_fill_rule(rule);
+    }
     fn fill_path(&mut self, path: &BezPath) {
         self.context.fill_path(path);
     }
