@@ -14,6 +14,16 @@
 //! `pdf-import`) and `casual-doc-ai`'s `Session::open` (feature `pdf-import`,
 //! which `opendoc-mcp` enables) do this.
 //!
+//! # OCR is the host's
+//!
+//! [`PdfImportAdapter::new`] runs no OCR: a scanned page imports with its
+//! picture and `pdf.import.ocr_unavailable`. A host that holds models builds
+//! [`crate::PdfOcrOptions`] (for example `PdfOcrOptions::from_models` over a
+//! [`crate::PdfOcrModels`]) and registers [`PdfImportAdapter::with_ocr`]
+//! through [`enable_pdf_import_with_ocr`]. What read the pages, with the
+//! SHA-256 of every model, is in [`pdf_ocr_summary`] of the import's source
+//! envelope (PDFR-I8). Nothing here fetches a model.
+//!
 //! # What is retained
 //!
 //! With `retain_source`, the envelope holds the original bytes (shared with the
@@ -29,6 +39,7 @@
 use std::sync::Arc;
 
 use casual_doc_pdf_import::{ImportJob, PdfImport, PdfImportError, PdfModelOutcome, Progress};
+use casual_doc_pdf_import::{OcrOptions, OcrSummary};
 use casual_doc_pdf_import::{PdfReadLimits, probe_pdf};
 
 use crate::pdf_preserve::{Baseline, ORIGINAL_WRITTEN_BACK, preserve};
@@ -48,6 +59,16 @@ use crate::{
 struct PdfSourceState {
     original: Option<Arc<Vec<u8>>>,
     baseline: Option<Baseline>,
+    /// What OCR did and which models did it (no recognised text).
+    ocr: OcrSummary,
+}
+
+/// What OCR did during the import `source` came from, and the manifest of
+/// the provider that read its pages (provider, version, SHA-256 of every
+/// model): `None` when `source` is not a PDF import. O(1).
+#[must_use]
+pub fn pdf_ocr_summary(source: &SourceEnvelope) -> Option<&OcrSummary> {
+    source.state::<PdfSourceState>().map(|state| &state.ocr)
 }
 
 /// PDF import and export: [`PdfAdapter`]'s writer plus the fixed-layout
@@ -57,12 +78,22 @@ pub struct PdfImportAdapter {
     descriptor: FormatDescriptor,
     writer: PdfAdapter,
     limits: PdfReadLimits,
+    ocr: OcrOptions,
 }
 
 impl PdfImportAdapter {
-    /// An adapter admitting PDFs under `limits` (`docs/21` PDF table).
+    /// An adapter admitting PDFs under `limits` (`docs/21` PDF table), with
+    /// no OCR.
     #[must_use]
     pub fn new(limits: PdfReadLimits) -> Self {
+        Self::with_ocr(limits, OcrOptions::default())
+    }
+
+    /// An adapter that reads scanned pages and unrecoverable runs with the
+    /// host's OCR (`docs/182` §20a). `OcrOptions::default()` is
+    /// [`PdfImportAdapter::new`].
+    #[must_use]
+    pub fn with_ocr(limits: PdfReadLimits, ocr: OcrOptions) -> Self {
         let writer = PdfAdapter::default();
         let mut descriptor = FormatExporter::descriptor(&writer).clone();
         descriptor.can_import = true;
@@ -74,6 +105,7 @@ impl PdfImportAdapter {
             descriptor,
             writer,
             limits,
+            ocr,
         }
     }
 
@@ -99,7 +131,8 @@ impl PdfImportAdapter {
         bytes: &[u8],
         retain_source: bool,
     ) -> Result<PdfStagedImport, AdapterError> {
-        let job = ImportJob::begin(bytes.to_vec(), self.limits).map_err(adapter_error)?;
+        let job = ImportJob::begin_with_ocr(bytes.to_vec(), self.limits, self.ocr.clone())
+            .map_err(adapter_error)?;
         Ok(PdfStagedImport {
             job,
             retain_source,
@@ -205,6 +238,7 @@ fn artifact(imported: PdfImport, retain_source: bool, format: FormatId) -> Impor
             PdfSourceState {
                 baseline,
                 original: retain_source.then_some(imported.original),
+                ocr: imported.ocr,
             },
         ),
         report,
@@ -298,9 +332,24 @@ pub fn enable_pdf_import(
     registry: &mut FormatRegistry,
     limits: PdfReadLimits,
 ) -> Result<(), IoError> {
+    enable_pdf_import_with_ocr(registry, limits, OcrOptions::default())
+}
+
+/// [`enable_pdf_import`] with the host's OCR: scanned pages and runs whose
+/// Unicode is unrecoverable are read by `ocr`'s provider and merged
+/// native-first (`docs/182` §20).
+///
+/// # Errors
+///
+/// Never in practice: re-registration into a cleared slot cannot collide.
+pub fn enable_pdf_import_with_ocr(
+    registry: &mut FormatRegistry,
+    limits: PdfReadLimits,
+    ocr: OcrOptions,
+) -> Result<(), IoError> {
     let id = FormatId::new(formats::PDF).expect("built-in PDF format id is valid");
     registry.unregister(&id);
-    let adapter = Arc::new(PdfImportAdapter::new(limits));
+    let adapter = Arc::new(PdfImportAdapter::with_ocr(limits, ocr));
     registry.register_importer(adapter.clone())?;
     registry.register_exporter(adapter)
 }
@@ -329,6 +378,160 @@ mod tests {
             file_name_hint: Some("file.pdf"),
             mime_hint: None,
         })
+    }
+
+    /// A one-page image-only PDF: a white 8 x 8 grey picture over the whole
+    /// page, uncompressed. A scan with nothing native on it.
+    fn blank_scan() -> Vec<u8> {
+        let objects: [Vec<u8>; 5] = [
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>".to_vec(),
+            [
+                b"<< /Type /XObject /Subtype /Image /Width 8 /Height 8 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 64 >>\nstream\n".as_slice(),
+                &[255u8; 64],
+                b"\nendstream",
+            ]
+            .concat(),
+            {
+                let content = b"q 612 0 0 792 0 0 cm /Im0 Do Q";
+                [
+                    format!("<< /Length {} >>\nstream\n", content.len()).as_bytes(),
+                    content,
+                    b"\nendstream",
+                ]
+                .concat()
+            },
+        ];
+        let mut out = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (i, body) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+            out.extend_from_slice(body);
+            out.extend_from_slice(b"\nendobj\n");
+        }
+        let xref = out.len();
+        out.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+        );
+        for offset in offsets {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
+        out
+    }
+
+    /// Reads "Scanned" near the top left of whatever raster it is given; no
+    /// model.
+    struct Fake;
+
+    impl crate::pdf_ocr::OcrProvider for Fake {
+        fn manifest(&self) -> crate::pdf_ocr::ProviderManifest {
+            crate::pdf_ocr::ProviderManifest {
+                provider: "fake",
+                version: "test",
+                models: vec![("detection", "00".repeat(32))],
+                decoding: "fixed",
+                determinism: crate::pdf_ocr::Determinism::Exact,
+            }
+        }
+
+        fn recognize(
+            &self,
+            raster: &crate::pdf_ocr::Raster,
+            _limits: &crate::pdf_ocr::OcrLimits,
+            _interrupt: &dyn crate::pdf_ocr::Interrupt,
+        ) -> Result<crate::pdf_ocr::OcrPage, crate::pdf_ocr::OcrError> {
+            let (w, h) = (raster.width() as f32, raster.height() as f32);
+            let bounds = crate::pdf_ocr::OcrBox {
+                x0: w * 0.1,
+                y0: h * 0.1,
+                x1: w * 0.4,
+                y1: h * 0.12,
+            };
+            let word = crate::pdf_ocr::OcrWord {
+                text: "Scanned".to_owned(),
+                bounds,
+                confidence: 0.99,
+            };
+            Ok(crate::pdf_ocr::OcrPage {
+                lines: vec![crate::pdf_ocr::OcrLine::upright(vec![word], bounds)],
+                ..crate::pdf_ocr::OcrPage::default()
+            })
+        }
+    }
+
+    fn import_text(registry: &FormatRegistry, bytes: &[u8]) -> (String, ImportArtifact) {
+        let artifact = registry
+            .import(
+                DetectionRequest {
+                    bytes,
+                    selection: FormatSelection::Auto,
+                    file_name_hint: Some("scan.pdf"),
+                    mime_hint: None,
+                },
+                false,
+            )
+            .expect("imports");
+        (format!("{:?}", artifact.document.body()), artifact)
+    }
+
+    #[test]
+    fn a_host_with_ocr_reads_a_scan_and_the_import_records_what_read_it() {
+        let scan = blank_scan();
+        let plain = builtin_registry_with_pdf_import();
+        let (text, artifact) = import_text(&plain, &scan);
+        assert!(!text.contains("Scanned"));
+        assert!(
+            artifact
+                .report
+                .entries
+                .iter()
+                .any(|e| e.feature == "pdf.import.ocr_unavailable")
+        );
+        assert_eq!(
+            pdf_ocr_summary(&artifact.source).map(|s| s.provider.is_some()),
+            Some(false)
+        );
+
+        let mut registry = builtin_registry();
+        enable_pdf_import_with_ocr(
+            &mut registry,
+            PdfReadLimits::default(),
+            crate::PdfOcrOptions {
+                provider: Some(Arc::new(Fake)),
+                ..crate::PdfOcrOptions::default()
+            },
+        )
+        .unwrap();
+        let (text, artifact) = import_text(&registry, &scan);
+        assert!(
+            text.contains("Scanned"),
+            "the scan's text is in the document"
+        );
+        let features: Vec<&str> = artifact
+            .report
+            .entries
+            .iter()
+            .map(|e| e.feature.as_str())
+            .collect();
+        assert!(features.contains(&"pdf.import.ocr_applied"), "{features:?}");
+        assert!(
+            !features.contains(&"pdf.import.ocr_unavailable"),
+            "{features:?}"
+        );
+        let summary = pdf_ocr_summary(&artifact.source).expect("a PDF import");
+        let manifest = summary.provider.as_ref().expect("the provider is recorded");
+        assert_eq!(manifest.provider, "fake");
+        assert_eq!(manifest.models, vec![("detection", "00".repeat(32))]);
+        assert_eq!(summary.words_kept, 1);
     }
 
     #[test]

@@ -40,6 +40,9 @@ pdf-import = [
     "dep:casual-doc-pdf-read",
     "dep:casual-doc-diff",
 ]
+# The heron layout model (docs/182 P6) for PDF import, when a host supplies
+# one in its OCR models. Adds no crate: rten is already in with OCR.
+pdf-layout = ["pdf-import", "casual-doc-pdf-import/layout-heron"]
 
 [dev-dependencies]
 # The byte-preserving PDF save's guards render the saved file with a renderer

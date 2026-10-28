@@ -176,7 +176,29 @@ pub struct ViewerOptions {
     /// Faces registered before the first layout, so a host that already knows
     /// its fonts pays for one pagination instead of two.
     pub fonts: Vec<Vec<u8>>,
+    /// OCR for scanned PDF pages (`docs/182` §20a); `None` (the default)
+    /// runs none and a scan opens as its picture, reported
+    /// `pdf.import.ocr_unavailable`.
+    #[cfg(feature = "pdf-import")]
+    pub pdf_ocr: Option<PdfOcr>,
 }
+
+/// The host's PDF OCR configuration, shared: two options are equal when
+/// they hold the same configuration (the same `Arc`), since a provider has
+/// no value equality.
+#[cfg(feature = "pdf-import")]
+#[derive(Clone, Debug)]
+pub struct PdfOcr(pub std::sync::Arc<casual_doc_io::PdfOcrOptions>);
+
+#[cfg(feature = "pdf-import")]
+impl PartialEq for PdfOcr {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+#[cfg(feature = "pdf-import")]
+impl Eq for PdfOcr {}
 
 impl ViewerOptions {
     /// The options with OS font fallback switched on or off.
@@ -190,6 +212,16 @@ impl ViewerOptions {
     #[must_use]
     pub fn with_font(mut self, bytes: Vec<u8>) -> Self {
         self.fonts.push(bytes);
+        self
+    }
+
+    /// The options with the host's OCR for scanned PDF pages: build `ocr`
+    /// with `PdfOcrOptions::from_models` over the host's models, or with
+    /// the host's own provider.
+    #[cfg(feature = "pdf-import")]
+    #[must_use]
+    pub fn with_pdf_ocr(mut self, ocr: casual_doc_io::PdfOcrOptions) -> Self {
+        self.pdf_ocr = Some(PdfOcr(std::sync::Arc::new(ocr)));
         self
     }
 }
@@ -253,7 +285,7 @@ impl ViewerDocument {
     ///
     /// As [`open`](Self::open).
     pub fn open_with(bytes: &[u8], options: &ViewerOptions) -> Result<Self, ViewerError> {
-        let (document, media) = import(bytes)?;
+        let (document, media) = import(bytes, options)?;
         Ok(Self::from_document(document, media.0, options))
     }
 
@@ -786,7 +818,7 @@ fn note_first_page(fragment: &BlockFragment, page: usize, first: &mut HashMap<No
 /// DOCX only: the importer directly, with the package's pictures collected for
 /// the renderer.
 #[cfg(not(feature = "formats"))]
-fn import(bytes: &[u8]) -> Result<(Document, Media), ViewerError> {
+fn import(bytes: &[u8], _options: &ViewerOptions) -> Result<(Document, Media), ViewerError> {
     use casual_doc_import::{ImportConfig, ImportMode, import_package};
     use casual_doc_ooxml::DocxPackage;
 
@@ -812,7 +844,8 @@ fn import(bytes: &[u8]) -> Result<(Document, Media), ViewerError> {
 
 /// Every format the editor opens, detected through the io registry.
 #[cfg(feature = "formats")]
-fn import(bytes: &[u8]) -> Result<(Document, Media), ViewerError> {
+#[cfg_attr(not(feature = "pdf-import"), allow(unused_variables))]
+fn import(bytes: &[u8], options: &ViewerOptions) -> Result<(Document, Media), ViewerError> {
     use casual_doc_io::{
         DetectionRequest, FormatSelection, PlainTextLimits, builtin_registry_with_limits,
     };
@@ -820,8 +853,16 @@ fn import(bytes: &[u8]) -> Result<(Document, Media), ViewerError> {
     let mut registry = builtin_registry_with_limits(package_limits(), PlainTextLimits::default());
     // PDF opens only when this build asked for it (`docs/182` P1).
     #[cfg(feature = "pdf-import")]
-    casual_doc_io::enable_pdf_import(&mut registry, casual_doc_io::PdfReadLimits::default())
-        .map_err(|e| ViewerError::Open(e.to_string()))?;
+    casual_doc_io::enable_pdf_import_with_ocr(
+        &mut registry,
+        casual_doc_io::PdfReadLimits::default(),
+        options
+            .pdf_ocr
+            .as_ref()
+            .map(|ocr| (*ocr.0).clone())
+            .unwrap_or_default(),
+    )
+    .map_err(|e| ViewerError::Open(e.to_string()))?;
     let imported = registry
         .import(
             DetectionRequest {

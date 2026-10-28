@@ -46,6 +46,35 @@ pub struct Options {
     pub toolsets: Option<Vec<Family>>,
     /// `--read-only` was given (the profile is then already `read`).
     pub read_only: bool,
+    /// OCR for scanned PDF pages, built at launch from `--ocr-models`
+    /// (`docs/178` §5.6); `None` reports `pdf.import.ocr_unavailable`.
+    pub pdf_ocr: Option<std::sync::Arc<casual_doc_ai::PdfOcrOptions>>,
+}
+
+/// What OCR did to a PDF as it opened, for `open_document`'s `ocr` field:
+/// the provider and the SHA-256 of every model it holds (`null` when the
+/// server has no `--ocr-models`), and counts. Never recognised text.
+fn ocr_json(summary: &casual_doc_ai::PdfOcrSummary) -> Value {
+    let manifest = |m: &casual_doc_ai::pdf_ocr::ProviderManifest| {
+        json!({
+            "provider": m.provider,
+            "version": m.version,
+            "models": m
+                .models
+                .iter()
+                .map(|(role, sha256)| json!({ "role": role, "sha256": sha256 }))
+                .collect::<Vec<_>>(),
+        })
+    };
+    json!({
+        "provider": summary.provider.as_ref().map(manifest),
+        "layout": summary.layout.as_ref().map(manifest),
+        "regionsRecognized": summary.regions_recognized,
+        "regionsSkipped": summary.regions_skipped,
+        "wordsKept": summary.words_kept,
+        "linesTurned": summary.lines_turned,
+        "linesCovered": summary.lines_covered,
+    })
 }
 
 /// The tools that build an edit themselves, and the op each one builds. A tool
@@ -698,7 +727,13 @@ impl Server {
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                let mut session = Session::open(&bytes, &file_name, self.config())?;
+                let mut session = match &self.options.pdf_ocr {
+                    Some(ocr) => {
+                        Session::open_with_pdf_ocr(&bytes, &file_name, self.config(), ocr)?
+                    }
+                    None => Session::open(&bytes, &file_name, self.config())?,
+                };
+                let ocr = session.pdf_ocr_summary().map(ocr_json);
                 let pages = session.page_count();
                 let handle = self.mint_handle();
                 let result = json!({
@@ -712,6 +747,10 @@ impl Server {
                     "profile": self.options.profile,
                     "author": self.options.author,
                 });
+                let mut result = result;
+                if let Some(ocr) = ocr {
+                    result["ocr"] = ocr;
+                }
                 self.documents.insert(handle, Open { session, path });
                 plain(result)
             }
@@ -1107,5 +1146,169 @@ fn summary(tool: &str, value: &Value) -> String {
             value["revision"]
         ),
         _ => format!("{tool} succeeded; see structuredContent."),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A one-page image-only PDF: a white 8 x 8 grey picture over the whole
+    /// page, uncompressed. A scan with nothing native on it.
+    fn blank_scan() -> Vec<u8> {
+        let objects: [Vec<u8>; 5] = [
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>".to_vec(),
+            [
+                b"<< /Type /XObject /Subtype /Image /Width 8 /Height 8 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 64 >>\nstream\n".as_slice(),
+                &[255u8; 64],
+                b"\nendstream",
+            ]
+            .concat(),
+            {
+                let content = b"q 612 0 0 792 0 0 cm /Im0 Do Q";
+                [
+                    format!("<< /Length {} >>\nstream\n", content.len()).as_bytes(),
+                    content,
+                    b"\nendstream",
+                ]
+                .concat()
+            },
+        ];
+        let mut out = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (i, body) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+            out.extend_from_slice(body);
+            out.extend_from_slice(b"\nendobj\n");
+        }
+        let xref = out.len();
+        out.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+        );
+        for offset in offsets {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
+        out
+    }
+
+    /// Reads "Scanned" near the top left of whatever raster it is given; no
+    /// model.
+    struct Fake;
+
+    impl casual_doc_ai::pdf_ocr::OcrProvider for Fake {
+        fn manifest(&self) -> casual_doc_ai::pdf_ocr::ProviderManifest {
+            casual_doc_ai::pdf_ocr::ProviderManifest {
+                provider: "fake",
+                version: "test",
+                models: vec![("detection", "00".repeat(32))],
+                decoding: "fixed",
+                determinism: casual_doc_ai::pdf_ocr::Determinism::Exact,
+            }
+        }
+
+        fn recognize(
+            &self,
+            raster: &casual_doc_ai::pdf_ocr::Raster,
+            _limits: &casual_doc_ai::pdf_ocr::OcrLimits,
+            _interrupt: &dyn casual_doc_ai::pdf_ocr::Interrupt,
+        ) -> Result<casual_doc_ai::pdf_ocr::OcrPage, casual_doc_ai::pdf_ocr::OcrError> {
+            let (w, h) = (raster.width() as f32, raster.height() as f32);
+            let bounds = casual_doc_ai::pdf_ocr::OcrBox {
+                x0: w * 0.1,
+                y0: h * 0.1,
+                x1: w * 0.4,
+                y1: h * 0.12,
+            };
+            let word = casual_doc_ai::pdf_ocr::OcrWord {
+                text: "Scanned".to_owned(),
+                bounds,
+                confidence: 0.99,
+            };
+            Ok(casual_doc_ai::pdf_ocr::OcrPage {
+                lines: vec![casual_doc_ai::pdf_ocr::OcrLine::upright(vec![word], bounds)],
+                ..casual_doc_ai::pdf_ocr::OcrPage::default()
+            })
+        }
+    }
+
+    fn options(
+        root: &std::path::Path,
+        pdf_ocr: Option<std::sync::Arc<casual_doc_ai::PdfOcrOptions>>,
+    ) -> Options {
+        Options {
+            roots: Roots::new(&[root.to_path_buf()], &[]).unwrap(),
+            profile: Profile::Read,
+            author: "test".to_owned(),
+            allow_overwrite: false,
+            toolsets: None,
+            read_only: true,
+            pdf_ocr,
+        }
+    }
+
+    fn args(value: Value) -> Map<String, Value> {
+        value.as_object().cloned().unwrap()
+    }
+
+    /// The server's OCR reaches `open_document`: a scan opens with its text,
+    /// searchable, and the result names the provider and its models. With no
+    /// OCR the same scan reports `ocr_unavailable`. The provider is a fake,
+    /// so CI needs no model and no network.
+    #[test]
+    fn a_server_with_ocr_opens_a_scan_with_its_text_and_says_what_read_it() {
+        let root = std::env::temp_dir().join(format!("opendoc-mcp-ocr-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("scan.pdf"), blank_scan()).unwrap();
+
+        let mut plain = Server::new(options(&root, None));
+        let (opened, _) = plain
+            .dispatch("open_document", &args(json!({ "path": "scan.pdf" })))
+            .unwrap();
+        assert!(
+            opened["importSummary"]
+                .to_string()
+                .contains("pdf.import.ocr_unavailable"),
+            "{opened}"
+        );
+        assert_eq!(opened["ocr"]["provider"], Value::Null, "{opened}");
+
+        let ocr = casual_doc_ai::PdfOcrOptions {
+            provider: Some(std::sync::Arc::new(Fake)),
+            ..casual_doc_ai::PdfOcrOptions::default()
+        };
+        let mut server = Server::new(options(&root, Some(std::sync::Arc::new(ocr))));
+        let (opened, _) = server
+            .dispatch("open_document", &args(json!({ "path": "scan.pdf" })))
+            .unwrap();
+        let summary = opened["importSummary"].to_string();
+        assert!(!summary.contains("pdf.import.ocr_unavailable"), "{opened}");
+        assert_eq!(opened["ocr"]["regionsRecognized"], 1, "{opened}");
+        assert_eq!(opened["ocr"]["provider"]["provider"], "fake", "{opened}");
+        assert_eq!(opened["ocr"]["provider"]["models"][0]["role"], "detection");
+        assert_eq!(opened["ocr"]["wordsKept"], 1);
+        let (hits, _) = server
+            .dispatch(
+                "search",
+                &args(
+                    json!({ "document": opened["document"], "query": "Scanned", "surface": "all" }),
+                ),
+            )
+            .unwrap();
+        assert!(
+            hits["hits"][0]["node"].is_string(),
+            "the scan's text is searchable: {hits}"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

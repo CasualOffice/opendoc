@@ -1309,3 +1309,35 @@ fn a_skewed_scan_reads_as_well_as_a_straight_one() {
     }
     assert!(imported.ocr.lines_turned > 0);
 }
+
+/// The host path end to end: the model directory `fetch-test-models.sh`
+/// writes (the parent of `OPENDOC_PADDLE_MODELS`), read by
+/// `OcrModels::from_dir`, built into options by `OcrOptions::from_models`,
+/// and the import records every model's identity.
+#[test]
+fn a_model_directory_builds_the_providers_and_the_import_records_their_identity() {
+    let Some(paddle) = std::env::var_os("OPENDOC_PADDLE_MODELS") else {
+        eprintln!("skipped: OPENDOC_PADDLE_MODELS is not set");
+        return;
+    };
+    let dir = std::path::PathBuf::from(paddle)
+        .parent()
+        .expect("paddle/ sits in the model directory")
+        .to_path_buf();
+    let models = casual_doc_pdf_import::OcrModels::from_dir(&dir).expect("the directory reads");
+    let options = OcrOptions::from_models(&models).expect("the models load");
+    let source = fixture("synthetic-prose.pdf");
+    let native = import_pdf(source.clone(), PdfReadLimits::default()).unwrap();
+    let scan = scan_pdf(&[render_grey(&source, 0, 200.0)], "");
+    let imported = import_pdf_with_ocr(scan, PdfReadLimits::default(), options).unwrap();
+    let score = similarity(&page_text(&native, 0), &all_frames(&imported, 0).0);
+    assert!(score >= SCAN_SIMILARITY, "similarity {score:.4}");
+    let manifest = imported.ocr.provider.expect("the provider is recorded");
+    let roles: Vec<&str> = manifest.models.iter().map(|(role, _)| *role).collect();
+    eprintln!("packs {:?}, roles {roles:?}", models.recognition_names());
+    assert_eq!(roles[0], "detection");
+    assert!(roles.contains(&"recognition") && roles.contains(&"dictionary"));
+    assert_eq!(roles.contains(&"orientation"), models.has_orientation());
+    assert!(manifest.models.iter().all(|(_, sha)| sha.len() == 64));
+    assert_eq!(imported.ocr.layout.is_some(), models.has_layout());
+}

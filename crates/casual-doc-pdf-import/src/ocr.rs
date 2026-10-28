@@ -192,6 +192,34 @@ impl Default for OcrOptions {
     }
 }
 
+impl OcrOptions {
+    /// The default options with PP-OCRv5 over the host's `models` (with its
+    /// orientation classifier when supplied) and, when this build has the
+    /// `layout-heron` feature and the models include one, the heron layout
+    /// provider. A layout model in a build without that feature is not
+    /// loaded: [`OcrSummary::layout`] then stays `None`. O(model bytes).
+    ///
+    /// # Errors
+    ///
+    /// [`OcrError::Model`] when a model does not load.
+    #[cfg(feature = "paddle")]
+    pub fn from_models(models: &casual_doc_ocr::OcrModels) -> Result<Self, OcrError> {
+        let provider: Arc<dyn OcrProvider> = Arc::new(models.recognizer()?);
+        #[cfg(feature = "layout-heron")]
+        let layout: Option<Arc<dyn LayoutProvider>> = match models.layout() {
+            Some(heron) => Some(Arc::new(heron?)),
+            None => None,
+        };
+        #[cfg(not(feature = "layout-heron"))]
+        let layout: Option<Arc<dyn LayoutProvider>> = None;
+        Ok(Self {
+            provider: Some(provider),
+            layout,
+            ..Self::default()
+        })
+    }
+}
+
 impl fmt::Debug for OcrOptions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OcrOptions")

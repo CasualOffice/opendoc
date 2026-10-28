@@ -43,6 +43,15 @@ use casual_doc_model::v1::Document;
 use casual_doc_pdf_read::PdfSource;
 pub use casual_doc_pdf_read::{PdfReadError, PdfReadLimits, probe_pdf};
 
+/// The OCR engine itself, so a host can implement its own
+/// [`casual_doc_ocr::OcrProvider`] without naming the crate.
+pub use casual_doc_ocr;
+/// The OCR engine's host-facing types, so a host reaches the model set and
+/// the provider seam through this crate.
+pub use casual_doc_ocr::{
+    Determinism as OcrDeterminism, OcrModels, OcrModelsError, OcrProvider, ProviderManifest,
+    RecognitionModel,
+};
 pub use ocr::{OcrOptions, OcrSummary, OcrTextPlacement, PageClass, PageLayout, ScanBehindText};
 pub use report::{PdfFinding, PdfImportReport, PdfModelOutcome};
 
