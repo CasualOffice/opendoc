@@ -4611,7 +4611,7 @@ percent. A dense page costs 26 ms native and 44 ms in wasm at 100 %, and 124 ms 
 
 ## ADR-075 — Every feature reaches agents through one capability registry, and an unclassified feature does not compile
 
-**Status:** Proposed 2026-10-28, awaiting owner review. **Row:** `docs/109` RM-48.
+**Status:** Proposed 2026-10-28, awaiting owner review; built in #897 (owner decisions of 2026-10-28 in `docs/181`: complete it in one PR, no `rmcp`, generated JSON Schema and TypeScript now, Python later, `rewrite_block` and the private preview built). **Row:** `docs/109` RM-48.
 **Design:** `docs/181`. **Refines:** ADR-072 (its "one schema" rule and its closed
 edit-plan vocabulary). **Builds on:** ADR-030 (I1–I4), `docs/147`, A1 (`casual-doc-review`).
 **Owner request, 2026-10-28:** "MCP complete planning and architecture and pattern so

@@ -160,6 +160,7 @@ OnlyOffice
 OpenDoc
 OpenDocument
 OpenType
+PAGEREF
 PDF
 PDFR
 PDFium
@@ -204,7 +205,6 @@ SHA
 SIL
 SVG
 SaaS
-Schemas
 Sdt
 ShareDB
 SharePoint

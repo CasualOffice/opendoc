@@ -1,6 +1,6 @@
 # 181 — One capability registry: every feature inherits its AI and MCP exposure
 
-**Status:** Design, proposed 2026-10-28. R0 and the tables step of R1 are built; what is and is not is in §12.
+**Status:** Built 2026-10-29 (PR #897): R0–R2, the generated front doors of R3/R4 that the owner chose, `rewrite_block` and the private preview mode. §12 says what is built, what is not, and why. The decision itself (ADR-075) awaits the owner's acceptance with the PR.
 **Decides:** ADR-075 (proposed). **Row:** `docs/109` RM-48.
 **Refines:** `178` and ADR-072 (§3 rule 2 "one schema", §4.3 rule 3 "the vocabulary is
 closed", and prerequisite A4). **Builds on:** `45` and ADR-030 (I1 to I4), `147` (transactions
@@ -364,11 +364,55 @@ ratchet keeping the direction one-way.
 - Not verified from a primary source, and not load-bearing here: the GitHub dynamic-toolsets
   meta-tool names; tool-count accuracy cliffs quoted in secondary posts.
 
-## 11. What the design change was
+## 11. What the first change was
 
 Documentation only: this document, ADR-075 (proposed) and `docs/109` RM-48.
 
-## 12. Built, 2026-10-28 (R0 and R1 step 1)
+## 12. Built
+
+### Where it stands (2026-10-29)
+
+Counts are not repeated here: the registry is `casual_doc_command::COMMANDS`, its vocabulary
+version is `schema::VOCABULARY_VERSION`, and the two ratchets are `coverage::NOT_EXPOSED_CEILING`
+(engine operations no command emits) and `registry::UI_NOT_EXPOSED_CEILING` (editor commands
+with no agent twin). `webapp/generated/edit-vocabulary.md` is the generated table of every
+command, and a test fails when it is stale.
+
+- **The pattern is in force.** A new engine operation does not compile until `coverage.rs`
+  classifies it; a new model node does not compile until the read projection classifies it; a
+  new editor command fails `command_registry_parity` until it has an agent twin or a reason; a
+  command that emits an undeclared operation is refused at the AI choke point; every
+  trackable command must round-trip as a suggestion under a real suggest-only profile (G5);
+  every untracked example must apply, save and reopen; and editor/agent lowerings are compared
+  per family (G7). Adding a feature for agents is one `Edit` variant, one `COMMANDS` entry,
+  one shared lowering and one `apply_edit` arm; the guards name whatever is missing.
+- **Families shared by the editor and agents:** tables, text, paragraph, styles, lists,
+  links, fields, objects, notes, sections, headers and footers, charts, and references
+  (contents, captions, cross-references), plus `rewrite_block`.
+- **Surfaces:** body, headers, footers, footnotes, endnotes, text boxes and comments.
+- **Front doors:** MCP (with `list_edit_kinds`, `describe_edit_kind`, schema resources,
+  `--toolsets`, `--read-only`), generated JSON Schema and TypeScript types, and the editor's
+  `editor.ai` with its private preview.
+- **Deviation from §2.1, deliberate:** the registry is a `const` table beside a typed,
+  `JsonSchema`-deriving `Edit` enum, held equal by a test, rather than a `Command` trait and a
+  generating macro. It gives the same guarantees (exhaustive, generated, enforced) with
+  ordinary Rust, and nothing a trait would add has been needed.
+
+**Not built, and why.**
+
+- *By owner decision (2026-10-28):* the Python package (later PR); `rmcp` (kept hand-rolled);
+  the official conformance suite as a CI job (needs the owner's approval; it runs locally, see
+  "Lane generation").
+- *No editor gesture to share:* removing a field or a field range, inserting an equation or a
+  content control, inserting shapes and text boxes and arranging objects, removing a note or a
+  header/footer body, chart data editing beyond sample data.
+- *Policy:* document-wide settings and protection are a person's decision.
+- *Needs model or engine work first:* character-style application (no `FormatDelta` field
+  for it), paragraph-number cross-references (list-number resolution), splitting a cell into
+  a grid, whole-table properties, tracked table structure (`178` Q11).
+- `178` M3 (HTTP/OAuth), M4 (WebMCP) and M5 (an agent in a room) stay as `178` plans them.
+
+### R0 and R1 step 1 (2026-10-28)
 
 **Built.**
 
@@ -406,15 +450,8 @@ Documentation only: this document, ADR-075 (proposed) and `docs/109` RM-48.
 | G2 inlines exhaustive | Delete the `Math` arm | `E0004` in `text.rs` |
 | G6 one mutation path | A second `Transaction::reserve(` in `plan.rs` | `left: ["session.rs", "plan.rs"]` |
 
-**Not built yet, and where it goes.**
-
-- The registry is a `const` table, not yet the `Command` trait of §2.1. The serde `Edit`
-  enum and its lowerings stay in `casual-doc-ai/src/plan.rs`; a test holds them to the
-  registry (every registry example parses as its own `op`). The trait and the macro that
-  generates the enum arrive with the next family moved in.
-- `UI_COMMANDS` and G3 (editor command ids ⇔ registry), G4 (generated schemas), G5 (suggest
-  round-trip over every command) and G7 beyond tables: R3 and later R1 steps.
-- The anchor resolver has not moved down; surfaces (R2) are not built.
+What this first step left open was built by the lanes below; "Where it stands" above is
+the current account.
 
 ### Lane surfaces
 

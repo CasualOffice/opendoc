@@ -787,12 +787,14 @@ re-minted still differs, so ADR-052's identity convention is unchanged.
   supported (no regex dependency), and case folding is ASCII-only.
 - Paragraphs holding an equation, a note reference or a preview-less embedded object are
   refused for edits (`unsupported-content`): the engine's two offset spaces disagree there.
-- Table structure (`table_insert_row`/`table_delete_row`) is direct-only (Q11); `insert_table`
-  and column edits are not in vocabulary version 1.
-- Schemas are hand-written in `tools/opendoc-mcp/src/catalog.rs`; A4 (generated schemas and
-  the staleness guard) is not built. Resource subscriptions, the tasks extension,
-  elicitation, Streamable HTTP and OAuth (M3), WebMCP (M4), rooms (M5), and the Python and
-  JavaScript bindings are not built.
+- Table structure is direct-only until tracked table structure is modelled (Q11). The edit
+  vocabulary now grows through the capability registry (`docs/181`): every command, its
+  trackability and its reason are in `webapp/generated/edit-vocabulary.md`.
+- A4 is built (`docs/181` G4): schemas are generated from the registry's edit types and a
+  staleness check fails CI. The editor's in-page assistant (`editor.ai`, with a private
+  preview) is built (`docs/181` §4.4); generated TypeScript types exist. Not built:
+  resource subscriptions, the tasks extension, elicitation, Streamable HTTP and OAuth (M3),
+  WebMCP (M4), rooms (M5), and the Python package (a later PR, owner decision 2026-10-28).
 - The preview does not compute whether a plan changes the compatibility report; it says so.
 - `get_styles` reports what each style declares, not the cascaded effective formatting.
 - `undo_change` applies the log's exact inverse of the latest change without re-judging it
