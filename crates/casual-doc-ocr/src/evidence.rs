@@ -61,10 +61,48 @@ pub struct OcrLine {
     /// The line's box: horizontally what was read, vertically the ink's
     /// extent inside the detected box ([`crate::Raster::ink_rows`]), so its
     /// height is ascender to descender whatever the detector's padding.
+    ///
+    /// For a turned line (`rotation_degrees` not zero) this box and its
+    /// words' boxes are in the line's **upright frame**: the raster turned
+    /// by `-rotation_degrees` about `pivot`, where the line reads left to
+    /// right. [`OcrLine::to_raster`] maps a point of that frame back.
     pub bounds: OcrBox,
+    /// Clockwise turn of the line's baseline on the raster, in degrees, in
+    /// the raster's y-down frame: 0 for an axis-aligned line, the scan's skew
+    /// for a skewed one, plus 180 when the orientation classifier found the
+    /// line upside down.
+    pub rotation_degrees: f32,
+    /// The raster point the upright frame is turned about (the detected
+    /// box's centre). Ignored when `rotation_degrees` is zero.
+    pub pivot: [f32; 2],
 }
 
 impl OcrLine {
+    /// An axis-aligned line: no turn.
+    #[must_use]
+    pub fn upright(words: Vec<OcrWord>, bounds: OcrBox) -> Self {
+        Self {
+            words,
+            bounds,
+            rotation_degrees: 0.0,
+            pivot: [0.0, 0.0],
+        }
+    }
+
+    /// Maps a point of the line's upright frame to the raster. O(1).
+    #[must_use]
+    pub fn to_raster(&self, x: f32, y: f32) -> (f32, f32) {
+        if self.rotation_degrees == 0.0 {
+            return (x, y);
+        }
+        let (sin, cos) = self.rotation_degrees.to_radians().sin_cos();
+        let (dx, dy) = (x - self.pivot[0], y - self.pivot[1]);
+        (
+            self.pivot[0] + dx * cos - dy * sin,
+            self.pivot[1] + dx * sin + dy * cos,
+        )
+    }
+
     /// The words joined by single spaces.
     #[must_use]
     pub fn text(&self) -> String {
@@ -98,6 +136,11 @@ pub struct OcrPage {
     pub lines_skipped: u32,
     /// Whether the time budget stopped recognition (the result is partial).
     pub out_of_time: bool,
+    /// The skew the provider estimated for the raster, clockwise degrees
+    /// (the median turn of its elongated lines); zero when it estimated none
+    /// or the raster is straight. Each line's `rotation_degrees` already
+    /// carries it.
+    pub skew_degrees: f32,
 }
 
 /// How far identical output is promised (PDFR-I8: declared, not assumed).

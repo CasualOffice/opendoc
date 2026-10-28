@@ -384,6 +384,22 @@ fn session_registry() -> casual_doc_io::FormatRegistry {
     registry
 }
 
+/// [`session_registry`] whose PDF import reads scans with the host's OCR.
+#[cfg(feature = "pdf-import")]
+fn session_registry_with_pdf_ocr(
+    ocr: &casual_doc_io::PdfOcrOptions,
+) -> casual_doc_io::FormatRegistry {
+    let mut registry =
+        builtin_registry_with_limits(PackageLimits::default(), PlainTextLimits::default());
+    casual_doc_io::enable_pdf_import_with_ocr(
+        &mut registry,
+        casual_doc_io::PdfReadLimits::default(),
+        ocr.clone(),
+    )
+    .expect("re-registering PDF into a cleared slot cannot collide");
+    registry
+}
+
 impl Session {
     /// Opens untrusted bytes. `name` is the file name, used only as a format
     /// hint and a label. **O(document)**: one import walk.
@@ -394,6 +410,45 @@ impl Session {
     /// admits the bytes (a hostile package is refused by the importer's own
     /// limits here).
     pub fn open(bytes: &[u8], name: &str, config: SessionConfig) -> AiResult<Self> {
+        Self::open_through(&session_registry(), bytes, name, config)
+    }
+
+    /// [`Session::open`] with the host's OCR for scanned PDF pages
+    /// (`docs/182` §20a): a scan opens with its text instead of
+    /// `pdf.import.ocr_unavailable`. Other formats open exactly as with
+    /// [`Session::open`]. **O(document)** plus the provider's work, bounded
+    /// by `ocr`'s budgets.
+    ///
+    /// # Errors
+    ///
+    /// As [`Session::open`].
+    #[cfg(feature = "pdf-import")]
+    pub fn open_with_pdf_ocr(
+        bytes: &[u8],
+        name: &str,
+        config: SessionConfig,
+        ocr: &casual_doc_io::PdfOcrOptions,
+    ) -> AiResult<Self> {
+        Self::open_through(&session_registry_with_pdf_ocr(ocr), bytes, name, config)
+    }
+
+    /// What OCR did when this session's PDF was imported, and the manifest of
+    /// the provider that read it (SHA-256 of every model): `None` for a
+    /// session that did not open a PDF. O(1).
+    #[cfg(feature = "pdf-import")]
+    #[must_use]
+    pub fn pdf_ocr_summary(&self) -> Option<&casual_doc_io::PdfOcrSummary> {
+        self.source
+            .as_ref()
+            .and_then(casual_doc_io::pdf_ocr_summary)
+    }
+
+    fn open_through(
+        registry: &casual_doc_io::FormatRegistry,
+        bytes: &[u8],
+        name: &str,
+        config: SessionConfig,
+    ) -> AiResult<Self> {
         if bytes.len() > config.limits.max_file_bytes {
             return Err(AiError::new(
                 "over-limit",
@@ -403,7 +458,6 @@ impl Session {
                 ),
             ));
         }
-        let registry = session_registry();
         let imported = registry
             .import(
                 DetectionRequest {

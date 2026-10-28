@@ -60,10 +60,24 @@ pub use report::{
 pub use report::{RecoveryReport, RepairSeverity, SourceRepair};
 pub use rtf::RtfAdapter;
 // Own lines, kept out of any sorted block (the repo's parallel-PR rule).
+/// The OCR engine behind PDF import: provider traits, evidence, rasters and
+/// the model set, for a host that implements its own provider.
+#[cfg(feature = "pdf-import")]
+pub use casual_doc_pdf_import::casual_doc_ocr as pdf_ocr;
+/// The host's OCR for PDF import (`docs/182` §20a): the options, the model
+/// set they are built from, the provider seam and what an import reports.
+#[cfg(feature = "pdf-import")]
+pub use casual_doc_pdf_import::{
+    OcrModels as PdfOcrModels, OcrModelsError as PdfOcrModelsError, OcrOptions as PdfOcrOptions,
+    OcrProvider as PdfOcrProvider, OcrSummary as PdfOcrSummary,
+    OcrTextPlacement as PdfOcrTextPlacement, ProviderManifest as PdfOcrManifest,
+    RecognitionModel as PdfRecognitionModel, ScanBehindText as PdfScanBehindText,
+};
 #[cfg(feature = "pdf-import")]
 pub use casual_doc_pdf_import::{PdfReadLimits, Progress as PdfImportProgress};
 #[cfg(feature = "pdf-import")]
 pub use pdf_import::{
     PdfImportAdapter, PdfStagedImport, builtin_registry_with_pdf_import, enable_pdf_import,
+    enable_pdf_import_with_ocr, pdf_ocr_summary,
 };
 pub use text::{PlainTextAdapter, PlainTextLimits};

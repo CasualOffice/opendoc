@@ -56,6 +56,11 @@ impl Roots {
         &self.read
     }
 
+    /// Whether a canonical path lies inside a read root.
+    pub fn contains(&self, canonical: &Path) -> bool {
+        self.read.iter().any(|root| canonical.starts_with(root))
+    }
+
     /// A file the server may read, canonical. Relative paths resolve against
     /// the first read root, never against the process's working directory.
     pub fn readable(&self, requested: &str) -> Result<PathBuf, AiError> {

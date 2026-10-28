@@ -18,6 +18,9 @@
 #
 # Licences (primary sources, docs/182 §20.1):
 #   PP-OCRv5 mobile det/rec, latin rec  huggingface.co/PaddlePaddle/*  Apache-2.0 (model cards)
+#   PP-LCNet_x1_0_textline_ori          huggingface.co/PaddlePaddle/PP-LCNet_x1_0_textline_ori
+#                                       Apache-2.0 (model card), the text-line orientation
+#                                       classifier (docs/182 §20a)
 #   ocrs detection + recognition        ocrs-models.s3-accelerate.amazonaws.com (what
 #                                       ocrs-cli 0.13 downloads); no licence file with them,
 #                                       the project's only weights licence is CC-BY-SA-4.0
@@ -27,7 +30,7 @@
 set -eu
 
 dir=${1:?usage: fetch-test-models.sh <dir>}
-mkdir -p "$dir/paddle/det" "$dir/paddle/rec" "$dir/paddle/latin_rec" "$dir/ocrs"
+mkdir -p "$dir/paddle/det" "$dir/paddle/rec" "$dir/paddle/latin_rec" "$dir/paddle/textline_ori" "$dir/ocrs"
 
 fetch() {
   url=$1 out=$2 sum=$3
@@ -45,7 +48,8 @@ fetch() {
 hf=https://huggingface.co/PaddlePaddle
 for pair in "PP-OCRv5_mobile_det det afa1820cb16c1fd0dad589d0f8b389139061c1ef6d68019685fd07be997dda5b" \
             "PP-OCRv5_mobile_rec rec 2460da90875937c94db97eba74ae3d9e5d4c4c57c42f1f41531c09a26bcc771a" \
-            "latin_PP-OCRv5_mobile_rec latin_rec 53cdc8b481a7394bb108f96d0fb3432b0a8f392e22c7d18f06dbb2d42b8b25f9"; do
+            "latin_PP-OCRv5_mobile_rec latin_rec 53cdc8b481a7394bb108f96d0fb3432b0a8f392e22c7d18f06dbb2d42b8b25f9" \
+            "PP-LCNet_x1_0_textline_ori textline_ori 0de2bcf996cf553e2b848dd7b1769dafffc6917b1ccdf55c1d8efe7909fbf743"; do
   set -- $pair
   repo=$1 name=$2 params=$3
   # The weights are pinned; the graph and config files come from the same
@@ -57,7 +61,7 @@ for pair in "PP-OCRv5_mobile_det det afa1820cb16c1fd0dad589d0f8b389139061c1ef6d6
 done
 
 if ${PYTHON:-python3} -c 'import paddle2onnx, yaml' 2>/dev/null; then
-  for name in det rec latin_rec; do
+  for name in det rec latin_rec textline_ori; do
     [ -f "$dir/paddle/$name.onnx" ] || "$(dirname "$(command -v "${PYTHON:-python3}")")/paddle2onnx" \
       --model_dir "$dir/paddle/$name" --model_filename inference.json \
       --params_filename inference.pdiparams --save_file "$dir/paddle/$name.onnx" \
@@ -87,6 +91,9 @@ fetch https://ocrs-models.s3-accelerate.amazonaws.com/text-recognition.onnx \
 fetch https://huggingface.co/docling-project/docling-layout-heron-onnx/resolve/main/model.onnx \
   "$dir/heron.onnx" 59c81a3a2923042d85034ffc487f8f47e4854117e879aef89b2b9f728fb4922a
 
+# The directory as a whole is what `opendoc-mcp --ocr-models` and
+# `OcrModels::from_dir` read (paddle/det.onnx, paddle/<pack>.onnx with
+# paddle/<pack>.dict.txt, paddle/textline_ori.onnx, heron.onnx).
 echo "OPENDOC_PADDLE_MODELS=$dir/paddle"
 echo "OPENDOC_OCR_MODELS=$dir/ocrs"
 echo "OPENDOC_LAYOUT_MODEL=$dir/heron.onnx"
