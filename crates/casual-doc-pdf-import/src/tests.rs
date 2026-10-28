@@ -606,9 +606,12 @@ fn on_curve_points(font: &[u8], c: char) -> Vec<(i32, i32)> {
     points.0
 }
 
+/// A character, its CID and its advance in 1000 units.
+type CjkGlyph = (char, u16, i64);
+
 /// The CJK test subset (a CID-keyed CFF inside an OTF), and three of its
 /// characters with their CIDs and advances in 1000 units.
-fn cjk_subset() -> (Vec<u8>, Vec<u8>, Vec<(char, u16, i64)>) {
+fn cjk_subset() -> (Vec<u8>, Vec<u8>, Vec<CjkGlyph>) {
     use skrifa::MetadataProvider;
     use skrifa::raw::TableProvider;
     let otf = std::fs::read(
