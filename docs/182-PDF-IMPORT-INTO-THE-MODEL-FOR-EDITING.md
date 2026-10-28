@@ -250,7 +250,7 @@ leaves the device (PDFR-I6).
 | --- | --- | --- | --- |
 | G-1 | Embedded font programs are DOCX `.odttf` only (`EmbeddedFace` carries a `font_key` GUID and `part_name`) | `v1/properties.rs` `EmbeddedFace`; `casual-doc-layout/src/font_registry.rs:425` | P1 |
 | G-2 | `CustomGeometry` has no **even-odd fill rule**; caps of 1,024 commands and 64 paths per shape | `v1/custom_geometry.rs:43-46` | P1 (vector-heavy pages degrade and are reported until then) |
-| G-3 | Text boxes cannot rotate their text or write vertically | `docs/47` (the body-properties "not built" list) | P1 for rotated runs (else reported) |
+| G-3 | Text boxes cannot rotate their text or write vertically (**built**, §16b) | `docs/47` (the body-properties "not built" list) | P1 for rotated runs (else reported) |
 | G-4 | No async/staged import; `SourceEnvelope` is not serialisable (cannot cross a worker) | `registry.rs:69`; ADR-073 | P2 (§6) |
 | G-5 | ~30 scripts render as notdef; Arabic/Indic shaping unverified; CJK/emoji fetched | `docs/109` FONT-01/02/03 | Substituted text in those scripts (embedded fonts cover the unedited text) |
 | G-6 | A model op to record "page carried over unchanged" is not needed: unchanged-ness is computed from the section's content digest against the import digest (`casual-doc-diff/src/identity.rs`), so no `Operation` is added (ADR-030 I2) | — | P4 |
@@ -519,3 +519,104 @@ builder (`from_paths`, `with_guides`, `with_handles`, `with_connections`, `with_
 | `…an_even_odd_geometry_that_cannot_be_re_wound_is_reported` | drop the loss note | left `[]`, right `[("docx.export.custom_geometry.even_odd_fill", Some("word/document.xml"))]` |
 
 The `snapshot_without_font_programs` test pins the G-1 serde default and validation.
+
+## 16b. Engine gaps built
+
+Branch `lane/pdf-engine-gaps`. The engine gaps P1 and §16a left open, in the
+model, layout, render, GPU and DOCX crates, and the importer change that uses
+them.
+
+**G-3, turned text.** Three DrawingML sources turn a text box's text, and all three
+are modelled, laid out, painted, hit-tested and round-tripped:
+
+- `wps:bodyPr@vert` → `TextBoxBodyProperties::vertical_text` (`TextBoxVerticalText`,
+  all seven `ST_TextVerticalType` tokens retained). `vert`, `eaVert` and
+  `mongolianVert` lay out as a quarter turn clockwise, `vert270` as three; the lines
+  wrap at the frame's HEIGHT (the content is flowed in the frame with width and
+  height exchanged, insets turned so each stays on its physical side).
+- `wps:bodyPr@rot` → `TextBoxBodyProperties::text_rotation` (60000ths, the text
+  alone, about the frame centre; Word writes `rot="0"` on every text box).
+- a group child's `a:xfrm@rot` (`GroupTextBox::rotation`, modelled before but painted
+  upright) now turns the frame's chrome and its text together, at any angle. Flips
+  turn the outline only; the words stay readable, as in Word.
+
+`TextBox` has no shape-rotation field and adding one would break the struct
+literals in `casual-doc-wasm` (not this lane's). So a lone floating text box whose
+`a:xfrm` is rotated or flipped is imported as a **group of one**, the route a lone
+non-rectangular text box already took; its rotation was previously dropped in
+silence. An inline one is reported (`rot`).
+
+- **Layout.** `AnchorContent::TextBox` carries `orientation: TextOrientation`
+  (`page.rs`): the total clockwise turn and whether the content box is exchanged.
+  `TextOrientation::content_box` / `transform` / `to_content` are the one
+  definition compose and hit-test share. `hit_test_text_box` maps a point into a
+  turned box's upright space and resolves against that box's lines only, topmost
+  first; exact at quarter turns, nearest twip otherwise.
+- **Render.** `compose_anchor` wraps the text in one `PaintItem::PushLayer` about the
+  frame centre — the seam the layer was introduced to wait for — and a turned
+  frame's chrome in another (its border is a flat `Rect`, which carries no
+  transform). tiny-skia, vello and the PDF writer all already honour layers; no
+  renderer changed for G-3.
+- **DOCX.** `rot` and `vert` are written on `wps:bodyPr` when not default.
+- **Importer.** A rotated run is turned back upright about the page centre, grouped
+  with the other runs at its angle (so every line of a `/Rotate` page groups as
+  usual), and each block becomes a one-child group whose `GroupTextBox` is turned by
+  the angle, placed so that turning it about its own centre puts the text where the
+  PDF drew it. `pdf.import.text_rotated` is now `Mapped`, not a loss. A wide page's
+  section says `Landscape`. The oracle no longer exempts either rotated page.
+
+**GPU even-odd.** `SparseCanvas::set_fill_rule`, forwarded to `vello_cpu` and
+`vello_hybrid`; the encoder sets `EvenOdd` around an even-odd path's fill only and
+restores `NonZero` straight after (clip layers stay non-zero). §16a's "Not yet" is
+closed.
+
+**The DOCX writer's silent picture loss.** Measured, missing bytes WERE reported
+(`docx.export.media.missing_bytes`, tested). The silence §16.3 found was the
+relationship target: `media_target` stripped a `word/` prefix and otherwise wrote the
+part name unchanged, so a picture at `media/x.png` was addressed, from `word/`, as
+`word/media/x.png` — a dangling relationship. `word_relative_target` (a part outside
+`word/` is `../<name>`) now serves every `word/` part's relationships: pictures,
+embedded font faces and embedded objects (the family). A part name no relationship
+can address, or one that would shadow a generated part (any `.xml` binary part:
+`PartList::push` keeps the first of two parts under one name in silence), is
+reported `docx.export.media.invalid_part_name` / `docx.export.embedded_font.invalid_part_name`
+and left out whole. Font programs already take generated names.
+
+**Guards, each driven red by a mutation:**
+
+| Guard | Mutation | Red output |
+| --- | --- | --- |
+| `render-gpu/tests/even_odd_fill.rs` (vello_cpu always; vello_hybrid on a real adapter, skips without one) | drop `set_fill_rule(EvenOdd)` | both painters: `under even-odd the same-wound inner square is a hole`, left `(255, 0, 0)` right `(255, 255, 255)` |
+| same | drop the restore to `NonZero` | both: `the even-odd rule is restored to non-zero after its fill` |
+| `pdf/tests/even_odd_operators.rs` (operators read back with `inspect`) | `even_odd()` returns false | left `["f"]` right `["f*"]`; left `["W"]` right `["W*"]` |
+| `export/tests/export_report.rs` `a_picture_stored_outside_word_is_written_where_its_relationship_points` | the old target rule | `word/_rels/document.xml.rels declares rId2 -> word/media/pdf-image1.png, which the package does not contain` |
+| `…a_face_and_a_chart_outside_word_stay_addressable` | the old rule; then the old rule for embedded objects alone | `declares rIdF1 -> word/fonts/font1.odttf`; `declares rIdChart1 -> word/charts/chart1.xml` |
+| `…a_picture_whose_part_name_cannot_be_written_is_reported` (six names) | `is_writable_part_name` always true | the report entry is missing |
+| `export/tests/turned_text_box_round_trip.rs` (Word-shaped markup → model → DOCX → model) | importer ignores `bodyPr@rot` | left `[(0, Vertical270, None), …]` right `[(5400000, Vertical270, None), …]` |
+| same | lone rotated box not grouped | `(0, Horizontal, None)` for `(0, Horizontal, Some(1800000))` |
+| same | writer drops `rot` | `the body's rotation and direction are written` |
+| `layout/tests/turned_text_box.rs` `vertical_lines_wrap_at_the_frames_height…` | never exchange the content box | `the line runs the frame's 3 in height`, left 2 right 1 |
+| `…turned_text_is_composed_inside_one_layer…` | no text layer | `a quarter-turn layer about the frame centre` not found |
+| `…a_click_on_turned_text_resolves_to_the_character_drawn_there` (90°, 270°, 180°, and 30° in the group test) | `to_content` identity | `a hit in the box` (none), `30 degrees: line start` |
+| `…a_grouped_text_box_turns_its_frame_and_text_together` | group child flowed with rotation 0 | `the text turns with its shape`, left rotation 0 right 1800000 |
+| `render/tests/turned_text_box.rs` (pixels: ink taller than wide, inside the frame, on the side the line's top faces; upright control) | no text layer | `Vertical: the line runs down the page, ink (0, 245, 55, 255)` |
+| `pdf-import/tests/oracle.rs` `rotated_text_pages_match_the_oracle` (rotated-run page 0.963 / 1.000, `/Rotate 90` page 1.000 / 1.000) | importer drops the child's rotation | `synthetic-rotated-text.pdf page 1: recall 0.507 precision 0.534`; page-boxes page 2 `recall 0.071` |
+
+`the_comparison_sees_a_reported_visual_loss` now shows the comparison can fail on
+the one remaining exemption (Type3: recall 0.767, precision 0.742).
+
+**Not built, and why:**
+
+- An INLINE text box's `vert`/`rot` (it flows inside a line; the same orientation
+  would have to ride `InlineTextBox`), the stacked `wordArtVert` readings, `eaVert`'s
+  upright East Asian glyphs, and VML `layout-flow` (`docs/47`).
+- Caret and selection GEOMETRY inside a turned box is still reported in the box's
+  upright space (`text_box_line_boxes`); a host drawing a caret there must apply the
+  box's `TextOrientation::transform`. Hit-testing is turned.
+- The CPU raster composites each layer through a page-sized offscreen pixmap, so a
+  page of N turned frames costs N page-sized composites (the GPU backend and the
+  PDF writer transform vectors and pay nothing extra). Bounding the offscreen by the
+  layer's content is the follow-up if a measured page needs it.
+- The webapp's object inspector does not expose `rot`/`vert` (`webapp/**` is another
+  lane's).
+
