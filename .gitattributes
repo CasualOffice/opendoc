@@ -8,3 +8,11 @@ crates/casual-doc-model/data/preset_shapes.txt text eol=lf
 # `crates/casual-doc-command/tests/generated.rs` and `opendoc-command-gen --check`
 # (`docs/181` G4). A CRLF checkout made every file "stale" on Windows.
 webapp/generated/** text eol=lf
+
+# A PDF is binary whatever its bytes look like: its cross-reference table holds
+# byte offsets, so a CRLF checkout breaks every file Git mistakes for text (a small,
+# NUL-free hand-written fixture is exactly that), and Windows CI read the encrypted
+# fixture as "not a readable PDF" (PR #899).
+*.pdf binary
+# Compared against a fresh measurement run (docs/182 P0).
+fixtures/pdf/measurement.json text eol=lf
