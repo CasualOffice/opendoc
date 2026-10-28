@@ -1229,3 +1229,129 @@ fn replies_thread_onto_their_note_and_free_text_is_drawn() {
     assert_eq!(run.properties.size_half_points, Some(28));
     assert!(matches!(run.properties.color, Some(Color::Rgb(c)) if (c.r, c.g, c.b) == (255, 0, 0)));
 }
+
+// --- Tagged tables and lists -------------------------------------------------
+
+/// A tagged 2x2 table whose two rows are too few for the whitespace
+/// detector, and a tagged list whose nested item sits at the same x as its
+/// parent: only the tree can make the table a table and the nested item
+/// level 2.
+fn tagged_structure_pdf() -> Vec<u8> {
+    let mut pdf = synth::Pdf::default();
+    let root = pdf.reserve();
+    let mut content = String::new();
+    let mut mcid = 0;
+    let mut mark = |role: &str, text_op: String| {
+        let out = format!("/{role} <</MCID {mcid}>> BDC\n{text_op}EMC\n");
+        mcid += 1;
+        (mcid - 1, out)
+    };
+    let cell = |x: f64, y: f64, t: &str| text("F2", 10.0, x, y, 12.0, &[t]);
+    let mut ids = Vec::new();
+    for (x, y, t) in [
+        (72.0, 700.0, "Name"),
+        (250.0, 700.0, "Qty"),
+        (72.0, 686.0, "Apples"),
+        (250.0, 686.0, "3"),
+    ] {
+        let (id, op) = mark("TD", cell(x, y, t));
+        content.push_str(&op);
+        ids.push(id);
+    }
+    let items = [
+        ("1.", "First item", 640.0),
+        ("2.", "Second item", 626.0),
+        ("a.", "Nested item", 612.0),
+        ("3.", "Third item", 598.0),
+    ];
+    let mut list_ids = Vec::new();
+    for (lbl, body, y) in items {
+        let (l, op) = mark("Lbl", cell(72.0, y, lbl));
+        content.push_str(&op);
+        let (b, op) = mark("LBody", cell(90.0, y, body));
+        content.push_str(&op);
+        list_ids.push((l, b));
+    }
+    fn el(pdf: &mut synth::Pdf, root: u32, role: &str, kids: String) -> u32 {
+        pdf.add(format!(
+            "<< /Type /StructElem /S /{role} /P {root} 0 R /Pg {{page0}} /K {kids} >>"
+        ))
+    }
+    fn li(pdf: &mut synth::Pdf, root: u32, (l, b): (i32, i32), extra: String) -> u32 {
+        let lbl = el(pdf, root, "Lbl", l.to_string());
+        let body = el(pdf, root, "LBody", b.to_string());
+        el(pdf, root, "LI", format!("[{lbl} 0 R {body} 0 R {extra}]"))
+    }
+    let tds: Vec<u32> = ids
+        .iter()
+        .map(|m| el(&mut pdf, root, "TD", m.to_string()))
+        .collect();
+    let tr1 = el(
+        &mut pdf,
+        root,
+        "TR",
+        format!("[{} 0 R {} 0 R]", tds[0], tds[1]),
+    );
+    let tr2 = el(
+        &mut pdf,
+        root,
+        "TR",
+        format!("[{} 0 R {} 0 R]", tds[2], tds[3]),
+    );
+    let table = el(&mut pdf, root, "Table", format!("[{tr1} 0 R {tr2} 0 R]"));
+    let li1 = li(&mut pdf, root, list_ids[0], String::new());
+    let nested_li = li(&mut pdf, root, list_ids[2], String::new());
+    let nested = el(&mut pdf, root, "L", format!("[{nested_li} 0 R]"));
+    let li2 = li(&mut pdf, root, list_ids[1], format!("{nested} 0 R"));
+    let li3 = li(&mut pdf, root, list_ids[3], String::new());
+    let list = el(
+        &mut pdf,
+        root,
+        "L",
+        format!("[{li1} 0 R {li2} 0 R {li3} 0 R]"),
+    );
+    pdf.set(
+        root,
+        format!("<< /Type /StructTreeRoot /K [{table} 0 R {list} 0 R] >>"),
+    );
+    synth::document_in(
+        &mut pdf,
+        &[Page::new(content)],
+        "",
+        &format!("/MarkInfo << /Marked true >> /StructTreeRoot {root} 0 R"),
+        |_| "/StructParents 0".to_owned(),
+    )
+}
+
+#[test]
+fn tagged_tables_and_nested_lists_follow_the_structure_tree() {
+    let (_, reflowed) = reflow_of(tagged_structure_pdf());
+    let document = &reflowed.document;
+    assert_eq!(
+        cell_texts(document, 0),
+        vec![vec!["Name", "Qty"], vec!["Apples", "3"]]
+    );
+    let definitions = document.definitions();
+    let listed: Vec<(String, u8, Option<NumberFormat>)> = paragraphs(document)
+        .iter()
+        .filter_map(|p| {
+            let n = p.properties.numbering?;
+            let instance = definitions.numbering.get(&n.instance)?;
+            let abs = definitions.abstract_numbering.get(&instance.abstract_ref)?;
+            Some((
+                para_text(p),
+                n.level,
+                abs.levels[usize::from(n.level)].num_fmt.clone(),
+            ))
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        vec![
+            ("First item".to_owned(), 0, Some(NumberFormat::Decimal)),
+            ("Second item".to_owned(), 0, Some(NumberFormat::Decimal)),
+            ("Nested item".to_owned(), 1, Some(NumberFormat::LowerLetter)),
+            ("Third item".to_owned(), 0, Some(NumberFormat::Decimal)),
+        ]
+    );
+}

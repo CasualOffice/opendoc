@@ -37,7 +37,7 @@ pub mod text;
 use std::collections::{BTreeMap, BTreeSet};
 
 use casual_doc_model::v1::Document;
-use casual_doc_pdf_read::{AnnotationEvidence, AnnotationKind, Bounds, LinkTarget};
+use casual_doc_pdf_read::{AnnotationEvidence, AnnotationKind, Bounds, LinkTarget, StructNode};
 
 pub use record::{PdfSourceState, Rule, SourceBlock, SourceImage, SourcePage};
 
@@ -208,6 +208,110 @@ pub struct Element {
     pub role: Option<String>,
     /// Column region (document-wide index into `Flow::regions`).
     pub region: Option<usize>,
+    /// The structure elements from the root down to the leaf's owner.
+    pub lineage: Vec<StructNode>,
+}
+
+/// The ordinal of the nearest `role` element on a lineage.
+fn nearest(lineage: &[StructNode], roles: &[&str]) -> Option<u32> {
+    lineage
+        .iter()
+        .rev()
+        .find(|n| roles.contains(&n.role.as_str()))
+        .map(|n| n.ordinal)
+}
+
+/// A tagged table (`Table`/`TR`/`TH`/`TD`, ISO 32000-1 §14.8.4.3.4): the
+/// consecutive elements under one `Table` element, rows by `TR`, cells by
+/// `TD`/`TH`, each in structure order. Column edges are each column's
+/// leftmost cell edge. O(elements in the table log).
+fn tagged_table(cells: Vec<Element>) -> Element {
+    let mut rows: Vec<(Option<u32>, Vec<(Option<u32>, Vec<ILine>, (f64, f64))>)> = Vec::new();
+    let page = cells[0].page;
+    let (mut x0, mut y0, mut x1, mut y1) = (
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    );
+    let leaf = cells.iter().filter_map(|c| c.leaf).min();
+    let region = cells[0].region;
+    for cell in cells {
+        x0 = x0.min(cell.rect.x0);
+        y0 = y0.min(cell.rect.y0);
+        x1 = x1.max(cell.rect.x1);
+        y1 = y1.max(cell.rect.y1);
+        let row = nearest(&cell.lineage, &["TR"]);
+        let td = nearest(&cell.lineage, &["TD", "TH"]);
+        let EKind::Text(lines) = cell.kind else {
+            continue;
+        };
+        if rows.last().is_none_or(|r| r.0 != row) {
+            rows.push((row, Vec::new()));
+        }
+        let cells = &mut rows.last_mut().expect("pushed").1;
+        match cells.last_mut() {
+            Some((id, existing, bounds)) if *id == td && td.is_some() => {
+                bounds.0 = bounds.0.min(cell.rect.x0);
+                bounds.1 = bounds.1.max(cell.rect.x1);
+                existing.extend(lines);
+            }
+            _ => cells.push((td, lines, (cell.rect.x0, cell.rect.x1))),
+        }
+    }
+    let columns = rows.iter().map(|r| r.1.len()).max().unwrap_or(1);
+    let mut edges = vec![f64::INFINITY; columns];
+    for (_, cells) in &rows {
+        for (k, (_, _, (left, _))) in cells.iter().enumerate() {
+            edges[k] = edges[k].min(*left);
+        }
+    }
+    let mut widths: Vec<f64> = (0..columns)
+        .map(|k| {
+            let next = edges.get(k + 1).copied().unwrap_or(x1);
+            (next - edges[k]).max(12.0)
+        })
+        .collect();
+    if widths.is_empty() {
+        widths.push((x1 - x0).max(12.0));
+    }
+    let table = ITable {
+        rows: rows
+            .into_iter()
+            .map(|(_, cells)| {
+                let n = cells.len();
+                cells
+                    .into_iter()
+                    .enumerate()
+                    .map(|(k, (_, lines, (left, right)))| tables::ICell {
+                        lines,
+                        // A short row's last cell spans the remaining columns.
+                        span: if k + 1 == n {
+                            u32::try_from(columns - k).unwrap_or(1)
+                        } else {
+                            1
+                        },
+                        vmerge: None,
+                        x0: left,
+                        x1: right,
+                    })
+                    .collect()
+            })
+            .collect(),
+        columns: widths,
+        ruled: false,
+        bounds: (x0, y0, x1, y1),
+    };
+    Element {
+        page,
+        rect: Rect { x0, y0, x1, y1 },
+        kind: EKind::Table(table),
+        leaf,
+        struct_element: None,
+        role: Some("Table".to_owned()),
+        region,
+        lineage: Vec::new(),
+    }
 }
 
 /// A column region and the page it is on.
@@ -712,6 +816,16 @@ pub fn build(
             tables::whitespace_candidates(&views, &mut work.tables)
         };
         for candidate in candidates {
+            // Cells a tagged `Table` owns are its; the tree decides them.
+            if candidate.elements.iter().any(|&e| {
+                texts[e]
+                    .1
+                    .and_then(|m| leaves.get(&(page.index, m)))
+                    .and_then(|&i| state.structure.as_ref().map(|t| &t.leaves[i]))
+                    .is_some_and(|leaf| nearest(&leaf.lineage, &["Table"]).is_some())
+            }) {
+                continue;
+            }
             if candidate.confidence >= tables::TABLE_CONFIDENCE && candidate.rows >= 3 {
                 let columns: Vec<(Vec<ILine>, (f64, f64))> = candidate
                     .elements
@@ -811,6 +925,7 @@ pub fn build(
                 struct_element: node.map(|n| n.element()),
                 role: node.map(|n| n.role().to_owned()),
                 region: None,
+                lineage: node.map(|n| n.lineage.clone()).unwrap_or_default(),
             });
         }
         for table in page_tables {
@@ -830,6 +945,7 @@ pub fn build(
                 struct_element: None,
                 role: None,
                 region: None,
+                lineage: Vec::new(),
             });
         }
         for image in &page.images {
@@ -847,6 +963,7 @@ pub fn build(
                 struct_element: None,
                 role: None,
                 region: None,
+                lineage: Vec::new(),
             });
         }
         for e in &elements {
@@ -901,11 +1018,40 @@ pub fn build(
             ordered.order.clone()
         };
         let mut slots: Vec<Option<Element>> = elements.into_iter().map(Some).collect();
+        let mut tagged_tables = 0;
+        let mut pending: Vec<Element> = Vec::new();
+        let mut pending_table: Option<u32> = None;
         for i in sequence {
-            if let Some(e) = slots[i].take() {
-                flow.elements.push(e);
+            let Some(e) = slots[i].take() else {
+                continue;
+            };
+            // Elements under one tagged `Table` become one table.
+            let table = if use_tags && matches!(e.kind, EKind::Text(_)) {
+                nearest(&e.lineage, &["Table"])
+            } else {
+                None
+            };
+            if pending_table.is_some() && table != pending_table {
+                flow.elements
+                    .push(tagged_table(std::mem::take(&mut pending)));
+                tagged_tables += 1;
+            }
+            pending_table = table;
+            match table {
+                Some(_) => pending.push(e),
+                None => flow.elements.push(e),
             }
         }
+        if !pending.is_empty() {
+            flow.elements.push(tagged_table(pending));
+            tagged_tables += 1;
+        }
+        findings.record(
+            report::TABLE_INFERRED,
+            Outcome::Mapped,
+            tagged_tables,
+            Some(page.index),
+        );
     }
     findings.record(
         report::READING_ORDER_INFERRED,

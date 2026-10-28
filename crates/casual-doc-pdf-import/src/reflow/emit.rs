@@ -56,6 +56,10 @@ struct IPara {
     heading: Option<u8>,
     bookmark: Vec<usize>,
     last_line: Option<ILine>,
+    /// The outermost tagged `L` this paragraph sits in, and how many `L`
+    /// elements deep it is.
+    list_root: Option<u32>,
+    list_depth: u8,
 }
 
 // Transient (one per paragraph, dropped at emission), so the size of the
@@ -643,6 +647,15 @@ pub(crate) fn emit(
                         end_aligned,
                         heading,
                         last_line: refs.last().map(|l| (*l).clone()),
+                        list_root: element
+                            .lineage
+                            .iter()
+                            .find(|n| n.role == "L")
+                            .map(|n| n.ordinal),
+                        list_depth: u8::try_from(
+                            element.lineage.iter().filter(|n| n.role == "L").count(),
+                        )
+                        .unwrap_or(u8::MAX),
                         ..IPara::default()
                     }));
                 }
@@ -689,7 +702,7 @@ pub(crate) fn emit(
     };
 
     // Lists, then headings for what is not a list.
-    let list_items = lists(&mut items, &mut emitter)?;
+    let list_items = tagged_lists(&mut items, &mut emitter)? + lists(&mut items, &mut emitter)?;
     findings.record(report::LIST_INFERRED, Outcome::Mapped, list_items, None);
     let mut headings = 0;
     for item in &mut items {
@@ -1227,11 +1240,127 @@ type Found = Option<(Marker, usize, f64, f64)>;
 /// kind, with a hanging indent (`docs/182` §4.2; `docs/131` §10.5: a visual
 /// bullet alone does not make a list). Returns how many items became list
 /// paragraphs. O(paragraphs).
+/// Tagged lists (`L`/`LI`/`Lbl`/`LBody`, ISO 32000-1 §14.8.4.3.3): the
+/// consecutive paragraphs under one outermost `L` are one list, each nested
+/// `L` one level deeper. A level's format is its first item's marker (the
+/// `Lbl` text, put back on its line by `attach_markers`), a bullet when it has
+/// none. The tree, not the hanging indent, decides membership. O(paragraphs).
+fn tagged_lists(items: &mut [Item], emitter: &mut Emitter<'_>) -> Result<u32, PdfImportError> {
+    let mut count = 0;
+    let mut i = 0;
+    while i < items.len() {
+        let root = match &items[i] {
+            Item::Para(p) => p.list_root,
+            _ => None,
+        };
+        let Some(root) = root else {
+            i += 1;
+            continue;
+        };
+        let mut j = i;
+        while j < items.len() && matches!(&items[j], Item::Para(p) if p.list_root == Some(root)) {
+            j += 1;
+        }
+        let mut levels: BTreeMap<u8, NumberingLevel> = BTreeMap::new();
+        let mut placed: Vec<(usize, u8, usize)> = Vec::new();
+        for (k, item) in items.iter().enumerate().take(j).skip(i) {
+            let Item::Para(p) = item else { continue };
+            let at = p.list_depth.saturating_sub(1).min(8);
+            let parsed = text::marker(&p.chars, false);
+            let marker_x0 = p.chars.first().map_or(p.first_x0, |c| c.x0);
+            let (n, text_x0) = match &parsed {
+                Some((_, n)) => (*n, p.chars.get(*n).map_or(marker_x0, |c| c.x0)),
+                None => (0, p.first_x0),
+            };
+            levels.entry(at).or_insert_with(|| {
+                let indent = (text_x0 - p.column_left).max(18.0 * f64::from(at + 1));
+                let hanging = if parsed.is_some() {
+                    (text_x0 - marker_x0).max(0.0)
+                } else {
+                    18.0
+                };
+                match parsed.map(|m| m.0) {
+                    Some(Marker::Number {
+                        value,
+                        format,
+                        pattern,
+                    }) => level(
+                        format,
+                        pattern.replace("%1", &format!("%{}", at + 1)),
+                        at,
+                        u16::try_from(value).unwrap_or(1),
+                        indent,
+                        hanging,
+                    ),
+                    Some(Marker::Bullet(glyph)) => level(
+                        NumberFormat::Bullet,
+                        glyph.to_string(),
+                        at,
+                        1,
+                        indent,
+                        hanging,
+                    ),
+                    None => level(
+                        NumberFormat::Bullet,
+                        "\u{2022}".to_owned(),
+                        at,
+                        1,
+                        indent,
+                        hanging,
+                    ),
+                }
+            });
+            placed.push((k, at, n));
+        }
+        let deepest = levels.keys().copied().max().unwrap_or(0);
+        for at in 0..=deepest {
+            levels.entry(at).or_insert_with(|| {
+                level(
+                    NumberFormat::Bullet,
+                    "\u{2022}".to_owned(),
+                    at,
+                    1,
+                    36.0 * f64::from(at + 1),
+                    18.0,
+                )
+            });
+        }
+        let abstract_id = AbstractNumberingId::new(emitter.id()?);
+        let instance = NumberingInstanceId::new(emitter.id()?);
+        emitter.definitions.abstract_numbering.insert(
+            abstract_id,
+            AbstractNumbering {
+                levels: levels.into_values().collect(),
+                multi_level_type: None,
+                num_style_link: None,
+                style_link: None,
+            },
+        );
+        emitter.definitions.numbering.insert(
+            instance,
+            NumberingInstance {
+                abstract_ref: abstract_id,
+                overrides: Vec::new(),
+            },
+        );
+        for (k, at, n) in placed {
+            if let Item::Para(p) = &mut items[k] {
+                p.list = Some((instance, at));
+                p.marker_len = n;
+                count += 1;
+            }
+        }
+        i = j;
+    }
+    Ok(count)
+}
+
 fn lists(items: &mut [Item], emitter: &mut Emitter<'_>) -> Result<u32, PdfImportError> {
     let mut found: Vec<Found> = Vec::with_capacity(items.len());
     let mut previous_letter = false;
     for item in items.iter() {
         let parsed = match item {
+            Item::Para(p) if p.list.is_some() => None,
             Item::Para(p) => text::marker(&p.chars, previous_letter).map(|(m, n)| {
                 let marker_x0 = p.chars.first().map_or(0.0, |c| c.x0);
                 let text_x0 = p.chars.get(n).map_or(marker_x0, |c| c.x0);
