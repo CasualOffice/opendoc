@@ -110,6 +110,7 @@ pub const FEATURES: &[&str] = &[
     FONT_EMBEDDED,
     FONT_SUBSTITUTED,
     FOOTNOTE_INFERRED,
+    FOOTNOTE_MARKER_RENUMBERED,
     FORM_OMITTED,
     HEADER_FOOTER_INFERRED,
     HEADING_INFERRED,
@@ -261,3 +262,7 @@ pub const TABLE_TOPOLOGY_DEGRADED: &str = "pdf.import.table_topology_degraded";
 /// Reflow: vector art that is not a table rule is not placed in a flowing
 /// document.
 pub const VECTOR_OMITTED: &str = "pdf.import.vector_omitted";
+/// Reflow: footnote markers that are neither a number sequence nor the
+/// `*` `†` `‡` `§` sequence (continuous or restarting each page) are
+/// renumbered by the model's footnote numbering.
+pub const FOOTNOTE_MARKER_RENUMBERED: &str = "pdf.import.footnote_marker_renumbered";

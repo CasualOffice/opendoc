@@ -785,10 +785,31 @@ pub fn build(
                 page_tables.push(table);
             }
         }
-        // Footnotes leave the body.
+        // Footnotes leave the body; a note the previous page left open
+        // continues in this page's note area.
+        if flow
+            .notes
+            .last()
+            .is_some_and(|n| n.page + 1 == page.index && notes::open(n))
+        {
+            let more =
+                notes::continuation(&mut lines_only, page.height, body_size, &mut work.notes);
+            if !more.is_empty() {
+                findings.record(
+                    report::FOOTNOTE_INFERRED,
+                    Outcome::Mapped,
+                    1,
+                    Some(page.index),
+                );
+                if let Some(note) = flow.notes.last_mut() {
+                    note.lines.extend(more);
+                }
+            }
+        }
         let first_note = flow.notes.len();
         let notes = notes::footnotes(
             &mut lines_only,
+            page.index,
             page.height,
             body_size,
             first_note,

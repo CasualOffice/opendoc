@@ -1355,3 +1355,76 @@ fn tagged_tables_and_nested_lists_follow_the_structure_tree() {
         ]
     );
 }
+
+// --- Continued footnotes and symbol markers ----------------------------------
+
+fn continued_notes_pdf() -> Vec<u8> {
+    let first = format!(
+        "BT /F2 11 Tf 72 700 Td (The committee approved the plan) Tj /F2 7 Tf 3 Ts (*) Tj 0 Ts /F2 11 Tf ( and the budget) Tj /F2 7 Tf 3 Ts (\\206) Tj 0 Ts /F2 11 Tf (.) Tj ET\n{}{}",
+        text("F2", 11.0, 72.0, 660.0, 14.0, &PROSE),
+        text(
+            "F2",
+            8.0,
+            72.0,
+            120.0,
+            10.0,
+            &["* A short note.", "\u{2020} The second note runs on and"],
+        )
+    );
+    let first = first.replace('\u{2020}', "\\206");
+    let second = format!(
+        "BT /F2 11 Tf 72 700 Td (Another body line on the second page) Tj /F2 7 Tf 3 Ts (*) Tj 0 Ts ET\n{}{}{}",
+        text("F2", 11.0, 72.0, 660.0, 14.0, &PROSE),
+        text(
+            "F2",
+            8.0,
+            72.0,
+            150.0,
+            10.0,
+            &["continues here on page two."]
+        ),
+        text(
+            "F2",
+            8.0,
+            72.0,
+            110.0,
+            10.0,
+            &["* A note of the second page."]
+        ),
+    );
+    synth::document(&[Page::new(first), Page::new(second)], "", "")
+}
+
+#[test]
+fn a_footnote_continues_onto_the_next_page_and_symbol_markers_are_kept() {
+    let (_, reflowed) = reflow_of(continued_notes_pdf());
+    let document = &reflowed.document;
+    let notes: Vec<String> = document
+        .definitions()
+        .footnotes
+        .iter()
+        .map(|(_, note)| match &note.blocks[0] {
+            BlockNode::Paragraph(p) => para_text(p).trim().to_owned(),
+            _ => String::new(),
+        })
+        .collect();
+    assert_eq!(
+        notes,
+        vec![
+            "A short note.",
+            "The second note runs on and continues here on page two.",
+            "A note of the second page.",
+        ]
+    );
+    assert!(!texts(document).join("\n").contains("continues here"));
+    let props = &document.definitions().sections[0].footnote_props;
+    assert_eq!(
+        props.number_format,
+        Some(NumberFormat::Other("chicago".to_owned()))
+    );
+    assert_eq!(
+        props.number_restart,
+        Some(casual_doc_model::v1::NoteNumberRestart::EachPage)
+    );
+    assert!(!reflowed.report.has(report::FOOTNOTE_MARKER_RENUMBERED));
+}

@@ -21,7 +21,7 @@ use casual_doc_model::v1::{
     TableProperties, TableRow, TableRowProperties, TableWidth, VerticalAlignment, VerticalMerge,
     WidthType,
 };
-use casual_doc_model::v1::{BorderEdge, TableBorders};
+use casual_doc_model::v1::{BorderEdge, NoteNumberRestart, NoteProperties, TableBorders};
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_pdf_read::{LinkTarget, RenderMode};
 
@@ -1053,6 +1053,20 @@ pub(crate) fn emit(
     );
     let last = section(&mut emitter, current_shape, sections.is_empty())?;
     sections.push(last);
+    // Footnote numbering that reproduces the PDF's own markers.
+    match note_numbering(&flow.notes) {
+        Some(props) => {
+            for section in &mut sections {
+                section.footnote_props = props.clone();
+            }
+        }
+        None => findings.record(
+            report::FOOTNOTE_MARKER_RENUMBERED,
+            Outcome::Degraded,
+            flow.notes.len() as u32,
+            None,
+        ),
+    }
     if body.is_empty() {
         body.push(BlockNode::Paragraph(Paragraph {
             id: emitter.id()?,
@@ -1647,6 +1661,66 @@ fn normalize(inlines: Vec<InlineNode>) -> Vec<InlineNode> {
         }
     }
     out
+}
+
+/// The value a footnote marker stands for in its sequence: digits for
+/// themselves, the `chicago` marks (`*` `†` `‡` `§`, then doubled) for their
+/// position. `None` for anything else.
+fn marker_value(marker: &str) -> Option<(bool, u32)> {
+    if let Ok(v) = marker.parse::<u32>() {
+        return Some((false, v));
+    }
+    let mut chars = marker.chars();
+    let first = chars.next()?;
+    let index = ['*', '\u{2020}', '\u{2021}', '\u{a7}']
+        .iter()
+        .position(|c| *c == first)?;
+    let repeats = marker.chars().count();
+    marker.chars().all(|c| c == first).then(|| {
+        (
+            true,
+            u32::try_from(index + 1 + 4 * (repeats - 1)).unwrap_or(u32::MAX),
+        )
+    })
+}
+
+/// The footnote properties that print the PDF's markers: a number or
+/// `chicago` format, starting where the PDF starts, continuous or restarting
+/// on each page. `None` when the markers follow no such rule (they are then
+/// renumbered and reported). O(notes).
+fn note_numbering(notes: &[super::notes::INote]) -> Option<NoteProperties> {
+    if notes.is_empty() {
+        return Some(NoteProperties::default());
+    }
+    let values: Vec<(bool, u32, usize)> = notes
+        .iter()
+        .map(|n| marker_value(&n.marker).map(|(s, v)| (s, v, n.page)))
+        .collect::<Option<_>>()?;
+    let symbols = values[0].0;
+    if values.iter().any(|v| v.0 != symbols) {
+        return None;
+    }
+    let continuous = values.windows(2).all(|w| w[1].1 == w[0].1 + 1);
+    let each_page = values.windows(2).all(|w| {
+        if w[1].2 == w[0].2 {
+            w[1].1 == w[0].1 + 1
+        } else {
+            w[1].1 == values[0].1
+        }
+    });
+    let restart = if continuous {
+        None
+    } else if each_page {
+        Some(NoteNumberRestart::EachPage)
+    } else {
+        return None;
+    };
+    Some(NoteProperties {
+        position: None,
+        number_format: symbols.then(|| NumberFormat::Other("chicago".to_owned())),
+        number_start: (values[0].1 != 1).then(|| i32::try_from(values[0].1).unwrap_or(1)),
+        number_restart: restart,
+    })
 }
 
 /// Gives every run in a note paragraph without a size the note's own size.
