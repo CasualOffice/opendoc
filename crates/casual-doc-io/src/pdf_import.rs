@@ -19,13 +19,19 @@
 //! With `retain_source`, the envelope holds the original bytes (shared with the
 //! reader, not copied), and an `ExactIfUnchanged` export of an unchanged
 //! session returns them byte for byte (MF-I4). Every other export is the
-//! semantic writer (`docs/98`). No PDF object reaches the model (MF-I1).
+//! semantic writer (`docs/98`), except an edited session saved with
+//! `PreserveWhenSafe` or `ExactIfUnchanged`: that appends an incremental update
+//! to the original when it is safe (`crate::pdf_preserve`, `docs/182` P4), and
+//! falls back to the semantic writer, reported, when it is not. A session whose
+//! content equals the import's (an edit undone) writes the original back. No
+//! PDF object reaches the model (MF-I1).
 
 use std::sync::Arc;
 
 use casual_doc_pdf_import::{ImportJob, PdfImport, PdfImportError, PdfModelOutcome, Progress};
 use casual_doc_pdf_import::{PdfReadLimits, probe_pdf};
 
+use crate::pdf_preserve::{Baseline, ORIGINAL_WRITTEN_BACK, preserve};
 use crate::{
     AdapterError, CompatibilityEntry, CompatibilityReport, DocumentResources, ExportArtifact,
     ExportMode, ExportRequest, FeatureLocation, FormatDescriptor, FormatExporter, FormatId,
@@ -34,10 +40,14 @@ use crate::{
     SourceEnvelope, formats,
 };
 
-/// The original bytes an import retained.
+/// The original bytes an import retained, and what a byte-preserving save
+/// compares the document against (the `I4` sidecar, `docs/182` §7 P4): page
+/// object ids, the show operators of every frame, and the import's content
+/// digests. No PDF object reaches the model (MF-I1).
 #[derive(Debug)]
 struct PdfSourceState {
     original: Option<Arc<Vec<u8>>>,
+    baseline: Option<Baseline>,
 }
 
 /// PDF import and export: [`PdfAdapter`]'s writer plus the fixed-layout
@@ -56,8 +66,10 @@ impl PdfImportAdapter {
         let writer = PdfAdapter::default();
         let mut descriptor = FormatExporter::descriptor(&writer).clone();
         descriptor.can_import = true;
-        // An unchanged session writes the retained original back exactly.
+        // An unchanged session writes the retained original back exactly; an
+        // edited one appends an incremental update when that is safe.
         descriptor.exact_if_unchanged = true;
+        descriptor.preserve_when_safe = true;
         Self {
             descriptor,
             writer,
@@ -112,6 +124,13 @@ pub struct PdfStagedImport {
 }
 
 impl PdfStagedImport {
+    /// Pages in the document, known from admission, so a host can show
+    /// "page 0 of N" before the first step. O(1).
+    #[must_use]
+    pub fn page_count(&self) -> usize {
+        self.job.page_count()
+    }
+
     /// Does at most `budget` pages. O(budget).
     pub fn step(&mut self, budget: usize) -> Progress {
         self.job.step(budget)
@@ -174,6 +193,9 @@ fn artifact(imported: PdfImport, retain_source: bool, format: FormatId) -> Impor
             .collect(),
     };
     report.sort();
+    let baseline = retain_source
+        .then(|| Baseline::new(&imported.document, imported.sources))
+        .flatten();
     ImportArtifact {
         document: imported.document,
         resources,
@@ -181,6 +203,7 @@ fn artifact(imported: PdfImport, retain_source: bool, format: FormatId) -> Impor
             format.clone(),
             env!("CARGO_PKG_VERSION").to_owned(),
             PdfSourceState {
+                baseline,
                 original: retain_source.then_some(imported.original),
             },
         ),
@@ -217,22 +240,52 @@ impl FormatExporter for PdfImportAdapter {
     }
 
     fn export(&self, request: ExportRequest<'_>) -> Result<ExportArtifact, AdapterError> {
+        let state = request.source.and_then(|s| s.state::<PdfSourceState>());
+        let original = state.and_then(|state| state.original.as_ref());
+        let artifact = |bytes: Vec<u8>, report| ExportArtifact {
+            bytes,
+            report,
+            format: FormatProfile {
+                format: self.descriptor.id.clone(),
+                version: None,
+            },
+            mime_type: "application/pdf".to_owned(),
+            suggested_extension: "pdf".to_owned(),
+        };
+        if request.mode == ExportMode::Semantic {
+            return self.writer.export(request);
+        }
         if request.mode == ExportMode::ExactIfUnchanged
             && request.source_unchanged
-            && let Some(bytes) = request.source.and_then(|s| self.retained_source_bytes(s))
+            && let Some(bytes) = original
         {
-            return Ok(ExportArtifact {
-                bytes: bytes.to_vec(),
-                report: CompatibilityReport::default(),
-                format: FormatProfile {
-                    format: self.descriptor.id.clone(),
-                    version: None,
-                },
-                mime_type: "application/pdf".to_owned(),
-                suggested_extension: "pdf".to_owned(),
-            });
+            return Ok(artifact(bytes.to_vec(), CompatibilityReport::default()));
         }
-        self.writer.export(request)
+        // Edited (or asked to preserve): keep the original when that is safe.
+        let fallback = match (original, state.and_then(|s| s.baseline.as_ref())) {
+            (Some(original), Some(baseline)) => {
+                if baseline.unchanged(request.document) {
+                    let mut report = CompatibilityReport::default();
+                    report.entries.push(CompatibilityEntry {
+                        feature: ORIGINAL_WRITTEN_BACK.to_owned(),
+                        occurrences: 1,
+                        location: FeatureLocation::default(),
+                        model_outcome: ModelOutcome::Mapped,
+                        retention_outcome: RetentionOutcome::Preserved,
+                    });
+                    return Ok(artifact(original.to_vec(), report));
+                }
+                match preserve(request.document, request.resources, original, baseline) {
+                    Ok((bytes, report)) => return Ok(artifact(bytes, report)),
+                    Err(fallback) => fallback,
+                }
+            }
+            _ => crate::pdf_preserve::Fallback::no_retained_source(),
+        };
+        let mut exported = self.writer.export(request)?;
+        exported.report.entries.push(fallback.entry());
+        exported.report.sort();
+        Ok(exported)
     }
 }
 
@@ -299,6 +352,7 @@ mod tests {
             .find(|d| d.id.as_str() == formats::PDF)
             .unwrap();
         assert!(descriptor.can_import && descriptor.can_export && descriptor.exact_if_unchanged);
+        assert!(descriptor.preserve_when_safe);
         let artifact = registry
             .import(
                 DetectionRequest {
@@ -347,9 +401,22 @@ mod tests {
             .export(request(true, ExportMode::ExactIfUnchanged))
             .unwrap();
         assert_eq!(exact.bytes, PROSE);
-        // Edited, or asked for a semantic write: the writer renders the model.
-        let semantic = adapter
+        // The watermark moved but the content is the import's (an edit
+        // undone): the original comes back, reported, rather than a re-render.
+        let undone = adapter
             .export(request(false, ExportMode::ExactIfUnchanged))
+            .unwrap();
+        assert_eq!(undone.bytes, PROSE);
+        assert!(
+            undone
+                .report
+                .entries
+                .iter()
+                .any(|e| e.feature == "pdf.export.original_written_back")
+        );
+        // Asked for a semantic write: the writer renders the model.
+        let semantic = adapter
+            .export(request(false, ExportMode::Semantic))
             .unwrap();
         assert_ne!(semantic.bytes, PROSE);
         assert!(semantic.bytes.starts_with(b"%PDF-"));

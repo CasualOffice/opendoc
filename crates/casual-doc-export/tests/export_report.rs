@@ -530,3 +530,145 @@ fn an_embedded_object_part_carried_verbatim_reports_nothing() {
     );
     assert_package_is_self_consistent(&export.bytes, "chart carried verbatim");
 }
+
+/// The rich fixture with its one picture moved to `part_name`, in the model and
+/// in the bytes the caller supplies, plus the picture's bytes.
+fn rich_with_picture_at(part_name: &str) -> (Document, BTreeMap<String, Vec<u8>>, Vec<u8>) {
+    let (mut document, mut resources) = import(RICH);
+    let (id, old) = document
+        .definitions()
+        .media
+        .iter()
+        .map(|(id, reference)| (*id, reference.part_name.clone()))
+        .next()
+        .expect("the fixture has one picture");
+    let bytes = resources.remove(&old).expect("the picture's bytes");
+    document
+        .definitions_mut()
+        .media
+        .get_mut(&id)
+        .expect("the reference")
+        .part_name = part_name.to_owned();
+    resources.insert(part_name.to_owned(), bytes.clone());
+    (document, resources, bytes)
+}
+
+/// A picture whose part lives outside `word/` is written where its
+/// relationship points, and comes back with its bytes.
+///
+/// The relationship target was the part name with a `word/` prefix stripped,
+/// and written unchanged when there was none — so `media/x.png` was stored at
+/// `media/x.png` and addressed as `word/media/x.png`. The export reported a
+/// clean save; the PDF importer's round-trip census was the only thing that saw
+/// the picture vanish (`docs/182` §16.3).
+#[test]
+fn a_picture_stored_outside_word_is_written_where_its_relationship_points() {
+    for part_name in ["media/pdf-image1.png", "pdf/images/scan.png"] {
+        let (document, resources, bytes) = rich_with_picture_at(part_name);
+        let export = export_document(&document, &resources).expect("exports");
+        assert!(
+            export.report.is_empty(),
+            "{part_name}: nothing is lost, got {:?}",
+            export.report.entries
+        );
+        assert_package_is_self_consistent(&export.bytes, part_name);
+        let (reopened, reopened_resources) = import(&export.bytes);
+        let carried: Vec<&Vec<u8>> = reopened
+            .definitions()
+            .media
+            .iter()
+            .filter_map(|(_, reference)| reopened_resources.get(&reference.part_name))
+            .collect();
+        assert_eq!(
+            carried,
+            [&bytes],
+            "{part_name}: the picture's bytes come back on reopen"
+        );
+    }
+}
+
+/// A picture under a name no relationship can address — or one that would
+/// shadow a part the writer generates — is reported and left out whole, never
+/// written over the main document or behind a dangling relationship.
+#[test]
+fn a_picture_whose_part_name_cannot_be_written_is_reported() {
+    for part_name in [
+        "word/document.xml",
+        "../outside.png",
+        "/word/media/rooted.png",
+        "word//double.png",
+        "word/_rels/hidden.png",
+        "",
+    ] {
+        let (document, resources, _) = rich_with_picture_at(part_name);
+        let export = export_document(&document, &resources).expect("exports");
+        let entry = export
+            .report
+            .entries
+            .iter()
+            .find(|entry| entry.feature == "docx.export.media.invalid_part_name")
+            .unwrap_or_else(|| panic!("{part_name:?}: an unwritable picture name is reported"));
+        assert_eq!(entry.location.part_name.as_deref(), Some(part_name));
+        assert_package_is_self_consistent(&export.bytes, part_name);
+        let parts = parts_of(&export.bytes);
+        let body = String::from_utf8_lossy(parts.get("word/document.xml").expect("body"));
+        assert!(
+            body.contains("<w:body>") && !body.contains("<w:drawing>"),
+            "{part_name:?}: the main part is the document, and the picture is gone from it"
+        );
+    }
+}
+
+/// The family: an embedded face and an embedded object whose parts live outside
+/// `word/` take the same relationship target rule, so both stay addressable.
+#[test]
+fn a_face_and_a_chart_outside_word_stay_addressable() {
+    let (mut document, mut resources) = import(&package_with_embedded_face(true));
+    let bytes = resources
+        .remove("word/fonts/font1.odttf")
+        .expect("the face bytes");
+    document.definitions_mut().font_table[0]
+        .embedded
+        .regular
+        .as_mut()
+        .expect("the face")
+        .part_name = "fonts/font1.odttf".to_owned();
+    resources.insert("fonts/font1.odttf".to_owned(), bytes.clone());
+    let export = export_document(&document, &resources).expect("exports");
+    assert!(export.report.is_empty(), "{:?}", export.report.entries);
+    assert_package_is_self_consistent(&export.bytes, "face outside word/");
+    assert_eq!(
+        parts_of(&export.bytes).get("fonts/font1.odttf"),
+        Some(&bytes)
+    );
+
+    let mut document = document_with_chart();
+    let mut body = document.body().to_vec();
+    if let casual_doc_model::v1::BlockNode::Paragraph(paragraph) = &mut body[0]
+        && let InlineNode::EmbeddedObject(object) = &mut paragraph.inlines[0]
+    {
+        object.part.part_name = "charts/chart1.xml".to_owned();
+    }
+    let document = Document::new(
+        document.id(),
+        body,
+        core::mem::take(document.definitions_mut()),
+    )
+    .unwrap();
+    let retained = RetainedParts {
+        theme: None,
+        parts: vec![RetainedPart {
+            part_name: "charts/chart1.xml".to_owned(),
+            content_type: Some(
+                "application/vnd.openxmlformats-officedocument.drawingml.chart+xml".to_owned(),
+            ),
+            bytes: b"<c:chartSpace/>".to_vec(),
+            rels: None,
+        }],
+        relationships: Vec::new(),
+    };
+    let export = export_document_with_retained_parts(&document, &BTreeMap::new(), &retained)
+        .expect("exports");
+    assert!(export.report.is_empty(), "{:?}", export.report.entries);
+    assert_package_is_self_consistent(&export.bytes, "chart outside word/");
+}

@@ -7,10 +7,16 @@ import { populateSaveFormats } from "./save_formats.mjs";
 import { openingZoomMode } from "./view_zoom.mjs";
 import { BLANK_DOCX_PARTS, UNTITLED_DOCUMENT_NAME, zipStore } from "./blank_document.mjs";
 import { hostIdentity, identityPromised } from "./host_identity.mjs";
+import { t } from "./i18n.mjs";
+import { createPdfImport } from "./pdf_import.mjs";
+import { isPdfBytes } from "./pdf_import_scheduler.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
 export function createFileOpen(ed) {
+  // The PDF progress dialog (`docs/182` P2). Built now, worded at open.
+  const pdfImport = createPdfImport({ fallbackFocus: () => ed.pagesEl });
+
   async function boot() {
     // Armed before the engine loads, because the hole it closes is open from the
     // first keystroke. The document lives in the wasm heap and nowhere else —
@@ -39,7 +45,7 @@ export function createFileOpen(ed) {
       // takes the whole editor down: nothing after it runs, so the document never
       // opens at all.
       ed.measurement.reflect();
-      ed.setStatus("Ready — open a .docx, .odt, .rtf, .json, or .txt");
+      ed.setStatus(t("fileOpen.ready"));
       ed.fileEl.disabled = false;
       if (ed.openBtn) ed.openBtn.disabled = false;
     } catch (err) {
@@ -178,8 +184,28 @@ export function createFileOpen(ed) {
 
   async function openBytes(bytes, name, onOpened, onRendered) {
     let replaced = false; // set where the previous document is freed: past it, nothing is "still here" (HF-381)
+    // A PDF is imported in slices behind its own progress dialog (`docs/182` §6),
+    // never by the synchronous `open`: the bytes decide, not the name, exactly as
+    // detection does for every other format. Cancel returns here with nothing
+    // changed, which is the same promise a failed parse below keeps.
+    const pdf = isPdfBytes(bytes);
+    if (pdf && pdfImport.running) {
+      ed.setStatus(t("pdfImport.busy"), "error");
+      return;
+    }
     try {
-      ed.setStatus(`Opening ${name}…`);
+      ed.setStatus(t("fileOpen.opening", { name }));
+      let next;
+      if (pdf) {
+        const imported = await pdfImport.run(bytes, name);
+        if (imported.cancelled) {
+          ed.setStatus(t(ed.doc ? "pdfImport.cancelledKept" : "pdfImport.cancelled", { name }));
+          return;
+        }
+        next = imported.doc;
+      } else {
+        next = open(bytes);
+      }
       // Parse BEFORE anything on screen is touched. Freeing the open document
       // first and parsing second meant any file the engine rejected — a corrupt
       // .docx, an unsupported .odt, the wrong file picked by mistake — destroyed
@@ -188,8 +214,8 @@ export function createFileOpen(ed) {
       // keystroke, click or Save threw "null pointer passed to rust" and there was
       // no way back. Only a successful parse replaces what is on screen; a failed
       // one leaves the previous document open, because the previous document is
-      // what the user still has.
-      const next = open(bytes);
+      // what the user still has. (`next` is parsed above, by `open` or by the
+      // PDF import's atomic finish.)
       await ed.versionHistory.closePreview(); await ed.comparePanel.closeView(); // a borrowed canvas goes home first, or `doc.free()` below frees the preview and strands the live wrapper
       ed.hideLinkChip();
       ed.pointerHover.clear();
@@ -298,7 +324,9 @@ export function createFileOpen(ed) {
       // engine getter with zero consumers: loss was computed on every open and
       // thrown away, while export loss was reported. SKILL §1 names reporting as
       // the condition under which verbatim retention is an advantage at all.
-      ed.compatFindings.show(ed.doc.importReportJson, "import");
+      // A PDF's report is also the import summary docs/182 asks for: what was
+      // inferred, approximated or left out, plus what the reconstruction is.
+      ed.compatFindings.show(ed.doc.importReportJson, "import", { origin: pdf ? "pdf" : null });
       ed.railOutline.disabled = ed.railPages.disabled = false;
       ed.reflowView.setEnabled();
       // The reader's formatting-mark preference, replayed onto the new handle: the
@@ -341,7 +369,11 @@ export function createFileOpen(ed) {
       // real faces register. Word and Docs both show the document before every
       // font it references is resolved; so do browsers, for the same reason.
       await ed.renderAll();
-      if (ed.statusEl.textContent === `Opening ${name}…`) ed.setStatus(ed.spellChecker.statusNote()); // the render clears only its own line
+      if (ed.statusEl.textContent === t("fileOpen.opening", { name })) ed.setStatus(ed.spellChecker.statusNote()); // the render clears only its own line
+      // Word says what it did to a PDF before you edit it; so does this, once,
+      // after the pages are on screen. Not for a restored draft or a version:
+      // those were summarised when they were first opened.
+      if (pdf && !ed.activatingRestore) ed.compatFindings.open();
       ed.buildOutline();
       ed.referenceCommands.numbering.refresh();
       ed.tocCommands.fields.refresh();
@@ -383,6 +415,11 @@ export function createFileOpen(ed) {
       // the message says so: "could not open" alone reads like the editor is empty.
       // A failure AFTER the previous document was freed must not claim it (HF-381).
       const kept = replaced ? " — the document you had open was already closed" : ed.doc ? " — the document you had open is still here" : "";
+      // A refusal with a finding id the reader can act on is said in words.
+      if (/pdf\.import\.encrypted_unsupported/.test(message)) {
+        ed.setStatus(`${t("pdfImport.encrypted", { name })}${kept}`, "error");
+        return;
+      }
       ed.setStatus(`Could not open ${name}: ${message}${kept}`, "error");
     }
   }

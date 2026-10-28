@@ -255,11 +255,13 @@ WebGPU
 WebKit
 WebMCP
 WebSocket
+Webapp
 WordArt
 WordprocessingML
 XML
 XMP
 XOR
+XObject
 XObjects
 XWPF
 Yjs
@@ -502,6 +504,7 @@ nginx
 nonmodal
 npm
 nspell
+ocr
 odf
 offline
 offscreen
@@ -533,6 +536,7 @@ postMessage
 pre
 preedit
 premultiplied
+preprocessing
 prev
 quantised
 quiesce
@@ -540,6 +544,7 @@ rAF
 rPr
 radiogroup
 rastered
+rasterised
 rasteriser
 rasterization
 rasterized
@@ -634,6 +639,7 @@ tblpPr
 teardown
 textbox
 tickable
+tokenizer
 tombstoned
 tombstoning
 toolchain
@@ -687,6 +693,7 @@ vMerge
 val
 validator
 var
+vello
 vendored
 verifier
 vertAlign

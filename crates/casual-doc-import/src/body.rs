@@ -38,6 +38,7 @@ use casual_doc_model::v1::{
 // merge collisions with other agents editing this shared file.
 use casual_doc_model::v1::DrawingHyperlink;
 use casual_doc_model::v1::NumberFormat;
+use casual_doc_model::v1::TextBoxVerticalText;
 // Same rule: the paragraph-spanning field range's own imports go on their own line.
 use casual_doc_model::v1::FieldUpdateState;
 use casual_doc_model::v1::Watermark;
@@ -5813,6 +5814,21 @@ impl BodyParser<'_> {
                 }
             };
         }
+        // The text's own rotation (`rot`, 60000ths of a degree) and the
+        // direction its lines run (`vert`), `docs/182` G-3. Word writes
+        // `rot="0"` on every text box, so the default is the common case.
+        if let Some(value) = attribute_value(element, b"rot") {
+            match value.parse::<i32>() {
+                Ok(rotation) => properties.text_rotation = rotation,
+                Err(_) => invalid = true,
+            }
+        }
+        if let Some(value) = attribute_value(element, b"vert") {
+            match TextBoxVerticalText::from_token(&value) {
+                Some(direction) => properties.vertical_text = direction,
+                None => invalid = true,
+            }
+        }
         if let Some(shape) = self.pending_shape.as_mut() {
             shape.body_properties = properties;
         }
@@ -6294,7 +6310,13 @@ impl BodyParser<'_> {
         let shaped = shape.geometry != ShapeGeometry::Rectangle
             || shape.preset.is_some()
             || !shape.adjustments.is_empty();
-        if shaped && shape.path.is_none() && self.pending_anchor.is_some() {
+        // A rotated or flipped lone text box takes the same route: `TextBox`
+        // has no field for its `a:xfrm@rot`/`@flipH`/`@flipV`, which were
+        // dropped in silence; a `GroupTextBox` carries all three, and layout
+        // turns the box and its text by them (`docs/182` G-3).
+        let turned =
+            shape.rotation.is_some_and(|rotation| rotation != 0) || shape.flip_h || shape.flip_v;
+        if (shaped || turned) && shape.path.is_none() && self.pending_anchor.is_some() {
             let pending = self
                 .pending_anchor
                 .take()
@@ -6327,6 +6349,11 @@ impl BodyParser<'_> {
         // `a:custGeom`, which `GroupTextBox` has no field for.
         if shaped || shape.path.is_some() {
             self.reporter.report(b"prstGeom");
+        }
+        // An INLINE text box's rotation or flip, likewise: a group of one needs
+        // an anchor.
+        if turned {
+            self.reporter.report(b"rot");
         }
         let docpr = self.pending_object_name.take();
         let own = core::mem::take(&mut shape.object_name);

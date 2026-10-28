@@ -9,6 +9,7 @@ members = [
     "crates/casual-doc-io",
     "crates/casual-doc-layout",
     "crates/casual-doc-model",
+    "crates/casual-doc-ocr",
     "crates/casual-doc-odf",
     "crates/casual-doc-package",
     "crates/casual-doc-pdf",
@@ -52,6 +53,7 @@ casual-doc-import = { path = "crates/casual-doc-import", version = "=0.0.1" }
 casual-doc-io = { path = "crates/casual-doc-io", version = "=0.0.1" }
 casual-doc-layout = { path = "crates/casual-doc-layout", version = "=0.0.1" }
 casual-doc-model = { path = "crates/casual-doc-model", version = "=0.0.1" }
+casual-doc-ocr = { path = "crates/casual-doc-ocr", version = "=0.0.1", default-features = false }
 casual-doc-odf = { path = "crates/casual-doc-odf", version = "=0.0.1" }
 casual-doc-package = { path = "crates/casual-doc-package", version = "=0.0.1" }
 casual-doc-pdf = { path = "crates/casual-doc-pdf", version = "=0.0.1" }

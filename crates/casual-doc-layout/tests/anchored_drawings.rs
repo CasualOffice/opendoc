@@ -1306,6 +1306,7 @@ fn floating_text_box_body_properties_apply_in_both_headers_and_footers() {
             horizontal_overflow: TextBoxHorizontalOverflow::Clip,
             vertical_overflow: TextBoxVerticalOverflow::Clip,
             auto_fit: TextBoxAutoFit::None,
+            ..TextBoxBodyProperties::default()
         },
         blocks: vec![BlockNode::Paragraph(Paragraph {
             id: node(411),

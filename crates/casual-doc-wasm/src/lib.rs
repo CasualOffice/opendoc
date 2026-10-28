@@ -265,6 +265,11 @@ mod presence;
 // write and the gate that decides when the write survives a save.
 mod chart;
 
+// The staged PDF import (`docs/182` §6, P2): begin, step a page budget, cancel,
+// and an atomic finish into a session. Its own module because it is one binding
+// over `casual-doc-io`'s job and touches no live document until `finish`.
+mod pdf_import;
+
 mod ai; // `editor.ai`: the in-page assistant's reads and private preview (`docs/181` §4.4).
 // The opt-in sparse-strip raster (`docs/architecture/179`, ADR-073 Proposed): one more export
 // with `renderPage`'s contract, compiled only with the `sparse-raster` feature.
@@ -1216,7 +1221,26 @@ impl WasmDocument {
             && !matches!(mode, ExportMode::ExactIfUnchanged)
             && self.revision != 0;
         let statistics = refresh.then(|| self.current_statistics());
-        let artifact = if format.as_str() == formats::PDF {
+        // A PDF opened here and saved as PDF before any edit is the original file,
+        // byte for byte (`docs/182` §7, MF-I4): the retained bytes, not a
+        // regeneration. Every other PDF save is the semantic writer below.
+        let original = (format.as_str() == formats::PDF
+            && mode == ExportMode::ExactIfUnchanged
+            && self.revision == 0)
+            .then(|| pdf_import::retained_original(self.format_state.source.as_ref()))
+            .flatten();
+        let artifact = if let Some(bytes) = original {
+            casual_doc_io::ExportArtifact {
+                bytes,
+                report: IoCompatibilityReport::default(),
+                format: casual_doc_io::FormatProfile {
+                    format: format.clone(),
+                    version: None,
+                },
+                mime_type: "application/pdf".to_owned(),
+                suggested_extension: "pdf".to_owned(),
+            }
+        } else if format.as_str() == formats::PDF {
             PdfAdapter::default()
                 .export_with_shaper(
                     ExportRequest {
@@ -22381,6 +22405,20 @@ fn open_document_bounded(
             imported.resources.insert(id, data);
         }
     }
+    session_from_import(imported, whole_layout_ceiling)
+}
+
+/// Turns a finished import into an editing session: the document's own faces,
+/// the block ceilings, the layout (whole or windowed), the id spaces and the
+/// saved folds. Shared by every open path, the synchronous registry import above
+/// and the staged PDF import (`pdf_import.rs`, `docs/182` §6), so a document
+/// opened either way is the same session.
+///
+/// Complexity: O(document), once: the layout pass is the whole cost.
+fn session_from_import(
+    imported: casual_doc_io::ImportArtifact,
+    whole_layout_ceiling: usize,
+) -> Result<WasmDocument, String> {
     let blocks = count_blocks(imported.document.body());
     if blocks > MAX_VIEWER_BLOCKS {
         return Err(too_many_blocks(blocks));

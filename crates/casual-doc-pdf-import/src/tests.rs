@@ -501,3 +501,71 @@ fn a_subset_without_a_usable_cmap_is_substituted_not_registered() {
     assert!(imported.document.definitions().font_programs.is_empty());
     assert!(imported.report.has(report::FONT_SUBSTITUTED));
 }
+
+/// The turned frames on a page: `(text, rotation in 60000ths)` of every
+/// `GroupTextBox` that carries a rotation.
+fn turned_frames(paragraph: &casual_doc_model::v1::Paragraph) -> Vec<(String, i32)> {
+    let mut out = Vec::new();
+    for inline in &paragraph.inlines {
+        let InlineNode::Group(group) = inline else {
+            continue;
+        };
+        for child in &group.children {
+            if let casual_doc_model::v1::GroupChild::TextBox(text_box) = child
+                && let Some(rotation) = text_box.rotation
+            {
+                let text: String = text_box
+                    .blocks
+                    .iter()
+                    .filter_map(|b| match b {
+                        BlockNode::Paragraph(p) => Some(p),
+                        _ => None,
+                    })
+                    .flat_map(|p| p.inlines.iter())
+                    .filter_map(|inline| match inline {
+                        InlineNode::Run(run) => Some(run.text.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                out.push((text, rotation));
+            }
+        }
+    }
+    out
+}
+
+/// G-3 (`docs/182` §16b): rotated text is a frame turned by its angle — real,
+/// editable text, not an upright stand-in — and a `/Rotate 90` page is a
+/// landscape section whose text is turned with it.
+#[test]
+fn rotated_text_becomes_turned_frames_and_a_rotated_page_is_landscape() {
+    let imported = import("synthetic-rotated-text.pdf");
+    let page = pages(&imported.document)[0];
+    let turned = turned_frames(page);
+    let rotations: Vec<i32> = turned.iter().map(|(_, r)| *r).collect();
+    assert_eq!(rotations, [-5_400_000, -1_800_000], "{turned:?}");
+    assert!(turned.iter().all(|(text, _)| !text.trim().is_empty()));
+    // Mapped, not a loss.
+    let finding = imported
+        .report
+        .findings
+        .iter()
+        .find(|f| f.feature == report::TEXT_ROTATED)
+        .expect("reported as the importer's choice");
+    assert_eq!(finding.outcome, report::PdfModelOutcome::Mapped);
+
+    let imported = import("synthetic-page-boxes.pdf");
+    let sections = &imported.document.definitions().sections;
+    let orientations: Vec<_> = sections.iter().map(|s| s.orientation).collect();
+    assert_eq!(
+        orientations,
+        [None, Some(casual_doc_model::v1::PageOrientation::Landscape)],
+        "the /Rotate 90 page is landscape"
+    );
+    let page = pages(&imported.document)[1];
+    assert!(frames(page).is_empty(), "no upright stand-in remains");
+    assert!(
+        !turned_frames(page).is_empty(),
+        "the rotated page's text is turned with it"
+    );
+}

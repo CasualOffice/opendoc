@@ -85,7 +85,7 @@ impl PdfAdapter {
 }
 
 /// Serves the export's pictures out of the request's [`DocumentResources`].
-struct ResourceMedia<'a>(&'a DocumentResources);
+pub(crate) struct ResourceMedia<'a>(pub(crate) &'a DocumentResources);
 
 impl PdfMediaSource for ResourceMedia<'_> {
     fn media_bytes(&self, media: &str) -> Option<&[u8]> {

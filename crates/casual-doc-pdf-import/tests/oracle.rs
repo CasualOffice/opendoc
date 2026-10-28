@@ -170,18 +170,17 @@ fn agreement(name: &str) -> Vec<(f64, f64)> {
 }
 
 /// Pages whose import reports a loss that is visible by construction, with the
-/// finding that reports it. Rotated text is placed upright (G-3), on a rotated
-/// page as on a rotated run; Type3 box glyphs become substitute text. Each is
+/// finding that reports it: Type3 box glyphs become substitute text. Each is
 /// asserted to be REPORTED, and the last test asserts the comparison SEES one.
-const REPORTED_LOSSES: [(&str, usize, &str); 3] = [
-    ("synthetic-page-boxes.pdf", 2, "pdf.import.text_rotated"),
-    ("synthetic-rotated-text.pdf", 1, "pdf.import.text_rotated"),
-    (
-        "synthetic-type3.pdf",
-        1,
-        "pdf.import.type3_glyphs_substituted",
-    ),
-];
+///
+/// Rotated text — a rotated run, and every line of a `/Rotate` page — was
+/// exempt here until G-3 (`docs/182` §16b): it was placed upright and reported.
+/// It is now a turned frame, and its pages are compared like any other.
+const REPORTED_LOSSES: [(&str, usize, &str); 1] = [(
+    "synthetic-type3.pdf",
+    1,
+    "pdf.import.type3_glyphs_substituted",
+)];
 
 fn fixture(name: &str) -> Vec<u8> {
     std::fs::read(
@@ -237,10 +236,31 @@ fn every_page_matches_hayros_render_of_the_original() {
     );
 }
 
-/// The comparison is able to fail: the upright placement of a rotated page's
-/// text misses almost all of the oracle's ink.
+/// The comparison is able to fail: the Type3 page's substituted glyphs, the
+/// one exemption left, disagree with the oracle's ink.
 #[test]
 fn the_comparison_sees_a_reported_visual_loss() {
-    let (recall, _) = agreement("synthetic-page-boxes.pdf")[1];
-    assert!(recall < MIN_AGREEMENT, "rotated page recall {recall:.3}");
+    let (recall, precision) = agreement("synthetic-type3.pdf")[0];
+    assert!(
+        recall < MIN_AGREEMENT || precision < MIN_AGREEMENT,
+        "type3 page recall {recall:.3} precision {precision:.3}"
+    );
+}
+
+/// Rotated text matches the original (`docs/182` G-3): the rotated run page and
+/// the `/Rotate 90` page, each once exempt, are within the tolerance on their
+/// own, named here so a regression says which.
+#[test]
+fn rotated_text_pages_match_the_oracle() {
+    for (name, index) in [
+        ("synthetic-rotated-text.pdf", 0),
+        ("synthetic-page-boxes.pdf", 1),
+    ] {
+        let (recall, precision) = agreement(name)[index];
+        assert!(
+            recall >= MIN_AGREEMENT && precision >= MIN_AGREEMENT,
+            "{name} page {}: recall {recall:.3} precision {precision:.3}",
+            index + 1
+        );
+    }
 }

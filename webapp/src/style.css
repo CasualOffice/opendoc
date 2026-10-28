@@ -1375,6 +1375,72 @@ button.compatibility-status:hover {
   }
 }
 
+/* A PDF's reconstruction (`docs/182` P2): what the document IS, said first. */
+.findings-pdf-facts {
+  margin: 0;
+  padding-inline-start: var(--space-4);
+}
+
+.findings-pdf-facts li + li {
+  margin-top: var(--space-1);
+}
+
+/* Opening a PDF (`pdf_import.mjs`): one bar, its count, its phase. The bar is
+   the editor's accent on its line colour; indeterminate until the page count is
+   known, which is only after admission. */
+.pdf-import-dialog {
+  max-width: 440px;
+}
+
+.pdf-import-bar {
+  position: relative;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--line);
+}
+
+.pdf-import-fill {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: 0;
+  background: var(--accent);
+  transition: inline-size 120ms linear;
+}
+
+.pdf-import-bar[data-state="indeterminate"] .pdf-import-fill {
+  inline-size: 30%;
+  animation: pdf-import-sweep 1.2s ease-in-out infinite;
+}
+
+@keyframes pdf-import-sweep {
+  from { inset-inline-start: -30%; }
+  to { inset-inline-start: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pdf-import-fill {
+    transition: none;
+  }
+  .pdf-import-bar[data-state="indeterminate"] .pdf-import-fill {
+    animation: none;
+    inline-size: 100%;
+    opacity: 0.4;
+  }
+}
+
+.pdf-import-count {
+  margin: var(--space-2) 0 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.pdf-import-phase {
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+
 .file {
   position: relative;
 }

@@ -22,11 +22,27 @@ skrifa = "0.43"
 # a wrapped CFF or converted Type1 program from its glyph names (`fonts.rs`).
 # No new crate or version enters the tree.
 read-fonts = { version = "0.40", default-features = false, features = ["std", "agl"] }
+# The OCR and layout provider seam (docs/182 P5/P6). Without features it is
+# traits and evidence types only; the host picks a provider.
+casual-doc-ocr.workspace = true
+# Selective rasterisation of the regions OCR reads (docs/182 §20): hayro's own
+# renderer over the bytes the reader admitted. Was the oracle's dev-dependency;
+# Apache-2.0 OR MIT, pure Rust, WASM-clean.
+hayro = "0.8.0"
+
+[features]
+default = ["paddle"]
+# The providers, enabled through this crate: PP-OCRv5 (the default), ocrs
+# (the fallback) and the heron layout model.
+paddle = ["casual-doc-ocr/paddle"]
+ocrs = ["casual-doc-ocr/ocrs"]
+layout-heron = ["casual-doc-ocr/layout-heron"]
 
 [dev-dependencies]
-# The oracle: hayro's own renderer draws the ORIGINAL page; ours draws the
-# imported model. A comparison against a renderer we did not write.
-hayro = "0.8.0"
+# The model-gated tests (tests/ocr.rs) build both providers.
+casual-doc-ocr = { workspace = true, features = ["paddle", "ocrs", "layout-heron"] }
+# Builds the synthetic scan (an image-only PDF) in tests/ocr.rs.
+flate2 = "1.1"
 # DOCX save and reopen for the edit round trip (no PDF feature needed there).
 casual-doc-io.workspace = true
 casual-doc-layout.workspace = true

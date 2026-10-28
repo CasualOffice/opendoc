@@ -76,6 +76,10 @@ pub struct Char {
     pub size: f64,
     /// Its run style.
     pub style: Style,
+    /// The page stream's show operator that painted it
+    /// ([`casual_doc_pdf_read::GlyphRunEvidence::show`]); an inserted space
+    /// carries the preceding glyph's.
+    pub show: Option<u32>,
 }
 
 /// A line of glyphs, spaces inserted.
@@ -168,6 +172,7 @@ pub fn blocks_counted(runs: &[&GlyphRunEvidence], params: LayoutParams) -> (Vec<
                 baseline: glyph.origin.y,
                 size: run.size,
                 style,
+                show: run.show,
             };
             let joins = lines.last().is_some_and(|line| {
                 let top = c.baseline - c.size * ASCENT;
@@ -189,7 +194,7 @@ pub fn blocks_counted(runs: &[&GlyphRunEvidence], params: LayoutParams) -> (Vec<
                     && !last.text.ends_with(char::is_whitespace)
                     && !c.text.starts_with(char::is_whitespace);
                 if space {
-                    let style = last.style;
+                    let (style, show) = (last.style, last.show);
                     let (x0, baseline, size) = (last.x1, last.baseline, last.size);
                     line.chars.push(Char {
                         text: " ".to_owned(),
@@ -198,6 +203,7 @@ pub fn blocks_counted(runs: &[&GlyphRunEvidence], params: LayoutParams) -> (Vec<
                         baseline,
                         size,
                         style,
+                        show,
                     });
                 }
                 line.push(c);

@@ -36,8 +36,10 @@
 import { t } from "./i18n.mjs";
 
 export const FORMAT_CATALOG = Object.freeze({
-  // Export only — the engine registers no PDF importer, so this never appears
-  // as something the picker offers to open.
+  // Both ways since `docs/182` P2: written by the real-text writer, and opened
+  // through the staged import (`pdf_import.mjs`), never the synchronous `open`.
+  // A document opened from a PDF and saved unchanged as PDF is the original
+  // file, byte for byte.
   "application.pdf": Object.freeze({
     labelKey: "format.pdf",
     extension: "pdf",

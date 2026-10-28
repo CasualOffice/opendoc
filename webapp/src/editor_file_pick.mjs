@@ -1,6 +1,8 @@
 // Opening a file the user picked or dropped: the size ceiling and handleFile.
 // Moved out of `main.js` unchanged (docs/177); it reaches the rest of the
 // editor only through the context `ed`.
+import { t } from "./i18n.mjs";
+
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
 export function createFilePick(ed) {
@@ -13,10 +15,10 @@ export function createFilePick(ed) {
   async function handleFile(file) {
     if (!file) return;
     // The WASM `open` auto-detects any registered format from the bytes, so accept
-    // every format the picker offers (DOCX, ODT, RTF, normalized JSON, plain text) —
+    // every format the picker offers (DOCX, ODT, RTF, PDF, normalized JSON, plain text) —
     // the extension is only a friendly pre-filter; detection is authoritative.
-    if (!/\.(docx|odt|rtf|json|txt)$/.test(file.name.toLowerCase())) {
-      ed.setStatus("Please choose a .docx, .odt, .rtf, .json, or .txt file", "error");
+    if (!/\.(docx|odt|rtf|pdf|json|txt)$/.test(file.name.toLowerCase())) {
+      ed.setStatus(t("filePick.unsupported"), "error");
       return;
     }
     // The open document lives in the wasm heap and nowhere else, so replacing it
