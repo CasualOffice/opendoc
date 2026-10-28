@@ -114,6 +114,7 @@ pub const FEATURES: &[&str] = &[
     OCR_APPLIED,
     OCR_LIMIT_REACHED,
     OCR_LOW_CONFIDENCE,
+    OCR_SCAN_COVERED,
     OCR_UNAVAILABLE,
     OPTIONAL_CONTENT_FLATTENED,
     PAGE_SIZE_CLAMPED,
@@ -173,6 +174,12 @@ pub const OCR_LIMIT_REACHED: &str = "pdf.import.ocr_limit_reached";
 /// Optical words under the low-confidence threshold (kept), or under the
 /// floor (dropped).
 pub const OCR_LOW_CONFIDENCE: &str = "pdf.import.ocr_low_confidence";
+/// Optical lines whose scanned ink is covered by a filled shape in the
+/// paper's colour, so the substitute face does not double the scan's own
+/// glyphs (`OcrOptions::scan_behind_text`). The picture's bytes are
+/// untouched: the shapes are separate objects above it, and deleting them
+/// shows the scan again.
+pub const OCR_SCAN_COVERED: &str = "pdf.import.ocr_scan_covered";
 /// Regions that need OCR when the host supplied no recognition model: their
 /// text is not in the document (pictures stay pictures; unmapped runs stay
 /// U+FFFD).

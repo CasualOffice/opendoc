@@ -43,7 +43,7 @@ use casual_doc_model::v1::Document;
 use casual_doc_pdf_read::PdfSource;
 pub use casual_doc_pdf_read::{PdfReadError, PdfReadLimits, probe_pdf};
 
-pub use ocr::{OcrOptions, OcrSummary, OcrTextPlacement, PageClass, PageLayout};
+pub use ocr::{OcrOptions, OcrSummary, OcrTextPlacement, PageClass, PageLayout, ScanBehindText};
 pub use report::{PdfFinding, PdfImportReport, PdfModelOutcome};
 
 /// Why an import failed. Carries no document text.

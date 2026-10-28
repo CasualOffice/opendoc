@@ -25,6 +25,8 @@
 //! (a file, a cache, a host `fetch` with an integrity hash); with none, a
 //! provider cannot be constructed and the importer reports
 //! `pdf.import.ocr_unavailable`. Nothing here opens a socket (PDFR-I6).
+//! [`OcrModels`] is the typed set a host builds (from bytes, or natively from
+//! a directory) and turns into providers.
 //!
 //! **Bounded and interruptible (PDFR-I7).** Every provider call takes
 //! [`OcrLimits`] (pixels, lines, characters) and an [`Interrupt`] it polls
@@ -47,6 +49,7 @@
 mod evidence;
 mod interrupt;
 pub mod layout;
+mod models;
 mod provider;
 mod raster;
 
@@ -66,6 +69,7 @@ pub use interrupt::{CancelToken, Interrupt, Never, Stop};
 pub use layout::{
     HeuristicLayout, LayoutInput, LayoutProvider, LayoutRegion, RegionKind, TextLineHint,
 };
+pub use models::{OcrModels, OcrModelsError, RecognitionModel};
 pub use provider::{OcrError, OcrLimits, OcrProvider};
 pub use raster::Raster;
 

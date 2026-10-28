@@ -279,7 +279,7 @@ impl OcrProvider for OcrsProvider {
                 continue;
             };
             let bounds = words.iter().fold(first.bounds, |b, w| b.union(&w.bounds));
-            page.lines.push(OcrLine { words, bounds });
+            page.lines.push(OcrLine::upright(words, bounds));
         }
         Ok(page)
     }

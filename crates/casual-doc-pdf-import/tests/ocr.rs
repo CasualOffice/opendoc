@@ -206,6 +206,10 @@ struct Scripted {
     /// Cancels this token on the first call (a host pressing Cancel while a
     /// page is being read).
     cancel_on_call: Option<CancelToken>,
+    /// Reports every line turned by this many degrees about its own centre
+    /// (the given box is then its upright frame), as a provider does for a
+    /// skewed or upside-down line.
+    turn: Option<f32>,
 }
 
 impl Scripted {
@@ -215,6 +219,7 @@ impl Scripted {
             region: None,
             calls: AtomicU32::new(0),
             cancel_on_call: None,
+            turn: None,
         }
     }
 }
@@ -256,14 +261,19 @@ impl OcrProvider for Scripted {
                     x1: (x1 - ox) * s,
                     y1: (y1 - oy) * s,
                 };
-                OcrLine {
-                    words: vec![OcrWord {
+                let mut line = OcrLine::upright(
+                    vec![OcrWord {
                         text: (*text).to_owned(),
                         bounds,
                         confidence: *confidence,
                     }],
                     bounds,
+                );
+                if let Some(turn) = self.turn {
+                    line.rotation_degrees = turn;
+                    line.pivot = [(bounds.x0 + bounds.x1) / 2.0, (bounds.y0 + bounds.y1) / 2.0];
                 }
+                line
             })
             .collect();
         Ok(OcrPage {
@@ -501,6 +511,194 @@ fn optical_frames_sit_over_the_picture_and_hidden_placement_hides_them() {
         .filter(|i| matches!(i, InlineNode::Run(r) if r.properties.hidden == Some(true)))
         .count();
     assert_eq!(hidden_runs, 1, "the optical run is hidden");
+}
+
+/// Each turned frame's text and rotation (60,000ths of a degree).
+fn turned_texts(document: &Document) -> Vec<(String, i32)> {
+    let mut out = Vec::new();
+    for block in document.body() {
+        let BlockNode::Paragraph(page) = block else {
+            continue;
+        };
+        for inline in &page.inlines {
+            let InlineNode::Group(group) = inline else {
+                continue;
+            };
+            for child in &group.children {
+                let casual_doc_model::v1::GroupChild::TextBox(text_box) = child else {
+                    continue;
+                };
+                let Some(rotation) = text_box.rotation else {
+                    continue;
+                };
+                let mut text = String::new();
+                for block in &text_box.blocks {
+                    if let BlockNode::Paragraph(p) = block {
+                        for inline in &p.inlines {
+                            if let InlineNode::Run(run) = inline {
+                                text.push_str(&run.text);
+                            }
+                        }
+                    }
+                }
+                out.push((text, rotation));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn a_line_read_turned_becomes_a_frame_turned_by_the_same_angle() {
+    for (turn, want) in [(180.0f32, 180 * 60_000), (3.0, 3 * 60_000)] {
+        let scripted = Arc::new(Scripted {
+            turn: Some(turn),
+            ..Scripted::new(vec![("Turned", [200.0, 300.0, 300.0, 320.0], 0.99)])
+        });
+        let imported =
+            import_pdf_with_ocr(blank_scan(1, ""), PdfReadLimits::default(), with(scripted))
+                .unwrap();
+        assert_eq!(
+            turned_texts(&imported.document),
+            vec![("Turned".to_owned(), want)],
+            "turn {turn}"
+        );
+        assert_eq!(imported.ocr.lines_turned, 1);
+        // The turned line is not also an upright frame.
+        assert!(!text_of(&imported.document).contains("Turned"));
+    }
+}
+
+#[test]
+fn an_upside_down_pages_lines_group_in_reading_order() {
+    // Upside down, the first line read sits lower on the page than the
+    // second. Turned back about the page centre, it is the top line, so the
+    // two join one frame, first line first.
+    let scripted = Arc::new(Scripted {
+        turn: Some(180.0),
+        ..Scripted::new(vec![
+            ("Second", [300.0, 480.0, 360.0, 492.0], 0.99),
+            ("First", [300.0, 495.0, 360.0, 507.0], 0.99),
+        ])
+    });
+    let imported =
+        import_pdf_with_ocr(blank_scan(1, ""), PdfReadLimits::default(), with(scripted)).unwrap();
+    let frames = turned_texts(&imported.document);
+    assert_eq!(frames.len(), 1, "one frame: {frames:?}");
+    assert!(frames[0].0.starts_with("First"), "{frames:?}");
+}
+
+/// The cover shapes on each page: their fill colours.
+fn covers(document: &Document) -> Vec<[u8; 3]> {
+    let mut out = Vec::new();
+    for block in document.body() {
+        let BlockNode::Paragraph(page) = block else {
+            continue;
+        };
+        for inline in &page.inlines {
+            let InlineNode::Group(group) = inline else {
+                continue;
+            };
+            for child in &group.children {
+                if let casual_doc_model::v1::GroupChild::Shape(shape) = child
+                    && let Some(casual_doc_model::v1::Fill::Solid(c)) = &shape.fill
+                {
+                    out.push([c.r, c.g, c.b]);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The z-order (relative height) of the first inline matching `pick`.
+fn z_of(document: &Document, pick: impl Fn(&InlineNode) -> Option<u32>) -> u32 {
+    let BlockNode::Paragraph(page) = &document.body()[0] else {
+        panic!("a page paragraph");
+    };
+    page.inlines.iter().find_map(pick).expect("present")
+}
+
+#[test]
+fn visible_optical_text_covers_the_scan_in_the_papers_colour_and_keeps_the_picture() {
+    // Off-white paper (230), so a cover in plain white would be visible, and
+    // a native stamp painted after the scan, far from the optical line, which
+    // the cover must stay under.
+    let (w, h) = (306u32, 396u32);
+    let paper = scan_pdf(
+        &[(w, h, vec![230u8; (w * h) as usize])],
+        "BT /F1 10 Tf 400 72 Td (Stamp) Tj ET",
+    );
+    let scripted: Arc<dyn OcrProvider> = Arc::new(Scripted::new(vec![(
+        "Covered",
+        [72.0, 100.0, 160.0, 113.0],
+        0.99,
+    )]));
+    let covered = import_pdf_with_ocr(
+        paper.clone(),
+        PdfReadLimits::default(),
+        with(scripted.clone()),
+    )
+    .unwrap();
+    assert_eq!(covers(&covered.document), vec![[230, 230, 230]]);
+    assert_eq!(covered.ocr.lines_covered, 1);
+    let finding = covered
+        .report
+        .findings
+        .iter()
+        .find(|f| f.feature == report::OCR_SCAN_COVERED)
+        .expect("the cover is reported");
+    assert_eq!(finding.occurrences, 1);
+    // Picture, then cover, then text.
+    let picture = z_of(&covered.document, |i| match i {
+        InlineNode::AnchoredDrawing(d) => d.relative_height,
+        _ => None,
+    });
+    let cover = z_of(&covered.document, |i| match i {
+        InlineNode::Group(g) => g.relative_height,
+        _ => None,
+    });
+    let frame = |needle: &'static str| {
+        move |i: &InlineNode| match i {
+            InlineNode::TextBox(t) if format!("{:?}", t.blocks).contains(needle) => {
+                t.relative_height
+            }
+            _ => None,
+        }
+    };
+    let text = z_of(&covered.document, frame("Covered"));
+    let stamp = z_of(&covered.document, frame("Stamp"));
+    assert!(
+        picture < cover && cover < text && cover < stamp,
+        "picture {picture}, cover {cover}, optical text {text}, stamp {stamp}"
+    );
+
+    // Showing the scan through, or hiding the text, adds no cover; the
+    // picture's bytes are the same in every case (the cover never edits it).
+    for options in [
+        OcrOptions {
+            scan_behind_text: casual_doc_pdf_import::ScanBehindText::ShowThrough,
+            ..with(scripted.clone())
+        },
+        OcrOptions {
+            placement: casual_doc_pdf_import::OcrTextPlacement::Hidden,
+            ..with(scripted.clone())
+        },
+    ] {
+        let plain = import_pdf_with_ocr(paper.clone(), PdfReadLimits::default(), options).unwrap();
+        assert!(covers(&plain.document).is_empty());
+        assert!(
+            plain
+                .report
+                .findings
+                .iter()
+                .all(|f| f.feature != report::OCR_SCAN_COVERED)
+        );
+        assert_eq!(
+            plain.resources, covered.resources,
+            "the picture is untouched"
+        );
+    }
 }
 
 // ----------------------------------------------------- bounds and cancel
@@ -969,4 +1167,145 @@ fn heron_finds_the_prose_title_and_paragraphs() {
     assert!(covers(&[RegionKind::Text], 120.0), "{regions:#?}");
     assert!(covers(&[RegionKind::Text], 200.0), "{regions:#?}");
     assert_eq!(run().layout, imported.layout, "PDFR-I8 on this target");
+}
+
+/// `(w, h, grey)` turned `degrees` clockwise about its centre on a canvas of
+/// the same size, white where nothing maps (a scan fed in skewed or upside
+/// down). Bilinear. O(pixels).
+fn turn_grey((w, h, grey): &(u32, u32, Vec<u8>), degrees: f32) -> (u32, u32, Vec<u8>) {
+    let (w, h) = (*w as usize, *h as usize);
+    let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+    let (sin, cos) = degrees.to_radians().sin_cos();
+    let at = |x: i64, y: i64| -> f32 {
+        if x < 0 || y < 0 || x >= w as i64 || y >= h as i64 {
+            255.0
+        } else {
+            f32::from(grey[y as usize * w + x as usize])
+        }
+    };
+    let mut out = vec![255u8; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let (dx, dy) = (x as f32 + 0.5 - cx, y as f32 + 0.5 - cy);
+            // The source point the clockwise turn brought here.
+            let sx = cx + dx * cos + dy * sin - 0.5;
+            let sy = cy - dx * sin + dy * cos - 0.5;
+            let (x0, y0) = (sx.floor(), sy.floor());
+            let (tx, ty) = (sx - x0, sy - y0);
+            let (x0, y0) = (x0 as i64, y0 as i64);
+            let top = at(x0, y0) * (1.0 - tx) + at(x0 + 1, y0) * tx;
+            let bottom = at(x0, y0 + 1) * (1.0 - tx) + at(x0 + 1, y0 + 1) * tx;
+            out[y * w + x] = (top * (1.0 - ty) + bottom * ty).round() as u8;
+        }
+    }
+    (w as u32, h as u32, out)
+}
+
+/// Every frame's text on `page`, upright and turned, in paint order, and
+/// each turned frame's rotation.
+fn all_frames(imported: &PdfImport, page: usize) -> (String, Vec<i32>) {
+    let BlockNode::Paragraph(p) = &imported.document.body()[page] else {
+        panic!("page paragraph")
+    };
+    let mut out = String::new();
+    let mut turns = Vec::new();
+    let push = |blocks: &[BlockNode], out: &mut String| {
+        for block in blocks {
+            if let BlockNode::Paragraph(q) = block {
+                for i in &q.inlines {
+                    match i {
+                        InlineNode::Run(r) => out.push_str(&r.text),
+                        InlineNode::Break(_) => out.push('\n'),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        out.push('\n');
+    };
+    for inline in &p.inlines {
+        match inline {
+            InlineNode::TextBox(t) => push(&t.blocks, &mut out),
+            InlineNode::Group(g) => {
+                for child in &g.children {
+                    if let casual_doc_model::v1::GroupChild::TextBox(t) = child {
+                        turns.push(t.rotation.unwrap_or(0));
+                        push(&t.blocks, &mut out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    (out, turns)
+}
+
+/// PP-OCRv5 with the multilingual pack and, when present, the text-line
+/// orientation classifier (`textline_ori.onnx`, `fetch-test-models.sh`).
+fn paddle_with_orientation() -> Option<Arc<PaddleOcr>> {
+    let dir = std::path::PathBuf::from(std::env::var_os("OPENDOC_PADDLE_MODELS")?);
+    let path = dir.join("textline_ori.onnx");
+    if !path.is_file() {
+        eprintln!("skipped: {} is absent", path.display());
+        return None;
+    }
+    let provider = paddle_provider(&["rec"])?;
+    let provider = Arc::try_unwrap(provider).expect("sole owner");
+    Some(Arc::new(
+        provider
+            .with_orientation(std::fs::read(path).unwrap())
+            .expect("the orientation model loads"),
+    ))
+}
+
+#[test]
+fn an_upside_down_scan_reads_the_right_way_up_with_the_orientation_model() {
+    let Some(provider) = paddle_with_orientation() else {
+        return;
+    };
+    let source = fixture("synthetic-prose.pdf");
+    let native = import_pdf(source.clone(), PdfReadLimits::default()).unwrap();
+    let expected = page_text(&native, 0);
+    let scan = scan_pdf(&[turn_grey(&render_grey(&source, 0, 200.0), 180.0)], "");
+    let imported =
+        import_pdf_with_ocr(scan, PdfReadLimits::default(), with_model(provider)).unwrap();
+    let (got, turns) = all_frames(&imported, 0);
+    let score = similarity(&expected, &got);
+    eprintln!("upside down: similarity {score:.4}, turns {turns:?}\ngot:\n{got}");
+    assert!(
+        score >= SCAN_SIMILARITY,
+        "upside down: similarity {score:.4} < {SCAN_SIMILARITY}\ngot:\n{got}"
+    );
+    assert!(
+        !turns.is_empty() && turns.iter().all(|&t| t == 180 * 60_000),
+        "every frame is turned half way, as the scan is: {turns:?}"
+    );
+}
+
+#[test]
+fn a_skewed_scan_reads_as_well_as_a_straight_one() {
+    let Some(provider) = paddle_provider(&["rec"]) else {
+        return;
+    };
+    let source = fixture("synthetic-prose.pdf");
+    let native = import_pdf(source.clone(), PdfReadLimits::default()).unwrap();
+    let expected = page_text(&native, 0);
+    let scan = scan_pdf(&[turn_grey(&render_grey(&source, 0, 200.0), 3.0)], "");
+    let imported =
+        import_pdf_with_ocr(scan, PdfReadLimits::default(), with_model(provider)).unwrap();
+    let (got, turns) = all_frames(&imported, 0);
+    let score = similarity(&expected, &got);
+    eprintln!("3 degrees: similarity {score:.4}, turns {turns:?}\ngot:\n{got}");
+    assert!(
+        score >= SCAN_SIMILARITY,
+        "3 degrees: similarity {score:.4} < {SCAN_SIMILARITY}\ngot:\n{got}"
+    );
+    // The frames carry the skew (one shared angle, within a quarter degree
+    // of the 3 the scan was turned by), so they sit on the scan's lines.
+    assert!(!turns.is_empty(), "the frames are turned");
+    for t in &turns {
+        let degrees = f64::from(*t) / 60_000.0;
+        assert!((degrees - 3.0).abs() < 0.25, "turned {degrees}");
+    }
+    assert!(imported.ocr.lines_turned > 0);
 }

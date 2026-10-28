@@ -28,7 +28,16 @@
 //!    optical line, appended after the page's own paint so the frames sit
 //!    above the picture they were read from. Their font index is
 //!    [`OCR_FONT`], which names no PDF font: the builder neither registers nor
-//!    reports a substitution for it and draws it with its default face.
+//!    reports a substitution for it and draws it with its default face. A
+//!    line the provider read turned (a skewed scan, an upside-down line) is a
+//!    run turned by the same angle, so the builder frames it rotated (G-3).
+//! 6. **Cover the scan under visible text** ([`ScanBehindText::Cover`], the
+//!    default for visible frames): each optical line read from a picture gets
+//!    a filled shape in the paper's colour, sampled from the raster around
+//!    the ink, painted directly above the picture and below everything drawn
+//!    after it. The picture's bytes are never changed; the shapes are
+//!    separate objects (one group per run of them), so deleting them shows
+//!    the scan again. Reported as `pdf.import.ocr_scan_covered`.
 //!
 //! With no provider, step 1 still runs and every region is reported as
 //! `pdf.import.ocr_unavailable`: OCR is never silently skipped.
@@ -47,10 +56,11 @@ use std::sync::Arc;
 
 use casual_doc_ocr::{
     Interrupt, LayoutInput, LayoutProvider, LayoutRegion, Never, OcrBox, OcrError, OcrLimits,
-    OcrPage, OcrProvider, ProviderManifest, Raster, Stop, TextLineHint,
+    OcrLine, OcrPage, OcrProvider, ProviderManifest, Raster, Stop, TextLineHint,
 };
 use casual_doc_pdf_read::{
-    Bounds, GlyphEvidence, GlyphRunEvidence, PageEvidence, PaintEvidence, Point, RenderMode,
+    Bounds, GlyphEvidence, GlyphRunEvidence, PageEvidence, PaintEvidence, PathCommand,
+    PathEvidence, Point, RenderMode,
 };
 
 use crate::PdfImportError;
@@ -99,14 +109,35 @@ const MAX_MERGED_PICTURES: usize = 256;
 pub enum OcrTextPlacement {
     /// Visible, editable frames over the retained picture (the default: the
     /// point of import is editing). The picture stays below, so nothing is
-    /// lost, and the scan's own ink shows through where the substitute face
-    /// differs from it. Erasing the picture behind the text is not built.
+    /// lost; [`OcrOptions::scan_behind_text`] decides whether its ink under
+    /// the text is covered.
     #[default]
     Visible,
     /// Hidden runs (`hidden`), the way a searchable scan carries its text
     /// layer: the page looks like the original and the text is searchable,
     /// selectable and readable by agents.
     Hidden,
+}
+
+/// What happens to the scanned ink under a visible optical line.
+///
+/// **Default `Cover`, and why** (`docs/182` §20a): visible frames are the
+/// editing output, and a substitute face drawn over the scan's own glyphs
+/// doubles every letter wherever the two faces differ (always, in practice),
+/// which reads as a defect rather than as the original. Acrobat's "Edit
+/// text" on a scan does the same and replaces the ink. Covering is the one
+/// choice that keeps both properties the design requires: the page reads
+/// once, and nothing is destroyed (the picture's bytes are untouched and the
+/// covers are ordinary, deletable shapes). `ShowThrough` keeps the earlier
+/// behaviour for a host that wants the scan visible under its text.
+/// Hidden placement never covers: its page must look like the original.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ScanBehindText {
+    /// A filled shape in the paper's colour over each visible line's ink.
+    #[default]
+    Cover,
+    /// Nothing over the scan: its ink shows through.
+    ShowThrough,
 }
 
 /// The host's OCR configuration. `Default` has no provider: OCR is reported
@@ -134,14 +165,16 @@ pub struct OcrOptions {
     pub min_confidence: f32,
     /// How optical text is drawn.
     pub placement: OcrTextPlacement,
+    /// Whether the scan's ink under visible optical text is covered.
+    pub scan_behind_text: ScanBehindText,
     /// Cancel and time budget, polled between pages, regions and lines.
     pub interrupt: Arc<dyn Interrupt>,
 }
 
 impl Default for OcrOptions {
     /// No provider; 150 dpi; [`OcrLimits::default`]; 500 pages and 4 Gpx per
-    /// import; low confidence under 0.8, dropped under 0.3; visible frames;
-    /// never interrupted.
+    /// import; low confidence under 0.8, dropped under 0.3; visible frames
+    /// with the scan covered under them; never interrupted.
     fn default() -> Self {
         Self {
             provider: None,
@@ -153,6 +186,7 @@ impl Default for OcrOptions {
             low_confidence: 0.8,
             min_confidence: 0.3,
             placement: OcrTextPlacement::Visible,
+            scan_behind_text: ScanBehindText::Cover,
             interrupt: Arc::new(Never),
         }
     }
@@ -170,6 +204,7 @@ impl fmt::Debug for OcrOptions {
             .field("low_confidence", &self.low_confidence)
             .field("min_confidence", &self.min_confidence)
             .field("placement", &self.placement)
+            .field("scan_behind_text", &self.scan_behind_text)
             .finish_non_exhaustive()
     }
 }
@@ -223,6 +258,10 @@ pub struct OcrSummary {
     pub words_kept: u32,
     /// Optical words dropped because native text covers them.
     pub words_shadowed: u32,
+    /// Optical lines whose scanned ink is covered ([`ScanBehindText::Cover`]).
+    pub lines_covered: u32,
+    /// Optical lines read turned (skewed, or upside down).
+    pub lines_turned: u32,
     /// Pixels rasterised for recognition.
     pub pixels: u64,
 }
@@ -600,28 +639,73 @@ fn conflicts(native: &str, optical: &str) -> bool {
     distance(&a, &b) * 3 > a.len().max(b.len()).max(3)
 }
 
-/// One optical word in page space.
+/// One optical word: its box in its line's upright frame (page points).
 struct PageWord {
     text: String,
     bounds: Bounds,
 }
 
+/// One optical line in page points. `bounds` and the words' boxes are in the
+/// line's upright frame: the page turned by `-rotation` about `pivot`.
+struct PageLine {
+    rotation: f64,
+    pivot: Point,
+    bounds: Bounds,
+    words: Vec<PageWord>,
+    /// The paper's colour around the line, when its ink is to be covered.
+    cover: Option<[u8; 3]>,
+}
+
+/// Turns `point` clockwise (y down) by `degrees` about `pivot`.
+fn turn_point(point: Point, pivot: Point, degrees: f64) -> Point {
+    if degrees == 0.0 {
+        return point;
+    }
+    let (sin, cos) = degrees.to_radians().sin_cos();
+    let (dx, dy) = (point.x - pivot.x, point.y - pivot.y);
+    Point {
+        x: pivot.x + dx * cos - dy * sin,
+        y: pivot.y + dx * sin + dy * cos,
+    }
+}
+
+/// The four corners of an upright-frame box, turned onto the page.
+fn corners(b: &Bounds, pivot: Point, degrees: f64) -> [Point; 4] {
+    [(b.x0, b.y0), (b.x1, b.y0), (b.x1, b.y1), (b.x0, b.y1)]
+        .map(|(x, y)| turn_point(Point { x, y }, pivot, degrees))
+}
+
+/// The page-space box holding an upright-frame box once turned.
+fn turned_bounds(b: &Bounds, pivot: Point, degrees: f64) -> Bounds {
+    if degrees == 0.0 {
+        return *b;
+    }
+    let c = corners(b, pivot, degrees);
+    let (xs, ys) = (c.map(|p| p.x), c.map(|p| p.y));
+    Bounds {
+        x0: xs.iter().copied().fold(f64::INFINITY, f64::min),
+        y0: ys.iter().copied().fold(f64::INFINITY, f64::min),
+        x1: xs.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+        y1: ys.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+    }
+}
+
 /// Builds the glyph run for one optical line. Each word's characters share
 /// its box evenly; words are separated by an explicit space glyph so the
-/// builder's word-gap rule cannot merge them.
-fn optical_run(words: &[PageWord], line: &Bounds, placement: OcrTextPlacement) -> GlyphRunEvidence {
-    let em = (line.height() * EM_PER_LINE_BOX).max(1.0);
-    let baseline = line.y1 - em * DESCENT;
+/// builder's word-gap rule cannot merge them. A turned line's origins are
+/// turned onto the page and the run carries its angle.
+fn optical_run(line: &PageLine, placement: OcrTextPlacement) -> GlyphRunEvidence {
+    let em = (line.bounds.height() * EM_PER_LINE_BOX).max(1.0);
+    let baseline = line.bounds.y1 - em * DESCENT;
+    let place = |x: f64| turn_point(Point { x, y: baseline }, line.pivot, line.rotation);
+    let words = &line.words;
     let mut glyphs = Vec::new();
     for (i, word) in words.iter().enumerate() {
         if i > 0 {
             let previous = &words[i - 1].bounds;
             glyphs.push(GlyphEvidence {
                 text: Some(" ".to_owned()),
-                origin: Point {
-                    x: previous.x1,
-                    y: baseline,
-                },
+                origin: place(previous.x1),
                 advance: (word.bounds.x0 - previous.x1).max(0.0),
             });
         }
@@ -630,10 +714,7 @@ fn optical_run(words: &[PageWord], line: &Bounds, placement: OcrTextPlacement) -
         for (k, c) in word.text.chars().enumerate() {
             glyphs.push(GlyphEvidence {
                 text: Some(c.to_string()),
-                origin: Point {
-                    x: word.bounds.x0 + advance * k as f64,
-                    y: baseline,
-                },
+                origin: place(word.bounds.x0 + advance * k as f64),
                 advance,
             });
         }
@@ -641,7 +722,7 @@ fn optical_run(words: &[PageWord], line: &Bounds, placement: OcrTextPlacement) -
     GlyphRunEvidence {
         font: OCR_FONT,
         size: em,
-        rotation_degrees: 0.0,
+        rotation_degrees: line.rotation,
         fill: Some([0, 0, 0, 255]),
         mode: match placement {
             OcrTextPlacement::Visible => RenderMode::Fill,
@@ -657,35 +738,136 @@ fn optical_run(words: &[PageWord], line: &Bounds, placement: OcrTextPlacement) -
     }
 }
 
+/// Padding of a cover around a line's ink, in line heights: CTC places
+/// characters to about a frame (8 px at the recogniser's scale), so the
+/// horizontal margin is wider than the vertical one.
+const COVER_PAD_X: f64 = 0.3;
+const COVER_PAD_Y: f64 = 0.15;
+
+/// The filled shape that covers a line's scanned ink: its padded upright box
+/// turned onto the page, in the paper's colour.
+fn cover_path(line: &PageLine, colour: [u8; 3]) -> PathEvidence {
+    let h = line.bounds.height().max(0.0);
+    let padded = Bounds {
+        x0: line.bounds.x0 - h * COVER_PAD_X,
+        y0: line.bounds.y0 - h * COVER_PAD_Y,
+        x1: line.bounds.x1 + h * COVER_PAD_X,
+        y1: line.bounds.y1 + h * COVER_PAD_Y,
+    };
+    let [a, b, c, d] = corners(&padded, line.pivot, line.rotation);
+    PathEvidence {
+        commands: vec![
+            PathCommand::MoveTo(a),
+            PathCommand::LineTo(b),
+            PathCommand::LineTo(c),
+            PathCommand::LineTo(d),
+            PathCommand::Close,
+        ],
+        fill: Some(Some([colour[0], colour[1], colour[2], 255])),
+        even_odd: false,
+        stroke: None,
+        bounds: turned_bounds(&padded, line.pivot, line.rotation),
+        clipped: false,
+    }
+}
+
+/// The paper's colour around an optical line: the per-channel median of the
+/// raster's non-ink pixels inside the line's padded box (sampled on a grid
+/// of about 16 x 64 points). White when too few are found. O(1) samples per
+/// line.
+fn paper_colour(raster: &Raster, line: &OcrLine) -> [u8; 3] {
+    let b = &line.bounds;
+    let h = b.height().max(1.0);
+    let (x0, x1) = (b.x0 - h * 0.3, b.x1 + h * 0.3);
+    let (y0, y1) = (b.y0 - h * 0.15, b.y1 + h * 0.15);
+    let (w, rh) = (raster.width() as i64, raster.height() as i64);
+    let rgb = raster.rgb();
+    let mut channels: [Vec<u8>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    for j in 0..16 {
+        let y = y0 + (y1 - y0) * (j as f32 + 0.5) / 16.0;
+        for i in 0..64 {
+            let x = x0 + (x1 - x0) * (i as f32 + 0.5) / 64.0;
+            let (rx, ry) = line.to_raster(x, y);
+            let (px, py) = (rx.floor() as i64, ry.floor() as i64);
+            if px < 0 || py < 0 || px >= w || py >= rh {
+                continue;
+            }
+            let at = ((py * w + px) * 3) as usize;
+            let p = [rgb[at], rgb[at + 1], rgb[at + 2]];
+            if p.iter().map(|&c| u32::from(c)).sum::<u32>() < 3 * 128 {
+                continue;
+            }
+            for (c, v) in p.into_iter().enumerate() {
+                channels[c].push(v);
+            }
+        }
+    }
+    if channels[0].len() < 16 {
+        return [255, 255, 255];
+    }
+    channels.map(|mut c| {
+        c.sort_unstable();
+        c[c.len() / 2]
+    })
+}
+
 /// Joins optical lines that sit on the same row: a detector splits a line at
 /// a wide word gap (`ocrs` does at about two ems), and two halves of one line
 /// would become two frames. A line joins an earlier one when they overlap
 /// vertically by half the smaller height and it starts to the right within
-/// [`ROW_GAP_EMS`] ems of it. Lines are sorted by top, then left, first, so
-/// the result does not depend on the provider's order (PDFR-I8). O(l log l +
-/// l x [`ROW_WINDOW`]).
-fn join_rows(mut lines: Vec<(Bounds, Vec<PageWord>)>) -> Vec<(Bounds, Vec<PageWord>)> {
-    lines.sort_by(|a, b| a.0.y0.total_cmp(&b.0.y0).then(a.0.x0.total_cmp(&b.0.x0)));
-    let mut out: Vec<(Bounds, Vec<PageWord>)> = Vec::with_capacity(lines.len());
-    for (bounds, words) in lines {
+/// [`ROW_GAP_EMS`] ems of it. Only upright lines join (a turned line's frame
+/// is its own). Lines are sorted by angle, then in reading order **as the
+/// fixed-layout builder sees them**: a turned line's top left corner turned
+/// back upright about the page `centre`, the pivot the builder turns rotated
+/// text about. So an upside-down page's lines reach the builder top line
+/// first and group into paragraphs. The order does not depend on the
+/// provider's (PDFR-I8). O(l log l + l x [`ROW_WINDOW`]).
+fn join_rows(mut lines: Vec<PageLine>, centre: Point) -> Vec<PageLine> {
+    let key = |l: &PageLine| {
+        let corner = turn_point(
+            Point {
+                x: l.bounds.x0,
+                y: l.bounds.y0,
+            },
+            l.pivot,
+            l.rotation,
+        );
+        let upright = turn_point(corner, centre, -l.rotation);
+        ((l.rotation * 100.0).round() as i64, upright.y, upright.x)
+    };
+    let order = |a: &PageLine, b: &PageLine| {
+        let (a, b) = (key(a), key(b));
+        a.0.cmp(&b.0)
+            .then(a.1.total_cmp(&b.1))
+            .then(a.2.total_cmp(&b.2))
+    };
+    lines.sort_by(order);
+    let mut out: Vec<PageLine> = Vec::with_capacity(lines.len());
+    for line in lines {
         let start = out.len().saturating_sub(ROW_WINDOW);
-        let target = out[start..].iter().rposition(|(row, _)| {
-            let overlap = row.y1.min(bounds.y1) - row.y0.max(bounds.y0);
-            let smaller = row.height().min(bounds.height());
-            let em = row.height().max(bounds.height());
-            let gap = bounds.x0 - row.x1;
-            overlap >= 0.5 * smaller && gap >= -0.5 * em && gap <= ROW_GAP_EMS * em
-        });
+        let target = (line.rotation == 0.0)
+            .then(|| {
+                out[start..].iter().rposition(|row| {
+                    let (row, bounds) = (&row.bounds, &line.bounds);
+                    let overlap = row.y1.min(bounds.y1) - row.y0.max(bounds.y0);
+                    let smaller = row.height().min(bounds.height());
+                    let em = row.height().max(bounds.height());
+                    let gap = bounds.x0 - row.x1;
+                    overlap >= 0.5 * smaller && gap >= -0.5 * em && gap <= ROW_GAP_EMS * em
+                })
+            })
+            .flatten()
+            .filter(|&at| out[start + at].rotation == 0.0);
         match target {
             Some(at) => {
                 let row = &mut out[start + at];
-                row.0 = union(&row.0, &bounds);
-                row.1.extend(words);
+                row.bounds = union(&row.bounds, &line.bounds);
+                row.words.extend(line.words);
             }
-            None => out.push((bounds, words)),
+            None => out.push(line),
         }
     }
-    out.sort_by(|a, b| a.0.y0.total_cmp(&b.0.y0).then(a.0.x0.total_cmp(&b.0.x0)));
+    out.sort_by(order);
     out
 }
 
@@ -765,7 +947,7 @@ impl OcrStage {
             self.summary.classes.resize(page.index + 1, None);
         }
         self.summary.classes[page.index] = Some(class);
-        let mut recognised: Vec<(OcrRegion, f64, OcrPage)> = Vec::new();
+        let mut recognised: Vec<Recognised> = Vec::new();
         if !regions.is_empty() {
             self.poll()?;
             let provider = self.options.provider.clone();
@@ -837,7 +1019,17 @@ impl OcrStage {
                                     );
                                 }
                                 any = true;
-                                recognised.push((*region, scale, result));
+                                let paper = result
+                                    .lines
+                                    .iter()
+                                    .map(|l| paper_colour(&raster, l))
+                                    .collect();
+                                recognised.push(Recognised {
+                                    region: *region,
+                                    scale,
+                                    page: result,
+                                    paper,
+                                });
                             }
                             Err(OcrError::Cancelled) => return Err(PdfImportError::Cancelled),
                             Err(_) => skipped += 1,
@@ -863,12 +1055,13 @@ impl OcrStage {
         Ok(())
     }
 
-    /// Native-first merge (`docs/131` §10.2), then the optical runs.
+    /// Native-first merge (`docs/131` §10.2), then the optical runs and,
+    /// under [`ScanBehindText::Cover`], the covers over their scanned ink.
     fn merge(
         &mut self,
         page: &mut PageEvidence,
         index: &GlyphIndex,
-        recognised: &[(OcrRegion, f64, OcrPage)],
+        recognised: &[Recognised],
         findings: &mut Findings,
     ) {
         let at = Some(page.index);
@@ -876,17 +1069,22 @@ impl OcrStage {
         let mut conflicts_found = 0u32;
         // (item, glyph) pairs of unmapped glyphs an optical word replaces.
         let mut replaced: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-        let mut lines: Vec<(Bounds, Vec<PageWord>)> = Vec::new();
-        for (region, scale, result) in recognised {
-            for line in &result.lines {
+        let mut lines: Vec<PageLine> = Vec::new();
+        let cover = self.options.placement == OcrTextPlacement::Visible
+            && self.options.scan_behind_text == ScanBehindText::Cover;
+        for item in recognised {
+            let (region, scale) = (&item.region, item.scale);
+            for (line, paper) in item.page.lines.iter().zip(&item.paper) {
+                let rotation = f64::from(line.rotation_degrees);
+                let pivot = to_page_point(line.pivot[0], line.pivot[1], &region.bounds, scale);
                 let mut kept: Vec<PageWord> = Vec::new();
                 for word in &line.words {
                     if word.confidence < self.options.min_confidence {
                         low += 1;
                         continue;
                     }
-                    let bounds = to_page(&word.bounds, &region.bounds, *scale);
-                    let hits = index.overlapping(&bounds);
+                    let bounds = to_page(&word.bounds, &region.bounds, scale);
+                    let hits = index.overlapping(&turned_bounds(&bounds, pivot, rotation));
                     let (valid, unmapped): (Vec<usize>, Vec<usize>) =
                         hits.into_iter().partition(|&id| index.glyphs[id].1);
                     if !valid.is_empty() {
@@ -922,14 +1120,28 @@ impl OcrStage {
                     continue;
                 }
                 self.summary.words_kept += kept.len() as u32;
+                if rotation != 0.0 {
+                    self.summary.lines_turned += 1;
+                }
                 let first = kept[0].bounds;
                 let line_box = kept.iter().fold(first, |b, w| union(&b, &w.bounds));
-                lines.push((line_box, kept));
+                lines.push(PageLine {
+                    rotation,
+                    pivot,
+                    bounds: line_box,
+                    words: kept,
+                    cover: (cover && region.reason == RegionReason::Picture).then_some(*paper),
+                });
             }
         }
-        let runs: Vec<GlyphRunEvidence> = join_rows(lines)
+        let centre = Point {
+            x: page.width / 2.0,
+            y: page.height / 2.0,
+        };
+        let lines = join_rows(lines, centre);
+        let runs: Vec<GlyphRunEvidence> = lines
             .iter()
-            .map(|(line_box, words)| optical_run(words, line_box, self.options.placement))
+            .map(|line| optical_run(line, self.options.placement))
             .collect();
         findings.record(report::OCR_LOW_CONFIDENCE, Outcome::Degraded, low, at);
         findings.record(
@@ -964,8 +1176,56 @@ impl OcrStage {
                 |item| !matches!(item, PaintEvidence::Glyphs(run) if run.glyphs.is_empty()),
             );
         }
+        let covered = self.cover(page, &lines);
+        self.summary.lines_covered += covered;
+        findings.record(report::OCR_SCAN_COVERED, Outcome::Mapped, covered, at);
         page.items
             .extend(runs.into_iter().map(PaintEvidence::Glyphs));
+    }
+
+    /// Inserts each line's cover directly above the last picture it lies on,
+    /// so it hides the scan and nothing painted after the picture. Returns
+    /// the lines covered. O(lines x pictures + items).
+    fn cover(&self, page: &mut PageEvidence, lines: &[PageLine]) -> u32 {
+        let page_box = Bounds {
+            x0: 0.0,
+            y0: 0.0,
+            x1: page.width,
+            y1: page.height,
+        };
+        let pictures: Vec<(usize, Bounds)> = page
+            .items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, item)| match item {
+                PaintEvidence::Image(image) => picture_footprint(image, &page_box).map(|b| (i, b)),
+                _ => None,
+            })
+            .collect();
+        let mut inserts: BTreeMap<usize, Vec<PathEvidence>> = BTreeMap::new();
+        for line in lines {
+            let Some(colour) = line.cover else {
+                continue;
+            };
+            let path = cover_path(line, colour);
+            let Some(&(at, _)) = pictures
+                .iter()
+                .rev()
+                .find(|(_, b)| b.intersect(&path.bounds).is_some())
+            else {
+                continue;
+            };
+            inserts.entry(at).or_default().push(path);
+        }
+        let mut covered = 0u32;
+        for (at, paths) in inserts.into_iter().rev() {
+            covered += paths.len() as u32;
+            let tail = page.items.split_off(at + 1);
+            page.items
+                .extend(paths.into_iter().map(PaintEvidence::Path));
+            page.items.extend(tail);
+        }
+        covered
     }
 
     /// P6: the layout provider over the merged page, when the host asked.
@@ -1055,6 +1315,23 @@ impl OcrStage {
             Err(_) => {}
         }
         Ok(())
+    }
+}
+
+/// One region's recognition: where, at what scale, what was read, and the
+/// paper's colour around each line.
+struct Recognised {
+    region: OcrRegion,
+    scale: f64,
+    page: OcrPage,
+    paper: Vec<[u8; 3]>,
+}
+
+/// Maps a raster point back to page points.
+fn to_page_point(x: f32, y: f32, region: &Bounds, scale: f64) -> Point {
+    Point {
+        x: region.x0 + f64::from(x) / scale,
+        y: region.y0 + f64::from(y) / scale,
     }
 }
 
