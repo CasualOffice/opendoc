@@ -166,11 +166,15 @@ impl OcrModels {
             .canonicalize()
             .map_err(|_| OcrModelsError::Missing(dir.display().to_string()))?;
         let read = |path: &Path| -> Result<Vec<u8>, OcrModelsError> {
+            // Named relative to the model directory with `/` on every platform, so
+            // an operator's message and the tests read the same on Windows.
             let shown = path
                 .strip_prefix(&root)
                 .unwrap_or(path)
-                .display()
-                .to_string();
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
             let canonical = path
                 .canonicalize()
                 .map_err(|_| OcrModelsError::Missing(shown.clone()))?;

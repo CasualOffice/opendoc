@@ -42,7 +42,11 @@ pdf-import = [
 ]
 # The heron layout model (docs/182 P6) for PDF import, when a host supplies
 # one in its OCR models. Adds no crate: rten is already in with OCR.
-pdf-layout = ["pdf-import", "casual-doc-pdf-import/layout-heron"]
+pdf-layout = ["pdf-ocr", "casual-doc-pdf-import/layout-heron"]
+# PaddleOCR PP-OCRv5 (docs/182 P5) for PDF import, when a host supplies models.
+# Separate from `pdf-import` so the editor's WASM build does not link the OCR
+# runtime it has no models for (the editor's OCR arrives in the lazy PDF module).
+pdf-ocr = ["pdf-import", "casual-doc-pdf-import/paddle"]
 
 [dev-dependencies]
 # The byte-preserving PDF save's guards render the saved file with a renderer

@@ -209,7 +209,8 @@ pub(crate) fn retained_original(_source: Option<&SourceEnvelope>) -> Option<Vec<
     None
 }
 
-#[cfg(all(test, feature = "pdf-import"))]
+#[cfg(feature = "pdf-import")]
+#[cfg(test)]
 mod tests {
     use super::*;
     use casual_doc_edit::surface_block_lists;
