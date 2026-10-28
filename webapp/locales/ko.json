@@ -2420,6 +2420,8 @@
   "findings.feature.pdfFootnoteMarkers": "번호를 다시 매긴 각주 기호",
   "findings.feature.pdfJustification": "줄 너비에서 추정한 양쪽 맞춤",
   "findings.feature.pdfPageBreaks": "페이지 끝에서 추정한 페이지 나누기",
+  "findings.feature.pdfFloats": "그림과 도형을 텍스트 옆이나 뒤에 배치",
+  "findings.feature.pdfVectorsPlaced": "도형으로 배치한 그리기 개체",
   "pdfImport.title": "{name} 여는 중",
   "pdfImport.intro": "이 기기에서 PDF 페이지를 편집 가능한 프레임으로 재구성하는 중입니다.",
   "pdfImport.reading": "파일을 읽는 중…",

@@ -2450,6 +2450,8 @@
   "findings.feature.pdfFootnoteMarkers": "Знаки виносок перенумеровано",
   "findings.feature.pdfJustification": "Вирівнювання за шириною визначено за довжиною рядків",
   "findings.feature.pdfPageBreaks": "Розриви сторінок визначено за кінцями сторінок",
+  "findings.feature.pdfFloats": "Зображення та малюнки розміщено поруч із текстом або за ним",
+  "findings.feature.pdfVectorsPlaced": "Малюнки розміщено як фігури",
   "pdfImport.title": "Відкриття {name}",
   "pdfImport.intro": "Сторінки PDF відтворюються як редаговані рамки на цьому пристрої.",
   "pdfImport.reading": "Читання файлу…",

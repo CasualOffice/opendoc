@@ -718,6 +718,8 @@ export const EN_STRINGS = Object.freeze({
   "findings.feature.pdfFootnoteMarkers": "Footnote marks renumbered",
   "findings.feature.pdfJustification": "Justified text inferred from line widths",
   "findings.feature.pdfPageBreaks": "Page breaks inferred from where pages end",
+  "findings.feature.pdfFloats": "Pictures and drawings floated beside or behind their text",
+  "findings.feature.pdfVectorsPlaced": "Drawings placed as shapes",
   // Opening a PDF (`pdf_import.mjs`): the progress dialog over the staged import.
   "pdfImport.title": "Opening {name}",
   "pdfImport.intro": "Rebuilding the PDF's pages as editable frames, on this device.",

@@ -2440,6 +2440,8 @@
   "findings.feature.pdfFootnoteMarkers": "Marcas de nota al pie renumeradas",
   "findings.feature.pdfJustification": "Texto justificado deducido del ancho de las líneas",
   "findings.feature.pdfPageBreaks": "Saltos de página deducidos de dónde terminan las páginas",
+  "findings.feature.pdfFloats": "Imágenes y dibujos flotantes junto a su texto o detrás de él",
+  "findings.feature.pdfVectorsPlaced": "Dibujos colocados como formas",
   "pdfImport.title": "Abriendo {name}",
   "pdfImport.intro": "Reconstruyendo las páginas del PDF como marcos editables, en este dispositivo.",
   "pdfImport.reading": "Leyendo el archivo…",
