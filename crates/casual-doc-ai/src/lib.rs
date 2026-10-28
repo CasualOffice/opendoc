@@ -30,6 +30,9 @@ pub mod anchor;
 pub mod compare;
 pub mod editor;
 pub mod error;
+// Own line (anti-conflict): heading levels and page labels for the reference
+// commands (`docs/181` §12, lane references).
+mod layout_facts;
 pub mod limits;
 pub mod plan;
 pub mod profile;

@@ -5416,6 +5416,14 @@ pub enum Surface {
     Endnote(NoteId),
 }
 
+/// `visit_paragraphs` (`casual_doc_model::v1`) over every block surface, in the
+/// order [`surface_block_lists`] produces. **O(document)**, one scan.
+pub fn visit_paragraphs_all_surfaces(document: &Document, visit: &mut impl FnMut(&Paragraph)) {
+    for blocks in surface_block_lists(document) {
+        casual_doc_model::v1::visit_paragraphs(blocks, visit);
+    }
+}
+
 /// Every block surface in the document, body first.
 ///
 /// The read helpers below all used to walk `document.body()` alone, so a caret

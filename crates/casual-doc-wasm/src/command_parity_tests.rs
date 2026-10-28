@@ -3,7 +3,10 @@
 //! `docs/181` §3, guard G7: the editor's wasm method and the capability
 //! registry's lowering produce the **same operations** on the same document
 //! and the same resolved input, family by family (tables, character and
-//! paragraph formatting, lists).
+//! paragraph formatting, lists, links, fields, notes, sections, objects,
+//! charts, and the reference family: tables of contents, captions and
+//! cross-references, whose resolved input includes what the editor's layout
+//! lends them).
 //!
 //! Each case clones the document's id generator, asks `casual_doc_command`
 //! for the operations, then drives the editor's method on the real document
@@ -24,6 +27,16 @@ use casual_doc_model::v1::{BreakKind, NoteKind};
 use casual_doc_model::{IdGenerator, NodeId};
 
 use crate::{WasmDocument, open_document};
+// Lane references (docs/181 §12), on their own lines per the parallel-lane
+// import rule.
+use crate::toc::EditorFacts;
+use casual_doc_command::references::{self, TocUpdate};
+use casual_doc_edit::references::{
+    CaptionChapter, CaptionNumberFormat, CaptionPosition, CaptionSeparator, CaptionSpec,
+    ReferenceTo,
+};
+use casual_doc_model::v1::InlineNode;
+use std::collections::HashMap;
 
 const MERGED: &[u8] = include_bytes!("../../../fixtures/generated/merged-tables.docx");
 
@@ -857,6 +870,256 @@ fn chart_insertion_is_one_lowering_for_the_editor_and_agents() {
 
 /// The production lines of the editor's sources: a test module, whole-file
 /// (`*_tests.rs`) or trailing (`#[cfg(test)] mod …`), is not production.
+/// A body of headings, captions' targets and text, imported from real markup so
+/// the headings carry an `w:outlineLvl` the cascade has to resolve: "Preface",
+/// "Chapter A" (level 1), "The wiring", "Chapter B" (level 2), "The layout".
+fn reference_document() -> WasmDocument {
+    let document = casual_doc_import::import_main_document_xml(
+        br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:t>Preface</w:t></w:r></w:p>
+            <w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>Chapter A</w:t></w:r></w:p>
+            <w:p><w:r><w:t>The wiring</w:t></w:r></w:p>
+            <w:p><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>Chapter B</w:t></w:r></w:p>
+            <w:p><w:r><w:t>The layout</w:t></w:r></w:p>
+        </w:body></w:document>"#,
+        casual_doc_import::ImportConfig::default(),
+    )
+    .expect("import")
+    .document;
+    crate::tests::wasm_document(document)
+}
+
+/// What an agent lends a table of contents, built here rather than through
+/// the editor's glue, so the glue's own choices are what is compared: the
+/// page label of every laid-out block, and the content width of the
+/// document's first section (what `casual-doc-ai` computes).
+fn toc_facts(d: &WasmDocument) -> EditorFacts<'_> {
+    let definitions = d.document.definitions();
+    EditorFacts::with_pages(
+        definitions,
+        casual_doc_layout::paginate::first_page_labels(d.layout.resident(), &definitions.sections),
+    )
+}
+
+fn content_width(d: &WasmDocument) -> i32 {
+    let page = casual_doc_layout::document_layout::document_page_config(&d.document);
+    page.page_size.width.raw() - page.margin_start.raw() - page.margin_end.raw()
+}
+
+#[test]
+fn tables_of_contents_are_one_lowering_for_the_editor_and_agents() {
+    let mut d = reference_document();
+    let preface = paragraphs(&d)[0];
+
+    for levels in [1_u32, 0] {
+        let mut expected_ids = ids(&d);
+        let expected = {
+            let facts = toc_facts(&d);
+            references::insert_table_of_contents(
+                &d.document,
+                &facts,
+                preface,
+                references::toc_level(levels),
+                content_width(&d),
+                &mut mint(&mut expected_ids),
+            )
+            .expect("lowers")
+        };
+        d.insert_table_of_contents_inner(&preface.to_string(), levels)
+            .expect("the editor inserts a table of contents");
+        assert_eq!(
+            committed(&d),
+            expected.operations,
+            "table of contents ({levels} levels): editor and command differ"
+        );
+        drop(d.undo().expect("undo"));
+    }
+
+    d.insert_table_of_contents_inner(&preface.to_string(), 3)
+        .expect("a table to update");
+    for (mode, name) in [
+        (TocUpdate::PageNumbers, "pageNumbers"),
+        (TocUpdate::Entire, "entire"),
+    ] {
+        let mut expected_ids = ids(&d);
+        let expected = {
+            let facts = toc_facts(&d);
+            references::update_table_of_contents(
+                &d.document,
+                &facts,
+                None,
+                mode,
+                content_width(&d),
+                &mut mint(&mut expected_ids),
+            )
+            .expect("lowers")
+        };
+        d.update_table_of_contents_inner("", name)
+            .expect("the editor updates the table");
+        assert_eq!(
+            committed(&d),
+            expected,
+            "update table of contents ({name}): editor and command differ"
+        );
+    }
+}
+
+/// The caption the editor's dialog defaults to, plus what each case varies.
+fn caption(label: &str, position: CaptionPosition, chapter: Option<CaptionChapter>) -> CaptionSpec {
+    CaptionSpec {
+        label: label.to_owned(),
+        text: ": parity".to_owned(),
+        position,
+        exclude_label: false,
+        number_format: CaptionNumberFormat::Arabic,
+        chapter,
+    }
+}
+
+#[test]
+fn captions_and_cross_references_are_one_lowering_for_the_editor_and_agents() {
+    let mut d = reference_document();
+    let [_, _, wiring, _, layout] = paragraphs(&d)[..] else {
+        panic!("five paragraphs");
+    };
+
+    // Below "The layout", then above "The wiring": the second renumbers the
+    // first (a `SetInlines`), and a chapter-numbered one counts the headings.
+    let cases = [
+        (layout, caption("Figure", CaptionPosition::Below, None)),
+        (wiring, caption("Figure", CaptionPosition::Above, None)),
+        (
+            layout,
+            caption(
+                "Table",
+                CaptionPosition::Below,
+                Some(CaptionChapter {
+                    heading_level: 1,
+                    separator: CaptionSeparator::Period,
+                }),
+            ),
+        ),
+    ];
+    for (target, spec) in cases {
+        let mut expected_ids = ids(&d);
+        let expected = {
+            let facts = EditorFacts::with_pages(d.document.definitions(), HashMap::new());
+            references::insert_caption(
+                &d.document,
+                &facts,
+                target,
+                spec.clone(),
+                &mut mint(&mut expected_ids),
+            )
+            .expect("lowers")
+        };
+        let chapter = spec.chapter.map_or(0, |chapter| chapter.heading_level);
+        let separator = spec
+            .chapter
+            .map_or("hyphen", |chapter| chapter.separator.wire_name());
+        d.insert_caption(
+            &target.to_string(),
+            &spec.label,
+            spec.text.clone(),
+            if spec.position == CaptionPosition::Above {
+                "above"
+            } else {
+                "below"
+            },
+            spec.exclude_label,
+            spec.number_format.wire_name(),
+            chapter,
+            separator,
+        )
+        .expect("the editor inserts a caption");
+        assert_eq!(
+            committed(&d),
+            expected.operations,
+            "caption {} {:?}: editor and command differ",
+            spec.label,
+            spec.position
+        );
+    }
+
+    // A stale number, as a document another producer saved arrives with: the
+    // first caption's cached `SEQ` result is overwritten in place.
+    let first_caption = paragraphs(&d)[2];
+    for block in d.document.body_mut() {
+        if let BlockNode::Paragraph(paragraph) = block
+            && paragraph.id == first_caption
+            && let Some(InlineNode::Field(field)) = paragraph
+                .inlines
+                .iter_mut()
+                .find(|inline| matches!(inline, InlineNode::Field(_)))
+            && let Some(InlineNode::Run(run)) = field.inlines.first_mut()
+        {
+            run.text = "9".to_owned();
+        }
+    }
+    let mut expected_ids = ids(&d);
+    let expected = {
+        let facts = EditorFacts::with_pages(d.document.definitions(), HashMap::new());
+        references::update_caption_numbers(&d.document, &facts, &mut mint(&mut expected_ids))
+            .expect("one caption is stale")
+    };
+    d.update_caption_numbers_inner()
+        .expect("the editor renumbers");
+    assert_eq!(
+        committed(&d),
+        expected.operations,
+        "update caption numbers: editor and command differ"
+    );
+
+    // Cross-references to that caption: each kind, with and without a link and
+    // the above/below suffix, and a page reference (the editor's one layout
+    // query, lent as the target's page).
+    let caret = Pos::new(layout, 3);
+    for (to, hyperlink, above_below) in [
+        (ReferenceTo::EntireCaption, false, true),
+        (ReferenceTo::LabelAndNumber, true, false),
+        (ReferenceTo::CaptionTextOnly, false, false),
+        (ReferenceTo::PageNumber, true, false),
+        (ReferenceTo::AboveBelow, false, false),
+        (ReferenceTo::ParagraphText, false, true),
+    ] {
+        let target = paragraphs(&d)[2];
+        let mut pages = HashMap::new();
+        if let Some(page) = d.page_of(target) {
+            pages.insert(target, page.to_string());
+        }
+        let mut expected_ids = ids(&d);
+        let expected = {
+            let facts = EditorFacts::with_pages(d.document.definitions(), pages);
+            references::insert_cross_reference(
+                &d.document,
+                &facts,
+                caret,
+                target,
+                to,
+                hyperlink,
+                above_below,
+                &mut mint(&mut expected_ids),
+            )
+            .expect("lowers")
+        };
+        d.insert_cross_reference(
+            &layout.to_string(),
+            caret.offset,
+            &target.to_string(),
+            to.wire_name(),
+            hyperlink,
+            above_below,
+        )
+        .expect("the editor inserts a cross-reference");
+        assert_eq!(
+            committed(&d),
+            expected,
+            "cross-reference {}: editor and command differ",
+            to.wire_name()
+        );
+    }
+}
+
 fn production_lines() -> Vec<(String, usize, String)> {
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut out = Vec::new();
@@ -926,10 +1189,23 @@ fn the_editor_builds_no_moved_lowering_itself() {
         "Operation::ClearFormatting {",
         // Lane families-b: links, bookmarks, fields, notes, breaks, sections,
         // running content, pictures and object formatting.
-        // (`CreateBookmark`, `InsertField`, `SetExtent`, `SetMediaReference`
-        // and `DeleteObject` are not listed: cross-references, captions, group
-        // resizing, picture bullets, Change Picture and group-member deletion
-        // build them for their own gestures, which have not moved.)
+        // (`SetExtent`, `SetMediaReference` and `DeleteObject` are not listed:
+        // group resizing, picture bullets, Change Picture and group-member
+        // deletion build them for their own gestures, which have not moved.)
+        // Lane references: tables of contents, captions and cross-references
+        // were the editor's last builders of these three.
+        "Operation::CreateBookmark {",
+        "Operation::InsertField {",
+        "Operation::InsertFieldRange {",
+        "caption_paragraph(",
+        "caption_style(",
+        "reference_field(",
+        "above_below(",
+        "fn toc_blocks(",
+        "fn toc_headings(",
+        "fn sequence_of(",
+        "fn renumbered(",
+        "fn paragraph_offsets(",
         "Operation::SetHyperlink {",
         "Operation::RenameBookmark {",
         "Operation::DeleteBookmark {",

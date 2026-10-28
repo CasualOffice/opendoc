@@ -116,7 +116,12 @@ fn needs(edit: &Edit, mode: Mode) -> Profile {
         | Edit::InsertFooter { .. }
         | Edit::SetDifferentFirstPage { .. }
         | Edit::SetDifferentOddEven { .. }
-        | Edit::InsertChart { .. } => Profile::Edit,
+        | Edit::InsertChart { .. }
+        | Edit::InsertTableOfContents { .. }
+        | Edit::UpdateTableOfContents { .. }
+        | Edit::InsertCaption { .. }
+        | Edit::UpdateCaptionNumbers { .. }
+        | Edit::InsertCrossReference { .. } => Profile::Edit,
         Edit::InsertText { .. }
         | Edit::ReplaceText { .. }
         | Edit::DeleteText { .. }
@@ -1810,6 +1815,157 @@ fn apply_edit(
                 ids.next_id().ok()
             })
             .map_err(|message| refusal(&message))?;
+            commit(state, ops)?;
+        }
+        // `docs/181` §12, lane references: the editor's own lowerings, with
+        // heading levels and page labels from this state (`layout_facts`).
+        Edit::InsertTableOfContents { before, levels } => {
+            refuse_untracked(kind, mode)?;
+            let levels = levels.unwrap_or(casual_doc_command::references::DEFAULT_TOC_LEVEL);
+            if !(1..=casual_doc_command::references::MAX_TOC_LEVEL).contains(&levels) {
+                return Err(AiError::invalid("`levels` is 1 to 9."));
+            }
+            let node = paragraph(&state.document, &before.node)?.id;
+            let page = casual_doc_layout::document_layout::document_page_config(&state.document);
+            let tab = page.page_size.width.raw() - page.margin_start.raw() - page.margin_end.raw();
+            let facts = crate::layout_facts::AgentFacts::paginated(&state.document);
+            let ids = &mut state.ids;
+            let placed = casual_doc_command::references::insert_table_of_contents(
+                &state.document,
+                &facts,
+                node,
+                levels,
+                tab,
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            drop(facts);
+            nodes.push(placed.caret.node);
+            commit(state, placed.operations)?;
+        }
+        Edit::UpdateTableOfContents {
+            mode: update,
+            field,
+        } => {
+            refuse_untracked(kind, mode)?;
+            let field = field
+                .as_deref()
+                .map(node_id)
+                .transpose()?
+                .map(casual_doc_model::v1::FieldRangeId::new);
+            let page = casual_doc_layout::document_layout::document_page_config(&state.document);
+            let tab = page.page_size.width.raw() - page.margin_start.raw() - page.margin_end.raw();
+            let facts = crate::layout_facts::AgentFacts::paginated(&state.document);
+            let ids = &mut state.ids;
+            let ops = casual_doc_command::references::update_table_of_contents(
+                &state.document,
+                &facts,
+                field,
+                update.mode(),
+                tab,
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            drop(facts);
+            for op in &ops {
+                if let Operation::InsertBlocks { blocks, .. } = op {
+                    nodes.extend(blocks.iter().filter_map(|block| match block {
+                        BlockNode::Paragraph(paragraph) => Some(paragraph.id),
+                        _ => None,
+                    }));
+                }
+            }
+            commit(state, ops)?;
+        }
+        Edit::InsertCaption {
+            target,
+            label,
+            text,
+            position,
+            exclude_label,
+            number_format,
+            chapter_level,
+            separator,
+        } => {
+            refuse_untracked(kind, mode)?;
+            let target = node_id(target)?;
+            let spec = casual_doc_edit::references::CaptionSpec {
+                label: label.clone(),
+                text: text.clone(),
+                position: position.position(),
+                exclude_label: *exclude_label,
+                number_format: number_format.format(),
+                chapter: chapter_level.map(|heading_level| {
+                    casual_doc_edit::references::CaptionChapter {
+                        heading_level,
+                        separator: separator.separator(),
+                    }
+                }),
+            };
+            let facts = crate::layout_facts::AgentFacts::headings(&state.document);
+            let ids = &mut state.ids;
+            let placed = casual_doc_command::references::insert_caption(
+                &state.document,
+                &facts,
+                target,
+                spec,
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            drop(facts);
+            nodes.push(placed.caret.node);
+            commit(state, placed.operations)?;
+        }
+        Edit::UpdateCaptionNumbers {} => {
+            refuse_untracked(kind, mode)?;
+            let facts = crate::layout_facts::AgentFacts::headings(&state.document);
+            let ids = &mut state.ids;
+            let placed = casual_doc_command::references::update_caption_numbers(
+                &state.document,
+                &facts,
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            drop(facts);
+            nodes.extend(placed.operations.iter().filter_map(|op| match op {
+                Operation::SetInlines { node, .. } => Some(*node),
+                _ => None,
+            }));
+            commit(state, placed.operations)?;
+        }
+        Edit::InsertCrossReference {
+            at,
+            target,
+            show,
+            hyperlink,
+            include_above_below,
+        } => {
+            refuse_untracked(kind, mode)?;
+            let point = resolve(&state.document, at)?;
+            let caret = Pos::new(point.node, point.point(at.side.unwrap_or(Side::After)));
+            let target = node_id(target)?;
+            let to = show.reference_to();
+            // Only a page reference prints a page, so only it pays for a
+            // layout pass; every other kind reads the model alone.
+            let facts = if to == casual_doc_edit::references::ReferenceTo::PageNumber {
+                crate::layout_facts::AgentFacts::paginated(&state.document)
+            } else {
+                crate::layout_facts::AgentFacts::headings(&state.document)
+            };
+            let ids = &mut state.ids;
+            let ops = casual_doc_command::references::insert_cross_reference(
+                &state.document,
+                &facts,
+                caret,
+                target,
+                to,
+                *hyperlink,
+                *include_above_below,
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            drop(facts);
+            nodes.push(caret.node);
             commit(state, ops)?;
         }
         Edit::Comment {

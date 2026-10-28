@@ -864,3 +864,86 @@ configuration channel, `hostConfig`). Rewriting a proposal ("Regenerate", "Make 
 the host assistant's job, not the editor's: the card offers Accept and Discard only. Per-edit
 accept within one proposal (Docs' per-suggestion review) is not offered; accepting lands every
 edit as its own tracked revision, which the review pane can then accept or reject one by one.
+
+### Lane references
+
+The last `NotExposed` editor lowerings: table of contents (insert, update page numbers,
+update entire), captions (insert, update caption numbers) and cross-references.
+
+**Built.**
+
+- `casual_doc_command::references`, pure and layout-free. What a gesture needs from layout
+  arrives as `LayoutFacts`: `heading_level(paragraph)` (the style cascade),
+  `page_label(node)` (the label the page prints) and `whole_pagination()` (a windowed layout
+  refuses instead of inventing numbers). Moved whole: the contents headings walk, `TOC n`
+  style creation, entry blocks, both updates and `toc_field`; the one-walk reference scan
+  (captions, headings, chapter ordinals, `_Ref` bookmark extents), caption insertion and
+  renumbering, cross-reference insertion with *Include above/below*, bookmark and note
+  targets. The editor's `toc.rs` and `references.rs` are glue: parse arguments, lend
+  `EditorFacts` (cascade plus `first_page_labels` over the resident layout; for a page
+  reference, the page the target is painted on) and apply.
+- `casual-doc-ai` lends `AgentFacts` (`layout_facts.rs`): the same cascade, and page labels
+  from an `opendoc-viewer` pagination of the plan's current state, so a contents inserted
+  after other edits in one plan lists the pages those edits produce. Only the contents
+  commands and a page reference pay for that pagination.
+- One page map for both: `casual_doc_layout::paginate::first_page_labels`
+  (`ViewerDocument::page_labels` calls it). Moved down so the command crate needs no layout:
+  `node_plain_text` and its two siblings to `casual_doc_model::v1::plain_text` (layout
+  re-exports), the paragraph visitors to `casual_doc_model::v1` and
+  `visit_paragraphs_all_surfaces` to `casual-doc-edit` (review re-exports).
+- Five commands in a new `references` family, all `Trackable::No` with a published reason:
+  `insert_table_of_contents`, `update_table_of_contents`, `insert_caption`,
+  `update_caption_numbers`, `insert_cross_reference`. Vocabulary **1.3**, 61 commands.
+- Coverage: `InsertFieldRange`, `InsertBlocks`, `DeleteBlocks`, `SetInlines` and
+  `SetStyleDefinition` reached; **`NOT_EXPOSED_CEILING` 21 → 16**. G3: the seven
+  `reference.*` ids have twins; **`UI_NOT_EXPOSED_CEILING` 91 → 84**.
+- G5 fixture: two headings, a table of contents made stale by renaming one, and a caption
+  whose `SEQ` shows a stale `7` (as another producer's file arrives), so every new example
+  changes the fixture in direct mode, saves and reopens.
+
+**Defect found and fixed (editor behaviour change).** The contents page map read top-level
+fragments only, so a heading inside a table cell had no page, its entry carried an empty
+run, the model refused it and the whole table failed to insert (`InvalidField`) for any
+document with a heading in a table. `first_page_labels` now descends table rows, and an
+entry with no page (a heading in a text box) shows none instead of refusing.
+
+**Guards, each driven red by a mutation and restored:**
+
+| Guard | Mutation | Red |
+| --- | --- | --- |
+| Heading in a table cell | the code before the fix | `"InvalidField"` |
+| Agent contents prints layout pages | `AgentFacts::paginated` lends no pages | `left: ["Chapter A\t", "Chapter B\t"] right: [... "\t1", ... "\t2"]` |
+| Page cross-reference prints the label | `first_page_labels` uses `page.number` | `left: "1" right: "v"` |
+| Chapter caption counts headings | `heading_level` returns `None` | `left: "Figure 1-1: Wiring" right: "Figure 2-1: Wiring"` |
+| Windowed layout refuses | `whole_pagination()` ignored | `refused: Placed { operations: [...] }` |
+| G7 contents | the editor's tab position off by one twip | `position_twips: 9361` vs `9360` |
+| G7 captions | the editor's chapter separator forced to a hyphen | `caption Table Below: editor and command differ` (`"-"` vs `"."`) |
+| G7 cross-references | the editor drops `hyperlink` | `cross-reference labelAndNumber: editor and command differ` |
+| G7 source half | `InsertFieldRange` re-constructed in `toc.rs` | `toc.rs:228: if let Some(casual_doc_edit::Operation::InsertFieldRange {` |
+| Declared emits enforced | drop `SetStyleDefinition` from the contents' `emits` | "`insert_table_of_contents` lowered to `SetStyleDefinition`, which the capability registry does not declare" |
+| Direct-mode examples | the renumber reads the cached number | `update_caption_numbers: refused in direct mode … every caption already shows` |
+| G1 | `SetInlines` marked not exposed | "`insert_caption` declares `SetInlines`, which coverage does not mark as reached"; ratchet `17 / 16` |
+| G3 ratchet | `reference.caption` re-added to `UI_NOT_EXPOSED` | `left: 85 right: 84` |
+| Vocabulary version | `VOCABULARY_COMMANDS` 60 | "the registry has 61 commands but vocabulary 1.3 names 60" |
+
+The source scan now also refuses a constructed `CreateBookmark`, `InsertField` or
+`InsertFieldRange`, and `caption_paragraph(`, `caption_style(`, `reference_field(`,
+`above_below(` and re-defined contents or caption walks in the editor.
+
+**Behaviour, otherwise unchanged for editor users.** G7 holds each moved gesture's
+operations equal to the command's. Argument-validation order differs only when several
+arguments are invalid at once (the label check now follows the enum parses).
+
+**Left, and why.**
+
+- `RemoveField`, `RemoveFieldRange`: no editor gesture unlinks a field yet, so there is
+  nothing to share.
+- Paragraph-number cross-references (`\r`, `\n`, `\w`) are not in the agent vocabulary: the
+  shared lowering caches the paragraph's *text* as their result, which a reader sees until
+  the field updates. A defect in the editor too; fixing it needs list-number resolution.
+- The editor's page cross-reference caches the **physical** page number (its painted-snapshot
+  query), not the printed label; an agent's caches the label. Unchanged here so the editor
+  did not move with the lowering; the fix is to lend `first_page_labels` there as well.
+- A one-entry contents begins and ends in one paragraph, and Word's markup for that reopens
+  as an inline `TOC` field, which `toc_field` (field ranges only) does not find: "no table
+  of contents to update" after a save and reopen. The G5 fixture therefore has two headings.

@@ -36,6 +36,8 @@ pub enum Family {
     HeadersFooters,
     /// Charts.
     Charts,
+    /// Tables of contents, captions and cross-references.
+    References,
     /// Comments, tracked changes and their decisions.
     Review,
 }
@@ -57,6 +59,7 @@ impl Family {
             Self::Sections => "sections",
             Self::HeadersFooters => "headers_footers",
             Self::Charts => "charts",
+            Self::References => "references",
             Self::Review => "review",
         }
     }
@@ -131,6 +134,11 @@ const INLINE_NOT_TRACKABLE: &str = "Links, bookmarks, fields, pictures, notes an
 const OBJECT_NOT_TRACKABLE: &str = "Object size, wrap, crop, alt text, fill, outline and deletion \
      cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under \
      a profile that grants `edit`.";
+
+const REFERENCES_NOT_TRACKABLE: &str = "Tables of contents, captions and cross-references \
+     cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, \
+     which the review lowering does not track. Use mode `direct` under a profile that grants \
+     `edit`.";
 
 const SECTION_NOT_TRACKABLE: &str = "Page setup, section breaks, headers, footers and the \
      watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not \
@@ -765,6 +773,55 @@ pub const COMMANDS: &[Command] = &[
         ui_commands: &["insert.chart"],
     },
     Command {
+        id: "insert_table_of_contents",
+        family: Family::References,
+        summary: "Insert a table of contents (each heading with its page) before a body paragraph.",
+        emits: &["SetStyleDefinition", "InsertFieldRange"],
+        trackable: Trackable::No(REFERENCES_NOT_TRACKABLE),
+        example: r#"{"op":"insert_table_of_contents","before":{"node":"1:2"},"levels":2}"#,
+        ui_commands: &["reference.tableOfContents"],
+    },
+    Command {
+        id: "update_table_of_contents",
+        family: Family::References,
+        summary: "Update a table of contents: its page numbers only, or the entire table from the headings.",
+        emits: &["SetStyleDefinition", "DeleteBlocks", "InsertBlocks"],
+        trackable: Trackable::No(REFERENCES_NOT_TRACKABLE),
+        example: r#"{"op":"update_table_of_contents","mode":"entire"}"#,
+        ui_commands: &[
+            "reference.updateFields",
+            "reference.updateToc.pageNumbers",
+            "reference.updateToc.entire",
+        ],
+    },
+    Command {
+        id: "insert_caption",
+        family: Family::References,
+        summary: "Insert a numbered caption (Figure, Table, Equation or the document's own label) above or below a table, picture or paragraph.",
+        emits: &["SetStyleDefinition", "InsertBlocks", "SetInlines"],
+        trackable: Trackable::No(REFERENCES_NOT_TRACKABLE),
+        example: r#"{"op":"insert_caption","target":"1:9","label":"Table","text":": Payment schedule"}"#,
+        ui_commands: &["reference.caption"],
+    },
+    Command {
+        id: "update_caption_numbers",
+        family: Family::References,
+        summary: "Renumber every caption whose shown number is stale.",
+        emits: &["SetInlines"],
+        trackable: Trackable::No(REFERENCES_NOT_TRACKABLE),
+        example: r#"{"op":"update_caption_numbers"}"#,
+        ui_commands: &["reference.updateCaptionNumbers"],
+    },
+    Command {
+        id: "insert_cross_reference",
+        family: Family::References,
+        summary: "Insert a cross-reference to a heading, caption, bookmarked paragraph or note: its text, label and number, page, or above/below.",
+        emits: &["CreateBookmark", "InsertField", "InsertText"],
+        trackable: Trackable::No(REFERENCES_NOT_TRACKABLE),
+        example: r#"{"op":"insert_cross_reference","at":{"node":"1:2","side":"after"},"target":"1:3","show":"page_number"}"#,
+        ui_commands: &["reference.crossReference"],
+    },
+    Command {
         id: "comment",
         family: Family::Review,
         summary: "Comment on the quoted text, or reply to a comment.",
@@ -839,7 +896,6 @@ const UI_CASE: &str = "Change case keeps each run's formatting, which replace_te
 const UI_PARAGRAPH: &str = "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2).";
 const UI_LISTS: &str = "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3).";
 const UI_STYLE_DEFINITIONS: &str = "Redefining a style changes every paragraph that uses it; agents apply styles and do not define them yet (docs/181 §4.2 step 2).";
-const UI_REFERENCES: &str = "Captions, cross-references, the table of contents and updating fields read the paginated layout or the caption sequences; their lowerings are still inside the editor (docs/181 §12, lane families-b). Links, bookmarks and fields are offered.";
 const UI_OBJECTS: &str = "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are.";
 const UI_OBJECT_MENU: &str = "The object menus are one contract family; its members that change a picture or shape (object.altText, object.crop, object.delete, object.fill, object.outline, object.wrap) are named by the objects commands, the rest are arrangement.";
 const UI_HEADER_FOOTER_SETTINGS: &str = "The Header & Footer options dialog also writes the header and footer distances, which agents are not offered; its toggles and page numbering are (set_different_first_page, set_different_odd_even, set_page_numbering).";
@@ -906,13 +962,6 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
     ("style.manage", UI_STYLE_DEFINITIONS),
     ("style.updateFromSelection", UI_STYLE_DEFINITIONS),
     ("style.createFromSelection", UI_STYLE_DEFINITIONS),
-    ("reference.caption", UI_REFERENCES),
-    ("reference.crossReference", UI_REFERENCES),
-    ("reference.tableOfContents", UI_REFERENCES),
-    ("reference.updateToc.pageNumbers", UI_REFERENCES),
-    ("reference.updateToc.entire", UI_REFERENCES),
-    ("reference.updateFields", UI_REFERENCES),
-    ("reference.updateCaptionNumbers", UI_REFERENCES),
     ("insert.shape", UI_OBJECTS),
     ("insert.textbox", UI_OBJECTS),
     ("layout.arrange.position", UI_OBJECTS),
@@ -956,4 +1005,4 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
 
 /// The length of [`UI_NOT_EXPOSED`]. It may only fall: lower it when a command
 /// names an id; raising it needs an ADR line (`docs/181` §3).
-pub const UI_NOT_EXPOSED_CEILING: usize = 91;
+pub const UI_NOT_EXPOSED_CEILING: usize = 84;
