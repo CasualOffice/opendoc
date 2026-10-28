@@ -125,7 +125,9 @@ const CEILINGS = new Map([
   // `module_seams.test.mjs` records three times.
   // 88 -> 89 with HF-361's `mention` event: its detail table names the field
   // `commentId`, a wire identifier the scanner reads as a word. Not prose.
-  ["embedding.page.html", 89],
+  // 89 -> 90 with the `ai-decision` event (`docs/181` §4.4): its detail table names
+  // `previewId`, another wire identifier. Its clause is routed (`site.event.*`).
+  ["embedding.page.html", 90],
   ["fidelity.page.html", 0],
   ["index.page.html", 0],
   ["playground.page.html", 3],

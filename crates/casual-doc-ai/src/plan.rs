@@ -45,7 +45,7 @@ use crate::profile::Profile;
 use crate::read::node_id;
 use crate::session::{ChangeRecord, Session, State};
 use crate::structure::find_table;
-use crate::text::{clip, paragraph_text, runs};
+use crate::text::{clip, paragraph_text, redline_runs};
 
 /// The vocabulary's version. A new edit kind is an entry in the capability
 /// registry (`casual_doc_command::COMMANDS`, `docs/181`), with its lowering,
@@ -187,12 +187,12 @@ fn parse(session: &Session, plan: &EditPlan) -> AiResult<Vec<Edit>> {
 
 /// One edit's outcome.
 #[derive(Clone, Debug)]
-struct Outcome {
+pub(crate) struct Outcome {
     index: usize,
     kind: &'static str,
     nodes: Vec<NodeId>,
     operations: usize,
-    error: Option<AiError>,
+    pub(crate) error: Option<AiError>,
 }
 
 fn style_id(state: &State, style: &str) -> AiResult<StyleId> {
@@ -1927,7 +1927,7 @@ fn find(state: &State, node: NodeId) -> AiResult<&Paragraph> {
 
 /// Runs a plan on a clone of the session's state. Returns the clone and the
 /// per-edit outcomes; the session itself is untouched.
-fn run(session: &Session, plan: &EditPlan) -> AiResult<(State, Vec<Outcome>)> {
+pub(crate) fn run(session: &Session, plan: &EditPlan) -> AiResult<(State, Vec<Outcome>)> {
     if plan.base_revision != session.revision() {
         return Err(AiError::new(
             "stale-revision",
@@ -1992,7 +1992,7 @@ fn redline(before: &Session, after: &State, outcomes: &[Outcome]) -> Vec<Value> 
             "node": node.to_string(),
             "before": was,
             "after": now.map(|p| clip(&paragraph_text(p), 1_000).to_owned()),
-            "afterRuns": now.map(|p| runs(p, 100)),
+            "afterRuns": now.map(|p| redline_runs(p, 100)),
         }));
     }
     out
@@ -2023,21 +2023,33 @@ fn outcomes_json(outcomes: &[Outcome]) -> Vec<Value> {
 /// plan as a whole; per-edit refusals are reported in the result.
 pub fn preview(session: &Session, plan: &EditPlan) -> AiResult<Value> {
     let (state, outcomes) = run(session, plan)?;
+    Ok(preview_value(session, plan, &state, &outcomes))
+}
+
+/// The preview's report of a run, shared by [`preview`] and the live editor's
+/// compile (`crate::editor`), so the two cannot describe one run differently.
+/// O(edits + affected blocks).
+pub(crate) fn preview_value(
+    session: &Session,
+    plan: &EditPlan,
+    state: &State,
+    outcomes: &[Outcome],
+) -> Value {
     let refused = outcomes
         .iter()
         .filter(|outcome| outcome.error.is_some())
         .count();
-    Ok(json!({
+    json!({
         "baseRevision": session.revision(),
         "mode": match plan.mode { Mode::Suggest => "suggest", Mode::Direct => "direct" },
         "author": session.config().author,
         "wouldApply": refused == 0,
         "refusals": refused,
         "operations": outcomes.iter().map(|o| o.operations).sum::<usize>(),
-        "edits": outcomes_json(&outcomes),
-        "redline": redline(session, &state, &outcomes),
+        "edits": outcomes_json(outcomes),
+        "redline": redline(session, state, outcomes),
         "reportImpact": "not computed here; call compatibility_report after applying",
-    }))
+    })
 }
 
 /// Applies a plan all or nothing, as one undo step, and returns its change id.

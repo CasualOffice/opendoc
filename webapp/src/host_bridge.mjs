@@ -96,6 +96,7 @@ export function attachHostBridge({ session, view }) {
     if (type === "identify") return session.identify(message.identity);
     if (type === "directory.answer") return session["directory.answer"](message);
     if (type === "mention.answer") return session["mention.answer"](message);
+    if (type === "ai") return session.ai.call(message.method, message.args ?? []);
     return session.ping();
   }
 
@@ -171,8 +172,9 @@ export function attachHostBridge({ session, view }) {
     // `execute` and `identify` already answer with `{ok, refusal}`; `describe`,
     // `query` and `ping` answer with a value. Both shapes go back as one envelope
     // so a host has one thing to unwrap.
+    // `ai` answers `{ok, ...}` or `{ok: false, refusal}` as `execute` does.
     const envelope =
-      message.type === "execute" || message.type === "identify"
+      message.type === "execute" || message.type === "identify" || message.type === "ai"
         ? { kind: "result", rid: message.rid, ...value }
         : { kind: "result", rid: message.rid, ok: true, value };
     post(source, event.origin, envelope);

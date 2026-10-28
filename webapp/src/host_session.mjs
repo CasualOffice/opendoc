@@ -37,6 +37,7 @@
 // input adds no string debt (`docs/124`).
 import { editingModeFor } from "./capabilities.mjs";
 import {
+  AI_METHODS,
   CONTRACT_VERSION,
   COMMAND_FAMILIES,
   HOST_EVENT_NAMES,
@@ -93,6 +94,8 @@ const no = (id, code, message, extra = {}) =>
  * @param {() => object} [io.document] name and format of the open document.
  * @param {(identity: unknown) => object} [io.identify] accepts the host identity
  *   once (`docs/175` §3.2); the page's own holder unless a test hands one in.
+ * @param {object|null} [io.ai] the in-page assistant (`ai_assistant.mjs`): one
+ *   function per `AI_METHODS` entry. Absent, every `ai` call is `unavailable`.
  */
 export function createHostSession({
   capabilities,
@@ -104,6 +107,7 @@ export function createHostSession({
   document: documentInfo = () => ({}),
   identify = (identity) => hostIdentity.identify(identity),
   directoryRemote = remoteDirectoryAsked(globalThis.location?.search),
+  ai = null,
 }) {
   /** event name -> listeners. One Set per event so an `off` is O(1). */
   const listeners = new Map(HOST_EVENT_NAMES.map((name) => [name, new Set()]));
@@ -282,6 +286,17 @@ export function createHostSession({
       },
     }),
 
+    /** The in-page assistant (`docs/178` §9, `docs/181` §4.4): `session.ai.read`,
+     *  `.preview`, `.apply`, `.accept`, `.discard`, `.access`, and `session.ai.call(method,
+     *  args)` for the `postMessage` verb. Every answer is a value, and a refusal is
+     *  announced as `execute`'s are, so a listening host and an awaiting host learn the
+     *  same thing. The gate is the ENGINE's (the access level the grant resolves to, then
+     *  the choke point's own checks); this only routes. */
+    ai: Object.freeze({
+      ...Object.fromEntries(AI_METHODS.map((method) => [method, (...args) => callAi(method, args)])),
+      call: (method, args = []) => callAi(String(method ?? ""), Array.isArray(args) ? args : [args]),
+    }),
+
     /** Liveness, and the cheapest possible one: no registry build. */
     ping() {
       return Object.freeze({ contract: CONTRACT_VERSION, ready, revision: revision() });
@@ -453,7 +468,38 @@ export function createHostSession({
     noteError(code, message, command = null) {
       emit("error", { code: String(code), message: String(message ?? ""), command });
     },
+
+    /** The person decided on an assistant's private preview. */
+    noteAiDecision(detail) {
+      emit("ai-decision", {
+        previewId: detail?.previewId ?? null,
+        decision: String(detail?.decision ?? ""),
+        revision: detail?.revision ?? null,
+        reason: detail?.reason ?? null,
+      });
+    },
   };
+
+  /** One `ai` call: an unknown method is `bad-request`, a missing assistant is
+   *  `unavailable`, and whatever comes back is a value. */
+  async function callAi(method, args) {
+    const command = `ai.${method}`;
+    if (!AI_METHODS.includes(method)) return refuse(no(command, "bad-request", ""));
+    if (!ai || typeof ai[method] !== "function") return refuse(no(command, "unavailable", ""));
+    let result;
+    try {
+      result = await ai[method](...args);
+    } catch (err) {
+      return refuse(no(command, "threw", String(err?.message ?? err), { revision: revision() }), true);
+    }
+    if (result && result.ok === false && result.refusal) {
+      // The event carries the contract's four fields; the result keeps the rest
+      // (`aiCode`, the engine's detail) for the host that awaited it.
+      const { code, command: refused, requires, message } = result.refusal;
+      emit("refusal", { code, command: refused, requires, message });
+    }
+    return result;
+  }
 
   /** Emits the `refusal` event for a result and returns the result.
    *

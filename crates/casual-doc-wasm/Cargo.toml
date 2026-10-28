@@ -54,6 +54,9 @@ casual-doc-render.workspace = true
 # The one capability registry: lowerings the editor shares with every agent
 # front door (`docs/181`, ADR-075).
 casual-doc-command.workspace = true
+# The in-page assistant's reads and plan compiler (`editor.ai`, `docs/178` §9,
+# `docs/181` §4.4): the same code the MCP server runs, so a plan compiles one way.
+casual-doc-ai.workspace = true
 # Only with `sparse-raster` (above).
 casual-doc-render-gpu = { workspace = true, optional = true }
 # The one lowering of review edits (suggestions, comments, decisions), shared

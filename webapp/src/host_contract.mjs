@@ -149,6 +149,11 @@ export const HOST_EVENTS = Object.freeze([
     name: "mention",
     detail: Object.freeze(["qid", "people", "commentId", "excerpt", "room"]),
   }),
+  // The person decided on an assistant's private preview (`docs/181` §4.4):
+  // `decision` is `accepted` or `discarded`, `revision` the document revision after
+  // it, `reason` the refusal code when an Accept was refused. A host's assistant
+  // learns the outcome without polling, across a frame boundary too.
+  Object.freeze({ name: "ai-decision", detail: Object.freeze(["previewId", "decision", "revision", "reason"]) }),
 ]);
 
 /** Event names alone, for validation and for generating a client's surface. */
@@ -186,8 +191,27 @@ export const PROTOCOL = Object.freeze({
   //  `directory.answer` and `mention.answer` are the host's half of the directory
   //  seam (`docs/175` §7.2): answers to the editor's `directory-query` and
   //  `mention` events, correlated by `qid`. One line: `host_parity.rs` reads it as one.
-  requests: Object.freeze(["describe", "execute", "query", "ping", "identify", "directory.answer", "mention.answer"]),
+  //  `ai` is the in-page assistant's door (`docs/178` §9, `docs/181` §4.4): one verb whose
+  //  `method` is one of `AI_METHODS`, so the assistant's surface grows without new verbs.
+  requests: Object.freeze(["describe", "execute", "query", "ping", "identify", "directory.answer", "mention.answer", "ai"]),
 });
+
+/** What the `ai` verb can be asked, as `session.ai.<method>(...)` in process and
+ *  `{type: "ai", method, args}` over `postMessage` (`docs/178` §9, `docs/181` §4.4).
+ *
+ *    read      the assistant's reads: `{tool: "outline" | "read" | "search" |
+ *              "trackedChanges" | "comments", ...}`, anchored as `opendoc.ai` reads are
+ *    preview   compile an edit plan and show it to the person PRIVATELY, with Accept
+ *              and Discard; nothing reaches the document, the undo stack or a room
+ *    apply     compile and commit at once (suggestions unless the host granted direct
+ *              edits), without the panel: `opendoc.ai`'s `apply`
+ *    accept    the person's Accept, for a host that drives its own button
+ *    discard   the person's Discard (or the host withdrawing its proposal)
+ *    access    what this mount lets an assistant do: `none`, `read`, `comment`,
+ *              `suggest` or `review`, and whether direct edits were granted
+ *
+ *  Every answer is a value, `{ok, ...}` or `{ok: false, refusal}`, like `execute`'s. */
+export const AI_METHODS = Object.freeze(["read", "preview", "apply", "accept", "discard", "access"]);
 
 /** A command whose id is a literal: `{ id, requires, args }`.
  *

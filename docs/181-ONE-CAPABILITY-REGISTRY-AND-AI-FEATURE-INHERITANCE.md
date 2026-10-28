@@ -776,3 +776,91 @@ to the command's. Rich paste's links now go through `links::link_range` (same op
   and the document-wide and protection settings: unchanged reasons in `coverage.rs` and
   `UI_NOT_EXPOSED`.
 - **Picture watermarks** (the `media` form of `setWatermark`): an agent stamps text only.
+
+### Lane preview
+
+The private preview mode of §4.4 (owner decision Q4), as `editor.ai` on the host contract.
+
+**Designed from Docs and Word first.** Gemini in Google Docs shows a proposal in a card of its
+own beside the page, untouched until the person picks Insert/Replace or throws it away; Word's
+Copilot rewrite does the same with "Keep it"/"Replace" and a discard; Tiptap's AI Toolkit calls
+it "review changes". One proposal is on screen at a time. So:
+
+- `editor.ai.preview(plan)` compiles the plan and opens a **non-modal card** at the right of
+  the editor (a bottom sheet under 600px): title, "Only you can see this until you accept it.",
+  who Accept will author it as, one redline per affected paragraph (struck deletions,
+  underlined insertions, "New paragraph" labels, on the paper colours in both themes), every
+  refused edit with its reason, then **Discard** and **Accept**. Never light-dismissed: a stray
+  click must not throw a proposal away. A new preview replaces the open one (reported as
+  `discarded`, reason `replaced`).
+- **Nothing is applied before Accept**: the document, the undo stack and a shared room see
+  nothing (the compile runs on a copy-on-write clone; the operations wait in the engine under an
+  id; JavaScript holds only the id).
+- **Accept** commits exactly the previewed operations through `apply_group`, one transaction,
+  one undo step. **Discard** drops them.
+- **Deliberately unlike Word:** Word applies a Copilot rewrite directly unless Track Changes is
+  on. Here the default is a tracked suggestion whatever the review mode (`178` §5.2): the
+  assistant acts *for* the person and a reviewer must tell its words from theirs.
+
+**One compiler, one mutation path.** `casual_doc_ai::editor::compile` is `plan::preview`'s run
+with the operations kept (collected from the clone's log in commit order, so a later edit can
+anchor in an earlier edit's paragraph). `Session::for_editor` builds the session over the
+editor's document, its id and revision-number allocators and its document revision, so a plan
+mints the ids the editor would mint next and the reads report the editor's revision.
+`crates/casual-doc-wasm/src/ai.rs` (`aiRead`, `aiPreview`, `aiAccept`, `aiDiscard`) only routes:
+it lowers nothing and builds no transaction; at preview it also asks the choke point's own
+question (`refuse_if_protected`: the replica's grant, the document's protection) so Accept is not
+offered when it would fail, and on Accept it moves the editor's allocators past the plan's before
+calling `apply_group`. The redline now carries pending **deletions** too (`text::redline_runs`);
+it carried only insertions, so a replacement read as a pure insertion in every preview.
+
+**The API** (`webapp/src/ai_assistant.mjs`, `host_contract.mjs` `AI_METHODS`): `ai.read({tool:
+outline | read | search | trackedChanges | comments})`, `ai.preview(plan)`, `ai.apply(plan)`
+(compile and commit with no card: `opendoc.ai`'s apply), `ai.accept()`, `ai.discard()`,
+`ai.access()`. In process as `window.opendoc.ai.*`; across a frame as one new verb, `ai`, with
+`{method, args}` (`createHostClient(...).ai.preview(plan)`), so the assistant's surface grows
+without new verbs. Every answer is a value, a refusal is also announced as a `refusal` event,
+and the decision arrives as the new `ai-decision` event. The SDK's `HostRequest::Ai` and
+`HostEvent::AiDecision` keep `host_parity.rs` exact.
+
+**The role matrix as implemented** (from the grant, never a role name; `aiAccessFor`):
+
+| Role (grant) | Access | Engine profile the plan compiles under | Direct edits |
+| --- | --- | --- | --- |
+| `preview` (nothing) | `none` | nothing; reads refused too | — |
+| `readonly` | `read` | `read`: every edit refused `capability-withheld`, shown with its reason | never |
+| `commentor` | `comment` | `comment`: comments only | never |
+| `edit` | `suggest` | `suggest` | `edit` only with the host's `?ai=direct` |
+| `owner` (every capability) | `review` | `review` for a plan that decides revisions, else `suggest` | `review` with `?ai=direct` |
+
+The replica's own grant (a room's word, a host ceiling) and the document's protection still
+decide at the choke point, and are asked at preview time too.
+
+**Author label (`178` Q3, implemented pending the owner):** `"<host identity> (AI)"`, for
+example "Ada Lovelace (AI)", the form `178` §9 gives and the MCP tests already use; "AI
+assistant" when the host named nobody. A plan cannot name its author. **In a shared room the
+relay's attested name wins at commit** (`docs/175` §5.2, `authorship::conform`), so the label
+does not survive there until `178` §10's agent principal exists.
+
+**Guards, each driven red:**
+
+| Guard | Mutation | Red |
+| --- | --- | --- |
+| Preview's redline marks deletions (`editor_compile.rs`) | redline back to `text::runs` | the afterRuns carried only `inserted` |
+| The compile hands back an allocator past every plan id | return the pre-run allocator | "the editor moves its allocator to 5001 and the plan minted 8194" |
+| Accept commits exactly the previewed operations (`ai.rs`) | Accept drops the last operation | `left/right` differ: the commit is not the preview's operations |
+| … and every one of them | compile keeps only the first commit | the new paragraph is missing |
+| `readonly` is refused by the engine | `read` mapped to `Profile::Suggest` | `wouldApply` `true` |
+| The replica's own grant is asked at preview | drop the `refuse_if_protected` call | a viewer replica offered an Accept (`wouldApply: true`) |
+| No id collides after Accept | drop the allocator move | "the editor would mint counter 4096, which the plan already put in the document" |
+| Discard leaves no trace | Discard keeps the plan | the pending plan survived |
+| A stale preview is refused | drop the revision check | Accept applied over the person's later typing |
+| Direct needs the host's grant | `suggest` always `Profile::Edit` | a direct plan was offered without the grant |
+| `ai.rs` mutates only through `apply_group` | a `Transaction::reserve(` in `ai.rs` | "ai.rs contains `Transaction::reserve(`" |
+
+**Not built, and why.** WebMCP (`178` M4) is out of scope. The `<opendoc-editor>` element has
+no `ai-direct` attribute: a host grants direct edits with `?ai=direct` on the editor URL (the one
+configuration channel, `hostConfig`). Rewriting a proposal ("Regenerate", "Make it shorter") is
+the host assistant's job, not the editor's: the card offers Accept and Discard only. Per-edit
+accept within one proposal (Docs' per-suggestion review) is not offered; accepting lands every
+edit as its own tracked revision, which the review pane can then accept or reject one by one.

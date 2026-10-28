@@ -265,6 +265,7 @@ mod presence;
 // write and the gate that decides when the write survives a save.
 mod chart;
 
+mod ai; // `editor.ai`: the in-page assistant's reads and private preview (`docs/181` §4.4).
 // The opt-in sparse-strip raster (`docs/architecture/179`, ADR-073 Proposed): one more export
 // with `renderPage`'s contract, compiled only with the `sparse-raster` feature.
 #[cfg(feature = "sparse-raster")]
