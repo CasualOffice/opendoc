@@ -455,6 +455,9 @@ impl SparseCanvas for HybridCanvas<'_> {
     fn set_stroke(&mut self, stroke: Stroke) {
         self.scene.set_stroke(stroke);
     }
+    fn set_fill_rule(&mut self, rule: vello_common::peniko::Fill) {
+        self.scene.set_fill_rule(rule);
+    }
     fn fill_path(&mut self, path: &BezPath) {
         self.scene.fill_path(path);
     }
