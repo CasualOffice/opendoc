@@ -14,19 +14,25 @@
 //!    source map and OCR's summary. The main module's `openPdfImport` turns it
 //!    and the original bytes into a session. Nothing is published before the
 //!    package exists (PDFR-I3).
-//! 2. **The hayro half of the byte-preserving save.** [`read_revision`]
-//!    answers the main module's `RevisionRequest`: it opens the original's last
-//!    revision, reads the edited pages' parts and removes their shows. The main
-//!    module plans the save and writes the update; see `casual-doc-io`'s
-//!    `pdf_preserve`. The boundary is drawn there because both halves already
-//!    existed: the planner needs the layout engine (only the main module has
-//!    it), the reader needs hayro (only this module has it).
-//! 3. **Provisioning.** hayro's bundled standard-14 faces and CMaps are not in
+//! 2. **The plan of the byte-preserving save.** At finish the package carries
+//!    the import's baseline (`casual-doc-pdf-save::baseline`, computed over the
+//!    document exactly as the main module will parse it). At save,
+//!    [`plan_save`] takes the original, that baseline and the session's
+//!    document as JSON, decides what changed and, for an edit it can keep,
+//!    opens the original's last revision, reads the edited pages' parts and
+//!    removes their shows. The main module only lays out the overlay and writes
+//!    the update (`casual-doc-io`'s `pdf_preserve`): the layout engine is
+//!    there, hayro and the digests are here.
+//! 3. **Convert to flowing document.** [`PdfImportJob::finish_reflowed`]
+//!    finishes the same staged job and returns `PdfImport::reflow`'s new
+//!    document as a package for the main module's `openPdfReflow`
+//!    (`docs/182` §4.2, §18).
+//! 4. **Provisioning.** hayro's bundled standard-14 faces and CMaps are not in
 //!    this module (`casual-doc-pdf-read`'s `provision`). [`set_face_host`]
 //!    hands it a host object whose `face(family, bold, italic)` returns the
 //!    bytes of a face the main module ships (Liberation); [`provide_cmap`]
 //!    registers a predefined CMap the host fetched.
-//! 4. **OCR.** [`PdfOcrModels`] carries model bytes the host obtained (never
+//! 5. **OCR.** [`PdfOcrModels`] carries model bytes the host obtained (never
 //!    bundled, never fetched here); [`PdfOcrEngine::load`] builds the PP-OCRv5
 //!    provider once; [`begin_pdf_import_with_ocr`] runs the import with it.
 
@@ -36,6 +42,8 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
+use casual_doc_model::SnapshotLimits;
+use casual_doc_model::v1::Document;
 use casual_doc_ocr::{CancelToken, PaddleOcr, RecognitionPack};
 use casual_doc_pdf_import::{
     ImportJob, OcrOptions, PdfImportError, PdfReadError, PdfReadLimits, Progress,
@@ -249,6 +257,20 @@ impl PdfImportJob {
     pub fn finish(&mut self) -> Result<Vec<u8>, JsValue> {
         self.finish_package().map_err(|e| JsValue::from_str(&e))
     }
+
+    /// "Convert to flowing document": the finished import reflowed into a
+    /// new document of paragraphs, headings, lists and tables, as a package
+    /// for the main module's `openPdfReflow`. Its findings are the reflow's
+    /// inferences. Runs any pages left. O(document log document).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::finish`], or a reflow whose result fails validation.
+    #[wasm_bindgen(js_name = finishReflowed)]
+    pub fn finish_reflowed(&mut self) -> Result<Vec<u8>, JsValue> {
+        self.finish_reflowed_package()
+            .map_err(|e| JsValue::from_str(&e))
+    }
 }
 
 impl PdfImportJob {
@@ -258,6 +280,50 @@ impl PdfImportJob {
     ///
     /// As [`Self::finish`].
     pub fn finish_package(&mut self) -> Result<Vec<u8>, String> {
+        let imported = self.finish_import()?;
+        let mut package = casual_doc_pdf_import::wire::package(&imported)?;
+        // The baseline is taken of the document as the main module will
+        // parse it from this JSON, so a save of an untouched session compares
+        // equal by construction rather than by the codec's good behaviour.
+        if let Ok(document) = Document::from_json(&package.document_json, SnapshotLimits::default())
+            && let Some(baseline) =
+                casual_doc_pdf_save::baseline(&document, package.sources.clone())
+        {
+            package.baseline = baseline.encode();
+        }
+        self.ocr_summary = Some(package.ocr.clone());
+        Ok(package.encode())
+    }
+
+    /// [`Self::finish_reflowed`] without `JsValue`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::finish_reflowed`].
+    pub fn finish_reflowed_package(&mut self) -> Result<Vec<u8>, String> {
+        let imported = self.finish_import()?;
+        let reflowed = imported.reflow().map_err(|error| error.to_string())?;
+        let ocr = casual_doc_pdf_import::wire::ocr(&imported.ocr);
+        let package = wire::ImportPackage {
+            document_json: reflowed
+                .document
+                .to_json()
+                .map_err(|error| error.to_string())?,
+            resources: reflowed.resources.into_iter().collect(),
+            findings: casual_doc_pdf_import::wire::findings(&reflowed.report),
+            // A new document: nothing of the original's objects to preserve.
+            sources: wire::SourceMap::default(),
+            ocr: ocr.clone(),
+            original_len: imported.original.len() as u64,
+            original_hash: wire::fnv1a64(&imported.original),
+            baseline: Vec::new(),
+        };
+        self.ocr_summary = Some(ocr);
+        Ok(package.encode())
+    }
+
+    /// Finishes the job into the importer's own result.
+    fn finish_import(&mut self) -> Result<casual_doc_pdf_import::PdfImport, String> {
         if self.state == State::Cancelled {
             return Err("the import was cancelled".to_owned());
         }
@@ -268,9 +334,7 @@ impl PdfImportJob {
         match job.finish() {
             Ok(imported) => {
                 self.state = State::Done;
-                let package = casual_doc_pdf_import::wire::package(&imported)?;
-                self.ocr_summary = Some(package.ocr.clone());
-                Ok(package.encode())
+                Ok(imported)
             }
             Err(error) => {
                 self.state = State::Failed;
@@ -326,20 +390,41 @@ pub fn set_face_host(host: PdfFaceHost) {
     }));
 }
 
-/// The hayro half of the byte-preserving save: `request` is the main module's
-/// encoded `RevisionRequest`; the answer is `encode_revision`'s bytes, parts
-/// or a refusal. O(original) plus the requested pages' content.
-#[wasm_bindgen(js_name = readRevision)]
+/// The byte-preserving save's plan (`docs/182` §17a): `baseline` is the
+/// package's baseline the main module kept, `document_json` the session's
+/// document as `Document::to_json` wrote it. The answer is a
+/// `casual-doc-pdf-wire` `SaveAnswer`'s bytes: write the original back, a
+/// refusal with its reason, or the pages to rewrite with their parts read
+/// from `original`. O(document + original).
+#[wasm_bindgen(js_name = planSave)]
 #[must_use]
-pub fn read_revision(original: Vec<u8>, request: &[u8]) -> Vec<u8> {
-    let answer = match wire::RevisionRequest::decode(request) {
-        Ok(request) => casual_doc_pdf_read::revision::read_for_save(Arc::new(original), &request),
-        Err(_) => Err(wire::Refusal {
-            reason: "request_malformed".to_owned(),
+pub fn plan_save(original: Vec<u8>, baseline: &[u8], document_json: &[u8]) -> Vec<u8> {
+    plan_save_answer(original, baseline, document_json).encode()
+}
+
+/// [`plan_save`] before encoding.
+#[must_use]
+pub fn plan_save_answer(
+    original: Vec<u8>,
+    baseline: &[u8],
+    document_json: &[u8],
+) -> wire::SaveAnswer {
+    let refuse = |reason: &str| {
+        wire::SaveAnswer::Refused(wire::Refusal {
+            reason: reason.to_owned(),
             page: None,
-        }),
+        })
     };
-    wire::encode_revision(&answer)
+    let Ok(baseline) = wire::Baseline::decode(baseline) else {
+        return refuse("baseline_malformed");
+    };
+    let Ok(document) = Document::from_json(document_json, SnapshotLimits::default()) else {
+        return refuse("document_unreadable");
+    };
+    let original = Arc::new(original);
+    casual_doc_pdf_save::plan(&document, &baseline, &|request| {
+        casual_doc_pdf_read::revision::read_for_save(original.clone(), request)
+    })
 }
 
 /// OCR model bytes the host obtained (a cache, its own fetch): a detection
@@ -431,8 +516,48 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_revision_request_is_refused_not_trapped() {
-        let answer = wire::decode_revision(&read_revision(PROSE.to_vec(), b"junk")).unwrap();
-        assert_eq!(answer.unwrap_err().reason, "request_malformed");
+    fn a_malformed_save_request_is_refused_not_trapped() {
+        let answer = wire::SaveAnswer::decode(&plan_save(PROSE.to_vec(), b"junk", b"{}")).unwrap();
+        assert_eq!(
+            answer,
+            wire::SaveAnswer::Refused(wire::Refusal {
+                reason: "baseline_malformed".to_owned(),
+                page: None,
+            })
+        );
+    }
+
+    #[test]
+    fn the_package_carries_a_baseline_and_an_untouched_document_plans_a_write_back() {
+        let mut job = begin(PROSE.to_vec(), None).expect("begin");
+        let package = wire::ImportPackage::decode(&job.finish_package().expect("finish")).unwrap();
+        assert!(
+            !package.baseline.is_empty(),
+            "the save has something to compare against"
+        );
+        assert_eq!(
+            plan_save_answer(PROSE.to_vec(), &package.baseline, &package.document_json),
+            wire::SaveAnswer::WriteBack
+        );
+    }
+
+    #[test]
+    fn a_reflowed_package_is_a_new_document_with_the_reflows_findings() {
+        let mut job = begin(PROSE.to_vec(), None).expect("begin");
+        let package =
+            wire::ImportPackage::decode(&job.finish_reflowed_package().expect("reflow")).unwrap();
+        assert!(package.sources.pages.is_empty(), "nothing to preserve");
+        assert!(package.baseline.is_empty());
+        let document = Document::from_json(&package.document_json, SnapshotLimits::default())
+            .expect("a valid snapshot");
+        assert!(!document.body().is_empty());
+        assert!(
+            package
+                .findings
+                .iter()
+                .any(|f| f.feature == "pdf.import.paragraph_boundary_inferred"),
+            "{:?}",
+            package.findings
+        );
     }
 }

@@ -29,6 +29,10 @@ casual-doc-ocr = { workspace = true, features = ["paddle"] }
 casual-doc-model.workspace = true
 # The bytes this module hands the main module.
 casual-doc-pdf-wire.workspace = true
+# The byte-preserving save's plan: the import's digests, and at save which
+# pages, frames and show operators an edit rewrites (`docs/182` §17a). Here,
+# not in the main module, which only lays out and writes the update.
+casual-doc-pdf-save.workspace = true
 wasm-bindgen = "0.2"
 
 [lints]

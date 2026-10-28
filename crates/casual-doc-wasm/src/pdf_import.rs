@@ -1,5 +1,5 @@
-//! A PDF-origin session in the main module, which links no PDF reader
-//! (`docs/182` §17a).
+//! A PDF-origin session in the main module, which links no PDF reader, no
+//! importer, no OCR and no save planner (`docs/182` §17a).
 //!
 //! The import runs in the lazily loaded PDF module (`casual-doc-wasm-pdf`):
 //! the webapp fetches it the first time a PDF is opened, drives its staged job
@@ -10,19 +10,23 @@
 //! over the wrong file.
 //!
 //! **Saving** a PDF-origin session as PDF is `casual-doc-io`'s
-//! `export_pdf_session`: the retained original when unchanged or undone, an
-//! incremental update when that is safe, the semantic writer otherwise. The
-//! update's planner and writer are here (they need the layout engine); the
-//! hayro half (open the last revision, read the edited pages, remove their
-//! shows) is the PDF module's `readRevision`, which the webapp registers with
-//! [`set_pdf_revision_reader`] when it loads that module. With none
-//! registered, the save is semantic and says `preserve_fallback.
-//! pdf_module_unavailable`.
+//! `export_pdf_session`: the retained original when unchanged, an incremental
+//! update when that is safe, the semantic writer otherwise. What changed, and
+//! whether it can be kept, is the PDF module's `planSave` (the import's
+//! digests and the hayro half live there), which the webapp registers with
+//! [`set_pdf_save_planner`] when it loads that module; this module lays out
+//! the overlay and writes the update. With none registered, the save is
+//! semantic and says `preserve_fallback.pdf_module_unavailable`.
 //!
 //! Why the save calls back rather than this module re-creating the reader's
 //! state: re-reading the original's revision needs a PDF parser of hostile
 //! input, and the only one this repository trusts is hayro (`docs/182` §19.1
-//! rejected a second). Keeping it in one module is the point of the split.
+//! rejected a second). Keeping it, and the digests, in one lazily loaded
+//! module is the point of the split.
+//!
+//! **Convert to flowing document** (`docs/182` §4.2, §18) is the PDF module's
+//! too: it re-runs the staged import over [`WasmDocument::pdf_original`] and
+//! reflows it, and [`open_pdf_reflow`] opens the result as a new document.
 //!
 //! [`bundled_face`] is the other direction: the PDF module draws the standard
 //! 14 with the Liberation faces this module ships, asked for by name.
@@ -30,9 +34,10 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use casual_doc_io::pdf_wire::{RevisionParts, RevisionRequest, decode_revision};
-use casual_doc_io::{PdfRevisionReader, import_pdf_package};
+use casual_doc_io::pdf_wire::SaveAnswer;
+use casual_doc_io::{PdfSavePlanner, import_pdf_package, import_pdf_reflow_package};
 use casual_doc_model::SnapshotLimits;
+use casual_doc_model::v1::Document;
 use wasm_bindgen::prelude::*;
 
 use crate::{MAX_WHOLE_LAYOUT_BLOCKS, WasmDocument, session_from_import, to_js};
@@ -58,58 +63,136 @@ pub(crate) fn open(package: &[u8], original: Vec<u8>) -> Result<WasmDocument, St
     session_from_import(imported, MAX_WHOLE_LAYOUT_BLOCKS)
 }
 
+/// Opens the PDF module's reflowed package ("Convert to flowing document") as
+/// a NEW document. It is not a PDF-origin session: it keeps no original, so
+/// it saves through the semantic writers and cannot be converted again. Its
+/// import report is the reflow's inferences. O(document).
+///
+/// # Errors
+///
+/// A malformed package or a document the snapshot importer refuses.
+#[wasm_bindgen(js_name = openPdfReflow)]
+pub fn open_pdf_reflow(package: &[u8]) -> Result<WasmDocument, JsValue> {
+    open_reflow(package).map_err(to_js)
+}
+
+/// [`open_pdf_reflow`] without `JsValue`.
+pub(crate) fn open_reflow(package: &[u8]) -> Result<WasmDocument, String> {
+    let imported = import_pdf_reflow_package(package, SnapshotLimits::default())
+        .map_err(|error| format!("convert PDF: {error}"))?;
+    session_from_import(imported, MAX_WHOLE_LAYOUT_BLOCKS)
+}
+
+#[wasm_bindgen]
+impl WasmDocument {
+    /// Whether this session was opened from a PDF and keeps its original:
+    /// what "Convert to flowing document" and "Recognise text in scanned
+    /// pages" are enabled by. O(1).
+    #[wasm_bindgen(getter, js_name = pdfOrigin)]
+    #[must_use]
+    pub fn pdf_origin(&self) -> bool {
+        self.format_state
+            .source
+            .as_ref()
+            .is_some_and(|source| casual_doc_io::pdf_retained_original(source).is_some())
+    }
+
+    /// The PDF this session was opened from, byte for byte, for the PDF
+    /// module to import again (to reflow it, or to read its scans).
+    /// `undefined` when the session is not PDF-origin. O(original): a copy.
+    #[wasm_bindgen(js_name = pdfOriginal)]
+    #[must_use]
+    pub fn pdf_original(&self) -> Option<Vec<u8>> {
+        self.format_state
+            .source
+            .as_ref()
+            .and_then(casual_doc_io::pdf_retained_original)
+            .map(<[u8]>::to_vec)
+    }
+
+    /// What OCR did when the PDF this session came from was imported, as JSON
+    /// (`rasterPages`, `hybridPages`, `regionsRecognized`, `regionsSkipped`,
+    /// `wordsKept`, `provider`); empty for a session not opened from a PDF.
+    /// O(1).
+    #[wasm_bindgen(getter, js_name = pdfOcrSummaryJson)]
+    #[must_use]
+    pub fn pdf_ocr_summary_json(&self) -> String {
+        let Some(ocr) = self
+            .format_state
+            .source
+            .as_ref()
+            .and_then(casual_doc_io::pdf_ocr_record)
+        else {
+            return String::new();
+        };
+        serde_json::json!({
+            "rasterPages": ocr.raster_pages,
+            "hybridPages": ocr.hybrid_pages,
+            "regionsRecognized": ocr.regions_recognized,
+            "regionsSkipped": ocr.regions_skipped,
+            "wordsKept": ocr.words_kept,
+            "provider": ocr.provider,
+        })
+        .to_string()
+    }
+}
+
 #[wasm_bindgen]
 extern "C" {
-    /// The host's bridge to the PDF module: `readRevision(original, request)`
-    /// returns that module's answer bytes.
-    pub type PdfRevisionHost;
+    /// The host's bridge to the PDF module: `planSave(original, baseline,
+    /// documentJson)` returns that module's `SaveAnswer` bytes.
+    pub type PdfSaveHost;
 
-    #[wasm_bindgen(method, catch, js_name = readRevision)]
-    fn read_revision(
-        this: &PdfRevisionHost,
+    #[wasm_bindgen(method, catch, js_name = planSave)]
+    fn plan_save(
+        this: &PdfSaveHost,
         original: &[u8],
-        request: &[u8],
+        baseline: &[u8],
+        document_json: &[u8],
     ) -> Result<Vec<u8>, JsValue>;
 }
 
-impl PdfRevisionReader for PdfRevisionHost {
-    fn read(
-        &self,
-        original: &Arc<Vec<u8>>,
-        request: &RevisionRequest,
-    ) -> Result<RevisionParts, casual_doc_io::pdf_wire::Refusal> {
-        let failed = |reason: &str| casual_doc_io::pdf_wire::Refusal {
-            reason: reason.to_owned(),
-            page: None,
+impl PdfSavePlanner for PdfSaveHost {
+    fn plan(&self, original: &Arc<Vec<u8>>, baseline: &[u8], document: &Document) -> SaveAnswer {
+        let failed = || {
+            SaveAnswer::Refused(casual_doc_io::pdf_wire::Refusal {
+                reason: "pdf_module_failed".to_owned(),
+                page: None,
+            })
         };
-        let bytes = self
-            .read_revision(original, &request.encode())
-            .map_err(|_| failed("pdf_module_failed"))?;
-        decode_revision(&bytes).map_err(|_| failed("pdf_module_failed"))?
+        // The snapshot serializer the editor already links; the PDF module
+        // parses it with the same limits as any shared snapshot.
+        let Ok(json) = document.to_json() else {
+            return failed();
+        };
+        let Ok(bytes) = self.plan_save(original, baseline, &json) else {
+            return failed();
+        };
+        SaveAnswer::decode(&bytes).unwrap_or_else(|_| failed())
     }
 }
 
 thread_local! {
-    /// The registered reader. One per module instance: the webapp loads one PDF
-    /// module and registers it once.
-    static READER: RefCell<Option<Box<dyn PdfRevisionReader>>> = const { RefCell::new(None) };
+    /// The registered planner. One per module instance: the webapp loads one
+    /// PDF module and registers it once.
+    static PLANNER: RefCell<Option<Box<dyn PdfSavePlanner>>> = const { RefCell::new(None) };
 }
 
 /// Registers the PDF module's half of the byte-preserving save.
-#[wasm_bindgen(js_name = setPdfRevisionReader)]
-pub fn set_pdf_revision_reader(host: PdfRevisionHost) {
-    install_reader(Box::new(host));
+#[wasm_bindgen(js_name = setPdfSavePlanner)]
+pub fn set_pdf_save_planner(host: PdfSaveHost) {
+    install_planner(Box::new(host));
 }
 
-/// [`set_pdf_revision_reader`] for any reader (the native tests' in-process
+/// [`set_pdf_save_planner`] for any planner (the native tests' in-process
 /// one).
-pub(crate) fn install_reader(reader: Box<dyn PdfRevisionReader>) {
-    READER.with(|slot| *slot.borrow_mut() = Some(reader));
+pub(crate) fn install_planner(planner: Box<dyn PdfSavePlanner>) {
+    PLANNER.with(|slot| *slot.borrow_mut() = Some(planner));
 }
 
-/// Runs `f` with the registered reader, if any.
-pub(crate) fn with_reader<R>(f: impl FnOnce(Option<&dyn PdfRevisionReader>) -> R) -> R {
-    READER.with(|slot| f(slot.borrow().as_deref()))
+/// Runs `f` with the registered planner, if any.
+pub(crate) fn with_planner<R>(f: impl FnOnce(Option<&dyn PdfSavePlanner>) -> R) -> R {
+    PLANNER.with(|slot| f(slot.borrow().as_deref()))
 }
 
 /// The bytes of a face this module ships, for the PDF module's standard-14
@@ -205,7 +288,7 @@ mod tests {
 
     #[test]
     fn an_unchanged_pdf_saves_back_byte_for_byte_and_an_edited_one_is_an_incremental_update() {
-        install_reader(Box::new(casual_doc_io::InProcessRevisionReader));
+        install_planner(Box::new(casual_doc_io::InProcessSavePlanner));
         let mut doc = imported(PROSE);
         let exact = doc
             .export_as_inner(PDF, "exact_if_unchanged")
@@ -220,7 +303,7 @@ mod tests {
         assert_ne!(semantic.bytes, PROSE);
 
         // Edit a frame: the save appends an update to the original (P4)
-        // through the registered reader, rather than regenerating the file.
+        // through the registered planner, rather than regenerating the file.
         let target = first_frame_paragraph(&doc);
         doc.insert_text(&target, 0, "Edited ".to_owned())
             .expect("type into a frame");
@@ -250,7 +333,7 @@ mod tests {
 
     #[test]
     fn with_no_pdf_module_an_edited_save_is_semantic_and_says_why() {
-        READER.with(|slot| *slot.borrow_mut() = None);
+        PLANNER.with(|slot| *slot.borrow_mut() = None);
         let mut doc = imported(PROSE);
         let target = first_frame_paragraph(&doc);
         doc.insert_text(&target, 0, "Edited ".to_owned())
@@ -277,6 +360,38 @@ mod tests {
         let docx = doc.export_as_inner(DOCX, "semantic").expect("export docx");
         let reopened = crate::open_document(&docx.bytes).expect("the DOCX reopens");
         assert!(surface_block_lists(&reopened.document).len() > 1);
+    }
+
+    #[test]
+    fn a_session_says_it_is_pdf_origin_and_hands_back_its_original() {
+        let mut doc = imported(PROSE);
+        assert!(doc.pdf_origin());
+        assert_eq!(doc.pdf_original().as_deref(), Some(PROSE));
+        assert!(doc.pdf_ocr_summary_json().contains("\"rasterPages\":0"));
+        let docx = crate::open_document(&doc.export_as_inner(DOCX, "semantic").unwrap().bytes)
+            .expect("the DOCX reopens");
+        assert!(!docx.pdf_origin(), "a DOCX is not a PDF session");
+        assert_eq!(docx.pdf_original(), None);
+        assert_eq!(docx.pdf_ocr_summary_json(), "");
+    }
+
+    #[test]
+    fn a_reflowed_pdf_opens_as_a_new_document_that_is_not_a_pdf_session() {
+        let mut job = casual_doc_wasm_pdf::begin(PROSE.to_vec(), None).expect("begin");
+        let package = job.finish_reflowed_package().expect("reflow");
+        let doc = open_reflow(&package).expect("open");
+        assert!(!doc.pdf_origin(), "a converted document keeps no original");
+        assert_eq!(doc.pdf_original(), None);
+        assert!(
+            doc.import_report_json().contains("pdf.import."),
+            "the reflow's inferences are its report: {}",
+            doc.import_report_json()
+        );
+        // Flowing: paragraphs in the body, not frames on page anchors.
+        assert!(
+            surface_block_lists(&doc.document)[0].len() > 2,
+            "the body holds the reflowed paragraphs"
+        );
     }
 
     #[test]

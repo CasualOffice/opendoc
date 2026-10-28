@@ -87,12 +87,12 @@ pub use pdf_import::{
     enable_pdf_import_with_ocr, pdf_ocr_summary,
 };
 #[cfg(feature = "pdf-source")]
+pub use pdf_source::import_pdf_reflow_package;
+#[cfg(feature = "pdf-source")]
 pub use pdf_source::pdf_ocr_record;
 #[cfg(feature = "pdf-source")]
 pub use pdf_source::{
     PdfSavePlanner, export_pdf_session, import_pdf_package, pdf_retained_original,
     pdf_session_artifact,
 };
-#[cfg(feature = "pdf-source")]
-pub use pdf_source::import_pdf_reflow_package;
 pub use text::{PlainTextAdapter, PlainTextLimits};

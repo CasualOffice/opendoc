@@ -24,11 +24,11 @@ casual-doc-rtf.workspace = true
 casual-doc-pdf-import = { workspace = true, optional = true }
 # The byte-preserving PDF save (docs/182 P4), also behind `pdf-import`: the
 # reader opens the original's last revision and page parts (hayro-syntax, the
-# parser import already admits files through), and the diff crate's content
-# projection decides which pages are unchanged (G-6). Both are in-tree; no
-# crate is added to Cargo.lock.
+# parser import already admits files through), and `casual-doc-pdf-save`'s
+# digests decide which pages are unchanged (G-6). The editor's main module
+# links neither: its PDF module answers the plan (`docs/182` §17a).
 casual-doc-pdf-read = { workspace = true, optional = true }
-casual-doc-diff = { workspace = true, optional = true }
+casual-doc-pdf-save = { workspace = true, optional = true }
 casual-doc-pdf-wire = { workspace = true, optional = true }
 
 [features]
@@ -40,17 +40,18 @@ pdf-import = [
     "pdf-source",
     "dep:casual-doc-pdf-import",
     "dep:casual-doc-pdf-read",
+    "dep:casual-doc-pdf-save",
     # A native host gets the standard 14 from the Liberation faces and
     # predefined CMaps from hayro-cmap's bundle (`docs/182` §17a).
     "casual-doc-pdf-read/liberation-faces",
     "casual-doc-pdf-read/embedded-cmaps",
 ]
 # The hayro-free half of a PDF-origin session (`docs/182` §17a): the retained
-# original, the byte-preserving save's plan and writer, and opening a session
-# from the PDF module's package. What the editor's main WebAssembly module
-# links: no reader, no importer, no hayro.
+# original, the byte-preserving save's overlay and writer, and opening a
+# session from the PDF module's package. What the editor's main WebAssembly
+# module links: no reader, no importer, no hayro, and no save planner (the
+# PDF module plans; `PdfSavePlanner`).
 pdf-source = [
-    "dep:casual-doc-diff",
     "dep:casual-doc-pdf-wire",
 ]
 # The heron layout model (docs/182 P6) for PDF import, when a host supplies

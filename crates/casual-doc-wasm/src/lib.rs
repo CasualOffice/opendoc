@@ -1224,7 +1224,7 @@ impl WasmDocument {
         // A PDF opened here and saved as PDF is `casual-doc-io`'s PDF-session save
         // (`docs/182` §7, §17a): before any edit the original file, byte for byte
         // (MF-I4); edited, an incremental update when that is safe, through the
-        // PDF module's reader; otherwise the semantic writer, reported. Any other
+        // PDF module's plan; otherwise the semantic writer, reported. Any other
         // document saved as PDF is the semantic writer.
         let pdf_session = self
             .format_state
@@ -1243,8 +1243,8 @@ impl WasmDocument {
                 PdfAdapter::default().export_with_shaper(request, &self.shaper)
             };
             if pdf_session {
-                pdf_import::with_reader(|reader| {
-                    casual_doc_io::export_pdf_session(request, reader, &semantic)
+                pdf_import::with_planner(|planner| {
+                    casual_doc_io::export_pdf_session(request, planner, &semantic)
                 })
             } else {
                 semantic(request)

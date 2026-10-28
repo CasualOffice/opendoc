@@ -402,7 +402,9 @@ mod tests {
 
     /// A reader that answers every request with empty parts for the pages
     /// asked, and records what it was asked.
-    fn recording(asked: &RefCell<Vec<RevisionRequest>>) -> impl Fn(&RevisionRequest) -> Result<RevisionParts, Refusal> + '_ {
+    fn recording(
+        asked: &RefCell<Vec<RevisionRequest>>,
+    ) -> impl Fn(&RevisionRequest) -> Result<RevisionParts, Refusal> + '_ {
         move |request: &RevisionRequest| {
             asked.borrow_mut().push(request.clone());
             Ok(RevisionParts {
@@ -459,7 +461,10 @@ mod tests {
             plan(&document, &baseline, &recording(&asked)),
             SaveAnswer::WriteBack
         );
-        assert!(asked.borrow().is_empty(), "nothing to read for a write-back");
+        assert!(
+            asked.borrow().is_empty(),
+            "nothing to read for a write-back"
+        );
     }
 
     #[test]

@@ -313,7 +313,6 @@ dependencies = [
 name = "casual-doc-io"
 version = "0.0.1"
 dependencies = [
- "casual-doc-diff",
  "casual-doc-export",
  "casual-doc-import",
  "casual-doc-layout",
@@ -323,6 +322,7 @@ dependencies = [
  "casual-doc-pdf",
  "casual-doc-pdf-import",
  "casual-doc-pdf-read",
+ "casual-doc-pdf-save",
  "casual-doc-pdf-wire",
  "casual-doc-rtf",
  "hayro",
@@ -430,6 +430,17 @@ dependencies = [
  "hayro-syntax",
  "kurbo 0.13.1",
  "png 0.18.1",
+]
+
+[[package]]
+name = "casual-doc-pdf-save"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-diff",
+ "casual-doc-model",
+ "casual-doc-pdf-import",
+ "casual-doc-pdf-read",
+ "casual-doc-pdf-wire",
 ]
 
 [[package]]
@@ -553,6 +564,7 @@ dependencies = [
  "casual-doc-ocr",
  "casual-doc-pdf-import",
  "casual-doc-pdf-read",
+ "casual-doc-pdf-save",
  "casual-doc-pdf-wire",
  "wasm-bindgen",
 ]

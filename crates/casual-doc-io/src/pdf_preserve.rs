@@ -153,7 +153,6 @@ fn overlay_list(list: &DisplayList, paragraphs: &BTreeSet<NodeId>) -> DisplayLis
     }
 }
 
-
 /// Writes the incremental update the planner's [`SaveAnswer::Update`]
 /// describes, or says why it cannot: the edited pages laid out, their
 /// overlays drawn, the update appended to `original`. O(document).
