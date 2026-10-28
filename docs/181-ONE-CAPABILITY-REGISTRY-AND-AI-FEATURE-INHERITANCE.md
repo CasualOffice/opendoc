@@ -403,8 +403,8 @@ command, and a test fails when it is stale.
   (contents, captions, cross-references), plus `rewrite_block`.
 - **Surfaces:** body, headers, footers, footnotes, endnotes, text boxes and comments.
 - **Front doors:** MCP (with `list_edit_kinds`, `describe_edit_kind`, schema resources,
-  `--toolsets`, `--read-only`), generated JSON Schema and TypeScript types, and the editor's
-  `editor.ai` with its private preview.
+  `--toolsets`, `--read-only`), generated JSON Schema and TypeScript types, the editor's
+  `editor.ai` with its private preview, and opt-in WebMCP tools over it.
 - **Deviation from §2.1, deliberate:** the registry is a `const` table beside a typed,
   `JsonSchema`-deriving `Edit` enum, held equal by a test, rather than a `Command` trait and a
   generating macro. It gives the same guarantees (exhaustive, generated, enforced) with
@@ -422,7 +422,7 @@ command, and a test fails when it is stale.
 - *Needs model or engine work first:* character-style application (no `FormatDelta` field
   for it), paragraph-number cross-references (list-number resolution), splitting a cell into
   a grid, whole-table properties, tracked table structure (`178` Q11).
-- `178` M3 (HTTP/OAuth), M4 (WebMCP) and M5 (an agent in a room) stay as `178` plans them.
+- WebMCP (`178` M4) is built: opt-in (`ai-tools="webmcp"`), feature-detected, gated by the same access as `editor.ai`, edits only through the private preview ("Lane webmcp"). `178` M3 (HTTP/OAuth) and M5 (an agent in a room) stay as `178` plans them.
 
 ### R0 and R1 step 1 (2026-10-28)
 
