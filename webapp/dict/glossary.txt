@@ -502,6 +502,7 @@ nginx
 nonmodal
 npm
 nspell
+ocr
 odf
 offline
 offscreen
@@ -533,6 +534,7 @@ postMessage
 pre
 preedit
 premultiplied
+preprocessing
 prev
 quantised
 quiesce
@@ -540,6 +542,7 @@ rAF
 rPr
 radiogroup
 rastered
+rasterised
 rasteriser
 rasterization
 rasterized
