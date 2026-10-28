@@ -857,3 +857,196 @@ Options:
   lists" is corrected here: only the Open picker opens documents.
 - A restored draft or version of a PDF-origin document does not re-show the summary.
 - Reflow (P3), preserving save (P4), OCR (P5), ML layout (P6).
+
+## 20. P5/P6 built: OCR and optional ML layout (headless)
+
+Branch `lane/pdf-p5-ocr`. Headless only, like §16: the editor (`webapp/**`,
+`casual-doc-wasm`) and the `casual-doc-io` adapter do not pass a provider yet, so
+every surface today gets the no-model path (§20.3). Reflow (P3) is what consumes the
+P6 regions.
+
+### 20.1 Decisions, licences and sources
+
+**One Rust OCR path, on `rten`.** The same choice as §3.1 for hayro: one engine for
+browser, desktop, MCP and CI, deterministic per target, under `cargo deny`, no npm
+runtime dependency. `docs/131` §11's PaddleOCR.js/Tesseract.js-in-a-Worker plan is
+superseded for the runtime. `rten` 0.26 (Robert Knight; MIT OR Apache-2.0, pure Rust)
+runs ONNX graphs directly and builds for `wasm32-unknown-unknown` (single-threaded
+there).
+
+**Owner decision (2026-10-29): PP-OCRv5 is the default provider; `ocrs` stays as the
+fallback.** The first implementation ran `ocrs`; its weights are why it is not the
+default:
+
+| | PP-OCRv5 mobile (default, feature `paddle`) | `ocrs` 0.13.1 (fallback, feature `ocrs`) |
+| --- | --- | --- |
+| Engine code | ours (`casual-doc-ocr/src/paddle.rs`) on `rten` | `ocrs` (MIT OR Apache-2.0) on `rten` |
+| Weights licence | **Apache-2.0**, model cards at `huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det`, `…/PP-OCRv5_mobile_rec`, `…/latin_PP-OCRv5_mobile_rec` (and the other `*_PP-OCRv5_mobile_rec` packs) | **CC-BY-SA-4.0** for the published checkpoints (`huggingface.co/robertknight/ocrs`, card `license: cc-by-sa-4.0`); the current weights `ocrs-cli` downloads (`ocrs-models.s3-accelerate.amazonaws.com`) carry no licence statement; the training repository has no licence file |
+| Format the host supplies | ONNX, converted from PaddlePaddle's release with PaddlePaddle's `paddle2onnx` (2.1.0) | `.rten` or ONNX |
+| Languages | multilingual pack (Chinese, English, Japanese, 18,383 entries) and per-script packs; several at once | Latin alphabet (96 symbols) |
+| Prose fixture scanned at 200 dpi, character similarity with the native text | **1.0000** (one or two packs) | 0.9885 |
+| Rendered CJK sample (STHeiti, 36 px; one-off, not committed) | exact, word confidence ≥ 0.998 | cannot read it |
+| Confidence | per character from the softmax | per character from the log-softmax (`ocrs` exposes none; decoded here) |
+
+Neither weight set is ever committed, bundled or fetched by a library: the host passes
+bytes (a file, a cache, its own `fetch` with an integrity hash). `ocrs` weights are not
+on §11's never-list (CC-BY-SA permits commercial use; share-alike binds the weights,
+not the code using them), but they are not permissive, which is why they are only the
+fallback. **P6 layout:** `docling-layout-heron-onnx` (`huggingface.co/docling-project/docling-layout-heron-onnx`,
+card `license: apache-2.0`, an RT-DETRv2 export of `docling-layout-heron`, 17 labels).
+PP-DocLayout is Apache-2.0 too but published only in Paddle format; it is not wired.
+
+**`cargo deny --locked check licenses bans sources`: bans ok, licenses ok, sources ok.**
+New crates: `ocrs`, `rten` family (`rten`, `rten-tensor`, `rten-imageproc`, `rten-onnx`,
+`rten-model-file`, …), all MIT OR Apache-2.0; `sha2` was already in the tree.
+
+### 20.2 `rten` runs the PP-OCRv5 graphs (verified, not assumed)
+
+The three converted graphs (`det.onnx` 4.8 MB, `rec.onnx` 16.6 MB, `latin_rec.onnx`
+8.1 MB) load and run in `rten` 0.26 with no unsupported operator. Numerics against
+onnxruntime 1.19.2 on the same inputs (a rendered text page, BGR-normalised as
+PaddleOCR does; a rendered text line):
+
+| Graph | Output | Largest absolute difference |
+| --- | --- | --- |
+| `det.onnx` (DB) | `[1, 1, 480, 640]` probability map | 1.4e-4 |
+| `rec.onnx` (multilingual) | `[1, 60, 18385]` class probabilities | 7.2e-6 |
+| `latin_rec.onnx` | `[1, 60, 838]` | 3.0e-6 |
+
+The heron graph also runs in `rten` (inputs `images: u8 [n, 3, 640, 640]`,
+`orig_target_sizes`; outputs `labels`, `boxes`, `scores`), about 0.45 s per page in a
+release build on an Apple M-series CPU. Its regions on `synthetic-prose.pdf` page 1:
+`SectionHeader` 0.92 over the heading, `Text` 0.98 and 0.97 over the two paragraphs.
+
+The pipeline around the graphs mirrors PaddleOCR with the models' `inference.yml`
+parameters fixed in code (DB `thresh` 0.3, `box_thresh` 0.6, `unclip_ratio` 1.5,
+`min_size` 3; recognition height 48, width ≥ 320, greedy CTC). **Differences from
+PaddleOCR, stated:** candidate boxes are axis-aligned (PaddleOCR uses rotated minimum
+rectangles and a perspective crop), the box score is the component's mean probability
+(PaddleOCR: the mean inside its polygon), and the long side is capped at 4,000 px
+rather than resized to 960 (the scan reads better at full resolution). Not built: the
+text-line orientation classifier (an upside-down line reads upside down) and deskew.
+
+### 20.3 What is built
+
+- **`casual-doc-ocr`** (new). Provider traits and owned evidence, no PDF knowledge
+  (PDFR-I1, I5): `OcrProvider::recognize(&Raster, &OcrLimits, &dyn Interrupt) -> OcrPage`
+  (lines of words with pixel boxes and confidences), `LayoutProvider::regions`,
+  `ProviderManifest` (provider, version, SHA-256 of every model and dictionary,
+  decoding, declared determinism). Providers: `PaddleOcr` (feature `paddle`, the
+  default, `RecognitionPack`s = model + dictionary, several at once: each line is read
+  by each pack and the most confident reading kept), `OcrsProvider` (feature `ocrs`),
+  `HeronLayout` (feature `layout-heron`), `HeuristicLayout` (always; title, headings,
+  page furniture, text, figures; no tables or lists, which PDFR-I4 forbids guessing
+  from geometry). A line's box is the ink's vertical extent inside the detected box
+  (`Raster::ink_rows`), so its height means the same thing for every detector.
+- **`casual-doc-pdf-import::ocr`** (new) and its wiring (`ImportJob::begin_with_ocr`,
+  `import_pdf_with_ocr`, `PdfImport::{ocr, layout}`):
+  1. *Classify* each page from native evidence alone: regions are pictures that valid
+     native glyphs cover less than 1% of, and the glyphs of runs with no Unicode;
+     `Native` (none: never rasterised, PDFR-I2), `Raster`, `Hybrid`.
+  2. *Rasterise selectively*: each region alone through `hayro::render_into` with a
+     transform mapping it to the raster origin, at 150 dpi (unmapped runs at ≥ 40 px
+     per em), white background.
+  3. *Recognise* under per-raster `OcrLimits` and import-wide `max_pages` and
+     `max_total_pixels`, polling the host's `Interrupt` between pages, regions and
+     lines.
+  4. *Merge native-first* (`docs/131` §10.2): a word over valid native glyphs is
+     dropped and, when the readings differ by more than a third of their letters,
+     counted as `native_ocr_conflict`; a word over unmapped glyphs only replaces them
+     (they are still counted as `native_text_invalid`, the producer's defect); a word
+     over raster is kept. Under 0.8 confidence: kept and counted
+     (`ocr_low_confidence`); under 0.3: dropped and counted. Lines split by the
+     detector on one row are joined.
+  5. *Build*: each optical line becomes an ordinary glyph run (characters spread over
+     each word's box, em = ink height × 1.1) under a font index no PDF font has, after
+     the page's own paint, so the fixed-layout builder frames it like native text, above
+     the retained picture. `OcrTextPlacement::Hidden` makes the runs hidden instead
+     (a searchable-scan text layer).
+  6. *Layout (P6)*: with a `LayoutProvider`, each merged page's regions land in
+     `PdfImport::layout` (heron gets a 96 dpi page raster). The fixed-layout document
+     does not depend on them.
+- **With no provider** every region is reported `pdf.import.ocr_unavailable` and the
+  import succeeds: pictures stay pictures, unmapped runs stay U+FFFD. New families:
+  `native_ocr_conflict`, `ocr_applied`, `ocr_limit_reached`, `ocr_low_confidence`,
+  `ocr_unavailable`.
+- **Bounds (PDFR-I7).** Pixels per raster are refused before any model runs; a region
+  that would have to drop under 100 dpi to fit is skipped and reported; lines and
+  characters per raster, pages and pixels per import, and the host's time budget stop
+  OCR and report the rest (`ocr_limit_reached`) without failing the import; Cancel
+  abandons it (`Progress::Cancelled`, no document, PDFR-I3).
+- **Determinism (PDFR-I8), declared:** `Determinism::SameTarget` for the model
+  providers (identical raster, model bytes, limits and build target give identical
+  evidence; x86-64, aarch64 and wasm32 may round differently and are not claimed equal),
+  `Exact` for the heuristic. Decoding is greedy, ties go to the lower label, regions and
+  rows are sorted with total tie-breaks. Tested: two imports of the same scan with the
+  same model give equal documents, reports and summaries, for each provider.
+- **Tests.** `crates/casual-doc-pdf-import/tests/ocr.rs`. Most use a scripted provider
+  (fixed words at fixed positions), so the merge, budget and cancel rules run in CI
+  without a model. The model tests read `OPENDOC_PADDLE_MODELS`, `OPENDOC_OCR_MODELS`
+  and `OPENDOC_LAYOUT_MODEL`, run every provider whose files are present and print why
+  when none is; CI sets none of them and needs no network.
+  `crates/casual-doc-ocr/fetch-test-models.sh` downloads the pinned weights (SHA-256),
+  converts PP-OCRv5 (needs a Python with `paddle2onnx`; the conversion reproduced
+  byte-identical ONNX here) and extracts the dictionaries with YAML's `BaseLoader`
+  (`safe_load` would coerce entries).
+- **Checks run:** `cargo +1.96.0 fmt --all --check`; clippy `-D warnings` on both
+  crates with all features and with none; the tests of both crates; `cargo check` of
+  `casual-doc-ocr` (default and all features) and of `casual-doc-pdf-import` (all
+  features) for `wasm32-unknown-unknown`; `cargo deny` as in §20.1.
+
+### 20.4 Measured
+
+| Measured | Value |
+| --- | --- |
+| Prose page 1 scanned at 200 dpi, imported at 150 dpi: character similarity with the native text (reading order, whitespace ignored); the test's stated threshold is 0.95 | PP-OCRv5 1.0000, two packs 1.0000, `ocrs` 0.9885 |
+| Frames on that page | 3, as natively; first-run sizes 19/10.5/10.5 pt against native 18/11/11 |
+| Ink height per em on that page | 0.97 (Helvetica Bold heading), 0.86 (Times body) → `EM_PER_LINE_BOX` 1.1 |
+| `ocrs` on the same page at 100/150/200/300 dpi | best at 150; 300 reads worse (the detector resizes its input to a fixed size), hence the 150 dpi default |
+| `ocrs` with the older Hugging Face checkpoints | noise (similarity 0.41): they load but do not match `ocrs` 0.13's preprocessing |
+
+### 20.5 Guards, each driven red by a mutation (SKILL §4)
+
+| Guard (`tests/ocr.rs` unless noted) | Mutation | Red output |
+| --- | --- | --- |
+| `native_text_is_never_overwritten_by_ocr` | skip the valid-native-glyph check in the merge | `OCR must not overwrite native text` (ocr.rs:359) |
+| `with_no_model_a_scan_reports_ocr_unavailable_and_still_imports` | record `ocr_limit_reached` instead of `ocr_unavailable` | `OCR unavailable is reported, not skipped silently` (ocr.rs:292) |
+| `cancel_during_ocr_abandons_the_import_and_returns_nothing` | treat a provider's `Cancelled` as a skipped region | `cancel lands inside the page`: left `Pending { page: 1, of: 3 }`, right `Cancelled` |
+| `the_page_budget_stops_ocr_and_reports_the_rest` | `page_budget = true` | provider calls left 3, right 1 |
+| `the_pixel_budgets_stop_ocr_before_rendering` | drop the import-wide pixel clause | provider calls left 2, right 1 |
+| `a_spent_time_budget_stops_ocr_and_the_import_still_succeeds` | ignore `Stop::OutOfTime` | provider calls left 3, right 0 |
+| `low_confidence_words_are_kept_and_reported_and_the_floor_drops_them` | keep words under the floor | `under the floor: dropped` (ocr.rs:434) |
+| `ocr_replaces_glyphs_whose_unicode_is_unrecoverable_and_nothing_else` | never record the replaced glyphs | `the unmapped glyphs are replaced` (ocr.rs:404) |
+| `a_born_digital_page_is_native_and_never_rasterised` | add a whole-page region to every page | classes left `[Hybrid, Hybrid]`, right `[Native, Native]` |
+| `a_scanned_page_imports_with_its_text_when_a_model_is_supplied` (models present) | `EM_PER_LINE_BOX` 1.5 | `pp-ocrv5: size 52 vs native 36` |
+| same | PP-OCRv5 line height from the padded detector box, not the ink | `pp-ocrv5: size 31 vs native 22` |
+| `paddle.rs` `a_component_under_the_box_threshold_is_dropped_and_one_over_it_unclipped` | box threshold 0 | left 2, right 1 |
+
+**Not guarded, stated:** a wrong channel order or input scale in PP-OCRv5's detector
+preprocessing (RGB for BGR, values halved) left the end-to-end test green: the scan
+is grey, so channel order is invisible, and the model tolerated the scale. The
+preprocessing was checked once against onnxruntime (§20.2); a committed
+reference-output test needs a reference vector produced outside Rust and is not built.
+Determinism has no mutation that breaks it on one target without also breaking
+correctness; the two-run equality test is the evidence.
+
+### 20.6 Not built, and why
+
+- **Host wiring.** `casual-doc-io`'s `PdfImportAdapter`, `opendoc-mcp`, the viewer and
+  the editor (`webapp/**`, `casual-doc-wasm`) still call `ImportJob::begin`, so they
+  report `ocr_unavailable` and never run OCR. Each needs a way for the host to supply
+  model bytes (a path setting headless; Cache Storage/OPFS plus a download prompt that
+  shows the size, `131` §12.3, in the browser). Not this lane's files.
+- **No CJK fixture is committed** (rendering one needs a system font); CJK recognition
+  is the one-off measurement in §20.1. Optical CJK frames are drawn with the builder's
+  default face, so they inherit FONT-01/02/03 (G-5).
+- **PP-OCRv5:** orientation classifier, deskew, rotated boxes (§20.2).
+- **Erasing the picture behind visible OCR text** (Acrobat's "editable text"): the
+  scan's ink shows through where the substitute face differs.
+- **Partially mapped words:** a word over both valid and unmapped glyphs keeps the
+  native glyphs and leaves the unmapped ones U+FFFD.
+- **P6:** heron's regions are evidence only until P3 reflow consumes them;
+  PP-DocLayout is not wired (Paddle format only).
+- **Determinism across targets** (x86-64, aarch64, wasm32) is declared, not tested.
+- **The time budget in the browser** needs the host's `Interrupt` over
+  `performance.now()`; `Deadline` is native-only.

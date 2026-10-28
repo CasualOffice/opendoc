@@ -12,6 +12,12 @@
 //! `finish`), the shape of `casual-doc-diff`'s `DiffJob`; nothing is published
 //! until `finish` succeeds (PDFR-I3). [`import_pdf`] drives it to completion.
 //!
+//! Scanned pages and runs whose Unicode is unrecoverable go through [`ocr`]
+//! first: classified from the native evidence, rasterised region by region,
+//! read by the host's [`casual_doc_ocr::OcrProvider`] and merged native-first
+//! (PDFR-I2). With no provider the regions are reported
+//! (`pdf.import.ocr_unavailable`), never silently skipped.
+//!
 //! ```
 //! use casual_doc_pdf_import::{import_pdf, PdfReadLimits};
 //! let bytes = include_bytes!("../../../fixtures/pdf/synthetic-prose.pdf");
@@ -26,6 +32,7 @@
 
 mod fixed;
 pub mod group;
+pub mod ocr;
 pub mod report;
 
 use std::collections::BTreeMap;
@@ -36,6 +43,7 @@ use casual_doc_model::v1::Document;
 use casual_doc_pdf_read::PdfSource;
 pub use casual_doc_pdf_read::{PdfReadError, PdfReadLimits, probe_pdf};
 
+pub use ocr::{OcrOptions, OcrSummary, OcrTextPlacement, PageClass, PageLayout};
 pub use report::{PdfFinding, PdfImportReport, PdfModelOutcome};
 
 /// Why an import failed. Carries no document text.
@@ -137,6 +145,11 @@ pub struct PdfImport {
     pub comparisons: u64,
     /// Page objects and frame operators (`docs/182` P4).
     pub sources: SourceMap,
+    /// What OCR classified, read and skipped, and which model read it.
+    pub ocr: OcrSummary,
+    /// Layout regions per page (P6), when the host supplied a layout
+    /// provider; empty otherwise. Evidence for reflow, not structure.
+    pub layout: Vec<PageLayout>,
 }
 
 /// Where a job is.
@@ -167,6 +180,7 @@ pub enum Progress {
 pub struct ImportJob {
     source: PdfSource,
     builder: Option<fixed::Builder>,
+    ocr: ocr::OcrStage,
     next_page: usize,
     state: State,
 }
@@ -206,12 +220,27 @@ impl ImportJob {
     ///
     /// [`PdfImportError::Read`] when the reader refuses the file.
     pub fn begin(bytes: Vec<u8>, limits: PdfReadLimits) -> Result<Self, PdfImportError> {
+        Self::begin_with_ocr(bytes, limits, OcrOptions::default())
+    }
+
+    /// [`ImportJob::begin`] with the host's OCR (and optional layout)
+    /// configuration. O(document).
+    ///
+    /// # Errors
+    ///
+    /// [`PdfImportError::Read`] when the reader refuses the file.
+    pub fn begin_with_ocr(
+        bytes: Vec<u8>,
+        limits: PdfReadLimits,
+        ocr: OcrOptions,
+    ) -> Result<Self, PdfImportError> {
         let namespace = namespace_of(&bytes);
         let source = PdfSource::open(bytes, limits)?;
         let builder = fixed::Builder::new(namespace, source.active_content());
         Ok(Self {
             source,
             builder: Some(builder),
+            ocr: ocr::OcrStage::new(ocr),
             next_page: 0,
             state: State::Running,
         })
@@ -234,18 +263,27 @@ impl ImportJob {
         let end = self.next_page.saturating_add(budget.max(1)).min(total);
         while self.next_page < end {
             let index = self.next_page;
+            let builder = self.builder.as_mut().expect("running job has a builder");
             let result = self
                 .source
                 .page_evidence(index)
                 .map_err(PdfImportError::from)
-                .and_then(|page| {
-                    let builder = self.builder.as_mut().expect("running job has a builder");
+                .and_then(|mut page| {
+                    self.ocr
+                        .page(&mut page, self.source.bytes(), builder.findings_mut())?;
                     builder.page(&page, self.source.fonts())
                 });
-            if let Err(error) = result {
-                self.builder = None;
-                self.state = State::Failed(error);
-                return Progress::Failed;
+            match result {
+                Ok(()) => {}
+                Err(PdfImportError::Cancelled) => {
+                    self.cancel();
+                    return Progress::Cancelled;
+                }
+                Err(error) => {
+                    self.builder = None;
+                    self.state = State::Failed(error);
+                    return Progress::Failed;
+                }
             }
             self.next_page += 1;
         }
@@ -298,6 +336,8 @@ impl ImportJob {
             pages: self.source.page_count(),
             comparisons,
             sources,
+            ocr: std::mem::take(&mut self.ocr.summary),
+            layout: std::mem::take(&mut self.ocr.layout),
         })
     }
 }
@@ -310,6 +350,20 @@ impl ImportJob {
 /// As [`ImportJob::begin`] and [`ImportJob::finish`].
 pub fn import_pdf(bytes: Vec<u8>, limits: PdfReadLimits) -> Result<PdfImport, PdfImportError> {
     ImportJob::begin(bytes, limits)?.finish()
+}
+
+/// [`import_pdf`] with the host's OCR configuration. O(document) plus the
+/// provider's work, bounded by `ocr`'s budgets.
+///
+/// # Errors
+///
+/// As [`ImportJob::begin_with_ocr`] and [`ImportJob::finish`].
+pub fn import_pdf_with_ocr(
+    bytes: Vec<u8>,
+    limits: PdfReadLimits,
+    ocr: OcrOptions,
+) -> Result<PdfImport, PdfImportError> {
+    ImportJob::begin_with_ocr(bytes, limits, ocr)?.finish()
 }
 
 #[cfg(test)]

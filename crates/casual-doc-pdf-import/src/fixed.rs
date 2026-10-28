@@ -256,6 +256,11 @@ impl Builder {
         }
     }
 
+    /// The findings, for the OCR stage that runs before each page is built.
+    pub(crate) fn findings_mut(&mut self) -> &mut Findings {
+        &mut self.findings
+    }
+
     fn id(&mut self) -> Result<NodeId, PdfImportError> {
         self.ids
             .next_id()
