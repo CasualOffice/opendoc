@@ -7,6 +7,7 @@ import { populateSaveFormats } from "./save_formats.mjs";
 import { openingZoomMode } from "./view_zoom.mjs";
 import { BLANK_DOCX_PARTS, UNTITLED_DOCUMENT_NAME, zipStore } from "./blank_document.mjs";
 import { hostIdentity, identityPromised } from "./host_identity.mjs";
+import { hostParams } from "./capabilities.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -54,7 +55,7 @@ export function createFileOpen(ed) {
     // host that promised and never sent costs a wait rather than an editor.
     if (identityPromised(window.location.search)) await hostIdentity.settled();
 
-    const params = new URLSearchParams(window.location.search);
+    const params = hostParams(window.location.search);
     // The public demo and plain editor both open sample.docx. The smaller rich
     // corpus remains available only through the explicit e2e fixture route,
     // whose specs assert on its exact content. ?blank=1 opts out for the bare

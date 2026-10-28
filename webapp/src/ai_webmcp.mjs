@@ -415,7 +415,7 @@ async function fetchVocabulary() {
  * @returns {() => object} the status
  */
 export function startWebMcp(assistant, config, view = globalThis) {
-  if (config?.aiTools !== WEBMCP_OPT_IN) {
+  if (String(config?.aiTools ?? "").toLowerCase() !== WEBMCP_OPT_IN) {
     const off = Object.freeze({ state: "off", reason: "not-requested", tools: Object.freeze([]) });
     return () => off;
   }

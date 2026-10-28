@@ -1,4 +1,5 @@
 import { newRoster } from "../pkg/casual_doc_wasm.js";
+import { hostParams } from "./capabilities.mjs";
 import { openRoom, resumeKey } from "./collab_transport.mjs";
 import { createRecovery } from "./collab_recovery.mjs";
 import { createSyncIndicator } from "./collab_sync.mjs";
@@ -44,7 +45,7 @@ export function createCollaborationShell({ root, getDocument, getTransport, setT
   const sync = createSyncIndicator({ transport: getTransport, document: getDocument, status, t });
 
   function currentSharedLink() {
-    const params = new URLSearchParams(window.location.search);
+    const params = hostParams(window.location.search);
     return shareLink(window.location.href, { room: params.get("room"), documentUrl: params.get("document"), revision: Number(params.get("revision")) });
   }
   function startCollaboration() {
@@ -52,7 +53,7 @@ export function createCollaborationShell({ root, getDocument, getTransport, setT
     const room = hostConfig().room;
     remotePresence.open(Boolean(room));
     if (room && !JSON.parse(getDocument().collabState).joined) {
-      const revision = Number(new URLSearchParams(window.location.search).get("revision") || 0);
+      const revision = Number(hostParams(window.location.search).get("revision") || 0);
       getDocument().collabPrepare(revision);
     }
     // Who joins (`docs/175` §3, §4.2): the host identity's `id` and profile when
