@@ -323,17 +323,43 @@ pub struct Region {
     pub columns: order::ColumnRegion,
 }
 
-/// Header or footer content: lines grouped by baseline.
+/// Which pages a header or footer part serves (`w:headerReference@w:type`).
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum Variant {
+    /// Every page (odd pages, when even pages have their own).
+    Default,
+    /// Even pages (`evenAndOddHeaders`).
+    Even,
+    /// The first page (`titlePg`).
+    First,
+}
+
+/// One header or footer part: lines grouped by baseline.
+#[derive(Clone, Debug, Default)]
+pub struct Part {
+    /// Rows of lines sharing a baseline.
+    pub rows: Vec<Vec<ILine>>,
+    /// Character positions holding the page number: `(row, line, start, end)`.
+    pub numbers: Vec<(usize, usize, usize, usize)>,
+}
+
+/// The header and footer parts, keyed by (is footer, variant).
 #[derive(Clone, Debug, Default)]
 pub struct Furniture {
-    /// Top band, rows of (line, page number token present).
-    pub header: Vec<Vec<ILine>>,
-    /// Bottom band.
-    pub footer: Vec<Vec<ILine>>,
-    /// Character positions holding the page number: `(row, line, start, end)`.
-    pub header_page_numbers: Vec<(usize, usize, usize, usize)>,
-    /// The same for the footer.
-    pub footer_page_numbers: Vec<(usize, usize, usize, usize)>,
+    /// The parts.
+    pub parts: BTreeMap<(bool, Variant), Part>,
+    /// The first page has its own parts.
+    pub title_page: bool,
+    /// Even pages have their own parts.
+    pub even_odd: bool,
+}
+
+/// How a repeated band key repeats.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Repeat {
+    All,
+    OddPages,
+    EvenPages,
 }
 
 /// A link annotation placed on characters.
@@ -484,19 +510,35 @@ fn furniture(
         None,
     );
     let need = ((pages as f64) * FURNITURE_REPEAT).ceil().max(2.0) as usize;
+    // Pages 1, 3, 5... (indices 0, 2, 4...) are odd; a key on only one
+    // parity, on at least half of those pages, is an even/odd variant.
+    let need_parity = |count: usize| ((count as f64) * FURNITURE_REPEAT).ceil().max(2.0) as usize;
+    let (odd_pages, even_pages) = (pages.div_ceil(2), pages / 2);
     let mut content = Furniture::default();
     let mut inferred = 0;
     // Per band: (first baseline, left edge, lines, carries the page number).
     type Row = (f64, f64, Vec<ILine>, bool);
-    let mut rows: [Vec<Row>; 2] = [Vec::new(), Vec::new()];
+    let mut keyed: Vec<(bool, Repeat, BTreeSet<usize>, Row)> = Vec::new();
     for ((top_band, _, _), occurrences) in &seen {
         let artifact = occurrences
             .iter()
             .any(|(p, b)| state.pages[*p].blocks[*b].artifact);
         let distinct: BTreeSet<usize> = occurrences.iter().map(|(p, _)| *p).collect();
-        if !(artifact || distinct.len() >= need) {
+        let repeat = if pages >= 4
+            && distinct.iter().all(|p| p % 2 == 0)
+            && distinct.len() >= need_parity(odd_pages)
+        {
+            Repeat::OddPages
+        } else if pages >= 4
+            && distinct.iter().all(|p| p % 2 == 1)
+            && distinct.len() >= need_parity(even_pages)
+        {
+            Repeat::EvenPages
+        } else if artifact || distinct.len() >= need {
+            Repeat::All
+        } else {
             continue;
-        }
+        };
         for (p, b) in occurrences {
             out[*p].insert(*b);
         }
@@ -525,7 +567,45 @@ fn furniture(
             });
         let first = lines.first().map_or(0.0, |l| l.baseline);
         let x = block.block.x0;
-        rows[usize::from(!*top_band)].push((first, x, lines, numbered));
+        keyed.push((!*top_band, repeat, distinct, (first, x, lines, numbered)));
+    }
+    content.even_odd = keyed.iter().any(|k| k.1 == Repeat::EvenPages);
+    // The first page is different when a band's every-page content skips it
+    // (a title page) on a document long enough to tell.
+    content.title_page = pages >= 3
+        && [false, true].iter().any(|footer| {
+            let band: Vec<_> = keyed
+                .iter()
+                .filter(|k| k.0 == *footer && k.1 != Repeat::EvenPages)
+                .collect();
+            !band.is_empty() && band.iter().all(|k| !k.2.contains(&0))
+        });
+    let mut rows: BTreeMap<(bool, Variant), Vec<Row>> = BTreeMap::new();
+    for (footer, repeat, distinct, row) in keyed {
+        let mut variants = Vec::new();
+        match repeat {
+            Repeat::All => {
+                variants.push(Variant::Default);
+                if content.even_odd {
+                    variants.push(Variant::Even);
+                }
+            }
+            Repeat::OddPages => variants.push(Variant::Default),
+            Repeat::EvenPages => variants.push(Variant::Even),
+        }
+        if content.title_page && distinct.contains(&0) {
+            variants.push(Variant::First);
+        }
+        for variant in variants {
+            rows.entry((footer, variant)).or_default().push(row.clone());
+        }
+    }
+    if content.title_page {
+        for footer in [false, true] {
+            if rows.contains_key(&(footer, Variant::Default)) {
+                rows.entry((footer, Variant::First)).or_default();
+            }
+        }
     }
     findings.record(
         report::HEADER_FOOTER_INFERRED,
@@ -533,7 +613,7 @@ fn furniture(
         inferred,
         None,
     );
-    for (band, list) in rows.iter_mut().enumerate() {
+    for (key, list) in &mut rows {
         list.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
         let mut grouped: Vec<Vec<ILine>> = Vec::new();
         let mut numbers: Vec<(usize, usize, usize, usize)> = Vec::new();
@@ -578,13 +658,13 @@ fn furniture(
                 grouped[row].push(line);
             }
         }
-        if band == 0 {
-            content.header = grouped;
-            content.header_page_numbers = numbers;
-        } else {
-            content.footer = grouped;
-            content.footer_page_numbers = numbers;
-        }
+        content.parts.insert(
+            *key,
+            Part {
+                rows: grouped,
+                numbers,
+            },
+        );
     }
     (out, content)
 }

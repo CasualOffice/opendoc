@@ -27,7 +27,7 @@ use casual_doc_pdf_read::{LinkTarget, RenderMode};
 
 use super::tables::ITable;
 use super::text::{self, FontKey, Marker, StyleSheet};
-use super::{EKind, Flow, ILine, PChar, PdfSourceState, ReflowWork, Reflowed};
+use super::{EKind, Flow, ILine, PChar, PdfSourceState, ReflowWork, Reflowed, Variant};
 use crate::PdfImportError;
 use crate::report::{self, Findings, PdfModelOutcome as Outcome};
 
@@ -882,14 +882,16 @@ pub(crate) fn emit(
     let (bx0, by0, bx1, by1) = flow.body;
     let header_top = flow
         .furniture
-        .header
-        .first()
+        .parts
+        .get(&(false, Variant::Default))
+        .and_then(|part| part.rows.first())
         .and_then(|row| row.first())
         .map(|l| l.top);
     let footer_bottom = flow
         .furniture
-        .footer
-        .last()
+        .parts
+        .get(&(true, Variant::Default))
+        .and_then(|part| part.rows.last())
         .and_then(|row| row.last())
         .map(|l| l.bottom);
     let margins = PageMargins {
@@ -902,23 +904,43 @@ pub(crate) fn emit(
         gutter_twips: None,
     };
 
-    // Header and footer parts.
-    let header_part = furniture_part(
-        &mut emitter,
-        &flow.furniture.header,
-        &flow.furniture.header_page_numbers,
-        page_w,
-        margins,
-    )?;
-    let footer_part = furniture_part(
-        &mut emitter,
-        &flow.furniture.footer,
-        &flow.furniture.footer_page_numbers,
-        page_w,
-        margins,
-    )?;
-    let header = header_part.as_ref().map(|(id, _)| *id);
-    let footer = footer_part.as_ref().map(|(id, _)| *id);
+    // Header and footer parts: default, even and first-page variants.
+    let mut parts: Vec<(bool, HeaderFooterKind, HeaderFooterId, HeaderFooter)> = Vec::new();
+    for ((footer, variant), part) in &flow.furniture.parts {
+        let kind = match variant {
+            Variant::Default => HeaderFooterKind::Default,
+            Variant::Even => HeaderFooterKind::Even,
+            Variant::First => HeaderFooterKind::First,
+        };
+        let (id, content) =
+            match furniture_part(&mut emitter, &part.rows, &part.numbers, page_w, margins)? {
+                Some(built) => built,
+                // An empty first-page part: the title page shows nothing there.
+                None => (
+                    HeaderFooterId::new(emitter.id()?),
+                    HeaderFooter {
+                        blocks: vec![BlockNode::Paragraph(Paragraph {
+                            id: emitter.id()?,
+                            properties: ParagraphProperties::default().into(),
+                            inlines: Vec::new(),
+                        })],
+                    },
+                ),
+            };
+        parts.push((*footer, kind, id, content));
+    }
+    let refs = |footer: bool| -> Vec<HeaderFooterRef> {
+        parts
+            .iter()
+            .filter(|p| p.0 == footer)
+            .map(|p| HeaderFooterRef {
+                kind: p.1,
+                reference: p.2,
+            })
+            .collect()
+    };
+    let (header_refs, footer_refs) = (refs(false), refs(true));
+    let title_page = flow.furniture.title_page.then_some(true);
 
     let mut body: Vec<BlockNode> = Vec::new();
     let mut sections: Vec<SectionBoundary> = Vec::new();
@@ -943,24 +965,10 @@ pub(crate) fn emit(
                 equal_width: (shape.0 > 1).then_some(true),
                 columns: Vec::new(),
             },
-            headers: header
-                .map(|h| {
-                    vec![HeaderFooterRef {
-                        kind: HeaderFooterKind::Default,
-                        reference: h,
-                    }]
-                })
-                .unwrap_or_default(),
-            footers: footer
-                .map(|f| {
-                    vec![HeaderFooterRef {
-                        kind: HeaderFooterKind::Default,
-                        reference: f,
-                    }]
-                })
-                .unwrap_or_default(),
+            headers: header_refs.clone(),
+            footers: footer_refs.clone(),
             section_type: (!first).then_some(SectionType::Continuous),
-            title_page: None,
+            title_page,
             vertical_alignment: None,
             page_numbering: casual_doc_model::v1::PageNumbering::default(),
             doc_grid: casual_doc_model::v1::DocGrid::default(),
@@ -1199,12 +1207,14 @@ pub(crate) fn emit(
             out_resources.insert(media.part_name.clone(), bytes.clone());
         }
     }
-    if let Some((id, part)) = header_part {
-        definitions.headers.insert(id, part);
+    for (footer, _, id, part) in parts {
+        if footer {
+            definitions.footers.insert(id, part);
+        } else {
+            definitions.headers.insert(id, part);
+        }
     }
-    if let Some((id, part)) = footer_part {
-        definitions.footers.insert(id, part);
-    }
+    definitions.settings.even_and_odd_headers = flow.furniture.even_odd;
     let document_id = emitter.id()?;
     let document = Document::new(document_id, body, definitions)
         .map_err(|error| PdfImportError::Model(error.to_string()))?;

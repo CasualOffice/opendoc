@@ -1428,3 +1428,94 @@ fn a_footnote_continues_onto_the_next_page_and_symbol_markers_are_kept() {
     );
     assert!(!reflowed.report.has(report::FOOTNOTE_MARKER_RENUMBERED));
 }
+
+// --- First-page and even/odd headers ------------------------------------------
+
+/// Five pages: a title page with no running head, then a head that
+/// alternates between even pages (left) and odd pages (right); a footer on
+/// every page.
+fn variant_headers_pdf() -> Vec<u8> {
+    let pages: Vec<Page> = (0..5)
+        .map(|i| {
+            let head = match i {
+                0 => String::new(),
+                i if i % 2 == 1 => text("F1", 9.0, 72.0, 750.0, 11.0, &["Even running head"]),
+                _ => text("F1", 9.0, 450.0, 750.0, 11.0, &["Odd running head"]),
+            };
+            Page::new(format!(
+                "{head}{}{}",
+                text(
+                    "F2",
+                    11.0,
+                    72.0,
+                    700.0,
+                    14.0,
+                    &PROSE[(i % 4) * 2..(i % 4) * 2 + 2]
+                ),
+                text("F1", 9.0, 290.0, 30.0, 11.0, &[&format!("Page {}", i + 1)]),
+            ))
+        })
+        .collect();
+    synth::document(&pages, "", "")
+}
+
+#[test]
+fn first_page_and_even_odd_headers_become_their_own_parts() {
+    use casual_doc_model::v1::HeaderFooterKind;
+    let (_, reflowed) = reflow_of(variant_headers_pdf());
+    let definitions = reflowed.document.definitions();
+    let section = &definitions.sections[0];
+    let part_text = |blocks: &[BlockNode]| {
+        blocks
+            .iter()
+            .filter_map(|b| match b {
+                BlockNode::Paragraph(p) => Some(para_text(p)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("|")
+    };
+    let headers: Vec<(HeaderFooterKind, String)> = section
+        .headers
+        .iter()
+        .map(|r| {
+            (
+                r.kind,
+                part_text(&definitions.headers.get(&r.reference).unwrap().blocks),
+            )
+        })
+        .collect();
+    assert_eq!(
+        headers,
+        vec![
+            (HeaderFooterKind::Default, "Odd running head".to_owned()),
+            (HeaderFooterKind::Even, "Even running head".to_owned()),
+            (HeaderFooterKind::First, String::new()),
+        ]
+    );
+    let footers: Vec<(HeaderFooterKind, String)> = section
+        .footers
+        .iter()
+        .map(|r| {
+            (
+                r.kind,
+                part_text(&definitions.footers.get(&r.reference).unwrap().blocks),
+            )
+        })
+        .collect();
+    assert_eq!(
+        footers,
+        vec![
+            (HeaderFooterKind::Default, "Page {1}".to_owned()),
+            (HeaderFooterKind::Even, "Page {1}".to_owned()),
+            (HeaderFooterKind::First, "Page {1}".to_owned()),
+        ]
+    );
+    assert_eq!(section.title_page, Some(true));
+    assert!(definitions.settings.even_and_odd_headers);
+    assert!(
+        !texts(&reflowed.document)
+            .join("\n")
+            .contains("running head")
+    );
+}
