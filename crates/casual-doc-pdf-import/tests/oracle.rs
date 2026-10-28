@@ -128,6 +128,14 @@ fn model_pages(bytes: &[u8]) -> Vec<Ink> {
         media.insert(name.clone(), bytes.clone());
     }
     let shaper = ParleyShaper::new();
+    // A host registers the document's own font programs at open, as it does
+    // `.odttf` faces (G-1).
+    let outcome = casual_doc_layout::font_registry::register_embedded_fonts(
+        &shaper,
+        &imported.document,
+        |part| imported.resources.get(part).map(Vec::as_slice),
+    );
+    assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
     let pages = paginate_document(&imported.document, &shaper);
     let registry = shaper.registry();
     let fonts = RegistryFontSource::new(&registry);
@@ -163,21 +171,15 @@ fn agreement(name: &str) -> Vec<(f64, f64)> {
 
 /// Pages whose import reports a loss that is visible by construction, with the
 /// finding that reports it. Rotated text is placed upright (G-3), on a rotated
-/// page as on a rotated run; Type3 box glyphs become substitute text; the
-/// even-odd donut fills its hole under the nonzero fallback (G-2). Each is
+/// page as on a rotated run; Type3 box glyphs become substitute text. Each is
 /// asserted to be REPORTED, and the last test asserts the comparison SEES one.
-const REPORTED_LOSSES: [(&str, usize, &str); 4] = [
+const REPORTED_LOSSES: [(&str, usize, &str); 3] = [
     ("synthetic-page-boxes.pdf", 2, "pdf.import.text_rotated"),
     ("synthetic-rotated-text.pdf", 1, "pdf.import.text_rotated"),
     (
         "synthetic-type3.pdf",
         1,
         "pdf.import.type3_glyphs_substituted",
-    ),
-    (
-        "synthetic-vector.pdf",
-        1,
-        "pdf.import.vector_fill_rule_degraded",
     ),
 ];
 
@@ -235,16 +237,10 @@ fn every_page_matches_hayros_render_of_the_original() {
     );
 }
 
-/// The comparison is able to fail: the even-odd donut's hole, filled by the
-/// nonzero fallback, is ink the oracle does not have, and the upright
-/// placement of a rotated page's text misses almost all of the oracle's ink.
+/// The comparison is able to fail: the upright placement of a rotated page's
+/// text misses almost all of the oracle's ink.
 #[test]
 fn the_comparison_sees_a_reported_visual_loss() {
-    let (_, precision) = agreement("synthetic-vector.pdf")[0];
-    assert!(
-        precision < 0.99,
-        "the filled donut hole must cost precision; was {precision:.3}"
-    );
     let (recall, _) = agreement("synthetic-page-boxes.pdf")[1];
     assert!(recall < MIN_AGREEMENT, "rotated page recall {recall:.3}");
 }

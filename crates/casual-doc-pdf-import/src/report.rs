@@ -102,6 +102,7 @@ pub const FEATURES: &[&str] = &[
     ATTACHMENT_OMITTED,
     CLIP_IGNORED,
     ENCRYPTED_UNSUPPORTED,
+    FONT_EMBEDDED,
     FONT_SUBSTITUTED,
     FORM_OMITTED,
     IMAGE_CLIP_IGNORED,
@@ -119,7 +120,6 @@ pub const FEATURES: &[&str] = &[
     TEXT_ROTATED,
     TRANSPARENCY_FLATTENED,
     TYPE3_GLYPHS_SUBSTITUTED,
-    VECTOR_FILL_RULE_DEGRADED,
     VECTOR_SPLIT,
 ];
 
@@ -133,8 +133,14 @@ pub const ATTACHMENT_OMITTED: &str = "pdf.import.attachment_omitted";
 pub const CLIP_IGNORED: &str = "pdf.import.clip_ignored";
 /// Encrypted files are refused (the error's finding id).
 pub const ENCRYPTED_UNSUPPORTED: &str = "pdf.import.encrypted_unsupported";
-/// A PDF font is drawn with a substitute face (embedded programs are not yet
-/// registrable, `docs/182` G-1).
+/// A PDF font's embedded program is registered and draws its text
+/// (`Definitions::font_programs`, `docs/182` G-1). Reported because it is the
+/// importer's decision, not the producer's.
+pub const FONT_EMBEDDED: &str = "pdf.import.font_embedded";
+/// A PDF font is drawn, wholly or for some characters, with a substitute face:
+/// it is not embedded, its program is a Type1/Type3/bare-CFF one the model
+/// cannot register yet, its sfnt has no cmap covering the text it drew, or
+/// another program already took its family and style.
 pub const FONT_SUBSTITUTED: &str = "pdf.import.font_substituted";
 /// Interactive form fields are not imported as fields.
 pub const FORM_OMITTED: &str = "pdf.import.form_omitted";
@@ -168,7 +174,5 @@ pub const TEXT_ROTATED: &str = "pdf.import.text_rotated";
 pub const TRANSPARENCY_FLATTENED: &str = "pdf.import.transparency_flattened";
 /// Type3 glyph procedures replaced by substitute text.
 pub const TYPE3_GLYPHS_SUBSTITUTED: &str = "pdf.import.type3_glyphs_substituted";
-/// Even-odd fills drawn with the nonzero rule (`docs/182` G-2).
-pub const VECTOR_FILL_RULE_DEGRADED: &str = "pdf.import.vector_fill_rule_degraded";
 /// A path over the model's per-shape command bound, split into several shapes.
 pub const VECTOR_SPLIT: &str = "pdf.import.vector_split";

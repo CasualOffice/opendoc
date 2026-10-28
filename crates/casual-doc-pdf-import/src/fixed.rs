@@ -31,10 +31,11 @@ use casual_doc_model::v1::{
     TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxInsets, VerticalAnchor,
     VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
 };
+use casual_doc_model::v1::{EmbeddedFontProgram, FillRule, FontProgramFormat, FontProgramStyle};
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_pdf_read::{
-    ActiveContent, DocumentFonts, FontEvidence, GlyphRunEvidence, ImageEvidence, ImageFormat,
-    PageEvidence, PaintEvidence, PathCommand, PathEvidence, RenderMode,
+    ActiveContent, DocumentFonts, FontEvidence, FontProgramKind, GlyphRunEvidence, ImageEvidence,
+    ImageFormat, PageEvidence, PaintEvidence, PathCommand, PathEvidence, RenderMode,
 };
 
 use crate::PdfImportError;
@@ -88,7 +89,31 @@ fn page_anchor(x: f64, y: f64) -> DrawingAnchor {
     }
 }
 
-/// The face the run is drawn with until embedded programs can be registered
+/// The family an embedded program registers under and its runs name: the
+/// descriptor's family, else the base name before any style suffix.
+fn embedded_family(font: &FontEvidence) -> String {
+    font.family
+        .clone()
+        .filter(|f| !f.is_empty())
+        .unwrap_or_else(|| {
+            let name = font.name.as_str();
+            let cut = name.find(['-', ',']).unwrap_or(name.len());
+            name[..cut].to_owned()
+        })
+}
+
+/// Whether the sfnt `bytes` maps every character in `chars` through a cmap.
+/// O(characters).
+fn covers(bytes: &[u8], chars: &BTreeSet<char>) -> bool {
+    use skrifa::MetadataProvider;
+    let Ok(face) = skrifa::FontRef::new(bytes) else {
+        return false;
+    };
+    let charmap = face.charmap();
+    charmap.has_map() && chars.iter().all(|c| charmap.map(*c).is_some())
+}
+
+/// The face the run is drawn with when its program is not registered embedded programs can be registered
 /// (`docs/182` G-1): the standard 14 map to their metric-compatible Office
 /// names; anything else keeps its family name with the style suffix removed.
 fn substitute_family(font: &FontEvidence) -> String {
@@ -134,7 +159,14 @@ pub(crate) struct Builder {
     resources: BTreeMap<String, Vec<u8>>,
     findings: Findings,
     z: u32,
-    fonts_substituted: BTreeSet<usize>,
+    /// Font index -> whether its program was registered.
+    font_embedded: BTreeMap<usize, bool>,
+    /// Font index -> the family its runs name, when embedded.
+    font_family: BTreeMap<usize, String>,
+    /// Embedded fonts a later page drew characters outside of.
+    font_partial: BTreeSet<usize>,
+    /// The programs registered (`Definitions::font_programs`).
+    programs: Vec<EmbeddedFontProgram>,
     /// The previous page's anchor paragraph, waiting for the next page so it
     /// can carry the section break that ends its page.
     pending: Option<(Paragraph, SectionId)>,
@@ -190,7 +222,10 @@ impl Builder {
             resources: BTreeMap::new(),
             findings,
             z: 0,
-            fonts_substituted: BTreeSet::new(),
+            font_embedded: BTreeMap::new(),
+            font_family: BTreeMap::new(),
+            font_partial: BTreeSet::new(),
+            programs: Vec::new(),
             pending: None,
             comparisons: 0,
         }
@@ -360,13 +395,109 @@ impl Builder {
         Ok(id)
     }
 
+    /// Decides, once per font, whether its embedded program draws the text
+    /// (`docs/182` G-1) or a substitute does, and reports which.
+    ///
+    /// A program is registered only when it is an sfnt whose cmap maps every
+    /// character this page drew with it, and no earlier program took the same
+    /// family and style: registering a subset that cannot shape its own text
+    /// would paint `.notdef` boxes where a substitute paints the letters. A
+    /// registered subset that a later page draws characters outside of is
+    /// reported as partly substituted (those characters fall back).
+    /// O(characters on the page).
+    fn decide_fonts(&mut self, runs: &[&GlyphRunEvidence], fonts: &DocumentFonts, page: usize) {
+        let mut used: BTreeMap<usize, BTreeSet<char>> = BTreeMap::new();
+        for run in runs {
+            let chars = used.entry(run.font).or_default();
+            for glyph in &run.glyphs {
+                if let Some(text) = &glyph.text {
+                    chars.extend(
+                        text.chars()
+                            .filter(|c| !c.is_whitespace() && !c.is_control()),
+                    );
+                }
+            }
+        }
+        for (index, chars) in used {
+            let Some(font) = fonts.fonts.get(index) else {
+                continue;
+            };
+            if let Some(embedded) = self.font_embedded.get(&index).copied() {
+                if embedded
+                    && !self.font_partial.contains(&index)
+                    && let Some((_, bytes)) = &font.program
+                    && !covers(bytes, &chars)
+                {
+                    self.font_partial.insert(index);
+                    self.findings.record(
+                        report::FONT_SUBSTITUTED,
+                        Outcome::Degraded,
+                        1,
+                        Some(page),
+                    );
+                }
+                continue;
+            }
+            let family = embedded_family(font);
+            let style = match (font.bold, font.italic) {
+                (true, true) => FontProgramStyle::BoldItalic,
+                (true, false) => FontProgramStyle::Bold,
+                (false, true) => FontProgramStyle::Italic,
+                (false, false) => FontProgramStyle::Regular,
+            };
+            let candidate = match &font.program {
+                Some((FontProgramKind::TrueType, bytes)) => {
+                    Some((FontProgramFormat::TrueType, "ttf", bytes))
+                }
+                Some((FontProgramKind::OpenTypeCff, bytes)) => {
+                    Some((FontProgramFormat::OpenTypeCff, "otf", bytes))
+                }
+                _ => None,
+            };
+            let slot_free = !self
+                .programs
+                .iter()
+                .any(|p| p.family == family && p.style == style);
+            match candidate {
+                Some((format, extension, bytes))
+                    if slot_free && !family.is_empty() && covers(bytes, &chars) =>
+                {
+                    let part_name =
+                        format!("pdf/fonts/font{}.{extension}", self.programs.len() + 1);
+                    self.resources.insert(part_name.clone(), bytes.clone());
+                    let mut program =
+                        EmbeddedFontProgram::new(family.clone(), style, format, part_name)
+                            .with_subsetted(true);
+                    if !font.name.is_empty() {
+                        program = program.with_source_name(font.name.clone());
+                    }
+                    self.programs.push(program);
+                    self.font_family.insert(index, family);
+                    self.font_embedded.insert(index, true);
+                    self.findings
+                        .record(report::FONT_EMBEDDED, Outcome::Mapped, 1, Some(page));
+                }
+                _ => {
+                    self.font_embedded.insert(index, false);
+                    self.findings.record(
+                        report::FONT_SUBSTITUTED,
+                        Outcome::Degraded,
+                        1,
+                        Some(page),
+                    );
+                }
+            }
+        }
+    }
+
     fn run_properties(&mut self, style: group::Style, fonts: &DocumentFonts) -> RunProperties {
         let font = fonts.fonts.get(style.font);
-        if font.is_some() && self.fonts_substituted.insert(style.font) {
-            self.findings
-                .record(report::FONT_SUBSTITUTED, Outcome::Degraded, 1, None);
-        }
-        let family = font.map_or_else(|| "Arial".to_owned(), substitute_family);
+        let family = self
+            .font_family
+            .get(&style.font)
+            .cloned()
+            .or_else(|| font.map(substitute_family))
+            .unwrap_or_else(|| "Arial".to_owned());
         let named = Some(FontRef::Named(FontName { name: family }));
         RunProperties {
             font_ref: named.clone(),
@@ -392,6 +523,7 @@ impl Builder {
         page: usize,
         inlines: &mut Vec<InlineNode>,
     ) -> Result<(), PdfImportError> {
+        self.decide_fonts(runs, fonts, page);
         let mut upright = Vec::new();
         for run in runs {
             let unmapped = run.glyphs.iter().filter(|g| g.text.is_none()).count();
@@ -686,15 +818,6 @@ impl Builder {
             f64::NEG_INFINITY,
         );
         for path in paths {
-            if path.even_odd {
-                // G-2: the model has no even-odd rule yet; nonzero is drawn.
-                self.findings.record(
-                    report::VECTOR_FILL_RULE_DEGRADED,
-                    Outcome::Degraded,
-                    1,
-                    Some(page),
-                );
-            }
             if path.clipped {
                 self.findings
                     .record(report::CLIP_IGNORED, Outcome::Degraded, 1, Some(page));
@@ -732,8 +855,11 @@ impl Builder {
             anchor: Some(page_anchor(x0, y0)),
             relative_height: Some(z),
             extent,
+            // The anchor places a top-level group; its own `a:off` is relative
+            // to that (Word writes 0,0), and the child space starts at the
+            // group's page origin so children keep page-EMU coordinates.
             transform: GroupTransform {
-                offset,
+                offset: PointEmu { x_emu: 0, y_emu: 0 },
                 extent,
                 child_offset: offset,
                 child_extent: extent,
@@ -808,7 +934,13 @@ impl Builder {
             geometry: ShapeGeometry::Other,
             preset: None,
             adjustments: Vec::new(),
-            path: Some(CustomGeometry::single_path(shape_path)),
+            path: Some(CustomGeometry::from_paths(vec![shape_path]).with_fill_rule(
+                if path.even_odd {
+                    FillRule::EvenOdd
+                } else {
+                    FillRule::NonZero
+                },
+            )),
             fill,
             stroke,
             flip_h: false,
@@ -828,6 +960,7 @@ impl Builder {
             definitions.media.insert(id, reference);
         }
         definitions.sections = std::mem::take(&mut self.sections);
+        definitions.font_programs = std::mem::take(&mut self.programs);
         let document_id = self.id()?;
         let document = Document::new(document_id, std::mem::take(&mut self.body), definitions)
             .map_err(|error| PdfImportError::Model(error.to_string()))?;

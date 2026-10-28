@@ -391,6 +391,7 @@ dependencies = [
  "casual-doc-pdf-read",
  "casual-doc-render",
  "hayro",
+ "skrifa 0.43.2",
 ]
 
 [[package]]

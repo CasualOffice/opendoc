@@ -5,18 +5,18 @@
       "Flate",
       "raw"
     ],
-    "files": 27,
-    "fonts": 31,
-    "fonts_registrable_for_editing": 0,
-    "glyphs": 3615,
+    "files": 28,
+    "fonts": 32,
+    "fonts_registrable_for_editing": 1,
+    "glyphs": 3885,
     "max_image_pixels": 10000000000,
     "max_page_operators": 2000000,
     "max_page_peak_heap_bytes": 234881888,
-    "max_page_us": 116503,
-    "pages": 2525,
-    "parsed": 25,
+    "max_page_us": 109461,
+    "pages": 2526,
+    "parsed": 26,
     "refused": 2,
-    "unicode_glyphs": 3609,
+    "unicode_glyphs": 3879,
     "unicode_share_per_mille": 998
   },
   "files": [
@@ -27,7 +27,7 @@
       },
       "name": "hostile/hostile-encrypted.pdf",
       "timing": {
-        "open_us": 129
+        "open_us": 115
       }
     },
     {
@@ -58,10 +58,10 @@
       "name": "hostile/hostile-flate-bomb.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 234881888,
-        "max_page_us": 75773,
+        "max_page_us": 76619,
         "median_page_peak_heap_bytes": 234881888,
-        "median_page_us": 75773,
-        "open_us": 27
+        "median_page_us": 76619,
+        "open_us": 32
       }
     },
     {
@@ -71,7 +71,7 @@
       },
       "name": "hostile/hostile-garbage.pdf",
       "timing": {
-        "open_us": 8
+        "open_us": 9
       }
     },
     {
@@ -104,10 +104,10 @@
       "name": "hostile/hostile-huge-page.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 81216,
-        "max_page_us": 187,
+        "max_page_us": 195,
         "median_page_peak_heap_bytes": 81216,
-        "median_page_us": 187,
-        "open_us": 10
+        "median_page_us": 195,
+        "open_us": 14
       }
     },
     {
@@ -140,10 +140,10 @@
       "name": "hostile/hostile-image-dimensions.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 4592,
-        "max_page_us": 22,
+        "max_page_us": 32,
         "median_page_peak_heap_bytes": 4592,
-        "median_page_us": 22,
-        "open_us": 3
+        "median_page_us": 32,
+        "open_us": 4
       }
     },
     {
@@ -174,9 +174,9 @@
       "name": "hostile/hostile-operator-flood.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 188164176,
-        "max_page_us": 116503,
+        "max_page_us": 109461,
         "median_page_peak_heap_bytes": 188164176,
-        "median_page_us": 116503,
+        "median_page_us": 109461,
         "open_us": 5
       }
     },
@@ -208,10 +208,10 @@
       "name": "hostile/hostile-page-flood.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 81120,
-        "max_page_us": 9,
+        "max_page_us": 10,
         "median_page_peak_heap_bytes": 81120,
         "median_page_us": 1,
-        "open_us": 3520
+        "open_us": 3181
       }
     },
     {
@@ -242,10 +242,10 @@
       "name": "hostile/hostile-recursive-form.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 6118,
-        "max_page_us": 32,
+        "max_page_us": 14,
         "median_page_peak_heap_bytes": 6118,
-        "median_page_us": 32,
-        "open_us": 6
+        "median_page_us": 14,
+        "open_us": 7
       }
     },
     {
@@ -279,7 +279,7 @@
         "max_page_us": 0,
         "median_page_peak_heap_bytes": 0,
         "median_page_us": 0,
-        "open_us": 7
+        "open_us": 8
       }
     },
     {
@@ -312,10 +312,46 @@
       "name": "synthetic-active-content.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 81312,
-        "max_page_us": 37,
+        "max_page_us": 51,
         "median_page_peak_heap_bytes": 81312,
-        "median_page_us": 37,
-        "open_us": 4
+        "median_page_us": 51,
+        "open_us": 5
+      }
+    },
+    {
+      "bytes": 29181,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 373,
+        "even_odd_fills": 0,
+        "font_programs": {
+          "truetype": 1
+        },
+        "fonts": 1,
+        "fonts_registrable_for_editing": 1,
+        "glyphs": 270,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 18,
+        "max_page_side_pt": 792,
+        "objects": 7,
+        "operators": 18,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 0,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 270
+      },
+      "name": "synthetic-embedded-truetype.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 189405,
+        "max_page_us": 279,
+        "median_page_peak_heap_bytes": 189405,
+        "median_page_us": 279,
+        "open_us": 9
       }
     },
     {
@@ -352,10 +388,10 @@
       "name": "synthetic-images.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 85847,
-        "max_page_us": 110,
+        "max_page_us": 123,
         "median_page_peak_heap_bytes": 85847,
-        "median_page_us": 110,
-        "open_us": 5
+        "median_page_us": 123,
+        "open_us": 6
       }
     },
     {
@@ -388,9 +424,9 @@
       "name": "synthetic-page-boxes.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 81312,
-        "max_page_us": 25,
+        "max_page_us": 22,
         "median_page_peak_heap_bytes": 81312,
-        "median_page_us": 25,
+        "median_page_us": 22,
         "open_us": 5
       }
     },
@@ -424,9 +460,9 @@
       "name": "synthetic-prose.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 82656,
-        "max_page_us": 111,
+        "max_page_us": 109,
         "median_page_peak_heap_bytes": 82656,
-        "median_page_us": 111,
+        "median_page_us": 109,
         "open_us": 5
       }
     },
@@ -460,9 +496,9 @@
       "name": "synthetic-rotated-text.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 81504,
-        "max_page_us": 31,
+        "max_page_us": 30,
         "median_page_peak_heap_bytes": 81504,
-        "median_page_us": 31,
+        "median_page_us": 30,
         "open_us": 3
       }
     },
@@ -496,10 +532,10 @@
       "name": "synthetic-tagged.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 81888,
-        "max_page_us": 49,
+        "max_page_us": 54,
         "median_page_peak_heap_bytes": 81888,
-        "median_page_us": 49,
-        "open_us": 4
+        "median_page_us": 54,
+        "open_us": 3
       }
     },
     {
@@ -532,9 +568,9 @@
       "name": "synthetic-two-column.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 82656,
-        "max_page_us": 72,
+        "max_page_us": 75,
         "median_page_peak_heap_bytes": 82656,
-        "median_page_us": 72,
+        "median_page_us": 75,
         "open_us": 3
       }
     },
@@ -568,9 +604,9 @@
       "name": "synthetic-type3.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 81312,
-        "max_page_us": 54,
+        "max_page_us": 45,
         "median_page_peak_heap_bytes": 81312,
-        "median_page_us": 54,
+        "median_page_us": 45,
         "open_us": 3
       }
     },
@@ -604,9 +640,9 @@
       "name": "synthetic-vector.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 81888,
-        "max_page_us": 38,
+        "max_page_us": 26,
         "median_page_peak_heap_bytes": 81888,
-        "median_page_us": 38,
+        "median_page_us": 26,
         "open_us": 3
       }
     },
@@ -640,9 +676,9 @@
       "name": "writer-real-producer-footnotes.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 140151,
-        "max_page_us": 215,
+        "max_page_us": 162,
         "median_page_peak_heap_bytes": 140151,
-        "median_page_us": 215,
+        "median_page_us": 162,
         "open_us": 7
       }
     },
@@ -676,10 +712,10 @@
       "name": "writer-real-producer-header-footer.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 140133,
-        "max_page_us": 118,
+        "max_page_us": 114,
         "median_page_peak_heap_bytes": 140133,
-        "median_page_us": 118,
-        "open_us": 4
+        "median_page_us": 114,
+        "open_us": 5
       }
     },
     {
@@ -712,9 +748,9 @@
       "name": "writer-real-producer-hyperlinks.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 203854,
-        "max_page_us": 155,
+        "max_page_us": 153,
         "median_page_peak_heap_bytes": 203854,
-        "median_page_us": 155,
+        "median_page_us": 153,
         "open_us": 6
       }
     },
@@ -748,10 +784,10 @@
       "name": "writer-real-producer-libreoffice.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 438486,
-        "max_page_us": 330,
+        "max_page_us": 327,
         "median_page_peak_heap_bytes": 438486,
-        "median_page_us": 330,
-        "open_us": 5
+        "median_page_us": 327,
+        "open_us": 4
       }
     },
     {
@@ -820,9 +856,9 @@
       "name": "writer-real-producer-table-list.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 139817,
-        "max_page_us": 98,
+        "max_page_us": 99,
         "median_page_peak_heap_bytes": 139817,
-        "median_page_us": 98,
+        "median_page_us": 99,
         "open_us": 3
       }
     },
@@ -856,10 +892,10 @@
       "name": "writer-real-producer-table-merges.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 206485,
-        "max_page_us": 154,
+        "max_page_us": 155,
         "median_page_peak_heap_bytes": 206485,
-        "median_page_us": 154,
-        "open_us": 3
+        "median_page_us": 155,
+        "open_us": 4
       }
     },
     {
@@ -892,9 +928,9 @@
       "name": "writer-synthetic-declared-family-substitution.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 148068,
-        "max_page_us": 202,
+        "max_page_us": 205,
         "median_page_peak_heap_bytes": 148068,
-        "median_page_us": 202,
+        "median_page_us": 205,
         "open_us": 3
       }
     },
@@ -928,9 +964,9 @@
       "name": "writer-synthetic-rich-metadata.pdf",
       "timing": {
         "max_page_peak_heap_bytes": 137209,
-        "max_page_us": 74,
+        "max_page_us": 75,
         "median_page_peak_heap_bytes": 137209,
-        "median_page_us": 74,
+        "median_page_us": 75,
         "open_us": 5
       }
     }

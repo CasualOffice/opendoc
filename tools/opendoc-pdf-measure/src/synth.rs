@@ -189,6 +189,7 @@ pub fn construct_corpus() -> Vec<Generated> {
         ("synthetic-type3.pdf", type3()),
         ("synthetic-page-boxes.pdf", page_boxes()),
         ("synthetic-active-content.pdf", active_content()),
+        ("synthetic-embedded-truetype.pdf", embedded_truetype()),
     ]
 }
 
@@ -605,4 +606,65 @@ fn huge_page() -> Vec<u8> {
         String::new(),
     );
     document(&[huge], "", "")
+}
+
+/// A simple TrueType font embedding the WHOLE Caladea Regular program
+/// (Apache-2.0, bundled in `casual-doc-layout/fonts`) as `FontFile2`, with
+/// WinAnsi widths read from its own `hmtx`: the case where the embedded program
+/// has a Unicode cmap and can draw its own text in the editor (`docs/182` G-1).
+fn embedded_truetype() -> Vec<u8> {
+    use skrifa::MetadataProvider;
+    let program = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/casual-doc-layout/fonts/Caladea-Regular.ttf"),
+    )
+    .expect("bundled Caladea");
+    let face = skrifa::FontRef::new(&program).expect("sfnt");
+    let charmap = face.charmap();
+    let upem = f32::from(
+        face.metrics(
+            skrifa::instance::Size::unscaled(),
+            skrifa::instance::LocationRef::default(),
+        )
+        .units_per_em,
+    );
+    let metrics = face.glyph_metrics(
+        skrifa::instance::Size::unscaled(),
+        skrifa::instance::LocationRef::default(),
+    );
+    let widths: Vec<String> = (32u32..=126)
+        .map(|code| {
+            let advance = charmap
+                .map(code)
+                .and_then(|gid| metrics.advance_width(gid))
+                .unwrap_or(0.0);
+            format!("{}", (advance * 1000.0 / upem).round() as i64)
+        })
+        .collect();
+    let mut pdf = PdfBuilder::default();
+    let catalog = pdf.reserve();
+    let tree = pdf.reserve();
+    let file = pdf.flate_stream(&format!("/Length1 {}", program.len()), &program);
+    let descriptor = pdf.add(format!(
+        "<< /Type /FontDescriptor /FontName /Caladea-Regular /FontFamily (Caladea) /Flags 34 /FontBBox [-200 -250 1200 950] /ItalicAngle 0 /Ascent 900 /Descent -250 /CapHeight 650 /StemV 80 /FontFile2 {file} 0 R >>"
+    ));
+    let font = pdf.add(format!(
+        "<< /Type /Font /Subtype /TrueType /BaseFont /Caladea-Regular /FirstChar 32 /LastChar 126 /Widths [{}] /Encoding /WinAnsiEncoding /FontDescriptor {descriptor} 0 R >>",
+        widths.join(" ")
+    ));
+    let content = format!(
+        "{}{}",
+        text_block("C1", 20.0, 72.0, 720.0, 24.0, &["Embedded Caladea"]),
+        text_block("C1", 12.0, 72.0, 680.0, 15.0, &PROSE[..4]),
+    );
+    let content = pdf.flate_stream("", content.as_bytes());
+    let page = pdf.add(format!(
+        "<< /Type /Page /Parent {tree} 0 R /MediaBox [{LETTER}] /Contents {content} 0 R /Resources << /Font << /C1 {font} 0 R >> >> >>"
+    ));
+    pdf.set(
+        tree,
+        format!("<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>"),
+    );
+    pdf.set(catalog, format!("<< /Type /Catalog /Pages {tree} 0 R >>"));
+    pdf.finish(catalog, "")
 }

@@ -121,13 +121,14 @@ fn z_order_follows_paint_order() {
 
 #[test]
 fn every_construct_file_imports_and_reports_its_losses() {
-    let expect: [(&str, &[&str]); 9] = [
+    let expect: [(&str, &[&str]); 10] = [
         ("synthetic-prose.pdf", &[report::FONT_SUBSTITUTED]),
         (
             "synthetic-two-column.pdf",
             &[report::READING_ORDER_INFERRED],
         ),
-        ("synthetic-vector.pdf", &[report::VECTOR_FILL_RULE_DEGRADED]),
+        ("synthetic-vector.pdf", &[]),
+        ("synthetic-embedded-truetype.pdf", &[report::FONT_EMBEDDED]),
         ("synthetic-images.pdf", &[]),
         ("synthetic-rotated-text.pdf", &[report::TEXT_ROTATED]),
         ("synthetic-tagged.pdf", &[report::TAG_STRUCTURE_IGNORED]),
@@ -330,4 +331,57 @@ fn import_work_doubles_when_the_pages_double() {
         large.document.definitions().sections.len(),
         2 * small.document.definitions().sections.len()
     );
+}
+
+#[test]
+fn the_even_odd_rule_reaches_the_model() {
+    use casual_doc_model::v1::{FillRule, GroupChild};
+    let imported = import("synthetic-vector.pdf");
+    let rules: Vec<FillRule> = pages(&imported.document)[0]
+        .inlines
+        .iter()
+        .filter_map(|inline| match inline {
+            InlineNode::Group(group) => Some(group),
+            _ => None,
+        })
+        .flat_map(|group| group.children.iter())
+        .filter_map(|child| match child {
+            GroupChild::Shape(shape) => shape.path.as_ref().map(|g| g.fill_rule),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        rules.iter().filter(|r| **r == FillRule::EvenOdd).count(),
+        1,
+        "exactly the donut is even-odd: {rules:?}"
+    );
+}
+
+#[test]
+fn an_embedded_program_with_a_cmap_is_registered_and_its_bytes_carried() {
+    use casual_doc_model::v1::FontProgramFormat;
+    let imported = import("synthetic-embedded-truetype.pdf");
+    let programs = &imported.document.definitions().font_programs;
+    assert_eq!(programs.len(), 1);
+    assert_eq!(programs[0].family, "Caladea");
+    assert_eq!(programs[0].format, FontProgramFormat::TrueType);
+    assert_eq!(programs[0].source_name.as_deref(), Some("Caladea-Regular"));
+    let bytes = imported
+        .resources
+        .get(&programs[0].part_name)
+        .expect("bytes");
+    assert!(bytes.starts_with(b"\x00\x01\x00\x00"), "unobfuscated sfnt");
+    assert!(!imported.report.has(report::FONT_SUBSTITUTED));
+    // The runs name the registered family.
+    let frames = frames(pages(&imported.document)[0]);
+    assert_eq!(frames[0], "Embedded Caladea");
+}
+
+#[test]
+fn a_subset_without_a_usable_cmap_is_substituted_not_registered() {
+    // Our own writer's subsets carry no Unicode cmap (P0): registering one
+    // would draw .notdef where a substitute draws the letters.
+    let imported = import("writer-real-producer-rich.pdf");
+    assert!(imported.document.definitions().font_programs.is_empty());
+    assert!(imported.report.has(report::FONT_SUBSTITUTED));
 }
