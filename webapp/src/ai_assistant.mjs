@@ -21,7 +21,7 @@
 //     surface, in both themes), new paragraphs labelled, and every edit the
 //     engine refused WITH its reason.
 //   * Accept commits exactly what was shown, through the editor's one choke point,
-//     as one undo step — as tracked suggestions authored "<person> (AI)", or as
+//     as one undo step — as tracked suggestions authored "Casual AI", or as
 //     direct edits only when the host granted them. Discard leaves no trace.
 //
 // WHERE WE DIFFER FROM WORD, deliberately: Word applies a Copilot rewrite as a

@@ -1,7 +1,7 @@
 # 181 — One capability registry: every feature inherits its AI and MCP exposure
 
-**Status:** Built 2026-10-29 (PR #897): R0–R2, the generated front doors of R3/R4 that the owner chose, `rewrite_block` and the private preview mode. §12 says what is built, what is not, and why. The decision itself (ADR-075) awaits the owner's acceptance with the PR.
-**Decides:** ADR-075 (proposed). **Row:** `docs/109` RM-48.
+**Status:** Built 2026-10-29 (PR #897): R0–R2, the generated front doors of R3/R4 that the owner chose, `rewrite_block` and the private preview mode. §12 says what is built, what is not, and why. ADR-075 was accepted by the owner on 2026-10-29.
+**Decides:** ADR-075 (accepted 2026-10-29). **Row:** `docs/109` RM-48.
 **Refines:** `178` and ADR-072 (§3 rule 2 "one schema", §4.3 rule 3 "the vocabulary is
 closed", and prerequisite A4). **Builds on:** `45` and ADR-030 (I1 to I4), `147` (transactions
 as the one mutation path), `84` (the command registry), `149` and ADR-036 (the host contract),
@@ -343,6 +343,18 @@ ratchet keeping the direction one-way.
 - **Q5 — bindings:** generated JSON Schema and TypeScript types now; the Python package
   (pyo3) in a later PR with its own CI job.
 - **Q3 / Q4 — extras:** build `rewrite_block` (§4.3) and the private preview mode (§4.4).
+
+## Owner decisions, 2026-10-29
+
+- **ADR-075 accepted:** the registry is the permanent pattern; every new feature is declared
+  once in `casual-doc-command`, and CI fails when one is neither offered to agents nor
+  excluded with a reason.
+- **The AI author is "Casual AI"** (`docs/178` Q3), whoever asked: `casual_doc_ai::AI_AUTHOR`,
+  used by the editor's assistant, the AI layer's default and `opendoc-mcp`'s default (an
+  operator may still pass `--author`). It is written into `w:author`.
+- **A section break copies form protection**, as Word copies all section settings, so
+  `SetSectionFormProtection` stays classified as reached; no command sets or lifts it.
+- **PDF import (`182`) starts now, in its own PR,** with the recommended defaults.
 
 ## 10. Sources
 

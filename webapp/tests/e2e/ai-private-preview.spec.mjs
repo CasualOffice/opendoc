@@ -57,14 +57,14 @@ test("a preview is private: the redline shows, the document does not change, Acc
   const shown = await preview(page, planFor(target));
   expect(shown.ok).toBe(true);
   expect(shown.wouldApply).toBe(true);
-  expect(shown.preview.author).toBe("Ada Lovelace (AI)");
+  expect(shown.preview.author).toBe("Casual AI");
 
   const panel = page.locator("#aiPreviewPanel");
   await expect(panel).toBeVisible();
   await expect(panel).toHaveAttribute("role", "dialog");
   await expect(panel.locator("#aiPreviewTitle")).toHaveText("Assistant suggestion");
   await expect(panel.locator("#aiPreviewPrivate")).toHaveText("Only you can see this until you accept it.");
-  await expect(panel.locator("#aiPreviewMode")).toContainText("Ada Lovelace (AI)");
+  await expect(panel.locator("#aiPreviewMode")).toContainText("Casual AI");
   await expect(panel.locator("ins")).toContainText(MARKER.trim());
 
   // Private: nothing reached the document or its history.
@@ -77,7 +77,7 @@ test("a preview is private: the redline shows, the document does not change, Acc
   await expect.poll(() => documentHasMarker(page)).toBe(true);
   const authors = await trackedAuthors(page);
   expect(authors.length).toBeGreaterThan(0);
-  expect(new Set(authors)).toEqual(new Set(["Ada Lovelace (AI)"]));
+  expect(new Set(authors)).toEqual(new Set(["Casual AI"]));
   await expect.poll(() => decisions.map((d) => d.decision)).toEqual(["accepted"]);
   expect(decisions[0].previewId).toBe(shown.previewId);
 

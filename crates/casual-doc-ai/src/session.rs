@@ -97,7 +97,7 @@ pub struct SessionConfig {
 impl Default for SessionConfig {
     fn default() -> Self {
         Self {
-            author: "AI assistant".to_owned(),
+            author: crate::AI_AUTHOR.to_owned(),
             profile: Profile::Read,
             clock: Clock::System,
             limits: Limits::default(),

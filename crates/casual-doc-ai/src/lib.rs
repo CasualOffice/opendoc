@@ -46,5 +46,10 @@ pub mod text;
 pub use error::{AiError, AiResult};
 pub use limits::Limits;
 pub use profile::Profile;
+/// The author every agent suggestion and comment carries unless an operator sets
+/// another: the owner's answer to `docs/178` Q3 (2026-10-29). It is written into
+/// `w:author`, so Word's review pane shows it too.
+pub const AI_AUTHOR: &str = "Casual AI";
+
 pub use session::{Clock, ExportFormat, Session, SessionConfig};
 pub use surface::Surface;

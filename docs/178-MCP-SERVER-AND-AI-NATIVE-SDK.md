@@ -714,7 +714,7 @@ Read 2026-10-24. Load-bearing facts were re-read by this lane, not only by the r
 - **Q1. Order.** Read-only M1 first and then M2, or M1 and M2 in one release?
 - **Q2. Direct edits.** May an agent ever edit without tracked changes? If yes, only when the
   operator launches with `edit`, or also per call after an elicitation?
-- **Q3. The agent's author label.** "Claude (AI)", "Ada Lovelace (AI)", or "Ada Lovelace via
+- **Q3. The agent's author label.** *Answered 2026-10-29: "Casual AI" (`docs/181`).* "Claude (AI)", "Ada Lovelace (AI)", or "Ada Lovelace via
   Claude"? It is written into `w:author` and survives into Word.
 - **Q4. Protocol dependency.** Use an MCP SDK crate (subject to the dependency policy), or
   hand-roll the JSON-RPC layer?

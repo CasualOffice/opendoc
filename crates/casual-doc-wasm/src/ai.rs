@@ -47,9 +47,9 @@
 //!
 //! # The author
 //!
-//! Suggestions and comments are authored by the host identity with an AI
-//! label, "Ada Lovelace (AI)" (`docs/178` §9, Q3 pending the owner; recorded
-//! in `docs/181` §12, Lane preview). A plan cannot name its author. In a
+//! Suggestions and comments are authored "Casual AI" (`casual_doc_ai::AI_AUTHOR`,
+//! the owner's answer to `docs/178` Q3, 2026-10-29), whoever asked: the label
+//! says an assistant wrote it. A plan cannot name its author. In a
 //! shared room the relay's attested name wins at commit, as for every edit
 //! (`docs/175` §5.2), so the label does not survive there until `178` §10's
 //! agent principal exists.
@@ -66,11 +66,6 @@ use serde_json::{Value, json};
 use wasm_bindgen::prelude::*;
 
 use crate::{EditResult, HistoryKind, WasmDocument, damage_of, to_js};
-
-/// The label suggestions carry when the host has said who the person is.
-const AI_LABEL: &str = " (AI)";
-/// The author when the host has not: the `casual-doc-ai` default.
-const ANONYMOUS_AUTHOR: &str = "AI assistant";
 
 /// A compiled plan waiting for the person's decision.
 struct Pending {
@@ -144,13 +139,11 @@ fn profile_for(access: &str, direct: bool, plan: Option<&EditPlan>) -> Result<Pr
 }
 
 impl WasmDocument {
-    /// The author an assistant's suggestions carry: the host identity with the
-    /// AI label, or the anonymous assistant. Never from the plan.
+    /// The author an assistant's suggestions carry: `casual_doc_ai::AI_AUTHOR`,
+    /// never the plan's say and never the person's name (owner, 2026-10-29).
+    #[allow(clippy::unused_self)]
     fn ai_author(&self) -> String {
-        self.resolve_author(None).map_or_else(
-            || ANONYMOUS_AUTHOR.to_owned(),
-            |name| format!("{name}{AI_LABEL}"),
-        )
+        casual_doc_ai::AI_AUTHOR.to_owned()
     }
 
     /// A `casual-doc-ai` session over this editor's document and allocators.
@@ -470,7 +463,7 @@ mod tests {
 
         assert_eq!(preview["wouldApply"], true, "{preview}");
         assert!(preview["previewId"].as_u64().is_some());
-        assert_eq!(preview["author"], "Ada Lovelace (AI)");
+        assert_eq!(preview["author"], casual_doc_ai::AI_AUTHOR);
         assert_eq!(preview["mode"], "suggest");
         let runs = preview["redline"][0]["afterRuns"].to_string();
         assert!(
@@ -524,7 +517,9 @@ mod tests {
             .collect();
         assert!(!authors.is_empty(), "{changes}");
         assert!(
-            authors.iter().all(|author| *author == "Ada Lovelace (AI)"),
+            authors
+                .iter()
+                .all(|author| *author == casual_doc_ai::AI_AUTHOR),
             "{authors:?}"
         );
 
