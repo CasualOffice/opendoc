@@ -589,7 +589,6 @@ fn render_region(
     region: &Bounds,
     scale: f64,
 ) -> Result<Raster, OcrError> {
-    use hayro::hayro_interpret::InterpreterSettings;
     use hayro::hayro_interpret::util::TransformExt;
     use hayro::kurbo::Affine;
     use hayro::vello_cpu;
@@ -600,9 +599,11 @@ fn render_region(
     let transform = Affine::translate((-region.x0 * scale, -region.y0 * scale))
         * Affine::scale(scale)
         * page.initial_transform(true).to_kurbo();
-    let settings = InterpreterSettings {
+    // The reader's own faces and CMaps (`casual_doc_pdf_read::provision`), so a
+    // region is drawn with what the evidence was read with.
+    let settings = hayro::hayro_interpret::InterpreterSettings {
         render_annotations: false,
-        ..InterpreterSettings::default()
+        ..casual_doc_pdf_read::provision::interpreter_settings()
     };
     let cache = hayro::RenderCache::new();
     hayro::render_into(

@@ -14,16 +14,6 @@
 //! `pdf-import`) and `casual-doc-ai`'s `Session::open` (feature `pdf-import`,
 //! which `opendoc-mcp` enables) do this.
 //!
-//! # OCR is the host's
-//!
-//! [`PdfImportAdapter::new`] runs no OCR: a scanned page imports with its
-//! picture and `pdf.import.ocr_unavailable`. A host that holds models builds
-//! [`crate::PdfOcrOptions`] (for example `PdfOcrOptions::from_models` over a
-//! [`crate::PdfOcrModels`]) and registers [`PdfImportAdapter::with_ocr`]
-//! through [`enable_pdf_import_with_ocr`]. What read the pages, with the
-//! SHA-256 of every model, is in [`pdf_ocr_summary`] of the import's source
-//! envelope (PDFR-I8). Nothing here fetches a model.
-//!
 //! # What is retained
 //!
 //! With `retain_source`, the envelope holds the original bytes (shared with the
@@ -35,40 +25,59 @@
 //! falls back to the semantic writer, reported, when it is not. A session whose
 //! content equals the import's (an edit undone) writes the original back. No
 //! PDF object reaches the model (MF-I1).
+//!
+//! # OCR is the host's
+//!
+//! [`PdfImportAdapter::new`] runs no OCR: a scanned page imports with its
+//! picture and `pdf.import.ocr_unavailable`. A host that holds models builds
+//! [`crate::PdfOcrOptions`] (for example `PdfOcrOptions::from_models` over a
+//! [`crate::PdfOcrModels`]) and registers [`PdfImportAdapter::with_ocr`]
+//! through [`enable_pdf_import_with_ocr`]. What read the pages, with the
+//! SHA-256 of every model, is in [`pdf_ocr_summary`] of the import's source
+//! envelope (PDFR-I8). Nothing here fetches a model.
 
 use std::sync::Arc;
 
-use casual_doc_pdf_import::{ImportJob, PdfImport, PdfImportError, PdfModelOutcome, Progress};
+use casual_doc_pdf_import::{ImportJob, PdfImport, PdfImportError, Progress};
 use casual_doc_pdf_import::{OcrOptions, OcrSummary};
 use casual_doc_pdf_import::{PdfReadLimits, probe_pdf};
 
-use crate::pdf_preserve::{Baseline, ORIGINAL_WRITTEN_BACK, preserve};
-use crate::{
-    AdapterError, CompatibilityEntry, CompatibilityReport, DocumentResources, ExportArtifact,
-    ExportMode, ExportRequest, FeatureLocation, FormatDescriptor, FormatExporter, FormatId,
-    FormatImporter, FormatProfile, FormatRegistry, ImportArtifact, ImportRequest, IoError,
-    ModelOutcome, PdfAdapter, ProbeRequest, ProbeResult, RecoveryReport, RetentionOutcome,
-    SourceEnvelope, formats,
+use crate::pdf_source::{
+    PdfRevisionReader, PdfSourceState, SessionParts, export_pdf_session, pdf_retained_original,
+    session_artifact,
 };
-
-/// The original bytes an import retained, and what a byte-preserving save
-/// compares the document against (the `I4` sidecar, `docs/182` §7 P4): page
-/// object ids, the show operators of every frame, and the import's content
-/// digests. No PDF object reaches the model (MF-I1).
-#[derive(Debug)]
-struct PdfSourceState {
-    original: Option<Arc<Vec<u8>>>,
-    baseline: Option<Baseline>,
-    /// What OCR did and which models did it (no recognised text).
-    ocr: OcrSummary,
-}
+use crate::{
+    AdapterError, DocumentResources, ExportArtifact, ExportRequest, FormatDescriptor,
+    FormatExporter, FormatId, FormatImporter, FormatRegistry, ImportArtifact, ImportRequest,
+    IoError, PdfAdapter, ProbeRequest, ProbeResult, SourceEnvelope, formats,
+};
 
 /// What OCR did during the import `source` came from, and the manifest of
 /// the provider that read its pages (provider, version, SHA-256 of every
-/// model): `None` when `source` is not a PDF import. O(1).
+/// model): `None` when `source` is not an in-process PDF import (a session
+/// opened from the editor's PDF module carries the reduced
+/// [`crate::pdf_ocr_record`] instead). O(1).
 #[must_use]
 pub fn pdf_ocr_summary(source: &SourceEnvelope) -> Option<&OcrSummary> {
-    source.state::<PdfSourceState>().map(|state| &state.ocr)
+    source
+        .state::<PdfSourceState>()
+        .and_then(|state| state.ocr_detail.as_ref())
+}
+
+/// The hayro half of the byte-preserving save, in process: the reader opens
+/// the original and prepares the edited pages (`docs/182` §17a). What the
+/// browser's PDF module answers through the host.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct InProcessRevisionReader;
+
+impl PdfRevisionReader for InProcessRevisionReader {
+    fn read(
+        &self,
+        original: &Arc<Vec<u8>>,
+        request: &casual_doc_pdf_wire::RevisionRequest,
+    ) -> Result<casual_doc_pdf_wire::RevisionParts, casual_doc_pdf_wire::Refusal> {
+        casual_doc_pdf_read::revision::read_for_save(original.clone(), request)
+    }
 }
 
 /// PDF import and export: [`PdfAdapter`]'s writer plus the fixed-layout
@@ -112,12 +121,8 @@ impl PdfImportAdapter {
     /// The original bytes `source` retained, when it is a PDF envelope made
     /// with `retain_source`.
     #[must_use]
-    pub fn retained_source_bytes<'a>(&self, source: &'a SourceEnvelope) -> Option<&'a [u8]> {
-        source
-            .state::<PdfSourceState>()?
-            .original
-            .as_deref()
-            .map(Vec::as_slice)
+    pub fn retained_source_bytes<'a>(&self, source: &'a crate::SourceEnvelope) -> Option<&'a [u8]> {
+        pdf_retained_original(source)
     }
 
     /// Starts a staged import (`docs/182` §6): admission now, then
@@ -189,65 +194,23 @@ fn adapter_error(error: PdfImportError) -> AdapterError {
     AdapterError::new(format!("PDF import: {error}"))
 }
 
-fn artifact(imported: PdfImport, retain_source: bool, format: FormatId) -> ImportArtifact {
+fn artifact(imported: PdfImport, retain_source: bool, _format: FormatId) -> ImportArtifact {
+    let findings = casual_doc_pdf_import::wire::findings(&imported.report);
+    let sources = casual_doc_pdf_import::wire::sources(&imported.sources);
+    let ocr = casual_doc_pdf_import::wire::ocr(&imported.ocr);
     let mut resources = DocumentResources::default();
     for (name, bytes) in imported.resources {
         resources.insert(name, bytes);
     }
-    let mut report = CompatibilityReport {
-        entries: imported
-            .report
-            .findings
-            .iter()
-            .map(|finding| CompatibilityEntry {
-                feature: finding.feature.to_owned(),
-                occurrences: finding.occurrences,
-                location: FeatureLocation {
-                    part_name: finding.first_page.map(|page| format!("page {}", page + 1)),
-                    namespace: None,
-                    local_name: Some(finding.feature.to_owned()),
-                    attribute_name: None,
-                },
-                model_outcome: match finding.outcome {
-                    PdfModelOutcome::Mapped => ModelOutcome::Mapped,
-                    PdfModelOutcome::Degraded => ModelOutcome::Degraded,
-                    PdfModelOutcome::Omitted => ModelOutcome::Omitted,
-                },
-                retention_outcome: match finding.outcome {
-                    PdfModelOutcome::Mapped => RetentionOutcome::NotApplicable,
-                    // The original bytes are retained when asked for, but no
-                    // adapter re-emits PDF objects from them except the exact
-                    // unchanged write, so a lost construct is not retained.
-                    PdfModelOutcome::Degraded | PdfModelOutcome::Omitted => {
-                        RetentionOutcome::NotRetained
-                    }
-                },
-            })
-            .collect(),
-    };
-    report.sort();
-    let baseline = retain_source
-        .then(|| Baseline::new(&imported.document, imported.sources))
-        .flatten();
-    ImportArtifact {
+    session_artifact(SessionParts {
         document: imported.document,
         resources,
-        source: SourceEnvelope::new(
-            format.clone(),
-            env!("CARGO_PKG_VERSION").to_owned(),
-            PdfSourceState {
-                baseline,
-                original: retain_source.then_some(imported.original),
-                ocr: imported.ocr,
-            },
-        ),
-        report,
-        recovery: RecoveryReport::default(),
-        format: FormatProfile {
-            format,
-            version: None,
-        },
-    }
+        findings: &findings,
+        sources,
+        original: retain_source.then_some(imported.original),
+        ocr,
+        ocr_detail: Some(imported.ocr),
+    })
 }
 
 impl FormatImporter for PdfImportAdapter {
@@ -274,52 +237,9 @@ impl FormatExporter for PdfImportAdapter {
     }
 
     fn export(&self, request: ExportRequest<'_>) -> Result<ExportArtifact, AdapterError> {
-        let state = request.source.and_then(|s| s.state::<PdfSourceState>());
-        let original = state.and_then(|state| state.original.as_ref());
-        let artifact = |bytes: Vec<u8>, report| ExportArtifact {
-            bytes,
-            report,
-            format: FormatProfile {
-                format: self.descriptor.id.clone(),
-                version: None,
-            },
-            mime_type: "application/pdf".to_owned(),
-            suggested_extension: "pdf".to_owned(),
-        };
-        if request.mode == ExportMode::Semantic {
-            return self.writer.export(request);
-        }
-        if request.mode == ExportMode::ExactIfUnchanged
-            && request.source_unchanged
-            && let Some(bytes) = original
-        {
-            return Ok(artifact(bytes.to_vec(), CompatibilityReport::default()));
-        }
-        // Edited (or asked to preserve): keep the original when that is safe.
-        let fallback = match (original, state.and_then(|s| s.baseline.as_ref())) {
-            (Some(original), Some(baseline)) => {
-                if baseline.unchanged(request.document) {
-                    let mut report = CompatibilityReport::default();
-                    report.entries.push(CompatibilityEntry {
-                        feature: ORIGINAL_WRITTEN_BACK.to_owned(),
-                        occurrences: 1,
-                        location: FeatureLocation::default(),
-                        model_outcome: ModelOutcome::Mapped,
-                        retention_outcome: RetentionOutcome::Preserved,
-                    });
-                    return Ok(artifact(original.to_vec(), report));
-                }
-                match preserve(request.document, request.resources, original, baseline) {
-                    Ok((bytes, report)) => return Ok(artifact(bytes, report)),
-                    Err(fallback) => fallback,
-                }
-            }
-            _ => crate::pdf_preserve::Fallback::no_retained_source(),
-        };
-        let mut exported = self.writer.export(request)?;
-        exported.report.entries.push(fallback.entry());
-        exported.report.sort();
-        Ok(exported)
+        export_pdf_session(request, Some(&InProcessRevisionReader), &|request| {
+            self.writer.export(request)
+        })
     }
 }
 
@@ -367,7 +287,7 @@ pub fn builtin_registry_with_pdf_import() -> FormatRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DetectionRequest, FormatSelection, builtin_registry};
+    use crate::{DetectionRequest, ExportMode, FormatSelection, ModelOutcome, builtin_registry};
 
     const PROSE: &[u8] = include_bytes!("../../../fixtures/pdf/synthetic-prose.pdf");
 

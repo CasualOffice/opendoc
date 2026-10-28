@@ -357,3 +357,63 @@ pub(crate) fn learn_fonts(
     learn_font_dict(&resources.fonts, fonts, index, limits)?;
     learn_from_forms(&resources.x_objects, fonts, index, limits, 0)
 }
+
+/// The predefined CMaps the document's Type0 fonts name: an `/Encoding` that
+/// is not `Identity-H`/`-V`, and, for a descendant with no embedded program and
+/// no `/ToUnicode`, the `*-UCS2` map hayro reads its Unicode from
+/// (`provision`, `docs/182` §17a). A `usecmap` inside one of them is not
+/// followed here; the page that needs it names it in its refusal. O(objects).
+pub(crate) fn required_cmaps(pdf: &Pdf) -> std::collections::BTreeSet<String> {
+    use hayro_interpret::hayro_cmap::{CMapName, CidFamily};
+    let mut names = std::collections::BTreeSet::new();
+    for object in pdf.objects() {
+        let dict = match object {
+            Object::Dict(dict) => dict,
+            _ => continue,
+        };
+        if !name_is(&dict, b"Subtype", b"Type0") {
+            continue;
+        }
+        if let Some(encoding) = dict.get::<Name<'_>>(b"Encoding") {
+            let bytes = encoding.as_str().as_bytes().to_vec();
+            if !matches!(
+                CMapName::from_bytes(&bytes),
+                CMapName::Custom(_) | CMapName::IdentityH | CMapName::IdentityV
+            ) {
+                names.insert(encoding.as_str().to_owned());
+            }
+        }
+        if dict.contains_key(b"ToUnicode") {
+            continue;
+        }
+        let Some(descendant) = dict
+            .get::<Array<'_>>(b"DescendantFonts")
+            .and_then(|fonts| fonts.iter::<Dict<'_>>().next())
+        else {
+            continue;
+        };
+        let embedded = descendant
+            .get::<Dict<'_>>(b"FontDescriptor")
+            .is_some_and(|d| {
+                d.contains_key(b"FontFile")
+                    || d.contains_key(b"FontFile2")
+                    || d.contains_key(b"FontFile3")
+            });
+        if embedded {
+            continue;
+        }
+        let Some(info) = descendant.get::<Dict<'_>>(b"CIDSystemInfo") else {
+            continue;
+        };
+        let (Some(registry), Some(ordering)) = (
+            info.get::<hayro_syntax::object::String<'_>>(b"Registry"),
+            info.get::<hayro_syntax::object::String<'_>>(b"Ordering"),
+        ) else {
+            continue;
+        };
+        if let Some(ucs2) = CidFamily::from_registry_ordering(&registry, &ordering).ucs2_cmap() {
+            names.insert(String::from_utf8_lossy(ucs2.to_bytes()).into_owned());
+        }
+    }
+    names
+}

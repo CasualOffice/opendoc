@@ -1,0 +1,35 @@
+[package]
+name = "casual-doc-wasm-pdf"
+description = "The editor's lazily loaded PDF module: the hayro-based reader, the fixed-layout importer and OCR behind a staged job that hands the main module a serialized import, plus the hayro half of the byte-preserving save"
+version.workspace = true
+edition.workspace = true
+# hayro 0.8 declares 1.92 and rten 0.26 declares 1.94; the toolchain is 1.96.0.
+rust-version = "1.94"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+# `cdylib` for `webapp/build.sh` (wasm-pack); `rlib` so the main module's native
+# tests can run a real import through this crate and open its package.
+crate-type = ["cdylib", "rlib"]
+
+# Same size pass as the main module (`crates/casual-doc-wasm/Cargo.toml`).
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ['-Oz', '--enable-bulk-memory', '--enable-sign-ext', '--enable-nontrapping-float-to-int']
+
+[dependencies]
+# What this module is: the reader, the importer and OCR (`docs/182` §17a). The
+# importer's default feature is the PP-OCRv5 provider (`paddle`); the weights
+# are never bundled, the host passes their bytes.
+casual-doc-pdf-import = { workspace = true, features = ["paddle"] }
+casual-doc-pdf-read.workspace = true
+casual-doc-ocr = { workspace = true, features = ["paddle"] }
+casual-doc-model.workspace = true
+# The bytes this module hands the main module.
+casual-doc-pdf-wire.workspace = true
+wasm-bindgen = "0.2"
+
+[lints]
+workspace = true
