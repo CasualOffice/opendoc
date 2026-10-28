@@ -7,13 +7,14 @@
 //! sequence (so a block never straddles two structure elements), ruling lines
 //! (thin axis-aligned paths, the evidence for table grids and footnote
 //! separators), the placed pictures by the part the fixed build stored them
-//! under, the page's annotations, and counts of what reflow cannot place
-//! (other vector art, rotated text). Kept per document: the fonts, the
-//! programs the fixed build registered, the structure tree, and the active
-//! content inventory.
+//! under, the vector art (each maximal run of consecutive non-rule paths, as
+//! the fixed build groups them), the page's annotations, and counts of what
+//! reflow cannot place (masks painted over a picture, rotated text). Kept per
+//! document: the fonts, the programs the fixed build registered, the
+//! structure tree, and the active content inventory.
 //!
-//! Memory is O(glyphs + rules + annotations); pictures are referenced, not
-//! copied.
+//! Memory is O(glyphs + rules + path commands + annotations); pictures are
+//! referenced, not copied.
 
 use std::collections::BTreeMap;
 
@@ -73,6 +74,57 @@ pub struct SourceImage {
     pub media: MediaReference,
 }
 
+/// Vector art: a maximal run of consecutive paths that are not rules, in
+/// paint order (what `fixed::build` draws as one group).
+#[derive(Clone, Debug)]
+pub struct SourceVector {
+    /// The union of the paths' bounds.
+    pub bounds: Bounds,
+    /// The paths.
+    pub paths: Vec<PathEvidence>,
+}
+
+impl SourceVector {
+    fn push(run: &mut Option<Self>, path: &PathEvidence) {
+        match run {
+            Some(v) => {
+                v.bounds = Bounds {
+                    x0: v.bounds.x0.min(path.bounds.x0),
+                    y0: v.bounds.y0.min(path.bounds.y0),
+                    x1: v.bounds.x1.max(path.bounds.x1),
+                    y1: v.bounds.y1.max(path.bounds.y1),
+                };
+                v.paths.push(path.clone());
+            }
+            None => {
+                *run = Some(Self {
+                    bounds: path.bounds,
+                    paths: vec![path.clone()],
+                });
+            }
+        }
+    }
+
+    /// A mask over the picture painted just before it: fills only, all
+    /// inside that picture (OCR's scan covers, `OcrOptions::scan_behind_text`,
+    /// and redaction-style boxes). It hides the picture in fixed layout; in a
+    /// flowing document the picture no longer sits under text, so the mask is
+    /// not placed. O(paths).
+    fn masks(&self, picture: Option<Bounds>) -> bool {
+        const SLACK: f64 = 0.5;
+        picture.is_some_and(|p| {
+            self.paths.iter().all(|path| {
+                path.fill.is_some()
+                    && path.stroke.is_none()
+                    && path.bounds.x0 >= p.x0 - SLACK
+                    && path.bounds.y0 >= p.y0 - SLACK
+                    && path.bounds.x1 <= p.x1 + SLACK
+                    && path.bounds.y1 <= p.y1 + SLACK
+            })
+        })
+    }
+}
+
 /// One page as reflow sees it.
 #[derive(Clone, Debug, Default)]
 pub struct SourcePage {
@@ -90,8 +142,10 @@ pub struct SourcePage {
     pub images: Vec<SourceImage>,
     /// Annotations.
     pub annotations: Vec<AnnotationEvidence>,
-    /// Paths that are not rules (vector art reflow does not place).
-    pub vectors: u32,
+    /// Vector art: runs of paths that are not rules, in paint order.
+    pub vectors: Vec<SourceVector>,
+    /// Runs of paths that only mask the picture under them (not placed).
+    pub masks: u32,
     /// Rotated glyph runs (reflowed upright, reported).
     pub rotated_runs: u32,
 }
@@ -217,6 +271,20 @@ impl PdfSourceState {
         let mut rotated: Vec<SourceBlock> = Vec::new();
         let mut segment: Vec<&GlyphRunEvidence> = Vec::new();
         let mut key: Option<(Option<i32>, bool)> = None;
+        // The vector run being collected, and the picture painted directly
+        // before it began.
+        let mut art: Option<SourceVector> = None;
+        let mut art_over: Option<Bounds> = None;
+        let mut last_picture: Option<Bounds> = None;
+        let close = |run: &mut Option<SourceVector>, over: Option<Bounds>, out: &mut SourcePage| {
+            if let Some(vector) = run.take() {
+                if vector.masks(over) {
+                    out.masks += 1;
+                } else {
+                    out.vectors.push(vector);
+                }
+            }
+        };
         let flush = |segment: &mut Vec<&GlyphRunEvidence>,
                      key: Option<(Option<i32>, bool)>,
                      out: &mut SourcePage|
@@ -238,6 +306,19 @@ impl PdfSourceState {
             n
         };
         for item in &page.items {
+            // Glyphs or a picture end the run; only the item directly before
+            // a run can be the picture it masks.
+            match item {
+                PaintEvidence::Path(_) => {}
+                PaintEvidence::Image(image) => {
+                    close(&mut art, art_over, &mut out);
+                    last_picture = Some(image.clip.unwrap_or(image.bounds));
+                }
+                PaintEvidence::Glyphs(_) => {
+                    close(&mut art, art_over, &mut out);
+                    last_picture = None;
+                }
+            }
             match item {
                 PaintEvidence::Glyphs(run) => {
                     if run.rotation_degrees.abs() > UPRIGHT_DEGREES {
@@ -269,12 +350,23 @@ impl PdfSourceState {
                     segment.push(run);
                 }
                 PaintEvidence::Path(path) => match rules_of(path) {
-                    Some(rules) => out.rules.extend(rules),
-                    None => out.vectors += 1,
+                    Some(rules) => {
+                        out.rules.extend(rules);
+                        if art.is_none() {
+                            last_picture = None;
+                        }
+                    }
+                    None => {
+                        if art.is_none() {
+                            art_over = last_picture;
+                        }
+                        SourceVector::push(&mut art, path);
+                    }
                 },
                 PaintEvidence::Image(_) => {}
             }
         }
+        close(&mut art, art_over, &mut out);
         comparisons += flush(&mut segment, key, &mut out);
         out.blocks.extend(rotated);
         self.pages.push(out);
