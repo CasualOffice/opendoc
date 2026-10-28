@@ -1,0 +1,940 @@
+{
+  "aggregate": {
+    "codecs": [
+      "DCT",
+      "Flate",
+      "raw"
+    ],
+    "files": 27,
+    "fonts": 31,
+    "fonts_registrable_for_editing": 0,
+    "glyphs": 3615,
+    "max_image_pixels": 10000000000,
+    "max_page_operators": 2000000,
+    "max_page_peak_heap_bytes": 234881888,
+    "max_page_us": 116503,
+    "pages": 2525,
+    "parsed": 25,
+    "refused": 2,
+    "unicode_glyphs": 3609,
+    "unicode_share_per_mille": 998
+  },
+  "files": [
+    {
+      "bytes": 1065,
+      "deterministic": {
+        "outcome": "refused:encrypted"
+      },
+      "name": "hostile/hostile-encrypted.pdf",
+      "timing": {
+        "open_us": 129
+      }
+    },
+    {
+      "bytes": 98599,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 100663296,
+        "even_odd_fills": 0,
+        "font_programs": {},
+        "fonts": 0,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 0,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 0,
+        "max_page_side_pt": 792,
+        "objects": 4,
+        "operators": 0,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 0,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 0
+      },
+      "name": "hostile/hostile-flate-bomb.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 234881888,
+        "max_page_us": 75773,
+        "median_page_peak_heap_bytes": 234881888,
+        "median_page_us": 75773,
+        "open_us": 27
+      }
+    },
+    {
+      "bytes": 8201,
+      "deterministic": {
+        "outcome": "refused:invalid"
+      },
+      "name": "hostile/hostile-garbage.pdf",
+      "timing": {
+        "open_us": 8
+      }
+    },
+    {
+      "bytes": 800,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 47,
+        "even_odd_fills": 0,
+        "font_programs": {
+          "not-extractable": 1
+        },
+        "fonts": 1,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 9,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 6,
+        "max_page_side_pt": 200000,
+        "objects": 4,
+        "operators": 6,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 0,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 9
+      },
+      "name": "hostile/hostile-huge-page.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 81216,
+        "max_page_us": 187,
+        "median_page_peak_heap_bytes": 81216,
+        "median_page_us": 187,
+        "open_us": 10
+      }
+    },
+    {
+      "bytes": 718,
+      "deterministic": {
+        "codecs": [
+          "Flate"
+        ],
+        "decoded_content_bytes": 32,
+        "even_odd_fills": 0,
+        "font_programs": {},
+        "fonts": 0,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 0,
+        "images": 1,
+        "images_over_measurement_cap": 1,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 10000000000,
+        "max_page_operators": 4,
+        "max_page_side_pt": 792,
+        "objects": 5,
+        "operators": 4,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 0,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 0
+      },
+      "name": "hostile/hostile-image-dimensions.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 4592,
+        "max_page_us": 22,
+        "median_page_peak_heap_bytes": 4592,
+        "median_page_us": 22,
+        "open_us": 3
+      }
+    },
+    {
+      "bytes": 18246,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 12000000,
+        "even_odd_fills": 0,
+        "font_programs": {},
+        "fonts": 0,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 0,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 2000000,
+        "max_page_side_pt": 792,
+        "objects": 4,
+        "operators": 2000000,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 0,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 0
+      },
+      "name": "hostile/hostile-operator-flood.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 188164176,
+        "max_page_us": 116503,
+        "median_page_peak_heap_bytes": 188164176,
+        "median_page_us": 116503,
+        "open_us": 5
+      }
+    },
+    {
+      "bytes": 1298051,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 0,
+        "even_odd_fills": 0,
+        "font_programs": {},
+        "fonts": 0,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 0,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 0,
+        "max_page_side_pt": 792,
+        "objects": 5002,
+        "operators": 0,
+        "outcome": "parsed",
+        "pages": 2500,
+        "paths": 0,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 0
+      },
+      "name": "hostile/hostile-page-flood.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 81120,
+        "max_page_us": 9,
+        "median_page_peak_heap_bytes": 81120,
+        "median_page_us": 1,
+        "open_us": 3520
+      }
+    },
+    {
+      "bytes": 653,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 6,
+        "even_odd_fills": 0,
+        "font_programs": {},
+        "fonts": 0,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 0,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 1,
+        "max_page_side_pt": 792,
+        "objects": 5,
+        "operators": 1,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 1,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 0
+      },
+      "name": "hostile/hostile-recursive-form.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 6118,
+        "max_page_us": 32,
+        "median_page_peak_heap_bytes": 6118,
+        "median_page_us": 32,
+        "open_us": 6
+      }
+    },
+    {
+      "bytes": 674,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 0,
+        "even_odd_fills": 0,
+        "font_programs": {},
+        "fonts": 0,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 0,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 0,
+        "max_page_side_pt": 0,
+        "objects": 3,
+        "operators": 0,
+        "outcome": "parsed",
+        "pages": 0,
+        "paths": 0,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 0
+      },
+      "name": "hostile/hostile-truncated.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 0,
+        "max_page_us": 0,
+        "median_page_peak_heap_bytes": 0,
+        "median_page_us": 0,
+        "open_us": 7
+      }
+    },
+    {
+      "bytes": 1493,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 75,
+        "even_odd_fills": 0,
+        "font_programs": {
+          "not-extractable": 1
+        },
+        "fonts": 1,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 37,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 6,
+        "max_page_side_pt": 792,
+        "objects": 9,
+        "operators": 6,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 0,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 37
+      },
+      "name": "synthetic-active-content.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 81312,
+        "max_page_us": 37,
+        "median_page_peak_heap_bytes": 81312,
+        "median_page_us": 37,
+        "open_us": 4
+      }
+    },
+    {
+      "bytes": 2191,
+      "deterministic": {
+        "codecs": [
+          "DCT",
+          "Flate",
+          "raw"
+        ],
+        "decoded_content_bytes": 199,
+        "even_odd_fills": 0,
+        "font_programs": {
+          "not-extractable": 1
+        },
+        "fonts": 1,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 33,
+        "images": 3,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 256,
+        "max_page_operators": 21,
+        "max_page_side_pt": 792,
+        "objects": 7,
+        "operators": 21,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 0,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 33
+      },
+      "name": "synthetic-images.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 85847,
+        "max_page_us": 110,
+        "median_page_peak_heap_bytes": 85847,
+        "median_page_us": 110,
+        "open_us": 5
+      }
+    },
+    {
+      "bytes": 1424,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 132,
+        "even_odd_fills": 0,
+        "font_programs": {
+          "not-extractable": 1
+        },
+        "fonts": 1,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 56,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 6,
+        "max_page_side_pt": 842,
+        "objects": 6,
+        "operators": 12,
+        "outcome": "parsed",
+        "pages": 2,
+        "paths": 0,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 56
+      },
+      "name": "synthetic-page-boxes.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 81312,
+        "max_page_us": 25,
+        "median_page_peak_heap_bytes": 81312,
+        "median_page_us": 25,
+        "open_us": 5
+      }
+    },
+    {
+      "bytes": 2024,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 1280,
+        "even_odd_fills": 0,
+        "font_programs": {
+          "not-extractable": 3
+        },
+        "fonts": 3,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 1011,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 30,
+        "max_page_side_pt": 792,
+        "objects": 6,
+        "operators": 50,
+        "outcome": "parsed",
+        "pages": 2,
+        "paths": 0,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 1011
+      },
+      "name": "synthetic-prose.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 82656,
+        "max_page_us": 111,
+        "median_page_peak_heap_bytes": 82656,
+        "median_page_us": 111,
+        "open_us": 5
+      }
+    },
+    {
+      "bytes": 886,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 202,
+        "even_odd_fills": 0,
+        "font_programs": {
+          "not-extractable": 1
+        },
+        "fonts": 1,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 68,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 16,
+        "max_page_side_pt": 792,
+        "objects": 4,
+        "operators": 16,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 0,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 68
+      },
+      "name": "synthetic-rotated-text.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 81504,
+        "max_page_us": 31,
+        "median_page_peak_heap_bytes": 81504,
+        "median_page_us": 31,
+        "open_us": 3
+      }
+    },
+    {
+      "bytes": 1338,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 404,
+        "even_odd_fills": 0,
+        "font_programs": {
+          "not-extractable": 3
+        },
+        "fonts": 3,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 209,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 3,
+        "max_image_pixels": 0,
+        "max_page_operators": 28,
+        "max_page_side_pt": 792,
+        "objects": 7,
+        "operators": 28,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 0,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 209
+      },
+      "name": "synthetic-tagged.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 81888,
+        "max_page_us": 49,
+        "median_page_peak_heap_bytes": 81888,
+        "median_page_us": 49,
+        "open_us": 4
+      }
+    },
+    {
+      "bytes": 1158,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 748,
+        "even_odd_fills": 0,
+        "font_programs": {
+          "not-extractable": 2
+        },
+        "fonts": 2,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 509,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 46,
+        "max_page_side_pt": 792,
+        "objects": 4,
+        "operators": 46,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 0,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 509
+      },
+      "name": "synthetic-two-column.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 82656,
+        "max_page_us": 72,
+        "median_page_peak_heap_bytes": 82656,
+        "median_page_us": 72,
+        "open_us": 3
+      }
+    },
+    {
+      "bytes": 1164,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 106,
+        "even_odd_fills": 0,
+        "font_programs": {
+          "not-extractable": 1
+        },
+        "fonts": 1,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 36,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 11,
+        "max_page_side_pt": 792,
+        "objects": 7,
+        "operators": 11,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 0,
+        "stencil_images": 0,
+        "type3_glyphs": 6,
+        "unicode_glyphs": 30
+      },
+      "name": "synthetic-type3.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 81312,
+        "max_page_us": 54,
+        "median_page_peak_heap_bytes": 81312,
+        "median_page_us": 54,
+        "open_us": 3
+      }
+    },
+    {
+      "bytes": 989,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 474,
+        "even_odd_fills": 1,
+        "font_programs": {
+          "not-extractable": 1
+        },
+        "fonts": 1,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 13,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 40,
+        "max_page_side_pt": 792,
+        "objects": 4,
+        "operators": 40,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 6,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 13
+      },
+      "name": "synthetic-vector.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 81888,
+        "max_page_us": 38,
+        "median_page_peak_heap_bytes": 81888,
+        "median_page_us": 38,
+        "open_us": 3
+      }
+    },
+    {
+      "bytes": 15266,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 3445,
+        "even_odd_fills": 0,
+        "font_programs": {
+          "truetype": 1
+        },
+        "fonts": 1,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 104,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 203,
+        "max_page_side_pt": 842,
+        "objects": 11,
+        "operators": 203,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 33,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 104
+      },
+      "name": "writer-real-producer-footnotes.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 140151,
+        "max_page_us": 215,
+        "median_page_peak_heap_bytes": 140151,
+        "median_page_us": 215,
+        "open_us": 7
+      }
+    },
+    {
+      "bytes": 14943,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 3427,
+        "even_odd_fills": 0,
+        "font_programs": {
+          "truetype": 1
+        },
+        "fonts": 1,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 108,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 192,
+        "max_page_side_pt": 842,
+        "objects": 11,
+        "operators": 192,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 32,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 108
+      },
+      "name": "writer-real-producer-header-footer.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 140133,
+        "max_page_us": 118,
+        "median_page_peak_heap_bytes": 140133,
+        "median_page_us": 118,
+        "open_us": 4
+      }
+    },
+    {
+      "bytes": 24745,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 1591,
+        "even_odd_fills": 0,
+        "font_programs": {
+          "truetype": 2
+        },
+        "fonts": 2,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 113,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 54,
+        "max_page_side_pt": 842,
+        "objects": 16,
+        "operators": 54,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 2,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 113
+      },
+      "name": "writer-real-producer-hyperlinks.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 203854,
+        "max_page_us": 155,
+        "median_page_peak_heap_bytes": 203854,
+        "median_page_us": 155,
+        "open_us": 6
+      }
+    },
+    {
+      "bytes": 55137,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 2258,
+        "even_odd_fills": 0,
+        "font_programs": {
+          "truetype": 5
+        },
+        "fonts": 5,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 160,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 87,
+        "max_page_side_pt": 842,
+        "objects": 31,
+        "operators": 87,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 1,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 160
+      },
+      "name": "writer-real-producer-libreoffice.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 438486,
+        "max_page_us": 330,
+        "median_page_peak_heap_bytes": 438486,
+        "median_page_us": 330,
+        "open_us": 5
+      }
+    },
+    {
+      "bytes": 24983,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 3013,
+        "even_odd_fills": 0,
+        "font_programs": {
+          "truetype": 2
+        },
+        "fonts": 2,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 88,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 149,
+        "max_page_side_pt": 842,
+        "objects": 16,
+        "operators": 149,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 34,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 88
+      },
+      "name": "writer-real-producer-rich.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 205190,
+        "max_page_us": 156,
+        "median_page_peak_heap_bytes": 205190,
+        "median_page_us": 156,
+        "open_us": 4
+      }
+    },
+    {
+      "bytes": 14464,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 3111,
+        "even_odd_fills": 0,
+        "font_programs": {
+          "truetype": 1
+        },
+        "fonts": 1,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 86,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 180,
+        "max_page_side_pt": 842,
+        "objects": 11,
+        "operators": 180,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 32,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 86
+      },
+      "name": "writer-real-producer-table-list.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 139817,
+        "max_page_us": 98,
+        "median_page_peak_heap_bytes": 139817,
+        "median_page_us": 98,
+        "open_us": 3
+      }
+    },
+    {
+      "bytes": 24701,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 3966,
+        "even_odd_fills": 0,
+        "font_programs": {
+          "truetype": 2
+        },
+        "fonts": 2,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 68,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 222,
+        "max_page_side_pt": 842,
+        "objects": 16,
+        "operators": 222,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 56,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 68
+      },
+      "name": "writer-real-producer-table-merges.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 206485,
+        "max_page_us": 154,
+        "median_page_peak_heap_bytes": 206485,
+        "median_page_us": 154,
+        "open_us": 3
+      }
+    },
+    {
+      "bytes": 15347,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 11362,
+        "even_odd_fills": 0,
+        "font_programs": {
+          "truetype": 1
+        },
+        "fonts": 1,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 870,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 60,
+        "max_page_side_pt": 842,
+        "objects": 10,
+        "operators": 60,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 0,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 870
+      },
+      "name": "writer-synthetic-declared-family-substitution.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 148068,
+        "max_page_us": 202,
+        "median_page_peak_heap_bytes": 148068,
+        "median_page_us": 202,
+        "open_us": 3
+      }
+    },
+    {
+      "bytes": 13408,
+      "deterministic": {
+        "codecs": [],
+        "decoded_content_bytes": 503,
+        "even_odd_fills": 0,
+        "font_programs": {
+          "truetype": 1
+        },
+        "fonts": 1,
+        "fonts_registrable_for_editing": 0,
+        "glyphs": 37,
+        "images": 0,
+        "images_over_measurement_cap": 0,
+        "marked_content_sequences": 0,
+        "max_image_pixels": 0,
+        "max_page_operators": 6,
+        "max_page_side_pt": 792,
+        "objects": 11,
+        "operators": 6,
+        "outcome": "parsed",
+        "pages": 1,
+        "paths": 0,
+        "stencil_images": 0,
+        "type3_glyphs": 0,
+        "unicode_glyphs": 37
+      },
+      "name": "writer-synthetic-rich-metadata.pdf",
+      "timing": {
+        "max_page_peak_heap_bytes": 137209,
+        "max_page_us": 74,
+        "median_page_peak_heap_bytes": 137209,
+        "median_page_us": 74,
+        "open_us": 5
+      }
+    }
+  ],
+  "harness": "opendoc-pdf-measure",
+  "provider": "hayro-syntax 0.8.0 + hayro-interpret 0.8.0"
+}
