@@ -772,6 +772,9 @@ What exists, measured by the tests named, and what does not.
   plan is refused without an edit grant (and refused **by the engine** with the adapter's
   check removed); paths outside the roots (`..`, absolute, `file://`, a symlink) are refused
   without echoing the target; `.docm` is refused.
+- M4, WebMCP (`docs/181` §12 "Lane webmcp"): opt-in (`ai-tools="webmcp"`, `?aiTools=webmcp`),
+  feature-detected, no polyfill; `editor.ai`'s reads and private-preview proposals registered
+  with `document.modelContext`, filtered by the same grant, unregistered by `AbortSignal`.
 
 **An engine defect the first headless suggester found.** `is_tracked_only` and
 `is_comment_only` compared paragraphs by full equality, ids included, so a suggestion or a
@@ -794,7 +797,7 @@ re-minted still differs, so ADR-052's identity convention is unchanged.
   staleness check fails CI. The editor's in-page assistant (`editor.ai`, with a private
   preview) is built (`docs/181` §4.4); generated TypeScript types exist. Not built:
   resource subscriptions, the tasks extension, elicitation, Streamable HTTP and OAuth (M3),
-  WebMCP (M4), rooms (M5), and the Python package (a later PR, owner decision 2026-10-28).
+  rooms (M5), and the Python package (a later PR, owner decision 2026-10-28).
 - The preview does not compute whether a plan changes the compatibility report; it says so.
 - `get_styles` reports what each style declares, not the cascaded effective formatting.
 - `undo_change` applies the log's exact inverse of the latest change without re-judging it

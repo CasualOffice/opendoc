@@ -52,6 +52,11 @@ import { createHostClient } from "./host_client.mjs";
 const AWAIT_IDENTITY = "awaitIdentity";
 /** The avatar-consent parameter (`host_identity.mjs`'s `AVATARS_PARAM`). */
 const AVATARS = "avatars";
+/** The WebMCP opt-in parameter (`capabilities.mjs`'s `hostConfig().aiTools`) and
+ *  the one value it takes (`ai_webmcp.mjs`'s `WEBMCP_OPT_IN`), spelled here for
+ *  `AWAIT_IDENTITY`'s reason: the package does not ship the editor's page modules. */
+const AI_TOOLS = "aiTools";
+const WEBMCP = "webmcp";
 /** The preferences a host identity supersedes: both name the person (§3.1). */
 const IDENTITY_PREFERENCES = Object.freeze(["user", "initials"]);
 
@@ -82,6 +87,7 @@ const MOUNT_ATTRIBUTES = Object.freeze([
   "frame-title",
   "identity",
   "avatars",
+  "ai-tools",
 ]);
 
 /** The two NARROWING attributes, each read against the authority's own vocabulary.
@@ -186,6 +192,11 @@ const SHADOW_STYLE = `
  *    `editorConfig.user`. A change remounts.
  *  * `avatars` — `"fetch"` is the host's consent to load participants' avatar
  *    URLs (`docs/175` §8.1). Absent, nothing is fetched and chips show initials.
+ *  * `ai-tools` — `"webmcp"` offers the in-page assistant's tools (`editor.ai`) to a
+ *    browser agent through WebMCP (`docs/178` §9). Off when absent. The tools are
+ *    registered in the FRAME's document, so this page cannot call them; they are
+ *    filtered by the same grant as `editor.ai`, and every edit is a private
+ *    proposal the person accepts or discards. Becomes `?aiTools=webmcp`.
  *
  * Properties: `mode`, `identity`, `capabilities`, `regions`, `editingMode`,
  * `sandbox`, `frame`, `can(name)`. `can` and `chrome` have no reflecting
@@ -493,6 +504,15 @@ export class OpenDocEditorElement extends ElementBase {
     const notes = [...translated.notes, ...this.#resolveIdentity(url, translated.identity)];
     if (this.getAttribute(AVATARS) === "fetch") url.searchParams.set(AVATARS, "fetch");
     else url.searchParams.delete(AVATARS);
+    // WebMCP is opt-in and has one spelling. Absent, `editor-src`'s own query is
+    // left as the host wrote it; any other value is dropped and REPORTED, so a typo
+    // reads as "not offered" on the capabilities event instead of in silence.
+    const aiTools = this.getAttribute("ai-tools");
+    if (aiTools === WEBMCP) url.searchParams.set(AI_TOOLS, WEBMCP);
+    else if (aiTools !== null) {
+      url.searchParams.delete(AI_TOOLS);
+      notes.push(Object.freeze({ option: "ai-tools", code: "unknown", message: `ai-tools takes "${WEBMCP}" only.` }));
+    }
     return { url, notes: Object.freeze(notes) };
   }
 

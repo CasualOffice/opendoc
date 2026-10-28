@@ -33,6 +33,7 @@
 // role name"): the access level is derived from the GRANT, in `aiAccessFor`.
 import { CAPABILITIES, hostConfig } from "./capabilities.mjs";
 import { t } from "./i18n.mjs";
+import { startWebMcp } from "./ai_webmcp.mjs";
 
 /** The access levels the engine's `aiRead`/`aiPreview` accept, weakest first. */
 export const AI_ACCESS = Object.freeze(["none", "read", "comment", "suggest", "review"]);
@@ -146,6 +147,8 @@ export function createAssistant(ed, { onDecision = () => {} } = {}) {
   /** The panel, built on first use: chrome built at boot must not call `t()`
    *  before the catalogue lands (`chrome-raw-keys.spec.mjs`). */
   let panel = null;
+  /** The WebMCP status, until `startWebMcp` below replaces it. */
+  let webmcpStatus = () => null;
 
   function access() {
     return aiAccessFor(ed.HOST_CAPS, { direct: hostConfig().ai === "direct" });
@@ -334,9 +337,10 @@ export function createAssistant(ed, { onDecision = () => {} } = {}) {
   }
 
   const assistant = {
-    /** What this mount lets an assistant do. O(capabilities). */
+    /** What this mount lets an assistant do, and whether its tools are offered to
+     *  a browser agent (`webmcp`, `ai_webmcp.mjs`). O(capabilities). */
     access() {
-      return Object.freeze({ ok: true, ...access() });
+      return Object.freeze({ ok: true, ...access(), webmcp: webmcpStatus() });
     },
 
     /** The assistant's reads, over the live document. O(document). */
@@ -415,5 +419,8 @@ export function createAssistant(ed, { onDecision = () => {} } = {}) {
       return Object.freeze({ ok: true, previewId });
     },
   };
+  // WebMCP (`docs/178` §9 item 2): only when the host asked, and only over the
+  // methods above, so a browser agent reaches nothing this object does not offer.
+  webmcpStatus = startWebMcp(assistant, hostConfig());
   return assistant;
 }
