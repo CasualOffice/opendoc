@@ -1489,7 +1489,9 @@ function brandControls() {
 export function urlParameters(source = read(SOURCES.capabilities)) {
   const body = source.match(/export function hostConfig\([\s\S]*?\n}/);
   if (!body) throw new Error(`build-embed-docs: no hostConfig() in ${rel(SOURCES.capabilities)}`);
-  const names = [...body[0].matchAll(/params\??\.get\("([\w-]+)"\)/g)].map((m) => m[1]);
+  // `get("name")` is hostConfig's case-insensitive reader (`hostParams`); the bare
+  // `params.get("name")` form is accepted too, so either spelling is documented.
+  const names = [...body[0].matchAll(/(?:params\??\.)?\bget\("([\w-]+)"\)/g)].map((m) => m[1]);
   const unique = [...new Set(names)];
   if (unique.length < 4) {
     throw new Error(

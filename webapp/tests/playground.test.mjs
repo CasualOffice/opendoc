@@ -210,7 +210,9 @@ test("the URL parameters the page names are the ones the editor reads", () => {
   assert.ok(named.length >= 4, `the page names only ${named.length} URL parameters`);
   for (const name of named) {
     assert.ok(
-      body.includes(`params?.get("${name}")`),
+      // `get("name")` is hostConfig's case-insensitive reader (`hostParams`); it also
+      // matches the older `params?.get("name")` spelling.
+      body.includes(`get("${name}")`),
       `the page tells a host about ?${name}=, which hostConfig() never reads`,
     );
   }
