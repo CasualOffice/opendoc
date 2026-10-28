@@ -1169,7 +1169,8 @@
       "emits": [
         "SetStyleDefinition",
         "DeleteBlocks",
-        "InsertBlocks"
+        "InsertBlocks",
+        "InsertFieldRange"
       ],
       "example": {
         "mode": "entire",

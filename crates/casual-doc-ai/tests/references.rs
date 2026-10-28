@@ -265,3 +265,48 @@ fn a_chapter_numbered_caption_counts_the_headings_before_it() {
         "the second chapter's first figure: {all:?}"
     );
 }
+
+/// A one-entry table of contents begins and ends in one paragraph, so it reopens
+/// from DOCX as an INLINE `TOC` field (`docs/128` §2c: a field that fits in a
+/// paragraph is inline). The update command used to look for ranges only and said
+/// "no table of contents to update"; it now finds the inline one and rebuilds it as
+/// a range, as Word does when an updated `TOC` result no longer fits (`docs/181` §12).
+#[test]
+fn a_one_entry_table_of_contents_still_updates_after_a_docx_round_trip() {
+    let body = format!("{}{}", plain("Preface"), heading("Heading1", "Scope"));
+    let mut session = open(&word_file(&body, ""));
+    let preface = id_of(&session, "Preface");
+    apply(
+        &mut session,
+        "direct",
+        json!([{ "op": "insert_table_of_contents", "before": { "node": preface } }]),
+    )
+    .expect("the contents inserts");
+    let saved = session
+        .export(casual_doc_ai::ExportFormat::Docx, &[])
+        .expect("the save loses nothing")
+        .bytes;
+    let mut reopened = open(&saved);
+    let toc_ranges = |session: &Session| {
+        session
+            .document()
+            .definitions()
+            .field_ranges
+            .iter()
+            .filter(|(_, range)| range.kind == casual_doc_model::v1::FieldKind::Toc)
+            .count()
+    };
+    assert_eq!(
+        toc_ranges(&reopened),
+        0,
+        "it reopens inline, per docs/128 §2c"
+    );
+    apply(
+        &mut reopened,
+        "direct",
+        json!([{ "op": "update_table_of_contents", "mode": "entire" }]),
+    )
+    .expect("the reopened contents updates");
+    assert_eq!(lines(&reopened)[0], "Scope\t1");
+    assert_eq!(toc_ranges(&reopened), 1, "the updated contents is a range");
+}

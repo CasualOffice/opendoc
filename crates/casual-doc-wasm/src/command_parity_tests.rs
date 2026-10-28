@@ -1084,8 +1084,8 @@ fn captions_and_cross_references_are_one_lowering_for_the_editor_and_agents() {
     ] {
         let target = paragraphs(&d)[2];
         let mut pages = HashMap::new();
-        if let Some(page) = d.page_of(target) {
-            pages.insert(target, page.to_string());
+        if let Some(page) = d.page_label_of(target) {
+            pages.insert(target, page);
         }
         let mut expected_ids = ids(&d);
         let expected = {
@@ -1249,4 +1249,57 @@ fn the_editor_builds_no_moved_lowering_itself() {
          (docs/181 G7):\n{}",
         found.join("\n")
     );
+}
+
+/// An editor's page cross-reference prints the LABEL the page prints, as Word's
+/// `PAGEREF` and an agent's reference do: a section numbered in lower-case roman
+/// from 5 prints `v` on its first page, where the page's index says `1`.
+#[test]
+fn an_editor_page_cross_reference_prints_the_page_label() {
+    let mut d = open_document(SECTIONED).expect("the fixture opens");
+    let nodes: Vec<NodeId> = paragraphs(&d)
+        .into_iter()
+        .filter(|node| {
+            casual_doc_edit::find_paragraph_any(&d.document, *node)
+                .is_some_and(|p| !crate::node_plain_text(&p.inlines).is_empty())
+        })
+        .collect();
+    assert!(nodes.len() >= 2, "the fixture has two text paragraphs");
+    let section = d.document.definitions().sections[0].id;
+    let layout = serde_json::json!({
+        "section": section.node_id().to_string(),
+        "pageNumberFormat": "lowerRoman",
+        "pageNumberStart": 5,
+    });
+    d.set_section_layout(&layout.to_string())
+        .expect("section layout");
+    let at = nodes[0];
+    let inlines_of = |d: &WasmDocument, node: NodeId| -> Vec<casual_doc_model::v1::InlineNode> {
+        casual_doc_edit::find_paragraph_any(&d.document, node)
+            .expect("the paragraph")
+            .inlines
+            .clone()
+    };
+    let end = u32::try_from(crate::node_plain_text(&inlines_of(&d, at)).len()).expect("short");
+    d.insert_cross_reference(
+        &at.to_string(),
+        end,
+        &nodes[1].to_string(),
+        ReferenceTo::PageNumber.wire_name(),
+        false,
+        false,
+    )
+    .expect("the editor inserts a page reference");
+    let shown = inlines_of(&d, at)
+        .iter()
+        .find_map(|inline| match inline {
+            casual_doc_model::v1::InlineNode::Field(field)
+                if field.instruction.contains("PAGEREF") =>
+            {
+                Some(crate::node_plain_text(&field.inlines))
+            }
+            _ => None,
+        })
+        .expect("a PAGEREF field");
+    assert_eq!(shown, "v", "the label the page prints, not its index");
 }

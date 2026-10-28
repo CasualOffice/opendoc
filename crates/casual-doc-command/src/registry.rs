@@ -785,7 +785,12 @@ pub const COMMANDS: &[Command] = &[
         id: "update_table_of_contents",
         family: Family::References,
         summary: "Update a table of contents: its page numbers only, or the entire table from the headings.",
-        emits: &["SetStyleDefinition", "DeleteBlocks", "InsertBlocks"],
+        emits: &[
+            "SetStyleDefinition",
+            "DeleteBlocks",
+            "InsertBlocks",
+            "InsertFieldRange",
+        ],
         trackable: Trackable::No(REFERENCES_NOT_TRACKABLE),
         example: r#"{"op":"update_table_of_contents","mode":"entire"}"#,
         ui_commands: &[

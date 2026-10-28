@@ -941,9 +941,18 @@ arguments are invalid at once (the label check now follows the enum parses).
 - Paragraph-number cross-references (`\r`, `\n`, `\w`) are not in the agent vocabulary: the
   shared lowering caches the paragraph's *text* as their result, which a reader sees until
   the field updates. A defect in the editor too; fixing it needs list-number resolution.
-- The editor's page cross-reference caches the **physical** page number (its painted-snapshot
-  query), not the printed label; an agent's caches the label. Unchanged here so the editor
-  did not move with the lowering; the fix is to lend `first_page_labels` there as well.
-- A one-entry contents begins and ends in one paragraph, and Word's markup for that reopens
-  as an inline `TOC` field, which `toc_field` (field ranges only) does not find: "no table
-  of contents to update" after a save and reopen. The G5 fixture therefore has two headings.
+- ~~The editor's page cross-reference caches the **physical** page number, not the printed
+  label.~~ **Fixed at integration:** `page_label_of` maps the painted page through
+  `page_number_labels`, the table the contents reads, so an editor's `PAGEREF` and an
+  agent's print the same label (`v` on the first page of a section numbered in roman from 5).
+  Guard: `an_editor_page_cross_reference_prints_the_page_label`; with the physical number
+  restored it reads `left: "1"`.
+- ~~A one-entry contents reopens from DOCX as an inline `TOC` field that the update command
+  cannot find.~~ **Fixed at integration**, in the command rather than the importer:
+  `docs/128` §2c deliberately keeps a field whose markers share a paragraph inline (the
+  stronger invariant), and two guards pin it. `update_table_of_contents` now also finds a
+  contents held as an inline field and rebuilds it as a range, as Word does when an updated
+  `TOC` result no longer fits in one paragraph. Guard:
+  `a_one_entry_table_of_contents_still_updates_after_a_docx_round_trip`; without the inline
+  path the reopened contents is refused. An importer-side promotion was tried first and
+  reverted, because it broke `docs/128` §2c's two guards.

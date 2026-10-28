@@ -315,9 +315,9 @@ impl WasmDocument {
     ) -> Result<Vec<casual_doc_edit::Operation>, String> {
         let mut pages = HashMap::new();
         if to == ReferenceTo::PageNumber
-            && let Some(page) = self.page_of(target)
+            && let Some(page) = self.page_label_of(target)
         {
-            pages.insert(target, page.to_string());
+            pages.insert(target, page);
         }
         let facts = EditorFacts::with_pages(self.document.definitions(), pages);
         let ids = &mut self.edit_ids;
@@ -342,25 +342,40 @@ impl WasmDocument {
         references::scan(&self.document, &facts, request)
     }
 
-    /// The 1-based page the model position at the start of `node` is painted on,
-    /// or `None` when the layout cannot say (a windowed document, or a node the
-    /// painted layout does not hold).
+    /// The label the page printing the start of `node` shows (`v` on the first page
+    /// of a section numbered in lower-case roman from 5, as Word's `PAGEREF` shows),
+    /// or `None` when the layout cannot say (a node the painted layout does not
+    /// hold).
     ///
-    /// **O(lines in the document)** — one geometry query, once per inserted page
-    /// reference. It is deliberately not called per caption: doing that inside a
-    /// loop is the shape of the `docs/116` defect.
+    /// The page is the one the target's first position is painted on; its label
+    /// comes from `casual_doc_layout::paginate::page_number_labels`, the table the
+    /// table of contents reads too, so an editor's page reference and an agent's
+    /// print the same thing (`docs/181` §12, lane references, where the editor
+    /// printed the PHYSICAL page number instead). A body laid out a window at a
+    /// time has no whole-document label table, and keeps the physical number.
     ///
-    /// This is the PHYSICAL page number, not the label the page prints: a
-    /// section that restarts its numbering, or numbers in roman, shows a label a
-    /// page reference here does not match (an agent's page reference, which
-    /// reads labels from a layout pass, does). Recorded in `docs/181` §12, lane
-    /// references; unchanged here so the editor's behaviour did not move with
-    /// the lowering.
-    pub(crate) fn page_of(&self, node: casual_doc_model::NodeId) -> Option<u32> {
+    /// **O(lines in the document)** for the geometry query plus O(pages) for the
+    /// labels, once per inserted page reference. It is deliberately not called per
+    /// caption: doing that inside a loop is the shape of the `docs/116` defect.
+    pub(crate) fn page_label_of(&self, node: casual_doc_model::NodeId) -> Option<String> {
         let snapshot = self.painted_snapshot();
-        snapshot
+        let page = snapshot
             .caret_rect(self.view_pos(casual_doc_layout::model::ModelPos::new(node, 0)))
-            .map(|(page, _)| page)
+            .map(|(page, _)| page)?;
+        if self.layout.is_windowed() {
+            return Some(page.to_string());
+        }
+        let labels = casual_doc_layout::paginate::page_number_labels(
+            self.layout.resident(),
+            &self.document.definitions().sections,
+        );
+        let index = usize::try_from(page).ok()?.checked_sub(1)?;
+        Some(
+            labels
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| page.to_string()),
+        )
     }
 }
 

@@ -493,6 +493,24 @@ pub fn update_table_of_contents(
     tab_position_twips: i32,
     ids: MintId<'_>,
 ) -> Result<Vec<Operation>, String> {
+    if field.is_none()
+        && !document
+            .definitions()
+            .field_ranges
+            .iter()
+            .any(|(_, range)| range.kind == FieldKind::Toc)
+        && let Some((index, instruction)) = inline_toc(document)
+    {
+        return update_inline_toc(
+            document,
+            facts,
+            index,
+            &instruction,
+            mode,
+            tab_position_twips,
+            ids,
+        );
+    }
     let (field, instruction) = toc_field(document, field)?;
     let (first, last) = body_field_range_blocks(document.body(), field)
         .map_err(|_| "the contents field's markers are not at body top level".to_owned())?;
@@ -525,6 +543,93 @@ pub fn update_table_of_contents(
     operations.push(Operation::InsertBlocks {
         container: None,
         index: first as u32,
+        blocks,
+    });
+    Ok(operations)
+}
+
+/// The top-level body paragraph holding a contents as an INLINE `TOC` field, and
+/// its instruction — `docs/128` §2c's encoding when the field's markers fall in one
+/// paragraph, which is how a one-entry contents (Word's or ours) reopens from DOCX.
+/// `None` when there is none, or more than one (the caller then reports the
+/// ordinary "no table of contents" refusal). **O(top-level inlines).**
+fn inline_toc(document: &Document) -> Option<(usize, String)> {
+    fn find(inlines: &[InlineNode]) -> Option<String> {
+        inlines.iter().find_map(|inline| match inline {
+            InlineNode::Field(field) if FieldKind::parse(&field.instruction) == FieldKind::Toc => {
+                Some(field.instruction.clone())
+            }
+            InlineNode::Hyperlink(link) => find(&link.inlines),
+            InlineNode::Sdt(sdt) => find(&sdt.inlines),
+            _ => None,
+        })
+    }
+    let mut found = document
+        .body()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, block)| match block {
+            BlockNode::Paragraph(paragraph) => find(&paragraph.inlines).map(|i| (index, i)),
+            _ => None,
+        });
+    let first = found.next()?;
+    found.next().is_none().then_some(first)
+}
+
+/// Updates a contents held as an inline field: its one paragraph is replaced by
+/// freshly built entries, inserted as a field RANGE with the same instruction,
+/// because the updated result no longer fits in a paragraph (`docs/128` §2c: a
+/// field that does not fit in a paragraph is a range). Word does the same when it
+/// updates a `TOC` field. "Page numbers only" checks the entry count as the range
+/// path does, then rebuilds the one paragraph, which is the whole of it.
+///
+/// **O(document)** for the headings, like the range path.
+fn update_inline_toc(
+    document: &Document,
+    facts: &impl LayoutFacts,
+    index: usize,
+    instruction: &str,
+    mode: TocUpdate,
+    tab_position_twips: i32,
+    ids: MintId<'_>,
+) -> Result<Vec<Operation>, String> {
+    let max_level = toc_levels_of(instruction);
+    let headings = toc_headings(document, facts, max_level)?;
+    if headings.is_empty() {
+        return Err(refused!(
+            "toc.no-headings",
+            "This document has no headings to list. Apply a heading style to the text \
+             you want listed."
+        )
+        .to_owned());
+    }
+    if mode == TocUpdate::PageNumbers {
+        let entries = usize::from(
+            matches!(&document.body()[index], BlockNode::Paragraph(p) if has_tab(&p.inlines)),
+        );
+        if entries != headings.len() {
+            return Err(format!(
+                "this table lists {entries} entries but the document now has {} headings; \
+                 update the entire table instead of only its page numbers",
+                headings.len()
+            ));
+        }
+    }
+    let field = FieldRangeId::new(next(ids)?);
+    let (mut operations, blocks) = toc_blocks(document, &headings, field, tab_position_twips, ids)?;
+    operations.push(Operation::DeleteBlocks {
+        container: None,
+        index: index as u32,
+        count: 1,
+    });
+    operations.push(Operation::InsertFieldRange {
+        field,
+        definition: Box::new(FieldRange {
+            kind: FieldKind::Toc,
+            instruction: instruction.to_owned(),
+            update: FieldUpdateState::default(),
+        }),
+        index: index as u32,
         blocks,
     });
     Ok(operations)
