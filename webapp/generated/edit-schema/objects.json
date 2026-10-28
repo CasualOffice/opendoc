@@ -1,0 +1,388 @@
+{
+  "description": "One edit of the `objects` family of the OpenDoc edit vocabulary 1.3.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "description": "Insert a picture at an anchor.",
+      "properties": {
+        "alt_text": {
+          "description": "Alt text for readers who cannot see it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "at": {
+          "additionalProperties": false,
+          "description": "Where.",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        },
+        "content_type": {
+          "description": "Its MIME type: image/png, image/jpeg, image/gif, image/bmp,\nimage/tiff or image/webp; the bytes must be that format.",
+          "type": "string"
+        },
+        "data": {
+          "description": "The image bytes, standard base64, at most 8 MiB decoded.",
+          "type": "string"
+        },
+        "height_pt": {
+          "description": "Height in points; omitted, it keeps the picture's proportions.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "insert_image",
+          "type": "string"
+        },
+        "width_pt": {
+          "description": "Width in points; with `height` omitted too, the picture's own\nsize at 96 DPI (PNG, GIF, JPEG and BMP state it).",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "at",
+        "data",
+        "content_type"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Set or clear an object's alt text.",
+      "properties": {
+        "object": {
+          "description": "The object id `read_blocks` lists.",
+          "type": "string"
+        },
+        "op": {
+          "const": "set_alt_text",
+          "type": "string"
+        },
+        "text": {
+          "description": "The alt text; omitted or empty clears it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "object"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Resize a picture, shape or text box.",
+      "properties": {
+        "height_pt": {
+          "description": "Height in points.",
+          "format": "double",
+          "type": "number"
+        },
+        "object": {
+          "description": "The object id.",
+          "type": "string"
+        },
+        "op": {
+          "const": "resize_object",
+          "type": "string"
+        },
+        "width_pt": {
+          "description": "Width in points.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "op",
+        "object",
+        "width_pt",
+        "height_pt"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Set how text wraps around a floating object.",
+      "properties": {
+        "object": {
+          "description": "The object id.",
+          "type": "string"
+        },
+        "op": {
+          "const": "set_wrap",
+          "type": "string"
+        },
+        "wrap": {
+          "description": "The wrap.",
+          "oneOf": [
+            {
+              "const": "square",
+              "description": "Around its bounding box.",
+              "type": "string"
+            },
+            {
+              "const": "tight",
+              "description": "Around its outline.",
+              "type": "string"
+            },
+            {
+              "const": "through",
+              "description": "Through its outline's gaps.",
+              "type": "string"
+            },
+            {
+              "const": "top_and_bottom",
+              "description": "Above and below only.",
+              "type": "string"
+            },
+            {
+              "const": "behind",
+              "description": "No wrap, behind the text.",
+              "type": "string"
+            },
+            {
+              "const": "front",
+              "description": "No wrap, over the text.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "object",
+        "wrap"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Crop a picture: the fraction (0 to 1) of each edge to hide; all zero\nremoves the crop.",
+      "properties": {
+        "bottom": {
+          "description": "Bottom edge.",
+          "format": "double",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "left": {
+          "description": "Left edge.",
+          "format": "double",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "object": {
+          "description": "The picture id.",
+          "type": "string"
+        },
+        "op": {
+          "const": "crop_image",
+          "type": "string"
+        },
+        "right": {
+          "description": "Right edge.",
+          "format": "double",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "top": {
+          "description": "Top edge.",
+          "format": "double",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "op",
+        "object",
+        "left",
+        "top",
+        "right",
+        "bottom"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Delete a picture, shape, text box or group.",
+      "properties": {
+        "object": {
+          "description": "The object id.",
+          "type": "string"
+        },
+        "op": {
+          "const": "delete_object",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "object"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Set a shape's fill.",
+      "properties": {
+        "color": {
+          "description": "`#RRGGBB`, or `none` to remove the fill.",
+          "type": "string"
+        },
+        "op": {
+          "const": "set_shape_fill",
+          "type": "string"
+        },
+        "shape": {
+          "description": "The shape id.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "shape",
+        "color"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Set a shape's or a picture's outline colour and/or weight.",
+      "properties": {
+        "color": {
+          "description": "`#RRGGBB`, or `none` to remove the outline.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "set_shape_outline",
+          "type": "string"
+        },
+        "shape": {
+          "description": "The shape or picture id.",
+          "type": "string"
+        },
+        "width_pt": {
+          "description": "Weight in points.",
+          "format": "double",
+          "maximum": 1584,
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "shape"
+      ],
+      "type": "object"
+    }
+  ]
+}

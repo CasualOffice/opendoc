@@ -118,6 +118,21 @@ does not carry the engine.
 | `chrome` | Chrome regions to withhold, by the same rule: `"-brand,-rail"`. Withholding `ribbon` withholds its bands too. |
 | `editor-src` | Where `editor.html` is. May carry your own query (`?blank=1`); `mode` is merged into it rather than appended twice, and `can`/`chrome` are unioned with any the query already carries. |
 | `frame-title` | The frame's accessible name, in **your** page's language. |
+| `ai-tools` | `"webmcp"` offers the in-page assistant's tools to a browser agent through [WebMCP](https://webmachinelearning.github.io/webmcp/). Off when absent; any other value is dropped and reported on `opendoc-capabilities`. |
+
+**WebMCP** (a Community Group draft, not a standard) is off by default and
+feature-detected: with no `document.modelContext` nothing is registered, no
+polyfill is shipped, and `ai.access()` says `webmcp.state: "unavailable"`. When
+it is there, the editor registers read tools (`get_outline`, `read_blocks`,
+`search`, `list_comments`, `list_tracked_changes`, marked `readOnlyHint` and
+`untrustedContentHint`) and, as the mount's grant allows, `add_comment`,
+`propose_edits` and `review_tracked_changes`. An edit tool never commits: it
+opens the same private preview as `ai.preview`, and the person accepts or
+discards it. The tools are filtered by the grant exactly as `ai.access()` is
+(`readonly` gets the reads only) and unregistered through their `AbortSignal`
+when the editor unmounts. They live in the editor frame's document, so your page
+cannot call them; nothing forwards them. A page that serves `editor.html`
+directly opts in with `?aiTools=webmcp`.
 
 `can` and `chrome` are attributes, rather than something you hand-write into
 `editor-src`'s query, because the per-capability list — not the role — is the

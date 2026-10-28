@@ -97,7 +97,7 @@ pub struct SessionConfig {
 impl Default for SessionConfig {
     fn default() -> Self {
         Self {
-            author: "AI assistant".to_owned(),
+            author: crate::AI_AUTHOR.to_owned(),
             profile: Profile::Read,
             clock: Clock::System,
             limits: Limits::default(),
@@ -115,6 +115,12 @@ pub(crate) struct State {
     pub(crate) ids: IdGenerator,
     pub(crate) revisions: RevisionIdAllocator,
     next_transaction: u128,
+    /// Picture bytes a plan wrote (`insert_image`), by package part name. The
+    /// model holds the reference through a `SetMediaReference` in the same
+    /// commit; the bytes join the session's resources only when the plan
+    /// commits ([`Session::adopt`]), so a preview or a refused plan writes
+    /// none. Empty between plans.
+    pub(crate) media: Vec<(String, Vec<u8>)>,
 }
 
 impl State {
@@ -358,6 +364,11 @@ pub struct Session {
     pub(crate) changes: Vec<ChangeRecord>,
     layout: Option<(u64, ViewerDocument)>,
     name: String,
+    /// What [`Session::revision`] adds to the log's head: zero for a session
+    /// that opened a file, the live editor's document revision for one built by
+    /// [`Session::for_editor`], so the revisions an agent reads and plans
+    /// against are the editor's own.
+    revision_base: u64,
 }
 
 impl Session {
@@ -409,6 +420,7 @@ impl Session {
                 ids,
                 revisions,
                 next_transaction: 0,
+                media: Vec::new(),
             },
             config,
             resources: imported.resources,
@@ -420,13 +432,78 @@ impl Session {
             changes: Vec::new(),
             layout: None,
             name: name.to_owned(),
+            revision_base: 0,
         })
+    }
+
+    /// A session over the live editor's document (`docs/181` §4.4): the
+    /// in-page assistant reads and compiles plans against exactly what the
+    /// editor holds, and nothing it does reaches the editor until the editor
+    /// commits the compiled operations through its own choke point.
+    ///
+    /// `ids` and `revisions` are clones of the EDITOR's allocators, so every id
+    /// a plan mints is one the editor would have minted next, and the editor
+    /// moves its allocators past them when it commits ([`crate::editor`]). A
+    /// fresh generator here would mint in the editor's own space from the
+    /// document's high-water mark and could hand out an id the editor had
+    /// already used for content an undo removed. `revision` is the editor's
+    /// document revision, which [`Session::revision`] then reports.
+    ///
+    /// **O(1)** beyond the moves; the caller already paid for the clone.
+    #[must_use]
+    pub fn for_editor(
+        document: Document,
+        ids: IdGenerator,
+        revisions: RevisionIdAllocator,
+        revision: u64,
+        config: SessionConfig,
+    ) -> Self {
+        let log = RevisionLog::new(MAX_UNDO_GROUPS);
+        let opened_at = log.head().get();
+        Self {
+            state: State {
+                document,
+                log,
+                ids,
+                revisions,
+                next_transaction: 0,
+                media: Vec::new(),
+            },
+            config,
+            resources: DocumentResources::default(),
+            source: None,
+            source_format: FormatId::new(formats::NORMALIZED_JSON)
+                .expect("a registered built-in format id"),
+            import_report: CompatibilityReport::default(),
+            recovery: RecoveryReport::default(),
+            opened_at,
+            changes: Vec::new(),
+            layout: None,
+            name: String::new(),
+            revision_base: revision,
+        }
     }
 
     /// The live document.
     #[must_use]
     pub fn document(&self) -> &Document {
         &self.state.document
+    }
+
+    /// Makes `state` (a plan's committed clone) the session's, moving the
+    /// picture bytes it wrote into the resources the model now references.
+    /// O(pictures written).
+    pub(crate) fn adopt(&mut self, mut state: State) {
+        for (part, bytes) in std::mem::take(&mut state.media) {
+            self.resources.insert(part, bytes);
+        }
+        self.state = state;
+    }
+
+    /// The bytes of the package part `part`, if the session holds it.
+    #[must_use]
+    pub fn resource(&self, part: &str) -> Option<&[u8]> {
+        self.resources.get(part)
     }
 
     /// The session's configuration.
@@ -445,7 +522,8 @@ impl Session {
     /// names the revision it was written against (`base_revision`).
     #[must_use]
     pub fn revision(&self) -> u64 {
-        self.state.log.head().get()
+        self.revision_base
+            .saturating_add(self.state.log.head().get())
     }
 
     /// The content digest of the current state. **O(document)**.
@@ -562,7 +640,7 @@ impl Session {
                     } else {
                         None
                     },
-                    source_unchanged: self.revision() == self.opened_at,
+                    source_unchanged: self.state.log.head().get() == self.opened_at,
                     mode: if same_format {
                         ExportMode::PreserveWhenSafe
                     } else {

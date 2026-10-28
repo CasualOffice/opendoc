@@ -27,10 +27,14 @@ use casual_doc_edit::refused;
 use casual_doc_edit::clone::{CloneReport, clone_block_with_fresh_ids};
 use casual_doc_edit::find_shape;
 use casual_doc_edit::{
-    CommonField, FormatDelta, Operation, Pos, Range as EditRange, RunningRegion,
-    caret_run_properties, cell_properties, find_table, locate_cell, locate_table_cell,
-    locate_table_row, paragraph_properties, run_properties_in_range,
+    FormatDelta, Operation, Pos, Range as EditRange, RunningRegion, caret_run_properties,
+    cell_properties, find_table, locate_cell, locate_table_cell, locate_table_row,
+    paragraph_properties, run_properties_in_range,
 };
+// The field kinds are the registry's (`casual_doc_command::fields`); the tests
+// still name the engine's type.
+#[cfg(test)]
+use casual_doc_edit::CommonField;
 // The transaction envelope and the ordered revision log (doc 147, ADR-043). Its
 // own `use` line, where the pinned rustfmt sorts it, so a parallel branch adding
 // an import does not conflict here. `casual_doc_edit::apply` is deliberately NOT
@@ -39,9 +43,7 @@ use casual_doc_edit::{
 // build if that stops being true.
 use casual_doc_edit::{find_paragraph_any, surface_block_lists};
 use casual_doc_transaction::{Coalesce, Origin, RevisionLog, Transaction, TransactionId};
-// Break authoring (`docs/130` section 4.3, OO-022): the site check, the
-// inline-break builder, and the section-split rules.
-use casual_doc_edit::breaks::{BreakSite, break_site, section_break_ops, section_split_site};
+
 use casual_doc_edit::{object_descr, text_box_body_properties};
 use casual_doc_export::write_document;
 #[cfg(test)]
@@ -99,26 +101,25 @@ use casual_doc_model::v1::MediaId;
 use casual_doc_model::v1::SectionType;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AnchorHorizontal, AnchorVertical, BlockNode,
-    BookmarkId, BorderEdge, Break, CellMargins, CellVerticalAlignment, Color, CommentId, Document,
+    BookmarkId, BorderEdge, CellMargins, CellVerticalAlignment, Color, CommentId, Document,
     DrawingAnchor, Extent, ExternalTarget, FontName, FontRef, GroupTransform, HeightRule,
     HighlightColor, HorizontalAnchor, HorizontalPosition, Hyperlink, HyperlinkTarget, Indentation,
-    InlineNode, InternalTarget, LevelJustification, LevelSuffix, MAX_EMU, NumberFormat,
-    NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef,
-    PageMargins, PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders,
-    ParagraphProperties, ReviewProjection, RevisionGroup, RgbColor, RowHeight, Run, RunProperties,
-    SectionColumns, SectionId, Spacing, Style, StyleId, StyleKind, TabAlignment, TabStop, Table,
-    TableBorders, TableCell, TableCellProperties, TableLayout, TableProperties, TableRow,
-    TableWidth, TextBoxAutoFit, TextBoxBodyProperties, UnderlineStyle, VerticalAlignment,
-    VerticalAnchor, VerticalMerge, VerticalPosition, WordprocessingGroup, WrapMode,
-};
-use casual_doc_model::v1::{
-    Axis, AxisKind, AxisPosition, BarDirection, BarGrouping, Chart, ChartCoverage, ChartGroup,
-    ChartGroupKind, ChartText, ChartValue, DataRange, DisplayBlanks, Grouping, Legend,
-    LegendPosition, PlotArea, ScatterStyle, Series,
+    InlineNode, InternalTarget, LevelSuffix, MAX_EMU, NumberFormat, NumberingInstance,
+    NumberingInstanceId, NumberingLevel, NumberingRef, PageMargins, PageOrientation,
+    PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties,
+    ReviewProjection, RevisionGroup, RgbColor, RowHeight, Run, RunProperties, SectionColumns,
+    SectionId, Spacing, Style, StyleId, StyleKind, TabAlignment, TabStop, Table, TableBorders,
+    TableCell, TableCellProperties, TableLayout, TableProperties, TableRow, TableWidth,
+    TextBoxAutoFit, TextBoxBodyProperties, UnderlineStyle, VerticalAlignment, VerticalAnchor,
+    VerticalMerge, VerticalPosition, WordprocessingGroup, WrapMode,
 };
 use casual_doc_model::v1::{CROP_FULL, CropRect};
 // The editing restriction `setDocumentProtection` installs or lifts (ADR-059). Its own `use`
 // line, in sorted position, per the parallel-lane import rule.
+#[cfg(test)]
+use casual_doc_model::v1::NoteId;
+use casual_doc_model::v1::NoteKind;
+use casual_doc_model::v1::PageVerticalAlignment;
 use casual_doc_model::v1::{DocumentProtection, DocumentProtectionEdit};
 use casual_doc_model::v1::{
     DropCapFrame, DropCapMode, FrameHorizontalAlignment, FrameHorizontalAnchor,
@@ -130,11 +131,7 @@ use casual_doc_model::v1::{
     SdtCheckbox, SdtCheckboxSymbol, SdtControlData, Symbol,
 };
 use casual_doc_model::v1::{LineNumberRestart, LineNumbering};
-use casual_doc_model::v1::{NoteId, NoteKind};
-use casual_doc_model::v1::{PageNumbering, PageVerticalAlignment};
-use casual_doc_model::v1::{
-    Watermark, WatermarkContent, WatermarkLayout, WatermarkPicture, WatermarkText,
-};
+use casual_doc_model::v1::{Watermark, WatermarkContent, WatermarkLayout, WatermarkPicture};
 use casual_doc_model::{IdGenerator, IdSpace, NodeId};
 #[cfg(test)]
 use casual_doc_ooxml::DocxPackage;
@@ -181,6 +178,10 @@ mod object_locks_tests;
 #[cfg(test)]
 #[path = "table_merge_matrix_tests.rs"]
 mod table_merge_matrix_tests;
+// The editor's methods and the capability registry lower alike (`docs/181` G7).
+#[cfg(test)]
+#[path = "command_parity_tests.rs"]
+mod command_parity_tests;
 
 // An edited save states the current `app.xml` counts (`docs/109` FID-AT-04).
 #[cfg(test)]
@@ -264,6 +265,7 @@ mod presence;
 // write and the gate that decides when the write survives a save.
 mod chart;
 
+mod ai; // `editor.ai`: the in-page assistant's reads and private preview (`docs/181` §4.4).
 // The opt-in sparse-strip raster (`docs/architecture/179`, ADR-073 Proposed): one more export
 // with `renderPage`'s contract, compiled only with the `sparse-raster` feature.
 #[cfg(feature = "sparse-raster")]
@@ -2580,13 +2582,7 @@ impl WasmDocument {
         let width = bounded_emu(width_emu, 1, MAX_EMU, "width")?;
         let height = bounded_emu(height_emu, 1, MAX_EMU, "height")?;
         self.apply_action_caret_as(
-            vec![Operation::SetExtent {
-                object,
-                extent: Some(Extent {
-                    width_emu: width,
-                    height_emu: height,
-                }),
-            }],
+            casual_doc_command::objects::set_extent(object, width, height).map_err(to_js)?,
             Pos::new(object, 0),
             HistoryKind::ObjectResize,
         )
@@ -3007,24 +3003,10 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = setObjectWrap)]
     pub fn set_object_wrap(&mut self, node: &str, mode: &str) -> Result<EditResult, JsValue> {
         let object = node_id(node)?;
-        let mut anchor = object_anchor_any_surface(&self.document, object)
-            .ok_or_else(|| to_js(objects::NOT_FLOATING_WRAP.into()))?;
-        match mode {
-            "square" => anchor.wrap = WrapMode::Square,
-            "tight" => anchor.wrap = WrapMode::Tight,
-            "through" => anchor.wrap = WrapMode::Through,
-            "topAndBottom" => anchor.wrap = WrapMode::TopAndBottom,
-            "behind" => {
-                anchor.wrap = WrapMode::None;
-                anchor.behind_doc = true;
-            }
-            "front" => {
-                anchor.wrap = WrapMode::None;
-                anchor.behind_doc = false;
-            }
-            _ => return Err(to_js(format!("unknown wrap mode: {mode}"))),
-        }
-        self.commit_anchor(object, anchor)
+        let ops =
+            casual_doc_command::objects::set_wrap(&self.document, object, mode).map_err(to_js)?;
+        self.apply_action_caret_as(ops, Pos::new(object, 0), HistoryKind::ObjectMove)
+            .map_err(to_js)
     }
 
     /// Sets or clears the source-rectangle crop (`a:srcRect`) of the picture `node`
@@ -3042,16 +3024,13 @@ impl WasmDocument {
         let object = node_id(node)?;
         let crop = match insets {
             None => None,
-            Some(insets) if insets.len() == 4 => Some(CropRect {
-                left: fraction_to_crop(insets[0]),
-                top: fraction_to_crop(insets[1]),
-                right: fraction_to_crop(insets[2]),
-                bottom: fraction_to_crop(insets[3]),
-            }),
+            Some(insets) if insets.len() == 4 => Some(casual_doc_command::objects::crop([
+                insets[0], insets[1], insets[2], insets[3],
+            ])),
             Some(_) => return Err(to_js("crop needs four inset fractions".into())),
         };
         self.apply_action_caret_as(
-            vec![Operation::SetImageCrop { object, crop }],
+            casual_doc_command::objects::set_crop(object, crop),
             Pos::new(object, 0),
             HistoryKind::ObjectCrop,
         )
@@ -3103,7 +3082,7 @@ impl WasmDocument {
     ) -> Result<EditResult, JsValue> {
         let object = node_id(node)?;
         self.apply_action_caret_as(
-            vec![Operation::SetObjectDescr { object, descr }],
+            casual_doc_command::objects::set_alt_text(object, descr),
             Pos::new(object, 0),
             HistoryKind::ObjectAltText,
         )
@@ -3155,25 +3134,21 @@ impl WasmDocument {
         height_emu: f64,
         mime: String,
     ) -> Result<EditResult, JsValue> {
-        use casual_doc_model::v1::{
-            Drawing, Extent, LockFlags, MediaId, MediaReference, ObjectLocks,
-        };
-        let Some((media_type, ext)) = image_part_type(&mime) else {
+        if image_part_type(&mime).is_none() {
             return Err(to_js(format!("unsupported image type {mime:?}")));
-        };
+        }
         if bytes.is_empty() {
             return Err(to_js("the image has no bytes".into()));
         }
         let owner = node_id(node)?;
         let width = bounded_emu(width_emu, 1, MAX_EMU, "width")?;
         let height = bounded_emu(height_emu, 1, MAX_EMU, "height")?;
-        let exhausted = || to_js("id space exhausted".into());
-        let media_seq = self.edit_ids.next_id().map_err(|_| exhausted())?;
-        let drawing_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-        let media_id = MediaId::new(media_seq);
-        // The resources map (and the model) reference media by PART NAME; use a
-        // unique editor-authored name so it can never collide with an imported
-        // part.
+        // The lowering is the registry's (`docs/181` §4.2 step 5): the media
+        // registration, the drawing and Word's aspect lock, one step.
+        //
+        // The resources map (and the model) reference media by PART NAME; the
+        // lowering mints a unique editor-authored name so it can never collide
+        // with an imported part.
         //
         // **The registration is an operation, and it is in the SAME transaction as the
         // drawing that references it.** It used to be a direct write into the media
@@ -3189,61 +3164,23 @@ impl WasmDocument {
         // The BYTES are not in the operation: they live in the host resource map keyed by
         // this part name, which is the same split import and export use — the model holds
         // the reference, the package holds the stream.
-        let part_name = format!("word/media/editor-{media_seq}.{ext}");
-        self.resources.insert(part_name.clone(), bytes);
-        let reference = MediaReference {
-            relationship_id: format!("rIdEditorImg{media_seq}"),
-            media_type: media_type.to_owned(),
-            part_name,
-        };
-        let drawing = Drawing {
-            // An inserted picture/shape is not linked; linking one is a
-            // separate gesture (`docs/109` HF-179).
-            hyperlink: None,
-            opacity: None,
-            id: drawing_id,
-            media: media_id,
-            extent: Some(Extent {
-                width_emu: width,
-                height_emu: height,
-            }),
-            descr: None,
-            crop: None,
-            border: None,
-            flip_h: false,
-            flip_v: false,
-            rotation: None,
-        };
+        //
         // Word writes `a:graphicFrameLocks noChangeAspect="1"` on the frame of every
         // picture it inserts, and that flag is what makes a corner drag of the picture
         // proportional — in Word, and here (`Definitions::locks_aspect_ratio`, read by
-        // the resize grips). A picture inserted here carries the same lock, so it keeps
-        // its proportions on a corner drag in this editor and in Word after a save.
-        let word_picture_locks = ObjectLocks {
-            frame: LockFlags {
-                no_change_aspect: true,
-                ..LockFlags::default()
-            },
-            object: LockFlags::default(),
-        };
+        // the resize grips); the lowering adds the same lock.
+        let ids = &mut self.edit_ids;
+        let picture = casual_doc_command::objects::insert_picture(
+            Pos::new(owner, offset),
+            &mime,
+            width,
+            height,
+            &mut || ids.next_id().ok(),
+        )
+        .map_err(to_js)?;
+        self.resources.insert(picture.part_name, bytes);
         self.apply_action_caret_as(
-            vec![
-                // Registration first: the drawing that follows names this media id, and an
-                // operation must never be ordered before the thing it references.
-                Operation::SetMediaReference {
-                    id: media_id,
-                    reference: Some(Box::new(reference)),
-                },
-                Operation::InsertInlineObject {
-                    at: Pos::new(owner, offset),
-                    node: Box::new(InlineNode::Drawing(Box::new(drawing))),
-                },
-                // After the drawing: the lock names it.
-                Operation::SetObjectLocks {
-                    object: drawing_id,
-                    locks: word_picture_locks,
-                },
-            ],
+            picture.operations,
             // Where `InsertInlineObject` alone left the caret: at the insertion point.
             Pos::new(owner, offset),
             HistoryKind::ObjectInsert,
@@ -3440,7 +3377,7 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = deleteObject)]
     pub fn delete_object(&mut self, node: &str) -> Result<EditResult, JsValue> {
         let object = node_id(node)?;
-        self.apply_action(vec![Operation::DeleteObject { object }])
+        self.apply_action(casual_doc_command::objects::delete_object(object))
             .map_err(to_js)
     }
 
@@ -3473,7 +3410,7 @@ impl WasmDocument {
     /// generates `word/charts/chartN.xml` — plus its content-type `Override` and,
     /// when the chart names a workbook the package contains, its own `_rels` —
     /// for a chart object whose part is not in the retained side table and whose
-    /// projection is [`ChartCoverage::Complete`], which is exactly the flag
+    /// projection is [`ChartCoverage::Complete`](casual_doc_model::v1::ChartCoverage::Complete), which is exactly the flag
     /// `ChartCoverage::permits_regeneration` gates on. That closes `109` HF-256;
     /// before it, saving an inserted chart emitted a relationship pointing at a
     /// part the package did not contain.
@@ -3500,56 +3437,19 @@ impl WasmDocument {
         offset: u32,
         kind: &str,
     ) -> Result<EditResult, JsValue> {
-        use casual_doc_model::v1::{ChartId, EmbeddedObject, EmbeddedPart, Extent};
-
-        let group =
-            chart_group_for_kind(kind).ok_or_else(|| to_js(unpainted_chart_refusal(kind)))?;
+        // The kind is judged before the caret, as it always was.
+        chart_group_for_kind(kind).ok_or_else(|| to_js(unpainted_chart_refusal(kind)))?;
         let owner = node_id(node)?;
-        let exhausted = || to_js("id space exhausted".into());
-        let object_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-        let chart_id = ChartId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
-        // 5" x 3", Word's own default chart frame, which fits a 6.5" text column
-        // at every margin preset this editor offers.
-        let extent = Extent {
-            width_emu: 4_572_000,
-            height_emu: 2_743_200,
-        };
-        // The part name and relationship id are derived from the object's own
-        // identity rather than counted, so two inserts — including two concurrent
-        // ones on different replicas — cannot mint the same name. A writer that
-        // regenerates the part (CHART-002) assigns the package's own ids at write
-        // time; these exist so the model is self-consistent in the meantime.
-        let object = EmbeddedObject {
-            id: object_id,
-            kind: EmbeddedKind::Chart,
-            part: EmbeddedPart {
-                relationship_id: format!("rIdChart{object_id}"),
-                relationship_type: EMBEDDED_CHART_RELATIONSHIP.to_owned(),
-                part_name: format!("word/charts/chart{object_id}.xml"),
-            },
-            extra_parts: Vec::new(),
-            // No cached preview: the projection draws, and a preview would be a
-            // second, stale picture of the same data.
-            preview: None,
-            extent,
-            prog_id: None,
-        };
-        let projection = default_chart_projection(object_id, group);
-        self.apply_action_caret_as(
-            vec![
-                Operation::InsertInlineObject {
-                    at: Pos::new(owner, offset),
-                    node: Box::new(InlineNode::EmbeddedObject(Box::new(object))),
-                },
-                Operation::SetChartDefinition {
-                    id: chart_id,
-                    chart: Some(Box::new(projection)),
-                },
-            ],
-            Pos::new(owner, offset),
-            HistoryKind::ChartInsert,
-        )
-        .map_err(to_js)
+        // The lowering is the registry's (`docs/181` §4.2 step 7): Word's 5" x 3"
+        // frame, ids that derive the part name, the object then its projection.
+        let ids = &mut self.edit_ids;
+        let ops =
+            casual_doc_command::charts::insert_chart(Pos::new(owner, offset), kind, &mut || {
+                ids.next_id().ok()
+            })
+            .map_err(to_js)?;
+        self.apply_action_caret_as(ops, Pos::new(owner, offset), HistoryKind::ChartInsert)
+            .map_err(to_js)
     }
 
     /// The current wrap mode of a floating object as one of the
@@ -3969,29 +3869,21 @@ impl WasmDocument {
                 });
             }
             if let Some(href) = &run.href {
-                let id = self
-                    .edit_ids
-                    .next_id()
-                    .map_err(|_| to_js("id space exhausted".into()))?;
-                let target = if let Some(anchor) = href.strip_prefix('#') {
-                    HyperlinkTarget::Internal(InternalTarget {
-                        anchor: anchor.to_owned(),
-                    })
-                } else {
-                    HyperlinkTarget::External(ExternalTarget {
-                        url: href.clone(),
-                        anchor: None,
-                    })
-                };
-                ops.push(Operation::SetHyperlink {
-                    range: EditRange {
-                        start: insert_start,
-                        end: insert_end,
-                    },
-                    id,
-                    target: Some(target),
-                    tooltip: None,
-                });
+                // The link lowering is the registry's (`docs/181` §4.2 step 4):
+                // `#name` is a bookmark, anything else a URL kept as written.
+                let ids = &mut self.edit_ids;
+                ops.extend(
+                    casual_doc_command::links::link_range(
+                        EditRange {
+                            start: insert_start,
+                            end: insert_end,
+                        },
+                        href,
+                        None,
+                        &mut || ids.next_id().ok(),
+                    )
+                    .map_err(to_js)?,
+                );
             }
             cursor = insert_end;
         }
@@ -4600,30 +4492,17 @@ impl WasmDocument {
         tooltip: Option<String>,
     ) -> Result<EditResult, JsValue> {
         let node = node_id(node)?;
-        let target = if let Some(anchor) = target.strip_prefix('#') {
-            HyperlinkTarget::Internal(InternalTarget {
-                anchor: anchor.to_owned(),
-            })
-        } else {
-            HyperlinkTarget::External(ExternalTarget {
-                url: target,
-                anchor: None,
-            })
-        };
-        let id = self
-            .edit_ids
-            .next_id()
-            .map_err(|_| to_js("id space exhausted".into()))?;
-        self.apply(Operation::SetHyperlink {
-            range: EditRange {
-                start: Pos::new(node, start),
-                end: Pos::new(node, end),
-            },
-            id,
-            target: Some(target),
+        let ids = &mut self.edit_ids;
+        let ops = casual_doc_command::links::set_hyperlink(
+            node,
+            start,
+            end,
+            &target,
             tooltip,
-        })
-        .map_err(to_js)
+            &mut || ids.next_id().ok(),
+        )
+        .map_err(to_js)?;
+        self.apply_action(ops).map_err(to_js)
     }
 
     /// Removes the hyperlink wrapper occupying exactly the supplied selection,
@@ -4636,15 +4515,9 @@ impl WasmDocument {
         end: u32,
     ) -> Result<EditResult, JsValue> {
         let node = node_id(node)?;
-        self.apply(Operation::SetHyperlink {
-            range: EditRange {
-                start: Pos::new(node, start),
-                end: Pos::new(node, end),
-            },
-            id: node,
-            target: None,
-            tooltip: None,
-        })
+        self.apply_action(casual_doc_command::links::remove_hyperlink(
+            node, start, end,
+        ))
         .map_err(to_js)
     }
 
@@ -4696,12 +4569,12 @@ impl WasmDocument {
         rgba: Option<String>,
     ) -> Result<EditResult, JsValue> {
         let node = node_id(shape)?;
-        let fill = match rgba {
-            Some(text) => Some(Fill::Solid(shape_rgba(&text)?)),
+        let color = match rgba {
+            Some(text) => Some(shape_rgba(&text)?),
             None => None,
         };
         self.apply_action_as(
-            vec![Operation::SetShapeFill { shape: node, fill }],
+            casual_doc_command::objects::set_shape_fill(node, color),
             HistoryKind::Formatting,
         )
         .map_err(to_js)
@@ -4724,28 +4597,15 @@ impl WasmDocument {
     ) -> Result<EditResult, JsValue> {
         let node = node_id(shape)?;
         // A picture's border is the same stroke on a different carrier, and a
-        // weight or colour change inherits the rest of it just the same.
-        let current = match find_shape(&self.document, node) {
-            Some(shape) => shape.stroke,
-            None => casual_doc_edit::picture_border(&self.document, node).flatten(),
-        };
-        let stroke = match rgba {
-            Some(text) => Some(ShapeStroke {
-                color: shape_rgba(&text)?,
-                ..stroke_base(current, width_emu)
-            }),
-            // A width with no colour changes only the weight — Word's Weight
-            // submenu, which never asks for a colour. Choosing a weight on an
-            // unoutlined shape gives it one, as Word does, rather than doing
-            // nothing.
-            None if width_emu.is_some() => Some(stroke_base(current, width_emu)),
+        // weight or colour change inherits the rest of it just the same; a width
+        // with no colour changes only the weight (Word's Weight submenu). The
+        // lowering is the registry's (`docs/181` §4.2 step 5).
+        let color = match rgba {
+            Some(text) => Some(shape_rgba(&text)?),
             None => None,
         };
         self.apply_action_as(
-            vec![Operation::SetShapeStroke {
-                shape: node,
-                stroke,
-            }],
+            casual_doc_command::objects::set_shape_outline(&self.document, node, color, width_emu),
             HistoryKind::Formatting,
         )
         .map_err(to_js)
@@ -4786,10 +4646,7 @@ impl WasmDocument {
             .running_section(page)
             .ok_or_else(|| to_js("the document has no section".to_string()))?;
         self.apply_action_as(
-            vec![Operation::SetSectionTitlePage {
-                section,
-                title_page: Some(enabled),
-            }],
+            casual_doc_command::sections::set_title_page(section, enabled),
             HistoryKind::Edit,
         )
         .map_err(to_js)
@@ -4800,7 +4657,7 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = setEvenOddVariant)]
     pub fn set_even_odd_variant(&mut self, enabled: bool) -> Result<EditResult, JsValue> {
         self.apply_action_as(
-            vec![Operation::SetEvenAndOddHeaders { enabled }],
+            casual_doc_command::sections::set_even_and_odd(enabled),
             HistoryKind::Edit,
         )
         .map_err(to_js)
@@ -5050,30 +4907,14 @@ impl WasmDocument {
                 }
             ));
         }
-        let exhausted = || "id space exhausted".to_string();
-        let body = HeaderFooterId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
-        let paragraph = self.edit_ids.next_id().map_err(|_| exhausted())?;
-        self.apply_action_caret_as(
-            vec![
-                Operation::CreateHeaderFooterBody {
-                    region,
-                    id: body,
-                    blocks: vec![BlockNode::Paragraph(Paragraph {
-                        id: paragraph,
-                        properties: ParagraphProperties::default().into(),
-                        inlines: Vec::new(),
-                    })],
-                },
-                Operation::SetSectionRunningRef {
-                    section,
-                    region,
-                    kind,
-                    reference: Some(body),
-                },
-            ],
-            Pos::new(paragraph, 0),
-            HistoryKind::Edit,
-        )
+        let ids = &mut self.edit_ids;
+        let lowered = casual_doc_command::sections::create_running_content(
+            section,
+            region,
+            kind,
+            &mut || ids.next_id().ok(),
+        )?;
+        self.apply_action_caret_as(lowered.operations, lowered.caret, HistoryKind::Edit)
     }
 
     /// Inserts an endnote at the caret, the endnote counterpart of
@@ -5251,28 +5092,12 @@ impl WasmDocument {
         let (start, end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
-        let bookmark = BookmarkId::new(
-            self.edit_ids
-                .next_id()
-                .map_err(|_| to_js("id space exhausted".into()))?,
-        );
-        let start_id = self
-            .edit_ids
-            .next_id()
-            .map_err(|_| to_js("id space exhausted".into()))?;
-        let end_id = self
-            .edit_ids
-            .next_id()
-            .map_err(|_| to_js("id space exhausted".into()))?;
-        self.apply(Operation::CreateBookmark {
-            bookmark,
-            name,
-            start,
-            start_id,
-            end,
-            end_id,
+        let ids = &mut self.edit_ids;
+        let ops = casual_doc_command::links::create_bookmark(name, start, end, &mut || {
+            ids.next_id().ok()
         })
-        .map_err(to_js)
+        .map_err(to_js)?;
+        self.apply_action(ops).map_err(to_js)
     }
 
     /// Renames the bookmark with the 32-hex `id` to `name`. One undoable action.
@@ -5281,7 +5106,7 @@ impl WasmDocument {
     pub fn rename_bookmark(&mut self, id: &str, name: String) -> Result<EditResult, JsValue> {
         let bookmark = BookmarkId::new(node_id(id)?);
         self.apply_action_caret_as(
-            vec![Operation::RenameBookmark { bookmark, name }],
+            casual_doc_command::links::rename_bookmark(bookmark, name),
             Pos::new(self.document.id(), 0),
             HistoryKind::BookmarkChange,
         )
@@ -5295,7 +5120,7 @@ impl WasmDocument {
     pub fn delete_bookmark(&mut self, id: &str) -> Result<EditResult, JsValue> {
         let bookmark = BookmarkId::new(node_id(id)?);
         self.apply_action_caret_as(
-            vec![Operation::DeleteBookmark { bookmark }],
+            casual_doc_command::links::delete_bookmark(bookmark),
             Pos::new(self.document.id(), 0),
             HistoryKind::BookmarkChange,
         )
@@ -5318,21 +5143,15 @@ impl WasmDocument {
         result_text: Option<String>,
     ) -> Result<EditResult, JsValue> {
         let nid = node_id(node)?;
-        let common = parse_common_field(kind, result_text.unwrap_or_default()).map_err(to_js)?;
-        let field_id = self
-            .edit_ids
-            .next_id()
-            .map_err(|_| to_js("id space exhausted".into()))?;
-        let result_id = self
-            .edit_ids
-            .next_id()
-            .map_err(|_| to_js("id space exhausted".into()))?;
-        let field = common.build(field_id, result_id);
-        self.apply(Operation::InsertField {
-            at: Pos::new(nid, offset),
-            field: Box::new(field),
-        })
-        .map_err(to_js)
+        let ids = &mut self.edit_ids;
+        let ops = casual_doc_command::fields::insert_field(
+            Pos::new(nid, offset),
+            kind,
+            result_text.unwrap_or_default(),
+            &mut || ids.next_id().ok(),
+        )
+        .map_err(to_js)?;
+        self.apply_action(ops).map_err(to_js)
     }
 
     /// Splits the paragraph at the caret into two (Enter). The caret lands at the
@@ -5371,21 +5190,16 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = insertLineBreak)]
     pub fn insert_line_break(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
         let nid = node_id(node)?;
-        let break_id = self
-            .edit_ids
-            .next_id()
-            .map_err(|_| to_js("id space exhausted".into()))?;
-        self.apply_action_as(
-            vec![Operation::InsertInlineObject {
-                at: Pos::new(nid, offset),
-                node: Box::new(InlineNode::Break(Break {
-                    id: break_id,
-                    kind: BreakKind::Line,
-                })),
-            }],
-            HistoryKind::LineBreak,
+        let ids = &mut self.edit_ids;
+        let ops = casual_doc_command::breaks::insert_break(
+            &self.document,
+            Pos::new(nid, offset),
+            BreakKind::Line,
+            &mut || ids.next_id().ok(),
         )
-        .map_err(to_js)
+        .map_err(to_js)?;
+        self.apply_action_as(ops, HistoryKind::LineBreak)
+            .map_err(to_js)
     }
 
     /// Ctrl+Enter / Ctrl+Shift+Enter: an explicit **page** or **column** break at
@@ -5435,21 +5249,14 @@ impl WasmDocument {
             "column" => (BreakKind::Column, HistoryKind::ColumnBreak),
             other => return Err(format!("unsupported break kind: {other}")),
         };
-        if let BreakSite::Elsewhere(refusal) = break_site(&self.document, nid) {
-            return Err(refusal.reason().to_owned());
-        }
-        let break_id = self
-            .edit_ids
-            .next_id()
-            .map_err(|_| "id space exhausted".to_owned())?;
-        self.apply_action_as(
-            vec![casual_doc_edit::breaks::insert_break_op(
-                Pos::new(nid, offset),
-                break_id,
-                kind,
-            )],
-            history,
-        )
+        let ids = &mut self.edit_ids;
+        let ops = casual_doc_command::breaks::insert_break(
+            &self.document,
+            Pos::new(nid, offset),
+            kind,
+            &mut || ids.next_id().ok(),
+        )?;
+        self.apply_action_as(ops, history)
     }
 
     /// A **section break** at the caret. `start` is the new section's start type —
@@ -5503,50 +5310,16 @@ impl WasmDocument {
             "oddPage" => SectionType::OddPage,
             other => return Err(format!("unsupported section break: {other}")),
         };
-        let split = section_split_site(&self.document, nid)
-            .map_err(|refusal| refusal.reason().to_owned())?;
-        let inherited = self
-            .document
-            .definitions()
-            .sections
-            .iter()
-            .find(|boundary| boundary.id == split.current)
-            .ok_or_else(|| {
-                refused!("section.not-defined", "The caret's section is not defined.").to_owned()
-            })?
-            .clone();
-        let new_section = SectionId::new(
-            self.edit_ids
-                .next_id()
-                .map_err(|_| "id space exhausted".to_owned())?,
-        );
-        let new_paragraph = self
-            .edit_ids
-            .next_id()
-            .map_err(|_| "id space exhausted".to_owned())?;
-        let mut ops = section_break_ops(
+        // The lowering is the registry's (`docs/181` §4.2 step 6): the split
+        // site, the inherited `w:sectPr` (form protection included) and the ids.
+        let ids = &mut self.edit_ids;
+        let lowered = casual_doc_command::breaks::section_break(
+            &self.document,
             Pos::new(nid, offset),
-            &split,
-            &inherited,
-            new_section,
-            new_paragraph,
             start,
-        );
-        // Word copies the split section's `w:sectPr` to the new break, `w:formProt`
-        // included; the model keeps that one flag in a side table keyed by section
-        // (`109` FID-AT-06), so it travels as its own operation, after the boundary
-        // it names exists.
-        if let Some(protected) = self
-            .document
-            .definitions()
-            .section_form_protection(split.current)
-        {
-            ops.push(Operation::SetSectionFormProtection {
-                section: new_section,
-                protected: Some(protected),
-            });
-        }
-        self.apply_action_caret_as(ops, Pos::new(new_paragraph, 0), HistoryKind::SectionBreak)
+            &mut || ids.next_id().ok(),
+        )?;
+        self.apply_action_caret_as(lowered.operations, lowered.caret, HistoryKind::SectionBreak)
     }
 
     /// Backspace at a collapsed caret: deletes the character before `offset`, or —
@@ -6067,12 +5840,10 @@ impl WasmDocument {
         end: u32,
     ) -> Result<EditResult, JsValue> {
         let nid = node_id(node)?;
-        self.apply(Operation::ClearFormatting {
-            range: EditRange {
-                start: Pos::new(nid, start),
-                end: Pos::new(nid, end),
-            },
-        })
+        // The one lowering an agent's `clear_formatting` uses too (`docs/181` §4.2).
+        self.apply_action(casual_doc_command::format::clear_ranges(&[(
+            nid, start, end,
+        )]))
         .map_err(to_js)
     }
 
@@ -6303,17 +6074,12 @@ impl WasmDocument {
             strike,
             ..FormatDelta::default()
         };
-        let ops: Vec<Operation> = self
-            .selection_subranges(start, end)
-            .into_iter()
-            .map(|(node, s, e)| Operation::FormatText {
-                range: EditRange {
-                    start: Pos::new(node, s),
-                    end: Pos::new(node, e),
-                },
-                delta: delta.clone(),
-            })
-            .collect();
+        // The one character-format lowering an agent's `set_text_format`
+        // uses too (`docs/181` §4.2 step 2).
+        let ops = casual_doc_command::format::format_ranges(
+            &self.selection_subranges(start, end),
+            &delta,
+        );
         if ops.is_empty() {
             return Err(to_js("empty selection".into()));
         }
@@ -6477,13 +6243,7 @@ impl WasmDocument {
         end_offset: u32,
         points: f32,
     ) -> Result<EditResult, JsValue> {
-        if !points.is_finite() || !(1.0..=1638.0).contains(&points) || (points * 2.0).fract() != 0.0
-        {
-            return Err(to_js(
-                "font size must be between 1 and 1638 points in 0.5 point steps".into(),
-            ));
-        }
-        let half_points = (points * 2.0).round() as u32;
+        let half_points = casual_doc_command::format::half_points(points).map_err(to_js)?;
         self.apply_run_format(
             start_node,
             start_offset,
@@ -6537,14 +6297,11 @@ impl WasmDocument {
         end_offset: u32,
         align: &str,
     ) -> Result<EditResult, JsValue> {
-        let value = match align {
-            "center" => Alignment::Center,
-            "end" | "right" => Alignment::End,
-            "justify" => Alignment::Justify,
-            _ => Alignment::Start,
-        };
+        let change = casual_doc_command::paragraph::ParagraphChange::Alignment(
+            casual_doc_command::paragraph::alignment(align),
+        );
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
-            p.alignment = Some(value);
+            change.apply(p);
         })
     }
 
@@ -6562,11 +6319,7 @@ impl WasmDocument {
         percent: u16,
     ) -> Result<EditResult, JsValue> {
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
-            let mut spacing = p.spacing.unwrap_or_default();
-            spacing.line_percent = Some(percent);
-            spacing.line_rule = None; // `auto` is the implicit-default rule
-            spacing.line_twips = None;
-            p.spacing = Some(spacing);
+            casual_doc_command::paragraph::ParagraphChange::LineSpacingMultiple(percent).apply(p);
         })
     }
 
@@ -6583,17 +6336,9 @@ impl WasmDocument {
         twips: i32,
         at_least: bool,
     ) -> Result<EditResult, JsValue> {
-        let rule = if at_least {
-            casual_doc_model::v1::LineRule::AtLeast
-        } else {
-            casual_doc_model::v1::LineRule::Exact
-        };
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
-            let mut spacing = p.spacing.unwrap_or_default();
-            spacing.line_rule = Some(rule);
-            spacing.line_twips = Some(twips.max(0));
-            spacing.line_percent = None;
-            p.spacing = Some(spacing);
+            casual_doc_command::paragraph::ParagraphChange::LineSpacingFixed { twips, at_least }
+                .apply(p);
         })
     }
 
@@ -6610,15 +6355,7 @@ impl WasmDocument {
         twips: i32,
     ) -> Result<EditResult, JsValue> {
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
-            let mut spacing = p.spacing.unwrap_or_default();
-            if twips < 0 {
-                spacing.before_twips = None;
-                spacing.before_auto = None;
-            } else {
-                spacing.before_twips = Some(twips);
-                spacing.before_auto = Some(false);
-            }
-            p.spacing = Some(spacing);
+            casual_doc_command::paragraph::ParagraphChange::SpaceBefore(twips).apply(p);
         })
     }
 
@@ -6635,15 +6372,7 @@ impl WasmDocument {
         twips: i32,
     ) -> Result<EditResult, JsValue> {
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
-            let mut spacing = p.spacing.unwrap_or_default();
-            if twips < 0 {
-                spacing.after_twips = None;
-                spacing.after_auto = None;
-            } else {
-                spacing.after_twips = Some(twips);
-                spacing.after_auto = Some(false);
-            }
-            p.spacing = Some(spacing);
+            casual_doc_command::paragraph::ParagraphChange::SpaceAfter(twips).apply(p);
         })
     }
 
@@ -6659,15 +6388,7 @@ impl WasmDocument {
         delta_twips: i32,
     ) -> Result<EditResult, JsValue> {
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
-            let mut indent = p.indentation.unwrap_or(Indentation {
-                start_twips: None,
-                end_twips: None,
-                first_line_twips: None,
-                hanging_twips: None,
-            });
-            let current = indent.start_twips.unwrap_or(0);
-            indent.start_twips = Some((current + delta_twips).max(0));
-            p.indentation = Some(indent);
+            casual_doc_command::paragraph::ParagraphChange::AdjustIndent(delta_twips).apply(p);
         })
     }
 
@@ -6683,9 +6404,7 @@ impl WasmDocument {
         twips: i32,
     ) -> Result<EditResult, JsValue> {
         self.apply_indent_props(start_node, start_offset, end_node, end_offset, move |p| {
-            let mut indent = p.indentation.unwrap_or(EMPTY_INDENT);
-            indent.start_twips = Some(twips.max(0));
-            p.indentation = Some(indent);
+            casual_doc_command::paragraph::ParagraphChange::StartIndent(twips).apply(p);
         })
     }
 
@@ -6701,9 +6420,7 @@ impl WasmDocument {
         twips: i32,
     ) -> Result<EditResult, JsValue> {
         self.apply_indent_props(start_node, start_offset, end_node, end_offset, move |p| {
-            let mut indent = p.indentation.unwrap_or(EMPTY_INDENT);
-            indent.end_twips = Some(twips.max(0));
-            p.indentation = Some(indent);
+            casual_doc_command::paragraph::ParagraphChange::EndIndent(twips).apply(p);
         })
     }
 
@@ -6720,18 +6437,7 @@ impl WasmDocument {
         twips: i32,
     ) -> Result<EditResult, JsValue> {
         self.apply_indent_props(start_node, start_offset, end_node, end_offset, move |p| {
-            let mut indent = p.indentation.unwrap_or(EMPTY_INDENT);
-            if twips > 0 {
-                indent.first_line_twips = Some(twips);
-                indent.hanging_twips = None;
-            } else if twips < 0 {
-                indent.hanging_twips = Some(-twips);
-                indent.first_line_twips = None;
-            } else {
-                indent.first_line_twips = None;
-                indent.hanging_twips = None;
-            }
-            p.indentation = Some(indent);
+            casual_doc_command::paragraph::ParagraphChange::FirstLineIndent(twips).apply(p);
         })
     }
 
@@ -6780,7 +6486,7 @@ impl WasmDocument {
             end_offset,
             HistoryKind::ListFormatting,
             move |p| {
-                p.numbering = target;
+                casual_doc_command::paragraph::ParagraphChange::Numbering(target).apply(p);
             },
         )
     }
@@ -7046,10 +6752,7 @@ impl WasmDocument {
             end_offset,
             HistoryKind::ListFormatting,
             move |p| {
-                if let Some(mut numbering) = p.numbering {
-                    numbering.level = (i32::from(numbering.level) + delta).clamp(0, 8) as u8;
-                    p.numbering = Some(numbering);
-                }
+                casual_doc_command::paragraph::ParagraphChange::ListLevel(delta).apply(p);
             },
         )
     }
@@ -7076,96 +6779,24 @@ impl WasmDocument {
             ));
         }
         let start_node = node_id(node)?;
-        let Some(current) =
-            paragraph_properties(&self.document, start_node).and_then(|p| p.numbering)
-        else {
-            return Err(to_js(
-                "restart numbering requires a numbered list item".into(),
-            ));
-        };
-        if self.list_format(current.instance) == Some(NumberFormat::Bullet) {
-            return Err(to_js(
-                "restart numbering requires a numbered list item".into(),
-            ));
-        }
-        let original = self
-            .document
-            .definitions()
-            .numbering
-            .get(&current.instance)
-            .ok_or_else(|| to_js("numbering definition not found".into()))?;
-        let abstract_ref = original.abstract_ref;
-        let mut overrides = original.overrides.clone();
-        if let Some(existing) = overrides.iter_mut().find(|o| o.level == current.level) {
-            existing.start = Some(value);
-        } else {
-            overrides.push(NumberingOverride {
-                level: current.level,
-                start: Some(value),
-                definition: None,
-            });
-        }
-        let new_instance = NumberingInstanceId::new(
-            self.edit_ids
-                .next_id()
-                .map_err(|_| to_js("id space exhausted".into()))?,
-        );
-        // **The instance is an operation, carried in the same transaction as the paragraphs
-        // that point at it.** It used to be a direct write into the numbering instance table
-        // here, before the scan below, and that had two consequences beyond undo: the
-        // refusal path a few lines down ("There are no numbered items here to restart")
-        // returned an error having ALREADY installed a definition nothing referenced, and a
-        // session would have fanned out paragraphs pointing at an instance no other replica
-        // had. Built here, applied below, and if the scan finds nothing the operation is
-        // never applied at all.
-        let install = Operation::SetNumberingInstance {
-            id: new_instance,
-            instance: Some(Box::new(NumberingInstance {
-                abstract_ref,
-                overrides,
-            })),
-        };
-
-        // One index over every paragraph, built by a single walk: resolving each
-        // id with `paragraph_properties` walks the whole document per node, so a
-        // scan bounded by the document was quadratic in its length.
-        let by_id = ParagraphIndex::build(&self.document);
-        let ordered = self.ordered_paragraphs();
-        let Some(index) = ordered.iter().position(|(id, _)| *id == start_node) else {
-            return Err(to_js("paragraph not found".into()));
-        };
-        let mut ops = Vec::new();
-        for (id, _) in ordered.into_iter().skip(index) {
-            let Some(properties) = by_id.properties(id) else {
-                continue;
-            };
-            let Some(numbering) = properties.numbering else {
-                break;
-            };
-            if numbering.instance != current.instance || numbering.level < current.level {
-                break;
-            }
-            let mut next = properties.clone();
-            next.numbering = Some(NumberingRef {
-                instance: new_instance,
-                level: numbering.level,
-            });
-            ops.push(Operation::SetParagraphProperties {
-                node: id,
-                properties: Box::new(next),
-            });
-        }
-        if ops.is_empty() {
-            return Err(to_js(
-                refused!(
-                    "list.restart-none",
-                    "There are no numbered items here to restart."
-                )
-                .into(),
-            ));
-        }
-        // Registration first: every paragraph operation that follows names this instance.
-        ops.insert(0, install);
+        // The one restart lowering an agent's `restart_numbering` uses too
+        // (`docs/181` §4.2 step 3). The instance is an operation in the same
+        // transaction as the paragraphs naming it, installed first, and never
+        // applied when nothing is restarted.
+        let ordered: Vec<NodeId> = self
+            .ordered_paragraphs()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        let ids = &mut self.edit_ids;
+        let ops = casual_doc_command::lists::restart(
+            &self.document,
+            &ordered,
+            start_node,
+            value,
+            &mut || ids.next_id().ok(),
+        )
+        .map_err(to_js)?;
         self.apply_action_caret_as(ops, Pos::new(start_node, 0), HistoryKind::ListFormatting)
             .map_err(to_js)
     }
@@ -7430,7 +7061,7 @@ impl WasmDocument {
             definition.multi_level_type = Some(casual_doc_model::v1::MultiLevelType::Multilevel);
             definition.levels = (0..9)
                 .map(|index| {
-                    let mut level = list_level(preset != "bullet", index);
+                    let mut level = casual_doc_command::lists::level(preset != "bullet", index);
                     if preset == "outline" {
                         apply_marker_spec(
                             &mut level,
@@ -7685,32 +7316,14 @@ impl WasmDocument {
             .ok_or_else(|| "table not found".to_owned())?
             .clone();
         let ids = &mut self.edit_ids;
-        let (replacement, at) = casual_doc_edit::table_structure::insert_row(
-            &original,
-            index as usize,
-            below,
-            &mut || ids.next_id().ok(),
-        )?;
-        let row = replacement.rows[at].clone();
-        let caret = first_paragraph_of_row(&row).map_or(Pos::new(nid, 0), |p| Pos::new(p, 0));
-        // One row inserted and nothing else changed is the fine-grained operation
-        // a concurrent edit transforms against; anything more (a degenerate merge
-        // the normalisation repaired) is the whole-table replacement.
-        let mut without = replacement.clone();
-        without.rows.remove(at);
-        let ops = if without == original {
-            vec![Operation::InsertRow {
-                table,
-                index: at as u32,
-                row: Box::new(row),
-            }]
-        } else {
-            vec![Operation::ReplaceTable {
-                table,
-                replacement: Box::new(replacement),
-            }]
-        };
-        self.apply_action_caret_as(ops, caret, HistoryKind::TableStructure)
+        // The one lowering an agent's row insert uses too (`docs/181` §4.2).
+        let edit =
+            casual_doc_command::table::insert_row(&original, index as usize, below, &mut || {
+                ids.next_id().ok()
+            })?;
+        let caret = first_paragraph_of_row(&edit.table.rows[edit.row])
+            .map_or(Pos::new(nid, 0), |p| Pos::new(p, 0));
+        self.apply_action_caret_as(edit.operations, caret, HistoryKind::TableStructure)
     }
 
     /// Deletes the table row containing the caret's paragraph. Refuses to delete a
@@ -7734,26 +7347,12 @@ impl WasmDocument {
         let original = find_table(&self.document, table)
             .ok_or_else(|| "table not found".to_owned())?
             .clone();
-        let index = index as usize;
-        let replacement = casual_doc_edit::table_structure::delete_rows(&original, index, index)?;
+        // The one lowering an agent's row delete uses too (`docs/181` §4.2).
+        let edit = casual_doc_command::table::delete_row(&original, index as usize)?;
         // Caret: the row now at this spot, else the one before it.
-        let target = index.min(replacement.rows.len() - 1);
-        let caret = first_paragraph_of_row(&replacement.rows[target])
+        let caret = first_paragraph_of_row(&edit.table.rows[edit.row])
             .map_or_else(|| Pos::new(nid, 0), |p| Pos::new(p, 0));
-        let mut expected = original.clone();
-        expected.rows.remove(index);
-        let ops = if expected == replacement {
-            vec![Operation::DeleteRow {
-                table,
-                index: index as u32,
-            }]
-        } else {
-            vec![Operation::ReplaceTable {
-                table,
-                replacement: Box::new(replacement),
-            }]
-        };
-        self.apply_action_caret_as(ops, caret, HistoryKind::TableStructure)
+        self.apply_action_caret_as(edit.operations, caret, HistoryKind::TableStructure)
     }
 
     /// Inserts an empty column left or right of the caret's cell (`after` = to its
@@ -7781,54 +7380,17 @@ impl WasmDocument {
         let original = find_table(&self.document, table)
             .ok_or_else(|| "table not found".to_owned())?
             .clone();
-        let grid = TableGridMap::build(&original);
-        let slot = *grid
-            .cell(row_index as usize, cell_index as usize)
-            .ok_or_else(|| "caret is not inside a table".to_owned())?;
-        let (boundary, beside) = if after {
-            (slot.end_column(), slot.last_column())
-        } else {
-            (slot.first_column, slot.first_column)
-        };
-        let width = original.grid.get(beside).and_then(|g| g.width_twips);
-        if grid.is_regular() {
-            let cells = self.empty_column_cells(original.rows.len())?;
-            let caret = cells
-                .get(row_index as usize)
-                .and_then(first_paragraph_of_cell)
-                .map_or(Pos::new(nid, 0), |p| Pos::new(p, 0));
-            return self.apply_action_caret_as(
-                vec![Operation::InsertColumn {
-                    table,
-                    index: boundary as u32,
-                    width,
-                    cells,
-                }],
-                caret,
-                HistoryKind::TableStructure,
-            );
-        }
         let ids = &mut self.edit_ids;
-        let replacement = casual_doc_edit::table_structure::insert_column(
+        // The one lowering an agent's column insert uses too (`docs/181` §4.2).
+        let edit = casual_doc_command::table::insert_column_beside(
             &original,
-            boundary,
-            width,
+            row_index as usize,
+            cell_index as usize,
+            after,
             &mut || ids.next_id().ok(),
         )?;
-        let new_grid = TableGridMap::build(&replacement);
-        let caret = new_grid
-            .cell_at(row_index as usize, boundary)
-            .and_then(|slot| replacement.rows[slot.row].cells.get(slot.cell))
-            .and_then(first_paragraph_of_cell)
-            .map_or(Pos::new(nid, 0), |p| Pos::new(p, 0));
-        self.apply_action_caret_as(
-            vec![Operation::ReplaceTable {
-                table,
-                replacement: Box::new(replacement),
-            }],
-            caret,
-            HistoryKind::TableStructure,
-        )
+        let caret = edit.caret.map_or(Pos::new(nid, 0), |p| Pos::new(p, 0));
+        self.apply_action_caret_as(edit.operations, caret, HistoryKind::TableStructure)
     }
 
     /// Deletes the column(s) the caret's cell covers — for a merged cell, every
@@ -7850,42 +7412,18 @@ impl WasmDocument {
         let original = find_table(&self.document, table)
             .ok_or_else(|| "table not found".to_owned())?
             .clone();
-        let grid = TableGridMap::build(&original);
-        let slot = *grid
-            .cell(row_index as usize, cell_index as usize)
-            .ok_or_else(|| "caret is not inside a table".to_owned())?;
-        let region = *grid.region(slot.region);
-        let replacement = casual_doc_edit::table_structure::delete_columns(
-            &original,
-            region.first_column,
-            region.last_column,
-        )?;
+        // The one lowering an agent's column delete uses too (`docs/181` §4.2).
         // Caret: the cell now at the deleted column's spot in this row, else the
         // one before it.
-        let new_grid = TableGridMap::build(&replacement);
-        let row = (row_index as usize).min(replacement.rows.len() - 1);
-        let column = region
-            .first_column
-            .min(new_grid.column_count().saturating_sub(1));
-        let caret = new_grid
-            .cell_at(row, column)
-            .or_else(|| new_grid.row(row).last())
-            .and_then(|slot| new_grid.anchor_of(slot.row, slot.cell))
-            .and_then(|(r, c)| replacement.rows[r].cells.get(c))
-            .and_then(first_paragraph_of_cell)
+        let edit = casual_doc_command::table::delete_column_of_cell(
+            &original,
+            row_index as usize,
+            cell_index as usize,
+        )?;
+        let caret = edit
+            .caret
             .map_or_else(|| Pos::new(nid, 0), |p| Pos::new(p, 0));
-        let ops = if grid.is_regular() && region.column_count() == 1 {
-            vec![Operation::DeleteColumn {
-                table,
-                index: region.first_column as u32,
-            }]
-        } else {
-            vec![Operation::ReplaceTable {
-                table,
-                replacement: Box::new(replacement),
-            }]
-        };
-        self.apply_action_caret_as(ops, caret, HistoryKind::TableStructure)
+        self.apply_action_caret_as(edit.operations, caret, HistoryKind::TableStructure)
     }
 
     /// Deletes the whole table the caret is in (the innermost table for a nested
@@ -7901,7 +7439,7 @@ impl WasmDocument {
         let caret = self
             .first_body_paragraph()
             .map_or_else(|| Pos::new(self.document.id(), 0), |p| Pos::new(p, 0));
-        self.apply_action_caret(vec![Operation::DeleteTable { table }], caret)
+        self.apply_action_caret(casual_doc_command::table::delete_table(table), caret)
             .map_err(to_js)
     }
 
@@ -7938,87 +7476,21 @@ impl WasmDocument {
         cols: u32,
     ) -> Result<EditResult, JsValue> {
         let nid = node_id(node)?;
-        let rows = rows.clamp(1, 50) as usize;
-        let cols = cols.clamp(1, 20) as usize;
-        let exhausted = || to_js("id space exhausted".into());
-
         let c = &self.default_config;
-        let content_w =
-            (c.page_size.width.raw() - c.margin_start.raw() - c.margin_end.raw()).max(cols as i32);
-        let col_w = content_w / cols as i32;
-
-        let grid = (0..cols)
-            .map(|_| GridColumn {
-                width_twips: Some(col_w),
+        let content_width = c.page_size.width.raw() - c.margin_start.raw() - c.margin_end.raw();
+        let index = casual_doc_command::table::body_index_after(&self.document, nid);
+        let ids = &mut self.edit_ids;
+        // The one lowering an agent's `insert_table` uses too (`docs/181` §4.2).
+        let edit =
+            casual_doc_command::table::insert_table(index, rows, cols, content_width, &mut || {
+                ids.next_id().ok()
             })
-            .collect();
-
-        let mut table_rows = Vec::with_capacity(rows);
-        for _ in 0..rows {
-            let mut cells = Vec::with_capacity(cols);
-            for _ in 0..cols {
-                let cell_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-                let para_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-                cells.push(TableCell {
-                    id: cell_id,
-                    properties: TableCellProperties {
-                        width: Some(TableWidth::dxa(col_w)),
-                        ..TableCellProperties::default()
-                    },
-                    blocks: vec![BlockNode::Paragraph(Paragraph {
-                        id: para_id,
-                        properties: ParagraphProperties::default().into(),
-                        inlines: Vec::new(),
-                    })],
-                });
-            }
-            let row_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-            table_rows.push(TableRow {
-                id: row_id,
-                properties: Default::default(),
-                cells,
-            });
-        }
-
-        let mut properties = TableProperties::default();
-        set_table_borders_preset(&mut properties.borders, "all", || {
-            border_edge("single", 0, 0, 0, 4)
-        });
-        let table_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-        let table = Table {
-            id: table_id,
-            grid,
-            grid_change: None,
-            properties,
-            rows: table_rows,
-        };
-
-        let index = self.body_index_after(nid) as u32;
-        let caret = table
-            .rows
-            .first()
-            .and_then(first_paragraph_of_row)
-            .map_or_else(|| Pos::new(table_id, 0), |p| Pos::new(p, 0));
-        self.apply_action_caret(
-            vec![Operation::InsertTable {
-                container: None,
-                index,
-                table: Box::new(table),
-            }],
-            caret,
-        )
-        .map_err(to_js)
-    }
-
-    /// The body index right after the top-level block that (recursively) contains
-    /// `node` — where [`insert_table`](Self::insert_table) drops a new table. Falls
-    /// back to the end of the body.
-    fn body_index_after(&self, node: NodeId) -> usize {
-        let blocks = self.document.body();
-        blocks
-            .iter()
-            .position(|b| block_holds(b, node))
-            .map_or(blocks.len(), |i| i + 1)
+            .map_err(to_js)?;
+        let caret = edit
+            .caret
+            .map_or_else(|| Pos::new(nid, 0), |p| Pos::new(p, 0));
+        self.apply_action_caret(edit.operations, caret)
+            .map_err(to_js)
     }
 
     /// Sets the table's horizontal alignment on the page: `"left"`/`"center"`/
@@ -9482,6 +8954,7 @@ impl WasmDocument {
             )
             .to_owned());
         }
+        debug_assert_eq!(table, original.id, "the range is this table's");
         let rect = casual_doc_edit::table_structure::GridRect {
             first_row: range.first_row(),
             last_row: range.last_row(),
@@ -9489,23 +8962,10 @@ impl WasmDocument {
             last_column: range.last_column(),
         };
         let ids = &mut self.edit_ids;
-        let (replacement, (r, c)) =
-            casual_doc_edit::table_structure::merge_rect(original, rect, &mut || {
-                ids.next_id().ok()
-            })?;
-        let caret = replacement.rows[r]
-            .cells
-            .get(c)
-            .and_then(first_paragraph_of_cell)
-            .map_or(Pos::new(fallback, 0), |p| Pos::new(p, 0));
-        self.apply_action_caret_as(
-            vec![Operation::ReplaceTable {
-                table,
-                replacement: Box::new(replacement),
-            }],
-            caret,
-            HistoryKind::TableStructure,
-        )
+        // The one lowering an agent's `table_merge_cells` uses too (`docs/181` §4.2).
+        let edit = casual_doc_command::table::merge(original, rect, &mut || ids.next_id().ok())?;
+        let caret = edit.caret.map_or(Pos::new(fallback, 0), |p| Pos::new(p, 0));
+        self.apply_action_caret_as(edit.operations, caret, HistoryKind::TableStructure)
     }
 
     /// The normalised rectangle two cell endpoints describe, as
@@ -9699,11 +9159,7 @@ impl WasmDocument {
         focus_node: &str,
         align: &str,
     ) -> Result<EditResult, JsValue> {
-        let va = match align {
-            "center" => CellVerticalAlignment::Center,
-            "bottom" => CellVerticalAlignment::Bottom,
-            _ => CellVerticalAlignment::Top,
-        };
+        let va = casual_doc_command::table::cell_vertical_alignment(align);
         self.apply_cell_props_range(anchor_node, focus_node, move |p| {
             p.vertical_alignment = Some(va);
         })
@@ -9774,22 +9230,30 @@ impl WasmDocument {
         let original = find_table(&self.document, table)
             .ok_or_else(|| "table not found".to_owned())?
             .clone();
-        // A caret in a covered continuation acts on the merged cell above it.
-        let (row, col) = TableGridMap::build(&original)
-            .anchor_of(row as usize, col as usize)
-            .ok_or_else(|| "caret is not inside a table".to_owned())?;
         let (rows, columns) = (
             requested_rows.unwrap_or(0) as usize,
             requested_columns.unwrap_or(0) as usize,
         );
-        let replacement = if rows == 0 && columns == 0 {
+        if rows == 0 && columns == 0 {
+            // The one lowering an agent's `table_split_cell` uses too
+            // (`docs/181` §4.2); it resolves a covered continuation to the
+            // merged cell above it.
             let ids = &mut self.edit_ids;
-            casual_doc_edit::table_structure::unmerge(&original, row, col, &mut || {
-                ids.next_id().ok()
-            })?
-        } else {
-            split_table_cell_counts(original, row, col, rows, columns, &mut self.edit_ids)?
-        };
+            let edit = casual_doc_command::table::unmerge(
+                &original,
+                row as usize,
+                col as usize,
+                &mut || ids.next_id().ok(),
+            )?;
+            let caret = edit.caret.map_or(Pos::new(nid, 0), |p| Pos::new(p, 0));
+            return self.apply_action_caret_as(edit.operations, caret, HistoryKind::TableStructure);
+        }
+        // A caret in a covered continuation acts on the merged cell above it.
+        let (row, col) = TableGridMap::build(&original)
+            .anchor_of(row as usize, col as usize)
+            .ok_or_else(|| "caret is not inside a table".to_owned())?;
+        let replacement =
+            split_table_cell_counts(original, row, col, rows, columns, &mut self.edit_ids)?;
         let caret = replacement
             .rows
             .get(row)
@@ -9832,11 +9296,7 @@ impl WasmDocument {
         node: &str,
         align: &str,
     ) -> Result<EditResult, JsValue> {
-        let va = match align {
-            "center" => CellVerticalAlignment::Center,
-            "bottom" => CellVerticalAlignment::Bottom,
-            _ => CellVerticalAlignment::Top,
-        };
+        let va = casual_doc_command::table::cell_vertical_alignment(align);
         self.apply_cell_props(node, move |p| p.vertical_alignment = Some(va))
     }
 
@@ -10129,25 +9589,15 @@ impl WasmDocument {
             .map(SectionId::new)
             .map_err(|_| to_js("invalid section id".to_string()))?;
         let caret = Pos::new(self.document.id(), 0);
-        self.apply_action_caret(
-            vec![Operation::SetSectionGeometry {
-                section,
-                page_size: payload.page_size,
-                page_margins: payload.page_margins,
-                orientation: payload.orientation,
-                columns: payload.columns.unwrap_or_else(|| {
-                    self.document
-                        .definitions()
-                        .sections
-                        .iter()
-                        .find(|candidate| candidate.id == section)
-                        .map(|candidate| candidate.columns.clone())
-                        .unwrap_or_else(default_section_columns)
-                }),
-            }],
-            caret,
-        )
-        .map_err(to_js)
+        let ops = casual_doc_command::sections::set_geometry(
+            &self.document,
+            section,
+            payload.page_size,
+            payload.page_margins,
+            payload.orientation,
+            payload.columns,
+        );
+        self.apply_action_caret(ops, caret).map_err(to_js)
     }
 
     /// Whether inside/outside margins swap on facing pages.
@@ -10198,34 +9648,15 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = insertBlankPage)]
     pub fn insert_blank_page(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
         let nid = node_id(node)?;
-        if let BreakSite::Elsewhere(refusal) = break_site(&self.document, nid) {
-            return Err(to_js(refusal.reason().to_owned()));
-        }
-        let first = self
-            .edit_ids
-            .next_id()
-            .map_err(|_| to_js("id space exhausted".into()))?;
-        let second = self
-            .edit_ids
-            .next_id()
-            .map_err(|_| to_js("id space exhausted".into()))?;
-        self.apply_action_caret_as(
-            vec![
-                casual_doc_edit::breaks::insert_break_op(
-                    Pos::new(nid, offset),
-                    first,
-                    BreakKind::Page,
-                ),
-                casual_doc_edit::breaks::insert_break_op(
-                    Pos::new(nid, offset),
-                    second,
-                    BreakKind::Page,
-                ),
-            ],
+        let ids = &mut self.edit_ids;
+        let ops = casual_doc_command::breaks::insert_blank_page(
+            &self.document,
             Pos::new(nid, offset),
-            HistoryKind::PageBreak,
+            &mut || ids.next_id().ok(),
         )
-        .map_err(to_js)
+        .map_err(to_js)?;
+        self.apply_action_caret_as(ops, Pos::new(nid, offset), HistoryKind::PageBreak)
+            .map_err(to_js)
     }
 
     /// The `NodeId` of the section that `node` sits in — the section a
@@ -10351,15 +9782,15 @@ impl WasmDocument {
             .map_err(|_| to_js("invalid section id".to_string()))?;
         let caret = Pos::new(self.document.id(), 0);
         self.apply_action_caret(
-            vec![Operation::SetSectionLineNumbering {
+            casual_doc_command::sections::set_line_numbering(
                 section,
-                line_numbering: LineNumbering {
+                LineNumbering {
                     count_by: payload.count_by,
                     start: payload.start,
                     distance: payload.distance,
                     restart: payload.restart,
                 },
-            }],
+            ),
             caret,
         )
         .map_err(to_js)
@@ -10432,19 +9863,12 @@ impl WasmDocument {
             .map_err(|_| to_js("invalid section id".to_string()))?;
         let caret = Pos::new(self.document.id(), 0);
         self.apply_action_caret(
-            vec![
-                Operation::SetSectionPageNumbering {
-                    section,
-                    page_numbering: PageNumbering {
-                        format: payload.page_number_format,
-                        start: payload.page_number_start,
-                    },
-                },
-                Operation::SetSectionVerticalAlignment {
-                    section,
-                    vertical_alignment: payload.vertical_alignment,
-                },
-            ],
+            casual_doc_command::sections::set_section_layout(
+                section,
+                payload.page_number_format,
+                payload.page_number_start,
+                payload.vertical_alignment,
+            ),
             caret,
         )
         .map_err(to_js)
@@ -10557,27 +9981,16 @@ impl WasmDocument {
             "text" => {
                 let rgb = parse_hex_color(&payload.color)
                     .ok_or_else(|| to_js("invalid watermark colour".to_string()))?;
-                Some(Box::new(Watermark {
-                    content: WatermarkContent::Text(WatermarkText {
-                        text: payload.text.clone(),
-                        font: payload
-                            .font
-                            .as_ref()
-                            .filter(|name| !name.is_empty())
-                            .map(|name| FontName { name: name.clone() }),
-                        size_half_points: payload.size_half_points,
-                        color: Rgba {
-                            r: rgb.r,
-                            g: rgb.g,
-                            b: rgb.b,
-                            a: 255,
-                        },
-                        bold: payload.bold,
-                        italic: payload.italic,
-                    }),
+                Some(Box::new(casual_doc_command::sections::text_watermark(
+                    payload.text.clone(),
+                    payload.font.as_deref(),
+                    payload.size_half_points,
+                    casual_doc_command::objects::opaque(rgb),
+                    payload.bold,
+                    payload.italic,
                     layout,
-                    semi_transparent: payload.semi_transparent,
-                }))
+                    payload.semi_transparent,
+                )))
             }
             "picture" => {
                 let media = payload
@@ -10613,16 +10026,7 @@ impl WasmDocument {
         //
         // One operation per section, in one action, so undo takes the whole stamp
         // off rather than leaving it on the sections the loop reached first.
-        let ops: Vec<Operation> = self
-            .document
-            .definitions()
-            .sections
-            .iter()
-            .map(|candidate| Operation::SetSectionWatermark {
-                section: candidate.id,
-                watermark: watermark.clone(),
-            })
-            .collect();
+        let ops = casual_doc_command::sections::set_watermark(&self.document, watermark);
         let caret = Pos::new(self.document.id(), 0);
         self.apply_action_caret(ops, caret).map_err(to_js)
     }
@@ -12976,7 +12380,7 @@ impl WasmDocument {
             )));
         }
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
-            p.style_ref = style_ref;
+            casual_doc_command::paragraph::ParagraphChange::Style(style_ref).apply(p);
         })
     }
 
@@ -15326,24 +14730,15 @@ impl WasmDocument {
         offset: u32,
     ) -> Result<EditResult, JsValue> {
         let node = node_id(node)?;
-        let exhausted = || to_js("id space exhausted".to_string());
-        let note = NoteId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
-        let reference_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-        let body_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-        let blocks = vec![BlockNode::Paragraph(Paragraph {
-            id: body_id,
-            properties: ParagraphProperties::default().into(),
-            inlines: Vec::new(),
-        })];
+        let ids = &mut self.edit_ids;
+        let lowered =
+            casual_doc_command::notes::insert_note(kind, Pos::new(node, offset), None, &mut || {
+                ids.next_id().ok()
+            })
+            .map_err(to_js)?;
         self.apply_action_caret_as(
-            vec![Operation::InsertNote {
-                kind,
-                note,
-                at: Pos::new(node, offset),
-                reference_id,
-                blocks,
-            }],
-            Pos::new(body_id, 0),
+            lowered.operations,
+            Pos::new(lowered.body, 0),
             HistoryKind::NoteChange,
         )
         .map_err(to_js)
@@ -16285,17 +15680,12 @@ impl WasmDocument {
         let (start, end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
-        let ops: Vec<Operation> = self
-            .selection_subranges(start, end)
-            .into_iter()
-            .map(|(node, s, e)| Operation::FormatText {
-                range: EditRange {
-                    start: Pos::new(node, s),
-                    end: Pos::new(node, e),
-                },
-                delta: delta.clone(),
-            })
-            .collect();
+        // The one character-format lowering an agent's `set_text_format`
+        // uses too (`docs/181` §4.2 step 2).
+        let ops = casual_doc_command::format::format_ranges(
+            &self.selection_subranges(start, end),
+            &delta,
+        );
         if ops.is_empty() {
             return Err(to_js("empty selection".into()));
         }
@@ -16365,26 +15755,20 @@ impl WasmDocument {
         let (start, end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
-        let mut ops = leading;
         // Read every selected paragraph's properties through ONE index first.
         // Select All makes this loop document-bounded, and `paragraph_properties`
         // walks the whole document per node; the index is also dropped before the
         // `&mut self` call below, which is why the read is a separate pass.
         let selected = self.selected_properties(start, end);
-        for (node, mut props) in selected {
-            let current = props.clone();
-            f(&mut props);
-            let props = self
-                .track_paragraph_change(&current, props)
-                .map_err(to_js)?;
-            ops.push(Operation::SetParagraphProperties {
-                node,
-                properties: Box::new(props),
-            });
-        }
-        if ops.is_empty() {
-            return Err(to_js("no paragraph in selection".into()));
-        }
+        // The one paragraph lowering an agent's paragraph and list commands use
+        // too (`docs/181` §4.2 steps 2-3); the tracker is Suggesting's.
+        let ops = casual_doc_command::paragraph::set_properties(
+            leading,
+            selected,
+            f,
+            &mut |current, next| self.track_paragraph_change(current, next),
+        )
+        .map_err(to_js)?;
         self.apply_action_as(ops, kind).map_err(to_js)
     }
 
@@ -16462,34 +15846,25 @@ impl WasmDocument {
             )
             .to_owned());
         }
-        let ops = targets
-            .into_iter()
-            .map(|(cell, mut properties)| {
-                f(&mut properties);
-                Operation::SetTableCellProperties {
-                    cell,
-                    properties: Box::new(properties),
-                }
-            })
-            .collect();
-        self.apply_action(ops)
+        // The one cell-format lowering an agent's `table_set_cell_format`
+        // uses too (`docs/181` §4.2).
+        self.apply_action(casual_doc_command::table::set_cell_properties(targets, f))
     }
 
     fn apply_cell_props(
         &mut self,
         node: &str,
-        f: impl FnOnce(&mut TableCellProperties),
+        f: impl Fn(&mut TableCellProperties),
     ) -> Result<EditResult, JsValue> {
         let nid = node_id(node)?;
         let (_table, cell) =
             locate_cell(&self.document, nid).ok_or_else(|| to_js("not in a table cell".into()))?;
-        let mut props =
+        let props =
             cell_properties(&self.document, cell).ok_or_else(|| to_js("cell not found".into()))?;
-        f(&mut props);
-        self.apply_action(vec![Operation::SetTableCellProperties {
-            cell,
-            properties: Box::new(props),
-        }])
+        self.apply_action(casual_doc_command::table::set_cell_properties(
+            vec![(cell, props)],
+            f,
+        ))
         .map_err(to_js)
     }
 
@@ -16518,7 +15893,6 @@ impl WasmDocument {
         let (start, end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
-        let mut ops = Vec::new();
         // Both the table-row test and the property read were linear walks of the
         // whole document, once per selected paragraph — two quadratics in one
         // loop under Select All. One index answers both, in one walk.
@@ -16530,20 +15904,16 @@ impl WasmDocument {
                 .filter_map(|node| by_id.properties(node).map(|props| (node, props)))
                 .collect()
         };
-        for (node, mut props) in selected {
-            let current = props.clone();
-            f(&mut props);
-            let props = self
-                .track_paragraph_change(&current, props)
-                .map_err(to_js)?;
-            ops.push(Operation::SetParagraphProperties {
-                node,
-                properties: Box::new(props),
-            });
-        }
-        if ops.is_empty() {
+        if selected.is_empty() {
             return Err(to_js("no body paragraph in selection".into()));
         }
+        let ops = casual_doc_command::paragraph::set_properties(
+            Vec::new(),
+            selected,
+            f,
+            &mut |current, next| self.track_paragraph_change(current, next),
+        )
+        .map_err(to_js)?;
         self.apply_action(ops).map_err(to_js)
     }
 
@@ -16558,94 +15928,15 @@ impl WasmDocument {
     /// (bullet/non-list rejection, no preceding list, already continuous) are
     /// unit-testable off-wasm, where constructing a `JsValue` error would panic.
     fn continue_list_inner(&mut self, start_node: NodeId) -> Result<EditResult, String> {
-        let Some(current) =
-            paragraph_properties(&self.document, start_node).and_then(|p| p.numbering)
-        else {
-            return Err(refused!(
-                "list.continue-not-numbered",
-                "Continue numbering works on a numbered list item."
-            )
-            .into());
-        };
-        if self.list_format(current.instance) == Some(NumberFormat::Bullet) {
-            return Err(refused!(
-                "list.continue-not-numbered",
-                "Continue numbering works on a numbered list item."
-            )
-            .into());
-        }
-
-        // One index over every paragraph, built by a single walk: resolving each
-        // id with `paragraph_properties` walks the whole document per node, so a
-        // scan bounded by the document was quadratic in its length.
-        let by_id = ParagraphIndex::build(&self.document);
-        let ordered = self.ordered_paragraphs();
-        let Some(index) = ordered.iter().position(|(id, _)| *id == start_node) else {
-            return Err("paragraph not found".into());
-        };
-
-        // Scan backward for the nearest earlier numbered item at the same level.
-        // A same-instance neighbor means the item is already part of that list, so
-        // there is nothing to continue; a different instance is the list to rejoin.
-        let mut target_instance = None;
-        for (id, _) in ordered[..index].iter().rev() {
-            let Some(numbering) = by_id.properties(*id).and_then(|p| p.numbering) else {
-                continue;
-            };
-            if self.list_format(numbering.instance) == Some(NumberFormat::Bullet) {
-                continue;
-            }
-            if numbering.level != current.level {
-                continue;
-            }
-            if numbering.instance == current.instance {
-                return Err(refused!(
-                    "list.continue-already",
-                    "This item already continues the numbering above it."
-                )
-                .into());
-            }
-            target_instance = Some(numbering.instance);
-            break;
-        }
-        let Some(target_instance) = target_instance else {
-            return Err(refused!(
-                "list.continue-no-preceding",
-                "There is no earlier numbered list at this level to continue from."
-            )
-            .into());
-        };
-
-        // Adopt the earlier list's instance for the caret item and the contiguous
-        // following run that shared its current instance and level.
-        let mut ops = Vec::new();
-        for (id, _) in ordered.into_iter().skip(index) {
-            let Some(properties) = by_id.properties(id) else {
-                continue;
-            };
-            let Some(numbering) = properties.numbering else {
-                break;
-            };
-            if numbering.instance != current.instance || numbering.level != current.level {
-                break;
-            }
-            let mut next = properties.clone();
-            next.numbering = Some(NumberingRef {
-                instance: target_instance,
-                level: current.level,
-            });
-            ops.push(Operation::SetParagraphProperties {
-                node: id,
-                properties: Box::new(next),
-            });
-        }
-        if ops.is_empty() {
-            return Err(refused!(
-                "list.continue-none",
-                "There are no numbered items here to continue."
-            )
-            .into());
-        }
+        // The one continue lowering an agent's `continue_numbering` uses too
+        // (`docs/181` §4.2 step 3).
+        let ordered: Vec<NodeId> = self
+            .ordered_paragraphs()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        let ops =
+            casual_doc_command::lists::continue_numbering(&self.document, &ordered, start_node)?;
         self.apply_action_caret_as(ops, Pos::new(start_node, 0), HistoryKind::ListFormatting)
     }
 
@@ -17025,27 +16316,11 @@ impl WasmDocument {
         } {
             return Ok((id, Vec::new()));
         }
-        let exhausted = || "id space exhausted".to_string();
-        let abs_id = AbstractNumberingId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
-        let inst_id = NumberingInstanceId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
-        let install = vec![
-            Operation::SetAbstractNumbering {
-                id: abs_id,
-                definition: Some(Box::new(AbstractNumbering {
-                    levels: (0..=8).map(|level| list_level(numbered, level)).collect(),
-                    multi_level_type: None,
-                    num_style_link: None,
-                    style_link: None,
-                })),
-            },
-            Operation::SetNumberingInstance {
-                id: inst_id,
-                instance: Some(Box::new(NumberingInstance {
-                    abstract_ref: abs_id,
-                    overrides: Vec::new(),
-                })),
-            },
-        ];
+        // The one list definition an agent's `set_list` installs too (`docs/181`
+        // §4.2 step 3).
+        let ids = &mut self.edit_ids;
+        let (inst_id, install) =
+            casual_doc_command::lists::new_definition(numbered, &mut || ids.next_id().ok())?;
         if numbered {
             self.numbered_list = Some(inst_id);
         } else {
@@ -17058,10 +16333,7 @@ impl WasmDocument {
     /// lets [`list_style_at`](Self::list_style_at) light the right button for a list
     /// the document already carried (not one this editor created).
     fn list_format(&self, instance: NumberingInstanceId) -> Option<NumberFormat> {
-        let defs = self.document.definitions();
-        let inst = defs.numbering.get(&instance)?;
-        let abstract_num = defs.abstract_numbering.get(&inst.abstract_ref)?;
-        abstract_num.levels.first().and_then(|l| l.num_fmt.clone())
+        casual_doc_command::lists::number_format(&self.document, instance)
     }
 
     /// Get-or-create the checklist numbering definition for a given checked state.
@@ -17083,29 +16355,13 @@ impl WasmDocument {
         } {
             return Ok((id, Vec::new()));
         }
-        let exhausted = || "id space exhausted".to_string();
-        let abs_id = AbstractNumberingId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
-        let inst_id = NumberingInstanceId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
-        let install = vec![
-            Operation::SetAbstractNumbering {
-                id: abs_id,
-                definition: Some(Box::new(AbstractNumbering {
-                    levels: (0..=8)
-                        .map(|level| checklist_level(checked, level))
-                        .collect(),
-                    multi_level_type: None,
-                    num_style_link: None,
-                    style_link: None,
-                })),
-            },
-            Operation::SetNumberingInstance {
-                id: inst_id,
-                instance: Some(Box::new(NumberingInstance {
-                    abstract_ref: abs_id,
-                    overrides: Vec::new(),
-                })),
-            },
-        ];
+        let ids = &mut self.edit_ids;
+        let (inst_id, install) = casual_doc_command::lists::install(
+            (0..=8)
+                .map(|level| checklist_level(checked, level))
+                .collect(),
+            &mut || ids.next_id().ok(),
+        )?;
         if checked {
             self.checklist_checked = Some(inst_id);
         } else {
@@ -17139,27 +16395,6 @@ impl WasmDocument {
     fn checklist_state_at(&self, node: NodeId) -> Option<bool> {
         let reference = paragraph_properties(&self.document, node)?.numbering?;
         self.checklist_state_of_instance(reference.instance)
-    }
-
-    /// `count` empty cells (one per row) for a new column: default cell properties,
-    /// a single empty paragraph each, all ids fresh from the edit namespace.
-    fn empty_column_cells(&mut self, count: usize) -> Result<Vec<TableCell>, String> {
-        let exhausted = || "id space exhausted".to_string();
-        let mut cells = Vec::with_capacity(count);
-        for _ in 0..count {
-            let cell_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-            let para_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-            cells.push(TableCell {
-                id: cell_id,
-                properties: TableCellProperties::default(),
-                blocks: vec![BlockNode::Paragraph(Paragraph {
-                    id: para_id,
-                    properties: ParagraphProperties::default().into(),
-                    inlines: Vec::new(),
-                })],
-            });
-        }
-        Ok(cells)
     }
 
     /// The first paragraph of the next (or previous) VISIBLE cell in reading
@@ -17949,14 +17184,9 @@ struct SectionLayoutSectionsJson {
     sections: Vec<SectionLayoutJson>,
 }
 
+#[cfg(test)]
 fn default_section_columns() -> SectionColumns {
-    SectionColumns {
-        count: 1,
-        space_twips: None,
-        separator: None,
-        equal_width: None,
-        columns: Vec::new(),
-    }
+    casual_doc_command::sections::single_column()
 }
 
 /// Sparse draft emitted by the host's table-properties inspector. Optional fields
@@ -19042,293 +18272,14 @@ struct InlineImageNode {
     embedded_kind: Option<&'static str>,
 }
 
-/// The OOXML relationship type of an embedded chart part.
-const EMBEDDED_CHART_RELATIONSHIP: &str =
-    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
-
-/// The chart family one of [`insert_chart`](WasmDocument::insert_chart)'s `kind`
-/// tokens names, or `None` when this build does not PAINT that family.
-///
-/// Deliberately keyed off what paints rather than off what the model represents.
-/// `ChartGroupKind` is the whole typed surface the importer projects into, and a
-/// family it can read but `casual_doc_layout::chart` cannot draw must not be
-/// insertable: a chart with no drawable projection paints `[chart]`, so offering
-/// one would be a gesture that inserts a label (`SKILL` §10). Today the two sets
-/// coincide — all seven variants paint — and this function is where they would
-/// diverge if an eighth were modeled first.
-///
-/// The defaults are Word's own: a column chart's 150% gap width and -27% overlap,
-/// a pie's twelve-o'clock first slice, a doughnut's 75% hole.
-///
-/// O(1).
-fn chart_group_for_kind(kind: &str) -> Option<ChartGroupKind> {
-    // Word's and ONLYOFFICE's chart-type picker: each family with its stacked
-    // and 100% stacked forms, a line with markers, a smoothed scatter. Stacked
-    // bars overlap fully (`c:overlap` 100), which is what stacking means for a
-    // bar and what Word writes for one.
-    let bar = |direction, grouping| {
-        let stacked = !matches!(grouping, BarGrouping::Clustered | BarGrouping::Standard);
-        ChartGroupKind::Bar {
-            direction,
-            grouping,
-            gap_width: 150,
-            overlap: if stacked { 100 } else { -27 },
-        }
-    };
-    let group = match kind {
-        "column" => bar(BarDirection::Column, BarGrouping::Clustered),
-        "column-stacked" => bar(BarDirection::Column, BarGrouping::Stacked),
-        "column-percent" => bar(BarDirection::Column, BarGrouping::PercentStacked),
-        "bar" => bar(BarDirection::Bar, BarGrouping::Clustered),
-        "bar-stacked" => bar(BarDirection::Bar, BarGrouping::Stacked),
-        "bar-percent" => bar(BarDirection::Bar, BarGrouping::PercentStacked),
-        "line" => ChartGroupKind::Line {
-            grouping: Grouping::Standard,
-            marker: false,
-        },
-        "line-markers" => ChartGroupKind::Line {
-            grouping: Grouping::Standard,
-            marker: true,
-        },
-        "line-stacked" => ChartGroupKind::Line {
-            grouping: Grouping::Stacked,
-            marker: false,
-        },
-        "line-percent" => ChartGroupKind::Line {
-            grouping: Grouping::PercentStacked,
-            marker: false,
-        },
-        "area" => ChartGroupKind::Area {
-            grouping: Grouping::Standard,
-        },
-        "area-stacked" => ChartGroupKind::Area {
-            grouping: Grouping::Stacked,
-        },
-        "area-percent" => ChartGroupKind::Area {
-            grouping: Grouping::PercentStacked,
-        },
-        "scatter" => ChartGroupKind::Scatter {
-            style: ScatterStyle::LineMarker,
-        },
-        "scatter-smooth" => ChartGroupKind::Scatter {
-            style: ScatterStyle::SmoothMarker,
-        },
-        "pie" => ChartGroupKind::Pie {
-            first_slice_angle: 0,
-        },
-        "doughnut" => ChartGroupKind::Doughnut {
-            first_slice_angle: 0,
-            hole_size: 75,
-        },
-        _ => return None,
-    };
-    Some(group)
-}
-
-/// The marked refusal for a chart family this build does not paint.
-///
-/// A sentence the reader can act on plus a stable code a host routes
-/// ([`casual_doc_edit::refusal`]), rather than a bare error name that
-/// `edit_errors.mjs` would replace with "that edit isn't supported for this
-/// selection yet" — which is wrong twice over here: the selection is fine, and
-/// the reader is never told which families they CAN have.
-///
-/// A function rather than an inline `format!` so it is assertable without
-/// crossing the `#[wasm_bindgen]` boundary: `to_js` panics under a native test.
-///
-/// Complexity: O(kind length), one allocation.
-fn unpainted_chart_refusal(kind: &str) -> String {
-    casual_doc_edit::refusal::marked(
-        "chart.unpainted-family",
-        &format!(
-            "This build draws bar, column, line, area, scatter, pie and doughnut \
-             charts; there is no {kind} chart to insert yet."
-        ),
-    )
-}
-
-/// Whether `group` is one of the pie families, which take ONE series and give
-/// each category its own colour.
-///
-/// Not a second copy of `casual_doc_layout::chart`'s `colors_by_point`, which
-/// answers a PAINT question (which colour a bar or a sector takes) and is right
-/// for pie whether or not a producer wrote `c:varyColors`. This answers an
-/// AUTHORING one: how many series the sample data has, whether the plot area
-/// gets axes at all, and what `c:varyColors` is written as. Both read the same
-/// two enum variants because that is what the OOXML families are, not because
-/// one is standing in for the other.
-const fn chart_colors_by_point(group: ChartGroupKind) -> bool {
-    matches!(
-        group,
-        ChartGroupKind::Pie { .. } | ChartGroupKind::Doughnut { .. }
-    )
-}
-
-/// One cached data range over `values`, with every index present.
-fn chart_range(values: &[&str]) -> DataRange {
-    DataRange {
-        // No `c:f`: the data is the cache, because there is no worksheet behind
-        // an inserted chart. A formula naming a range nothing holds would be a
-        // reference a spreadsheet editor could not resolve.
-        formula: None,
-        point_count: values.len() as u32,
-        points: values
-            .iter()
-            .enumerate()
-            .map(|(index, value)| (index as u32, ChartValue::Number((*value).to_owned())))
-            .collect(),
-        number_format: None,
-    }
-}
-
-/// The sample projection a freshly inserted chart carries, anchored to `object`.
-///
-/// The numbers are Word's own Insert ▸ Chart sample data — three series of four
-/// categories for the category families, one series of four for the pie families,
-/// and three x/y pairs for scatter. Sample data rather than an empty chart on
-/// purpose, and for the same reason Word does it: an empty plot area gives the
-/// author nothing to recognise, nothing to resize against, and no way to tell a
-/// working chart from a broken one.
-///
-/// [`ChartCoverage::Complete`] is not optimism: this projection IS the whole
-/// chart, there are no source bytes it fails to represent, and that is exactly
-/// the condition `ChartCoverage::permits_regeneration` asks about.
-///
-/// Complexity: O(1) — a fixed number of series and points.
-fn default_chart_projection(object: NodeId, group: ChartGroupKind) -> Chart {
-    let scatter = matches!(group, ChartGroupKind::Scatter { .. });
-    let categories = if chart_colors_by_point(group) {
-        chart_range(&["8.2", "3.2", "1.4", "1.2"])
-    } else {
-        chart_range(&["4.3", "2.5", "3.5", "4.5"])
-    };
-    let category_labels = if chart_colors_by_point(group) {
-        ["1st Qtr", "2nd Qtr", "3rd Qtr", "4th Qtr"]
-    } else {
-        ["Category 1", "Category 2", "Category 3", "Category 4"]
-    };
-    let label = |text: &str| ChartText {
-        text: text.to_owned(),
-        formula: None,
-    };
-    let category_names = DataRange {
-        formula: None,
-        point_count: category_labels.len() as u32,
-        points: category_labels
-            .iter()
-            .enumerate()
-            .map(|(index, name)| (index as u32, ChartValue::Text((*name).to_owned())))
-            .collect(),
-        number_format: None,
-    };
-    let series = if scatter {
-        vec![Series {
-            index: 0,
-            order: 0,
-            name: Some(label("Series 1")),
-            categories: None,
-            values: chart_range(&["2.7", "3.2", "0.8"]),
-            x_values: Some(chart_range(&["0.7", "1.8", "2.6"])),
-            ..Series::default()
-        }]
-    } else if chart_colors_by_point(group) {
-        vec![Series {
-            index: 0,
-            order: 0,
-            name: Some(label("Series 1")),
-            categories: Some(category_names),
-            values: categories,
-            ..Series::default()
-        }]
-    } else {
-        [
-            ("Series 1", ["4.3", "2.5", "3.5", "4.5"]),
-            ("Series 2", ["2.4", "4.4", "1.8", "2.8"]),
-            ("Series 3", ["2.0", "2.0", "3.0", "5.0"]),
-        ]
-        .iter()
-        .enumerate()
-        .map(|(index, (name, values))| Series {
-            index: index as u32,
-            order: index as u32,
-            name: Some(label(name)),
-            categories: Some(category_names.clone()),
-            values: chart_range(&values.map(|value| value)),
-            ..Series::default()
-        })
-        .collect()
-    };
-    // The pie families have no axes at all, which is why nothing declares one for
-    // them: `compose_chart` draws no axis furniture it was not given, and an axis
-    // id a group names but the plot area does not hold would be a dangling
-    // reference the model rejects.
-    let (axis_ids, axes) = if chart_colors_by_point(group) {
-        (Vec::new(), Vec::new())
-    } else {
-        (
-            vec![1, 2],
-            vec![
-                Axis {
-                    id: 1,
-                    // Scatter plots both axes as values; every other family puts
-                    // the categories on the bottom.
-                    kind: if scatter {
-                        AxisKind::Value
-                    } else {
-                        AxisKind::Category
-                    },
-                    position: Some(AxisPosition::Bottom),
-                    cross_axis_id: Some(2),
-                    ..Axis::default()
-                },
-                Axis {
-                    id: 2,
-                    kind: AxisKind::Value,
-                    position: Some(AxisPosition::Left),
-                    major_gridlines: true,
-                    cross_axis_id: Some(1),
-                    ..Axis::default()
-                },
-            ],
-        )
-    };
-    Chart {
-        font: None,
-        chart_retained: Vec::new(),
-        namespaces: Vec::new(),
-        space_retained: Vec::new(),
-        object,
-        coverage: ChartCoverage::Complete,
-        // No title and `autoTitleDeleted` unset: Word shows "Chart Title" as a
-        // placeholder the author replaces, and there is no title-editing gesture
-        // yet, so a chart that printed those two words with no way to change them
-        // would be worse than one with none.
-        title: None,
-        auto_title_deleted: true,
-        plot_area: PlotArea {
-            retained: Vec::new(),
-            groups: vec![ChartGroup {
-                retained: Vec::new(),
-                kind: group,
-                series,
-                axis_ids,
-                vary_colors: chart_colors_by_point(group),
-            }],
-            axes,
-        },
-        legend: Some(Legend {
-            font: None,
-            retained: Vec::new(),
-            position: LegendPosition::Bottom,
-            overlay: false,
-        }),
-        plot_visible_only: true,
-        display_blanks_as: DisplayBlanks::Gap,
-        vary_colors: chart_colors_by_point(group),
-        external_data: None,
-        dirty: false,
-    }
-}
+// The chart insertion lowering and its sample projection are the registry's
+// (`casual_doc_command::charts`, `docs/181` §4.2 step 7); `chart.rs` reads them
+// through these names.
+#[cfg(test)]
+use casual_doc_command::charts::{EMBEDDED_CHART_RELATIONSHIP, default_chart_projection};
+use casual_doc_command::charts::{
+    chart_colors_by_point, chart_group_for_kind, unpainted_chart_refusal,
+};
 
 /// Every embedded CHART object in `blocks`, in document order.
 ///
@@ -20374,22 +19325,10 @@ fn parse_pos(node: &str, offset: u32) -> Option<ModelPos> {
 /// Maps a `kind` string from [`WasmDocument::insert_field`] to a [`CommonField`],
 /// threading `result` as the cached display value for the clock/context kinds
 /// (`page`/`numpages` ignore it and recompute). Rejects an unrecognized kind.
+#[cfg(test)]
 fn parse_common_field(kind: &str, result: String) -> Result<CommonField, String> {
-    match kind.to_ascii_lowercase().as_str() {
-        "page" => Ok(CommonField::Page),
-        "numpages" => Ok(CommonField::NumPages),
-        "date" => Ok(CommonField::Date {
-            format: None,
-            result,
-        }),
-        "time" => Ok(CommonField::Time {
-            format: None,
-            result,
-        }),
-        "filename" => Ok(CommonField::FileName { result }),
-        "author" => Ok(CommonField::Author { result }),
-        other => Err(format!("unknown field kind: {other}")),
-    }
+    // One table for the editor and agents (`docs/181` §4.2 step 4).
+    casual_doc_command::fields::common_field(kind, result)
 }
 
 /// A [`ModelRange`] from two string-encoded anchors, or `None` if either id is
@@ -21640,15 +20579,7 @@ fn rotate_about(x: i32, y: i32, cx: i32, cy: i32, rotation_60k: i32) -> (i32, i3
 /// and `replacePicture`, so the two can never accept different files.
 /// **O(1)**.
 pub(crate) fn image_part_type(mime: &str) -> Option<(&'static str, &'static str)> {
-    Some(match mime.to_ascii_lowercase().as_str() {
-        "image/png" => ("image/png", "png"),
-        "image/jpeg" | "image/jpg" => ("image/jpeg", "jpeg"),
-        "image/gif" => ("image/gif", "gif"),
-        "image/bmp" | "image/x-ms-bmp" => ("image/bmp", "bmp"),
-        "image/tiff" => ("image/tiff", "tiff"),
-        "image/webp" => ("image/webp", "webp"),
-        _ => return None,
-    })
+    casual_doc_command::objects::image_part_type(mime)
 }
 
 fn bounded_emu(value: f64, min: i64, max: i64, label: &str) -> Result<i64, JsValue> {
@@ -22156,70 +21087,16 @@ fn object_authored_extent_in_inlines(inlines: &[InlineNode], object: NodeId) -> 
 /// `AnchoredDrawing`, floating `TextBox`, or anchored `Group`), searched across
 /// body paragraphs (through hyperlink/revision wrappers), table cells, block
 /// SDTs, and inline text-box bodies. `None` if `object` is not floating.
+#[cfg(test)]
 fn object_anchor(blocks: &[BlockNode], object: NodeId) -> Option<DrawingAnchor> {
-    for block in blocks {
-        match block {
-            BlockNode::Paragraph(paragraph) => {
-                if let Some(anchor) = object_anchor_in_inlines(&paragraph.inlines, object) {
-                    return Some(anchor);
-                }
-            }
-            BlockNode::Table(table) => {
-                for row in &table.rows {
-                    for cell in &row.cells {
-                        if let Some(anchor) = object_anchor(&cell.blocks, object) {
-                            return Some(anchor);
-                        }
-                    }
-                }
-            }
-            BlockNode::Sdt(sdt) => {
-                if let Some(anchor) = object_anchor(&sdt.blocks, object) {
-                    return Some(anchor);
-                }
-            }
-            BlockNode::AltChunk(_) => {}
-        }
-    }
-    None
+    casual_doc_command::objects::anchor_in_blocks(blocks, object)
 }
 
+/// The anchor of a floating object on any surface: the registry's one walk
+/// (`docs/181` §4.2 step 5), which also follows every inline wrapper (`109`
+/// HF-166, HF-214).
 fn object_anchor_any_surface(document: &Document, object: NodeId) -> Option<DrawingAnchor> {
-    surface_block_lists(document)
-        .into_iter()
-        .find_map(|blocks| object_anchor(blocks, object))
-}
-
-fn object_anchor_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<DrawingAnchor> {
-    for inline in inlines {
-        match inline {
-            InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
-                return Some(drawing.anchor.clone());
-            }
-            InlineNode::TextBox(text_box) => {
-                if text_box.id == object {
-                    return text_box.anchor.clone();
-                }
-                if let Some(anchor) = object_anchor(&text_box.blocks, object) {
-                    return Some(anchor);
-                }
-            }
-            InlineNode::Group(group) if group.id == object => return group.anchor.clone(),
-            // Every inline wrapper in the declared container set — `Hyperlink`,
-            // `Field`, `Revision`, `Sdt` — not the two this walk used to name. A
-            // float inside a field result (an `INCLUDEPICTURE` picture) or an
-            // inline content control painted and could not be clicked (`109`
-            // HF-166, HF-214).
-            other => {
-                if let Some(nested) = contained_inlines(other)
-                    && let Some(anchor) = object_anchor_in_inlines(nested, object)
-                {
-                    return Some(anchor);
-                }
-            }
-        }
-    }
-    None
+    casual_doc_command::objects::anchor_of(document, object)
 }
 
 /// Resolves a DrawingML group carrier through the same bounded body traversal
@@ -23822,30 +22699,6 @@ fn hex_of(color: Rgba) -> String {
     format!("#{:02x}{:02x}{:02x}", color.r, color.g, color.b)
 }
 
-/// The stroke to write, starting from the one the shape already has: only the
-/// width is overridden here, so dash and line-end decorations survive an edit
-/// made through a control that cannot express them.
-fn stroke_base(current: Option<ShapeStroke>, width_emu: Option<f64>) -> ShapeStroke {
-    const HAIRLINE_EMU: i64 = 9525; // 0.75pt, Word's default outline weight
-    let base = current.unwrap_or(ShapeStroke {
-        color: Rgba {
-            r: 0,
-            g: 0,
-            b: 0,
-            a: 255,
-        },
-        width_emu: HAIRLINE_EMU,
-        dash: None,
-        head_end: None,
-        tail_end: None,
-    });
-    ShapeStroke {
-        #[allow(clippy::cast_possible_truncation)] // clamped to a sane EMU range
-        width_emu: width_emu.map_or(base.width_emu, |w| w.clamp(0.0, MAX_EMU as f64) as i64),
-        ..base
-    }
-}
-
 /// The anchor a newly inserted floating object gets: square wrap, offset a little
 /// into the column from the paragraph it was inserted at, so it lands visibly
 /// near the caret instead of on top of the text.
@@ -23900,29 +22753,9 @@ fn shape_rgba(hex: &str) -> Result<Rgba, JsValue> {
 }
 
 fn parse_hex_color(hex: &str) -> Option<RgbColor> {
-    let h = hex.strip_prefix('#').unwrap_or(hex);
-    // `str::len` is a BYTE count, not a character count. A six-BYTE multibyte
-    // string — "ÀÁÂ" is three characters of two bytes each — passed this check
-    // and then sliced at byte 2, which is inside a character, and slicing a
-    // `str` off a character boundary panics.
-    //
-    // In WebAssembly a panic traps the module for good: every later call throws
-    // "unreachable executed", so the open and possibly unsaved document becomes
-    // unrecoverable. The reachable inputs are a pasted colour, a host-supplied
-    // underline colour and a shape fill — none of them sanitised, all of them
-    // ultimately attacker- or user-supplied.
-    //
-    // Requiring ASCII hex digits makes the length check mean what it looked like
-    // it meant, and leaves the slices below provably on character boundaries.
-    let bytes = h.as_bytes();
-    if bytes.len() != 6 || !bytes.iter().all(u8::is_ascii_hexdigit) {
-        return None;
-    }
-    Some(RgbColor {
-        r: u8::from_str_radix(&h[0..2], 16).ok()?,
-        g: u8::from_str_radix(&h[2..4], 16).ok()?,
-        b: u8::from_str_radix(&h[4..6], 16).ok()?,
-    })
+    // ASCII-hex only, so slicing can never land inside a multibyte character
+    // and trap the module; one parser for the editor and agents (`docs/181`).
+    casual_doc_command::format::parse_color(hex)
 }
 
 fn parse_underline_style(style: &str) -> Result<Option<UnderlineStyle>, String> {
@@ -23954,34 +22787,11 @@ fn underline_style_name(style: UnderlineStyle) -> String {
 }
 
 fn parse_highlight(name: &str) -> HighlightColor {
-    match name.to_ascii_lowercase().as_str() {
-        "none" | "" => HighlightColor::None,
-        "black" => HighlightColor::Black,
-        "blue" => HighlightColor::Blue,
-        "cyan" => HighlightColor::Cyan,
-        "green" => HighlightColor::Green,
-        "magenta" => HighlightColor::Magenta,
-        "red" => HighlightColor::Red,
-        "white" => HighlightColor::White,
-        "darkgray" | "gray" | "grey" => HighlightColor::DarkGray,
-        "lightgray" => HighlightColor::LightGray,
-        // The six dark variants `highlight_name` emits but this never accepted.
-        // Every one of them fell through to yellow, so text highlighted dark red
-        // in an imported Word document silently became yellow the moment it was
-        // copied or picked up with the format painter — a real formatting change
-        // the user neither asked for nor could see happen.
-        "darkblue" => HighlightColor::DarkBlue,
-        "darkcyan" => HighlightColor::DarkCyan,
-        "darkgreen" => HighlightColor::DarkGreen,
-        "darkmagenta" => HighlightColor::DarkMagenta,
-        "darkred" => HighlightColor::DarkRed,
-        "darkyellow" => HighlightColor::DarkYellow,
-        "yellow" => HighlightColor::Yellow,
-        // An unrecognised name is not a highlight. Inventing yellow for it is
-        // what let the six names above stay broken without a single complaint
-        // reaching the code: the wrong answer looked like a deliberate one.
-        _ => HighlightColor::None,
-    }
+    // The one table an agent's highlight is read through too (`docs/181`
+    // §4.2 step 2). An unrecognised name is not a highlight: the toolbar clears
+    // rather than inventing yellow, which once hid six dark names that fell
+    // through to yellow and silently recoloured imported text.
+    casual_doc_command::format::parse_highlight(name).unwrap_or(HighlightColor::None)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -24027,13 +22837,6 @@ fn node_id(node: &str) -> Result<NodeId, JsValue> {
 /// `WasmDocument::add_comment_inner`).
 fn node_id_msg(node: &str) -> Result<NodeId, String> {
     NodeId::from_str(node).map_err(|_| format!("invalid node id: {node}"))
-}
-
-/// Converts a crop inset fraction (0..=1 of a source edge) to the model's
-/// `a:srcRect` unit (thousandths of a percent, [`CROP_FULL`] = 100%). The edit op
-/// clamps the result into the model's valid crop range.
-fn fraction_to_crop(fraction: f64) -> i32 {
-    (fraction * f64::from(CROP_FULL)).round() as i32
 }
 
 /// Where the caret lands after `op` is applied: end of an insertion, start of a
@@ -25015,45 +23818,7 @@ fn checklist_level(checked: bool, level: u8) -> NumberingLevel {
         picture_bullet: None,
         num_fmt: Some(NumberFormat::Bullet),
         lvl_text: Some(glyph.to_string()),
-        ..list_level(false, level)
-    }
-}
-
-fn list_level(numbered: bool, level: u8) -> NumberingLevel {
-    let (num_fmt, lvl_text) = if numbered {
-        let placeholders = (1..=level + 1)
-            .map(|part| format!("%{part}"))
-            .collect::<Vec<_>>()
-            .join(".");
-        (NumberFormat::Decimal, format!("{placeholders}."))
-    } else {
-        let glyph = ["\u{2022}", "\u{25e6}", "\u{25aa}", "\u{2013}"][usize::from(level) % 4];
-        (NumberFormat::Bullet, glyph.to_string())
-    };
-    NumberingLevel {
-        picture_bullet: None,
-        level,
-        start: 1,
-        num_fmt: Some(num_fmt),
-        lvl_text: Some(lvl_text),
-        lvl_jc: Some(LevelJustification::Start),
-        suff: Some(LevelSuffix::Tab),
-        is_lgl: false,
-        paragraph_properties: Some(ParagraphProperties {
-            indentation: Some(Indentation {
-                start_twips: Some(720 + i32::from(level) * 360),
-                end_twips: None,
-                first_line_twips: None,
-                hanging_twips: Some(360),
-            }),
-            ..ParagraphProperties::default()
-        }),
-        run_properties: None,
-        style_ref: None,
-        lvl_restart: None,
-        pstyle: None,
-        template_code: None,
-        tentative: false,
+        ..casual_doc_command::lists::level(false, level)
     }
 }
 
@@ -25526,14 +24291,6 @@ impl Format {
         self.strike_state
     }
 }
-
-/// An all-unset indentation, the base a ruler drag mutates.
-const EMPTY_INDENT: Indentation = Indentation {
-    start_twips: None,
-    end_twips: None,
-    first_line_twips: None,
-    hanging_twips: None,
-};
 
 /// A page's ruler geometry (twips).
 #[wasm_bindgen]

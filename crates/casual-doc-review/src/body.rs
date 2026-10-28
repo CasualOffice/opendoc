@@ -4171,104 +4171,16 @@ pub fn contained_inlines_mut(inline: &mut InlineNode) -> Option<&mut Vec<InlineN
     }
 }
 
-/// Every block story an inline owns, at any container depth — both the `TextBox`
-/// and the `Group` axis of [`inline_descent`], plus the inline containers that can
-/// hold either. **O(inlines in the subtree)**.
-///
-/// For the walks that ask "is this node anywhere under this paragraph", where a
-/// text box's own paragraphs count.
-pub fn inline_block_stories<'a>(
-    inlines: &'a [InlineNode],
-    visit: &mut impl FnMut(&'a [BlockNode]),
-) {
-    for inline in inlines {
-        match inline_descent(inline) {
-            InlineDescent::Inlines(nested) => inline_block_stories(nested, visit),
-            InlineDescent::Blocks(blocks) => visit(blocks),
-            InlineDescent::Group(children) => group_block_stories(children, visit),
-            InlineDescent::Leaf => {}
-        }
-    }
-}
-
-/// Every block story a group's children own, in paint order — the `Group` axis of
-/// [`inline_descent`] flattened. **O(children in the subtree)**; a picture or a
-/// shape is a leaf.
-pub fn group_block_stories<'a>(
-    children: &'a [GroupChild],
-    visit: &mut impl FnMut(&'a [BlockNode]),
-) {
-    for child in children {
-        match child {
-            GroupChild::TextBox(text_box) => visit(&text_box.blocks),
-            GroupChild::Group(nested) => group_block_stories(&nested.children, visit),
-            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
-        }
-    }
-}
-
-/// Every paragraph in `blocks`, in document order, with the paragraph itself in
-/// hand — the traversal [`collect_block_text`] is written on top of.
-///
-/// This exists because the alternative shape is quadratic. A caller that
-/// collects node **ids** and then asks the document about each one pays a linear
-/// by-id walk (`find_paragraph_any`, `paragraph_properties`,
-/// `surface_block_lists`) **per id**, which on a 1.3M-paragraph document is
-/// ~1.7 × 10¹² block visits — the Outline panel measured 1,443 ms at 20,000
-/// blocks and 5,565 ms at 40,000 (3.86× for 2× the document: quadratic), and it
-/// would not have finished at all on the owner's file. One walk that carries the
-/// node is the fix, and it is the only fix: a faster by-id lookup would still be
-/// the wrong shape. `docs/116`.
-pub fn visit_paragraphs(blocks: &[BlockNode], visit: &mut impl FnMut(&Paragraph)) {
-    for block in blocks {
-        match block {
-            BlockNode::Paragraph(paragraph) => {
-                visit(paragraph);
-                visit_text_box_paragraphs(&paragraph.inlines, visit);
-            }
-            BlockNode::Table(table) => {
-                for row in &table.rows {
-                    for cell in &row.cells {
-                        visit_paragraphs(&cell.blocks, visit);
-                    }
-                }
-            }
-            BlockNode::Sdt(sdt) => visit_paragraphs(&sdt.blocks, visit),
-            BlockNode::AltChunk(_) => {}
-        }
-    }
-}
-
-/// The paragraphs of every block story an inline list owns, at any container
-/// depth. **O(inlines in the subtree)**; descent is [`inline_descent`]'s, so the
-/// container set is the complete one.
-///
-/// It descended `TextBox`, `Hyperlink`, `Field` and `Group` and stopped, so a text
-/// box inside an inline content control or inside a tracked insertion had no
-/// paragraphs as far as every caller of [`visit_paragraphs_all_surfaces`] was
-/// concerned — and those callers are the reference scan (so a caption in such a
-/// box was missing from the cross-reference picker and from renumbering), the
-/// object map, and endpoint ordering.
-pub fn visit_text_box_paragraphs(inlines: &[InlineNode], visit: &mut impl FnMut(&Paragraph)) {
-    for inline in inlines {
-        match inline_descent(inline) {
-            InlineDescent::Inlines(nested) => visit_text_box_paragraphs(nested, visit),
-            InlineDescent::Blocks(blocks) => visit_paragraphs(blocks, visit),
-            InlineDescent::Group(children) => {
-                group_block_stories(children, &mut |blocks| visit_paragraphs(blocks, visit));
-            }
-            InlineDescent::Leaf => {}
-        }
-    }
-}
-
-/// [`visit_paragraphs`] over every block surface, in the order
-/// `collect_block_text_all_surfaces` produces.
-pub fn visit_paragraphs_all_surfaces(document: &Document, visit: &mut impl FnMut(&Paragraph)) {
-    for blocks in surface_block_lists(document) {
-        visit_paragraphs(blocks, visit);
-    }
-}
+// `inline_block_stories`, `group_block_stories`, `visit_paragraphs` and
+// `visit_text_box_paragraphs` live in `casual_doc_model::v1` (containers), and
+// `visit_paragraphs_all_surfaces` in `casual_doc_edit`, beside the
+// `surface_block_lists` it walks: moved down so the capability registry
+// (`casual-doc-command`, no layout dependency) walks paragraphs the same way
+// (`docs/181` §12, lane references). Re-exported so every caller keeps its path.
+pub use casual_doc_edit::visit_paragraphs_all_surfaces;
+pub use casual_doc_model::v1::{
+    group_block_stories, inline_block_stories, visit_paragraphs, visit_text_box_paragraphs,
+};
 
 pub fn collect_block_text(blocks: &[BlockNode], out: &mut Vec<(NodeId, String)>) {
     visit_paragraphs(blocks, &mut |paragraph| {

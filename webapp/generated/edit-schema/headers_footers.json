@@ -1,0 +1,134 @@
+{
+  "description": "One edit of the `headers_footers` family of the OpenDoc edit vocabulary 1.3.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "description": "Add an empty header to a section, ready for insert_text.",
+      "properties": {
+        "op": {
+          "const": "insert_header",
+          "type": "string"
+        },
+        "pages": {
+          "default": "default",
+          "description": "Which pages it is for (default every page).",
+          "oneOf": [
+            {
+              "const": "default",
+              "description": "Every page that has no first-page or even-page variant (the default).",
+              "type": "string"
+            },
+            {
+              "const": "first",
+              "description": "The section's first page (needs a different first page).",
+              "type": "string"
+            },
+            {
+              "const": "even",
+              "description": "Even pages (needs different odd and even pages).",
+              "type": "string"
+            }
+          ]
+        },
+        "section": {
+          "default": 0,
+          "description": "The 0-based section (default 0).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Add an empty footer to a section, ready for insert_text.",
+      "properties": {
+        "op": {
+          "const": "insert_footer",
+          "type": "string"
+        },
+        "pages": {
+          "default": "default",
+          "description": "Which pages it is for (default every page).",
+          "oneOf": [
+            {
+              "const": "default",
+              "description": "Every page that has no first-page or even-page variant (the default).",
+              "type": "string"
+            },
+            {
+              "const": "first",
+              "description": "The section's first page (needs a different first page).",
+              "type": "string"
+            },
+            {
+              "const": "even",
+              "description": "Even pages (needs different odd and even pages).",
+              "type": "string"
+            }
+          ]
+        },
+        "section": {
+          "default": 0,
+          "description": "The 0-based section (default 0).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Give a section's first page its own header and footer, or not.",
+      "properties": {
+        "enabled": {
+          "description": "On or off.",
+          "type": "boolean"
+        },
+        "op": {
+          "const": "set_different_first_page",
+          "type": "string"
+        },
+        "section": {
+          "description": "The 0-based section.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op",
+        "section",
+        "enabled"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Give even and odd pages their own headers and footers, or not\n(document-wide).",
+      "properties": {
+        "enabled": {
+          "description": "On or off.",
+          "type": "boolean"
+        },
+        "op": {
+          "const": "set_different_odd_even",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "enabled"
+      ],
+      "type": "object"
+    }
+  ]
+}

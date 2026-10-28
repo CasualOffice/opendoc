@@ -1,20 +1,23 @@
 //! Captions and cross-references, host side (`docs/105` OO-005).
 //!
 //! `casual-doc-edit`'s `references` module writes the OOXML field markup and reads
-//! no document. This module is the other half: it reads the document — **once per
-//! command** — and turns the host's request into one undoable action.
+//! no document. `casual_doc_command::references` reads the document — **once per
+//! command** — and lowers a request to operations; agents call the same lowering
+//! (`docs/181` §12, lane references). This module is the editor's glue: it parses
+//! the host's arguments, lends the command what the editor's layout knows
+//! ([`EditorFacts`]: the heading cascade, and for a page reference the page the
+//! target is painted on), and applies the result as one undoable action.
 //!
-//! # The performance rule this module exists to obey
+//! # The performance rule the lowering obeys
 //!
 //! The feature that most wants to enumerate a whole document is the one that
 //! lists every caption in it. The defect this repository already paid for
 //! (`docs/116`) was `documentOutline` calling `paragraph_properties` per node —
 //! a by-id lookup that is itself a whole-document walk, so 1.3M paragraphs cost
-//! 1.3M walks. Every enumerating function here therefore states its complexity,
-//! and the shape is always the same: **one walk, carrying what it needs**, never a
-//! lookup inside a loop over nodes. `casual_doc_edit::document_scans` counts the
-//! walks, and `references_read_the_document_a_bounded_number_of_times` in the test
-//! module asserts that count does not grow with the document — which a timing
+//! 1.3M walks. The shape is always one walk carrying what it needs.
+//! `casual_doc_edit::document_scans` counts the walks, and
+//! `references_read_the_document_a_bounded_number_of_times` in the test module
+//! asserts that count does not grow with the document — which a timing
 //! threshold cannot do.
 //!
 //! Typing stays O(1) because nothing here is on the keystroke path: a caption's
@@ -22,590 +25,18 @@
 //! field's result, and repainted from the model thereafter. A document full of
 //! captions costs a keystroke exactly what a document full of text costs.
 
+use std::collections::HashMap;
+
+use casual_doc_command::references::{self, ReferenceScan, ScanRequest, TargetRecord};
+use casual_doc_edit::Pos;
 use casual_doc_edit::references::{
-    BUILT_IN_CAPTION_LABELS, CAPTION_STYLE_NAME, CaptionChapter, CaptionNumberFormat,
-    CaptionPosition, CaptionSeparator, CaptionSpec, REFERENCE_BOOKMARK_PREFIX, ReferenceTo,
-    above_below, caption_paragraph, caption_style, reference_field,
-};
-use casual_doc_edit::{Operation, Pos, Surface, surface_of};
-// Its own line, not folded into a sorted block: a shared `use` list is where
-// parallel lanes collide (rustfmt is set to Preserve).
-use casual_doc_edit::refused;
-use casual_doc_model::NodeId;
-use casual_doc_model::v1::{
-    BlockNode, Bookmark, BookmarkId, Document, FieldKind, InlineNode, Paragraph, StyleId,
+    CaptionChapter, CaptionNumberFormat, CaptionPosition, CaptionSeparator, CaptionSpec,
+    ReferenceTo,
 };
 use wasm_bindgen::prelude::*;
 
-use crate::{EditResult, HistoryKind, WasmDocument, node_id, node_plain_text, to_js};
-
-/// One caption the document already holds.
-///
-/// `number` is the caption's 1-based position within its own label's sequence,
-/// resolved the way a `SEQ` field resolves it: per sequence name, restarting at
-/// the heading level named by a `\s` switch when there is one.
-#[derive(Clone, Debug)]
-struct CaptionRecord {
-    /// The caption paragraph.
-    node: NodeId,
-    /// Document order among all paragraphs (for above/below and for renumbering).
-    order: usize,
-    /// The `SEQ` sequence name, which is the caption's label.
-    label: String,
-    /// The sequence number the document would resolve to if its fields were
-    /// updated now — what a renumbering pass computes.
-    number: u32,
-    /// The number the caption's `SEQ` field currently **shows**: its cached result,
-    /// which is what a reader sees and what a picker must therefore list.
-    ///
-    /// Kept separate from `number` deliberately. Reporting the recomputed number to
-    /// the host would make the caption list unable to disagree with the model —
-    /// which meant a build that cached the wrong number in the document still
-    /// listed the right one, and every numbering guard passed. That was found by
-    /// mutating the numbering and watching the guards stay green.
-    cached_number: String,
-    /// The number format the existing `SEQ` switch asks for.
-    format: CaptionNumberFormat,
-    /// The caption paragraph's plain text (tabs flattened to spaces).
-    text: String,
-    /// The paragraph's own inline tree, kept so a renumber can rewrite just the
-    /// `SEQ` field's cached run without a second lookup by id.
-    inlines: Vec<InlineNode>,
-}
-
-/// One cross-reference target: a heading, a bookmark, a note, or a caption.
-#[derive(Clone, Debug)]
-struct TargetRecord {
-    node: NodeId,
-    order: usize,
-    text: String,
-}
-
-/// What a caller wants out of one walk, so the walk allocates nothing per
-/// paragraph it was not asked about.
-///
-/// This struct is the difference between a scan that costs O(captions) memory and
-/// one that costs O(document) memory. An earlier shape of this module kept a
-/// `(NodeId, order)` row and a nine-word chapter snapshot for **every** paragraph
-/// so that two questions could be answered afterwards — about 50 MB of tables on
-/// the owner's 1.3M-paragraph file, to look up two nodes. The questions are known
-/// before the walk starts, so they are answered during it.
-#[derive(Clone, Copy, Default)]
-struct ScanRequest<'a> {
-    /// The handful of nodes whose document order, chapter ordinal and leading
-    /// `_Ref` bookmark the caller needs — a command's target and its caret.
-    interest: &'a [NodeId],
-    /// Whether each caption keeps its inline tree. Only renumbering needs it, and
-    /// only renumbering pays for it.
-    keep_inlines: bool,
-}
-
-/// Everything one walk of the document yields for this feature.
-#[derive(Default)]
-struct ReferenceScan {
-    /// Every caption, in document order, numbered.
-    captions: Vec<CaptionRecord>,
-    /// Every heading, in document order, as `(level, node, text)`.
-    headings: Vec<(u8, NodeId, String)>,
-    /// One row per node in the request's `interest`, recorded as the walk passed
-    /// it: its document order, the running chapter ordinal per heading level, and
-    /// the `_Ref` bookmark opening at its offset 0 if there is one.
-    interest: Vec<InterestRecord>,
-    /// How many paragraphs the walk saw, which is where a node the walk never
-    /// found would have ranked.
-    paragraphs: usize,
-}
-
-/// What the walk recorded about one node the caller asked about.
-struct InterestRecord {
-    node: NodeId,
-    order: usize,
-    chapters: [u32; 9],
-    /// The paragraph's plain-text byte length — the end offset of a bookmark that
-    /// covers the whole paragraph.
-    ///
-    /// This is deliberately NOT the length of the trimmed display text a picker
-    /// shows. Using the trimmed length as a bookmark's end offset is a defect this
-    /// module shipped for exactly one commit: it never errors (a trimmed length is
-    /// never longer), so every test passed, and the bookmark silently covered less
-    /// of the paragraph than the reference claimed — which another word processor
-    /// then displays as truncated text.
-    length: u32,
-    /// The byte offset just past the first `SEQ` field's cached result, when the
-    /// paragraph is a caption. This is the boundary Word's *Only label and number*
-    /// and *Only caption text* reference kinds bookmark on either side of.
-    after_sequence: Option<u32>,
-    /// Every `_Ref`-prefixed bookmark in the paragraph, as `(id, start, end)`, so a
-    /// second reference of the same kind to the same target reuses the bookmark
-    /// whose extent actually matches rather than making another.
-    reference_bookmarks: Vec<(BookmarkId, u32, u32)>,
-}
-
-impl ReferenceScan {
-    fn caption_labels(&self) -> Vec<String> {
-        let mut labels: Vec<String> = BUILT_IN_CAPTION_LABELS
-            .iter()
-            .map(|label| (*label).to_owned())
-            .collect();
-        for caption in &self.captions {
-            if !labels.iter().any(|known| known == &caption.label) {
-                labels.push(caption.label.clone());
-            }
-        }
-        labels.sort();
-        labels.dedup();
-        labels
-    }
-
-    /// The row the walk recorded for `node`. O(interest), which a command keeps to
-    /// the two nodes it asked about — never O(document), which is the whole reason
-    /// `ScanRequest::interest` exists.
-    fn found(&self, node: NodeId) -> Option<&InterestRecord> {
-        self.interest.iter().find(|record| record.node == node)
-    }
-
-    /// O(interest). The node's document order, or the end of the document when the walk never
-    /// saw it (so a caption asked for against an unknown node sorts last rather
-    /// than first, which would silently renumber everything).
-    fn order(&self, node: NodeId) -> usize {
-        self.found(node)
-            .map_or(self.paragraphs, |record| record.order)
-    }
-
-    /// O(interest). The 1-based ordinal of the enclosing chapter at `level` — what Word's
-    /// `STYLEREF N \s` shows. At least 1: a caption before the first heading
-    /// belongs to chapter 1, which is what Word displays there too.
-    fn chapter_ordinal(&self, node: NodeId, level: u8) -> u32 {
-        let index = usize::from(level.clamp(1, 9)) - 1;
-        self.found(node)
-            .map_or(0, |record| record.chapters[index])
-            .max(1)
-    }
-
-    /// The `_Ref` bookmark on `node` covering exactly `[start, end)`, if there is
-    /// one. O(interest x bookmarks on that paragraph) — both small by construction.
-    fn reference_bookmark(&self, node: NodeId, start: u32, end: u32) -> Option<BookmarkId> {
-        self.found(node).and_then(|record| {
-            record
-                .reference_bookmarks
-                .iter()
-                .find(|(_, from, to)| *from == start && *to == end)
-                .map(|(bookmark, _, _)| *bookmark)
-        })
-    }
-}
-
-/// The `\s` restart level a `SEQ` instruction asks for, if any.
-/// O(instruction length); O(1) in document size.
-fn sequence_restart_level(instruction: &str) -> Option<u8> {
-    let tokens: Vec<&str> = instruction.split_whitespace().collect();
-    let index = tokens.iter().position(|token| *token == "\\s")?;
-    tokens.get(index + 1)?.parse::<u8>().ok()
-}
-
-/// The number format a `SEQ` instruction's `\*` picture switch asks for, or
-/// arabic when it has none. O(instruction length); O(1) in document size.
-fn sequence_format(instruction: &str) -> CaptionNumberFormat {
-    let tokens: Vec<&str> = instruction.split_whitespace().collect();
-    let Some(index) = tokens.iter().position(|token| *token == "\\*") else {
-        return CaptionNumberFormat::Arabic;
-    };
-    match tokens.get(index + 1).copied().unwrap_or("") {
-        "ROMAN" => CaptionNumberFormat::UpperRoman,
-        "roman" => CaptionNumberFormat::LowerRoman,
-        "ALPHABETIC" => CaptionNumberFormat::UpperLetter,
-        "alphabetic" => CaptionNumberFormat::LowerLetter,
-        _ => CaptionNumberFormat::Arabic,
-    }
-}
-
-/// The cached result text of the first `SEQ` field in an inline tree — the number
-/// a reader currently sees. O(inlines in the paragraph's own subtree).
-///
-/// Descent is [`crate::contained_inlines`]'s, so it reaches a `SEQ` nested in any
-/// depth of hyperlink, field, tracked revision or inline content control, and
-/// cannot fall out of step with [`sequence_of`]: a caption this function cannot
-/// read the cached number of, but `sequence_of` can identify, is a caption the
-/// picker lists with an empty number.
-fn sequence_cached_number(inlines: &[InlineNode]) -> String {
-    fn find(inlines: &[InlineNode]) -> Option<String> {
-        for inline in inlines {
-            if let InlineNode::Field(field) = inline
-                && matches!(field.kind, FieldKind::Seq { .. })
-            {
-                return Some(node_plain_text(&field.inlines));
-            }
-            if let Some(nested) = crate::contained_inlines(inline)
-                && let Some(found) = find(nested)
-            {
-                return Some(found);
-            }
-        }
-        None
-    }
-    find(inlines).unwrap_or_default()
-}
-
-/// The first `SEQ` field in an inline tree, as `(sequence name, instruction)`.
-/// A caption is identified by having one — which is exactly how Word identifies
-/// one for a table of figures, and is why it works on a caption a different
-/// producer wrote. O(inlines in the paragraph's own subtree).
-///
-/// A caption inside a hyperlink, a tracked insertion, an inline content control or
-/// another field's result is still a caption, and descent is
-/// [`crate::contained_inlines`]'s so the set of wrappers searched is the complete
-/// one rather than the three that were written out here.
-///
-/// It deliberately does NOT follow the `TextBox`/`Group` axis, and that is the
-/// difference between this and the other walks in this file. A caption inside a
-/// text box is a paragraph OF ITS OWN inside that box; it is identified when the
-/// paragraph walk reaches it. Descending here would instead label the paragraph
-/// that merely *anchors* the box as a caption, so one caption would be counted
-/// twice and the numbering would run 1, 1, 2. The reason a caption in a box was
-/// missing from the Table of Figures was the paragraph walk — `visit_text_box_paragraphs`
-/// skipping `Sdt` and `Revision` — not this function.
-fn sequence_of(inlines: &[InlineNode]) -> Option<(String, String)> {
-    for inline in inlines {
-        if let InlineNode::Field(field) = inline
-            && let FieldKind::Seq { name } = &field.kind
-        {
-            return Some((name.clone(), field.instruction.clone()));
-        }
-        if let Some(nested) = crate::contained_inlines(inline)
-            && let Some(found) = sequence_of(nested)
-        {
-            return Some(found);
-        }
-    }
-    None
-}
-
-/// The plain-text byte offsets a cross-reference needs from one paragraph: its
-/// total length, the offset just past its first `SEQ` field, and every
-/// `_Ref`-prefixed bookmark's extent.
-///
-/// Offsets are derived from `node_plain_text` rather than by re-implementing its
-/// rules: the authoritative definition of "the paragraph's plain text" is that one
-/// function, and an offset that disagrees with it by one byte is an edit applied in
-/// the wrong place. Each inline contributes `node_plain_text` of itself, which for
-/// the four inline containers is exactly the sum of its children's contributions
-/// (`append_node_plain_text` recurses through all four), so descending and
-/// accumulating gives the same total as measuring the container whole.
-///
-/// **The walk descends a paragraph's inline containers.** It used to look at
-/// top-level inlines only, so a `_Ref…` bookmark pair or a `SEQ` field nested in a
-/// hyperlink, an inline content control or a tracked insertion was invisible: the
-/// bookmark could not be reused, `after_sequence` was `None`, and an inserted
-/// cross-reference to that caption resolved to nothing. `Field` is descended for
-/// the bookmark markers inside a field result but its own `SEQ` detection stays at
-/// the outermost `SEQ`, which is the caption's.
-///
-/// It does NOT follow the `TextBox`/`Group` axis: a box's paragraphs have their own
-/// offset spaces, and an offset from one of them addressed against this paragraph
-/// would place a bookmark somewhere else entirely.
-///
-/// A legacy form CHECKBOX field is the one container whose plain text is not its
-/// children's (layout synthesises a single glyph), so it is not descended — a
-/// bookmark inside one has no representable offset here.
-///
-/// **O(inlines in the paragraph's subtree)**, one pass; it runs for the two
-/// paragraphs a command names, never per paragraph of the document. The previous
-/// shape re-ran `node_plain_text` over every prefix, which was O(inlines²).
-fn paragraph_offsets(
-    paragraph: &Paragraph,
-    bookmarks: &casual_doc_model::v1::DefinitionMap<BookmarkId, Bookmark>,
-) -> (u32, Option<u32>, Vec<(BookmarkId, u32, u32)>) {
-    struct Walk<'a> {
-        bookmarks: &'a casual_doc_model::v1::DefinitionMap<BookmarkId, Bookmark>,
-        offset: u32,
-        after_sequence: Option<u32>,
-        open: Vec<(BookmarkId, u32)>,
-        extents: Vec<(BookmarkId, u32, u32)>,
-    }
-
-    impl Walk<'_> {
-        fn inlines(&mut self, inlines: &[InlineNode]) {
-            for inline in inlines {
-                let own_len = node_plain_text(core::slice::from_ref(inline)).len() as u32;
-                match inline {
-                    InlineNode::BookmarkStart(marker) => {
-                        if self
-                            .bookmarks
-                            .get(&marker.bookmark)
-                            .is_some_and(|b| b.name.starts_with(REFERENCE_BOOKMARK_PREFIX))
-                        {
-                            self.open.push((marker.bookmark, self.offset));
-                        }
-                    }
-                    InlineNode::BookmarkEnd(marker) => {
-                        if let Some(position) = self
-                            .open
-                            .iter()
-                            .position(|(bookmark, _)| *bookmark == marker.bookmark)
-                        {
-                            let (bookmark, start) = self.open.remove(position);
-                            self.extents.push((bookmark, start, self.offset));
-                        }
-                    }
-                    _ => {}
-                }
-                let sequence = matches!(inline,
-                    InlineNode::Field(field) if matches!(field.kind, FieldKind::Seq { .. }));
-                if sequence && self.after_sequence.is_none() {
-                    // The boundary is past the whole field, label and number, so
-                    // the caption's own text starts here.
-                    self.after_sequence = Some(self.offset.saturating_add(own_len));
-                    self.offset = self.offset.saturating_add(own_len);
-                    continue;
-                }
-                match crate::contained_inlines(inline) {
-                    // A form checkbox's painted glyph is not its children's text,
-                    // so its interior has no offsets in this space.
-                    Some(_)
-                        if matches!(inline, InlineNode::Field(field)
-                            if field.form.is_some()) =>
-                    {
-                        self.offset = self.offset.saturating_add(own_len);
-                    }
-                    Some(nested) => self.inlines(nested),
-                    None => self.offset = self.offset.saturating_add(own_len),
-                }
-            }
-        }
-    }
-
-    let mut walk = Walk {
-        bookmarks,
-        offset: 0,
-        after_sequence: None,
-        open: Vec::new(),
-        extents: Vec::new(),
-    };
-    walk.inlines(&paragraph.inlines);
-    let length = walk.offset;
-    // A bookmark whose end marker is in a later paragraph covers this paragraph to
-    // its end; reporting it as zero-length would make us reuse it for a reference
-    // that then shows nothing.
-    for (bookmark, start) in std::mem::take(&mut walk.open) {
-        walk.extents.push((bookmark, start, length));
-    }
-    (length, walk.after_sequence, walk.extents)
-}
-
-/// Rewrites the cached result of the first `SEQ` field in `inlines` to `number`,
-/// returning the new inline tree — the vehicle for renumbering an existing
-/// caption without touching anything else about it. `None` when there is no
-/// `SEQ` field or its result already reads `number`, so a renumber that changes
-/// nothing produces no operation and no history entry.
-/// **O(inlines in the paragraph's subtree)**.
-///
-/// It rewrote a TOP-LEVEL `SEQ` only, which was consistent with [`sequence_of`]
-/// while that function was also top-level and became a half-fix the moment it was
-/// not: a caption whose `SEQ` sits inside a hyperlink or a tracked insertion would
-/// be LISTED and numbered by the scan and then silently skipped by every renumber,
-/// so Update Caption Numbers would report nothing stale while the document read
-/// 1, 1, 2. The two must agree about where a caption's `SEQ` can be, so the
-/// descent is the same one — [`crate::contained_inlines`].
-fn renumbered(
-    inlines: &[InlineNode],
-    number: &str,
-    next_id: &mut impl FnMut() -> Option<NodeId>,
-) -> Option<Vec<InlineNode>> {
-    /// Rewrites in place, reporting whether it found a `SEQ` and whether the
-    /// rewrite changed anything. `None` = no `SEQ` here; `Some(false)` = found one
-    /// already reading `number`.
-    fn rewrite(
-        inlines: &mut [InlineNode],
-        number: &str,
-        next_id: &mut impl FnMut() -> Option<NodeId>,
-    ) -> Option<bool> {
-        for inline in inlines {
-            if let InlineNode::Field(field) = inline
-                && matches!(field.kind, FieldKind::Seq { .. })
-            {
-                if node_plain_text(&field.inlines) == number {
-                    return Some(false);
-                }
-                let first = match field.inlines.first() {
-                    Some(InlineNode::Run(run)) => Some((run.id, run.properties.clone())),
-                    _ => None,
-                };
-                let (id, properties) = match first {
-                    Some(pair) => pair,
-                    None => (
-                        next_id()?,
-                        casual_doc_model::v1::RunProperties::default().into(),
-                    ),
-                };
-                field.inlines = vec![InlineNode::Run(casual_doc_model::v1::Run {
-                    id,
-                    properties,
-                    text: number.to_owned(),
-                })];
-                return Some(true);
-            }
-            // The same container set the caption was IDENTIFIED through, so a
-            // caption this engine lists is a caption this engine can renumber.
-            if let Some(nested) = crate::contained_inlines_mut(inline)
-                && let Some(changed) = rewrite(nested, number, next_id)
-            {
-                return Some(changed);
-            }
-        }
-        None
-    }
-
-    let mut out = inlines.to_vec();
-    match rewrite(&mut out, number, next_id) {
-        Some(true) => Some(out),
-        Some(false) | None => None,
-    }
-}
-
-/// Why a caption cannot attach to `target`, or `None` when it can.
-///
-/// Word refuses a caption in a header, footer or note, and so does ONLYOFFICE
-/// (`apiBuilder.js:12272`: "the current paragraph must be in the document (not in
-/// the footer/header)"). Saying so is better than putting it somewhere the reader
-/// will not find it.
-///
-/// This is a function rather than an inline check because a `JsValue` cannot be
-/// constructed on a native target, so a refusal asserted only through the binding
-/// cannot be tested at all — the assertion panics inside `wasm-bindgen` before it
-/// reaches the guard. **O(document), one scan** (`surface_of`).
-fn caption_target_refusal(document: &Document, target: NodeId) -> Option<&'static str> {
-    match surface_of(document, target) {
-        Some(Surface::Body) => None,
-        Some(_) => Some(
-            "a caption can only be inserted in the document body, not in a header, footer or note",
-        ),
-        None => Some("the caption's target is not in the document"),
-    }
-}
-
-/// Where a block sits: the `InsertBlocks` container (`None` = the document body,
-/// else the owning cell or content control) and the block's 0-based index in it.
-///
-/// **O(document), ONE walk** — the body only, because that is the surface
-/// `InsertBlocks` addresses and the surface Word itself restricts a caption to
-/// (ONLYOFFICE says the same in `apiBuilder.js:12272`: "the current paragraph must
-/// be in the document (not in the footer/header)").
-///
-/// `node` may name the block itself (a paragraph, a table, a content control) or
-/// anything inside one of its paragraphs (a selected picture or text box), so a
-/// host that has a picture selected does not have to work out which paragraph
-/// anchors it.
-///
-/// "Inside one of its paragraphs" now includes a text box's or a group's own block
-/// content, because [`inlines_hold`] follows that axis. What it does NOT do is
-/// return the text box as the CONTAINER: the caption for a picture in a box lands
-/// in the body beside the block that anchors the box. That is not a judgement
-/// about where a caption belongs — it is what the engine can address.
-/// `Operation::InsertBlocks` resolves `container` through
-/// `find_container_blocks_mut`, which handles table cells and block-level SDTs and
-/// has no text-box case, so returning the box's id would build a path that always
-/// fails `NodeNotFound`, which is a dead control with extra steps. Inserting inside
-/// a box needs that container support first; reported as a row.
-fn locate_block(document: &Document, node: NodeId) -> Option<(Option<NodeId>, usize)> {
-    fn search(
-        blocks: &[BlockNode],
-        container: Option<NodeId>,
-        node: NodeId,
-    ) -> Option<(Option<NodeId>, usize)> {
-        for (index, block) in blocks.iter().enumerate() {
-            let named = match block {
-                BlockNode::Paragraph(paragraph) => {
-                    paragraph.id == node || inlines_hold(&paragraph.inlines, node)
-                }
-                BlockNode::Table(table) => table.id == node,
-                BlockNode::Sdt(sdt) => sdt.id == node,
-                BlockNode::AltChunk(chunk) => chunk.id == node,
-            };
-            if named {
-                return Some((container, index));
-            }
-        }
-        // Not at this level: descend, so a caption on a picture inside a table
-        // cell lands in that cell rather than being refused.
-        for block in blocks {
-            match block {
-                BlockNode::Table(table) => {
-                    for row in &table.rows {
-                        for cell in &row.cells {
-                            if let Some(found) = search(&cell.blocks, Some(cell.id), node) {
-                                return Some(found);
-                            }
-                        }
-                    }
-                }
-                BlockNode::Sdt(sdt) => {
-                    if let Some(found) = search(&sdt.blocks, Some(sdt.id), node) {
-                        return Some(found);
-                    }
-                }
-                _ => {}
-            }
-        }
-        None
-    }
-    search(document.body(), None, node)
-}
-
-/// Whether an inline tree holds the node `id`, at any depth — including inside a
-/// text box's or a group's own block content. **O(nodes in the paragraph's
-/// subtree)**, one pass, no by-id lookup.
-///
-/// It searched the four inline-in-inline containers only, so a picture selected
-/// inside a text box or a DrawingML group was not "held" by any paragraph and
-/// `locate_block` refused: Insert Caption on the most ordinary floated figure in
-/// Word — a picture in a text box with its caption beneath — answered "a caption
-/// attaches to something in the document body".
-///
-/// Both descent axes are followed here because the question is containment, not
-/// offsets. The caption still goes in the BODY, beside the block that anchors the
-/// box, not inside the box: `Operation::InsertBlocks` resolves a container id
-/// through `find_container_blocks_mut`, which knows table cells and block-level
-/// SDTs and does not know a text box, so naming the box as the container would
-/// build a path that always fails `NodeNotFound`. Placing a caption inside a text
-/// box needs that engine-side container support and is reported as a row rather
-/// than half-built here.
-fn inlines_hold(inlines: &[InlineNode], id: NodeId) -> bool {
-    if inlines.iter().any(|inline| inline.id() == id) {
-        return true;
-    }
-    for inline in inlines {
-        if let Some(nested) = crate::contained_inlines(inline)
-            && inlines_hold(nested, id)
-        {
-            return true;
-        }
-    }
-    let mut found = false;
-    crate::inline_block_stories(inlines, &mut |blocks| {
-        found = found || blocks_hold(blocks, id);
-    });
-    found
-}
-
-/// Whether a block list holds the node `id`, at any depth — the block half of
-/// [`inlines_hold`]. **O(nodes in the subtree)**.
-fn blocks_hold(blocks: &[BlockNode], id: NodeId) -> bool {
-    blocks.iter().any(|block| match block {
-        BlockNode::Paragraph(paragraph) => {
-            paragraph.id == id || inlines_hold(&paragraph.inlines, id)
-        }
-        BlockNode::Table(table) => {
-            table.id == id
-                || table.rows.iter().any(|row| {
-                    row.cells
-                        .iter()
-                        .any(|cell| cell.id == id || blocks_hold(&cell.blocks, id))
-                })
-        }
-        BlockNode::Sdt(sdt) => sdt.id == id || blocks_hold(&sdt.blocks, id),
-        BlockNode::AltChunk(chunk) => chunk.id == id,
-    })
-}
+use crate::toc::EditorFacts;
+use crate::{EditResult, HistoryKind, WasmDocument, node_id, to_js};
 
 #[wasm_bindgen]
 impl WasmDocument {
@@ -655,16 +86,16 @@ impl WasmDocument {
     ///
     /// `kind` is `"heading"`, `"bookmark"`, `"footnote"`, `"endnote"`, or a
     /// caption label (`"Figure"`, `"Table"`, or any label the document uses) —
-    /// Word's *Reference type* list. An unknown kind yields no rows rather than an
-    /// error, so a host offering a label the document has since stopped using gets
-    /// an empty list and says so, instead of throwing.
+    /// Word's *Reference type* list. An unknown label is not an error, so a host
+    /// offering a label the document has since stopped using gets an empty list
+    /// and says so, instead of throwing.
     ///
     /// **O(document), ONE walk.**
     #[wasm_bindgen(js_name = referenceTargets)]
     #[must_use]
     pub fn reference_targets(&self, kind: &str) -> Vec<String> {
         let scan = self.scan_references(ScanRequest::default());
-        let rows: Vec<TargetRecord> = match kind {
+        let mut rows: Vec<TargetRecord> = match kind {
             "heading" => scan
                 .headings
                 .iter()
@@ -675,8 +106,8 @@ impl WasmDocument {
                     text: text.clone(),
                 })
                 .collect(),
-            "bookmark" => self.bookmark_targets(),
-            "footnote" | "endnote" => self.note_targets(kind == "footnote"),
+            "bookmark" => references::bookmark_targets(&self.document),
+            "footnote" | "endnote" => references::note_targets(&self.document, kind == "footnote"),
             label => scan
                 .captions
                 .iter()
@@ -688,7 +119,6 @@ impl WasmDocument {
                 })
                 .collect(),
         };
-        let mut rows = rows;
         rows.sort_by_key(|row| row.order);
         rows.iter()
             .map(|row| format!("{}\t{}", row.node, row.text))
@@ -744,19 +174,7 @@ impl WasmDocument {
     /// so updating a correct document costs no history.
     #[wasm_bindgen(js_name = updateCaptionNumbers)]
     pub fn update_caption_numbers(&mut self) -> Result<EditResult, JsValue> {
-        let (ops, first) = self.caption_renumber_operations();
-        let Some(first) = first else {
-            return Err(to_js(
-                refused!("caption.none", "This document has no captions to update.").to_owned(),
-            ));
-        };
-        if ops.is_empty() {
-            return Err(to_js(
-                "every caption already shows the right number".to_owned(),
-            ));
-        }
-        self.apply_action_caret_as(ops, Pos::new(first, 0), HistoryKind::FieldChange)
-            .map_err(to_js)
+        self.update_caption_numbers_inner().map_err(to_js)
     }
 
     /// Inserts a caption paragraph above or below the block that holds
@@ -788,16 +206,6 @@ impl WasmDocument {
         separator: &str,
     ) -> Result<EditResult, JsValue> {
         let target = node_id(target_node)?;
-        let label = label.trim();
-        if label.is_empty() {
-            return Err(to_js(
-                refused!(
-                    "caption.label-required",
-                    "Choose a caption label, such as Figure or Table."
-                )
-                .into(),
-            ));
-        }
         let position = match position {
             "above" => CaptionPosition::Above,
             "below" => CaptionPosition::Below,
@@ -808,40 +216,12 @@ impl WasmDocument {
         let chapter = if chapter_level == 0 {
             None
         } else {
-            if !(1..=9).contains(&chapter_level) {
-                return Err(to_js(
-                    refused!(
-                        "caption.chapter-level-out-of-range",
-                        "A chapter heading level has to be between 1 and 9."
-                    )
-                    .into(),
-                ));
-            }
             Some(CaptionChapter {
                 heading_level: chapter_level,
                 separator: CaptionSeparator::parse(separator)
                     .ok_or_else(|| to_js(format!("unknown caption separator {separator:?}")))?,
             })
         };
-
-        // Walk once for the numbering and the chapter ordinal, and once for the
-        // insertion point. Two constant walks per command, not one per caption.
-        if let Some(refusal) = caption_target_refusal(&self.document, target) {
-            return Err(to_js(refusal.to_owned()));
-        }
-        let scan = self.scan_references(ScanRequest {
-            interest: &[target],
-            keep_inlines: true,
-        });
-        let (container, index) =
-            locate_block(&self.document, target).ok_or_else(|| {
-                to_js(refused!(
-                "caption.body-only",
-                "A caption attaches to something in the document body, not in a header, footer \
-                 or note."
-            ).into())
-            })?;
-
         let spec = CaptionSpec {
             label: label.to_owned(),
             text,
@@ -850,98 +230,14 @@ impl WasmDocument {
             number_format,
             chapter,
         };
-
-        // The new caption's number: one more than the captions of this label that
-        // precede the insertion point. Read off the already-computed scan, so the
-        // count costs nothing extra.
-        let target_order = scan.order(target);
-        let insert_after = position == CaptionPosition::Below;
-        let precedes = |caption: &CaptionRecord| {
-            if insert_after {
-                caption.order <= target_order
-            } else {
-                caption.order < target_order
-            }
-        };
-        let number = 1 + scan
-            .captions
-            .iter()
-            .filter(|caption| caption.label == label && precedes(caption))
-            .count() as u32;
-        let chapter_number = chapter
-            .map(|chapter| {
-                scan.chapter_ordinal(target, chapter.heading_level)
-                    .to_string()
-            })
-            .unwrap_or_default();
-
-        let mut ops = Vec::new();
-        // Word creates the `Caption` style on first use; a document that has not
-        // got it would otherwise render the caption as body text — "built is not
-        // reachable" in miniature.
-        let style = match self.style_id_by_name(CAPTION_STYLE_NAME) {
-            Some(existing) => Some(existing),
-            None => {
-                let id = StyleId::new(self.fresh_id()?);
-                let default = self
-                    .document
-                    .definitions()
-                    .styles
-                    .iter()
-                    .find(|(_, style)| style.is_default)
-                    .map(|(id, _)| *id);
-                ops.push(Operation::SetStyleDefinition {
-                    id,
-                    style: Some(Box::new(caption_style(default))),
-                });
-                Some(id)
-            }
-        };
-
-        let paragraph_id = self.fresh_id()?;
-        let paragraph = {
-            let mut allocate = || {
-                self.edit_ids
-                    .next_id()
-                    .map_err(|_| casual_doc_edit::EditError::IdExhausted)
-            };
-            caption_paragraph(
-                paragraph_id,
-                style,
-                &spec,
-                &number_format.render(number),
-                &chapter_number,
-                &mut allocate,
-            )
-            .map_err(|error| to_js(format!("{error:?}")))?
-        };
-        let caret = Pos::new(paragraph_id, 0);
-        let insert_index = if insert_after { index + 1 } else { index };
-        ops.push(Operation::InsertBlocks {
-            container,
-            index: insert_index as u32,
-            blocks: vec![BlockNode::Paragraph(paragraph)],
-        });
-
-        // Renumber the captions of this label that now come later. Word does this
-        // too; the alternative is a document whose figures read 1, 1, 2.
-        let mut running = number;
-        for caption in &scan.captions {
-            if caption.label != label || precedes(caption) {
-                continue;
-            }
-            running += 1;
-            let rendered = caption.format.render(running);
-            let mut allocate = || self.edit_ids.next_id().ok();
-            if let Some(inlines) = renumbered(&caption.inlines, &rendered, &mut allocate) {
-                ops.push(Operation::SetInlines {
-                    node: caption.node,
-                    inlines,
-                });
-            }
-        }
-
-        self.apply_action_caret_as(ops, caret, HistoryKind::FieldChange)
+        let facts = EditorFacts::with_pages(self.document.definitions(), HashMap::new());
+        let ids = &mut self.edit_ids;
+        let placed = references::insert_caption(&self.document, &facts, target, spec, &mut || {
+            ids.next_id().ok()
+        })
+        .map_err(to_js)?;
+        drop(facts);
+        self.apply_action_caret_as(placed.operations, placed.caret, HistoryKind::FieldChange)
             .map_err(to_js)
     }
 
@@ -984,426 +280,137 @@ impl WasmDocument {
         let target = node_id(target_node)?;
         let to = ReferenceTo::parse(reference_to)
             .ok_or_else(|| to_js(format!("unknown reference kind {reference_to:?}")))?;
-
-        let scan = self.scan_references(ScanRequest {
-            interest: &[target, caret.node],
-            keep_inlines: false,
-        });
-        // The target's OWN plain text, untrimmed, because these offsets address the
-        // model. The trimmed text a picker displays is a different string and using
-        // it here silently shortens every bookmark.
-        let offsets = scan.found(target).ok_or_else(|| {
-            to_js(
-                refused!(
-                    "crossref.target-missing",
-                    "The thing this cross-reference points at is no longer in the document."
-                )
-                .into(),
-            )
-        })?;
-        let length = offsets.length;
-        let after_sequence = offsets.after_sequence;
-        let text = self.paragraph_text_of(target).ok_or_else(|| {
-            to_js(
-                refused!(
-                    "crossref.target-missing",
-                    "The thing this cross-reference points at is no longer in the document."
-                )
-                .into(),
-            )
-        })?;
-
-        // Word's three caption reference kinds differ ONLY in what the bookmark
-        // covers, not in the field instruction — "Entire caption", "Only label and
-        // number" and "Only caption text" are all a plain `REF`. The boundary is the
-        // end of the `SEQ` field: before it is the label and number, after it is the
-        // author's text. Offering all three while bookmarking the whole paragraph
-        // for each would put three rows in the dialog that do the same thing, which
-        // is worse than offering one.
-        let (start, end) = match (to, after_sequence) {
-            (ReferenceTo::LabelAndNumber, Some(boundary)) => (0, boundary),
-            (ReferenceTo::CaptionTextOnly, Some(boundary)) => (boundary, length),
-            // A target with no `SEQ` field — a heading or a bookmark — has no such
-            // boundary, so those two kinds fall back to the whole paragraph rather
-            // than to an empty range. The host does not offer them for a
-            // non-caption target; this is the engine refusing to produce an empty
-            // reference if it ever does.
-            _ => (0, length),
-        };
-        let result_text_from_range = || {
-            text.get(start as usize..end as usize)
-                .unwrap_or(&text)
-                .trim()
-                .replace('\t', " ")
-        };
-
-        let mut ops = Vec::new();
-        // Reuse an existing `_Ref` bookmark on the target ONLY when its extent is
-        // the one this reference kind needs, so ten "entire caption" references share
-        // one bookmark while a "label and number" reference gets its own.
-        let (bookmark_name, bookmark_id) = match scan.reference_bookmark(target, start, end) {
-            Some(existing) => (
-                self.document
-                    .definitions()
-                    .bookmarks
-                    .get(&existing)
-                    .map(|bookmark| bookmark.name.clone())
-                    .unwrap_or_default(),
-                Some(existing),
-            ),
-            None => (self.fresh_reference_bookmark_name(), None),
-        };
-        if bookmark_id.is_none() {
-            let bookmark = BookmarkId::new(self.fresh_id()?);
-            let start_id = self.fresh_id()?;
-            let end_id = self.fresh_id()?;
-            ops.push(Operation::CreateBookmark {
-                bookmark,
-                name: bookmark_name.clone(),
-                start: Pos::new(target, start),
-                start_id,
-                end: Pos::new(target, end),
-                end_id,
-            });
-        }
-
-        let result_text = match to {
-            ReferenceTo::PageNumber => self.page_of(target).map(|page| page.to_string()),
-            ReferenceTo::AboveBelow => {
-                Some(above_below(scan.order(target), scan.order(caret.node)).to_owned())
-            }
-            _ => Some(result_text_from_range()),
-        }
-        .unwrap_or_default();
-
-        let field_id = self.fresh_id()?;
-        let result_id = self.fresh_id()?;
-        let field = reference_field(
-            field_id,
-            result_id,
-            to,
-            &bookmark_name,
-            hyperlink,
-            &result_text,
-        )
-        .map_err(|error| to_js(format!("{error:?}")))?;
-        ops.push(Operation::InsertField {
-            at: caret,
-            field: Box::new(field),
-        });
-
-        // *Include above/below*: a space and a second ` REF … \p ` after the
-        // reference, which is Word's own markup for that checkbox. Two fields in
-        // ONE undoable action, so a reader who regrets it presses undo once.
-        //
-        // Each op inserts at an offset in the paragraph AS THE PREVIOUS OPS LEFT
-        // IT, so the space goes after the reference's own cached text and the `\p`
-        // field after the space. Pushing all three at `caret` reverses them —
-        // measured, before this arithmetic: " belowFigure 1: Wiring diagram".
-        if include_above_below && to != ReferenceTo::AboveBelow {
-            let word = above_below(scan.order(target), scan.order(caret.node));
-            let space_field = self.fresh_id()?;
-            let space_result = self.fresh_id()?;
-            // A field, not a bare run: a bare run would merge with the surrounding
-            // text and a later edit could not tell the two references apart.
-            let above = reference_field(
-                space_field,
-                space_result,
-                ReferenceTo::AboveBelow,
-                &bookmark_name,
-                hyperlink,
-                word,
-            )
-            .map_err(|error| to_js(format!("{error:?}")))?;
-            let after_reference = caret.offset.saturating_add(result_text.len() as u32);
-            ops.push(Operation::InsertText {
-                at: Pos::new(caret.node, after_reference),
-                text: " ".to_owned(),
-            });
-            ops.push(Operation::InsertField {
-                at: Pos::new(caret.node, after_reference.saturating_add(1)),
-                field: Box::new(above),
-            });
-        }
-
-        self.apply_action_caret_as(ops, caret, HistoryKind::FieldChange)
+        let operations = self
+            .cross_reference_operations(caret, target, to, hyperlink, include_above_below)
+            .map_err(to_js)?;
+        self.apply_action_caret_as(operations, caret, HistoryKind::FieldChange)
             .map_err(to_js)
     }
 }
 
 impl WasmDocument {
-    /// The operations an update would apply, and the first caption's node (for the
-    /// caret). Empty operations means nothing is stale.
-    ///
-    /// Factored out of [`update_caption_numbers`](Self::update_caption_numbers) so
-    /// that its two refusals are testable: a `JsValue` cannot be constructed on a
-    /// native target, so a refusal asserted only through the binding panics inside
-    /// `wasm-bindgen` before it reaches the code under test — which is how a
-    /// refusal ships unguarded.
-    ///
-    /// **O(document), ONE walk.**
-    fn caption_renumber_operations(&mut self) -> (Vec<Operation>, Option<NodeId>) {
-        let scan = self.scan_references(ScanRequest {
-            interest: &[],
-            keep_inlines: true,
-        });
-        let mut ops = Vec::new();
-        for caption in &scan.captions {
-            let correct = caption.format.render(caption.number);
-            let mut allocate = || self.edit_ids.next_id().ok();
-            if let Some(inlines) = renumbered(&caption.inlines, &correct, &mut allocate) {
-                ops.push(Operation::SetInlines {
-                    node: caption.node,
-                    inlines,
-                });
-            }
+    /// See [`WasmDocument::update_caption_numbers`]. Split out so native guards
+    /// read its two refusals: a `JsValue` cannot be constructed on a native
+    /// target, so a refusal asserted only through the binding panics inside
+    /// `wasm-bindgen` before it reaches the code under test.
+    pub(crate) fn update_caption_numbers_inner(&mut self) -> Result<EditResult, String> {
+        let facts = EditorFacts::with_pages(self.document.definitions(), HashMap::new());
+        let ids = &mut self.edit_ids;
+        let placed =
+            references::update_caption_numbers(&self.document, &facts, &mut || ids.next_id().ok())?;
+        drop(facts);
+        self.apply_action_caret_as(placed.operations, placed.caret, HistoryKind::FieldChange)
+    }
+
+    /// The operations [`WasmDocument::insert_cross_reference`] applies. A page
+    /// reference reads the page the target's first position is painted on — the
+    /// editor's one layout query in this feature, made once, for that one node.
+    pub(crate) fn cross_reference_operations(
+        &mut self,
+        caret: Pos,
+        target: casual_doc_model::NodeId,
+        to: ReferenceTo,
+        hyperlink: bool,
+        include_above_below: bool,
+    ) -> Result<Vec<casual_doc_edit::Operation>, String> {
+        let mut pages = HashMap::new();
+        if to == ReferenceTo::PageNumber
+            && let Some(page) = self.page_label_of(target)
+        {
+            pages.insert(target, page);
         }
-        (ops, scan.captions.first().map(|caption| caption.node))
+        let facts = EditorFacts::with_pages(self.document.definitions(), pages);
+        let ids = &mut self.edit_ids;
+        references::insert_cross_reference(
+            &self.document,
+            &facts,
+            caret,
+            target,
+            to,
+            hyperlink,
+            include_above_below,
+            &mut || ids.next_id().ok(),
+        )
     }
 
     /// ONE walk of every block surface, carrying everything captions and
-    /// cross-references need.
+    /// cross-references need (`casual_doc_command::references::scan`).
     ///
-    /// **O(document) time, and exactly one whole-document scan** (the one
-    /// `surface_block_lists` performs). Memory is O(captions + headings + the
-    /// request's `interest`) — nothing per paragraph. Every field of the result is
-    /// filled from this one traversal rather than from a per-node lookup, which is
-    /// the difference between this and the `documentOutline` defect of `docs/116`.
+    /// **O(document) time, and exactly one whole-document scan.**
     fn scan_references(&self, request: ScanRequest<'_>) -> ReferenceScan {
-        let cascade = casual_doc_layout::cascade::StyleCascade::new(self.document.definitions());
-        let bookmarks = &self.document.definitions().bookmarks;
-        let mut scan = ReferenceScan::default();
-        // The running per-label sequence counter, and the `\s` restart level each
-        // label asks for, so a heading of that level zeroes it — which is the
-        // whole meaning of `SEQ … \s N`.
-        let mut counters: Vec<(String, u32, Option<u8>)> = Vec::new();
-        let mut chapters = [0u32; 9];
-        let mut order = 0usize;
-        crate::visit_paragraphs_all_surfaces(&self.document, &mut |paragraph| {
-            if let Some(level) = self.heading_level_of(paragraph.properties.get(), &cascade) {
-                let index = usize::from(level.clamp(1, 9)) - 1;
-                chapters[index] = chapters[index].saturating_add(1);
-                // A heading resets every deeper level's counter, as a multilevel
-                // list does.
-                for deeper in chapters.iter_mut().skip(index + 1) {
-                    *deeper = 0;
-                }
-                // And it restarts every sequence that names this level, which is
-                // the whole meaning of `SEQ … \s N`.
-                for (_, count, restart) in counters.iter_mut() {
-                    if *restart == Some(level) {
-                        *count = 0;
-                    }
-                }
-                let trimmed = node_plain_text(&paragraph.inlines)
-                    .trim()
-                    .replace('\t', " ");
-                if !trimmed.is_empty() {
-                    scan.headings.push((level, paragraph.id, trimmed));
-                }
-            }
-            // Only the nodes the caller named get a row; a document-wide
-            // enumeration names none and so allocates none.
-            if request.interest.contains(&paragraph.id) {
-                let (length, after_sequence, reference_bookmarks) =
-                    paragraph_offsets(paragraph, bookmarks);
-                scan.interest.push(InterestRecord {
-                    node: paragraph.id,
-                    order,
-                    chapters,
-                    length,
-                    after_sequence,
-                    reference_bookmarks,
-                });
-            }
-            if let Some((label, instruction)) = sequence_of(&paragraph.inlines) {
-                let restart = sequence_restart_level(&instruction);
-                let entry = match counters.iter_mut().find(|(name, _, _)| *name == label) {
-                    Some(entry) => entry,
-                    None => {
-                        counters.push((label.clone(), 0, restart));
-                        counters.last_mut().expect("just pushed")
-                    }
-                };
-                entry.1 = entry.1.saturating_add(1);
-                scan.captions.push(CaptionRecord {
-                    node: paragraph.id,
-                    order,
-                    label,
-                    number: entry.1,
-                    cached_number: sequence_cached_number(&paragraph.inlines),
-                    format: sequence_format(&instruction),
-                    text: node_plain_text(&paragraph.inlines)
-                        .trim()
-                        .replace('\t', " "),
-                    inlines: if request.keep_inlines {
-                        paragraph.inlines.clone()
-                    } else {
-                        Vec::new()
-                    },
-                });
-            }
-            order += 1;
-        });
-        scan.paragraphs = order;
-        scan
+        let facts = EditorFacts::with_pages(self.document.definitions(), HashMap::new());
+        references::scan(&self.document, &facts, request)
     }
 
-    /// Every authored bookmark as a cross-reference target, named by the
-    /// paragraph its start marker sits in.
+    /// The label the page printing the start of `node` shows (`v` on the first page
+    /// of a section numbered in lower-case roman from 5, as Word's `PAGEREF` shows),
+    /// or `None` when the layout cannot say (a node the painted layout does not
+    /// hold).
     ///
-    /// **O(document), ONE walk.** The document order comes from the walk's own
-    /// counter rather than from a lookup per bookmark: asking a table for each
-    /// bookmark's paragraph would be O(bookmarks x paragraphs), and
-    /// `document_scans` would NOT have caught that, because it is a linear search
-    /// over a table rather than a second scan of the document. Not every quadratic
-    /// in this area is a scan.
+    /// The page is the one the target's first position is painted on; its label
+    /// comes from `casual_doc_layout::paginate::page_number_labels`, the table the
+    /// table of contents reads too, so an editor's page reference and an agent's
+    /// print the same thing (`docs/181` §12, lane references, where the editor
+    /// printed the PHYSICAL page number instead). A body laid out a window at a
+    /// time has no whole-document label table, and keeps the physical number.
     ///
-    /// The per-paragraph part descends the paragraph's inline containers, because a
-    /// bookmark start marker inside a hyperlink, an inline content control or a
-    /// tracked insertion is an authored bookmark like any other, and leaving it out
-    /// meant the cross-reference picker offered no row for it — the same top-level
-    /// blind spot as `paragraph_offsets`, one function along. O(inlines in the
-    /// paragraph's subtree) per paragraph, so the whole walk stays O(document).
-    fn bookmark_targets(&self) -> Vec<TargetRecord> {
-        fn collect(
-            inlines: &[InlineNode],
-            bookmarks: &casual_doc_model::v1::DefinitionMap<BookmarkId, Bookmark>,
-            node: NodeId,
-            order: usize,
-            rows: &mut Vec<TargetRecord>,
-        ) {
-            for inline in inlines {
-                if let InlineNode::BookmarkStart(marker) = inline
-                    && let Some(bookmark) = bookmarks.get(&marker.bookmark)
-                    // Word hides its own `_Ref`/`_Toc` bookkeeping bookmarks from
-                    // this list; so do we, or the picker fills with machine names.
-                    && !bookmark.name.starts_with('_')
-                {
-                    rows.push(TargetRecord {
-                        node,
-                        order,
-                        text: bookmark.name.clone(),
-                    });
-                }
-                if let Some(nested) = crate::contained_inlines(inline) {
-                    collect(nested, bookmarks, node, order, rows);
-                }
-            }
-        }
-
-        let mut rows = Vec::new();
-        let bookmarks = &self.document.definitions().bookmarks;
-        let mut order = 0usize;
-        crate::visit_paragraphs_all_surfaces(&self.document, &mut |paragraph| {
-            collect(
-                &paragraph.inlines,
-                bookmarks,
-                paragraph.id,
-                order,
-                &mut rows,
-            );
-            order += 1;
-        });
-        rows
-    }
-
-    /// Footnotes or endnotes as cross-reference targets, numbered in definition
-    /// order with their first paragraph's text. **O(notes)** — the note
-    /// definitions are their own map, so this needs no document walk.
-    fn note_targets(&self, footnotes: bool) -> Vec<TargetRecord> {
-        let definitions = self.document.definitions();
-        let notes = if footnotes {
-            &definitions.footnotes
-        } else {
-            &definitions.endnotes
-        };
-        notes
-            .iter()
-            .enumerate()
-            .filter_map(|(order, (_, note))| {
-                let first = note.blocks.iter().find_map(|block| match block {
-                    BlockNode::Paragraph(paragraph) => Some(paragraph),
-                    _ => None,
-                })?;
-                let text = node_plain_text(&first.inlines).trim().replace('\t', " ");
-                Some(TargetRecord {
-                    node: first.id,
-                    order,
-                    text,
-                })
-            })
-            .collect()
-    }
-
-    /// The plain text of the paragraph `node`, or `None`.
-    ///
-    /// **O(document), ONE walk.** Called once per cross-reference insertion, for
-    /// the targets the scan did not already name (a bookmark or a note).
-    fn paragraph_text_of(&self, node: NodeId) -> Option<String> {
-        let mut found = None;
-        crate::visit_paragraphs_all_surfaces(&self.document, &mut |paragraph| {
-            if paragraph.id == node && found.is_none() {
-                found = Some(
-                    node_plain_text(&paragraph.inlines)
-                        .trim()
-                        .replace('\t', " "),
-                );
-            }
-        });
-        found
-    }
-
-    /// The 1-based page the model position at the start of `node` is painted on,
-    /// or `None` when the layout cannot say (a windowed document, or a node the
-    /// painted layout does not hold).
-    ///
-    /// **O(lines in the document)** — one geometry query, once per inserted page
-    /// reference. It is deliberately not called per caption: doing that inside a
-    /// loop is the shape of the `docs/116` defect, and a table of contents will
-    /// need a single index instead.
-    fn page_of(&self, node: NodeId) -> Option<u32> {
+    /// **O(lines in the document)** for the geometry query plus O(pages) for the
+    /// labels, once per inserted page reference. It is deliberately not called per
+    /// caption: doing that inside a loop is the shape of the `docs/116` defect.
+    pub(crate) fn page_label_of(&self, node: casual_doc_model::NodeId) -> Option<String> {
         let snapshot = self.painted_snapshot();
-        snapshot
+        let page = snapshot
             .caret_rect(self.view_pos(casual_doc_layout::model::ModelPos::new(node, 0)))
-            .map(|(page, _)| page)
-    }
-
-    /// A fresh `_Ref`-prefixed bookmark name no bookmark in the document uses.
-    ///
-    /// Word's own automatic names are `_Ref` plus a decimal, and ours are too, so a
-    /// reader cannot tell which produced the file. One pass over the bookmark
-    /// definitions, taking one past the highest number already used rather than
-    /// probing candidates — probing is O(bookmarks) per candidate. **O(bookmarks).**
-    fn fresh_reference_bookmark_name(&self) -> String {
-        let highest = self
-            .document
-            .definitions()
-            .bookmarks
-            .iter()
-            .filter_map(|(_, bookmark)| {
-                bookmark
-                    .name
-                    .strip_prefix(REFERENCE_BOOKMARK_PREFIX)
-                    .and_then(|digits| digits.parse::<u64>().ok())
-            })
-            .max()
-            .unwrap_or(100_000_000);
-        format!("{REFERENCE_BOOKMARK_PREFIX}{}", highest + 1)
-    }
-
-    /// One fresh node id, or a readable refusal.
-    fn fresh_id(&mut self) -> Result<NodeId, JsValue> {
-        self.edit_ids
-            .next_id()
-            .map_err(|_| to_js("id space exhausted".into()))
+            .map(|(page, _)| page)?;
+        if self.layout.is_windowed() {
+            return Some(page.to_string());
+        }
+        let labels = casual_doc_layout::paginate::page_number_labels(
+            self.layout.resident(),
+            &self.document.definitions().sections,
+        );
+        let index = usize::try_from(page).ok()?.checked_sub(1)?;
+        Some(
+            labels
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| page.to_string()),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::open_document;
+    use crate::{node_plain_text, open_document};
+    use casual_doc_command::references::{caption_target_refusal, locate_block, renumbered};
+    use casual_doc_edit::Operation;
+    use casual_doc_edit::references::{CAPTION_STYLE_NAME, REFERENCE_BOOKMARK_PREFIX};
+    use casual_doc_model::NodeId;
+    use casual_doc_model::v1::{BlockNode, Document, FieldKind, InlineNode, Paragraph};
+
+    impl WasmDocument {
+        /// The operations Update Caption Numbers would apply and the first
+        /// caption (for the caret), without applying them: empty operations
+        /// means nothing is stale. The command refuses both empty cases, so the
+        /// guards below ask it what it would do through the same lowering.
+        fn caption_renumber_operations(&self) -> (Vec<Operation>, Option<NodeId>) {
+            let facts = EditorFacts::with_pages(self.document.definitions(), HashMap::new());
+            let mut ids = self.edit_ids.clone();
+            let first = self
+                .scan_references(ScanRequest::default())
+                .captions
+                .first()
+                .map(|caption| caption.node);
+            let operations =
+                references::update_caption_numbers(&self.document, &facts, &mut || {
+                    ids.next_id().ok()
+                })
+                .map(|placed| placed.operations)
+                .unwrap_or_default();
+            (operations, first)
+        }
+    }
 
     /// The one genuinely Microsoft-Word-produced file in the repository, so a
     /// round-trip assertion is against a real producer's package rather than our
@@ -2488,7 +1495,6 @@ mod tests {
         );
         // And renumbering can now reach it: two captions of one label cannot both
         // be 1, so an update must produce work.
-        let mut d = d;
         let (ops, first) = d.caption_renumber_operations();
         assert!(
             first.is_some() && !ops.is_empty(),

@@ -3,3 +3,8 @@
 # `core.autocrlf`) changes those bytes, the table is refused, and every preset
 # shape paints as its bounding rectangle. Keep it LF on every platform.
 crates/casual-doc-model/data/preset_shapes.txt text eol=lf
+
+# Generated from the capability registry and compared byte for byte by
+# `crates/casual-doc-command/tests/generated.rs` and `opendoc-command-gen --check`
+# (`docs/181` G4). A CRLF checkout made every file "stale" on Windows.
+webapp/generated/** text eol=lf

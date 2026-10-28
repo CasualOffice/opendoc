@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/casual-doc-ai",
+    "crates/casual-doc-command",
     "crates/casual-doc-diff",
     "crates/casual-doc-edit",
     "crates/casual-doc-export",
@@ -40,6 +41,7 @@ authors = ["CasualOffice contributors"]
 
 [workspace.dependencies]
 casual-doc-ai = { path = "crates/casual-doc-ai", version = "=0.0.1" }
+casual-doc-command = { path = "crates/casual-doc-command", version = "=0.0.1" }
 casual-doc-diff = { path = "crates/casual-doc-diff", version = "=0.0.1" }
 casual-doc-edit = { path = "crates/casual-doc-edit", version = "=0.0.1" }
 casual-doc-export = { path = "crates/casual-doc-export", version = "=0.0.1" }
@@ -60,6 +62,7 @@ casual-doc-selection = { path = "crates/casual-doc-selection", version = "=0.0.1
 casual-doc-transaction = { path = "crates/casual-doc-transaction", version = "=0.0.1" }
 opendoc-viewer = { path = "crates/opendoc-viewer", version = "=0.0.1" }
 casual-doc-wasm = { path = "crates/casual-doc-wasm", version = "=0.0.1" }
+schemars = { version = "1.2.3", default-features = false, features = ["derive", "std"] }
 quick-xml = { version = "0.41.0", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.145"

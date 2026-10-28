@@ -3,6 +3,9 @@
 **Status:** Design, proposed 2026-10-24. A1 (shared review lowering), M1 and M2 over stdio are
 built; what is built and what is not is in §15.
 **Decides:** ADR-072 (proposed). **Row:** `docs/109` RM-47.
+**Refined by:** `181` and ADR-075 (proposed 2026-10-28): how every later feature reaches
+this surface through one capability registry, with generated schemas (A4) and exhaustive
+coverage guards.
 **Builds on:** `45` and ADR-030 (the four seams, I1 to I4), `132` and ADR-035 (the document
 assistance layer, which this refines for MCP), `176` and ADR-071 (the Native/headless SDK
 this is built on), `05` (SDK API), `175` and ADR-070 (host-attested identity, JWT grants),
@@ -711,7 +714,7 @@ Read 2026-10-24. Load-bearing facts were re-read by this lane, not only by the r
 - **Q1. Order.** Read-only M1 first and then M2, or M1 and M2 in one release?
 - **Q2. Direct edits.** May an agent ever edit without tracked changes? If yes, only when the
   operator launches with `edit`, or also per call after an elicitation?
-- **Q3. The agent's author label.** "Claude (AI)", "Ada Lovelace (AI)", or "Ada Lovelace via
+- **Q3. The agent's author label.** *Answered 2026-10-29: "Casual AI" (`docs/181`).* "Claude (AI)", "Ada Lovelace (AI)", or "Ada Lovelace via
   Claude"? It is written into `w:author` and survives into Word.
 - **Q4. Protocol dependency.** Use an MCP SDK crate (subject to the dependency policy), or
   hand-roll the JSON-RPC layer?
@@ -769,6 +772,9 @@ What exists, measured by the tests named, and what does not.
   plan is refused without an edit grant (and refused **by the engine** with the adapter's
   check removed); paths outside the roots (`..`, absolute, `file://`, a symlink) are refused
   without echoing the target; `.docm` is refused.
+- M4, WebMCP (`docs/181` §12 "Lane webmcp"): opt-in (`ai-tools="webmcp"`, `?aiTools=webmcp`),
+  feature-detected, no polyfill; `editor.ai`'s reads and private-preview proposals registered
+  with `document.modelContext`, filtered by the same grant, unregistered by `AbortSignal`.
 
 **An engine defect the first headless suggester found.** `is_tracked_only` and
 `is_comment_only` compared paragraphs by full equality, ids included, so a suggestion or a
@@ -779,17 +785,19 @@ re-minted still differs, so ADR-052's identity convention is unchanged.
 
 **Not built, stated.**
 
-- Reading covers the body; headers, footers, notes and text boxes are not projected yet.
+- Every surface is read (`docs/181` §12 "Lane surfaces"); charts, SmartArt, OLE objects, alt-chunks and equations without a linear form are named and counted as `omitted`, not projected.
 - `search` has exact, case-insensitive and whole-word modes; regular expressions are not
   supported (no regex dependency), and case folding is ASCII-only.
 - Paragraphs holding an equation, a note reference or a preview-less embedded object are
   refused for edits (`unsupported-content`): the engine's two offset spaces disagree there.
-- Table structure (`table_insert_row`/`table_delete_row`) is direct-only (Q11); `insert_table`
-  and column edits are not in vocabulary version 1.
-- Schemas are hand-written in `tools/opendoc-mcp/src/catalog.rs`; A4 (generated schemas and
-  the staleness guard) is not built. Resource subscriptions, the tasks extension,
-  elicitation, Streamable HTTP and OAuth (M3), WebMCP (M4), rooms (M5), and the Python and
-  JavaScript bindings are not built.
+- Table structure is direct-only until tracked table structure is modelled (Q11). The edit
+  vocabulary now grows through the capability registry (`docs/181`): every command, its
+  trackability and its reason are in `webapp/generated/edit-vocabulary.md`.
+- A4 is built (`docs/181` G4): schemas are generated from the registry's edit types and a
+  staleness check fails CI. The editor's in-page assistant (`editor.ai`, with a private
+  preview) is built (`docs/181` §4.4); generated TypeScript types exist. Not built:
+  resource subscriptions, the tasks extension, elicitation, Streamable HTTP and OAuth (M3),
+  rooms (M5), and the Python package (a later PR, owner decision 2026-10-28).
 - The preview does not compute whether a plan changes the compatibility report; it says so.
 - `get_styles` reports what each style declares, not the cascaded effective formatting.
 - `undo_change` applies the log's exact inverse of the latest change without re-judging it

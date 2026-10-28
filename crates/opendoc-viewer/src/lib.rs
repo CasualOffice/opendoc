@@ -505,6 +505,21 @@ impl ViewerDocument {
         Ok(out)
     }
 
+    /// The page label printed on the page each top-level node is first laid
+    /// out on, keyed by node: what a table of contents or a page
+    /// cross-reference prints for it. The editor's table of contents reads the
+    /// same function (`casual_doc_layout::paginate::first_page_labels`) over
+    /// its own layout, so a headless session and the editor agree.
+    ///
+    /// **O(placed fragments + pages).**
+    #[must_use]
+    pub fn page_labels(&self) -> HashMap<NodeId, String> {
+        casual_doc_layout::paginate::first_page_labels(
+            &self.layout,
+            &self.document.definitions().sections,
+        )
+    }
+
     /// The headings of the body, in document order, with the page each starts
     /// on.
     ///

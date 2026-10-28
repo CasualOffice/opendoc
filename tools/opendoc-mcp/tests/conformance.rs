@@ -10,7 +10,8 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use serde_json::{Value, json};
 
-/// The 20 tools at the widest profile, in `tools/list` order (`docs/178` §6.2).
+/// The 22 tools at the widest profile, in `tools/list` order (`docs/178` §6.2, plus
+/// the two discovery tools of `docs/181` §5.1).
 const ALL_TOOLS: &[&str] = &[
     "open_document",
     "close_document",
@@ -32,6 +33,8 @@ const ALL_TOOLS: &[&str] = &[
     "compare_documents",
     "compatibility_report",
     "validate_document",
+    "list_edit_kinds",
+    "describe_edit_kind",
 ];
 
 struct Client {
@@ -60,7 +63,26 @@ impl Client {
         }
     }
 
-    fn request(&mut self, method: &str, params: Value) -> Value {
+    /// A 2026-07-28 stateless request: `_meta` names the protocol version and
+    /// the client's capabilities, as SEP-2575 requires of every request.
+    /// `initialize` is the older lifecycle and is sent as it was.
+    fn request(&mut self, method: &str, mut params: Value) -> Value {
+        if method != "initialize"
+            && let Some(object) = params.as_object_mut()
+        {
+            object.entry("_meta").or_insert_with(|| {
+                json!({
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": { "name": "conformance.rs", "version": "1" }
+                })
+            });
+        }
+        self.raw(method, params)
+    }
+
+    /// A request sent exactly as given.
+    fn raw(&mut self, method: &str, params: Value) -> Value {
         self.next += 1;
         let message =
             json!({ "jsonrpc": "2.0", "id": self.next, "method": method, "params": params });
@@ -206,6 +228,22 @@ fn the_server_lists_every_tool_and_every_tool_answers() {
         assert_eq!(tool["inputSchema"]["type"], "object", "{tool}");
         assert!(tool["annotations"]["readOnlyHint"].is_boolean());
     }
+    // `docs/181`: the published edit vocabulary is the capability registry,
+    // not a hand-kept list.
+    for name in ["preview_edits", "apply_edits"] {
+        let tool = listed["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .expect("an edit tool");
+        let items = &tool["inputSchema"]["properties"]["plan"]["properties"]["edits"]["items"];
+        assert_eq!(
+            casual_doc_command::schema::ops(items),
+            casual_doc_command::ids(),
+            "{name} publishes the registry's ops, each with its generated fields"
+        );
+    }
 
     // --- every tool, once ---
     let opened = client.ok("open_document", json!({ "path": "contract.txt" }));
@@ -261,6 +299,33 @@ fn the_server_lists_every_tool_and_every_tool_answers() {
     );
     let node = hits["hits"][0]["node"].clone();
     client.ok("chunk_document", json!({ "document": doc }));
+
+    // `docs/181` R2: the `surface` argument reaches the library through the
+    // server, for one surface and for all of them.
+    let everywhere = client.ok(
+        "search",
+        json!({ "document": doc, "query": "thirty", "surface": "all" }),
+    );
+    assert_eq!(everywhere["surfaces"], "all", "{everywhere}");
+    assert_eq!(everywhere["hits"][0]["surface"], "body");
+    let body = client.ok(
+        "read_blocks",
+        json!({ "document": doc, "surface": "body", "max_tokens": 200 }),
+    );
+    assert_eq!(body["surface"], "body", "{body}");
+    let chunks = client.ok(
+        "chunk_document",
+        json!({ "document": doc, "surface": "all" }),
+    );
+    assert!(chunks["chunks"].as_array().is_some_and(|c| !c.is_empty()));
+    let refused = client.refused(
+        "read_blocks",
+        json!({ "document": doc, "surface": "header:not-an-id" }),
+    );
+    assert!(
+        refused["code"].is_string(),
+        "an unknown surface is refused: {refused}"
+    );
 
     let revision = opened["revision"].clone();
     let plan = json!({
@@ -349,6 +414,17 @@ fn the_server_lists_every_tool_and_every_tool_answers() {
     assert_eq!(report["lossyByNature"], true);
     let valid = client.ok("validate_document", json!({ "document": doc }));
     assert_eq!(valid["valid"], true, "{valid}");
+    let kinds = client.ok("list_edit_kinds", json!({}));
+    assert_eq!(
+        kinds["withheld"],
+        json!([]),
+        "the review profile with no toolsets admits every op"
+    );
+    let described = client.ok("describe_edit_kind", json!({ "op": "replace_text" }));
+    assert_eq!(
+        described["schema"]["properties"]["op"]["const"],
+        "replace_text"
+    );
     client.ok("close_document", json!({ "document": doc }));
     let gone = client.refused("get_outline", json!({ "document": doc }));
     assert_eq!(gone["code"], "not-found");
@@ -386,7 +462,7 @@ fn a_suggest_profile_hides_review_and_its_direct_edits_are_refused() {
         .iter()
         .filter_map(|tool| tool["name"].as_str())
         .collect();
-    assert_eq!(names.len(), 19);
+    assert_eq!(names.len(), ALL_TOOLS.len() - 1);
     assert!(
         !names.contains(&"review_tracked_changes"),
         "an ungranted tool is not listed"
@@ -460,4 +536,417 @@ fn paths_outside_the_operator_roots_are_refused() {
         "no-write-root",
         "the default is to write nothing to disk"
     );
+}
+
+/// The names of the listed tools.
+fn tool_names(client: &mut Client) -> Vec<String> {
+    client.result("tools/list", json!({}))["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+        .collect()
+}
+
+/// `op` → the modes `list_edit_kinds` admits it in, for every admitted op.
+fn admitted_modes(kinds: &Value) -> Vec<(String, Vec<String>)> {
+    kinds["families"]
+        .as_array()
+        .expect("families")
+        .iter()
+        .flat_map(|family| family["ops"].as_array().expect("ops").iter())
+        .map(|op| {
+            let modes = op["modes"]
+                .as_array()
+                .expect("modes")
+                .iter()
+                .filter_map(|m| m.as_str().map(str::to_owned))
+                .collect();
+            (op["id"].as_str().expect("an id").to_owned(), modes)
+        })
+        .collect()
+}
+
+#[test]
+fn discovery_describes_the_registry_and_the_profile_the_engine_enforces() {
+    let base = sandbox("discovery");
+    let root = arg(&base.join("root"));
+    let mut client = Client::start(&["--root", &root, "--profile", "suggest"]);
+
+    // `docs/181` §5.1. What the session admits is asked of the AI layer's own
+    // capability check, so it is exactly what `apply_edits` would enforce:
+    // content edits as suggestions only, table rows (edit grant, never
+    // suggestible) not at all, comments in either mode, review not at all.
+    let kinds = client.ok("list_edit_kinds", json!({}));
+    assert_eq!(
+        kinds["vocabularyVersion"],
+        casual_doc_command::schema::VOCABULARY_VERSION
+    );
+    let suggest_only = vec!["suggest".to_owned()];
+    let both = vec!["suggest".to_owned(), "direct".to_owned()];
+    // Derived from the registry, so a new command is covered without editing
+    // this test: under `suggest`, a trackable command is admitted as a
+    // suggestion only; a comment command in either mode; everything that needs
+    // `edit` or `review` (untrackable structure, review decisions) not at all.
+    let expected: Vec<(String, Vec<String>)> = casual_doc_command::COMMANDS
+        .iter()
+        .filter_map(|command| match command.trackable {
+            casual_doc_command::Trackable::Yes => Some((command.id, &suggest_only)),
+            casual_doc_command::Trackable::NotApplicable
+                if command.family == casual_doc_command::Family::Review
+                    && command.id != "review" =>
+            {
+                Some((command.id, &both))
+            }
+            _ => None,
+        })
+        .map(|(op, modes)| (op.to_owned(), modes.clone()))
+        .collect();
+    let mut expected = expected;
+    expected.sort();
+    let mut admitted = admitted_modes(&kinds);
+    admitted.sort();
+    assert_eq!(admitted, expected, "{kinds}");
+    let withheld: Vec<(&str, &str)> = kinds["withheld"]
+        .as_array()
+        .expect("withheld")
+        .iter()
+        .map(|w| {
+            (
+                w["op"].as_str().expect("op"),
+                w["withheldBy"].as_str().expect("by"),
+            )
+        })
+        .collect();
+    // Everything not admitted is withheld, by the profile, in registry order.
+    let admitted_ids: Vec<&str> = expected.iter().map(|(op, _)| op.as_str()).collect();
+    let expected_withheld: Vec<(&str, &str)> = casual_doc_command::COMMANDS
+        .iter()
+        .filter(|command| !admitted_ids.contains(&command.id))
+        .map(|command| (command.id, "profile"))
+        .collect();
+    assert_eq!(withheld, expected_withheld);
+    assert!(withheld.contains(&("review", "profile")));
+    assert!(withheld.contains(&("table_insert_row", "profile")));
+
+    // The engine agrees: a mode the listing withholds is refused by the profile.
+    let doc = client.ok("open_document", json!({ "path": "contract.txt" }))["document"].clone();
+    let node =
+        client.ok("search", json!({ "document": doc, "query": "thirty" }))["hits"][0]["node"]
+            .clone();
+    let refused = client.refused(
+        "apply_edits",
+        json!({ "document": doc, "plan": { "base_revision": 0, "mode": "direct",
+            "edits": [{ "op": "replace_text", "target": { "node": node, "exact": "thirty" }, "text": "sixty" }] } }),
+    );
+    assert_eq!(refused["details"]["firstCode"], "capability-withheld");
+
+    // One op: its generated schema, trackability and reason, and an example.
+    let rows = client.ok("describe_edit_kind", json!({ "op": "table_insert_row" }));
+    assert_eq!(
+        rows["schema"],
+        casual_doc_command::schema::command("table_insert_row").expect("registered")
+    );
+    assert_eq!(rows["trackable"], "no");
+    assert!(
+        rows["trackableReason"]
+            .as_str()
+            .is_some_and(|r| r.contains("Q11"))
+    );
+    assert_eq!(rows["example"]["op"], "table_insert_row");
+    assert_eq!(rows["admitted"], false);
+    assert_eq!(rows["withheldBy"], "profile");
+    let unknown = client.refused("describe_edit_kind", json!({ "op": "insert_rocket" }));
+    assert_eq!(unknown["code"], "unknown-edit");
+    assert!(unknown["details"]["known"].is_array());
+
+    // The per-family schema, as a resource template.
+    let templates = client.result("resources/templates/list", json!({}));
+    assert!(
+        templates["resourceTemplates"]
+            .as_array()
+            .expect("templates")
+            .iter()
+            .any(|t| t["uriTemplate"] == "opendoc://schema/edits/{family}")
+    );
+    let tables = client.result(
+        "resources/read",
+        json!({ "uri": "opendoc://schema/edits/tables" }),
+    );
+    let schema: Value = serde_json::from_str(
+        tables["contents"][0]["text"]
+            .as_str()
+            .expect("a text resource"),
+    )
+    .expect("JSON");
+    assert_eq!(
+        casual_doc_command::schema::ops(&schema),
+        casual_doc_command::COMMANDS
+            .iter()
+            .filter(|command| command.family == casual_doc_command::Family::Tables)
+            .map(|command| command.id)
+            .collect::<Vec<_>>()
+    );
+    let missing = client.request(
+        "resources/read",
+        json!({ "uri": "opendoc://schema/edits/rockets" }),
+    );
+    assert!(missing["error"].is_object(), "{missing}");
+}
+
+#[test]
+fn toolsets_limit_the_edit_families_and_the_read_tools_stay() {
+    let base = sandbox("toolsets");
+    let root = arg(&base.join("root"));
+    let mut client = Client::start(&["--root", &root, "--profile", "edit", "--toolsets", "text"]);
+
+    // `docs/181` §5.2: read tools always; a tool that only makes edits of an
+    // excluded family is not listed.
+    let names = tool_names(&mut client);
+    for read in [
+        "open_document",
+        "get_outline",
+        "read_blocks",
+        "search",
+        "list_edit_kinds",
+    ] {
+        assert!(names.iter().any(|n| n == read), "{read} is listed");
+    }
+    assert!(
+        !names.iter().any(|n| n == "add_comment"),
+        "add_comment makes review-family edits"
+    );
+    let listed = client.result("tools/list", json!({}));
+    let apply = listed["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .find(|t| t["name"] == "apply_edits")
+        .expect("apply_edits is listed")
+        .clone();
+    assert_eq!(
+        casual_doc_command::schema::ops(
+            &apply["inputSchema"]["properties"]["plan"]["properties"]["edits"]["items"]
+        ),
+        casual_doc_command::COMMANDS
+            .iter()
+            .filter(|command| command.family == casual_doc_command::Family::Text)
+            .map(|command| command.id)
+            .collect::<Vec<_>>(),
+        "the published plan schema holds only the admitted families"
+    );
+    let kinds = client.ok("list_edit_kinds", json!({}));
+    assert_eq!(kinds["toolsets"], json!(["text"]));
+    let families: Vec<Value> = kinds["families"]
+        .as_array()
+        .expect("families")
+        .iter()
+        .map(|f| f["name"].clone())
+        .collect();
+    assert_eq!(families, [json!("text")]);
+
+    // Enforced, not only advertised: an op of another family is refused by
+    // apply and by preview, and nothing lands.
+    let tables = client.ok("open_document", json!({ "path": "table.docx" }))["document"].clone();
+    let table = client.ok("get_outline", json!({ "document": tables }))["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .find(|e| e["kind"] == "table")
+        .expect("a table")["node"]
+        .clone();
+    let plan = json!({ "base_revision": 0, "mode": "direct",
+        "edits": [{ "op": "table_insert_row", "table": table, "index": 1 }] });
+    for tool in ["apply_edits", "preview_edits"] {
+        let refused = client.refused(tool, json!({ "document": tables, "plan": plan }));
+        assert_eq!(refused["code"], "toolset-withheld", "{tool}: {refused}");
+        assert_eq!(refused["details"]["family"], "tables");
+    }
+    let read = client.ok("read_table", json!({ "document": tables, "table": table }));
+    assert_eq!(
+        read["rows"].as_array().map(Vec::len),
+        Some(2),
+        "nothing landed"
+    );
+    let comment = client.refused(
+        "add_comment",
+        json!({ "document": tables, "base_revision": 0, "target": { "node": table }, "text": "x" }),
+    );
+    assert_eq!(comment["code"], "toolset-withheld");
+
+    // An admitted family still works.
+    let doc = client.ok("open_document", json!({ "path": "contract.txt" }))["document"].clone();
+    let node =
+        client.ok("search", json!({ "document": doc, "query": "thirty" }))["hits"][0]["node"]
+            .clone();
+    client.ok(
+        "apply_edits",
+        json!({ "document": doc, "plan": { "base_revision": 0,
+            "edits": [{ "op": "replace_text", "target": { "node": node, "exact": "thirty" }, "text": "sixty" }] } }),
+    );
+}
+
+#[test]
+fn read_only_overrides_the_profile_in_either_order_and_admits_no_edit() {
+    let base = sandbox("readonly");
+    let root = arg(&base.join("root"));
+    for args in [
+        ["--read-only", "--profile", "review"],
+        ["--profile", "review", "--read-only"],
+    ] {
+        let mut client = Client::start(&["--root", &root, args[0], args[1], args[2]]);
+        let names = tool_names(&mut client);
+        for write in [
+            "apply_edits",
+            "add_comment",
+            "undo_change",
+            "review_tracked_changes",
+        ] {
+            assert!(
+                !names.iter().any(|n| n == write),
+                "{write} is hidden under --read-only ({args:?})"
+            );
+        }
+        let kinds = client.ok("list_edit_kinds", json!({}));
+        assert_eq!(kinds["readOnly"], true);
+        assert_eq!(kinds["profile"], "read");
+        assert_eq!(
+            kinds["families"],
+            json!([]),
+            "no edit is admitted ({args:?})"
+        );
+        let doc = client.ok("open_document", json!({ "path": "contract.txt" }))["document"].clone();
+        let refused = client.refused(
+            "apply_edits",
+            json!({ "document": doc, "plan": { "base_revision": 0, "edits": [] } }),
+        );
+        assert_eq!(refused["code"], "capability-withheld");
+    }
+}
+
+#[test]
+fn an_unknown_toolset_stops_the_server_at_launch() {
+    let base = sandbox("badtoolset");
+    let output = Command::new(env!("CARGO_BIN_EXE_opendoc-mcp"))
+        .args([
+            "--root",
+            &arg(&base.join("root")),
+            "--toolsets",
+            "text,rockets",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .expect("the server runs");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown toolset rockets") && stderr.contains("tables"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn every_list_and_discover_result_carries_the_2026_07_28_cache_fields() {
+    // Found by the official conformance suite's wire-schema check
+    // (`docs/181` §12, lane generation): `ttlMs` and `cacheScope` are
+    // required on these results in MCP 2026-07-28.
+    let base = sandbox("cache");
+    let root = arg(&base.join("root"));
+    let mut client = Client::start(&["--root", &root]);
+    for method in [
+        "server/discover",
+        "tools/list",
+        "resources/list",
+        "resources/templates/list",
+        "prompts/list",
+    ] {
+        let result = client.result(method, json!({}));
+        assert!(result["ttlMs"].is_u64(), "{method} carries ttlMs: {result}");
+        assert!(
+            result["cacheScope"].is_string(),
+            "{method} carries cacheScope: {result}"
+        );
+    }
+}
+
+#[test]
+fn a_stateless_request_must_carry_its_meta_and_a_spoken_version() {
+    // MCP 2026-07-28 SEP-2575, as the official conformance suite's
+    // `server-stateless` scenario checks it (`docs/181` §12, lane generation).
+    let base = sandbox("stateless");
+    let root = arg(&base.join("root"));
+    let mut client = Client::start(&["--root", &root]);
+    let version = "io.modelcontextprotocol/protocolVersion";
+    let capabilities = "io.modelcontextprotocol/clientCapabilities";
+
+    let bare = client.raw("server/discover", json!({}));
+    assert_eq!(bare["error"]["code"], -32602, "no _meta: {bare}");
+    let bare = client.raw("tools/list", json!({}));
+    assert_eq!(
+        bare["error"]["code"], -32602,
+        "no initialize and no _meta: {bare}"
+    );
+    let no_version = client.raw("server/discover", json!({ "_meta": { capabilities: {} } }));
+    assert_eq!(no_version["error"]["code"], -32602);
+    let no_capabilities = client.raw(
+        "server/discover",
+        json!({ "_meta": { version: "2026-07-28" } }),
+    );
+    assert_eq!(no_capabilities["error"]["code"], -32602);
+    let unknown = client.raw(
+        "server/discover",
+        json!({ "_meta": { version: "v999.0.0", capabilities: {} } }),
+    );
+    assert_eq!(unknown["error"]["code"], -32022);
+    assert_eq!(unknown["error"]["data"]["requested"], "v999.0.0");
+    assert!(
+        unknown["error"]["data"]["supported"]
+            .as_array()
+            .is_some_and(|v| v.contains(&json!("2026-07-28")))
+    );
+    for removed in ["initialize", "ping", "resources/subscribe"] {
+        let reply = client.request(
+            removed,
+            json!({ "_meta": { version: "2026-07-28", capabilities: {} } }),
+        );
+        assert_eq!(reply["error"]["code"], -32601, "{removed}: {reply}");
+    }
+    let discover = client.result("server/discover", json!({}));
+    assert_eq!(
+        discover["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+        "opendoc-mcp"
+    );
+    let missing = client.request(
+        "resources/read",
+        json!({ "uri": "opendoc://documents/doc_nope/outline" }),
+    );
+    assert_eq!(missing["error"]["code"], -32602, "SEP-2164: {missing}");
+    let malformed = client.request(
+        "tools/call",
+        json!({ "name": "list_edit_kinds", "arguments": {}, "inputResponses": 5 }),
+    );
+    assert_eq!(
+        malformed["error"]["code"], -32602,
+        "SEP-2322: a malformed inputResponses is a protocol error: {malformed}"
+    );
+    assert_eq!(
+        missing["error"]["data"]["uri"],
+        "opendoc://documents/doc_nope/outline"
+    );
+}
+
+#[test]
+fn a_client_that_opens_with_initialize_keeps_the_older_lifecycle() {
+    // `docs/178` Q12: a 2025-11-25 client never sends `_meta`.
+    let base = sandbox("legacy");
+    let root = arg(&base.join("root"));
+    let mut client = Client::start(&["--root", &root]);
+    let init = client.raw(
+        "initialize",
+        json!({ "protocolVersion": "2025-11-25", "capabilities": {} }),
+    );
+    assert_eq!(init["result"]["protocolVersion"], "2025-11-25");
+    let listed = client.raw("tools/list", json!({}));
+    assert!(listed["result"]["tools"].is_array(), "{listed}");
+    assert_eq!(client.raw("ping", json!({}))["result"], json!({}));
 }

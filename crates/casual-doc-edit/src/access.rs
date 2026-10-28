@@ -636,6 +636,17 @@ pub const fn admitted_by(op: &Operation) -> Capabilities {
             .with_suggest()
             .with_review()
             .with_edit(),
+        // A tracked paragraph-format change (`w:pPrChange`), a tracked split and the new
+        // numbering definition a suggested list needs travel as these operations, as do
+        // their untracked forms; the document-aware pass tells them apart
+        // (`protection::is_tracked_only`). Without `suggest` here a suggester could never
+        // propose paragraph formatting at all (`docs/181` §12, found by the G5 guard).
+        Operation::SetParagraphProperties { .. }
+        | Operation::SplitParagraph { .. }
+        | Operation::SetAbstractNumbering { .. }
+        | Operation::SetNumberingInstance { .. } => {
+            Capabilities::viewer().with_suggest().with_edit()
+        }
         _ => Capabilities::viewer().with_edit(),
     }
 }
@@ -668,9 +679,19 @@ pub fn refuse_if_not_permitted(
         if !capabilities.intersects(admitted_by(op)) {
             return Err(refusal_for(capabilities, op));
         }
-        // `edit` admits every content change outright, so the only operation left to sharpen
-        // is the review vehicle — and only for a participant who does not hold `edit`.
-        if capabilities.may_edit() || !matches!(op, Operation::UpdateReviewState { .. }) {
+        // `edit` admits every content change outright, so the only operations left to
+        // sharpen are the two that carry suggestions (the review vehicle and a tracked
+        // paragraph-format change) — and only for a participant who does not hold `edit`.
+        if capabilities.may_edit()
+            || !matches!(
+                op,
+                Operation::UpdateReviewState { .. }
+                    | Operation::SetParagraphProperties { .. }
+                    | Operation::SplitParagraph { .. }
+                    | Operation::SetAbstractNumbering { .. }
+                    | Operation::SetNumberingInstance { .. }
+            )
+        {
             continue;
         }
         let Some(document) = document else {

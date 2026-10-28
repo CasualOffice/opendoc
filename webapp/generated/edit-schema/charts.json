@@ -1,0 +1,204 @@
+{
+  "description": "One edit of the `charts` family of the OpenDoc edit vocabulary 1.3.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "description": "Insert a chart with sample data at an anchor.",
+      "properties": {
+        "at": {
+          "additionalProperties": false,
+          "description": "Where.",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        },
+        "kind": {
+          "description": "The chart family.",
+          "oneOf": [
+            {
+              "const": "column",
+              "description": "Vertical bars side by side.",
+              "type": "string"
+            },
+            {
+              "const": "column-stacked",
+              "description": "Vertical bars stacked.",
+              "type": "string"
+            },
+            {
+              "const": "column-percent",
+              "description": "Vertical bars stacked to 100%.",
+              "type": "string"
+            },
+            {
+              "const": "bar",
+              "description": "Horizontal bars side by side.",
+              "type": "string"
+            },
+            {
+              "const": "bar-stacked",
+              "description": "Horizontal bars stacked.",
+              "type": "string"
+            },
+            {
+              "const": "bar-percent",
+              "description": "Horizontal bars stacked to 100%.",
+              "type": "string"
+            },
+            {
+              "const": "line",
+              "description": "Lines.",
+              "type": "string"
+            },
+            {
+              "const": "line-markers",
+              "description": "Lines with markers.",
+              "type": "string"
+            },
+            {
+              "const": "line-stacked",
+              "description": "Stacked lines.",
+              "type": "string"
+            },
+            {
+              "const": "line-percent",
+              "description": "Lines stacked to 100%.",
+              "type": "string"
+            },
+            {
+              "const": "area",
+              "description": "Areas.",
+              "type": "string"
+            },
+            {
+              "const": "area-stacked",
+              "description": "Stacked areas.",
+              "type": "string"
+            },
+            {
+              "const": "area-percent",
+              "description": "Areas stacked to 100%.",
+              "type": "string"
+            },
+            {
+              "const": "scatter",
+              "description": "X/Y points.",
+              "type": "string"
+            },
+            {
+              "const": "scatter-smooth",
+              "description": "X/Y points joined by smooth lines.",
+              "type": "string"
+            },
+            {
+              "const": "pie",
+              "description": "A pie.",
+              "type": "string"
+            },
+            {
+              "const": "doughnut",
+              "description": "A doughnut.",
+              "type": "string"
+            }
+          ]
+        },
+        "op": {
+          "const": "insert_chart",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "at",
+        "kind"
+      ],
+      "type": "object"
+    }
+  ]
+}

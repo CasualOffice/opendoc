@@ -312,3 +312,104 @@ fn a_lone_pictures_real_transform_and_shaped_frame_are_each_reported() {
         );
     }
 }
+
+/// A plain rectangular DrawingML text box in the shape Word writes it: the
+/// `wps:wsp` inside `mc:AlternateContent`'s `wps` choice (with the VML fallback
+/// Word adds), `wps:cNvSpPr txBox="1"`, an identity `a:xfrm` echoing
+/// `wp:extent`, a `rect` preset, a fill and an outline, and the text in
+/// `wps:txbx/w:txbxContent`. `floating` selects `wp:anchor` over `wp:inline`;
+/// `off_x` translates the shape inside its frame.
+fn text_box_document(floating: bool, off_x: i64) -> String {
+    let frame_open = if floating {
+        r#"<wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="251659264" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>"#
+    } else {
+        r#"<wp:inline distT="0" distB="0" distL="0" distR="0">"#
+    };
+    let wrap = if floating {
+        r#"<wp:wrapSquare wrapText="bothSides"/>"#
+    } else {
+        ""
+    };
+    let frame_close = if floating {
+        "</wp:anchor>"
+    } else {
+        "</wp:inline>"
+    };
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document{NS} xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:v="urn:schemas-microsoft-com:vml" mc:Ignorable="wps"><w:body><w:p><w:r>
+<mc:AlternateContent><mc:Choice Requires="wps"><w:drawing>
+  {frame_open}
+    <wp:extent cx="{EXTENT_CX}" cy="{EXTENT_CY}"/>
+    <wp:effectExtent l="0" t="0" r="0" b="0"/>
+    {wrap}
+    <wp:docPr id="1" name="Text Box 1"/>
+    <wp:cNvGraphicFramePr/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp>
+        <wps:cNvSpPr txBox="1"/>
+        <wps:spPr>
+          <a:xfrm><a:off x="{off_x}" y="0"/><a:ext cx="{EXTENT_CX}" cy="{EXTENT_CY}"/></a:xfrm>
+          <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+          <a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill>
+          <a:ln w="6350"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln>
+        </wps:spPr>
+        <wps:txbx><w:txbxContent><w:p><w:r><w:t>Boxed words</w:t></w:r></w:p></w:txbxContent></wps:txbx>
+        <wps:bodyPr rot="0" vert="horz" wrap="square" lIns="91440" tIns="45720" rIns="91440" bIns="45720" anchor="t" anchorCtr="0"><a:noAutofit/></wps:bodyPr>
+      </wps:wsp>
+    </a:graphicData></a:graphic>
+  {frame_close}
+</w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape style="width:72pt;height:36pt" stroked="t"><v:textbox><w:txbxContent><w:p><w:r><w:t>Boxed words</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent>
+</w:r></w:p>
+<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>
+</w:body></w:document>"#
+    )
+}
+
+/// The text box the body's first paragraph carries, if any.
+fn first_text_box(document: &Document) -> Option<&casual_doc_model::v1::TextBox> {
+    match document.body().first() {
+        Some(BlockNode::Paragraph(paragraph)) => {
+            paragraph.inlines.iter().find_map(|inline| match inline {
+                InlineNode::TextBox(text_box) => Some(text_box.as_ref()),
+                _ => None,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// `docs/181` §12, lane families-b: a DrawingML text box is modelled (its
+/// paragraphs are a surface), so its drawing lost nothing, and the import must
+/// not say it did. It used to report the `w:drawing` as omitted, because the
+/// drawing held no picture once the text box had been taken out of it, and the
+/// DOCX loss gate then refused to save any document holding one.
+#[test]
+fn a_text_box_drawing_is_modelled_and_reports_nothing() {
+    for floating in [false, true] {
+        let imported = import(&text_box_document(floating, 0));
+        let text_box = first_text_box(&imported.document)
+            .unwrap_or_else(|| panic!("the text box (floating {floating}) is not in the model"));
+        assert_eq!(text_box.anchor.is_some(), floating, "placement");
+        assert!(
+            imported.features.is_empty(),
+            "a text box (floating {floating}) that lost nothing reported: {:?}",
+            imported.features,
+        );
+    }
+}
+
+/// The loud half: the shape's own transform is not modelled (the frame places
+/// and sizes a lone text box), so a translation that would move the box inside
+/// its frame is named, not dropped in silence.
+#[test]
+fn a_text_boxs_real_translation_is_reported() {
+    for floating in [false, true] {
+        let imported = import(&text_box_document(floating, 114_300));
+        assert!(
+            imported.features.contains("off"),
+            "a translated text box (floating {floating}) was dropped in silence: {:?}",
+            imported.features,
+        );
+    }
+}

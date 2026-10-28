@@ -3,12 +3,16 @@
 //! Word and ONLYOFFICE both split updating a table of contents exactly one way:
 //! **update page numbers only**, which keeps the entries and re-reads the
 //! pagination, and **update the entire table**, which rebuilds the entries from
-//! the heading outline. This module is that split, plus the insertion that makes
-//! a table exist in the first place.
+//! the heading outline. The lowering of all three gestures is
+//! `casual_doc_command::references` (`docs/181` §12, lane references), shared
+//! with agents; this module is the editor's glue over it: it resolves the caret,
+//! lends the command what the editor's layout knows ([`EditorFacts`]: the heading
+//! cascade and the page each heading is laid out on), and applies the result as
+//! one undoable action.
 //!
 //! # What makes it a field rather than frozen text
 //!
-//! A generated table of contents here is a real paragraph-spanning complex field
+//! A generated table of contents is a real paragraph-spanning complex field
 //! (`docs/128`): a `FieldRangeStart`/`FieldRangeEnd` marker pair delimiting the
 //! entry paragraphs, with the instruction in `Definitions::field_ranges`. That is
 //! what lets [`WasmDocument::field_range_spans`](crate::WasmDocument::field_range_spans)
@@ -16,20 +20,9 @@
 //! round trip as a field Word will itself offer to update, and what makes
 //! "update this table" a question with an answer. Entry text, level, page number
 //! and the outline it is derived from all come from the document — the heading
-//! cascade and the real pagination — never from what the caller typed.
-//!
-//! # Where this deliberately differs from Word
-//!
-//! Word writes `\h` and wraps every entry in a hyperlink to a `_TocNNNN`
-//! bookmark it plants in each heading. **We do not**, and the instruction we
-//! write says so: it has no `\h`. Planting a bookmark per heading means one
-//! `CreateBookmark` per heading, and each of those re-validates the whole
-//! document — O(headings x document), which is precisely the quadratic shape the
-//! complexity gate here exists to keep out (`docs/116`). Navigation is not lost:
-//! `webapp/src/toc_navigation.mjs` already follows an entry by its heading text
-//! for the (very common) documents whose author's field carried no `\h` either,
-//! and a generated table is marked with the same `TOC 1`..`TOC 9` styles that
-//! path keys on.
+//! cascade and the real pagination — never from what the caller typed. Where it
+//! deliberately differs from Word (no `\h`, no `_Toc` bookmarks) is recorded on
+//! the command module.
 //!
 //! # Complexity
 //!
@@ -40,290 +33,100 @@
 //! `generating_a_table_of_contents_costs_work_proportional_to_the_document`
 //! guards it by DOUBLING the heading count rather than by timing.
 
-use casual_doc_edit::{Operation, Pos, body_field_range_blocks};
-// Its own line, not folded into a sorted block: a shared `use` list is where
-// parallel lanes collide (rustfmt is set to Preserve).
-use casual_doc_edit::refused;
+use casual_doc_command::references::{self, LayoutFacts, TocUpdate};
 use casual_doc_layout::cascade::StyleCascade;
-use casual_doc_layout::paginate::page_number_labels;
+use casual_doc_layout::paginate::first_page_labels;
 use casual_doc_model::NodeId;
-use casual_doc_model::v1::{
-    BlockNode, FieldKind, FieldRange, FieldRangeEnd, FieldRangeId, FieldRangeStart, Indentation,
-    InlineNode, Paragraph, ParagraphProperties, Run, RunProperties, Style, StyleId, StyleKind, Tab,
-    TabAlignment, TabLeader, TabStop,
-};
-use std::collections::{BTreeMap, HashMap};
+use casual_doc_model::v1::{Definitions, Document, FieldRangeId, Paragraph};
+use std::collections::HashMap;
 use std::str::FromStr;
 use wasm_bindgen::prelude::*;
 
-use crate::{EditResult, HistoryKind, WasmDocument, node_plain_text, to_js, visit_paragraphs};
+use crate::window::BodyLayout;
+use crate::{EditResult, HistoryKind, WasmDocument, to_js};
 
-/// The deepest heading level a table of contents can show, as Word's dialog
-/// offers.
-const MAX_TOC_LEVEL: u8 = 9;
-
-/// The default when the caller names no level — Word's own default.
-const DEFAULT_TOC_LEVEL: u8 = 3;
-
-/// The indent one contents level adds, in twips (0.15 in), matching the built-in
-/// `TOC n` styles Word ships.
-const TOC_LEVEL_INDENT_TWIPS: i32 = 220;
-
-/// The name of the paragraph style for contents level `level` (1-based).
+/// What the editor's layout knows, lent to the shared lowerings in
+/// `casual_doc_command::references`: heading levels through the style cascade,
+/// and page labels for the nodes a gesture asks about.
 ///
-/// `TOC 1`..`TOC 9` is Word's marking, and it is the marking
-/// `webapp/src/toc_navigation.mjs` recognises, so a generated table is navigable
-/// by the path that was already shipped for authored ones.
-///
-/// **Complexity: O(1).**
-#[must_use]
-fn toc_style_name(level: u8) -> String {
-    format!("TOC {level}")
+/// It borrows only the document's definitions, so the gesture can still mint
+/// ids while the facts are alive.
+pub(crate) struct EditorFacts<'a> {
+    definitions: &'a Definitions,
+    cascade: StyleCascade<'a>,
+    /// The page label of each node the gesture may ask about, or the reason
+    /// the layout cannot answer for the whole document.
+    pages: Result<HashMap<NodeId, String>, String>,
 }
 
-/// One heading the contents names.
-struct Heading {
-    /// 1-based outline level (1 = top).
-    level: u8,
-    /// The heading's own text, tabs flattened.
-    text: String,
-    /// The page label the reader sees printed on the page the heading is laid
-    /// out on — the same label a `PAGE` field would print there. Empty when the
-    /// pagination placed no fragment for the heading, which a whole layout does
-    /// not do; it is not silently invented.
-    page: String,
+impl<'a> EditorFacts<'a> {
+    /// Heading levels and the given page labels. O(1); the cascade resolves
+    /// lazily.
+    pub(crate) fn with_pages(definitions: &'a Definitions, pages: HashMap<NodeId, String>) -> Self {
+        Self {
+            definitions,
+            cascade: StyleCascade::new(definitions),
+            pages: Ok(pages),
+        }
+    }
+}
+
+impl LayoutFacts for EditorFacts<'_> {
+    fn heading_level(&self, paragraph: &Paragraph) -> Option<u8> {
+        casual_doc_layout::fold::heading_level(
+            paragraph.properties.get(),
+            self.definitions,
+            &self.cascade,
+        )
+    }
+
+    fn page_label(&self, node: NodeId) -> Option<String> {
+        self.pages
+            .as_ref()
+            .ok()
+            .and_then(|pages| pages.get(&node).cloned())
+    }
+
+    fn whole_pagination(&self) -> Result<(), String> {
+        self.pages.as_ref().map(|_| ()).map_err(Clone::clone)
+    }
 }
 
 impl WasmDocument {
-    /// Every heading at or above `max_level`, in document order, with its page
-    /// label.
+    /// The facts a table of contents needs: the page label of every node the
+    /// paginated layout placed (a heading that splits across a break is listed
+    /// on the page it starts on, as Word lists it), or — when the body is laid
+    /// out one window at a time — the reason the pages a table of contents must
+    /// read are not all resident. Inventing numbers for the ones that are not is
+    /// worse than saying so.
     ///
-    /// **Complexity: O(document)** — one walk of the body carrying each
-    /// paragraph (never a by-id lookup per heading, `docs/116`), plus one pass
-    /// over the paginated layout's fragments.
+    /// An associated function over the two fields it reads, so the facts borrow
+    /// the document alone and the gesture can mint ids while they are alive.
     ///
-    /// # Errors
-    /// When the body is laid out one window at a time: the pages a table of
-    /// contents must read are not all resident, and inventing numbers for the
-    /// ones that are not is worse than saying so.
-    fn toc_headings(&self, max_level: u8) -> Result<Vec<Heading>, String> {
-        if self.layout.is_windowed() {
-            return Err(
-                "a table of contents needs the whole document paginated, and this one is \
-                 laid out a window at a time"
-                    .to_owned(),
-            );
-        }
-        let layout = self.layout.resident();
-        let labels = page_number_labels(layout, &self.document.definitions().sections);
-        // node -> 0-based page index, first placement wins (a heading that splits
-        // across a break is listed on the page it starts on, as Word lists it).
-        let mut page_of: HashMap<NodeId, usize> = HashMap::new();
-        for (index, page) in layout.pages.iter().enumerate() {
-            for placed in &page.placed {
-                page_of.entry(placed.fragment.node_id()).or_insert(index);
-            }
-        }
-
-        let cascade = StyleCascade::new(self.document.definitions());
-        let mut headings = Vec::new();
-        visit_paragraphs(self.document.body(), &mut |paragraph| {
-            let Some(level) = self.heading_level_of(paragraph.properties.get(), &cascade) else {
-                return;
+    /// **O(placed fragments)**, one pass over the layout.
+    fn toc_facts<'a>(document: &'a Document, layout: &BodyLayout) -> EditorFacts<'a> {
+        let definitions = document.definitions();
+        if layout.is_windowed() {
+            return EditorFacts {
+                definitions,
+                cascade: StyleCascade::new(definitions),
+                pages: Err(
+                    "a table of contents needs the whole document paginated, and this one is \
+                     laid out a window at a time"
+                        .to_owned(),
+                ),
             };
-            if level > max_level {
-                return;
-            }
-            let text = node_plain_text(&paragraph.inlines);
-            let trimmed = text.trim();
-            if trimmed.is_empty() {
-                return;
-            }
-            headings.push(Heading {
-                level,
-                text: trimmed.replace('\t', " "),
-                page: page_of
-                    .get(&paragraph.id)
-                    .and_then(|index| labels.get(*index))
-                    .cloned()
-                    .unwrap_or_default(),
-            });
-        });
-        Ok(headings)
-    }
-
-    /// The style id for contents level `level`, plus the operation that creates
-    /// the style when the document does not already define it.
-    ///
-    /// **Complexity: O(styles)** per level, and at most nine levels exist, so the
-    /// whole pass is O(styles) — bounded by the style registry, not the document.
-    fn toc_style(&mut self, level: u8) -> Result<(StyleId, Option<Operation>), String> {
-        let name = toc_style_name(level);
-        if let Some(id) = self
-            .document
-            .definitions()
-            .styles
-            .iter()
-            .find(|(_, style)| {
-                style.kind == StyleKind::Paragraph && style.name.as_deref() == Some(name.as_str())
-            })
-            .map(|(id, _)| *id)
-        {
-            return Ok((id, None));
         }
-        let id = StyleId::new(
-            self.edit_ids
-                .next_id()
-                .map_err(|_| "id space exhausted".to_owned())?,
-        );
-        let style = Style {
-            kind: StyleKind::Paragraph,
-            is_default: false,
-            name: Some(name),
-            aliases: None,
-            based_on: None,
-            next: None,
-            link: None,
-            hidden: false,
-            ui_priority: Some(39),
-            semi_hidden: false,
-            unhide_when_used: true,
-            q_format: false,
-            locked: false,
-            paragraph: Some(ParagraphProperties {
-                indentation: Some(Indentation {
-                    start_twips: Some(i32::from(level - 1) * TOC_LEVEL_INDENT_TWIPS),
-                    ..Indentation::default()
-                }),
-                ..ParagraphProperties::default()
-            }),
-            run: None,
-            table: None,
-            table_row: None,
-            table_cell: None,
-            conditional: Vec::new(),
-            custom_style: false,
-        };
-        Ok((
-            id,
-            Some(Operation::SetStyleDefinition {
-                id,
-                style: Some(Box::new(style)),
-            }),
-        ))
+        let pages = first_page_labels(layout.resident(), &definitions.sections);
+        EditorFacts::with_pages(definitions, pages)
     }
 
-    /// The right-aligned dot-leader tab stop an entry's page number sits on, at
-    /// the content width of the document's first section — Word's shape for a
-    /// contents entry.
-    ///
-    /// **Complexity: O(1).**
-    fn toc_tab_stop(&self) -> TabStop {
+    /// The right-aligned page-number tab's position: the content width of the
+    /// document's default page. O(1).
+    fn toc_tab_position(&self) -> i32 {
         let config = &self.default_config;
-        let width =
-            (config.page_size.width.raw() - config.margin_start.raw() - config.margin_end.raw())
-                .max(0);
-        TabStop {
-            position_twips: width,
-            alignment: TabAlignment::End,
-            leader: Some(TabLeader::Dot),
-        }
+        config.page_size.width.raw() - config.margin_start.raw() - config.margin_end.raw()
     }
-
-    /// Builds the entry paragraphs for `headings`, carrying the field range's two
-    /// markers on the first and last block, and the `SetStyleDefinition`
-    /// operations for any `TOC n` style the document does not yet define.
-    ///
-    /// **Complexity: O(headings)** plus the bounded style pass.
-    fn toc_blocks(
-        &mut self,
-        headings: &[Heading],
-        field: FieldRangeId,
-    ) -> Result<(Vec<Operation>, Vec<BlockNode>), String> {
-        let exhausted = || "id space exhausted".to_owned();
-        let mut style_ops = Vec::new();
-        let mut styles: BTreeMap<u8, StyleId> = BTreeMap::new();
-        for heading in headings {
-            if let std::collections::btree_map::Entry::Vacant(slot) = styles.entry(heading.level) {
-                let (id, op) = self.toc_style(heading.level)?;
-                slot.insert(id);
-                style_ops.extend(op);
-            }
-        }
-        let tab_stop = self.toc_tab_stop();
-
-        let mut blocks = Vec::with_capacity(headings.len());
-        for (index, heading) in headings.iter().enumerate() {
-            let mut inlines = Vec::with_capacity(5);
-            if index == 0 {
-                inlines.push(InlineNode::FieldRangeStart(FieldRangeStart {
-                    id: self.edit_ids.next_id().map_err(|_| exhausted())?,
-                    field,
-                }));
-            }
-            inlines.push(InlineNode::Run(Run {
-                id: self.edit_ids.next_id().map_err(|_| exhausted())?,
-                properties: RunProperties::default().into(),
-                text: heading.text.clone(),
-            }));
-            inlines.push(InlineNode::Tab(Tab {
-                id: self.edit_ids.next_id().map_err(|_| exhausted())?,
-            }));
-            inlines.push(InlineNode::Run(Run {
-                id: self.edit_ids.next_id().map_err(|_| exhausted())?,
-                properties: RunProperties::default().into(),
-                text: heading.page.clone(),
-            }));
-            if index + 1 == headings.len() {
-                inlines.push(InlineNode::FieldRangeEnd(FieldRangeEnd {
-                    id: self.edit_ids.next_id().map_err(|_| exhausted())?,
-                    field,
-                }));
-            }
-            blocks.push(BlockNode::Paragraph(Paragraph {
-                id: self.edit_ids.next_id().map_err(|_| exhausted())?,
-                properties: ParagraphProperties {
-                    style_ref: styles.get(&heading.level).copied(),
-                    tabs: vec![tab_stop],
-                    ..ParagraphProperties::default()
-                }
-                .into(),
-                inlines,
-            }));
-        }
-        Ok((style_ops, blocks))
-    }
-}
-
-/// The deepest level a `TOC` instruction asks for: the upper bound of its
-/// `\o "1-3"` switch, clamped to 1..=9. Defaults to Word's 3 when the switch is
-/// absent or unreadable, which is what Word's own dialog offers.
-///
-/// **Complexity: O(instruction length).**
-#[must_use]
-fn toc_levels_of(instruction: &str) -> u8 {
-    let Some(rest) = instruction.split("\\o").nth(1) else {
-        return DEFAULT_TOC_LEVEL;
-    };
-    let Some(quoted) = rest.split('"').nth(1) else {
-        return DEFAULT_TOC_LEVEL;
-    };
-    quoted
-        .split('-')
-        .nth(1)
-        .and_then(|value| value.trim().parse::<u8>().ok())
-        .map_or(DEFAULT_TOC_LEVEL, |level| level.clamp(1, MAX_TOC_LEVEL))
-}
-
-/// The instruction a generated table of contents carries.
-///
-/// `\z` (hide in web layout) and `\u` (use outline levels) are Word's own
-/// defaults; `\h` is deliberately absent — see the module note on hyperlinks.
-///
-/// **Complexity: O(1).**
-#[must_use]
-fn toc_instruction(max_level: u8) -> String {
-    format!(" TOC \\o \"1-{max_level}\" \\z \\u ")
 }
 
 #[wasm_bindgen]
@@ -397,56 +200,28 @@ impl WasmDocument {
         node: &str,
         max_level: u32,
     ) -> Result<EditResult, String> {
-        let max_level = if max_level == 0 {
-            DEFAULT_TOC_LEVEL
-        } else {
-            (max_level.min(u32::from(MAX_TOC_LEVEL)) as u8).max(1)
-        };
-        let index = self.block_index_of(node);
-        if index < 0 {
-            return Err(refused!(
+        // An id that does not parse names no body block, which is the command's
+        // own body-only refusal (as `block_index_of`'s `-1` was).
+        let Ok(before) = NodeId::from_str(node) else {
+            return Err(casual_doc_edit::refused!(
                 "toc.body-only",
                 "A table of contents goes in the document body, not in a header, footer or note."
             )
             .to_owned());
-        }
-        let headings = self.toc_headings(max_level)?;
-        if headings.is_empty() {
-            return Err(format!(
-                "the document has no headings at level {max_level} or above to list"
-            ));
-        }
-        let field = FieldRangeId::new(
-            self.edit_ids
-                .next_id()
-                .map_err(|_| "id space exhausted".to_owned())?,
-        );
-        let (mut ops, blocks) = self.toc_blocks(&headings, field)?;
-        let caret = blocks
-            .first()
-            .and_then(|block| match block {
-                BlockNode::Paragraph(paragraph) => Some(Pos::new(paragraph.id, 0)),
-                _ => None,
-            })
-            .ok_or_else(|| {
-                refused!(
-                    "toc.empty",
-                    "This table of contents has no entries to go to."
-                )
-                .to_owned()
-            })?;
-        let instruction = toc_instruction(max_level);
-        ops.push(Operation::InsertFieldRange {
-            field,
-            definition: Box::new(FieldRange {
-                kind: FieldKind::parse(&instruction),
-                instruction,
-                update: casual_doc_model::v1::FieldUpdateState::default(),
-            }),
-            index: index as u32,
-            blocks,
-        });
-        self.apply_action_caret_as(ops, caret, HistoryKind::FieldChange)
+        };
+        let tab = self.toc_tab_position();
+        let facts = Self::toc_facts(&self.document, &self.layout);
+        let ids = &mut self.edit_ids;
+        let placed = references::insert_table_of_contents(
+            &self.document,
+            &facts,
+            before,
+            references::toc_level(max_level),
+            tab,
+            &mut || ids.next_id().ok(),
+        )?;
+        drop(facts);
+        self.apply_action_caret_as(placed.operations, placed.caret, HistoryKind::FieldChange)
     }
 
     /// See [`WasmDocument::update_table_of_contents`].
@@ -455,182 +230,40 @@ impl WasmDocument {
         id: &str,
         mode: &str,
     ) -> Result<EditResult, String> {
-        if mode != "pageNumbers" && mode != "entire" {
-            return Err("update mode must be pageNumbers or entire".to_owned());
-        }
-        let (field, instruction) = self.toc_field(id)?;
-        let (first, last) = body_field_range_blocks(self.document.body(), field)
-            .map_err(|_| "the contents field's markers are not at body top level".to_owned())?;
-        let count = (last - first + 1) as u32;
-        let max_level = toc_levels_of(&instruction);
-        let headings = self.toc_headings(max_level)?;
-
-        let blocks = if mode == "entire" {
-            if headings.is_empty() {
-                return Err(refused!(
-                    "toc.no-headings",
-                    "This document has no headings to list. Apply a heading style to the text \
-                     you want listed."
-                )
-                .to_owned());
-            }
-            let (style_ops, blocks) = self.toc_blocks(&headings, field)?;
-            let mut ops = style_ops;
-            ops.push(Operation::DeleteBlocks {
-                container: None,
-                index: first as u32,
-                count,
-            });
-            ops.push(Operation::InsertBlocks {
-                container: None,
-                index: first as u32,
-                blocks,
-            });
-            return self.apply_action_as(ops, HistoryKind::FieldChange);
-        } else {
-            self.toc_renumbered_blocks(first, last, &headings)?
+        let mode = match mode {
+            "pageNumbers" => TocUpdate::PageNumbers,
+            "entire" => TocUpdate::Entire,
+            _ => return Err("update mode must be pageNumbers or entire".to_owned()),
         };
-
-        self.apply_action_as(
-            vec![
-                Operation::DeleteBlocks {
-                    container: None,
-                    index: first as u32,
-                    count,
-                },
-                Operation::InsertBlocks {
-                    container: None,
-                    index: first as u32,
-                    blocks,
-                },
-            ],
-            HistoryKind::FieldChange,
-        )
-    }
-
-    /// The field range a contents command acts on: the one `id` names, or — when
-    /// `id` is empty — the document's single `TOC` field range. Returns its id and
-    /// its instruction.
-    ///
-    /// **Complexity: O(field ranges).**
-    fn toc_field(&self, id: &str) -> Result<(FieldRangeId, String), String> {
-        if !id.is_empty() {
+        let field = if id.is_empty() {
+            None
+        } else {
             let node = NodeId::from_str(id).map_err(|_| "invalid field range id".to_owned())?;
-            let field = FieldRangeId::new(node);
-            let range = self
-                .document
-                .definitions()
-                .field_ranges
-                .get(&field)
-                .ok_or_else(|| "no such field range".to_owned())?;
-            return Ok((field, range.instruction.clone()));
-        }
-        let mut found = self
-            .document
-            .definitions()
-            .field_ranges
-            .iter()
-            .filter(|(_, range)| range.kind == FieldKind::Toc)
-            .map(|(id, range)| (*id, range.instruction.clone()));
-        let first = found.next().ok_or_else(|| {
-            refused!(
-                "toc.none",
-                "This document has no table of contents to update."
-            )
-            .to_owned()
-        })?;
-        if found.next().is_some() {
-            return Err(
-                "this document holds more than one table of contents; name the one to update"
-                    .to_owned(),
-            );
-        }
-        Ok(first)
+            Some(FieldRangeId::new(node))
+        };
+        let tab = self.toc_tab_position();
+        let facts = Self::toc_facts(&self.document, &self.layout);
+        let ids = &mut self.edit_ids;
+        let operations = references::update_table_of_contents(
+            &self.document,
+            &facts,
+            field,
+            mode,
+            tab,
+            &mut || ids.next_id().ok(),
+        )?;
+        drop(facts);
+        self.apply_action_as(operations, HistoryKind::FieldChange)
     }
-
-    /// The contents blocks `first..=last` with only their page numbers rewritten
-    /// from `headings`: each entry keeps its own runs, its own formatting, and the
-    /// field markers it carries, and only the text after its tab is replaced.
-    ///
-    /// Entries are paired with headings POSITIONALLY, which is what "update page
-    /// numbers only" means — Word's other mode is the one that re-derives the
-    /// entries. When the counts disagree the outline has changed underneath the
-    /// table, so this refuses and names the mode that fixes it rather than
-    /// writing each heading's page onto the wrong row.
-    ///
-    /// **Complexity: O(entries + inlines in them).**
-    fn toc_renumbered_blocks(
-        &mut self,
-        first: usize,
-        last: usize,
-        headings: &[Heading],
-    ) -> Result<Vec<BlockNode>, String> {
-        let blocks: Vec<BlockNode> = self.document.body()[first..=last].to_vec();
-        let entries = blocks
-            .iter()
-            .filter(|block| matches!(block, BlockNode::Paragraph(p) if has_tab(&p.inlines)))
-            .count();
-        if entries != headings.len() {
-            return Err(format!(
-                "this table lists {entries} entries but the document now has {} headings; \
-                 update the entire table instead of only its page numbers",
-                headings.len()
-            ));
-        }
-
-        let mut out = Vec::with_capacity(blocks.len());
-        let mut next = 0_usize;
-        for block in blocks {
-            let BlockNode::Paragraph(mut paragraph) = block else {
-                out.push(block);
-                continue;
-            };
-            let Some(tab) = paragraph
-                .inlines
-                .iter()
-                .position(|inline| matches!(inline, InlineNode::Tab(_)))
-            else {
-                out.push(BlockNode::Paragraph(paragraph));
-                continue;
-            };
-            let end_marker = match paragraph.inlines.last() {
-                Some(InlineNode::FieldRangeEnd(marker)) => Some(InlineNode::FieldRangeEnd(*marker)),
-                _ => None,
-            };
-            let mut inlines: Vec<InlineNode> = paragraph.inlines[..=tab].to_vec();
-            inlines.push(InlineNode::Run(Run {
-                id: self
-                    .edit_ids
-                    .next_id()
-                    .map_err(|_| "id space exhausted".to_owned())?,
-                properties: RunProperties::default().into(),
-                text: headings[next].page.clone(),
-            }));
-            inlines.extend(end_marker);
-            paragraph.inlines = inlines;
-            next += 1;
-            out.push(BlockNode::Paragraph(paragraph));
-        }
-        Ok(out)
-    }
-}
-
-/// Whether an inline list holds a tab — what makes a contents paragraph an
-/// ENTRY rather than, say, a "Contents" title the field happens to enclose.
-///
-/// **Complexity: O(inlines).**
-#[must_use]
-fn has_tab(inlines: &[InlineNode]) -> bool {
-    inlines
-        .iter()
-        .any(|inline| matches!(inline, InlineNode::Tab(_)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::node_plain_text;
     use crate::tests::wasm_document;
-    use casual_doc_model::v1::Document;
+    use casual_doc_layout::paginate::page_number_labels;
+    use casual_doc_model::v1::{BlockNode, InlineNode};
 
     /// A document of `chapters` level-1 headings, each followed by `filler` body
     /// paragraphs, built by importing real markup so the headings carry a real
@@ -815,6 +448,40 @@ mod tests {
         );
     }
 
+    /// A heading inside a table cell is listed with the page it is on.
+    ///
+    /// The page map read top-level fragments only, so a heading in a cell had
+    /// no page, the entry carried an EMPTY page run, the model refused it as an
+    /// invalid field, and the whole table of contents failed to insert
+    /// (`InvalidField`) for any document with a heading in a table — found
+    /// while moving this lowering into `casual-doc-command` (`docs/181` §12,
+    /// lane references).
+    #[test]
+    fn a_heading_inside_a_table_cell_is_listed_with_its_page() {
+        let document = casual_doc_import::import_main_document_xml(
+            br#"<w:document xmlns:w="urn:w"><w:body>
+                <w:p><w:r><w:t>Preface</w:t></w:r></w:p>
+                <w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>
+                  <w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>Boxed heading</w:t></w:r></w:p>
+                </w:tc></w:tr></w:tbl>
+                <w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>Body heading</w:t></w:r></w:p>
+            </w:body></w:document>"#,
+            casual_doc_import::ImportConfig::default(),
+        )
+        .expect("import")
+        .document;
+        let mut d = wasm_document(document);
+        let anchor = first_body_paragraph(&d);
+        d.insert_table_of_contents_inner(&anchor, 3)
+            .expect("a heading in a table does not stop the table of contents");
+        let lines = body_lines(&d);
+        assert_eq!(
+            &lines[..2],
+            ["Boxed heading\t1", "Body heading\t1"],
+            "both headings are listed, each with its page"
+        );
+    }
+
     #[test]
     fn show_levels_limits_the_table_to_the_levels_asked_for() {
         let document = casual_doc_import::import_main_document_xml(
@@ -968,14 +635,6 @@ mod tests {
             absent.contains("no table of contents"),
             "and an English fallback that says which document state it means: {absent}"
         );
-    }
-
-    #[test]
-    fn toc_levels_are_read_out_of_the_instruction() {
-        assert_eq!(toc_levels_of(r#" TOC \o "1-5" \h "#), 5);
-        assert_eq!(toc_levels_of(r#" TOC \o "1-99" \h "#), MAX_TOC_LEVEL);
-        assert_eq!(toc_levels_of(" TOC \\h "), DEFAULT_TOC_LEVEL);
-        assert_eq!(toc_levels_of(""), DEFAULT_TOC_LEVEL);
     }
 
     /// Generating a table of contents is legitimately O(document) — it is a

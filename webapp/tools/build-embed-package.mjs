@@ -451,8 +451,52 @@ export interface IdentifyResult {
   refusal?: Refusal & { field?: string };
 }
 
+/** What an \`ai\` call answers (\`docs/181\` §4.4): a value, refusals included. A
+ *  refusal carries the contract's \`code\` and the engine's own \`aiCode\`
+ *  (\`anchor-ambiguous\`, \`stale-revision\`, …). */
+export interface AiResult {
+  ok: boolean;
+  value?: unknown;
+  previewId?: number | null;
+  wouldApply?: boolean;
+  preview?: unknown;
+  revision?: number | null;
+  access?: "none" | "read" | "comment" | "suggest" | "review";
+  direct?: boolean;
+  /** On \`access()\`: whether the assistant's tools are offered to a browser agent
+   *  through WebMCP (\`ai-tools="webmcp"\`, \`docs/178\` §9). */
+  webmcp?: WebMcpStatus | null;
+  refusal?: Refusal & { aiCode?: string };
+}
+
+/** WebMCP, as \`ai.access().webmcp\` reports it. \`off\`: the host did not opt in;
+ *  \`unavailable\`: the browser has no \`document.modelContext\` (no polyfill is
+ *  shipped); \`unregistered\`: the editor unmounted. \`tools\` are the names
+ *  registered now, filtered by the same grant as \`access\`. */
+export interface WebMcpStatus {
+  state: "off" | "unavailable" | "pending" | "registered" | "failed" | "unregistered";
+  reason: string | null;
+  tools: readonly string[];
+}
+
+/** \`editor.ai\`: the in-page assistant's door (\`docs/178\` §9). \`preview\` shows the
+ *  plan to the person PRIVATELY with Accept and Discard and changes nothing until they
+ *  accept; \`apply\` commits at once. Edits are tracked suggestions unless the host
+ *  opened the editor with \`?ai=direct\`. */
+export interface OpenDocAssistant {
+  read(request: { tool: "outline" | "read" | "search" | "trackedChanges" | "comments"; [argument: string]: unknown }): Promise<AiResult>;
+  preview(plan: object): Promise<AiResult>;
+  apply(plan: object): Promise<AiResult>;
+  accept(): Promise<AiResult>;
+  discard(): Promise<AiResult>;
+  access(): Promise<AiResult>;
+}
+
 /** The editor, as a host addresses it. Both transports expose this. */
 export interface OpenDocHostSession {
+  /** The in-page assistant (\`docs/181\` §4.4). Over \`postMessage\` also callable as
+   *  \`ai(method, ...args)\`. */
+  ai: OpenDocAssistant;
   /** Says who this person is, ONCE per mount and before a shared room is joined
    *  (\`docs/175\` §3.2). A second call is refused \`identity-fixed\`. */
   identify(identity: HostIdentity): Promise<IdentifyResult> | IdentifyResult;

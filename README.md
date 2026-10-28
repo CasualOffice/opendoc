@@ -276,6 +276,7 @@ The editor is a thin shell over a Rust engine that owns everything a document is
 | `casual-doc-io` | Format identities, capability descriptors, detection, the adapter registry, and the HTML, Markdown and text writers |
 | `casual-doc-edit` | The closed set of editing operations, each returning its inverse |
 | `casual-doc-ai` | The Rust core of `opendoc.ai`: outline, anchored reading, search, retrieval chunks, and closed edit plans that land as tracked suggestions through the editor's own lowering (`docs/178`) |
+| `casual-doc-command` | The one capability registry: every agent-facing command declared once, the operations each may emit (enforced), every operation classified for agents by an exhaustive match, and the lowerings the editor and agents share (`docs/181`) |
 | `casual-doc-review` | The one lowering of review commands (tracked suggestions, comments, accept and reject), shared by the editor and native callers (`docs/178`) |
 | `casual-doc-transaction` | Transactions and the ordered revision log — the one mutation path — plus the collaboration session and transform |
 | `casual-doc-selection` | Validated caret, text-range and table-cell-range selection |

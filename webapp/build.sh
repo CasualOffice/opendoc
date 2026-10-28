@@ -196,6 +196,15 @@ cp "$repo/docs/assets/editor.jpg" "$here/assets/editor.jpg"
 # below, and as build-embed-package --check for the published package.
 node "$here/tools/build-embed-docs.mjs" --check
 
+# The capability registry's generated files (`webapp/generated/`, docs/181 §6,
+# G3/G4): the edit JSON Schema and one per family, `commands.json` (which
+# `tests/command_registry_parity.test.mjs` holds to the host contract), the
+# TypeScript declarations and the vocabulary table. `--check` fails when a
+# committed copy is not what the registry produces, including a file edited by
+# hand or a stray one nothing generates. CI's `test` job runs the same check as
+# `casual-doc-command`'s `tests/generated.rs`.
+cargo run --quiet --locked -p casual-doc-command --bin opendoc-command-gen -- --check
+
 # The white-label artifacts (docs/126 phase 3, ADR-038): `src/brand.css`,
 # `src/brand.mjs` and two generated regions in `editor.html`, all produced from
 # `brand.json`. FIRST, because it rewrites `editor.html` and `build-locale`'s

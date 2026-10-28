@@ -1,20 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! The body as an agent walks it: a flat, ordered list of blocks (content
-//! controls opened, tables kept whole), and heading detection.
+//! A surface as an agent walks it: a flat, ordered list of blocks (content
+//! controls listed and then opened in place, tables kept whole), and heading
+//! detection. Every surface (`crate::surface`) is walked by the same code.
 
 use casual_doc_model::NodeId;
-use casual_doc_model::v1::{BlockNode, Document, Paragraph, StyleKind, Table};
+use casual_doc_model::v1::{BlockNode, BlockSdt, Document, Paragraph, StyleKind, Table};
 
-/// One block of the body in reading order.
-#[derive(Clone, Copy, Debug)]
+use crate::project::{ALT_CHUNK, Omitted};
+
+/// One block of a surface in reading order.
+#[derive(Clone, Debug)]
 pub(crate) enum Block<'a> {
     /// A paragraph.
     Paragraph(&'a Paragraph),
     /// A table, kept whole; its cells are read through `read_table`.
     Table(&'a Table),
-    /// Preserved content the projection does not read (an `altChunk`).
-    Other(NodeId),
+    /// A block content control. Its own entry carries its type, tag and alias;
+    /// the blocks it wraps follow it, each naming it as their `contentControl`.
+    ContentControl(&'a BlockSdt),
+    /// Content the projection names but does not read, and why.
+    Opaque(NodeId, Omitted),
+}
+
+/// A block and the innermost block content control holding it, if any.
+#[derive(Clone, Debug)]
+pub(crate) struct Placed<'a> {
+    pub block: Block<'a>,
+    pub control: Option<NodeId>,
 }
 
 impl Block<'_> {
@@ -22,32 +35,51 @@ impl Block<'_> {
         match self {
             Self::Paragraph(paragraph) => paragraph.id,
             Self::Table(table) => table.id,
-            Self::Other(id) => *id,
+            Self::ContentControl(sdt) => sdt.id,
+            Self::Opaque(id, _) => *id,
         }
     }
 }
 
-/// The body's blocks in reading order, block content controls opened in
-/// place. **O(top-level blocks)**.
-pub(crate) fn body_blocks(document: &Document) -> Vec<Block<'_>> {
-    fn walk<'a>(blocks: &'a [BlockNode], out: &mut Vec<Block<'a>>) {
+/// `blocks` in reading order, block content controls listed and then opened
+/// in place. The `match` has no wildcard arm (`docs/181` G2): a new block kind
+/// does not compile until it is projected or named opaque. **O(top-level
+/// blocks + controls)**.
+pub(crate) fn blocks_in(blocks: &[BlockNode]) -> Vec<Placed<'_>> {
+    fn walk<'a>(blocks: &'a [BlockNode], control: Option<NodeId>, out: &mut Vec<Placed<'a>>) {
         for block in blocks {
             match block {
-                BlockNode::Paragraph(paragraph) => out.push(Block::Paragraph(paragraph)),
-                BlockNode::Table(table) => out.push(Block::Table(table)),
-                BlockNode::Sdt(sdt) => walk(&sdt.blocks, out),
-                BlockNode::AltChunk(chunk) => out.push(Block::Other(chunk.id)),
+                BlockNode::Paragraph(paragraph) => out.push(Placed {
+                    block: Block::Paragraph(paragraph),
+                    control,
+                }),
+                BlockNode::Table(table) => out.push(Placed {
+                    block: Block::Table(table),
+                    control,
+                }),
+                BlockNode::Sdt(sdt) => {
+                    out.push(Placed {
+                        block: Block::ContentControl(sdt),
+                        control,
+                    });
+                    walk(&sdt.blocks, Some(sdt.id), out);
+                }
+                BlockNode::AltChunk(chunk) => out.push(Placed {
+                    block: Block::Opaque(chunk.id, Omitted::new("alt_chunk", chunk.id, ALT_CHUNK)),
+                    control,
+                }),
             }
         }
     }
     let mut out = Vec::new();
-    walk(document.body(), &mut out);
+    walk(blocks, None, &mut out);
     out
 }
 
-/// Every paragraph of the body including those inside table cells, with the
-/// id of the table that holds it (if any). **O(blocks)**.
-pub(crate) fn body_paragraphs(document: &Document) -> Vec<(&Paragraph, Option<NodeId>)> {
+/// Every paragraph of `blocks` including those inside table cells, with the
+/// id of the outermost table that holds it (if any). Text boxes are not
+/// entered: they are surfaces of their own. **O(blocks)**.
+pub(crate) fn paragraphs_in(blocks: &[BlockNode]) -> Vec<(&Paragraph, Option<NodeId>)> {
     fn walk<'a>(
         blocks: &'a [BlockNode],
         table: Option<NodeId>,
@@ -69,8 +101,13 @@ pub(crate) fn body_paragraphs(document: &Document) -> Vec<(&Paragraph, Option<No
         }
     }
     let mut out = Vec::new();
-    walk(document.body(), None, &mut out);
+    walk(blocks, None, &mut out);
     out
+}
+
+/// Every paragraph of the body, as [`paragraphs_in`]. **O(blocks)**.
+pub(crate) fn body_paragraphs(document: &Document) -> Vec<(&Paragraph, Option<NodeId>)> {
+    paragraphs_in(document.body())
 }
 
 /// A table anywhere in the body, by id. **O(blocks)**.

@@ -497,7 +497,9 @@ last-writer-wins). A tombstoned operation is **reported through the disposition 
 
 **Status:** Proposed experimental future feature; not accepted, implemented, supported,
 or part of the current v1 commitment. Designed in
-`131-PDF-SEMANTIC-RECONSTRUCTION-AND-BROWSER-OCR-ARCHITECTURE.md`.
+`131-PDF-SEMANTIC-RECONSTRUCTION-AND-BROWSER-OCR-ARCHITECTURE.md`. **Superseded by ADR-076**
+(proposed 2026-10-28, `docs/182`), which keeps this ADR's invariants and OCR policy and
+replaces its provider, output shape and order.
 
 **Proposed decision:** If the experiment later graduates, import PDFs through a staged,
 browser-local reconstruction path. Native PDF evidence is extracted before selective
@@ -3733,8 +3735,8 @@ a mechanical answer.
 - internal text storage: rope, piece tree, or chunked sequence;
 - ~~collaboration operation model: OT vs CRDT~~ — superseded by **ADR-033** (proposed; owner decision 2026-09-15; see doc 107);
 - ~~PDF generation backend~~ — superseded by **ADR-031** (Phase 0 accepted and implemented; see doc 98);
-- PDF semantic reconstruction and browser OCR — **ADR-034 proposed experimental**;
-- document assistance, local semantic retrieval, and MCP adapter — **ADR-035 proposed experimental**; its MCP part is refined by **ADR-072** (proposed; see doc 178);
+- PDF semantic reconstruction and browser OCR — **ADR-034 proposed experimental**; superseded by **ADR-076** (proposed; PDF import for editing, fixed-layout frames first; see doc 182);
+- document assistance, local semantic retrieval, and MCP adapter — **ADR-035 proposed experimental**; its MCP part is refined by **ADR-072** (proposed; see doc 178), whose feature-inheritance mechanism is **ADR-075** (proposed; see doc 181);
 - schema format: canonical CBOR encoding profile and golden vectors;
 - plugin ABI stability;
 - proofing context pack: which source corpus is redistributable — **ADR-042** leaves it open;
@@ -4606,3 +4608,93 @@ percent. A dense page costs 26 ms native and 44 ms in wasm at 100 %, and 124 ms 
   at 384 dpi. It is worth having later on top of any backend.
 
 **Open.** `docs/architecture/179` §10 Q1–Q3.
+
+## ADR-075 — Every feature reaches agents through one capability registry, and an unclassified feature does not compile
+
+**Status:** **Accepted** by the owner 2026-10-29; built in #897 (owner decisions of 2026-10-28 in `docs/181`: complete it in one PR, no `rmcp`, generated JSON Schema and TypeScript now, Python later, `rewrite_block` and the private preview built). **Row:** `docs/109` RM-48.
+**Design:** `docs/181`. **Refines:** ADR-072 (its "one schema" rule and its closed
+edit-plan vocabulary). **Builds on:** ADR-030 (I1–I4), `docs/147`, A1 (`casual-doc-review`).
+**Owner request, 2026-10-28:** "MCP complete planning and architecture and pattern so
+upcoming features can also inherit that."
+
+**Context.** Measured at `a6a73192` (`docs/181` §0): the edit plan reaches 9 of 67
+operations; reads cover the body only; the vocabulary is spelled four times in `plan.rs`;
+MCP edit schemas are a prose string; editor lowerings live inside 391 wasm exports, so each
+agent feature is a re-implementation, and the AI table-row lowerings already diverge from
+the editor's `table_structure` (a merged-cell correctness defect). Nothing fails when a new
+feature has no agent surface.
+
+**Decision.**
+
+1. **One registry crate, `casual-doc-command`,** holds every document-mutating command as a
+   type implementing `Command` (id, family, editor command ids, summary, `JsonSchema` args,
+   a pure `lower()` to `Operation`s, and its trackability). The editor's wasm methods, the
+   AI layer, the MCP server, the bindings and WebMCP all call it; none lowers a gesture
+   itself.
+2. **The capability a command needs is derived from the operations it lowers to**
+   (`access::admitted_by`), never declared beside them.
+3. **Coverage is exhaustive by construction:** every `Operation` variant and every model
+   node kind is matched with no wildcard and is either reached or listed as not exposed
+   with a reason; those lists are ratchets that can only shrink. Editor command ids and the
+   registry are parity-checked both ways, and editor/agent lowerings are compared on the
+   same input.
+4. **Schemas are generated** (`schemars`) for MCP, TypeScript and Python, with a staleness
+   check; no hand-written schema remains.
+5. **The MCP tool list stays fixed;** features add `op`s to one tagged union, discoverable
+   through `list_edit_kinds` and `describe_edit_kind`, filtered by toolset and profile.
+6. **`rewrite_block`** (rewrite one block, the engine diffs and lowers the difference) joins
+   the vocabulary, because models rewrite better than they patch.
+
+**Rejected.**
+
+- One hand-written MCP tool per feature (tool sprawl; a second registry, VS Code's split).
+- Generating tools from an OpenAPI/IDL file (our truth is Rust types; per-endpoint
+  generation is the sprawl the evidence warns against).
+- A runtime plugin map for commands (loses compile-time exhaustiveness).
+- Code-mode execution as the primary surface (a security-critical sandbox; deferred).
+
+**Open.** `docs/181` §9 Q1–Q6.
+
+## ADR-076 — PDF is imported into the model for editing: fixed-layout frames by default, reflow as an explicit conversion, parsed in Rust
+
+**Status:** Proposed 2026-10-28, awaiting owner review; **changes product scope** (SKILL §1,
+`docs/98` non-goals) only when the owner confirms `docs/182` Q1. **Supersedes:** ADR-034
+(proposed). **Row:** `docs/109` RM-49. **Design:** `docs/182`.
+**Owner request, 2026-10-28:** "pdf to our modeling, for editing pdf".
+
+**Context.** PDF is export-only (`PdfAdapter::can_import == false`). Products that edit
+PDFs (Acrobat, ONLYOFFICE, Foxit) use positioned text frames; products that convert PDFs
+into word-processing documents (Word, Google Docs) reflow and lose layout outside prose.
+ONLYOFFICE lowers a page into its presentation shape model on demand (source-verified).
+`hayro` (Apache-2.0 OR MIT) now offers a pure-Rust parser and interpreter with a glyph-level
+device API and JBIG2/JPEG 2000 decoders.
+
+**Decision.**
+
+1. **PDF pages become ordinary model content.** Each page is a section of its own size
+   holding page-anchored `TextBox`es (real paragraphs and runs), pictures and shape groups
+   in paint order. No PDF object becomes editor state (MF-I1).
+2. **Reflow is a separate, explicit conversion** to a new flow document (struct tree, then
+   XY-Cut++, furniture, style clusters, lists, tables, notes), every inference reported.
+3. **Native evidence comes from `hayro` in Rust**, the same code in browser, desktop and
+   headless; PDFium is the named fallback; PDF.js is a CI oracle only.
+4. **Import is a resumable, budgeted, cancellable job** that commits atomically, beside the
+   synchronous importer contract.
+5. **Saving:** exact original bytes when unchanged; semantic PDF/DOCX/ODT when edited; then
+   a byte-preserving incremental update that carries unchanged pages over.
+6. **Forms, signatures, annotations and scripts stay out of scope;** encrypted files are
+   refused in the first release.
+7. **`docs/131`'s invariants, OCR policy and finding families stand.**
+
+**Rejected.**
+
+- Reflow as the default (loses layout for every non-prose PDF; not what the competitor
+  we replace does).
+- Lowering into a presentation/shape model (ONLYOFFICE's choice): frames here are
+  body-pipeline paragraphs, so every editing feature applies to them.
+- PDF.js as the runtime evidence provider (a second, JS-only path; the first runtime npm
+  dependency; not usable headless).
+- Any AGPL/GPL/non-commercial dependency or model (MuPDF, poppler, MinerU, Surya, Nougat,
+  LayoutReader weights) and any cloud conversion.
+
+**Open.** `docs/182` §13 Q1–Q8.

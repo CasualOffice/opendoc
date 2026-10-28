@@ -224,7 +224,7 @@ test("the URL is the one configuration channel, read in one place", () => {
     location: {
       search:
         "?mode=readonly&can=-print&chrome=-find&autosave=1&prefs=%7B%22spellcheck%22%3Afalse%7D" +
-        "&granted=comment,review&participant=4&room=wss%3A%2F%2Frelay.example%2Fdoc%2F1",
+        "&granted=comment,review&participant=4&room=wss%3A%2F%2Frelay.example%2Fdoc%2F1&ai=direct&aiTools=webmcp",
     },
     self: 1,
     top: 2,
@@ -247,6 +247,12 @@ test("the URL is the one configuration channel, read in one place", () => {
     // The room's endpoint, verbatim: this function reads and does not decide.
     // `collab_transport.mjs`'s `roomUrl` refuses anything that is not ws:/wss:.
     room: "wss://relay.example/doc/1",
+    // The host's grant of direct edits to its in-page assistant (`docs/178` §9),
+    // verbatim; `ai_assistant.mjs` decides what it means.
+    ai: "direct",
+    // The host's WebMCP opt-in (`docs/178` §9 item 2), verbatim; `ai_webmcp.mjs`
+    // honours `webmcp` only.
+    aiTools: "webmcp",
     framed: true,
   });
   // And absent on a page nobody shared: a document opened from a file has no

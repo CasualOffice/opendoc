@@ -1,0 +1,1799 @@
+{
+  "commands": [
+    {
+      "emits": [
+        "InsertText",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "at": {
+          "exact": "days",
+          "node": "1:2",
+          "side": "after"
+        },
+        "op": "insert_text",
+        "text": " (calendar)"
+      },
+      "family": "text",
+      "id": "insert_text",
+      "summary": "Insert text at an anchor.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": [
+        "edit.pasteText",
+        "insert.symbol",
+        "insert.emoji"
+      ]
+    },
+    {
+      "emits": [
+        "DeleteText",
+        "InsertText",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "op": "replace_text",
+        "target": {
+          "exact": "thirty (30) days",
+          "node": "1:2"
+        },
+        "text": "sixty (60) days"
+      },
+      "family": "text",
+      "id": "replace_text",
+      "summary": "Replace the quoted text with new text.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": [
+        "edit.replace"
+      ]
+    },
+    {
+      "emits": [
+        "DeleteText",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "op": "delete_text",
+        "target": {
+          "exact": " without notice",
+          "node": "1:2"
+        }
+      },
+      "family": "text",
+      "id": "delete_text",
+      "summary": "Delete the quoted text.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": [
+        "edit.cut"
+      ]
+    },
+    {
+      "emits": [
+        "SplitParagraph",
+        "SetParagraphProperties",
+        "InsertText",
+        "UpdateReviewState",
+        "JoinParagraphs"
+      ],
+      "example": {
+        "after": {
+          "node": "1:2"
+        },
+        "op": "insert_paragraphs",
+        "paragraphs": [
+          {
+            "style": "Heading 2",
+            "text": "Termination"
+          }
+        ]
+      },
+      "family": "paragraph",
+      "id": "insert_paragraphs",
+      "summary": "Insert new paragraphs after an anchor's paragraph.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "SetParagraphProperties",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs"
+      ],
+      "example": {
+        "op": "apply_paragraph_style",
+        "style": "Heading 1",
+        "target": {
+          "node": "1:2"
+        }
+      },
+      "family": "styles",
+      "id": "apply_paragraph_style",
+      "summary": "Apply a paragraph style, by name or id.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": [
+        "paragraph.heading.1",
+        "paragraph.heading.2",
+        "paragraph.heading.3",
+        "paragraph.normal",
+        "style."
+      ]
+    },
+    {
+      "emits": [
+        "FormatText",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "format": {
+          "bold": true
+        },
+        "op": "set_text_format",
+        "target": {
+          "exact": "Notice",
+          "node": "1:2"
+        }
+      },
+      "family": "text",
+      "id": "set_text_format",
+      "summary": "Set bold, italic, underline, strike, size, colour, highlight or font on the quoted text.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": [
+        "format.bold",
+        "format.italic",
+        "format.underline",
+        "format.strike",
+        "format.color",
+        "format.highlight",
+        "format.family",
+        "format.family.",
+        "format.size",
+        "format.size."
+      ]
+    },
+    {
+      "emits": [
+        "ClearFormatting"
+      ],
+      "example": {
+        "op": "clear_formatting",
+        "target": {
+          "exact": "notice period",
+          "node": "1:2"
+        }
+      },
+      "family": "text",
+      "id": "clear_formatting",
+      "summary": "Remove direct character formatting from the quoted text; the paragraph style stays.",
+      "trackable": "no",
+      "trackableReason": "Clearing formatting cannot be suggested yet: a suggested format change is recorded as the properties it sets, and clearing sets none. Use set_text_format with explicit values, or mode `direct`.",
+      "uiCommands": [
+        "format.clear"
+      ]
+    },
+    {
+      "emits": [
+        "DeleteText",
+        "InsertText",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "markdown": "Notice: the notice period is sixty (60) days without notice.",
+        "op": "rewrite_block",
+        "target": {
+          "node": "1:2"
+        }
+      },
+      "family": "paragraph",
+      "id": "rewrite_block",
+      "summary": "Rewrite one paragraph from read_blocks Markdown; only the words that differ change.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "SetParagraphProperties",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs"
+      ],
+      "example": {
+        "alignment": "center",
+        "op": "set_alignment",
+        "target": {
+          "node": "1:2"
+        }
+      },
+      "family": "paragraph",
+      "id": "set_alignment",
+      "summary": "Align a paragraph: start, center, end or justify.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": [
+        "paragraph.align.start",
+        "paragraph.align.center",
+        "paragraph.align.end",
+        "paragraph.align.justify"
+      ]
+    },
+    {
+      "emits": [
+        "SetParagraphProperties",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs"
+      ],
+      "example": {
+        "op": "set_line_spacing",
+        "rule": "multiple",
+        "target": {
+          "node": "1:2"
+        },
+        "value": 150
+      },
+      "family": "paragraph",
+      "id": "set_line_spacing",
+      "summary": "Set a paragraph's line spacing: a multiple of single, or an exact or minimum height in twips.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": [
+        "paragraph.spacing.100",
+        "paragraph.spacing.150",
+        "paragraph.spacing.200"
+      ]
+    },
+    {
+      "emits": [
+        "SetParagraphProperties",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs"
+      ],
+      "example": {
+        "after": 120,
+        "before": 240,
+        "op": "set_paragraph_spacing",
+        "target": {
+          "node": "1:2"
+        }
+      },
+      "family": "paragraph",
+      "id": "set_paragraph_spacing",
+      "summary": "Set the space before and/or after a paragraph, in twips.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "SetParagraphProperties",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs"
+      ],
+      "example": {
+        "first_line": -360,
+        "op": "set_indent",
+        "start": 720,
+        "target": {
+          "node": "1:2"
+        }
+      },
+      "family": "paragraph",
+      "id": "set_indent",
+      "summary": "Set a paragraph's start, end or first-line indent, in twips (a negative first line hangs).",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": [
+        "paragraph.indent.increase",
+        "paragraph.indent.decrease"
+      ]
+    },
+    {
+      "emits": [
+        "InsertText",
+        "DeleteText",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "column": 0,
+        "op": "set_cell_text",
+        "row": 1,
+        "table": "1:9",
+        "text": "Q3"
+      },
+      "family": "tables",
+      "id": "set_cell_text",
+      "summary": "Set the text of one table cell.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "InsertRow",
+        "ReplaceTable"
+      ],
+      "example": {
+        "index": 1,
+        "op": "table_insert_row",
+        "table": "1:9"
+      },
+      "family": "tables",
+      "id": "table_insert_row",
+      "summary": "Insert an empty row at an index; a vertical merge it lands inside grows to cover it.",
+      "trackable": "no",
+      "trackableReason": "Table rows cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "table.insert.rowAbove",
+        "table.insert.rowBelow"
+      ]
+    },
+    {
+      "emits": [
+        "DeleteRow",
+        "ReplaceTable"
+      ],
+      "example": {
+        "index": 1,
+        "op": "table_delete_row",
+        "table": "1:9"
+      },
+      "family": "tables",
+      "id": "table_delete_row",
+      "summary": "Delete one row; a merged cell anchored in it keeps its content on the next row.",
+      "trackable": "no",
+      "trackableReason": "Table rows cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "table.delete.row"
+      ]
+    },
+    {
+      "emits": [
+        "InsertTable"
+      ],
+      "example": {
+        "after": {
+          "node": "1:2"
+        },
+        "columns": 3,
+        "op": "insert_table",
+        "rows": 2
+      },
+      "family": "tables",
+      "id": "insert_table",
+      "summary": "Insert an empty table (rows x columns, with a thin grid) after an anchor's top-level block.",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.table"
+      ]
+    },
+    {
+      "emits": [
+        "InsertColumn",
+        "ReplaceTable"
+      ],
+      "example": {
+        "index": 1,
+        "op": "table_insert_column",
+        "table": "1:9"
+      },
+      "family": "tables",
+      "id": "table_insert_column",
+      "summary": "Insert an empty column at a grid index; a merged cell it lands inside grows to cover it.",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "table.insert.columnLeft",
+        "table.insert.columnRight"
+      ]
+    },
+    {
+      "emits": [
+        "DeleteColumn",
+        "ReplaceTable"
+      ],
+      "example": {
+        "index": 1,
+        "op": "table_delete_column",
+        "table": "1:9"
+      },
+      "family": "tables",
+      "id": "table_delete_column",
+      "summary": "Delete one grid column; a merged cell crossing it shrinks.",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "table.delete.column"
+      ]
+    },
+    {
+      "emits": [
+        "ReplaceTable"
+      ],
+      "example": {
+        "from": {
+          "column": 0,
+          "row": 0
+        },
+        "op": "table_merge_cells",
+        "table": "1:9",
+        "to": {
+          "column": 1,
+          "row": 0
+        }
+      },
+      "family": "tables",
+      "id": "table_merge_cells",
+      "summary": "Merge the rectangle between two cells into one; every cell's text moves into it in reading order.",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "table.merge"
+      ]
+    },
+    {
+      "emits": [
+        "ReplaceTable"
+      ],
+      "example": {
+        "cell": {
+          "column": 0,
+          "row": 0
+        },
+        "op": "table_split_cell",
+        "table": "1:9"
+      },
+      "family": "tables",
+      "id": "table_split_cell",
+      "summary": "Unmerge the merged cell a cell belongs to; its text stays in the top-left cell.",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "table.unmerge"
+      ]
+    },
+    {
+      "emits": [
+        "DeleteTable"
+      ],
+      "example": {
+        "op": "table_delete",
+        "table": "1:9"
+      },
+      "family": "tables",
+      "id": "table_delete",
+      "summary": "Delete a whole table.",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "table.delete.table"
+      ]
+    },
+    {
+      "emits": [
+        "SetTableCellProperties"
+      ],
+      "example": {
+        "from": {
+          "column": 0,
+          "row": 0
+        },
+        "op": "table_set_cell_format",
+        "shading": "#FFF2CC",
+        "table": "1:9",
+        "to": {
+          "column": 1,
+          "row": 0
+        },
+        "vertical_alignment": "center"
+      },
+      "family": "tables",
+      "id": "table_set_cell_format",
+      "summary": "Set the shading and/or vertical alignment of one cell or a rectangle of cells.",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "SetAbstractNumbering",
+        "SetNumberingInstance",
+        "SetParagraphProperties",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs"
+      ],
+      "example": {
+        "kind": "bullet",
+        "op": "set_list",
+        "target": {
+          "node": "1:2"
+        }
+      },
+      "family": "lists",
+      "id": "set_list",
+      "summary": "Make a paragraph a bulleted or numbered list item, or take it out of its list.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": [
+        "paragraph.list.bullet",
+        "paragraph.list.numbered"
+      ]
+    },
+    {
+      "emits": [
+        "SetParagraphProperties",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs"
+      ],
+      "example": {
+        "delta": 1,
+        "op": "change_list_level",
+        "target": {
+          "node": "1:3"
+        }
+      },
+      "family": "lists",
+      "id": "change_list_level",
+      "summary": "Move a list item down (positive) or up (negative) a number of levels.",
+      "trackable": "yes",
+      "trackableReason": null,
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "SetNumberingInstance",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "op": "restart_numbering",
+        "target": {
+          "node": "1:3"
+        },
+        "value": 1
+      },
+      "family": "lists",
+      "id": "restart_numbering",
+      "summary": "Restart numbering at a numbered list item, at 1 or a given value.",
+      "trackable": "no",
+      "trackableReason": "Restarting or continuing numbering cannot be suggested: it moves items to another numbering instance, which Word has no tracked-change record for. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "paragraph.list.restart"
+      ]
+    },
+    {
+      "emits": [
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "op": "continue_numbering",
+        "target": {
+          "node": "1:3"
+        }
+      },
+      "family": "lists",
+      "id": "continue_numbering",
+      "summary": "Continue numbering from the nearest earlier numbered list at the item's level.",
+      "trackable": "no",
+      "trackableReason": "Restarting or continuing numbering cannot be suggested: it moves items to another numbering instance, which Word has no tracked-change record for. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "paragraph.list.continue"
+      ]
+    },
+    {
+      "emits": [
+        "SetHyperlink"
+      ],
+      "example": {
+        "op": "set_hyperlink",
+        "target": {
+          "exact": "notice period",
+          "node": "1:2"
+        },
+        "url": "https://example.com/terms"
+      },
+      "family": "links",
+      "id": "set_hyperlink",
+      "summary": "Link the quoted text to an http(s), mailto, ftp or tel URL, or to a bookmark as `#name`.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.link"
+      ]
+    },
+    {
+      "emits": [
+        "SetHyperlink"
+      ],
+      "example": {
+        "op": "remove_hyperlink",
+        "target": {
+          "exact": "First",
+          "node": "1:3"
+        }
+      },
+      "family": "links",
+      "id": "remove_hyperlink",
+      "summary": "Remove the hyperlink whose text is exactly the quote; the text and its formatting stay.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "CreateBookmark"
+      ],
+      "example": {
+        "name": "NoticePeriod",
+        "op": "create_bookmark",
+        "target": {
+          "exact": "thirty (30) days",
+          "node": "1:2"
+        }
+      },
+      "family": "links",
+      "id": "create_bookmark",
+      "summary": "Bookmark the quoted text (a letter, then letters, digits or _, at most 40).",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.bookmark"
+      ]
+    },
+    {
+      "emits": [
+        "RenameBookmark"
+      ],
+      "example": {
+        "name": "Notice",
+        "new_name": "NoticeClause",
+        "op": "rename_bookmark"
+      },
+      "family": "links",
+      "id": "rename_bookmark",
+      "summary": "Rename a bookmark.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "DeleteBookmark"
+      ],
+      "example": {
+        "name": "Notice",
+        "op": "delete_bookmark"
+      },
+      "family": "links",
+      "id": "delete_bookmark",
+      "summary": "Delete a bookmark; the text it spans stays.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "InsertField"
+      ],
+      "example": {
+        "at": {
+          "node": "1:2",
+          "side": "after"
+        },
+        "kind": "page",
+        "op": "insert_field"
+      },
+      "family": "fields",
+      "id": "insert_field",
+      "summary": "Insert a page-number, page-count, date, time, file-name or author field at an anchor.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.field",
+        "insert.field."
+      ]
+    },
+    {
+      "emits": [
+        "SetMediaReference",
+        "InsertInlineObject",
+        "SetObjectLocks",
+        "SetObjectDescr"
+      ],
+      "example": {
+        "alt_text": "Company logo",
+        "at": {
+          "node": "1:2",
+          "side": "after"
+        },
+        "content_type": "image/png",
+        "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==",
+        "op": "insert_image",
+        "width_pt": 36
+      },
+      "family": "objects",
+      "id": "insert_image",
+      "summary": "Insert a picture (base64 PNG, JPEG, GIF, BMP, TIFF or WebP, at most 8 MiB) at an anchor.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.image"
+      ]
+    },
+    {
+      "emits": [
+        "SetObjectDescr"
+      ],
+      "example": {
+        "object": "1:20",
+        "op": "set_alt_text",
+        "text": "Signature of the lessor"
+      },
+      "family": "objects",
+      "id": "set_alt_text",
+      "summary": "Set or clear an object's alt text.",
+      "trackable": "no",
+      "trackableReason": "Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "object.altText"
+      ]
+    },
+    {
+      "emits": [
+        "SetExtent"
+      ],
+      "example": {
+        "height_pt": 72,
+        "object": "1:20",
+        "op": "resize_object",
+        "width_pt": 72
+      },
+      "family": "objects",
+      "id": "resize_object",
+      "summary": "Resize a picture, shape or text box, in points.",
+      "trackable": "no",
+      "trackableReason": "Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "SetAnchor"
+      ],
+      "example": {
+        "object": "1:20",
+        "op": "set_wrap",
+        "wrap": "square"
+      },
+      "family": "objects",
+      "id": "set_wrap",
+      "summary": "Set how text wraps around a floating object.",
+      "trackable": "no",
+      "trackableReason": "Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "layout.arrange.wrap",
+        "object.wrap"
+      ]
+    },
+    {
+      "emits": [
+        "SetImageCrop"
+      ],
+      "example": {
+        "bottom": 0,
+        "left": 0.1,
+        "object": "1:20",
+        "op": "crop_image",
+        "right": 0.1,
+        "top": 0
+      },
+      "family": "objects",
+      "id": "crop_image",
+      "summary": "Crop a picture by the fraction of each edge to hide; all zero removes the crop.",
+      "trackable": "no",
+      "trackableReason": "Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "object.crop"
+      ]
+    },
+    {
+      "emits": [
+        "DeleteObject"
+      ],
+      "example": {
+        "object": "1:20",
+        "op": "delete_object"
+      },
+      "family": "objects",
+      "id": "delete_object",
+      "summary": "Delete a picture, shape, text box or group.",
+      "trackable": "no",
+      "trackableReason": "Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "object.delete"
+      ]
+    },
+    {
+      "emits": [
+        "SetShapeFill"
+      ],
+      "example": {
+        "color": "#FFF2CC",
+        "op": "set_shape_fill",
+        "shape": "1:20"
+      },
+      "family": "objects",
+      "id": "set_shape_fill",
+      "summary": "Set a shape's fill to a colour, or remove it.",
+      "trackable": "no",
+      "trackableReason": "Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "object.fill"
+      ]
+    },
+    {
+      "emits": [
+        "SetShapeStroke"
+      ],
+      "example": {
+        "color": "#1F3864",
+        "op": "set_shape_outline",
+        "shape": "1:20",
+        "width_pt": 1.5
+      },
+      "family": "objects",
+      "id": "set_shape_outline",
+      "summary": "Set a shape's or a picture's outline colour and/or weight, or remove it.",
+      "trackable": "no",
+      "trackableReason": "Object size, wrap, crop, alt text, fill, outline and deletion cannot be suggested: no tracked-change record for them is modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "object.outline"
+      ]
+    },
+    {
+      "emits": [
+        "InsertNote"
+      ],
+      "example": {
+        "at": {
+          "exact": "days",
+          "node": "1:2",
+          "side": "after"
+        },
+        "op": "insert_footnote",
+        "text": "Calendar days, not business days."
+      },
+      "family": "notes",
+      "id": "insert_footnote",
+      "summary": "Insert a footnote with its text; the reference mark goes at the anchor.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.footnote"
+      ]
+    },
+    {
+      "emits": [
+        "InsertNote"
+      ],
+      "example": {
+        "at": {
+          "exact": "days",
+          "node": "1:2",
+          "side": "after"
+        },
+        "op": "insert_endnote",
+        "text": "See the schedule of notice periods."
+      },
+      "family": "notes",
+      "id": "insert_endnote",
+      "summary": "Insert an endnote with its text; the reference mark goes at the anchor.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.endnote"
+      ]
+    },
+    {
+      "emits": [
+        "InsertInlineObject"
+      ],
+      "example": {
+        "at": {
+          "node": "1:2",
+          "side": "after"
+        },
+        "kind": "page",
+        "op": "insert_break"
+      },
+      "family": "sections",
+      "id": "insert_break",
+      "summary": "Insert a line, page or column break, or a blank page, at an anchor.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.lineBreak",
+        "layout.break.page",
+        "layout.break.column",
+        "layout.blankPage"
+      ]
+    },
+    {
+      "emits": [
+        "SpliceSectionBoundary",
+        "SetParagraphProperties",
+        "SplitParagraph",
+        "SetSectionFormProtection"
+      ],
+      "example": {
+        "at": {
+          "node": "1:2",
+          "side": "after"
+        },
+        "op": "insert_section_break",
+        "start": "next_page"
+      },
+      "family": "sections",
+      "id": "insert_section_break",
+      "summary": "Start a new section at an anchor; it inherits the page setup, headers and footers.",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "layout.break.section.nextPage",
+        "layout.break.section.continuous",
+        "layout.break.section.evenPage",
+        "layout.break.section.oddPage"
+      ]
+    },
+    {
+      "emits": [
+        "SetSectionGeometry"
+      ],
+      "example": {
+        "margins": {
+          "left": 1080,
+          "right": 1080
+        },
+        "op": "set_page_setup",
+        "orientation": "landscape",
+        "section": 0
+      },
+      "family": "sections",
+      "id": "set_page_setup",
+      "summary": "Change a section's (or every section's) page size, orientation, margins or columns, in twips.",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "layout.pageSetup",
+        "layout.margins",
+        "layout.orientation",
+        "layout.size",
+        "layout.columns"
+      ]
+    },
+    {
+      "emits": [
+        "SetSectionLineNumbering"
+      ],
+      "example": {
+        "count_by": 1,
+        "op": "set_line_numbering",
+        "restart": "each_page",
+        "section": 0
+      },
+      "family": "sections",
+      "id": "set_line_numbering",
+      "summary": "Number a section's lines in the margin every N lines, or turn it off with 0.",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "layout.lineNumbers"
+      ]
+    },
+    {
+      "emits": [
+        "SetSectionPageNumbering",
+        "SetSectionVerticalAlignment"
+      ],
+      "example": {
+        "format": "lower_roman",
+        "op": "set_page_numbering",
+        "section": 0,
+        "start": 1
+      },
+      "family": "sections",
+      "id": "set_page_numbering",
+      "summary": "Set a section's page-number format, and restart it at a number or continue.",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": []
+    },
+    {
+      "emits": [
+        "SetSectionWatermark"
+      ],
+      "example": {
+        "op": "set_watermark",
+        "text": "DRAFT"
+      },
+      "family": "sections",
+      "id": "set_watermark",
+      "summary": "Stamp a text watermark on every page, or remove it.",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "layout.watermark"
+      ]
+    },
+    {
+      "emits": [
+        "CreateHeaderFooterBody",
+        "SetSectionRunningRef"
+      ],
+      "example": {
+        "op": "insert_header",
+        "section": 0
+      },
+      "family": "headers_footers",
+      "id": "insert_header",
+      "summary": "Add an empty header to a section; read_blocks on its surface gives the paragraph to write into.",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.header"
+      ]
+    },
+    {
+      "emits": [
+        "CreateHeaderFooterBody",
+        "SetSectionRunningRef"
+      ],
+      "example": {
+        "op": "insert_footer",
+        "section": 0
+      },
+      "family": "headers_footers",
+      "id": "insert_footer",
+      "summary": "Add an empty footer to a section; read_blocks on its surface gives the paragraph to write into.",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.footer"
+      ]
+    },
+    {
+      "emits": [
+        "SetSectionTitlePage"
+      ],
+      "example": {
+        "enabled": true,
+        "op": "set_different_first_page",
+        "section": 0
+      },
+      "family": "headers_footers",
+      "id": "set_different_first_page",
+      "summary": "Give a section's first page its own header and footer, or not.",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "layout.firstPageVariant"
+      ]
+    },
+    {
+      "emits": [
+        "SetEvenAndOddHeaders"
+      ],
+      "example": {
+        "enabled": true,
+        "op": "set_different_odd_even"
+      },
+      "family": "headers_footers",
+      "id": "set_different_odd_even",
+      "summary": "Give even and odd pages their own headers and footers, or not (document-wide).",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "layout.evenOddVariant"
+      ]
+    },
+    {
+      "emits": [
+        "InsertInlineObject",
+        "SetChartDefinition"
+      ],
+      "example": {
+        "at": {
+          "node": "1:2",
+          "side": "after"
+        },
+        "kind": "column",
+        "op": "insert_chart"
+      },
+      "family": "charts",
+      "id": "insert_chart",
+      "summary": "Insert a chart (column, bar, line, area, scatter, pie or doughnut, plain, stacked or percent) with sample data at an anchor.",
+      "trackable": "no",
+      "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.chart"
+      ]
+    },
+    {
+      "emits": [
+        "SetStyleDefinition",
+        "InsertFieldRange"
+      ],
+      "example": {
+        "before": {
+          "node": "1:2"
+        },
+        "levels": 2,
+        "op": "insert_table_of_contents"
+      },
+      "family": "references",
+      "id": "insert_table_of_contents",
+      "summary": "Insert a table of contents (each heading with its page) before a body paragraph.",
+      "trackable": "no",
+      "trackableReason": "Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "reference.tableOfContents"
+      ]
+    },
+    {
+      "emits": [
+        "SetStyleDefinition",
+        "DeleteBlocks",
+        "InsertBlocks",
+        "InsertFieldRange"
+      ],
+      "example": {
+        "mode": "entire",
+        "op": "update_table_of_contents"
+      },
+      "family": "references",
+      "id": "update_table_of_contents",
+      "summary": "Update a table of contents: its page numbers only, or the entire table from the headings.",
+      "trackable": "no",
+      "trackableReason": "Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "reference.updateFields",
+        "reference.updateToc.pageNumbers",
+        "reference.updateToc.entire"
+      ]
+    },
+    {
+      "emits": [
+        "SetStyleDefinition",
+        "InsertBlocks",
+        "SetInlines"
+      ],
+      "example": {
+        "label": "Table",
+        "op": "insert_caption",
+        "target": "1:9",
+        "text": ": Payment schedule"
+      },
+      "family": "references",
+      "id": "insert_caption",
+      "summary": "Insert a numbered caption (Figure, Table, Equation or the document's own label) above or below a table, picture or paragraph.",
+      "trackable": "no",
+      "trackableReason": "Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "reference.caption"
+      ]
+    },
+    {
+      "emits": [
+        "SetInlines"
+      ],
+      "example": {
+        "op": "update_caption_numbers"
+      },
+      "family": "references",
+      "id": "update_caption_numbers",
+      "summary": "Renumber every caption whose shown number is stale.",
+      "trackable": "no",
+      "trackableReason": "Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "reference.updateCaptionNumbers"
+      ]
+    },
+    {
+      "emits": [
+        "CreateBookmark",
+        "InsertField",
+        "InsertText"
+      ],
+      "example": {
+        "at": {
+          "node": "1:2",
+          "side": "after"
+        },
+        "op": "insert_cross_reference",
+        "show": "page_number",
+        "target": "1:3"
+      },
+      "family": "references",
+      "id": "insert_cross_reference",
+      "summary": "Insert a cross-reference to a heading, caption, bookmarked paragraph or note: its text, label and number, page, or above/below.",
+      "trackable": "no",
+      "trackableReason": "Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "reference.crossReference"
+      ]
+    },
+    {
+      "emits": [
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "op": "comment",
+        "target": {
+          "exact": "notice period",
+          "node": "1:2"
+        },
+        "text": "Aligned with the MSA, clause 9."
+      },
+      "family": "review",
+      "id": "comment",
+      "summary": "Comment on the quoted text, or reply to a comment.",
+      "trackable": "not-applicable",
+      "trackableReason": null,
+      "uiCommands": [
+        "review.comment"
+      ]
+    },
+    {
+      "emits": [
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "id": "1:40",
+        "op": "resolve_comment",
+        "resolved": true
+      },
+      "family": "review",
+      "id": "resolve_comment",
+      "summary": "Resolve or reopen a comment thread.",
+      "trackable": "not-applicable",
+      "trackableReason": null,
+      "uiCommands": [
+        "review.comment.resolve"
+      ]
+    },
+    {
+      "emits": [
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs",
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "decision": "accept",
+        "op": "review",
+        "revisions": [
+          "1:41"
+        ]
+      },
+      "family": "review",
+      "id": "review",
+      "summary": "Accept or reject named tracked changes, or all of them.",
+      "trackable": "not-applicable",
+      "trackableReason": null,
+      "uiCommands": [
+        "review.acceptAtCaret",
+        "review.rejectAtCaret",
+        "review.acceptNext",
+        "review.rejectNext",
+        "review.acceptAll",
+        "review.rejectAll"
+      ]
+    }
+  ],
+  "families": [
+    {
+      "commands": [
+        "insert_text",
+        "replace_text",
+        "delete_text",
+        "set_text_format",
+        "clear_formatting"
+      ],
+      "name": "text"
+    },
+    {
+      "commands": [
+        "insert_paragraphs",
+        "rewrite_block",
+        "set_alignment",
+        "set_line_spacing",
+        "set_paragraph_spacing",
+        "set_indent"
+      ],
+      "name": "paragraph"
+    },
+    {
+      "commands": [
+        "apply_paragraph_style"
+      ],
+      "name": "styles"
+    },
+    {
+      "commands": [
+        "set_cell_text",
+        "table_insert_row",
+        "table_delete_row",
+        "insert_table",
+        "table_insert_column",
+        "table_delete_column",
+        "table_merge_cells",
+        "table_split_cell",
+        "table_delete",
+        "table_set_cell_format"
+      ],
+      "name": "tables"
+    },
+    {
+      "commands": [
+        "set_list",
+        "change_list_level",
+        "restart_numbering",
+        "continue_numbering"
+      ],
+      "name": "lists"
+    },
+    {
+      "commands": [
+        "set_hyperlink",
+        "remove_hyperlink",
+        "create_bookmark",
+        "rename_bookmark",
+        "delete_bookmark"
+      ],
+      "name": "links"
+    },
+    {
+      "commands": [
+        "insert_field"
+      ],
+      "name": "fields"
+    },
+    {
+      "commands": [
+        "insert_image",
+        "set_alt_text",
+        "resize_object",
+        "set_wrap",
+        "crop_image",
+        "delete_object",
+        "set_shape_fill",
+        "set_shape_outline"
+      ],
+      "name": "objects"
+    },
+    {
+      "commands": [
+        "insert_footnote",
+        "insert_endnote"
+      ],
+      "name": "notes"
+    },
+    {
+      "commands": [
+        "insert_break",
+        "insert_section_break",
+        "set_page_setup",
+        "set_line_numbering",
+        "set_page_numbering",
+        "set_watermark"
+      ],
+      "name": "sections"
+    },
+    {
+      "commands": [
+        "insert_header",
+        "insert_footer",
+        "set_different_first_page",
+        "set_different_odd_even"
+      ],
+      "name": "headers_footers"
+    },
+    {
+      "commands": [
+        "insert_chart"
+      ],
+      "name": "charts"
+    },
+    {
+      "commands": [
+        "insert_table_of_contents",
+        "update_table_of_contents",
+        "insert_caption",
+        "update_caption_numbers",
+        "insert_cross_reference"
+      ],
+      "name": "references"
+    },
+    {
+      "commands": [
+        "comment",
+        "resolve_comment",
+        "review"
+      ],
+      "name": "review"
+    }
+  ],
+  "generatedBy": "cargo run -p casual-doc-command --bin opendoc-command-gen",
+  "uiNotExposed": [
+    {
+      "id": "edit.undo",
+      "reason": "Undo and redo walk the person's own history; an agent undoes its own change with the `undo_change` tool."
+    },
+    {
+      "id": "edit.redo",
+      "reason": "Undo and redo walk the person's own history; an agent undoes its own change with the `undo_change` tool."
+    },
+    {
+      "id": "edit.paste",
+      "reason": "Rich paste reads the person's clipboard; an agent inserts text with insert_text and formats it with set_text_format."
+    },
+    {
+      "id": "format.direction.rtl",
+      "reason": "Paragraph direction arrives with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.direction.ltr",
+      "reason": "Paragraph direction arrives with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.subscript",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.superscript",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.grow",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.shrink",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.underline.",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.allCaps",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.smallCaps",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.doubleStrike",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.outline",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.shadow",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.emboss",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.imprint",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.dialog",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.advanced",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.border",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.emphasis",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.spacing",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.scale",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.position",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.kerning",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.character.ligatures",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "format.painter",
+      "reason": "Format painter copies the caret's formatting, a gesture with no document-addressed equivalent; an agent sets formatting with set_text_format."
+    },
+    {
+      "id": "format.case.upper",
+      "reason": "Change case keeps each run's formatting, which replace_text would flatten; it arrives with rewrite_block (docs/181 §4.3)."
+    },
+    {
+      "id": "format.case.lower",
+      "reason": "Change case keeps each run's formatting, which replace_text would flatten; it arrives with rewrite_block (docs/181 §4.3)."
+    },
+    {
+      "id": "format.case.title",
+      "reason": "Change case keeps each run's formatting, which replace_text would flatten; it arrives with rewrite_block (docs/181 §4.3)."
+    },
+    {
+      "id": "format.case.sentence",
+      "reason": "Change case keeps each run's formatting, which replace_text would flatten; it arrives with rewrite_block (docs/181 §4.3)."
+    },
+    {
+      "id": "format.case.toggle",
+      "reason": "Change case keeps each run's formatting, which replace_text would flatten; it arrives with rewrite_block (docs/181 §4.3)."
+    },
+    {
+      "id": "paragraph.spacing.",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "paragraph.space.",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "layout.paragraph",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "layout.indent",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "layout.spacing",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "layout.tabStops",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "insert.dropCap",
+      "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "paragraph.list.settings",
+      "reason": "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3)."
+    },
+    {
+      "id": "paragraph.list.checklist",
+      "reason": "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3)."
+    },
+    {
+      "id": "paragraph.listFormat.",
+      "reason": "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3)."
+    },
+    {
+      "id": "style.manage",
+      "reason": "Redefining a style changes every paragraph that uses it; agents apply styles and do not define them yet (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "style.updateFromSelection",
+      "reason": "Redefining a style changes every paragraph that uses it; agents apply styles and do not define them yet (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "style.createFromSelection",
+      "reason": "Redefining a style changes every paragraph that uses it; agents apply styles and do not define them yet (docs/181 §4.2 step 2)."
+    },
+    {
+      "id": "insert.shape",
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
+    },
+    {
+      "id": "insert.textbox",
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
+    },
+    {
+      "id": "layout.arrange.position",
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
+    },
+    {
+      "id": "layout.arrange.bringForward",
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
+    },
+    {
+      "id": "layout.arrange.sendBackward",
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
+    },
+    {
+      "id": "layout.arrange.bringToFront",
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
+    },
+    {
+      "id": "layout.arrange.sendToBack",
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
+    },
+    {
+      "id": "layout.arrange.group",
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
+    },
+    {
+      "id": "layout.arrange.ungroup",
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
+    },
+    {
+      "id": "layout.arrange.rotateRight",
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
+    },
+    {
+      "id": "layout.arrange.rotateLeft",
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
+    },
+    {
+      "id": "layout.arrange.flipHorizontal",
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
+    },
+    {
+      "id": "layout.arrange.flipVertical",
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
+    },
+    {
+      "id": "layout.arrange.inLine",
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
+    },
+    {
+      "id": "layout.arrange.addText",
+      "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
+    },
+    {
+      "id": "object.",
+      "reason": "The object menus are one contract family; its members that change a picture or shape (object.altText, object.crop, object.delete, object.fill, object.outline, object.wrap) are named by the objects commands, the rest are arrangement."
+    },
+    {
+      "id": "table.",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.move.rowUp",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.move.rowDown",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.move.columnLeft",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.move.columnRight",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.split",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.distribute.rows",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.distribute.columns",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.sort.ascending",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.sort.descending",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.column.grow",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.column.shrink",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.row.grow",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.row.shrink",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.cellFormat",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.borderStyle",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.properties",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "table.style.none",
+      "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
+    },
+    {
+      "id": "layout.headerFooterSettings",
+      "reason": "The Header & Footer options dialog also writes the header and footer distances, which agents are not offered; its toggles and page numbering are (set_different_first_page, set_different_odd_even, set_page_numbering)."
+    },
+    {
+      "id": "review.mode.editing",
+      "reason": "Switches the editor's own editing mode, not the document; an agent's mode is its profile plus the plan's `mode`."
+    },
+    {
+      "id": "review.mode.suggesting",
+      "reason": "Switches the editor's own editing mode, not the document; an agent's mode is its profile plus the plan's `mode`."
+    },
+    {
+      "id": "review.restrictEditing",
+      "reason": "Protection and tracking settings are a person's decision, never an agent's."
+    },
+    {
+      "id": "review.comment.delete",
+      "reason": "No command deletes a comment yet; an agent resolves a thread with resolve_comment."
+    }
+  ],
+  "uiNotExposedCeiling": 84,
+  "vocabularyVersion": "1.3"
+}

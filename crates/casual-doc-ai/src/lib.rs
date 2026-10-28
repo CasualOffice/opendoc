@@ -16,6 +16,8 @@
 //!   editor's own lowering; direct edits only under a profile that grants
 //!   `edit`; preview equals apply.
 //! - [`compare`]: budgeted structural comparison.
+//! - [`editor`]: the live editor's entry point: a plan compiled to its
+//!   operations and redline, committed by nobody (`docs/181` §4.4).
 //!
 //! This crate never calls a model, holds no credential, and opens no network
 //! connection. The MCP server (`tools/opendoc-mcp`) is a thin adapter over it;
@@ -26,16 +28,28 @@
 
 pub mod anchor;
 pub mod compare;
+pub mod editor;
 pub mod error;
+// Own line (anti-conflict): heading levels and page labels for the reference
+// commands (`docs/181` §12, lane references).
+mod layout_facts;
 pub mod limits;
 pub mod plan;
 pub mod profile;
+mod project;
 pub mod read;
 pub mod session;
 mod structure;
+pub mod surface;
 pub mod text;
 
 pub use error::{AiError, AiResult};
 pub use limits::Limits;
 pub use profile::Profile;
+/// The author every agent suggestion and comment carries unless an operator sets
+/// another: the owner's answer to `docs/178` Q3 (2026-10-29). It is written into
+/// `w:author`, so Word's review pane shows it too.
+pub const AI_AUTHOR: &str = "Casual AI";
+
 pub use session::{Clock, ExportFormat, Session, SessionConfig};
+pub use surface::Surface;

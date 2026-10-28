@@ -5,14 +5,17 @@
 //! cursor bound to the revision it was issued at, and every text-bearing result
 //! states its truncation (`docs/178` §5.3).
 //!
-//! Reading covers the **body** (including table cells and content controls).
-//! Headers, footers, notes and text boxes are other surfaces; every result says
-//! which surfaces it covered rather than implying the whole document.
+//! Every surface is readable (`docs/181` R2): the body, headers, footers,
+//! footnotes, endnotes, comment bodies and text boxes ([`Surface`]).
+//! `get_outline` lists them all; `read_blocks`, `search` and `chunks` take one
+//! (the body by default) and `search`/`chunks` can take all of them. Every
+//! result names the surfaces it covered rather than implying the whole
+//! document, and counts what it names but does not show (`omitted`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use casual_doc_model::NodeId;
-use casual_doc_model::v1::{BlockNode, InlineNode, StyleKind};
+use casual_doc_model::v1::{BlockNode, Document, InlineNode, StyleKind};
 use casual_doc_review::body::{
     ReviewCommentSummaryJson, ReviewRevisionSummaryJson, build_review_comment_summaries,
     build_review_revision_summaries,
@@ -21,17 +24,90 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::error::{AiError, AiResult};
+use crate::project::{self, Omitted};
 use crate::session::Session;
 use crate::structure::{
-    Block, body_blocks, body_paragraphs, find_table, heading_level, style_name,
+    Block, blocks_in, body_paragraphs, find_table, heading_level, paragraphs_in, style_name,
 };
+use crate::surface::{self, Surface};
 use crate::text::{ESTIMATOR, RunView, clip, estimate_tokens, paragraph_text, runs};
-
-/// The surfaces every read result covers today.
-pub const SURFACES: &[&str] = &["body"];
 
 /// Most runs projected for one paragraph.
 const MAX_RUNS: usize = 200;
+
+/// Most `omitted` items listed in one result; the rest are counted.
+const MAX_OMITTED: usize = 50;
+
+/// Why a comment body's paragraphs are not edit targets.
+const COMMENT_READ_ONLY: &str =
+    "a comment's body changes through the comment and resolve_comment edits, not by anchor";
+
+/// Which surfaces a `search` or `chunks` call covers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Scope {
+    /// One surface.
+    One(Surface),
+    /// Every surface the document has.
+    All,
+}
+
+impl Default for Scope {
+    fn default() -> Self {
+        Self::One(Surface::Body)
+    }
+}
+
+impl Scope {
+    /// `None` is the body; `all` is every surface; anything else is one
+    /// surface as [`Surface::parse`] reads it.
+    ///
+    /// # Errors
+    ///
+    /// `invalid-argument` for a malformed surface.
+    pub fn parse(value: Option<&str>) -> AiResult<Self> {
+        match value {
+            None => Ok(Self::default()),
+            Some("all") => Ok(Self::All),
+            Some(one) => Surface::parse(one).map(Self::One),
+        }
+    }
+
+    fn tag(self) -> String {
+        match self {
+            Self::One(Surface::Body) => String::new(),
+            Self::One(surface) => format!("~{surface}"),
+            Self::All => "~all".to_owned(),
+        }
+    }
+
+    fn covered(self) -> Value {
+        match self {
+            Self::One(surface) => json!([surface.to_string()]),
+            Self::All => json!("all"),
+        }
+    }
+
+    /// The surfaces in scope with their blocks. O(1) lookups for one named
+    /// surface (O(document) for a text box), O(document) for all.
+    fn entries(self, document: &Document) -> AiResult<Vec<(Surface, &[BlockNode])>> {
+        match self {
+            Self::One(surface) => Ok(vec![(surface, surface::blocks_of(document, surface)?)]),
+            Self::All => Ok(surface::enumerate(document)
+                .into_iter()
+                .map(|entry| (entry.surface, entry.blocks))
+                .collect()),
+        }
+    }
+}
+
+/// The `omitted` field of a result: how many named things it did not show,
+/// and the first `MAX_OMITTED` of them.
+fn omitted_value(items: &[Omitted]) -> Value {
+    json!({
+        "count": items.len(),
+        "items": &items[..items.len().min(MAX_OMITTED)],
+    })
+}
 
 /// An opaque page cursor: `<kind>.<revision>.<index>`. Bound to the revision it
 /// was issued at, so a cursor from before an edit is refused rather than
@@ -96,25 +172,42 @@ pub struct OutlineEntry {
     pub dimensions: Option<[usize; 2]>,
 }
 
-/// Builds the outline. **O(body blocks)**.
+/// Builds the outline: the body's headings and tables, then every surface the
+/// document has ([`Surface`]) with its ids, kind, where it shows (section and
+/// page type for a header or footer, the referencing paragraph for a note, the
+/// host paragraph for a text box) and its estimated tokens, plus the
+/// bookmarks and the document-wide counts. Both lists are paged: `cursor` for
+/// the headings, `surfaces_cursor` for the surfaces. **O(document)**, one walk.
 pub fn outline(
     session: &Session,
     depth: Option<u8>,
     cursor_in: Option<&str>,
     limit: Option<usize>,
 ) -> AiResult<Value> {
+    outline_paged(session, depth, cursor_in, limit, None)
+}
+
+/// [`outline`] with a cursor for the surface list too (its
+/// `surfacesNextCursor`). **O(document)**.
+pub fn outline_paged(
+    session: &Session,
+    depth: Option<u8>,
+    cursor_in: Option<&str>,
+    limit: Option<usize>,
+    surfaces_cursor: Option<&str>,
+) -> AiResult<Value> {
     let document = session.document();
     let revision = session.revision();
     let depth = depth.unwrap_or(3).clamp(1, 9);
-    let blocks = body_blocks(document);
+    let blocks = blocks_in(document.body());
     // Per-block tokens, so a section's size is a prefix-sum difference.
     let mut tokens = Vec::with_capacity(blocks.len());
     let mut entries = Vec::new();
     let mut path: Vec<(u8, String)> = Vec::new();
     let mut paragraphs = 0usize;
     let mut tables = 0usize;
-    for (index, block) in blocks.iter().enumerate() {
-        match block {
+    for (index, placed) in blocks.iter().enumerate() {
+        match &placed.block {
             Block::Paragraph(paragraph) => {
                 paragraphs += 1;
                 let text = paragraph_text(paragraph);
@@ -182,7 +275,7 @@ pub fn outline(
                     },
                 ));
             }
-            Block::Other(_) => tokens.push(1),
+            Block::ContentControl(_) | Block::Opaque(..) => tokens.push(1),
         }
     }
     // A heading's section runs to the next heading of the same or higher level.
@@ -193,9 +286,9 @@ pub fn outline(
     let all_headings: Vec<(usize, u8)> = blocks
         .iter()
         .enumerate()
-        .filter_map(|(index, block)| match block {
+        .filter_map(|(index, placed)| match placed.block {
             Block::Paragraph(paragraph) => heading_level(document, paragraph).map(|l| (index, l)),
-            _ => None,
+            Block::Table(_) | Block::ContentControl(_) | Block::Opaque(..) => None,
         })
         .collect();
     let mut prefix = vec![0u64; tokens.len() + 1];
@@ -223,9 +316,23 @@ pub fn outline(
         .then(|| cursor("outline", revision, start + page.len()));
     let comments = document.definitions().comments.iter().count();
     let tracked = build_review_revision_summaries(document).len();
+    let map = surface_map(document);
+    let surface_start = parse_cursor("surfaces", revision, surfaces_cursor)?;
+    let surface_page: Vec<&Value> = map
+        .surfaces
+        .iter()
+        .skip(surface_start)
+        .take(limit)
+        .collect();
+    let surface_end = surface_start + surface_page.len();
+    let kinds = |kind: &str| {
+        map.surfaces
+            .iter()
+            .filter(|entry| entry["kind"] == kind)
+            .count()
+    };
     Ok(json!({
         "revision": revision,
-        "surfaces": SURFACES,
         "estimator": ESTIMATOR,
         "totalTokens": prefix[tokens.len()],
         "counts": {
@@ -234,10 +341,153 @@ pub fn outline(
             "comments": comments,
             "trackedChanges": tracked,
             "headings": all_headings.len(),
+            "headers": kinds("header"),
+            "footers": kinds("footer"),
+            "footnotes": kinds("footnote"),
+            "endnotes": kinds("endnote"),
+            "textBoxes": kinds("text_box"),
+            "bookmarks": map.bookmarks.len(),
+            "links": map.links,
+            "fields": map.fields,
+            "objects": map.objects,
+            "contentControls": map.controls,
         },
         "entries": page,
         "nextCursor": next,
+        "surfaceCount": map.surfaces.len(),
+        "surfaces": surface_page,
+        "surfacesNextCursor": (surface_end < map.surfaces.len())
+            .then(|| cursor("surfaces", revision, surface_end)),
+        "bookmarks": &map.bookmarks[..map.bookmarks.len().min(MAX_BOOKMARKS)],
+        "bookmarksTruncated": map.bookmarks.len() > MAX_BOOKMARKS,
+        "omitted": omitted_value(&map.omitted),
     }))
+}
+
+/// Most bookmarks listed by the outline; the rest are counted.
+const MAX_BOOKMARKS: usize = 200;
+
+/// Every surface with its facts, built in one walk.
+struct SurfaceMap {
+    surfaces: Vec<Value>,
+    bookmarks: Vec<Value>,
+    omitted: Vec<Omitted>,
+    links: usize,
+    fields: usize,
+    objects: usize,
+    controls: usize,
+}
+
+/// One pass over every paragraph of every surface: per-surface sizes and a
+/// preview, where each note is referenced from, the bookmarks, and what is
+/// named but not shown. **O(document)**: each surface's blocks are walked
+/// once, and each paragraph's inlines once (`project::paragraph_facts`).
+fn surface_map(document: &Document) -> SurfaceMap {
+    let definitions = document.definitions();
+    let entries = surface::enumerate(document);
+    let mut referenced: BTreeMap<String, (NodeId, Surface)> = BTreeMap::new();
+    let mut bookmarks = Vec::new();
+    let mut omitted = Vec::new();
+    let (mut links, mut fields, mut objects, mut controls) = (0, 0, 0, 0);
+    let mut stats = Vec::with_capacity(entries.len());
+    for entry in &entries {
+        let mut paragraphs = 0usize;
+        let mut tokens = 0u64;
+        let mut preview = String::new();
+        for (paragraph, _) in paragraphs_in(entry.blocks) {
+            paragraphs += 1;
+            let text = paragraph_text(paragraph);
+            tokens += u64::from(estimate_tokens(&text));
+            if preview.is_empty() && !text.trim().is_empty() {
+                clip(text.trim(), 160).clone_into(&mut preview);
+            }
+            let facts = project::paragraph_facts(definitions, paragraph);
+            links += facts.links.len();
+            fields += facts.fields.len();
+            objects += facts.objects.len();
+            controls += facts.controls.len();
+            for note in &facts.notes {
+                if let Some(id) = note["note"].as_str() {
+                    referenced
+                        .entry(id.to_owned())
+                        .or_insert((paragraph.id, entry.surface));
+                }
+            }
+            for mut bookmark in facts.bookmarks {
+                bookmark["paragraph"] = json!(paragraph.id.to_string());
+                bookmark["surface"] = json!(entry.surface.to_string());
+                bookmarks.push(bookmark);
+            }
+            omitted.extend(facts.omitted);
+        }
+        let mut tables = 0usize;
+        for placed in blocks_in(entry.blocks) {
+            match placed.block {
+                Block::Table(_) => tables += 1,
+                Block::ContentControl(_) => controls += 1,
+                Block::Opaque(_, item) => omitted.push(item),
+                Block::Paragraph(_) => {}
+            }
+        }
+        stats.push((paragraphs, tables, tokens, preview));
+    }
+    let surfaces = entries
+        .iter()
+        .zip(stats)
+        .map(|(entry, (paragraphs, tables, tokens, preview))| {
+            let mut value = json!({
+                "surface": entry.surface.to_string(),
+                "kind": entry.surface.kind(),
+                "id": entry.surface.id().map(|id| id.to_string()),
+                "paragraphs": paragraphs,
+                "tables": tables,
+                "tokens": tokens,
+                "preview": preview,
+            });
+            if !entry.uses.is_empty() {
+                value["uses"] = entry
+                    .uses
+                    .iter()
+                    .map(|u| json!({ "section": u.section, "page": u.page }))
+                    .collect();
+            }
+            if let Some((host, paragraph)) = entry.host {
+                value["host"] =
+                    json!({ "surface": host.to_string(), "paragraph": paragraph.to_string() });
+            }
+            match entry.surface {
+                Surface::Footnote(id) | Surface::Endnote(id) => {
+                    value["referencedFrom"] =
+                        referenced
+                            .get(&id.to_string())
+                            .map_or(Value::Null, |(paragraph, surface)| {
+                                json!({ "surface": surface.to_string(), "paragraph": paragraph.to_string() })
+                            });
+                }
+                Surface::Comment(id) => {
+                    value["author"] = json!(
+                        definitions
+                            .comments
+                            .get(&casual_doc_model::v1::CommentId::new(id))
+                            .and_then(|comment| comment.author.clone())
+                    );
+                    value["editable"] = json!(false);
+                    value["reason"] = json!(COMMENT_READ_ONLY);
+                }
+                Surface::Body | Surface::Header(_) | Surface::Footer(_) | Surface::TextBox(_) => {}
+            }
+            value
+        })
+        .collect();
+    SurfaceMap {
+        surfaces,
+        bookmarks,
+        omitted,
+        links,
+        fields,
+        objects,
+        controls,
+    }
 }
 
 fn cell_text(blocks: &[BlockNode]) -> String {
@@ -264,11 +514,35 @@ pub enum ReadFormat {
     Markdown,
 }
 
-/// Reads blocks in document order from `start` (a node id, or the cursor a
-/// previous call returned) until the token ceiling. **O(blocks returned)** plus
-/// one walk to find the start.
+/// Reads one surface's blocks in order from `start` (a node id, or the cursor a
+/// previous call returned) until the token ceiling.
+///
+/// The surface is `surface` when given; otherwise the one the cursor was
+/// issued for; otherwise the one holding `start` (so a paragraph id found by
+/// `search` or the outline reads in place, whatever surface it is on);
+/// otherwise the body. **O(blocks returned)** plus one walk of the surface to
+/// find the start (and, with only a `start` from another surface, one
+/// O(document) walk to find which surface holds it).
 pub fn read_blocks(
     session: &Session,
+    start: Option<&str>,
+    cursor_in: Option<&str>,
+    max_tokens: Option<u32>,
+    format: ReadFormat,
+) -> AiResult<Value> {
+    read_blocks_in(session, None, start, cursor_in, max_tokens, format)
+}
+
+/// [`read_blocks`] on a named surface (`None` picks it as `read_blocks`
+/// describes). **O(blocks returned)** plus the walks `read_blocks` names.
+///
+/// # Errors
+///
+/// `surface-not-found`, `anchor-not-found`, `stale-cursor`, or
+/// `invalid-argument` for a cursor of another list or another surface.
+pub fn read_blocks_in(
+    session: &Session,
+    surface: Option<Surface>,
     start: Option<&str>,
     cursor_in: Option<&str>,
     max_tokens: Option<u32>,
@@ -277,63 +551,114 @@ pub fn read_blocks(
     let document = session.document();
     let revision = session.revision();
     let budget = session.config().limits.tokens(max_tokens);
-    let blocks = body_blocks(document);
-    let mut index = parse_cursor("blocks", revision, cursor_in)?;
-    if cursor_in.is_none()
-        && let Some(start) = start
-    {
-        let id = node_id(start)?;
+    let from_cursor = cursor_in.map(cursor_surface).transpose()?;
+    let start_id = match (cursor_in, start) {
+        (None, Some(start)) => Some(node_id(start)?),
+        _ => None,
+    };
+    let surface = match (surface, from_cursor) {
+        (Some(given), Some(issued)) if given != issued => {
+            return Err(AiError::invalid(
+                "That cursor belongs to a different surface's list.",
+            ));
+        }
+        (Some(given), _) => given,
+        (None, Some(issued)) => issued,
+        (None, None) => match start_id {
+            Some(id) if !surface::holds(document.body(), id) => {
+                surface::surface_holding(document, id).unwrap_or(Surface::Body)
+            }
+            _ => Surface::Body,
+        },
+    };
+    let blocks = blocks_in(surface::blocks_of(document, surface)?);
+    let kind = blocks_kind(surface);
+    let mut index = parse_cursor(&kind, revision, cursor_in)?;
+    if let Some(id) = start_id {
         index = blocks
             .iter()
-            .position(|block| block.id() == id)
+            .position(|placed| placed.block.id() == id)
             .or_else(|| {
                 // A paragraph inside a table starts at its table.
-                blocks.iter().position(|block| match block {
+                blocks.iter().position(|placed| match placed.block {
                     Block::Table(table) => table_holds(table, id),
-                    _ => false,
+                    Block::Paragraph(_) | Block::ContentControl(_) | Block::Opaque(..) => false,
                 })
             })
             .ok_or_else(|| {
                 AiError::new(
                     "anchor-not-found",
-                    "No body block has that id at this revision.",
+                    "No block of that surface has that id at this revision.",
                 )
+                .with_details(json!({ "surface": surface.to_string() }))
             })?;
     }
+    let definitions = document.definitions();
     let mut used = 0u32;
     let mut out_json = Vec::new();
     let mut out_md = String::new();
+    let mut omitted = Vec::new();
     let mut cursor_at = index;
     while cursor_at < blocks.len() {
-        let block = &blocks[cursor_at];
-        let (value, markdown, cost) = project_block(session, block);
-        if used > 0 && used.saturating_add(cost) > budget {
+        let placed = &blocks[cursor_at];
+        let projected = project_block(document, definitions, placed);
+        if used > 0 && used.saturating_add(projected.cost) > budget {
             break;
         }
-        used = used.saturating_add(cost);
-        out_json.push(value);
-        out_md.push_str(&markdown);
+        used = used.saturating_add(projected.cost);
+        out_json.push(projected.value);
+        out_md.push_str(&projected.markdown);
         out_md.push_str("\n\n");
+        omitted.extend(projected.omitted);
         cursor_at += 1;
         if used >= budget {
             break;
         }
     }
     let truncated = cursor_at < blocks.len();
-    let next = truncated.then(|| cursor("blocks", revision, cursor_at));
+    let next = truncated.then(|| cursor(&kind, revision, cursor_at));
     let mut result = json!({
         "revision": revision,
-        "surfaces": SURFACES,
+        "surface": surface.to_string(),
+        "surfaces": [surface.to_string()],
         "estimator": ESTIMATOR,
         "tokens": used,
         "truncated": truncated,
         "nextCursor": next,
+        "omitted": omitted_value(&omitted),
     });
+    if matches!(surface, Surface::Comment(_)) {
+        result["editable"] = json!(false);
+        result["reason"] = json!(COMMENT_READ_ONLY);
+    }
     match format {
         ReadFormat::Json => result["blocks"] = Value::Array(out_json),
         ReadFormat::Markdown => result["markdown"] = Value::String(out_md.trim_end().to_owned()),
     }
     Ok(result)
+}
+
+/// The cursor kind of one surface's block list. The body keeps the bare
+/// `blocks` it always had; another surface's kind names it, so a cursor can
+/// never page a different surface than the one it was issued for.
+fn blocks_kind(surface: Surface) -> String {
+    match surface {
+        Surface::Body => "blocks".to_owned(),
+        other => format!("blocks~{other}"),
+    }
+}
+
+/// The surface a `read_blocks` cursor was issued for.
+fn cursor_surface(cursor: &str) -> AiResult<Surface> {
+    let kind = cursor.split('.').next().unwrap_or_default();
+    match kind.strip_prefix("blocks") {
+        Some("") => Ok(Surface::Body),
+        Some(rest) => rest
+            .strip_prefix('~')
+            .ok_or_else(|| AiError::invalid("That cursor was not issued by this server."))
+            .and_then(Surface::parse),
+        None => Err(AiError::invalid("That cursor belongs to a different list.")),
+    }
 }
 
 fn table_holds(table: &casual_doc_model::v1::Table, id: NodeId) -> bool {
@@ -350,15 +675,30 @@ fn table_holds(table: &casual_doc_model::v1::Table, id: NodeId) -> bool {
     })
 }
 
-fn project_block(session: &Session, block: &Block<'_>) -> (Value, String, u32) {
-    let document = session.document();
-    match block {
+/// One block as a read returns it.
+struct Projected {
+    value: Value,
+    markdown: String,
+    cost: u32,
+    omitted: Vec<Omitted>,
+}
+
+/// Projects one block. The `match` on [`Block`] has no wildcard, and `Block`
+/// is built from `BlockNode` by a wildcard-free match (`docs/181` G2), so a
+/// new block kind is classified here or does not compile. **O(block)**; a
+/// table is summarised (rows, columns, header), not walked cell by cell.
+fn project_block(
+    document: &Document,
+    definitions: &casual_doc_model::v1::Definitions,
+    placed: &crate::structure::Placed<'_>,
+) -> Projected {
+    let mut projected = match &placed.block {
         Block::Paragraph(paragraph) => {
             let text = paragraph_text(paragraph);
             let level = heading_level(document, paragraph);
             let runs: Vec<RunView> = runs(paragraph, MAX_RUNS);
-            let cost = estimate_tokens(&text);
-            let markdown = match level {
+            let facts = project::paragraph_facts(definitions, paragraph);
+            let mut markdown = match level {
                 Some(level) => format!(
                     "{{#{}}} {} {}",
                     paragraph.id,
@@ -367,19 +707,29 @@ fn project_block(session: &Session, block: &Block<'_>) -> (Value, String, u32) {
                 ),
                 None => format!("{{#{}}} {}", paragraph.id, text),
             };
-            (
-                json!({
-                    "kind": "paragraph",
-                    "id": paragraph.id.to_string(),
-                    "style": style_name(document, paragraph),
-                    "headingLevel": level,
-                    "list": paragraph.properties.numbering.is_some(),
-                    "text": text,
-                    "runs": runs,
-                }),
+            let trailer = facts.markdown();
+            let cost = estimate_tokens(&text).saturating_add(if trailer.is_empty() {
+                0
+            } else {
+                estimate_tokens(&trailer)
+            });
+            markdown.push_str(&trailer);
+            let mut value = json!({
+                "kind": "paragraph",
+                "id": paragraph.id.to_string(),
+                "style": style_name(document, paragraph),
+                "headingLevel": level,
+                "list": paragraph.properties.numbering.is_some(),
+                "text": text,
+                "runs": runs,
+            });
+            facts.write_into(&mut value);
+            Projected {
+                value,
                 markdown,
                 cost,
-            )
+                omitted: facts.omitted,
+            }
         }
         Block::Table(table) => {
             let columns = table
@@ -406,8 +756,8 @@ fn project_block(session: &Session, block: &Block<'_>) -> (Value, String, u32) {
                 header.join(" | ")
             );
             let cost = estimate_tokens(&markdown);
-            (
-                json!({
+            Projected {
+                value: json!({
                     "kind": "table",
                     "id": table.id.to_string(),
                     "rows": table.rows.len(),
@@ -416,14 +766,44 @@ fn project_block(session: &Session, block: &Block<'_>) -> (Value, String, u32) {
                 }),
                 markdown,
                 cost,
-            )
+                omitted: Vec::new(),
+            }
         }
-        Block::Other(id) => (
-            json!({ "kind": "other", "id": id.to_string(), "note": "preserved content this projection does not read" }),
-            format!("{{#{id}}} [preserved content]"),
-            1,
-        ),
+        Block::ContentControl(sdt) => {
+            let mut value = project::block_control(sdt);
+            value["kind"] = json!("content_control");
+            value["blocks"] = json!(sdt.blocks.len());
+            let markdown = format!(
+                "{{#{}}} [content control {} alias={:?} tag={:?}; its blocks follow]",
+                sdt.id,
+                value["type"].as_str().unwrap_or("rich_text"),
+                sdt.properties.alias.as_deref().unwrap_or(""),
+                sdt.properties.tag.as_deref().unwrap_or("")
+            );
+            let cost = estimate_tokens(&markdown);
+            Projected {
+                value,
+                markdown,
+                cost,
+                omitted: Vec::new(),
+            }
+        }
+        Block::Opaque(id, omitted) => Projected {
+            value: json!({
+                "kind": "opaque",
+                "id": id.to_string(),
+                "node": omitted.kind,
+                "reason": omitted.reason,
+            }),
+            markdown: format!("{{#{id}}} [{} not shown: {}]", omitted.kind, omitted.reason),
+            cost: 1,
+            omitted: vec![omitted.clone()],
+        },
+    };
+    if let Some(control) = placed.control {
+        projected.value["contentControl"] = json!(control.to_string());
     }
+    projected
 }
 
 /// Paragraph and character styles: the ones in use, with how often, and the
@@ -512,6 +892,7 @@ pub fn read_table(
     Ok(json!({
         "revision": revision,
         "table": id.to_string(),
+        "surface": surface::surface_holding(document, id).map(|s| s.to_string()),
         "rowCount": table.rows.len(),
         "rows": out,
         "nextCursor": (end < table.rows.len()).then(|| cursor("table", revision, end)),
@@ -601,11 +982,32 @@ fn find_all(text: &str, query: &str, mode: SearchMode) -> Vec<(usize, usize)> {
     out
 }
 
-/// Search with anchored hits and a bounded context window. **O(body text)**.
+/// Search with anchored hits and a bounded context window, over one surface
+/// (the body by default) or every surface (`Scope::All`). Each hit names its
+/// surface, and its `node` resolves as an anchor wherever it is.
+/// **O(text of the surfaces searched)**.
 pub fn search(
     session: &Session,
     query: &str,
     mode: SearchMode,
+    cursor_in: Option<&str>,
+    limit: Option<usize>,
+) -> AiResult<Value> {
+    search_in(session, query, mode, Scope::default(), cursor_in, limit)
+}
+
+/// [`search`] over a [`Scope`]: one surface or all of them.
+/// **O(text of the surfaces searched)**.
+///
+/// # Errors
+///
+/// `invalid-argument` for an empty or over-long query, `surface-not-found`,
+/// `stale-cursor`.
+pub fn search_in(
+    session: &Session,
+    query: &str,
+    mode: SearchMode,
+    scope: Scope,
     cursor_in: Option<&str>,
     limit: Option<usize>,
 ) -> AiResult<Value> {
@@ -614,36 +1016,40 @@ pub fn search(
     }
     let document = session.document();
     let revision = session.revision();
-    let start = parse_cursor("search", revision, cursor_in)?;
+    let kind = format!("search{}", scope.tag());
+    let start = parse_cursor(&kind, revision, cursor_in)?;
     let limit = session.config().limits.page(limit, 20);
     let mut hits = Vec::new();
     let mut total = 0usize;
-    for (paragraph, table) in body_paragraphs(document) {
-        let text = paragraph_text(paragraph);
-        for (from, to) in find_all(&text, query, mode) {
-            if total >= start && hits.len() < limit {
-                let before_start = floor_boundary(&text, from.saturating_sub(60));
-                let after_end = ceil_boundary(&text, (to + 60).min(text.len()));
-                hits.push(json!({
-                    "node": paragraph.id.to_string(),
-                    "table": table.map(|t| t.to_string()),
-                    "start": from,
-                    "end": to,
-                    "exact": &text[from..to],
-                    "prefix": &text[before_start..from],
-                    "suffix": &text[to..after_end],
-                }));
+    for (surface, blocks) in scope.entries(document)? {
+        for (paragraph, table) in paragraphs_in(blocks) {
+            let text = paragraph_text(paragraph);
+            for (from, to) in find_all(&text, query, mode) {
+                if total >= start && hits.len() < limit {
+                    let before_start = floor_boundary(&text, from.saturating_sub(60));
+                    let after_end = ceil_boundary(&text, (to + 60).min(text.len()));
+                    hits.push(json!({
+                        "node": paragraph.id.to_string(),
+                        "surface": surface.to_string(),
+                        "table": table.map(|t| t.to_string()),
+                        "start": from,
+                        "end": to,
+                        "exact": &text[from..to],
+                        "prefix": &text[before_start..from],
+                        "suffix": &text[to..after_end],
+                    }));
+                }
+                total += 1;
             }
-            total += 1;
         }
     }
     let end = start + hits.len();
     Ok(json!({
         "revision": revision,
-        "surfaces": SURFACES,
+        "surfaces": scope.covered(),
         "total": total,
         "hits": hits,
-        "nextCursor": (end < total).then(|| cursor("search", revision, end)),
+        "nextCursor": (end < total).then(|| cursor(&kind, revision, end)),
     }))
 }
 
@@ -682,10 +1088,30 @@ fn fnv1a(parts: &[&[u8]]) -> u64 {
 /// paragraphs after it up to the ceiling, a table's header with a bounded run
 /// of rows, and each comment thread with its anchor. Ids are deterministic: a
 /// hash of the chunker version, the ordered anchors and the text.
+///
+/// `scope` picks the surfaces: the body (the default) also yields one chunk
+/// per comment thread, as it always has; one other surface yields that
+/// surface's chunks; `Scope::All` yields every surface's chunks (a comment's
+/// body through its thread chunk, not twice). Each chunk names its surface.
 /// **O(document)**; paged.
 pub fn chunks(
     session: &Session,
     max_tokens: Option<u32>,
+    cursor_in: Option<&str>,
+    limit: Option<usize>,
+) -> AiResult<Value> {
+    chunks_in(session, max_tokens, Scope::default(), cursor_in, limit)
+}
+
+/// [`chunks`] over a [`Scope`]. **O(document)**; paged.
+///
+/// # Errors
+///
+/// `surface-not-found`, `stale-cursor`.
+pub fn chunks_in(
+    session: &Session,
+    max_tokens: Option<u32>,
+    scope: Scope,
     cursor_in: Option<&str>,
     limit: Option<usize>,
 ) -> AiResult<Value> {
@@ -700,7 +1126,8 @@ pub fn chunks(
     let flush = |current: &mut (Vec<String>, String, u32),
                  path: &[(u8, String)],
                  out: &mut Vec<Value>,
-                 kind: &str| {
+                 kind: &str,
+                 surface: &str| {
         if current.0.is_empty() {
             return;
         }
@@ -720,82 +1147,95 @@ pub fn chunks(
             "headingPath": path.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(),
             "text": text,
             "tokens": tokens,
-            "surface": "body",
+            "surface": surface,
         }));
     };
-    for block in body_blocks(document) {
-        match block {
-            Block::Paragraph(paragraph) => {
-                let text = paragraph_text(paragraph);
-                let cost = estimate_tokens(&text);
-                if let Some(level) = heading_level(document, paragraph) {
-                    flush(&mut current, &path, &mut out, "section");
-                    while path.last().is_some_and(|(at, _)| *at >= level) {
-                        path.pop();
+    let threads = matches!(scope, Scope::One(Surface::Body) | Scope::All);
+    let entries: Vec<(Surface, &[BlockNode])> = scope
+        .entries(document)?
+        .into_iter()
+        .filter(|(surface, _)| !(scope == Scope::All && matches!(surface, Surface::Comment(_))))
+        .collect();
+    for (surface, blocks) in entries {
+        let key = surface.to_string();
+        path.clear();
+        for placed in blocks_in(blocks) {
+            match placed.block {
+                Block::Paragraph(paragraph) => {
+                    let text = paragraph_text(paragraph);
+                    let cost = estimate_tokens(&text);
+                    if let Some(level) = heading_level(document, paragraph) {
+                        flush(&mut current, &path, &mut out, "section", &key);
+                        while path.last().is_some_and(|(at, _)| *at >= level) {
+                            path.pop();
+                        }
+                        path.push((level, clip(&text, 200).to_owned()));
+                    } else if current.2.saturating_add(cost) > ceiling {
+                        flush(&mut current, &path, &mut out, "section", &key);
                     }
-                    path.push((level, clip(&text, 200).to_owned()));
-                } else if current.2.saturating_add(cost) > ceiling {
-                    flush(&mut current, &path, &mut out, "section");
+                    if text.is_empty() {
+                        continue;
+                    }
+                    current.0.push(paragraph.id.to_string());
+                    if !current.1.is_empty() {
+                        current.1.push('\n');
+                    }
+                    // A single paragraph longer than the ceiling is cut, and says so.
+                    let room = (ceiling as usize).saturating_mul(4);
+                    current.1.push_str(clip(&text, room));
+                    current.2 = current.2.saturating_add(cost.min(ceiling));
                 }
-                if text.is_empty() {
-                    continue;
-                }
-                current.0.push(paragraph.id.to_string());
-                if !current.1.is_empty() {
-                    current.1.push('\n');
-                }
-                // A single paragraph longer than the ceiling is cut, and says so.
-                let room = (ceiling as usize).saturating_mul(4);
-                current.1.push_str(clip(&text, room));
-                current.2 = current.2.saturating_add(cost.min(ceiling));
-            }
-            Block::Table(table) => {
-                flush(&mut current, &path, &mut out, "section");
-                let header = table
-                    .rows
-                    .first()
-                    .map(|row| {
-                        row.cells
+                Block::Table(table) => {
+                    flush(&mut current, &path, &mut out, "section", &key);
+                    let header = table
+                        .rows
+                        .first()
+                        .map(|row| {
+                            row.cells
+                                .iter()
+                                .map(|cell| cell_text(&cell.blocks))
+                                .collect::<Vec<_>>()
+                                .join(" | ")
+                        })
+                        .unwrap_or_default();
+                    let mut rows = (
+                        vec![table.id.to_string()],
+                        header.clone(),
+                        estimate_tokens(&header),
+                    );
+                    for row in table.rows.iter().skip(1) {
+                        let line = row
+                            .cells
                             .iter()
                             .map(|cell| cell_text(&cell.blocks))
                             .collect::<Vec<_>>()
-                            .join(" | ")
-                    })
-                    .unwrap_or_default();
-                let mut rows = (
-                    vec![table.id.to_string()],
-                    header.clone(),
-                    estimate_tokens(&header),
-                );
-                for row in table.rows.iter().skip(1) {
-                    let line = row
-                        .cells
-                        .iter()
-                        .map(|cell| cell_text(&cell.blocks))
-                        .collect::<Vec<_>>()
-                        .join(" | ");
-                    let cost = estimate_tokens(&line);
-                    if rows.2.saturating_add(cost) > ceiling {
-                        flush(&mut rows, &path, &mut out, "table");
-                        rows = (
-                            vec![table.id.to_string()],
-                            header.clone(),
-                            estimate_tokens(&header),
-                        );
+                            .join(" | ");
+                        let cost = estimate_tokens(&line);
+                        if rows.2.saturating_add(cost) > ceiling {
+                            flush(&mut rows, &path, &mut out, "table", &key);
+                            rows = (
+                                vec![table.id.to_string()],
+                                header.clone(),
+                                estimate_tokens(&header),
+                            );
+                        }
+                        rows.0.push(row.id.to_string());
+                        rows.1.push('\n');
+                        rows.1
+                            .push_str(clip(&line, (ceiling as usize).saturating_mul(4)));
+                        rows.2 = rows.2.saturating_add(cost.min(ceiling));
                     }
-                    rows.0.push(row.id.to_string());
-                    rows.1.push('\n');
-                    rows.1
-                        .push_str(clip(&line, (ceiling as usize).saturating_mul(4)));
-                    rows.2 = rows.2.saturating_add(cost.min(ceiling));
+                    flush(&mut rows, &path, &mut out, "table", &key);
                 }
-                flush(&mut rows, &path, &mut out, "table");
+                Block::ContentControl(_) | Block::Opaque(..) => {}
             }
-            Block::Other(_) => {}
         }
+        flush(&mut current, &path, &mut out, "section", &key);
     }
-    flush(&mut current, &path, &mut out, "section");
-    for comment in build_review_comment_summaries(document) {
+    for comment in build_review_comment_summaries(document)
+        .into_iter()
+        .filter(|_| threads)
+    {
         let mut anchors = vec![comment.id.clone()];
         if let Some(anchor) = &comment.anchor {
             anchors.push(anchor.node.clone());
@@ -816,7 +1256,8 @@ pub fn chunks(
             "surface": "comments",
         }));
     }
-    let start = parse_cursor("chunks", revision, cursor_in)?;
+    let kind = format!("chunks{}", scope.tag());
+    let start = parse_cursor(&kind, revision, cursor_in)?;
     let limit = session.config().limits.page(limit, 50);
     let total = out.len();
     let page: Vec<Value> = out.into_iter().skip(start).take(limit).collect();
@@ -825,10 +1266,13 @@ pub fn chunks(
         "revision": revision,
         "chunkerVersion": CHUNKER_VERSION,
         "estimator": ESTIMATOR,
-        "surfaces": ["body", "comments"],
+        "surfaces": match scope {
+            Scope::One(Surface::Body) => json!(["body", "comments"]),
+            other => other.covered(),
+        },
         "total": total,
         "chunks": page,
-        "nextCursor": (end < total).then(|| cursor("chunks", revision, end)),
+        "nextCursor": (end < total).then(|| cursor(&kind, revision, end)),
     }))
 }
 
