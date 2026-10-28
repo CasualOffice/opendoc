@@ -1730,6 +1730,53 @@ pub fn page_number_labels(layout: &PaginatedLayout, sections: &[SectionBoundary]
     page_number_labels_for(layout.pages.iter().map(|page| page.section), sections)
 }
 
+/// The page label printed on the page each laid-out block (a top-level
+/// fragment, or a paragraph or row inside a table cell) is first placed on,
+/// keyed by its node: what a table of contents and a page
+/// cross-reference print for it. A node that splits across a break is listed on
+/// the page it starts on, as Word lists it.
+///
+/// One definition for every caller that hands page labels to the capability
+/// registry (`casual_doc_command::references::LayoutFacts`): the editor's
+/// table of contents and a headless session's layout pass, so the two cannot
+/// disagree about which page a heading is on.
+///
+/// **O(placed fragments + pages).**
+#[must_use]
+pub fn first_page_labels(
+    layout: &PaginatedLayout,
+    sections: &[SectionBoundary],
+) -> HashMap<NodeId, String> {
+    let labels = page_number_labels(layout, sections);
+    let mut out: HashMap<NodeId, String> = HashMap::new();
+    for (index, page) in layout.pages.iter().enumerate() {
+        let Some(label) = labels.get(index) else {
+            continue;
+        };
+        for placed in &page.placed {
+            note_first_page_label(&placed.fragment, label, &mut out);
+        }
+    }
+    out
+}
+
+/// Records `label` for `fragment`'s node and, for a table row, for every block
+/// laid out in its cells (nested tables included), unless an earlier page
+/// already claimed it. A heading inside a table cell is placed inside its row's
+/// fragment, not as a fragment of its own, and a page map that read top-level
+/// fragments only had no page for it. **O(fragments in the subtree).**
+fn note_first_page_label(fragment: &BlockFragment, label: &str, out: &mut HashMap<NodeId, String>) {
+    out.entry(fragment.node_id())
+        .or_insert_with(|| label.to_owned());
+    if let BlockFragment::TableRow { cells, .. } = fragment {
+        for cell in cells {
+            for block in &cell.blocks {
+                note_first_page_label(block, label, out);
+            }
+        }
+    }
+}
+
 /// The `PAGE` label of the page at 0-based index `index` of a document with a
 /// **single** section — computed directly rather than by walking every page
 /// before it.

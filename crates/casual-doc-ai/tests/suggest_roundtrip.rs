@@ -100,8 +100,17 @@ fn example_for(session: &Session, example: &str) -> Value {
     serde_json::from_str(&example).expect("the example is JSON")
 }
 
+/// A heading the fixture's table of contents lists, as authored; the fixture
+/// renames it afterwards, so the contents is stale and an `entire` update has
+/// something to change. A second heading follows it: a one-entry contents field
+/// begins and ends in one paragraph, and Word's markup for that reopens as an
+/// inline field rather than a paragraph-spanning one.
+const HEADING: &str = "Terms";
+
 /// A minimal Word file: the example paragraph and "First item", with the
-/// built-in Normal and heading styles the examples name.
+/// built-in Normal and heading styles the examples name; then a heading and a
+/// caption whose `SEQ` field shows a stale number, as a document another
+/// producer last saved would (`update_caption_numbers` has one to correct).
 fn word_file() -> Vec<u8> {
     use std::io::Write;
     const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -151,6 +160,9 @@ fn word_file() -> Vec<u8> {
                  <w:document xmlns:w=\"{W}\"><w:body>\
                  <w:p><w:r><w:t xml:space=\"preserve\">{EXAMPLE_PARAGRAPH}</w:t></w:r></w:p>\
                  <w:p><w:r><w:t>First item</w:t></w:r></w:p>\
+                 <w:p><w:pPr><w:pStyle w:val=\"Heading1\"/></w:pPr><w:r><w:t>{HEADING}</w:t></w:r></w:p>\
+                 <w:p><w:pPr><w:pStyle w:val=\"Heading2\"/></w:pPr><w:r><w:t>Payment</w:t></w:r></w:p>\
+                 <w:p><w:r><w:t xml:space=\"preserve\">Figure </w:t></w:r><w:fldSimple w:instr=\" SEQ Figure \\* ARABIC \"><w:r><w:t>7</w:t></w:r></w:fldSimple><w:r><w:t xml:space=\"preserve\">: Site plan</w:t></w:r></w:p>\
                  <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>\
                  </w:body></w:document>"
             ),
@@ -165,10 +177,12 @@ fn word_file() -> Vec<u8> {
     zip.finish().expect("a zip").into_inner()
 }
 
-/// The fixture: the example paragraph, a numbered item (with a hyperlink over
-/// `First` and the bookmark `EXAMPLE_BOOKMARK` over `item`), a filled 2x2
-/// table, and a paragraph holding a picture, saved as DOCX so every run starts
-/// from a Word file. Built through the registry's own commands.
+/// The fixture: a table of contents, the example paragraph, a numbered item
+/// (with a hyperlink over `First` and the bookmark `EXAMPLE_BOOKMARK` over
+/// `item`), a filled 2x2 table, a paragraph holding a picture, a heading the
+/// contents no longer matches, and a caption showing a stale number, saved as
+/// DOCX so every run starts from a Word file. Built through the registry's own
+/// commands.
 fn fixture() -> Vec<u8> {
     let mut session = open(&word_file(), "examples.docx", Profile::Edit);
     let blocks = read::read_blocks(&session, None, None, Some(20_000), ReadFormat::Json)
@@ -218,6 +232,27 @@ fn fixture() -> Vec<u8> {
         })
         .collect();
     apply(&mut session, "direct", Value::Array(cells)).expect("the cells fill");
+    let [example, ..] = ids(&session);
+    let blocks = read::read_blocks(&session, None, None, Some(20_000), ReadFormat::Json)
+        .expect("the body reads");
+    let heading = blocks["blocks"]
+        .as_array()
+        .expect("blocks")
+        .iter()
+        .find(|block| block["text"] == HEADING)
+        .and_then(|block| block["id"].as_str())
+        .expect("the heading")
+        .to_owned();
+    apply(
+        &mut session,
+        "direct",
+        json!([
+            { "op": "insert_table_of_contents", "before": { "node": example } },
+            { "op": "replace_text", "target": { "node": heading, "exact": HEADING },
+              "text": "Terms and conditions" },
+        ]),
+    )
+    .expect("the contents builds, then goes stale");
     save(&session)
 }
 

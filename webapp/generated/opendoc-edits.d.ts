@@ -3,7 +3,7 @@
 // Regenerate: cargo run -p casual-doc-command --bin opendoc-command-gen
 
 /** The edit vocabulary version (docs/181 §4.1): a minor bump adds commands; a major bump changes or removes one. */
-export declare const VOCABULARY_VERSION: "1.2";
+export declare const VOCABULARY_VERSION: "1.3";
 
 /**
  * Insert text at an anchor.
@@ -1474,6 +1474,153 @@ export interface InsertChartEdit {
 }
 
 /**
+ * Insert a table of contents (each heading with its page) before a body paragraph.
+ *
+ * Family `references`; trackable: no. Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"insert_table_of_contents","before":{"node":"1:2"},"levels":2}
+ */
+export interface InsertTableOfContentsEdit {
+  op: "insert_table_of_contents";
+  /**
+   * The body paragraph the table goes before (its id; a quote is not
+   * needed).
+   */
+  before: {
+    /** The quoted text, matched inside `node` only. */
+    exact?: string | null;
+    /** A paragraph id returned by `get_outline`, `read_blocks` or `search`. */
+    node: string;
+    /** 1-based occurrence of `exact` among the matches that remain. */
+    occurrence?: number | null;
+    /** Offsets for programs only; never computed by a model. */
+    pos?: {
+      /** End, exclusive. */
+      end: number;
+      /** Start, UTF-8 bytes into the node's text. */
+      start: number;
+    } | null;
+    /** Text immediately before `exact`, to disambiguate. */
+    prefix?: string | null;
+    /** For an insertion point: before or after the target. */
+    side?: "before" | "after" | null;
+    /** Text immediately after `exact`, to disambiguate. */
+    suffix?: string | null;
+  };
+  /** The deepest heading level listed, 1 to 9; 3 when omitted. */
+  levels?: number | null;
+}
+
+/**
+ * Update a table of contents: its page numbers only, or the entire table from the headings.
+ *
+ * Family `references`; trackable: no. Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"update_table_of_contents","mode":"entire"}
+ */
+export interface UpdateTableOfContentsEdit {
+  op: "update_table_of_contents";
+  /**
+   * The table's field id, as `read_blocks` lists it; omitted, the
+   * document's only table of contents.
+   */
+  field?: string | null;
+  /**
+   * `page_numbers` keeps the entries and re-reads their pages;
+   * `entire` rebuilds the entries from the headings.
+   */
+  mode: "page_numbers" | "entire";
+}
+
+/**
+ * Insert a numbered caption (Figure, Table, Equation or the document's own label) above or below a table, picture or paragraph.
+ *
+ * Family `references`; trackable: no. Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"insert_caption","target":"1:9","label":"Table","text":": Payment schedule"}
+ */
+export interface InsertCaptionEdit {
+  op: "insert_caption";
+  /**
+   * Include the chapter number, counted from headings of this level
+   * (1 to 9).
+   */
+  chapter_level?: number | null;
+  /** Leave the label out and show only the number. */
+  exclude_label?: boolean;
+  /**
+   * The label and numbering sequence: `Figure`, `Table`, `Equation` or
+   * any label the document already uses.
+   */
+  label: string;
+  /** How the number is written; arabic when omitted. */
+  number_format?: "arabic" | "upper_roman" | "lower_roman" | "upper_letter" | "lower_letter";
+  /** Above or below the target; below when omitted. */
+  position?: "above" | "below";
+  /** The separator after the chapter number; a hyphen when omitted. */
+  separator?: "hyphen" | "period" | "colon" | "em_dash" | "en_dash";
+  /** The id of the table, picture or paragraph the caption is for. */
+  target: string;
+  /** The caption's own text after the number. */
+  text?: string;
+}
+
+/**
+ * Renumber every caption whose shown number is stale.
+ *
+ * Family `references`; trackable: no. Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"update_caption_numbers"}
+ */
+export interface UpdateCaptionNumbersEdit {
+  op: "update_caption_numbers";
+}
+
+/**
+ * Insert a cross-reference to a heading, caption, bookmarked paragraph or note: its text, label and number, page, or above/below.
+ *
+ * Family `references`; trackable: no. Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"insert_cross_reference","at":{"node":"1:2","side":"after"},"target":"1:3","show":"page_number"}
+ */
+export interface InsertCrossReferenceEdit {
+  op: "insert_cross_reference";
+  /** Where the reference goes. */
+  at: {
+    /** The quoted text, matched inside `node` only. */
+    exact?: string | null;
+    /** A paragraph id returned by `get_outline`, `read_blocks` or `search`. */
+    node: string;
+    /** 1-based occurrence of `exact` among the matches that remain. */
+    occurrence?: number | null;
+    /** Offsets for programs only; never computed by a model. */
+    pos?: {
+      /** End, exclusive. */
+      end: number;
+      /** Start, UTF-8 bytes into the node's text. */
+      start: number;
+    } | null;
+    /** Text immediately before `exact`, to disambiguate. */
+    prefix?: string | null;
+    /** For an insertion point: before or after the target. */
+    side?: "before" | "after" | null;
+    /** Text immediately after `exact`, to disambiguate. */
+    suffix?: string | null;
+  };
+  /** Make the reference a link to its target. */
+  hyperlink?: boolean;
+  /** Follow it with `above` or `below`, as Word's checkbox does. */
+  include_above_below?: boolean;
+  /** What the reference shows. */
+  show: "entire_caption" | "label_and_number" | "caption_text" | "page_number" | "above_below" | "paragraph_text";
+  /**
+   * The paragraph referred to: a heading, a caption, a bookmarked
+   * paragraph or a note's first paragraph.
+   */
+  target: string;
+}
+
+/**
  * Comment on the quoted text, or reply to a comment.
  *
  * Family `review`; trackable: not-applicable.
@@ -1597,6 +1744,11 @@ export type EditOp =
   | "set_different_first_page"
   | "set_different_odd_even"
   | "insert_chart"
+  | "insert_table_of_contents"
+  | "update_table_of_contents"
+  | "insert_caption"
+  | "update_caption_numbers"
+  | "insert_cross_reference"
   | "comment"
   | "resolve_comment"
   | "review";
@@ -1656,12 +1808,17 @@ export type Edit =
   | SetDifferentFirstPageEdit
   | SetDifferentOddEvenEdit
   | InsertChartEdit
+  | InsertTableOfContentsEdit
+  | UpdateTableOfContentsEdit
+  | InsertCaptionEdit
+  | UpdateCaptionNumbersEdit
+  | InsertCrossReferenceEdit
   | CommentEdit
   | ResolveCommentEdit
   | ReviewEdit;
 
 /** The toolset families (docs/181 §5.2). */
-export type EditFamily = "text" | "paragraph" | "styles" | "tables" | "lists" | "links" | "fields" | "objects" | "notes" | "sections" | "headers_footers" | "charts" | "review";
+export type EditFamily = "text" | "paragraph" | "styles" | "tables" | "lists" | "links" | "fields" | "objects" | "notes" | "sections" | "headers_footers" | "charts" | "references" | "review";
 
 /** The edits of each family. */
 export interface EditsByFamily {
@@ -1677,5 +1834,6 @@ export interface EditsByFamily {
   sections: InsertBreakEdit | InsertSectionBreakEdit | SetPageSetupEdit | SetLineNumberingEdit | SetPageNumberingEdit | SetWatermarkEdit;
   headers_footers: InsertHeaderEdit | InsertFooterEdit | SetDifferentFirstPageEdit | SetDifferentOddEvenEdit;
   charts: InsertChartEdit;
+  references: InsertTableOfContentsEdit | UpdateTableOfContentsEdit | InsertCaptionEdit | UpdateCaptionNumbersEdit | InsertCrossReferenceEdit;
   review: CommentEdit | ResolveCommentEdit | ReviewEdit;
 }

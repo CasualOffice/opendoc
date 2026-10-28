@@ -446,6 +446,152 @@ impl ChartKind {
     }
 }
 
+/// Which update a table of contents gets.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum TocUpdateName {
+    /// Keep the entries; re-read every entry's page number.
+    PageNumbers,
+    /// Rebuild the entries from the current headings.
+    Entire,
+}
+
+impl TocUpdateName {
+    /// The lowering's mode. O(1).
+    #[must_use]
+    pub const fn mode(self) -> crate::references::TocUpdate {
+        match self {
+            Self::PageNumbers => crate::references::TocUpdate::PageNumbers,
+            Self::Entire => crate::references::TocUpdate::Entire,
+        }
+    }
+}
+
+/// Where a caption goes relative to what it captions.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptionPlacement {
+    /// Above it.
+    Above,
+    /// Below it (the default).
+    #[default]
+    Below,
+}
+
+impl CaptionPlacement {
+    /// The engine's position. O(1).
+    #[must_use]
+    pub const fn position(self) -> casual_doc_edit::references::CaptionPosition {
+        match self {
+            Self::Above => casual_doc_edit::references::CaptionPosition::Above,
+            Self::Below => casual_doc_edit::references::CaptionPosition::Below,
+        }
+    }
+}
+
+/// How a caption's number is written.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptionNumbering {
+    /// 1, 2, 3 (the default).
+    #[default]
+    Arabic,
+    /// I, II, III.
+    UpperRoman,
+    /// i, ii, iii.
+    LowerRoman,
+    /// A, B, C.
+    UpperLetter,
+    /// a, b, c.
+    LowerLetter,
+}
+
+impl CaptionNumbering {
+    /// The engine's number format. O(1).
+    #[must_use]
+    pub const fn format(self) -> casual_doc_edit::references::CaptionNumberFormat {
+        use casual_doc_edit::references::CaptionNumberFormat as F;
+        match self {
+            Self::Arabic => F::Arabic,
+            Self::UpperRoman => F::UpperRoman,
+            Self::LowerRoman => F::LowerRoman,
+            Self::UpperLetter => F::UpperLetter,
+            Self::LowerLetter => F::LowerLetter,
+        }
+    }
+}
+
+/// The separator between a chapter number and a caption number.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChapterSeparator {
+    /// `1-1` (the default, as Word's).
+    #[default]
+    Hyphen,
+    /// `1.1`.
+    Period,
+    /// `1:1`.
+    Colon,
+    /// `1—1`.
+    EmDash,
+    /// `1–1`.
+    EnDash,
+}
+
+impl ChapterSeparator {
+    /// The engine's separator. O(1).
+    #[must_use]
+    pub const fn separator(self) -> casual_doc_edit::references::CaptionSeparator {
+        use casual_doc_edit::references::CaptionSeparator as S;
+        match self {
+            Self::Hyphen => S::Hyphen,
+            Self::Period => S::Period,
+            Self::Colon => S::Colon,
+            Self::EmDash => S::EmDash,
+            Self::EnDash => S::EnDash,
+        }
+    }
+}
+
+/// What a cross-reference shows.
+///
+/// Word's paragraph-number kinds (`\r`, `\n`, `\w`) are not offered: the
+/// shared lowering caches the paragraph's text as their result rather than its
+/// list number, which a reader would see until the field is updated
+/// (`docs/181` §12, lane references).
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReferenceKind {
+    /// A caption's label, number and text.
+    EntireCaption,
+    /// A caption's label and number only (`Figure 2`).
+    LabelAndNumber,
+    /// A caption's text after its number.
+    CaptionText,
+    /// The page label of the page the target is on.
+    PageNumber,
+    /// The word `above` or `below`, from where the reference sits.
+    AboveBelow,
+    /// The target paragraph's text (a heading's, a bookmarked paragraph's).
+    ParagraphText,
+}
+
+impl ReferenceKind {
+    /// The engine's reference kind. O(1).
+    #[must_use]
+    pub const fn reference_to(self) -> casual_doc_edit::references::ReferenceTo {
+        use casual_doc_edit::references::ReferenceTo as R;
+        match self {
+            Self::EntireCaption => R::EntireCaption,
+            Self::LabelAndNumber => R::LabelAndNumber,
+            Self::CaptionText => R::CaptionTextOnly,
+            Self::PageNumber => R::PageNumber,
+            Self::AboveBelow => R::AboveBelow,
+            Self::ParagraphText => R::ParagraphText,
+        }
+    }
+}
+
 /// Accept or reject.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -953,6 +1099,76 @@ pub enum Edit {
         /// The chart family.
         kind: ChartKind,
     },
+    /// Insert a table of contents before a body paragraph: one entry per
+    /// heading, with the page it is on, as one field an update finds again.
+    InsertTableOfContents {
+        /// The body paragraph the table goes before (its id; a quote is not
+        /// needed).
+        before: Anchor,
+        /// The deepest heading level listed, 1 to 9; 3 when omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(range(min = 1, max = 9))]
+        levels: Option<u8>,
+    },
+    /// Update a table of contents.
+    UpdateTableOfContents {
+        /// `page_numbers` keeps the entries and re-reads their pages;
+        /// `entire` rebuilds the entries from the headings.
+        mode: TocUpdateName,
+        /// The table's field id, as `read_blocks` lists it; omitted, the
+        /// document's only table of contents.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        field: Option<String>,
+    },
+    /// Insert a numbered caption above or below a table, picture or
+    /// paragraph in the body; later captions of the same label renumber.
+    InsertCaption {
+        /// The id of the table, picture or paragraph the caption is for.
+        target: String,
+        /// The label and numbering sequence: `Figure`, `Table`, `Equation` or
+        /// any label the document already uses.
+        label: String,
+        /// The caption's own text after the number.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        text: String,
+        /// Above or below the target; below when omitted.
+        #[serde(default)]
+        position: CaptionPlacement,
+        /// Leave the label out and show only the number.
+        #[serde(default)]
+        exclude_label: bool,
+        /// How the number is written; arabic when omitted.
+        #[serde(default)]
+        number_format: CaptionNumbering,
+        /// Include the chapter number, counted from headings of this level
+        /// (1 to 9).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(range(min = 1, max = 9))]
+        chapter_level: Option<u8>,
+        /// The separator after the chapter number; a hyphen when omitted.
+        #[serde(default)]
+        separator: ChapterSeparator,
+    },
+    /// Renumber every caption whose number is stale (Word's update fields
+    /// over the captions).
+    UpdateCaptionNumbers {},
+    /// Insert a cross-reference at an anchor: a field showing a heading's,
+    /// caption's or bookmarked paragraph's text, number or page.
+    InsertCrossReference {
+        /// Where the reference goes.
+        at: Anchor,
+        /// The paragraph referred to: a heading, a caption, a bookmarked
+        /// paragraph or a note's first paragraph.
+        target: String,
+        /// What the reference shows.
+        show: ReferenceKind,
+        /// Make the reference a link to its target.
+        #[serde(default)]
+        hyperlink: bool,
+        /// Follow it with `above` or `below`, as Word's checkbox does.
+        #[serde(default)]
+        include_above_below: bool,
+    },
     /// Comment on the quoted text, or reply to a comment.
     Comment {
         /// The text commented on.
@@ -1042,6 +1258,11 @@ impl Edit {
             Self::SetDifferentFirstPage { .. } => "set_different_first_page",
             Self::SetDifferentOddEven { .. } => "set_different_odd_even",
             Self::InsertChart { .. } => "insert_chart",
+            Self::InsertTableOfContents { .. } => "insert_table_of_contents",
+            Self::UpdateTableOfContents { .. } => "update_table_of_contents",
+            Self::InsertCaption { .. } => "insert_caption",
+            Self::UpdateCaptionNumbers { .. } => "update_caption_numbers",
+            Self::InsertCrossReference { .. } => "insert_cross_reference",
             Self::Comment { .. } => "comment",
             Self::ResolveComment { .. } => "resolve_comment",
             Self::Review { .. } => "review",
@@ -1064,6 +1285,7 @@ impl Edit {
             Self::CreateBookmark { name, .. } => name.len(),
             Self::RenameBookmark { new_name, .. } => new_name.len(),
             Self::InsertField { result, .. } => result.as_ref().map_or(0, String::len),
+            Self::InsertCaption { label, text, .. } => label.len() + text.len(),
             Self::SetAltText { text, .. } => text.as_ref().map_or(0, String::len),
             Self::SetWatermark { text, .. } => text.as_ref().map_or(0, String::len),
             // A picture's bytes are bounded per edit (`objects::MAX_IMAGE_BYTES`),
@@ -1113,6 +1335,10 @@ impl Edit {
             | Self::SetDifferentFirstPage { .. }
             | Self::SetDifferentOddEven { .. }
             | Self::InsertChart { .. }
+            | Self::InsertTableOfContents { .. }
+            | Self::UpdateTableOfContents { .. }
+            | Self::UpdateCaptionNumbers { .. }
+            | Self::InsertCrossReference { .. }
             | Self::ResolveComment { .. }
             | Self::Review { .. } => 0,
         }

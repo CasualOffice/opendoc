@@ -1146,6 +1146,109 @@
     },
     {
       "emits": [
+        "SetStyleDefinition",
+        "InsertFieldRange"
+      ],
+      "example": {
+        "before": {
+          "node": "1:2"
+        },
+        "levels": 2,
+        "op": "insert_table_of_contents"
+      },
+      "family": "references",
+      "id": "insert_table_of_contents",
+      "summary": "Insert a table of contents (each heading with its page) before a body paragraph.",
+      "trackable": "no",
+      "trackableReason": "Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "reference.tableOfContents"
+      ]
+    },
+    {
+      "emits": [
+        "SetStyleDefinition",
+        "DeleteBlocks",
+        "InsertBlocks"
+      ],
+      "example": {
+        "mode": "entire",
+        "op": "update_table_of_contents"
+      },
+      "family": "references",
+      "id": "update_table_of_contents",
+      "summary": "Update a table of contents: its page numbers only, or the entire table from the headings.",
+      "trackable": "no",
+      "trackableReason": "Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "reference.updateFields",
+        "reference.updateToc.pageNumbers",
+        "reference.updateToc.entire"
+      ]
+    },
+    {
+      "emits": [
+        "SetStyleDefinition",
+        "InsertBlocks",
+        "SetInlines"
+      ],
+      "example": {
+        "label": "Table",
+        "op": "insert_caption",
+        "target": "1:9",
+        "text": ": Payment schedule"
+      },
+      "family": "references",
+      "id": "insert_caption",
+      "summary": "Insert a numbered caption (Figure, Table, Equation or the document's own label) above or below a table, picture or paragraph.",
+      "trackable": "no",
+      "trackableReason": "Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "reference.caption"
+      ]
+    },
+    {
+      "emits": [
+        "SetInlines"
+      ],
+      "example": {
+        "op": "update_caption_numbers"
+      },
+      "family": "references",
+      "id": "update_caption_numbers",
+      "summary": "Renumber every caption whose shown number is stale.",
+      "trackable": "no",
+      "trackableReason": "Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "reference.updateCaptionNumbers"
+      ]
+    },
+    {
+      "emits": [
+        "CreateBookmark",
+        "InsertField",
+        "InsertText"
+      ],
+      "example": {
+        "at": {
+          "node": "1:2",
+          "side": "after"
+        },
+        "op": "insert_cross_reference",
+        "show": "page_number",
+        "target": "1:3"
+      },
+      "family": "references",
+      "id": "insert_cross_reference",
+      "summary": "Insert a cross-reference to a heading, caption, bookmarked paragraph or note: its text, label and number, page, or above/below.",
+      "trackable": "no",
+      "trackableReason": "Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "reference.crossReference"
+      ]
+    },
+    {
+      "emits": [
         "UpdateReviewState",
         "SplitParagraph",
         "JoinParagraphs",
@@ -1331,6 +1434,16 @@
         "insert_chart"
       ],
       "name": "charts"
+    },
+    {
+      "commands": [
+        "insert_table_of_contents",
+        "update_table_of_contents",
+        "insert_caption",
+        "update_caption_numbers",
+        "insert_cross_reference"
+      ],
+      "name": "references"
     },
     {
       "commands": [
@@ -1524,34 +1637,6 @@
       "reason": "Redefining a style changes every paragraph that uses it; agents apply styles and do not define them yet (docs/181 §4.2 step 2)."
     },
     {
-      "id": "reference.caption",
-      "reason": "Captions, cross-references, the table of contents and updating fields read the paginated layout or the caption sequences; their lowerings are still inside the editor (docs/181 §12, lane families-b). Links, bookmarks and fields are offered."
-    },
-    {
-      "id": "reference.crossReference",
-      "reason": "Captions, cross-references, the table of contents and updating fields read the paginated layout or the caption sequences; their lowerings are still inside the editor (docs/181 §12, lane families-b). Links, bookmarks and fields are offered."
-    },
-    {
-      "id": "reference.tableOfContents",
-      "reason": "Captions, cross-references, the table of contents and updating fields read the paginated layout or the caption sequences; their lowerings are still inside the editor (docs/181 §12, lane families-b). Links, bookmarks and fields are offered."
-    },
-    {
-      "id": "reference.updateToc.pageNumbers",
-      "reason": "Captions, cross-references, the table of contents and updating fields read the paginated layout or the caption sequences; their lowerings are still inside the editor (docs/181 §12, lane families-b). Links, bookmarks and fields are offered."
-    },
-    {
-      "id": "reference.updateToc.entire",
-      "reason": "Captions, cross-references, the table of contents and updating fields read the paginated layout or the caption sequences; their lowerings are still inside the editor (docs/181 §12, lane families-b). Links, bookmarks and fields are offered."
-    },
-    {
-      "id": "reference.updateFields",
-      "reason": "Captions, cross-references, the table of contents and updating fields read the paginated layout or the caption sequences; their lowerings are still inside the editor (docs/181 §12, lane families-b). Links, bookmarks and fields are offered."
-    },
-    {
-      "id": "reference.updateCaptionNumbers",
-      "reason": "Captions, cross-references, the table of contents and updating fields read the paginated layout or the caption sequences; their lowerings are still inside the editor (docs/181 §12, lane families-b). Links, bookmarks and fields are offered."
-    },
-    {
       "id": "insert.shape",
       "reason": "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are."
     },
@@ -1708,6 +1793,6 @@
       "reason": "No command deletes a comment yet; an agent resolves a thread with resolve_comment."
     }
   ],
-  "uiNotExposedCeiling": 91,
-  "vocabularyVersion": "1.2"
+  "uiNotExposedCeiling": 84,
+  "vocabularyVersion": "1.3"
 }

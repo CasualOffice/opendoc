@@ -1,5 +1,5 @@
 {
-  "description": "One edit of the `review` family of the OpenDoc edit vocabulary 1.2.",
+  "description": "One edit of the `review` family of the OpenDoc edit vocabulary 1.3.",
   "oneOf": [
     {
       "additionalProperties": false,

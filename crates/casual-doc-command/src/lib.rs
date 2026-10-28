@@ -18,7 +18,9 @@
 //!   [`table`], [`format`](mod@format) (character formatting), [`paragraph`], [`lists`],
 //!   [`rewrite`] (the `rewrite_block` dialect), [`links`] (hyperlinks and
 //!   bookmarks), [`fields`], [`objects`] (pictures and shapes), [`notes`],
-//!   [`breaks`], [`sections`] (page setup and running content) and [`charts`].
+//!   [`breaks`], [`sections`] (page setup and running content), [`charts`] and
+//!   [`references`] (tables of contents, captions and cross-references, with
+//!   what they need from layout supplied as [`references::LayoutFacts`]).
 //!
 //! Every lowering here is pure: it reads the document and returns operations.
 //! Nothing in this crate applies an operation or builds a transaction; the
@@ -38,6 +40,8 @@ pub mod lists;
 pub mod notes;
 pub mod objects;
 pub mod paragraph;
+// Own line (anti-conflict): tables of contents, captions and cross-references.
+pub mod references;
 pub mod registry;
 pub mod rewrite;
 pub mod schema;

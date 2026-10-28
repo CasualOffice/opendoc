@@ -34,6 +34,8 @@ mod locate;
 mod metadata;
 mod migration;
 mod numbering;
+// Own line (anti-conflict): the plain-text projection, moved down from layout.
+mod plain_text;
 mod preset_shapes;
 mod properties;
 mod table;
@@ -55,6 +57,7 @@ pub use locate::{reset_route_block_visits, route_block_visits};
 pub use metadata::*;
 pub use migration::*;
 pub use numbering::*;
+pub use plain_text::*;
 pub use preset_shapes::*;
 pub use properties::*;
 pub use table::*;
