@@ -950,3 +950,49 @@ fn a_client_that_opens_with_initialize_keeps_the_older_lifecycle() {
     assert!(listed["result"]["tools"].is_array(), "{listed}");
     assert_eq!(client.raw("ping", json!({}))["result"], json!({}));
 }
+
+/// `docs/182` P1 headless reach: `open_document` opens a PDF through the
+/// registry, and an agent reads it and suggests into one of its frames with
+/// the same tools it uses on a DOCX. No PDF-specific tool exists.
+#[test]
+fn an_agent_opens_a_pdf_reads_it_and_suggests_into_a_frame() {
+    let base = sandbox("pdf");
+    std::fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/pdf/synthetic-prose.pdf"
+        ),
+        base.join("root/prose.pdf"),
+    )
+    .expect("fixture");
+    let root = arg(&base.join("root"));
+    let mut client = Client::start(&["--root", &root, "--profile", "suggest"]);
+    let opened = client.ok("open_document", json!({ "path": "prose.pdf" }));
+    assert_eq!(opened["format"], "application.pdf", "{opened}");
+    assert_eq!(opened["pageCount"], 2, "{opened}");
+    let doc = opened["document"].clone();
+
+    let hits = client.ok(
+        "search",
+        json!({ "document": doc, "query": "lazy dog", "surface": "all" }),
+    );
+    let node = hits["hits"][0]["node"].clone();
+    assert!(node.is_string(), "the frame text is searchable: {hits}");
+    assert!(
+        opened["importSummary"]
+            .to_string()
+            .contains("pdf.import.font_substituted"),
+        "the import's findings reach the agent: {opened}"
+    );
+
+    let plan = json!({
+        "base_revision": opened["revision"],
+        "edits": [{ "op": "replace_text", "target": { "node": node, "exact": "lazy dog" }, "text": "sleepy cat" }],
+    });
+    client.ok("apply_edits", json!({ "document": doc, "plan": plan }));
+    assert_eq!(
+        client.ok("list_tracked_changes", json!({ "document": doc }))["total"],
+        2,
+        "a suggestion inside a PDF frame is a tracked deletion and insertion"
+    );
+}

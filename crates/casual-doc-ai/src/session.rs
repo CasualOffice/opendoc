@@ -371,6 +371,19 @@ pub struct Session {
     revision_base: u64,
 }
 
+/// The registry a session opens and saves through: the built-in one, plus PDF
+/// import when this build compiled `pdf-import` (`docs/182` P1; `opendoc-mcp`
+/// enables it, the editor's WASM build does not). Built per call: O(formats).
+fn session_registry() -> casual_doc_io::FormatRegistry {
+    #[allow(unused_mut)] // mutated only with `pdf-import`
+    let mut registry =
+        builtin_registry_with_limits(PackageLimits::default(), PlainTextLimits::default());
+    #[cfg(feature = "pdf-import")]
+    casual_doc_io::enable_pdf_import(&mut registry, casual_doc_io::PdfReadLimits::default())
+        .expect("re-registering PDF into a cleared slot cannot collide");
+    registry
+}
+
 impl Session {
     /// Opens untrusted bytes. `name` is the file name, used only as a format
     /// hint and a label. **O(document)**: one import walk.
@@ -390,8 +403,7 @@ impl Session {
                 ),
             ));
         }
-        let registry =
-            builtin_registry_with_limits(PackageLimits::default(), PlainTextLimits::default());
+        let registry = session_registry();
         let imported = registry
             .import(
                 DetectionRequest {
@@ -624,8 +636,7 @@ impl Session {
     }
 
     fn export_inner(&self, target: ExportFormat) -> AiResult<Exported> {
-        let registry =
-            builtin_registry_with_limits(PackageLimits::default(), PlainTextLimits::default());
+        let registry = session_registry();
         let format = FormatId::new(target.id())
             .map_err(|_| AiError::invalid("That export format is not registered."))?;
         let same_format = format == self.source_format;

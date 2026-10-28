@@ -11,7 +11,7 @@ use casual_doc_ai::AiError;
 
 /// Extensions `open_document` accepts. `.docm` is refused, as it is in the
 /// editor (`SKILL` §11).
-pub const OPENABLE: &[&str] = &["docx", "dotx", "odt", "rtf", "txt", "json"];
+pub const OPENABLE: &[&str] = &["docx", "dotx", "odt", "rtf", "txt", "json", "pdf"];
 
 /// Canonical read and write roots.
 #[derive(Clone, Debug, Default)]

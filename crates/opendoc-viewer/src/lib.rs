@@ -279,6 +279,14 @@ impl ViewerDocument {
         for face in &options.fonts {
             shaper.register_font(face.clone());
         }
+        // The document's own faces (DOCX `.odttf`, and the font programs a PDF
+        // import carries, `docs/182` G-1) outrank substitutes for their family.
+        // A face that fails to register keeps its substitute.
+        drop(casual_doc_layout::font_registry::register_embedded_fonts(
+            &shaper,
+            &document,
+            |part| media.0.get(part).map(Vec::as_slice),
+        ));
         let mut doc = Self {
             document,
             media,
@@ -603,6 +611,14 @@ fn append_blocks(blocks: &[BlockNode], out: &mut String) {
     visit_body_paragraphs(blocks, &mut |paragraph| {
         out.push_str(&node_plain_text(&paragraph.inlines));
         out.push('\n');
+        // A text box's content is the paragraph's, read after it: a floating
+        // frame (a PDF-origin page is nothing else, `docs/182`) or an inline
+        // one. Without this a fixed-layout document read as empty.
+        for inline in &paragraph.inlines {
+            if let casual_doc_model::v1::InlineNode::TextBox(text_box) = inline {
+                append_blocks(&text_box.blocks, out);
+            }
+        }
     });
 }
 
@@ -800,7 +816,12 @@ fn import(bytes: &[u8]) -> Result<(Document, Media), ViewerError> {
     use casual_doc_io::{
         DetectionRequest, FormatSelection, PlainTextLimits, builtin_registry_with_limits,
     };
-    let registry = builtin_registry_with_limits(package_limits(), PlainTextLimits::default());
+    #[allow(unused_mut)] // mutated only with `pdf-import`
+    let mut registry = builtin_registry_with_limits(package_limits(), PlainTextLimits::default());
+    // PDF opens only when this build asked for it (`docs/182` P1).
+    #[cfg(feature = "pdf-import")]
+    casual_doc_io::enable_pdf_import(&mut registry, casual_doc_io::PdfReadLimits::default())
+        .map_err(|e| ViewerError::Open(e.to_string()))?;
     let imported = registry
         .import(
             DetectionRequest {
