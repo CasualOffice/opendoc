@@ -22,15 +22,29 @@ casual-doc-rtf.workspace = true
 # PDF import (docs/182 P1), behind `pdf-import`: off by default so the editor's
 # WASM build neither compiles hayro nor offers PDF in File -> Open until P2.
 casual-doc-pdf-import = { workspace = true, optional = true }
+# The byte-preserving PDF save (docs/182 P4), also behind `pdf-import`: the
+# reader opens the original's last revision and page parts (hayro-syntax, the
+# parser import already admits files through), and the diff crate's content
+# projection decides which pages are unchanged (G-6). Both are in-tree; no
+# crate is added to Cargo.lock.
+casual-doc-pdf-read = { workspace = true, optional = true }
+casual-doc-diff = { workspace = true, optional = true }
 
 [features]
 default = []
 # Compiles the PDF importer. A host still opts in at run time with
 # `enable_pdf_import` / `builtin_registry_with_pdf_import`; the plain built-in
 # registry never imports PDF, whatever features are on.
-pdf-import = ["dep:casual-doc-pdf-import"]
+pdf-import = [
+    "dep:casual-doc-pdf-import",
+    "dep:casual-doc-pdf-read",
+    "dep:casual-doc-diff",
+]
 
 [dev-dependencies]
+# The byte-preserving PDF save's guards render the saved file with a renderer
+# we did not write the update with (already in the tree: the importer's oracle).
+hayro = "0.8.0"
 zip.workspace = true
 
 [lints]

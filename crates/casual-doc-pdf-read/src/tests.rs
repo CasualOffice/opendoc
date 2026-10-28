@@ -287,3 +287,43 @@ fn probe_finds_the_header() {
     assert!(probe_pdf(b"junk before %PDF-1.4"));
     assert!(!probe_pdf(b"PK\x03\x04"));
 }
+
+/// Every glyph run a page stream paints names the show operator that painted
+/// it, and the numbering is dense: the byte-preserving save (`docs/182` P4)
+/// relies on this to remove exactly an edited frame's operators.
+#[test]
+fn every_page_stream_glyph_run_names_its_show_operator() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/pdf");
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|path| path.extension().is_some_and(|e| e == "pdf"))
+        .collect();
+    files.sort();
+    let mut numbered_runs = 0;
+    for path in files {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let mut source =
+            PdfSource::open(std::fs::read(&path).unwrap(), PdfReadLimits::default()).expect(&name);
+        for index in 0..source.page_count() {
+            let page = source.page_evidence(index).expect(&name);
+            assert!(page.object.is_some(), "{name} page {index}: object id");
+            let shows = page
+                .shows
+                .unwrap_or_else(|| panic!("{name} page {index}: shows not numbered"));
+            let mut seen = std::collections::BTreeSet::new();
+            for item in &page.items {
+                if let PaintEvidence::Glyphs(run) = item {
+                    let show = run
+                        .show
+                        .unwrap_or_else(|| panic!("{name} page {index}: a run without a show"));
+                    assert!(show < shows, "{name} page {index}: show {show} of {shows}");
+                    seen.insert(show);
+                    numbered_runs += 1;
+                }
+            }
+            assert!(seen.len() as u32 <= shows);
+        }
+    }
+    assert!(numbered_runs > 100, "{numbered_runs}");
+}

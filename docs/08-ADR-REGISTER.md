@@ -384,6 +384,13 @@ whole and the export reports it. Three crates already in the tree are reused rat
 added: `flate2`, `skrifa` and `image`. Full design, current support matrix and remaining
 work: `98-PDF-EXPORT-AND-PRINT-DESIGN.md` §"Implementation status".
 
+**Extension (2026-10-29, `docs/182` §19, P4):** the same hand-rolled writer also appends
+**incremental updates** to an imported PDF (`Writer::append_to`, `replace_object`,
+`finish_incremental`, `write_incremental_update`), reading the original with the
+`hayro-syntax` parser the importer already admits files through. `hayro-write` (extracts
+pages into a new file) and `lopdf` (about fifteen further dependencies, including
+`getrandom`) were considered and not added; `Cargo.lock` gains no crate.
+
 **Why:** the display-list seam already makes a PDF backend additive; the only open
 questions are the dependency posture (writer/subsetter) and the Phase-2 scope gate
 (tagged PDF / PDF-A). Recording them here keeps the "PDF generation backend" pending

@@ -25,13 +25,22 @@ use crate::{PdfReadError, PdfReadLimits};
 /// font's identity on the glyph).
 const TYPE3_KEY: u128 = u128::MAX;
 
+/// One open marked-content sequence: the document's own, or the numbered
+/// marker [`crate::content::instrument`] put around a show operator.
+enum Mark {
+    /// `(is /Artifact, MCID)`.
+    Content(bool, Option<i32>),
+    /// The show index of the operator painting inside it.
+    Show(u32),
+}
+
 pub(crate) struct Collector<'c> {
     limits: &'c PdfReadLimits,
     fonts: &'c mut DocumentFonts,
     index: &'c mut BTreeMap<u128, usize>,
     programs_tried: &'c mut BTreeSet<usize>,
     clips: Vec<Option<Bounds>>,
-    marked: Vec<(bool, Option<i32>)>,
+    marked: Vec<Mark>,
     items: Vec<PaintEvidence>,
     notes: PageNotes,
     evidence: u64,
@@ -521,9 +530,14 @@ impl<'a> Device<'a> for Collector<'_> {
         let (artifact, mcid) = self
             .marked
             .iter()
-            .fold((false, None), |(artifact, mcid), (a, m)| {
-                (artifact || *a, m.or(mcid))
+            .fold((false, None), |(artifact, mcid), mark| match mark {
+                Mark::Content(a, m) => (artifact || *a, m.or(mcid)),
+                Mark::Show(_) => (artifact, mcid),
             });
+        let show = self.marked.iter().rev().find_map(|mark| match mark {
+            Mark::Show(show) => Some(*show),
+            Mark::Content(..) => None,
+        });
         self.items.push(PaintEvidence::Glyphs(GlyphRunEvidence {
             font,
             size,
@@ -533,6 +547,7 @@ impl<'a> Device<'a> for Collector<'_> {
             glyphs,
             mcid,
             artifact,
+            show,
         }));
     }
 
@@ -620,7 +635,10 @@ impl<'a> Device<'a> for Collector<'_> {
     fn pop_transparency_group(&mut self) {}
 
     fn begin_marked_content(&mut self, tag: &[u8], mcid: Option<i32>) {
-        self.marked.push((tag == b"Artifact", mcid));
+        self.marked.push(match crate::content::show_of_tag(tag) {
+            Some(show) if mcid.is_none() => Mark::Show(show),
+            _ => Mark::Content(tag == b"Artifact", mcid),
+        });
     }
 
     fn end_marked_content(&mut self) {

@@ -519,3 +519,131 @@ builder (`from_paths`, `with_guides`, `with_handles`, `with_connections`, `with_
 | `…an_even_odd_geometry_that_cannot_be_re_wound_is_reported` | drop the loss note | left `[]`, right `[("docx.export.custom_geometry.even_odd_fill", Some("word/document.xml"))]` |
 
 The `snapshot_without_font_programs` test pins the G-1 serde default and validation.
+
+## 19. P4 built: the byte-preserving save
+
+Branch `lane/pdf-p4-save` (from `feature/pdf-import`). Headless: an edited PDF-origin
+session saved through the registry with `PreserveWhenSafe` (or `ExactIfUnchanged` once
+edited) appends an **incremental update** (ISO 32000-1 §7.5.6) to the original. The editor
+reaches it when P2 lands.
+
+### 19.1 Object-level read/write: no new crate
+
+- **Read** with `hayro-syntax` 0.8, the parser import already admits hostile files
+  through: raw dictionary bytes (`Dict::data`), page object ids, decoded content, the
+  inheritance chain for `/Resources`. A small lexer in `casual-doc-pdf-read/src/content.rs`
+  splits content streams and dictionaries into byte ranges.
+- **Write** with this repository's own writer (`casual-doc-pdf/src/writer.rs`, ADR-031):
+  `Writer::append_to` copies the original as the prefix and numbers objects from its
+  `/Size`, `replace_object` re-emits an object under its own number and generation, and
+  `finish_incremental` writes a table or a stream to match the original's last section,
+  with `/Prev` and `/ID` (first element kept, second changed).
+- **Rejected:** `hayro-write` 0.8 extracts pages *into a new* `pdf-writer` document (its
+  docs call it internal); it cannot append a revision. `lopdf` (MIT) can, but its manifest
+  (0.45, read from the local registry; 0.46 is current) brings about fifteen non-optional
+  dependencies (`rand`/`getrandom`, which need a feature flag
+  on `wasm32-unknown-unknown`, plus `aes`, `cbc`, `ecb`, `md-5`, `sha2`, `nom`, `rangemap`,
+  `stringprep`, `weezl`, …) and a second parser of hostile input next to hayro's. Neither
+  buys anything the two in-tree halves do not already do.
+- `cargo deny --offline --locked check bans licenses sources`: bans ok, licenses ok,
+  sources ok. `Cargo.lock` gains only edges between in-tree crates (and `hayro`, already
+  locked, as a `casual-doc-io` dev-dependency for the guards).
+
+### 19.2 Design
+
+**Operator ranges, at import.** `PdfSource::page_evidence` tokenizes the page stream,
+checks that hayro's own `UntypedIter` reads the same operator sequence, and interprets an
+*instrumented* copy in which show `k` (`Tj`, `TJ`, `'`, `"`) is wrapped as
+`/OpenDocShow<k> BMC … EMC`. The device reads the marker back, so every glyph run carries
+`show: Option<u32>` (`None` for a form XObject's glyphs), and `PageEvidence` carries the
+page `object` and the `shows` count. A stream the two tokenizers disagree about, or one
+that already uses the tag, is interpreted as is with `shows: None`. The importer records a
+`SourceMap` (`casual-doc-pdf-import`): per page its object and count, per frame its
+`TextBox` node, the shows its glyphs came from, and whether every glyph has one.
+
+**Unchanged-ness, at save (G-6).** The adapter stores a `Baseline` in `PdfSourceState`
+(the I4 sidecar) at import: from `casual-doc-diff`'s projection, each section's digest (its
+blocks' `subtree_hash` plus its `SectionBoundary`), each frame's value hash, a digest of
+everything on the page but the frames, a digest of the definitions without `sections`, and
+of every story but the body and comments. The save takes the same digests again. No
+`Operation` is added (ADR-030 I2). If the whole-document `content_digest` equals the
+import's (an edit undone), the original is written back
+(`pdf.export.original_written_back`).
+
+**The edited page.** Removed = edited ∪ deleted frames; their shows are dropped by
+`content::remove_shows`, which keeps every other operator byte for byte (`'` becomes
+`T*`, `aw ac (s) "` becomes `aw Tw ac Tc T*`). Drawn = edited ∪ added frames: the page is
+laid out by the same pagination pass the semantic writer uses, its display list is reduced
+to those frames' glyph runs (clip and layer brackets kept), and `write_incremental_update`
+transcribes it into a Form XObject with its own resources and a `/Matrix` from displayed
+page space to the page's user space (the inverse of hayro's `initial_transform`). The page
+object is replaced: its other entries raw and in order (so `/Parent`, boxes and `/Annots`
+survive), its effective resources inlined with the form added under a name it does not
+use, `/Contents [kept overlay]`, `kept` bracketed in `q`/`Q`. An unchanged page, its
+content and its resources get no object in the update.
+
+**Fallback, reported.** Anything not provably safe is saved semantically with
+`pdf.export.preserve_fallback.<reason>` (`Degraded`, `NotRetained`): `definitions_changed`,
+`stories_changed`, `page_count_changed`, `pagination_changed`, `page_objects_changed` (a
+picture, shape, anchor or section setting), `page_operators_unnumbered`,
+`frame_text_not_removable` (glyphs from a form XObject), `operator_shared_with_kept_frame`
+(one `TJ` paints two frames), `kept_text_would_move` (a kept show follows a removed one on
+the same line with no `Td`/`TD`/`Tm`/`T*` between: the text matrix advances by what a show
+draws), `clipping_text` (render mode 4–7), `content_unbalanced`, `content_untokenizable`,
+`frame_not_text_only` (numbering, a style, a drop cap, fill, border, link, or a non-text
+inline), `page_size_changed`, `page_object_moved`, `xref_unreadable`,
+`no_retained_source`.
+
+**Reported on success:** `pdf.export.incremental_update` (pages rewritten),
+`pdf.export.page_carried_over` (`Preserved`), `pdf.export.earlier_revision_retained` (the
+replaced text is still in the file, in the earlier revision: an incremental update is not a
+redaction), `pdf.export.signature_covers_earlier_revision` when `/AcroForm /SigFlags` has
+bit 1, `pdf.export.certification_invalidated` (`Degraded`) when the catalog has `/Perms`,
+and the writer's own font findings for the overlay.
+
+Complexity: O(document) at save (one projection, one pagination, the prefix copy), never
+per edit; the import-side numbering is O(page stream bytes).
+
+### 19.3 Guards, each driven red by a mutation (SKILL §4)
+
+All in `crates/casual-doc-io/tests/pdf_preserve.rs` unless named. The file is re-opened and
+rendered with hayro, and `xref_chain` walks every `/Prev` and checks each in-use entry
+points at its own `n g obj` header, because hayro repairs a broken chain silently.
+
+| Guard | Mutation | Red output |
+| --- | --- | --- |
+| `an_edited_frame_is_appended_as_an_update_and_the_unchanged_page_is_carried_over`: the original is the prefix; objects 3, 5, 6 are not in the update; page 2's parts are equal; page 2 renders identically; page 1 has the edit and not the replaced text | treat every page as edited | `left: Some(2) right: Some(1)` (the count) |
+| same, with the counts also mutated to stay 1 | as above | `6 0 obj rewritten` |
+| same: the replaced text is gone from the new revision | `remove_shows` keeps every show | the page text still holds `The quick brown fox …` |
+| same: the chain resolves | `/Prev` off by one | `the section at 1820 is neither a table nor a stream` |
+| `a_signed_file_keeps_its_signed_revision_intact_when_a_page_is_edited` (a generated file with a `/Sig` dictionary, a `/ByteRange` over the whole signing revision, and a digest of those bytes as its dummy `/Contents`; table and xref-stream variants) | the update drops the original's last byte | `assertion failed: bytes.starts_with(&signed)` |
+| same: the update's entries point at their objects | a replaced object's offset + 1 | `object 4 points at 3920, not at 4 0 obj` |
+| `what_cannot_be_preserved_falls_back_to_the_semantic_writer_and_says_why`: a deleted picture | skip the non-text digest comparison | `left: [] right: ["…preserve_fallback.page_objects_changed"]` |
+| same: a frame given a fill | drop the fill check from `text_only` | `left: [] right: ["…frame_not_text_only"]` |
+| `a_deleted_frame_loses_its_text_and_an_added_one_is_drawn` | treat a deleted frame as unchanged | the page text still begins `Synthetic prose` |
+| `an_operator_that_also_paints_a_kept_frame_or_moves_one_is_not_removed` | skip the shared-operator check | `left: [] right: ["…operator_shared_with_kept_frame"]` |
+| `pdf-read` `content::tests::a_kept_show_after_a_removed_one_on_the_same_line_is_refused` | never set the moved flag | `left: Ok([…]) right: Err(KeptShowWouldMove)` |
+| `pdf-read` `every_page_stream_glyph_run_names_its_show_operator` (every corpus page) | the device ignores the markers | `synthetic-active-content.pdf page 0: a run without a show` |
+
+`an_undone_edit_writes_the_original_back_and_semantic_mode_regenerates` and the
+`content`/`revision` unit tests (tokenizer agreement with hayro on strings, arrays, inline
+images and marked content; a forged tag refused; dictionary splitting; the tail) pin the
+rest. The P1 oracle (`every_page_matches_hayros_render_of_the_original`) stays green on the
+instrumented interpretation.
+
+### 19.4 Not built, and why
+
+- **Pictures and shapes are not edited in place.** Only text operators carry ranges, so a
+  changed or deleted picture or shape on a page falls back. Path and image ranges are the
+  same mechanism (wrap `Do`, `BI` and painting operators) when needed.
+- **The overlay draws in the layout's faces**, as the semantic writer does (Liberation for
+  an unembedded Times, for example), not in the PDF's embedded subset; unedited frames keep
+  their original glyphs.
+- **Text inside form XObjects** is not removable; a frame whose glyphs come from one falls
+  back.
+- **The replaced text stays recoverable** in the earlier revision. Reported; a redacting
+  save is a full rewrite, not an update.
+- **A file hayro had to repair** is not detected when its last `startxref` still parses;
+  the update then chains to a broken section, which readers repair as they did before.
+- **Hybrid-reference files** (`/XRefStm`) get a table update without restating `/XRefStm`.
+- **Not reachable from the editor** until P2; the registry path is.
