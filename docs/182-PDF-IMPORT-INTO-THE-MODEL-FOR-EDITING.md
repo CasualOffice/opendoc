@@ -1,6 +1,6 @@
 # 182 — PDF into the model, for editing: fixed-layout frames first, reflow on demand
 
-**Status:** Design proposed 2026-10-28; owner decision 2026-10-29 started it. P0 and P1 (headless) are built on `feature/pdf-import` (§16), G-1/G-2 in §16a, P2 (the editor) in §17; P3-P6 are not. **It changes product scope**,
+**Status:** Built in PR #899 (2026-10-29): P0 measurement, P1 fixed-layout import, P2 the editor, P3 reflow with fonts, links and annotations, P4 the byte-preserving save, P5/P6 OCR (PaddleOCR PP-OCRv5 on `rten`) and heron layout, and the model and engine gaps (§16-§20). Follow-ups, not in #899: the lazily loaded PDF wasm module (the editor ships PDF in its main module for now, ceilings raised by owner decision), and wiring OCR models into the SDK, MCP, viewer and editor (OCR is built but reports `ocr_unavailable` until a host supplies models). Scope changed by owner decision 2026-10-29 (SKILL §1).
 which the owner confirmed on 2026-10-29 (Q1: fixed layout by default, hayro, encrypted refused, semantic save first).
 **Decides:** ADR-076 (proposed; supersedes the proposed ADR-034). **Row:** `docs/109` RM-49.
 **Refines:** `131` (keeps its invariants PDFR-I1..I9, its OCR policy §11 and its finding
