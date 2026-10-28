@@ -27,6 +27,11 @@ web-host-fonts = ["casual-doc-layout/external-web-fonts"]
 # module and `renderPage` are unchanged; a host that builds with it gets one more
 # export with `renderPage`'s exact contract to A/B against.
 sparse-raster = ["dep:casual-doc-render-gpu", "casual-doc-render-gpu/sparse-cpu"]
+# PDF import into the editor (`docs/182` P2): the hayro-based reader and the
+# fixed-layout importer behind `beginPdfImport`'s staged job. `webapp/build.sh`
+# turns it on. Without it the binding still exists and refuses with a sentence,
+# so the webapp's import of it always links.
+pdf-import = ["casual-doc-io/pdf-import"]
 
 # Modern rustc emits bulk-memory / sign-ext / nontrapping-fptoint instructions by
 # default; `wasm-opt` must be told to accept them, or validation fails. These

@@ -33,6 +33,7 @@ import {
   runFilePageCommand,
   stableBox,
 } from "./fixtures.mjs";
+import { installIdleGate, startHeldPdfImport } from "./pdf-import-helpers.mjs";
 
 /** "Focus must return to the editing surface" — as opposed to a named opener
  *  element. Which element actually holds it is `expectEditorFocused`'s business,
@@ -85,6 +86,22 @@ export const MODALS = [
       // `sample.docx`: the rich fixture has no findings left to open (FID-AT-08/09/10).
       await gotoSampleDocument(page);
       await page.locator("#compatibilityStatus").click();
+    },
+  },
+  {
+    id: "pdfImportDialog",
+    name: "Opening a PDF",
+    // Built by `pdf_import.mjs` and registered through `registerModal`. Every
+    // dismissal is Cancel, which leaves the open document as it was, so focus
+    // goes back to the editing surface the import was started from. The import's
+    // slices are held (`pdf-import-helpers.mjs`) so the dialog stays up.
+    restore: EDITOR_SURFACE,
+    focus: "#pdfImportDialogCancel",
+    async open(page) {
+      await installIdleGate(page);
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await startHeldPdfImport(page);
     },
   },
   {

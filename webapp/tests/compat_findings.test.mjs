@@ -89,3 +89,19 @@ test("the chip counts content, opens on bookkeeping alone, and every entry is in
 test("every group has a sentence in the catalogue", () => {
   for (const kind of FINDING_KINDS) assert.ok(kind.key in EN_STRINGS, `${kind.key} is not declared`);
 });
+
+// A PDF's reconstruction (`docs/182` P2): grouped by what the IMPORT did, from
+// the model outcome, because the adapter reports every lost construct as
+// `not_retained` and "Not kept" would put an inferred reading order and a
+// dropped form field under one heading. Only `pdf.import.*` ids take this path.
+test("a PDF import finding is grouped by what the import did to it", () => {
+  assert.equal(findingKind(entry("pdf.import.form_omitted", "omitted", "not_retained")), "pdfOmitted");
+  assert.equal(findingKind(entry("pdf.import.font_substituted", "degraded", "not_retained")), "pdfDegraded");
+  assert.equal(findingKind(entry("pdf.import.reading_order_inferred", "mapped", "not_applicable")), "pdfInferred");
+  // Any other id with the same outcomes is unchanged.
+  assert.equal(findingKind(entry("docx.thing", "omitted", "not_retained")), "lost");
+  assert.equal(findingKind(entry("docx.thing", "mapped", "not_applicable")), "other");
+  const order = FINDING_KINDS.map((kind) => kind.id);
+  assert.ok(order.indexOf("pdfOmitted") < order.indexOf("pdfDegraded"));
+  assert.ok(order.indexOf("pdfDegraded") < order.indexOf("pdfInferred"));
+});

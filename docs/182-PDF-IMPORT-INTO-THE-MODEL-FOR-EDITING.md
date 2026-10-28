@@ -1,6 +1,6 @@
 # 182 — PDF into the model, for editing: fixed-layout frames first, reflow on demand
 
-**Status:** Design proposed 2026-10-28; owner decision 2026-10-29 started it. P0 and P1 (headless) are built on `feature/pdf-import` (§16), G-1/G-2 in §16a; P2-P6 are not. **It changes product scope**,
+**Status:** Design proposed 2026-10-28; owner decision 2026-10-29 started it. P0 and P1 (headless) are built on `feature/pdf-import` (§16), G-1/G-2 in §16a, P2 (the editor) in §17; P3-P6 are not. **It changes product scope**,
 which the owner confirmed on 2026-10-29 (Q1: fixed layout by default, hayro, encrypted refused, semantic save first).
 **Decides:** ADR-076 (proposed; supersedes the proposed ADR-034). **Row:** `docs/109` RM-49.
 **Refines:** `131` (keeps its invariants PDFR-I1..I9, its OCR policy §11 and its finding
@@ -519,3 +519,113 @@ builder (`from_paths`, `with_guides`, `with_handles`, `with_connections`, `with_
 | `…an_even_odd_geometry_that_cannot_be_re_wound_is_reported` | drop the loss note | left `[]`, right `[("docx.export.custom_geometry.even_odd_fill", Some("word/document.xml"))]` |
 
 The `snapshot_without_font_programs` test pins the G-1 serde default and validation.
+
+## 17. P2 built: the editor
+
+Branch `lane/pdf-p2-editor` (from `feature/pdf-import` at `502ff112`). Owner, 2026-10-29:
+complete the roadmap; this is P2.
+
+### 17.1 What is built
+
+- **Wasm (`crates/casual-doc-wasm`).** Feature `pdf-import` (on in `webapp/build.sh`) compiles
+  `casual-doc-io/pdf-import`. `src/pdf_import.rs` is the staged binding over
+  `PdfStagedImport`: `beginPdfImport(bytes)` (admission, O(file)), `step(pages)` (O(pages),
+  returns `pending`/`done`/`cancelled`/`failed`), `pageCount`/`pagesDone`, `cancel()`, and
+  `finish()`, which consumes the job and is **atomic**: it validates the model and builds the
+  session through `session_from_import`, the same function every other open now ends in
+  (split out of `open_document_bounded`, unchanged otherwise). The binding exists without
+  the feature and refuses with a sentence, so the webapp's import always links. The
+  synchronous `open` still refuses a PDF (the built-in registry stays export-only), so a host
+  cannot import a PDF on the main thread by accident. `casual-doc-io` gained one accessor,
+  `PdfStagedImport::page_count`, so the bar is determinate before the first page.
+- **Save.** `exportAs("application.pdf", "exact_if_unchanged")` of an unchanged session
+  (revision 0) opened from a PDF returns the retained original bytes (MF-I4); edited, or
+  asked for `semantic`, it is the real-text writer (`docs/98`). DOCX is the semantic writer:
+  frames are text boxes.
+- **Webapp.** File → Open, the drop target and the host's open all reach `openBytes`, which
+  routes on the `%PDF-` header (the bytes decide, as detection does for every format):
+  `editor_file_pick.mjs` accepts `.pdf`, the Open picker's `accept=` lists `.pdf` and
+  `application/pdf`, `format_io.mjs` names PDF both ways. `pdf_import_scheduler.mjs` (pure)
+  runs the job in `requestIdleCallback` slices of at most 40 ms, a page at a time, predicting
+  the next page from the slowest seen and always doing at least one page; Safari falls back
+  to zero-delay tasks. `pdf_import.mjs` is the modal progress dialog (`registerModal`):
+  title, a `role="progressbar"` with value and value text, a polite live region for the
+  phases only, Cancel focused; Escape, the backdrop and the close button are all Cancel.
+  Nothing replaces the open document until `finish` succeeds; Cancel leaves it as it was
+  and says so. An encrypted PDF is refused in words (`pdfImport.encrypted`).
+- **Summary.** After the pages are on screen the findings dialog opens once
+  (`compat_findings.mjs`), led by the disclosure: converted on this device, nothing
+  uploaded; a reconstruction of the pages as frames, pictures and shapes, not the PDF; the
+  original untouched, written back byte for byte when saved as PDF before an edit. The
+  `pdf.import.*` findings are grouped by what the import did (Not brought in / Rebuilt
+  approximately / Inferred from the page layout), from the model outcome, because the
+  adapter reports every loss as `not_retained` and "Not kept" would merge an inferred
+  reading order with a dropped form. All 24 families have words (`findings_catalogue.mjs`),
+  located by first page. Every string is in `en_strings.mjs` and the 18 catalogues.
+- **Scope.** SKILL §1 now lists PDF (import and edit) under In, and PDF forms, signatures,
+  annotations and scripts under Out; `docs/98`'s import non-goal points here.
+- **Not needed:** a disabled "Convert to flowing document" command. No surface offers one
+  yet, and the command-surface rule (SKILL §10) is about a control that exists; P3 adds the
+  command with its surfaces.
+
+### 17.2 Guards, each driven red by a mutation (SKILL §4)
+
+| Guard | Mutation | Red output |
+| --- | --- | --- |
+| wasm `pdf_import::tests::an_unchanged_pdf_saves_back_byte_for_byte_and_an_edited_one_is_regenerated` | never take the retained bytes (`.filter(\|_\| false)`) | `an unchanged session is the original file (76502 bytes written, 2024 read)` |
+| wasm `a_cancelled_import_produces_no_document` | `cancel()` does nothing | `left: "pending"`, `right: "cancelled"` |
+| `pdf_import_scheduler.test.mjs` "no slice overruns its budget" | drop the per-slice budget check | `a slice took 700 ms against 40` |
+| same, "Cancel between slices…" | never consult `cancelled()` | `+ 'done'` / `- 'cancelled'` |
+| `compat_findings.test.mjs` "a PDF import finding is grouped by what the import did" | drop the `pdf.import.` branch | `+ 'lost'` / `- 'pdfOmitted'` |
+| `findings_catalogue.test.mjs` "every PDF import finding … is catalogued" (ids read from `report.rs`) | delete the `vector_split` entry | `a PDF finding the dialog would print as its id` |
+| e2e `pdf-import.spec.mjs` main-thread test: 275-page PDF made by the editor, no long task before the finish mark over 200 ms | one slice with an unbounded budget | `importing 275 pages blocked the main thread for 543 ms` (green: no long task at all before the finish) |
+| e2e Cancel test | the scheduler never sees Cancel | `Expected: "Opening synthetic-prose.pdf was cancelled — the document you had open is still here"`, `Received: ""` |
+| e2e open test (progress, pages, summary, edit a frame, save PDF unchanged = original bytes, edited PDF and DOCX reopen holding the edit) | drop the disclosure section | `[data-kind="pdfDisclosure"]` not found |
+
+`modal-roster.mjs` carries the dialog (held open by an idle-callback gate in
+`pdf-import-helpers.mjs`), so `dialog-contract`, `dialog-fit` and `phone-dialog-sheet` hold it
+to the modal contract; all pass.
+
+**Measured, not guarded:** the finish (validation and layout) is one task, 650 ms and 580 ms
+on the 275-page PDF, 470-500 ms at 118 pages: the same O(document) open every format pays
+(`docs/116` §7), now after the import rather than inside it.
+
+### 17.3 Wasm size: over both ceilings, for the owner
+
+Measured with `build.sh`'s settings (wasm-pack 0.14.0, Binaryen `-Oz`, release `z`):
+
+| Build | Total | Code | Data | gzip -9 |
+| --- | ---: | ---: | ---: | ---: |
+| `502ff112` (base) | 26,992,235 | 13,009,766 | 13,935,168 | 12,243,545 |
+| this branch, `pdf-import` off | 26,993,325 | 13,010,547 | 13,935,262 | 12,244,060 |
+| this branch, `pdf-import` on (shipped) | 29,827,011 | 14,739,317 | 15,036,004 | 13,539,863 |
+| **delta (on vs base)** | **+2,834,776 (+10.5%)** | **+1,729,551** | **+1,100,836** | **+1,296,318** |
+
+`wasm_size.test.mjs` fails on this branch (27,010,000 / 13,035,000) and its ceilings are
+**not** raised here. Of the data, about 576 KB is hayro-interpret's default features:
+`embed-fonts` (the Foxit standard-14 `.pfb` faces, 320 KB) and `embed-cmaps` (256 KB).
+Options:
+
+1. **Ship it in the main module** and raise both ceilings by the measured delta plus the
+   usual ~128 KiB headroom (29,960,000 / 14,870,000).
+2. **Trim the reader first** (the reader lane's crate): `hayro-interpret` with
+   `default-features = false`, standard-14 fonts resolved to the metric-compatible
+   Liberation faces the layout crate already ships, predefined CMaps fetched on demand.
+   About -0.6 MB; the rest is the reader and importer code.
+3. **A lazy second module**: a small `casual-doc-pdf-wasm` (reader, importer, model, serde)
+   loaded on the first PDF, handing the main module a normalized-JSON snapshot package
+   plus the original bytes; the main module stays at the base size. Costs: a second copy of
+   the model and serde code in that module, a new crate, and the exact-bytes save moving to
+   the host (it keeps the original and writes it while the revision is 0).
+4. **Feature off by default** with a PDF-capable build variant: the off build measures +1,090 B
+   against the base, so it fits; the shipped editor would not open PDFs.
+
+### 17.4 Not built
+
+- The finish and layout are one main-thread task (above); splitting them is `docs/116` §7's
+  lazy measure pass, not this phase. The worker (ADR-073) is where the whole job goes.
+- Compare (`#compareFile`) does not accept PDF: its diff job imports both sides through the
+  synchronous registry, which stays export-only for PDF. `docs/182` P2's "both `accept=`
+  lists" is corrected here: only the Open picker opens documents.
+- A restored draft or version of a PDF-origin document does not re-show the summary.
+- Reflow (P3), preserving save (P4), OCR (P5), ML layout (P6).

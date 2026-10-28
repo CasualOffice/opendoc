@@ -112,6 +112,13 @@ pub struct PdfStagedImport {
 }
 
 impl PdfStagedImport {
+    /// Pages in the document, known from admission, so a host can show
+    /// "page 0 of N" before the first step. O(1).
+    #[must_use]
+    pub fn page_count(&self) -> usize {
+        self.job.page_count()
+    }
+
     /// Does at most `budget` pages. O(budget).
     pub fn step(&mut self, budget: usize) -> Progress {
         self.job.step(budget)
