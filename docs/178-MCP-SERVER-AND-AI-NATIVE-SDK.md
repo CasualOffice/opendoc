@@ -783,6 +783,12 @@ for every suggest-only or comment-only participant. `protection.rs` now rejoins 
 split minted fresh onto the run before them before comparing; a held run that comes back
 re-minted still differs, so ADR-052's identity convention is unchanged.
 
+- WebMCP origin trial (2026-10-29): `webapp/editor.html` carries the owner's Chrome
+  origin-trial token for `opendoc.casualoffice.org` (subdomains and third-party frames
+  included, until 2027-03-30), so `document.modelContext` exists there for Chrome
+  users; tools still register only on opt-in. `webapp/tests/webmcp_origin_trial.test.mjs`
+  fails when the token lapses or stops matching `CNAME`.
+
 **Not built, stated.**
 
 - Every surface is read (`docs/181` §12 "Lane surfaces"); charts, SmartArt, OLE objects, alt-chunks and equations without a linear form are named and counted as `omitted`, not projected.
