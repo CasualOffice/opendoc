@@ -151,7 +151,7 @@ export function createAssistant(ed, { onDecision = () => {} } = {}) {
   let webmcpStatus = () => null;
 
   function access() {
-    return aiAccessFor(ed.HOST_CAPS, { direct: hostConfig().ai === "direct" });
+    return aiAccessFor(ed.HOST_CAPS, { direct: String(hostConfig().ai ?? "").toLowerCase() === "direct" });
   }
 
   function decide(previewId, decision, reason = null) {
