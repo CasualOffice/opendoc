@@ -2397,6 +2397,8 @@ fn text_box_with_block_content_validates_and_round_trips_json() {
                 font_scale: 80_000,
                 line_spacing_reduction: 20_000,
             },
+            text_rotation: -1_800_000,
+            vertical_text: crate::v1::TextBoxVerticalText::Vertical270,
         },
         blocks: vec![paragraph_block(tid(11))],
     };
@@ -6347,4 +6349,47 @@ fn a_chart_projection_resolves_inside_a_nested_container() {
         .insert(ChartId::new(tid(3)), chart_projection(object));
     Document::new(tid(99), vec![nested], definitions)
         .expect("a chart inside a table cell projects");
+}
+
+/// `wps:bodyPr@rot`/`@vert` (`docs/182` G-3): a snapshot written before the
+/// fields existed reads as upright horizontal text, the defaults are not
+/// written back, and every `ST_TextVerticalType` token maps both ways.
+#[test]
+fn text_box_rotation_and_direction_default_upright_and_round_trip() {
+    use crate::v1::TextBoxVerticalText;
+    let upright: TextBoxBodyProperties = serde_json::from_str("{}").unwrap();
+    assert_eq!(upright.text_rotation, 0);
+    assert_eq!(upright.vertical_text, TextBoxVerticalText::Horizontal);
+    assert!(upright.is_default());
+    assert_eq!(serde_json::to_string(&upright).unwrap(), "{}");
+    let turned = TextBoxBodyProperties {
+        text_rotation: 5_400_000,
+        vertical_text: TextBoxVerticalText::Vertical,
+        ..TextBoxBodyProperties::default()
+    };
+    let json = serde_json::to_string(&turned).unwrap();
+    assert_eq!(
+        json,
+        r#"{"textRotation":5400000,"verticalText":"vertical"}"#
+    );
+    assert_eq!(
+        serde_json::from_str::<TextBoxBodyProperties>(&json).unwrap(),
+        turned
+    );
+    for token in [
+        "horz",
+        "vert",
+        "vert270",
+        "wordArtVert",
+        "eaVert",
+        "mongolianVert",
+        "wordArtVertRtl",
+    ] {
+        let value = TextBoxVerticalText::from_token(token).unwrap();
+        assert_eq!(value.token(), token);
+    }
+    assert_eq!(TextBoxVerticalText::from_token("sideways"), None);
+    assert_eq!(TextBoxVerticalText::Vertical.quarter_turns(), 1);
+    assert_eq!(TextBoxVerticalText::Vertical270.quarter_turns(), 3);
+    assert_eq!(TextBoxVerticalText::WordArtVertical.quarter_turns(), 0);
 }

@@ -2,11 +2,13 @@
 //! (`docs/182` §4.1).
 //!
 //! Every PDF page becomes one section (page size from the CropBox, rotation
-//! applied, zero margins) holding one anchor paragraph. That paragraph carries
+//! applied, landscape when wide, zero margins) holding one anchor paragraph. That paragraph carries
 //! the page's objects as page-anchored floats, in paint order, with a
 //! monotonically increasing `relative_height` so z-order follows paint order:
 //!
-//! - each text block (`group.rs`) -> a `TextBox` with real paragraphs and runs,
+//! - each text block (`group.rs`) -> a `TextBox` with real paragraphs and runs
+//!   (a ROTATED block -> a one-child group whose `GroupTextBox` is turned by
+//!   the text's angle, `docs/182` G-3),
 //!   `LineRule::Exact` from the measured baselines, zero insets, and
 //!   grow-on-overflow (`TextBoxAutoFit::Shape`, Acrobat's behaviour);
 //! - each image -> an `AnchoredDrawing`, its clip as a `CropRect`;
@@ -32,6 +34,8 @@ use casual_doc_model::v1::{
     VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
 };
 use casual_doc_model::v1::{EmbeddedFontProgram, FillRule, FontProgramFormat, FontProgramStyle};
+// Own line: turned text frames and landscape pages (`docs/182` G-3).
+use casual_doc_model::v1::{GroupTextBox, PageOrientation};
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_pdf_read::{
     ActiveContent, DocumentFonts, FontEvidence, FontProgramKind, GlyphRunEvidence, ImageEvidence,
@@ -60,6 +64,21 @@ fn emu(points: f64) -> i64 {
 
 fn twips(points: f64) -> i32 {
     (points * 20.0).round() as i32
+}
+
+/// `point` turned clockwise (y-down page space, the evidence's convention) by
+/// `degrees` about `pivot`. O(1).
+fn turn(
+    point: casual_doc_pdf_read::Point,
+    pivot: casual_doc_pdf_read::Point,
+    degrees: f64,
+) -> casual_doc_pdf_read::Point {
+    let (sin, cos) = degrees.to_radians().sin_cos();
+    let (dx, dy) = (point.x - pivot.x, point.y - pivot.y);
+    casual_doc_pdf_read::Point {
+        x: pivot.x + dx * cos - dy * sin,
+        y: pivot.y + dx * sin + dy * cos,
+    }
 }
 
 fn rgba(color: [u8; 4]) -> Rgba {
@@ -172,6 +191,8 @@ pub(crate) struct Builder {
     pending: Option<(Paragraph, SectionId)>,
     /// Line-against-block comparisons made by grouping (the work counter).
     pub(crate) comparisons: u64,
+    /// The current page's centre: the pivot rotated text is turned about.
+    centre: casual_doc_pdf_read::Point,
 }
 
 impl Builder {
@@ -228,6 +249,7 @@ impl Builder {
             programs: Vec::new(),
             pending: None,
             comparisons: 0,
+            centre: casual_doc_pdf_read::Point { x: 0.0, y: 0.0 },
         }
     }
 
@@ -249,6 +271,10 @@ impl Builder {
         fonts: &DocumentFonts,
     ) -> Result<(), PdfImportError> {
         let section = self.section(page)?;
+        self.centre = casual_doc_pdf_read::Point {
+            x: page.width / 2.0,
+            y: page.height / 2.0,
+        };
         let notes = &page.notes;
         let at = Some(page.index);
         self.findings.record(
@@ -381,7 +407,10 @@ impl Builder {
             vertical_alignment: None,
             page_numbering: casual_doc_model::v1::PageNumbering::default(),
             doc_grid: casual_doc_model::v1::DocGrid::default(),
-            orientation: None,
+            // A landscape page (a `/Rotate` 90/270 portrait sheet, or one
+            // authored wide) says so, as Word's `w:orient` does: the size is
+            // already the displayed one (`docs/182` G-3).
+            orientation: (width > height).then_some(PageOrientation::Landscape),
             paper_source: casual_doc_model::v1::PaperSource::default(),
             page_borders: casual_doc_model::v1::PageBorders::default(),
             line_numbering: casual_doc_model::v1::LineNumbering::default(),
@@ -525,6 +554,9 @@ impl Builder {
     ) -> Result<(), PdfImportError> {
         self.decide_fonts(runs, fonts, page);
         let mut upright = Vec::new();
+        // Rotated runs, by angle (hundredths of a degree), so lines of one
+        // turned paragraph — every line of a `/Rotate` page — group together.
+        let mut turned: BTreeMap<i64, Vec<GlyphRunEvidence>> = BTreeMap::new();
         for run in runs {
             let unmapped = run.glyphs.iter().filter(|g| g.text.is_none()).count();
             self.findings.record(
@@ -549,21 +581,29 @@ impl Builder {
             if run.rotation_degrees.abs() <= UPRIGHT_DEGREES {
                 upright.push(*run);
             } else {
-                // G-3: text boxes cannot rotate their text yet. The run gets
-                // its own frame at its first glyph, upright, and is reported.
+                // G-3: a rotated run is turned back upright about the page's
+                // centre, grouped like any text, and each block becomes a frame
+                // turned by the run's angle — the text stays editable and
+                // paints where the PDF drew it.
                 self.findings
-                    .record(report::TEXT_ROTATED, Outcome::Degraded, 1, Some(page));
-                let mut flat = (*run).clone();
-                let origin = flat.glyphs.first().map(|g| g.origin).unwrap_or_default();
-                let mut x = origin.x;
-                for glyph in &mut flat.glyphs {
-                    glyph.origin = casual_doc_pdf_read::Point { x, y: origin.y };
-                    x += glyph.advance;
+                    .record(report::TEXT_ROTATED, Outcome::Mapped, 1, Some(page));
+                let key = (run.rotation_degrees * 100.0).round() as i64;
+                turned.entry(key).or_default().push((*run).clone());
+            }
+        }
+        for (key, mut runs) in turned {
+            let degrees = key as f64 / 100.0;
+            for run in &mut runs {
+                for glyph in &mut run.glyphs {
+                    glyph.origin = turn(glyph.origin, self.centre, -degrees);
                 }
-                flat.rotation_degrees = 0.0;
-                for block in group::blocks(&[&flat], self.params) {
-                    self.frame(&block, fonts, inlines)?;
-                }
+                run.rotation_degrees = 0.0;
+            }
+            let refs: Vec<&GlyphRunEvidence> = runs.iter().collect();
+            let (blocks, comparisons) = group::blocks_counted(&refs, self.params);
+            self.comparisons += comparisons;
+            for block in &blocks {
+                self.frame(block, fonts, inlines, Some(degrees))?;
             }
         }
         let (blocks, comparisons) = group::blocks_counted(&upright, self.params);
@@ -584,16 +624,22 @@ impl Builder {
             );
         }
         for block in &blocks {
-            self.frame(block, fonts, inlines)?;
+            self.frame(block, fonts, inlines, None)?;
         }
         Ok(())
     }
 
+    /// One text block as a frame. `turned` is the clockwise angle in degrees
+    /// when the block was turned back upright about the page centre: the
+    /// frame is then a one-child group whose `GroupTextBox` carries the angle
+    /// (`a:xfrm@rot`), placed so that turning it about its own centre puts the
+    /// text where the PDF drew it.
     fn frame(
         &mut self,
         block: &Block,
         fonts: &DocumentFonts,
         inlines: &mut Vec<InlineNode>,
+        turned: Option<f64>,
     ) -> Result<(), PdfImportError> {
         let first = &block.lines[0];
         let mut deltas: Vec<f64> = block
@@ -695,28 +741,78 @@ impl Builder {
             inlines: paragraph_inlines,
         };
         let z = self.next_z();
-        inlines.push(InlineNode::TextBox(Box::new(TextBox {
-            hyperlink: None,
+        let extent = Extent {
+            width_emu: emu(width).max(1),
+            height_emu: emu(height).max(1),
+        };
+        let body_properties = TextBoxBodyProperties {
+            insets: TextBoxInsets {
+                left_emu: 0,
+                top_emu: 0,
+                right_emu: 0,
+                bottom_emu: 0,
+            },
+            auto_fit: TextBoxAutoFit::Shape,
+            ..TextBoxBodyProperties::default()
+        };
+        let blocks = vec![BlockNode::Paragraph(paragraph)];
+        let Some(degrees) = turned else {
+            inlines.push(InlineNode::TextBox(Box::new(TextBox {
+                hyperlink: None,
+                id: self.id()?,
+                anchor: Some(page_anchor(x, top)),
+                relative_height: Some(z),
+                extent: Some(extent),
+                fill: None,
+                border: None,
+                body_properties,
+                blocks,
+            })));
+            return Ok(());
+        };
+        // The frame's centre, turned back to where the PDF drew it; the
+        // frame is placed upright around that point and turned about it.
+        let centre = turn(
+            casual_doc_pdf_read::Point {
+                x: x + width / 2.0,
+                y: top + height / 2.0,
+            },
+            self.centre,
+            degrees,
+        );
+        let origin = PointEmu { x_emu: 0, y_emu: 0 };
+        let child = GroupTextBox {
             id: self.id()?,
-            anchor: Some(page_anchor(x, top)),
-            relative_height: Some(z),
-            extent: Some(Extent {
-                width_emu: emu(width).max(1),
-                height_emu: emu(height).max(1),
-            }),
+            offset: origin,
+            extent,
+            geometry: ShapeGeometry::Rectangle,
+            preset: None,
+            adjustments: Vec::new(),
+            blocks,
             fill: None,
             border: None,
-            body_properties: TextBoxBodyProperties {
-                insets: TextBoxInsets {
-                    left_emu: 0,
-                    top_emu: 0,
-                    right_emu: 0,
-                    bottom_emu: 0,
-                },
-                auto_fit: TextBoxAutoFit::Shape,
-                ..TextBoxBodyProperties::default()
+            body_properties,
+            hyperlink: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: Some((degrees * 60_000.0).round() as i32),
+        };
+        inlines.push(InlineNode::Group(Box::new(WordprocessingGroup {
+            id: self.id()?,
+            anchor: Some(page_anchor(centre.x - width / 2.0, centre.y - height / 2.0)),
+            relative_height: Some(z),
+            extent,
+            transform: GroupTransform {
+                offset: origin,
+                extent,
+                child_offset: origin,
+                child_extent: extent,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
             },
-            blocks: vec![BlockNode::Paragraph(paragraph)],
+            hyperlink: None,
+            children: vec![GroupChild::TextBox(child)],
         })));
         Ok(())
     }

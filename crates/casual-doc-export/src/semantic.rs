@@ -9427,6 +9427,14 @@ fn write_text_box_body_properties(
     properties: &TextBoxBodyProperties,
 ) -> Result<(), ExportError> {
     let mut body = start("wps:bodyPr");
+    // `rot` and `vert` lead, in the schema's attribute order (`docs/182` G-3).
+    let rotation = properties.text_rotation.to_string();
+    if properties.text_rotation != 0 {
+        body.push_attribute(("rot", rotation.as_str()));
+    }
+    if properties.vertical_text != casual_doc_model::v1::TextBoxVerticalText::Horizontal {
+        body.push_attribute(("vert", properties.vertical_text.token()));
+    }
     let insets = properties.insets;
     let left = insets.left_emu.to_string();
     let top = insets.top_emu.to_string();
