@@ -392,10 +392,9 @@
         <h2 class="doc-h2" id="non-goals">Non-Goals</h2>
         <ul class="doc-list">
         <li>Any <em>rendering/layout</em> fidelity work — that lives in the layout engine, not here. This document adds <strong>no</strong> shaping, line-breaking, or pagination logic.</li>
-        <li>Round-trip PDF <em>import</em>. This is export-only.</li>
-        <li>Experimental local PDF semantic reconstruction is evaluated separately in doc 131 and proposed ADR-034. It does not alter this design's export-only scope or the current <code>can_import: false</code> product behavior.</li>
+        <li>PDF <em>import</em> is not this document's. Opening a PDF for editing is designed and built in <code>docs/182</code> (ADR-076, owner decision 2026-10-29), which supersedes doc 131's experiment and the proposed ADR-034: a separate adapter (<code>PdfImportAdapter</code>, feature <code>pdf-import</code>) reconstructs the pages into the model, and this writer is what saves an edited one. The built-in registry's PDF descriptor stays export-only; the editor opens a PDF only through the staged import (<code>docs/182</code> §6, §17).</li>
         <li>Text-as-outlines or rasterized-page output (explicitly rejected).</li>
-        <li>Editing PDFs, PDF forms (AcroForm) authoring, digital signatures, JavaScript, or embedded multimedia.</li>
+        <li>PDF forms (AcroForm/XFA) as forms, digital signatures, annotations as PDF-native objects, JavaScript, or embedded multimedia (<code>docs/182</code> §0).</li>
         <li>Font <em>procurement</em>. Which faces are legally embeddable is a licensing decision (§7), out of engineering scope; this document only specifies the embedding mechanism and the fallback policy.</li>
         </ul>
         <h2 class="doc-h2" id="architecture">Architecture</h2>

@@ -383,3 +383,25 @@ test("what a styles part can still raise is named, and says it came from a style
   }
   assert.equal(where(cases[0][0]), t("findings.where.styles"), "and it still says where");
 });
+
+// Every `pdf.import.*` id the importer can report reads as words (`docs/182`
+// P2), read out of the Rust source so a new family cannot ship unnamed.
+test("every PDF import finding the engine can report is catalogued", () => {
+  const report = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "..", "crates", "casual-doc-pdf-import", "src", "report.rs"),
+    "utf8",
+  );
+  const ids = [...report.matchAll(/pub const [A-Z0-9_]+: &str = "(pdf\.import\.[a-z0-9_]+)";/g)].map((m) => m[1]);
+  assert.ok(ids.length >= 24, `read ${ids.length} ids from report.rs`);
+  const missing = ids.filter((id) => catalogueEntry(id) === null);
+  assert.deepEqual(missing, [], "a PDF finding the dialog would print as its id");
+  // Its location is the first page it was seen on, said as a page.
+  const described = describeFinding({
+    feature: "pdf.import.font_substituted",
+    occurrences: 1,
+    location: { partName: "page 3", namespace: null, localName: "pdf.import.font_substituted", attributeName: null },
+  });
+  assert.deepEqual(described.where, { key: "findings.where.pdfPage", params: { page: 3 } });
+  assert.equal(t(described.where.key, described.where.params), "first seen on page 3");
+  assert.equal(partArea("page 12"), "pdfPage");
+});

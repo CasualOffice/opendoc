@@ -255,6 +255,7 @@ WebGPU
 WebKit
 WebMCP
 WebSocket
+Webapp
 WordArt
 WordprocessingML
 XML

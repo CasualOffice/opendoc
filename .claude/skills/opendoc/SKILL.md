@@ -14,10 +14,11 @@ stable**. The *why* behind each rule (incidents, measurements, competitive evide
 
 Apache-2.0 alternative to ONLYOFFICE Docs for **documents and document collaboration**.
 
-- **In:** DOCX, ODT, TXT, JSON snapshot; multi-user editing, presence, review, versions,
-  roles; an embeddable library; local-first; desktop, browser, mobile browser, headless.
-- **Out:** spreadsheets (sibling `opencalc`), presentations, PDF editing and forms, native
-  mobile shells.
+- **In:** DOCX, ODT, TXT, JSON snapshot, PDF (import and edit, `docs/182`); multi-user
+  editing, presence, review, versions, roles; an embeddable library; local-first; desktop,
+  browser, mobile browser, headless.
+- **Out:** spreadsheets (sibling `opencalc`), presentations, PDF forms, signatures,
+  annotations and scripts, native mobile shells.
 - Production and enterprise grade is the baseline. Never call it an MVP or a prototype.
 - **Embeddability is the product.** ONLYOFFICE is AGPL and gates host customisation
   behind a licence.

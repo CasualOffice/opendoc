@@ -56,6 +56,13 @@ import { showCompatibilityFindings } from "./save_formats.mjs";
 export const FINDING_KINDS = Object.freeze([
   Object.freeze({ id: "lost", key: "findings.kind.lost" }),
   Object.freeze({ id: "refused", key: "findings.kind.refused" }),
+  // A PDF's reconstruction (`docs/182` P2): what it says about each construct is
+  // what the IMPORT did to it, because the original file is never written over
+  // and a save to PDF before an edit is that file. So these three are named by
+  // the model outcome, not by retention, and only for `pdf.import.*` ids.
+  Object.freeze({ id: "pdfOmitted", key: "findings.kind.pdfOmitted" }),
+  Object.freeze({ id: "pdfDegraded", key: "findings.kind.pdfDegraded" }),
+  Object.freeze({ id: "pdfInferred", key: "findings.kind.pdfInferred" }),
   Object.freeze({ id: "approximated", key: "findings.kind.approximated" }),
   Object.freeze({ id: "preserved", key: "findings.kind.preserved" }),
   Object.freeze({ id: "other", key: "findings.kind.unsorted" }),
@@ -64,6 +71,11 @@ export const FINDING_KINDS = Object.freeze([
 /** Which group one report entry belongs to. Retention first: a construct that
  *  was approximated AND not kept is, to a reader, not kept. */
 export function findingKind(entry) {
+  if (String(entry?.feature ?? "").startsWith("pdf.import.")) {
+    if (entry?.modelOutcome === "omitted") return "pdfOmitted";
+    if (entry?.modelOutcome === "degraded") return "pdfDegraded";
+    if (entry?.modelOutcome === "mapped") return "pdfInferred";
+  }
   const retention = entry?.retentionOutcome;
   if (retention === "not_retained") return "lost";
   if (retention === "blocked" || retention === "rejected") return "refused";
@@ -194,7 +206,9 @@ export function createCompatibilityFindings(io) {
     fallbackFocus: io.fallbackFocus,
   });
   /** What the chip counts right now. */
-  let current = { reportJson: "", phase: "import", totals: { headline: 0, bookkeeping: 0, entries: 0 } };
+  let current = { reportJson: "", phase: "import", origin: null, totals: { headline: 0, bookkeeping: 0, entries: 0 } };
+  /** Whether the dialog has the PDF disclosure to say, findings or none. */
+  const disclosing = () => current.origin === "pdf" && current.phase === "import";
   /** Which kind groups' bookkeeping is open. Reset at every open, kept across a
    *  re-render while open, so a save under an open dialog does not fold what
    *  the reader just unfolded. */
@@ -289,6 +303,29 @@ export function createCompatibilityFindings(io) {
     return box;
   }
 
+  /** What a PDF-origin document IS, said before its findings (`docs/182`,
+   *  `docs/131` §16.2): processed here, a reconstruction, the original kept. */
+  function pdfDisclosure() {
+    const section = make("section", "findings-group findings-pdf");
+    section.dataset.kind = "pdfDisclosure";
+    const title = make("h3", "findings-group-title");
+    title.textContent = t("findings.pdf.title");
+    const list = make("ul", "findings-pdf-facts");
+    for (const key of ["findings.pdf.local", "findings.pdf.reconstruction", "findings.pdf.original"]) {
+      const item = make("li");
+      item.dataset.fact = key.slice("findings.pdf.".length);
+      item.textContent = t(key);
+      list.append(item);
+    }
+    section.append(title, list);
+    if (current.totals.entries === 0) {
+      const none = make("p", "findings-note");
+      none.textContent = t("findings.pdf.none");
+      section.append(none);
+    }
+    return section;
+  }
+
   function render() {
     view.getElementById(`${ID}Title`).textContent = t("findings.title");
     view.getElementById(`${ID}Description`).textContent = t(
@@ -298,6 +335,7 @@ export function createCompatibilityFindings(io) {
     parts.close.title = t("findings.close");
     parts.done.textContent = t("findings.close");
     parts.body.replaceChildren();
+    if (disclosing()) parts.body.append(pdfDisclosure());
     if (current.totals.headline === 0 && current.totals.bookkeeping > 0) {
       const only = make("p", "findings-note findings-only-bookkeeping");
       only.textContent = t("findings.bookkeeping.only");
@@ -323,7 +361,7 @@ export function createCompatibilityFindings(io) {
   }
 
   function open() {
-    if (current.totals.entries === 0) return;
+    if (current.totals.entries === 0 && !disclosing()) return;
     expanded.clear();
     render();
     modal.open();
@@ -336,9 +374,9 @@ export function createCompatibilityFindings(io) {
     /** Records a report and paints the chip. Returns the HEADLINE count — the
      *  occurrences a reader would miss, Word's own bookkeeping excluded — which
      *  is the number the chip prints and the one a status line should say. */
-    show(reportJson, phase) {
+    show(reportJson, phase, { origin = null } = {}) {
       const totals = reportJson ? findingTotals(reportJson) : { headline: 0, bookkeeping: 0, entries: 0 };
-      current = { reportJson: reportJson ?? "", phase, totals };
+      current = { reportJson: reportJson ?? "", phase, origin, totals };
       showCompatibilityFindings(io.chip, totals.headline, phase);
       if (modal.isOpen) render();
       return totals.headline;
@@ -354,7 +392,7 @@ export function createCompatibilityFindings(io) {
         label: t("findings.command"),
         group: "File",
         kw: "compatibility findings import export report loss lost fidelity check issues conversion",
-        enabled: current.totals.entries > 0,
+        enabled: current.totals.entries > 0 || disclosing(),
         disabledReason: t("findings.none"),
         run: open,
       },

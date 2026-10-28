@@ -234,4 +234,6 @@ test("the Open picker never offers a format the engine cannot import", async ({ 
   expect(accept, "the formats that DO import must still be offered").toContain(".docx");
   expect(accept).toContain(".odt");
   expect(accept).toContain(".rtf");
+  // PDF imports through the staged job (`docs/182` P2).
+  expect(accept).toContain(".pdf");
 });
