@@ -136,6 +136,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Options, String> {
 /// read roots is a launch error (the operator's allowlist covers models too);
 /// a missing or unloadable one is said on stderr and OCR is off, so scans
 /// report `pdf.import.ocr_unavailable`. O(model bytes), once.
+#[cfg(not(target_family = "wasm"))]
 fn load_ocr(
     dir: &std::path::Path,
     roots: &Roots,
@@ -184,6 +185,16 @@ fn load_ocr(
             Ok(None)
         }
     }
+}
+
+/// `--ocr-models` reads model files from disk, which a wasm target has none of:
+/// the flag is refused there in words rather than failing to build.
+#[cfg(target_family = "wasm")]
+fn load_ocr(
+    _dir: &std::path::Path,
+    _roots: &Roots,
+) -> Result<Option<std::sync::Arc<casual_doc_ai::PdfOcrOptions>>, String> {
+    Err("--ocr-models reads model files from disk, which this target cannot".to_owned())
 }
 
 fn reply(out: &mut impl Write, id: &Value, result: Result<Value, (i64, String, Value)>) {

@@ -53,10 +53,10 @@ pub(crate) fn appearance(da: Option<&str>) -> (f64, [u8; 3]) {
     for (i, t) in tokens.iter().enumerate() {
         match *t {
             "Tf" => {
-                if let Some(v) = i.checked_sub(1).and_then(|k| number(tokens[k])) {
-                    if v > 0.0 {
-                        size = v;
-                    }
+                if let Some(v) = i.checked_sub(1).and_then(|k| number(tokens[k]))
+                    && v > 0.0
+                {
+                    size = v;
                 }
             }
             "rg" if i >= 3 => {

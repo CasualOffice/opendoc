@@ -221,12 +221,17 @@ fn nearest(lineage: &[StructNode], roles: &[&str]) -> Option<u32> {
         .map(|n| n.ordinal)
 }
 
+/// One column band of a row: its column, its lines, and its horizontal extent.
+type Band = (Option<u32>, Vec<ILine>, (f64, f64));
+/// One row of bands, keyed by its row index.
+type Row = (Option<u32>, Vec<Band>);
+
 /// A tagged table (`Table`/`TR`/`TH`/`TD`, ISO 32000-1 §14.8.4.3.4): the
 /// consecutive elements under one `Table` element, rows by `TR`, cells by
 /// `TD`/`TH`, each in structure order. Column edges are each column's
 /// leftmost cell edge. O(elements in the table log).
 fn tagged_table(cells: Vec<Element>) -> Element {
-    let mut rows: Vec<(Option<u32>, Vec<(Option<u32>, Vec<ILine>, (f64, f64))>)> = Vec::new();
+    let mut rows: Vec<Row> = Vec::new();
     let page = cells[0].page;
     let (mut x0, mut y0, mut x1, mut y1) = (
         f64::INFINITY,

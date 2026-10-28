@@ -246,11 +246,11 @@ fn wrap_cff(
     for gid in 0..glyphs {
         let gid = GlyphId::new(gid);
         let index = font.subfont_index(gid).unwrap_or(0);
-        if !subfonts.contains_key(&index) {
+        if let std::collections::btree_map::Entry::Vacant(slot) = subfonts.entry(index) {
             let subfont = font
                 .subfont(index, &[])
                 .map_err(|_| WrapRefusal::Unreadable)?;
-            subfonts.insert(index, subfont);
+            slot.insert(subfont);
         }
         let mut outline = Outline::default();
         let advance = font
