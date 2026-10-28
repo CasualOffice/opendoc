@@ -17,6 +17,14 @@
          accessibility failure for anyone who needs to magnify text, and we have
          no canvas-level pinch of our own to put in its place (`105` UX-018). -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+    <!-- Chrome's WebMCP origin trial for opendoc.casualoffice.org, its subdomains and
+         third-party use, until 2027-03-30 (`docs/178` M4). It only makes
+         `document.modelContext` available; the editor registers tools solely when
+         the host opts in (`?aiTools=webmcp` / `ai-tools="webmcp"`), and edits still
+         go through the private preview. An origin-trial token is public by design.
+         `tests/webmcp_origin_trial.test.mjs` fails when it lapses or stops matching
+         CNAME. -->
+    <meta http-equiv="origin-trial" content="A7jwplg0qfeTbbeiSRmLAkVij6TFQUXe2p9Ny/QM51P2b7a2N7Wcqxl4w/ViPI7cP5XgzBd4yj3BR88UP9LQTQUAAAB/eyJvcmlnaW4iOiJodHRwczovL29wZW5kb2MuY2FzdWFsb2ZmaWNlLm9yZzo0NDMiLCJmZWF0dXJlIjoiV2ViTUNQIiwiZXhwaXJ5IjoxODA2MzY0ODAwLCJpc1N1YmRvbWFpbiI6dHJ1ZSwiaXNUaGlyZFBhcnR5Ijp0cnVlfQ==" />
     <title data-i18n="ui.opendocEditorLocalDocument">OpenDoc Editor — local document editing in WebAssembly</title>
     <meta
       name="description"

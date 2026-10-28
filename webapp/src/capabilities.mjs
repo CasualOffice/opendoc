@@ -859,6 +859,26 @@ export function sandboxTokensFor(capabilities) {
   return Object.freeze(tokens);
 }
 
+/** The editor's address parameters with their NAMES lower-cased, so
+ *  `?aitools=webmcp` and `?aiTools=webmcp` mean the same thing: a person types an
+ *  address, and an option silently ignored for its case is a failure nobody can
+ *  see (owner, 2026-10-29). Values are kept verbatim (a room URL or a JSON payload
+ *  is case-sensitive). The first parameter of a name wins, as
+ *  `URLSearchParams.get` does. Every reader of the editor's own address goes
+ *  through this; callers ask for lower-case names. O(parameters).
+ *
+ *  @param {string} search `location.search`
+ *  @returns {URLSearchParams}
+ */
+export function hostParams(search) {
+  const out = new URLSearchParams();
+  for (const [key, value] of new URLSearchParams(search)) {
+    const name = key.toLowerCase();
+    if (!out.has(name)) out.append(name, value);
+  }
+  return out;
+}
+
 /** The host inputs carried on the page's URL, read once.
  *
  *  `mode` and `autosave` were already a published contract; `can` and `chrome`
@@ -872,11 +892,15 @@ export function hostConfig(view = globalThis) {
   const search = view?.location?.search ?? "";
   let params = null;
   try {
-    params = new URLSearchParams(search);
+    params = hostParams(search);
   } catch {
     params = null;
   }
-  const asked = params?.get("autosave") ?? null;
+  // Parameter names are matched without regard to case (`hostParams`); values stay
+  // verbatim, and the few enumerated opt-in values are compared case-insensitively
+  // where they are read.
+  const get = (name) => params?.get(name.toLowerCase()) ?? null;
+  const asked = get("autosave");
   // `window.self !== window.top` throws on a cross-origin parent in some
   // engines; a throw means we ARE framed, which is the safer answer anyway.
   let framed = false;
@@ -886,14 +910,14 @@ export function hostConfig(view = globalThis) {
     framed = true;
   }
   return {
-    mode: params?.get("mode") ?? null,
+    mode: get("mode"),
     autosave: asked === "1" ? true : asked === "0" ? false : null,
-    withhold: params?.get("can") ?? null,
-    chrome: params?.get("chrome") ?? null,
+    withhold: get("can"),
+    chrome: get("chrome"),
     // The opening positions, as JSON. Read here with the other four because a
     // host's configuration arrives in one place or it arrives in two, and two is
     // how `autosave` came to be known by both this file and `main.js`.
-    prefs: params?.get("prefs") ?? null,
+    prefs: get("prefs"),
     // THE ROOM'S GRANT, read here with the other five for the reason the comment
     // above `prefs` gives: a host's configuration arrives in one place or it
     // arrives in two, and two is how `autosave` came to be known by both this
@@ -906,8 +930,8 @@ export function hostConfig(view = globalThis) {
     // them, and the reason reading them off the URL is safe rather than
     // forgeable is written down there: `adoptParticipantCapabilities`
     // intersects, so a value from this side can only ever narrow.
-    granted: params?.get("granted") ?? null,
-    participant: params?.get("participant") ?? null,
+    granted: get("granted"),
+    participant: get("participant"),
     // THE ROOM ITSELF, read here for the same reason the two above are: a host's
     // configuration arrives in one place or it arrives in two. `152` §2a — the
     // HOST creates the room at embed or share time, not the first client — so
@@ -919,14 +943,14 @@ export function hostConfig(view = globalThis) {
     // anything that is not a `ws:`/`wss:` URL, and it is there rather than here
     // because a transport's own input belongs to the transport — and because a
     // refusal is only useful where there is something to say it to.
-    room: params?.get("room") ?? null,
+    room: get("room"),
     // The host's explicit grant of DIRECT edits to its in-page assistant (`?ai=direct`,
     // `docs/178` §9). Absent, an assistant's edits are tracked suggestions; never a way
     // to widen the grant, only to say which of the granted modes an assistant may use.
-    ai: params?.get("ai") ?? null,
+    ai: get("ai"),
     // The host's opt-in to WebMCP (`?aiTools=webmcp`, `docs/178` §9 item 2): register
     // `editor.ai`'s tools with a browser agent. Off when absent; `ai_webmcp.mjs`.
-    aiTools: params?.get("aiTools") ?? null,
+    aiTools: get("aiTools"),
     framed,
   };
 }

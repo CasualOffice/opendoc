@@ -10,6 +10,7 @@ import { hostIdentity, identityPromised } from "./host_identity.mjs";
 import { t } from "./i18n.mjs";
 import { createPdfImport } from "./pdf_import.mjs";
 import { isPdfBytes } from "./pdf_import_scheduler.mjs";
+import { hostParams } from "./capabilities.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -60,7 +61,7 @@ export function createFileOpen(ed) {
     // host that promised and never sent costs a wait rather than an editor.
     if (identityPromised(window.location.search)) await hostIdentity.settled();
 
-    const params = new URLSearchParams(window.location.search);
+    const params = hostParams(window.location.search);
     // The public demo and plain editor both open sample.docx. The smaller rich
     // corpus remains available only through the explicit e2e fixture route,
     // whose specs assert on its exact content. ?blank=1 opts out for the bare
