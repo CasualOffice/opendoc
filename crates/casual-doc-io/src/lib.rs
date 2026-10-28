@@ -8,6 +8,8 @@
 //! covers DOCX, bounded ODT, normalized JSON and UTF-8 plain text both ways,
 //! RTF import, and export-only DOTX, CommonMark, single-file HTML and PDF
 //! ([`register_pdf_exporter`]), each with an explicit capability descriptor.
+//! PDF import is a separate, explicit capability (feature `pdf-import`, then
+//! `enable_pdf_import`): the built-in registry never imports PDF.
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
@@ -22,6 +24,8 @@ mod markdown;
 mod normalized_json;
 mod odt;
 mod pdf;
+#[cfg(feature = "pdf-import")]
+mod pdf_import;
 mod registry;
 mod report;
 mod rtf;
@@ -53,4 +57,11 @@ pub use report::{
 // Own line, kept out of any sorted block (the repo's parallel-PR rule).
 pub use report::{RecoveryReport, RepairSeverity, SourceRepair};
 pub use rtf::RtfAdapter;
+// Own lines, kept out of any sorted block (the repo's parallel-PR rule).
+#[cfg(feature = "pdf-import")]
+pub use casual_doc_pdf_import::{PdfReadLimits, Progress as PdfImportProgress};
+#[cfg(feature = "pdf-import")]
+pub use pdf_import::{
+    PdfImportAdapter, PdfStagedImport, builtin_registry_with_pdf_import, enable_pdf_import,
+};
 pub use text::{PlainTextAdapter, PlainTextLimits};

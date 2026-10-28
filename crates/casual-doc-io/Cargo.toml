@@ -19,6 +19,16 @@ casual-doc-ooxml.workspace = true
 # The real-text PDF backend behind the export-only `application.pdf` adapter.
 casual-doc-pdf.workspace = true
 casual-doc-rtf.workspace = true
+# PDF import (docs/182 P1), behind `pdf-import`: off by default so the editor's
+# WASM build neither compiles hayro nor offers PDF in File -> Open until P2.
+casual-doc-pdf-import = { workspace = true, optional = true }
+
+[features]
+default = []
+# Compiles the PDF importer. A host still opts in at run time with
+# `enable_pdf_import` / `builtin_registry_with_pdf_import`; the plain built-in
+# registry never imports PDF, whatever features are on.
+pdf-import = ["dep:casual-doc-pdf-import"]
 
 [dev-dependencies]
 zip.workspace = true
