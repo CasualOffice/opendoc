@@ -32,6 +32,51 @@ pub(crate) struct NoteAnnotation {
     pub date: Option<String>,
     /// `/Contents`.
     pub text: String,
+    /// Its object id, and the note it replies to (`/IRT`).
+    pub object: Option<(i32, i32)>,
+    /// See [`NoteAnnotation::object`].
+    pub reply_to: Option<(i32, i32)>,
+    /// A FreeText note: its text is drawn on the page, at this size and
+    /// colour (from `/DA`).
+    pub drawn: Option<(f64, [u8; 3])>,
+}
+
+/// The size and colour of a `/DA` default appearance (`/Helv 12 Tf 0 0 1 rg`,
+/// or `0.5 g`), defaulting to 12 pt black. O(string).
+#[must_use]
+pub(crate) fn appearance(da: Option<&str>) -> (f64, [u8; 3]) {
+    let tokens: Vec<&str> = da.unwrap_or("").split_whitespace().collect();
+    let number = |t: &str| t.parse::<f64>().ok();
+    let mut size = 12.0;
+    let mut colour = [0, 0, 0];
+    let byte = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    for (i, t) in tokens.iter().enumerate() {
+        match *t {
+            "Tf" => {
+                if let Some(v) = i.checked_sub(1).and_then(|k| number(tokens[k])) {
+                    if v > 0.0 {
+                        size = v;
+                    }
+                }
+            }
+            "rg" if i >= 3 => {
+                if let (Some(r), Some(g), Some(b)) = (
+                    number(tokens[i - 3]),
+                    number(tokens[i - 2]),
+                    number(tokens[i - 1]),
+                ) {
+                    colour = [byte(r), byte(g), byte(b)];
+                }
+            }
+            "g" if i >= 1 => {
+                if let Some(v) = number(tokens[i - 1]) {
+                    colour = [byte(v); 3];
+                }
+            }
+            _ => {}
+        }
+    }
+    (size.min(144.0), colour)
 }
 
 /// One page's annotations, sorted by what they become.
@@ -58,12 +103,15 @@ pub(crate) fn sort(
             AnnotationKind::Link(_) => {
                 findings.record(report::LINK_UNRESOLVED, Outcome::Omitted, 1, Some(page));
             }
-            AnnotationKind::Note { .. } => match &annotation.contents {
+            AnnotationKind::Note { free_text, .. } => match &annotation.contents {
                 Some(text) if !text.trim().is_empty() => out.notes.push(NoteAnnotation {
                     rect: annotation.rect,
                     author: annotation.author.clone(),
                     date: annotation.date.clone(),
                     text: text.clone(),
+                    object: annotation.object,
+                    reply_to: annotation.in_reply_to,
+                    drawn: free_text.then(|| appearance(annotation.appearance.as_deref())),
                 }),
                 _ => findings.record(report::ANNOTATION_OMITTED, Outcome::Omitted, 1, Some(page)),
             },
@@ -71,6 +119,21 @@ pub(crate) fn sort(
             AnnotationKind::Other => {
                 findings.record(report::ANNOTATION_OMITTED, Outcome::Omitted, 1, Some(page));
             }
+        }
+    }
+    // Roots before replies, so a reply finds the comment it threads onto; a
+    // reply takes its root's rectangle (replies often carry none of their own).
+    out.notes.sort_by_key(|n| n.reply_to.is_some());
+    let roots: Vec<((i32, i32), Bounds)> = out
+        .notes
+        .iter()
+        .filter_map(|n| n.object.map(|o| (o, n.rect)))
+        .collect();
+    for note in &mut out.notes {
+        if let Some(parent) = note.reply_to
+            && let Some((_, rect)) = roots.iter().find(|(o, _)| *o == parent)
+        {
+            note.rect = *rect;
         }
     }
     out

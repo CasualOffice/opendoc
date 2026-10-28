@@ -232,6 +232,9 @@ pub(crate) struct Builder {
     destinations: Vec<(BookmarkId, String, usize, Option<f64>)>,
     /// Comments from notes.
     comments: Vec<(CommentId, Comment)>,
+    /// A note's object id -> its comment's thread id (`para_id`), so a reply
+    /// (`/IRT`) threads onto it.
+    comment_threads: BTreeMap<(i32, i32), String>,
     /// Where each page and frame came from (`docs/182` P4).
     pub(crate) sources: crate::SourceMap,
     /// The current page's centre: the pivot rotated text is turned about.
@@ -292,6 +295,7 @@ impl Builder {
             page_links_used: Vec::new(),
             destinations: Vec::new(),
             comments: Vec::new(),
+            comment_threads: BTreeMap::new(),
             sources: crate::SourceMap::default(),
             centre: casual_doc_pdf_read::Point { x: 0.0, y: 0.0 },
         }
@@ -408,6 +412,9 @@ impl Builder {
         );
         self.page_links.clear();
         for note in sorted.notes {
+            if let Some((size, colour)) = note.drawn {
+                self.free_text(&note, size, colour, &mut inlines)?;
+            }
             self.comment(note, &mut inlines, page.index)?;
         }
         let paragraph = Paragraph {
@@ -1091,6 +1098,15 @@ impl Builder {
                 .take(4)
                 .collect::<String>()
         });
+        // Thread ids are the `w14:paraId` tokens Word threads by: 8 hex
+        // digits, non-zero, below 0x80000000.
+        let para_id = format!("{:08X}", self.comments.len() + 1);
+        let parent_para_id = note
+            .reply_to
+            .and_then(|parent| self.comment_threads.get(&parent).cloned());
+        if let Some(object) = note.object {
+            self.comment_threads.insert(object, para_id.clone());
+        }
         self.comments.push((
             comment,
             Comment {
@@ -1098,11 +1114,102 @@ impl Builder {
                 author,
                 initials: initials.filter(|i| !i.is_empty()),
                 date: note.date,
+                para_id: Some(para_id),
+                parent_para_id,
                 ..Comment::default()
             },
         ));
         self.findings
             .record(report::COMMENT_INFERRED, Outcome::Mapped, 1, Some(page));
+        Ok(())
+    }
+
+    /// A FreeText note's visible text, drawn as a frame at its rectangle in
+    /// its `/DA` size and colour (the annotation's appearance stream is not
+    /// page content, so without this the text it shows would be lost from
+    /// the page). Its comment then anchors on it. O(text).
+    fn free_text(
+        &mut self,
+        note: &links::NoteAnnotation,
+        size: f64,
+        colour: [u8; 3],
+        inlines: &mut Vec<InlineNode>,
+    ) -> Result<(), PdfImportError> {
+        let r = note.rect;
+        let half_points = (size * 2.0).round().clamp(2.0, 3_276.0) as u32;
+        let named = Some(FontRef::Named(FontName {
+            name: "Arial".to_owned(),
+        }));
+        let mut paragraph_inlines = Vec::new();
+        for (i, line) in note.text.split('\n').enumerate() {
+            if i > 0 {
+                paragraph_inlines.push(InlineNode::Break(Break {
+                    id: self.id()?,
+                    kind: BreakKind::Line,
+                }));
+            }
+            if line.is_empty() {
+                continue;
+            }
+            paragraph_inlines.push(InlineNode::Run(Run {
+                id: self.id()?,
+                properties: RunProperties {
+                    font_ref: named.clone(),
+                    font_ref_h_ansi: named.clone(),
+                    font_ref_cs: named.clone(),
+                    font_ref_east_asia: named.clone(),
+                    size_half_points: Some(half_points),
+                    size_complex_half_points: Some(half_points),
+                    color: (colour != [0, 0, 0]).then(|| {
+                        Color::Rgb(RgbColor {
+                            r: colour[0],
+                            g: colour[1],
+                            b: colour[2],
+                        })
+                    }),
+                    ..RunProperties::default()
+                }
+                .into(),
+                text: line.to_owned(),
+            }));
+        }
+        let paragraph = Paragraph {
+            id: self.id()?,
+            properties: ParagraphProperties {
+                spacing: Some(Spacing {
+                    before_twips: Some(0),
+                    after_twips: Some(0),
+                    ..Spacing::default()
+                }),
+                ..ParagraphProperties::default()
+            }
+            .into(),
+            inlines: paragraph_inlines,
+        };
+        let z = self.next_z();
+        inlines.push(InlineNode::TextBox(Box::new(TextBox {
+            hyperlink: None,
+            id: self.id()?,
+            anchor: Some(page_anchor(r.x0, r.y0)),
+            relative_height: Some(z),
+            extent: Some(Extent {
+                width_emu: emu(r.width()).max(1),
+                height_emu: emu(r.height()).max(1),
+            }),
+            fill: None,
+            border: None,
+            body_properties: TextBoxBodyProperties {
+                insets: TextBoxInsets {
+                    left_emu: 25_400,
+                    top_emu: 12_700,
+                    right_emu: 25_400,
+                    bottom_emu: 0,
+                },
+                auto_fit: TextBoxAutoFit::Shape,
+                ..TextBoxBodyProperties::default()
+            },
+            blocks: vec![BlockNode::Paragraph(paragraph)],
+        })));
         Ok(())
     }
 

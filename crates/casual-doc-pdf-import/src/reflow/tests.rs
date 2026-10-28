@@ -1145,3 +1145,87 @@ fn marker_and_paragraph_work_doubles_when_the_items_double() {
         large.1.work.paragraphs
     );
 }
+
+// --- Reply threads and FreeText ----------------------------------------------
+
+fn threads_pdf() -> Vec<u8> {
+    let page = Page {
+        content: text("F2", 11.0, 72.0, 700.0, 14.0, &["A paragraph the reviewers discussed."]),
+        annots: vec![
+            "<< /Type /Annot /Subtype /Text /Rect [300 700 320 720] /T (Reviewer A) /M (D:20261029120000Z) /Contents (Is this right?) >>".to_owned(),
+            // The reply carries no rectangle of its own: it threads onto, and
+            // anchors where, the note it answers.
+            "<< /Type /Annot /Subtype /Text /Rect [0 0 0 0] /IRT {annot0} /T (Author B) /M (D:20261029130000Z) /Contents (Yes, checked.) >>".to_owned(),
+            "<< /Type /Annot /Subtype /FreeText /Rect [72 600 300 630] /DA (/Helv 14 Tf 1 0 0 rg) /T (Reviewer A) /Contents (Typed on the page) >>".to_owned(),
+        ],
+        extra: String::new(),
+    };
+    synth::document(&[page], "", "")
+}
+
+#[test]
+fn replies_thread_onto_their_note_and_free_text_is_drawn() {
+    use casual_doc_model::v1::Color;
+    let (imported, reflowed) = reflow_of(threads_pdf());
+    for (label, document) in [
+        ("fixed", &imported.document),
+        ("reflow", &reflowed.document),
+    ] {
+        let comments: Vec<_> = document
+            .definitions()
+            .comments
+            .iter()
+            .map(|(_, c)| c)
+            .collect();
+        assert_eq!(comments.len(), 3, "{label}");
+        let root = comments
+            .iter()
+            .find(|c| c.author.as_deref() == Some("Reviewer A") && c.parent_para_id.is_none())
+            .unwrap();
+        let reply = comments
+            .iter()
+            .find(|c| c.author.as_deref() == Some("Author B"))
+            .unwrap();
+        assert!(root.para_id.is_some(), "{label}");
+        assert_eq!(
+            reply.parent_para_id, root.para_id,
+            "{label}: the reply threads onto the note"
+        );
+        assert_eq!(
+            comments
+                .iter()
+                .filter(|c| c.parent_para_id.is_some())
+                .count(),
+            1,
+            "{label}: only the reply is a reply"
+        );
+    }
+    // Fixed layout draws the FreeText's own text in its size and colour.
+    let frame = imported
+        .document
+        .body()
+        .iter()
+        .filter_map(|b| match b {
+            BlockNode::Paragraph(p) => Some(p),
+            _ => None,
+        })
+        .flat_map(|p| p.inlines.iter())
+        .find_map(|i| match i {
+            InlineNode::TextBox(t) => match &t.blocks[0] {
+                BlockNode::Paragraph(p) if para_text(p) == "Typed on the page" => Some(p.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("the FreeText's text is a frame on the page");
+    let InlineNode::Run(run) = frame
+        .inlines
+        .iter()
+        .find(|i| matches!(i, InlineNode::Run(_)))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(run.properties.size_half_points, Some(28));
+    assert!(matches!(run.properties.color, Some(Color::Rgb(c)) if (c.r, c.g, c.b) == (255, 0, 0)));
+}

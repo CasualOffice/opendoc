@@ -248,6 +248,10 @@ pub struct IComment {
     pub date: Option<String>,
     /// Text.
     pub text: String,
+    /// The note's object id.
+    pub object: Option<(i32, i32)>,
+    /// The note it replies to (`/IRT`).
+    pub reply_to: Option<(i32, i32)>,
 }
 
 /// Work counters per pass (counts, never times: SKILL §8).
@@ -735,6 +739,19 @@ pub fn build(
             Some(page.index),
         );
 
+        // A reply anchors where its root does (replies often carry no
+        // rectangle of their own).
+        let roots: Vec<((i32, i32), Bounds)> = page_comments
+            .iter()
+            .filter_map(|(c, r)| flow.comments[*c].object.map(|o| (o, *r)))
+            .collect();
+        for (comment, rect) in &mut page_comments {
+            if let Some(parent) = flow.comments[*comment].reply_to
+                && let Some((_, root_rect)) = roots.iter().find(|(o, _)| *o == parent)
+            {
+                *rect = *root_rect;
+            }
+        }
         // Comments anchor on the line nearest each note.
         for (comment, rect) in &page_comments {
             let centre = (rect.y0 + rect.y1) / 2.0;
@@ -952,6 +969,8 @@ fn classify(
                 author: annotation.author.clone(),
                 date: annotation.date.clone(),
                 text,
+                object: annotation.object,
+                reply_to: annotation.in_reply_to,
             });
         }
         // A popup is its parent's window; widgets and attachments are

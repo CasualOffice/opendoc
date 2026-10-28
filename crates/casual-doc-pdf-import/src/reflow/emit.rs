@@ -1098,11 +1098,21 @@ pub(crate) fn emit(
         );
     }
 
-    // Comments that were anchored.
+    // Comments that were anchored, threaded by `/IRT` through `para_id`s.
     let referenced: std::collections::BTreeSet<CommentId> = collect_comment_refs(&body);
+    let mut threads: BTreeMap<(i32, i32), String> = BTreeMap::new();
+    let mut thread_count = 0usize;
     for (id, comment) in emitter.comments.clone().into_iter().flatten() {
         if !referenced.contains(&id) {
             continue;
+        }
+        thread_count += 1;
+        let para_id = format!("{thread_count:08X}");
+        let parent_para_id = comment
+            .reply_to
+            .and_then(|parent| threads.get(&parent).cloned());
+        if let Some(object) = comment.object {
+            threads.insert(object, para_id.clone());
         }
         let paragraphs: Vec<BlockNode> = comment
             .text
@@ -1137,6 +1147,8 @@ pub(crate) fn emit(
                 author,
                 initials: initials.filter(|i| !i.is_empty()),
                 date: comment.date.clone(),
+                para_id: Some(para_id),
+                parent_para_id,
                 ..Comment::default()
             },
         );

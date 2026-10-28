@@ -83,6 +83,14 @@ pub struct AnnotationEvidence {
     pub contents: Option<String>,
     /// `/M` (else `/CreationDate`) as an ISO 8601 date-time.
     pub date: Option<String>,
+    /// The annotation's object number and generation, when it is an
+    /// indirect object (what a reply's `/IRT` names).
+    pub object: Option<(i32, i32)>,
+    /// `/IRT`: the annotation this one replies to.
+    pub in_reply_to: Option<(i32, i32)>,
+    /// `/DA`, the default appearance (`/Helv 12 Tf 0 0 1 rg`) a FreeText
+    /// note's text is drawn with.
+    pub appearance: Option<String>,
 }
 
 /// Decodes a PDF text string (ISO 32000-1 §7.9.2.2): UTF-16BE or UTF-8 with
@@ -381,6 +389,11 @@ impl PdfSource {
                 author: string(&annot, b"T"),
                 contents: string(&annot, b"Contents"),
                 date,
+                object: annot.obj_id().map(|id| (id.obj_number, id.gen_number)),
+                in_reply_to: annot.get_ref(b"IRT").map(|r| (r.obj_number, r.gen_number)),
+                appearance: annot
+                    .get::<hayro_syntax::object::String<'_>>(b"DA")
+                    .map(|s| String::from_utf8_lossy(s.as_bytes()).into_owned()),
             });
         }
         Ok(out)

@@ -148,11 +148,18 @@ pub fn document_in(
     };
     for (i, page) in pages.iter().enumerate() {
         let content = pdf.stream("", page.content.as_bytes());
+        // `{annotK}` names this page's K-th annotation (a reply's `/IRT`).
+        let annot_ids: Vec<u32> = page.annots.iter().map(|_| pdf.reserve()).collect();
         let annots: Vec<String> = page
             .annots
             .iter()
-            .map(|a| {
-                let id = pdf.add(substitute(a, ids[i]));
+            .zip(&annot_ids)
+            .map(|(a, &id)| {
+                let mut body = substitute(a, ids[i]);
+                for (k, other) in annot_ids.iter().enumerate() {
+                    body = body.replace(&format!("{{annot{k}}}"), &format!("{other} 0 R"));
+                }
+                pdf.set(id, body);
                 format!("{id} 0 R")
             })
             .collect();
