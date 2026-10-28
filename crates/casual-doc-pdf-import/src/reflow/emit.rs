@@ -51,6 +51,10 @@ struct IPara {
     role: Option<String>,
     centred: bool,
     end_aligned: bool,
+    /// Every line but the last runs from the column's left to its right.
+    justified: bool,
+    /// The page before ended early: this paragraph starts a new page.
+    page_break: bool,
     list: Option<(NumberingInstanceId, u8)>,
     marker_len: usize,
     heading: Option<u8>,
@@ -314,7 +318,12 @@ impl Emitter<'_> {
             } else if para.end_aligned {
                 properties.alignment = Some(Alignment::End);
                 properties.indentation = None;
+            } else if para.justified {
+                properties.alignment = Some(Alignment::Justify);
             }
+        }
+        if para.page_break {
+            properties.page_break_before = Some(true);
         }
         let chars = &para.chars[para.marker_len.min(para.chars.len())..];
         let start = chars
@@ -563,6 +572,25 @@ fn shape(
     )
 }
 
+/// A page is "ended early" when its content stops above this share of the
+/// body's height.
+pub const PAGE_BREAK_FILL: f64 = 0.75;
+
+/// Justified: at least three lines, every line but the last ending at the
+/// same right edge (within a point) at the column's right, and the last line
+/// shorter. Ragged-right text does not end every line within a point. O(lines).
+fn justified(lines: &[&ILine], column_left: f64, column_right: f64) -> bool {
+    if lines.len() < 3 {
+        return false;
+    }
+    let (body, last) = lines.split_at(lines.len() - 1);
+    let right = body.iter().map(|l| l.x1).fold(f64::NEG_INFINITY, f64::max);
+    let width = (column_right - column_left).max(1.0);
+    body.iter().all(|l| (l.x1 - right).abs() <= 1.0)
+        && column_right - right <= 0.05 * width
+        && last[0].x1 < right - 2.0 * last[0].size.max(1.0)
+}
+
 /// Emits the document. O(characters + elements log elements).
 #[allow(clippy::too_many_lines)]
 pub(crate) fn emit(
@@ -580,7 +608,21 @@ pub(crate) fn emit(
     let mut multi_line = 0;
     let page_width = flow.page_size.0;
     // Paragraphs: segment each text element, then join across elements.
+    let mut last_page: Option<usize> = None;
+    let mut page_breaks = 0;
+    let mut justified_count = 0;
+    let (_, body_top, _, body_bottom) = flow.body;
     for element in &flow.elements {
+        // A page whose content stopped well above the body's bottom ended
+        // in a break: the next page's first new paragraph starts a page.
+        let new_page = last_page.is_some_and(|p| p != element.page);
+        let broke = new_page
+            && last_page
+                .and_then(|p| flow.page_bottoms.get(p))
+                .is_some_and(|bottom| {
+                    *bottom < body_top + PAGE_BREAK_FILL * (body_bottom - body_top)
+                });
+        last_page = Some(element.page);
         match &element.kind {
             EKind::Text(lines) => {
                 let (left, right) = {
@@ -620,6 +662,13 @@ pub(crate) fn emit(
                     if refs.len() > 1 {
                         multi_line += 1;
                     }
+                    let page_break = broke && n == 0;
+                    page_breaks += u32::from(page_break);
+                    let justified = {
+                        let s = shape(&refs, &flow, element.region, page_width);
+                        justified(&refs, s.3, s.4) && !s.5 && !s.6
+                    };
+                    justified_count += u32::from(justified);
                     let (first_x0, rest_x0, _, column_left, column_right, centred, end_aligned) =
                         shape(&refs, &flow, element.region, page_width);
                     let heading = element.role.as_deref().and_then(|role| match role {
@@ -647,6 +696,8 @@ pub(crate) fn emit(
                         end_aligned,
                         heading,
                         last_line: refs.last().map(|l| (*l).clone()),
+                        justified,
+                        page_break,
                         list_root: element
                             .lineage
                             .iter()
@@ -664,6 +715,18 @@ pub(crate) fn emit(
             EKind::Image(image) => items.push(Item::Image(image.clone(), element.region)),
         }
     }
+    findings.record(
+        report::PAGE_BREAK_INFERRED,
+        Outcome::Mapped,
+        page_breaks,
+        None,
+    );
+    findings.record(
+        report::JUSTIFICATION_INFERRED,
+        Outcome::Mapped,
+        justified_count,
+        None,
+    );
     findings.record(
         report::PARAGRAPH_BOUNDARY_INFERRED,
         Outcome::Mapped,

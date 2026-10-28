@@ -119,6 +119,7 @@ pub const FEATURES: &[&str] = &[
     IMAGE_REENCODED,
     IMAGE_UNDECODABLE,
     INVISIBLE_TEXT,
+    JUSTIFICATION_INFERRED,
     LINK_UNRESOLVED,
     LIST_INFERRED,
     NATIVE_OCR_CONFLICT,
@@ -128,6 +129,7 @@ pub const FEATURES: &[&str] = &[
     OCR_LOW_CONFIDENCE,
     OCR_UNAVAILABLE,
     OPTIONAL_CONTENT_FLATTENED,
+    PAGE_BREAK_INFERRED,
     PAGE_SIZE_CLAMPED,
     PARAGRAPH_BOUNDARY_INFERRED,
     PATTERN_FLATTENED,
@@ -266,3 +268,9 @@ pub const VECTOR_OMITTED: &str = "pdf.import.vector_omitted";
 /// `*` `†` `‡` `§` sequence (continuous or restarting each page) are
 /// renumbered by the model's footnote numbering.
 pub const FOOTNOTE_MARKER_RENUMBERED: &str = "pdf.import.footnote_marker_renumbered";
+/// Reflow: a paragraph whose lines all reach the column's right edge but the
+/// last is justified.
+pub const JUSTIFICATION_INFERRED: &str = "pdf.import.justification_inferred";
+/// Reflow: a page that ended well above the body's bottom ended in a page
+/// break, kept before the next page's first paragraph.
+pub const PAGE_BREAK_INFERRED: &str = "pdf.import.page_break_inferred";

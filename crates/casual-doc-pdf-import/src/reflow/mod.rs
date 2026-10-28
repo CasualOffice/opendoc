@@ -433,6 +433,9 @@ pub(crate) struct Flow {
     pub page_size: (f64, f64),
     /// Body text bounds: left, top, right, bottom (the margins).
     pub body: (f64, f64, f64, f64),
+    /// Per page, where its body content ends (the lowest text or table
+    /// edge), for page-break inference.
+    pub page_bottoms: Vec<f64>,
 }
 
 /// The font key of a character, through the families the fixed build chose.
@@ -1067,8 +1070,10 @@ pub fn build(
                 lineage: Vec::new(),
             });
         }
+        let mut page_bottom = f64::NEG_INFINITY;
         for e in &elements {
             if matches!(e.kind, EKind::Text(_) | EKind::Table(_)) {
+                page_bottom = page_bottom.max(e.rect.y1);
                 bx0 = bx0.min(e.rect.x0);
                 by0 = by0.min(e.rect.y0);
                 bx1 = bx1.max(e.rect.x1);
@@ -1076,6 +1081,7 @@ pub fn build(
             }
         }
 
+        flow.page_bottoms.push(page_bottom);
         // Reading order: XY-Cut++ always (it also finds the column regions);
         // the structure tree overrides the order when it covers the page.
         let rects: Vec<Rect> = elements.iter().map(|e| e.rect).collect();

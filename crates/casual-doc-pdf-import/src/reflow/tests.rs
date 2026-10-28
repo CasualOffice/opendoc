@@ -1519,3 +1519,75 @@ fn first_page_and_even_odd_headers_become_their_own_parts() {
             .contains("running head")
     );
 }
+
+// --- Page breaks and justification --------------------------------------------
+
+fn breaks_pdf() -> Vec<u8> {
+    let first = format!(
+        "{}{}",
+        text("F3", 16.0, 72.0, 720.0, 20.0, &["Chapter One"]),
+        text(
+            "F2",
+            11.0,
+            72.0,
+            690.0,
+            14.0,
+            &["A short chapter that ends near the top of its page."]
+        ),
+    );
+    let justified = [
+        "Every line of this paragraph is exactly as long as the others are,",
+        "so its right edge is straight; the typesetter set it justified and",
+        "only the last line, which ends the paragraph, stops short.",
+    ];
+    let second = format!(
+        "{}{}{}{}",
+        text("F3", 16.0, 72.0, 720.0, 20.0, &["Chapter Two"]),
+        text("F6", 10.0, 72.0, 690.0, 12.0, &justified),
+        text("F2", 11.0, 72.0, 600.0, 14.0, &PROSE[..4]),
+        text(
+            "F2",
+            11.0,
+            72.0,
+            80.0,
+            14.0,
+            &["The last line of the body, low on the page."]
+        ),
+    );
+    synth::document(&[Page::new(first), Page::new(second)], "", "")
+}
+
+#[test]
+fn a_page_that_ends_early_keeps_its_break_and_justified_text_stays_justified() {
+    use casual_doc_model::v1::Alignment;
+    let (_, reflowed) = reflow_of(breaks_pdf());
+    let paras: Vec<(String, Option<bool>, Option<Alignment>)> = paragraphs(&reflowed.document)
+        .iter()
+        .map(|p| {
+            (
+                para_text(p),
+                p.properties.page_break_before,
+                p.properties.alignment,
+            )
+        })
+        .filter(|(t, ..)| !t.is_empty())
+        .collect();
+    let find = |prefix: &str| {
+        paras
+            .iter()
+            .find(|p| p.0.starts_with(prefix))
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(find("Chapter Two").1, Some(true), "{paras:?}");
+    assert_eq!(find("Chapter One").1, None);
+    assert_eq!(find("The quick brown").1, None);
+    assert_eq!(find("Every line").2, Some(Alignment::Justify));
+    assert_eq!(
+        find("The quick brown").2,
+        None,
+        "ragged-right prose is not justified"
+    );
+    assert!(reflowed.report.has(report::PAGE_BREAK_INFERRED));
+    assert!(reflowed.report.has(report::JUSTIFICATION_INFERRED));
+}
