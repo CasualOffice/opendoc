@@ -1364,6 +1364,22 @@ pub fn build(
     )
 }
 
+/// [`build`] in the id namespace [`crate::PdfImport::reflow`] uses for an
+/// import whose own namespace is `import_namespace`: what a host that kept
+/// only the source state and the resources (`casual-doc-io`'s source
+/// envelope) calls to get the same document. O(document log document).
+///
+/// # Errors
+///
+/// As [`build`].
+pub fn build_for_import(
+    state: &PdfSourceState,
+    resources: &BTreeMap<String, Vec<u8>>,
+    import_namespace: u64,
+) -> Result<Reflowed, PdfImportError> {
+    build(state, resources, import_namespace ^ crate::REFLOW_NAMESPACE)
+}
+
 /// Sorts one annotation into links, comments or the omitted count.
 fn classify(
     annotation: &AnnotationEvidence,

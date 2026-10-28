@@ -469,6 +469,49 @@ impl Session {
                 true,
             )
             .map_err(|error| AiError::new("open-failed", error.to_string()))?;
+        Ok(Self::from_artifact(imported, name, config))
+    }
+
+    /// "Convert to flowing document" (`docs/182` §18): a **new** session over
+    /// the reflow of the PDF this session opened, with paragraphs, headings,
+    /// lists, tables and columns inferred from its pages. This session is not
+    /// touched. The conversion reads the PDF as it was imported (its source
+    /// envelope), not this session's edits: a change of document shape keeps
+    /// no edit history, which is Word's PDF Reflow model too. The new
+    /// session's name is this one's with ` (flowing)` added, and its import
+    /// report is the reflow's. **O(document log document)**.
+    ///
+    /// # Errors
+    ///
+    /// `not-a-pdf` when this session did not open a PDF (or is itself a
+    /// conversion); `convert-failed` when the reflowed document fails
+    /// validation (an importer defect).
+    #[cfg(feature = "pdf-import")]
+    pub fn convert_pdf_to_flowing(&self) -> AiResult<Self> {
+        let reflowed = self
+            .source
+            .as_ref()
+            .and_then(|source| casual_doc_io::pdf_reflow(source, &self.resources))
+            .ok_or_else(|| {
+                AiError::new(
+                    "not-a-pdf",
+                    "Only a document opened from a PDF converts to a flowing document.",
+                )
+            })?
+            .map_err(|error| AiError::new("convert-failed", error.to_string()))?;
+        Ok(Self::from_artifact(
+            reflowed,
+            &format!("{} (flowing)", self.name),
+            self.config.clone(),
+        ))
+    }
+
+    /// A session over an import artifact. O(document) for the id scan.
+    fn from_artifact(
+        imported: casual_doc_io::ImportArtifact,
+        name: &str,
+        config: SessionConfig,
+    ) -> Self {
         let document = imported.document;
         // Edits mint in the OFFLINE space of this document's partition, seeded past
         // whatever that space already holds: the editor's rule, so a document an
@@ -479,7 +522,7 @@ impl Session {
         let revisions = RevisionIdAllocator::from_document(&document);
         let log = RevisionLog::new(MAX_UNDO_GROUPS);
         let opened_at = log.head().get();
-        Ok(Self {
+        Self {
             state: State {
                 document,
                 log,
@@ -499,7 +542,7 @@ impl Session {
             layout: None,
             name: name.to_owned(),
             revision_base: 0,
-        })
+        }
     }
 
     /// A session over the live editor's document (`docs/181` §4.4): the

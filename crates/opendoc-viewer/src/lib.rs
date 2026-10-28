@@ -181,6 +181,12 @@ pub struct ViewerOptions {
     /// `pdf.import.ocr_unavailable`.
     #[cfg(feature = "pdf-import")]
     pub pdf_ocr: Option<PdfOcr>,
+    /// Open a PDF as a flowing document ("Convert to flowing document",
+    /// `docs/182` §18): paragraphs, headings, lists, tables and columns
+    /// inferred from the pages, instead of the fixed layout's page-anchored
+    /// frames. Off by default; no effect on any other format.
+    #[cfg(feature = "pdf-import")]
+    pub pdf_reflow: bool,
 }
 
 /// The host's PDF OCR configuration, shared: two options are equal when
@@ -222,6 +228,15 @@ impl ViewerOptions {
     #[must_use]
     pub fn with_pdf_ocr(mut self, ocr: casual_doc_io::PdfOcrOptions) -> Self {
         self.pdf_ocr = Some(PdfOcr(std::sync::Arc::new(ocr)));
+        self
+    }
+
+    /// The options opening a PDF as a flowing document (reflowed) or, the
+    /// default, in its fixed layout.
+    #[cfg(feature = "pdf-import")]
+    #[must_use]
+    pub fn with_pdf_reflow(mut self, on: bool) -> Self {
+        self.pdf_reflow = on;
         self
     }
 }
@@ -874,6 +889,16 @@ fn import(bytes: &[u8], options: &ViewerOptions) -> Result<(Document, Media), Vi
             false,
         )
         .map_err(|e| ViewerError::Open(e.to_string()))?;
+    // A PDF asked to flow: the reflow of this import, from its envelope.
+    #[cfg(feature = "pdf-import")]
+    let imported = match options
+        .pdf_reflow
+        .then(|| casual_doc_io::pdf_reflow(&imported.source, &imported.resources))
+        .flatten()
+    {
+        Some(reflowed) => reflowed.map_err(|e| ViewerError::Open(e.to_string()))?,
+        None => imported,
+    };
     Ok((
         imported.document,
         Media(imported.resources.as_map().clone()),
