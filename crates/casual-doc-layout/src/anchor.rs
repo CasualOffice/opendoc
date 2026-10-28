@@ -33,6 +33,8 @@ use casual_doc_model::v1::{
 // Kept on a separate `use` line (anti-conflict): the outline dash style the anchor
 // stroke now carries through to paint.
 use casual_doc_model::v1::DashStyle;
+// Own line (anti-conflict): a geometry's fill rule (`docs/182` G-2).
+use casual_doc_model::v1::FillRule;
 // Its own `use` line on purpose: a new v1 import added into the sorted block
 // above conflicts with every other branch doing the same.
 use casual_doc_model::v1::{Fill, ShapeAdjustment};
@@ -1220,8 +1222,12 @@ pub(crate) fn geometry_content(
     let Some(resolved) = resolved else {
         return rectangle();
     };
+    // The rule is the geometry's own: a preset is always non-zero.
+    let fill_rule = shape
+        .custom
+        .map_or(FillRule::NonZero, |custom| custom.fill_rule);
     AnchorContent::Path {
-        paths: anchor_paths(&resolved, shape.extent, rect),
+        paths: anchor_paths(&resolved, shape.extent, rect, fill_rule),
         fill: fill.cloned(),
         stroke: shape_stroke(stroke),
         head_end: stroke.and_then(|s| s.head_end),
@@ -1237,7 +1243,12 @@ pub(crate) fn geometry_content(
 /// already absolute EMU and convert at 635 per twip.
 ///
 /// Complexity: O(c) in the resolved commands.
-fn anchor_paths(resolved: &ResolvedGeometry, extent: Extent, rect: Rect) -> Vec<AnchorPath> {
+fn anchor_paths(
+    resolved: &ResolvedGeometry,
+    extent: Extent,
+    rect: Rect,
+    fill_rule: FillRule,
+) -> Vec<AnchorPath> {
     #[allow(clippy::cast_precision_loss)] // see `geometry_content`
     let scale = |painted: Twip, own: i64| {
         if own > 0 {
@@ -1288,6 +1299,7 @@ fn anchor_paths(resolved: &ResolvedGeometry, extent: Extent, rect: Rect) -> Vec<
                 .collect(),
             fill: path.fill,
             stroke: path.stroke,
+            fill_rule,
         })
         .collect()
 }

@@ -21,6 +21,8 @@ use crate::page::{AnchorContent, AnchorStroke, Page, PlacedAnchor, ResolvedPageB
 use crate::display::LayerBlend;
 // Own line (anti-conflict): a geometry path's `a:path@fill` mode.
 use casual_doc_model::v1::PathFill;
+// Own line (anti-conflict): a path's fill rule (`docs/182` G-2).
+use casual_doc_model::v1::FillRule;
 // Own line (anti-conflict): the paint-only non-printing-character overlay.
 use crate::formatting_marks::{FormattingMarks, MarkLayer};
 use crate::page::PlacedWatermarkContent;
@@ -339,6 +341,7 @@ fn compose_chart_primitive(list: &mut DisplayList, primitive: &ChartPrimitive, o
                 geometry: ShapeGeometry::Path {
                     commands,
                     closed: *closed,
+                    fill_rule: FillRule::NonZero,
                 },
                 fill: solid(*fill),
                 stroke: outline(*stroke),
@@ -1040,6 +1043,7 @@ fn push_shape_items(
                     geometry: ShapeGeometry::Path {
                         commands: path.commands.clone(),
                         closed: false,
+                        fill_rule: path.fill_rule,
                     },
                     fill,
                     stroke,

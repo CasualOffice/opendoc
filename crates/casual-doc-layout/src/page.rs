@@ -11,6 +11,8 @@ use casual_doc_model::v1::SectionId;
 // Kept on a separate `use` line (anti-conflict): the shape fill/outline/line-end
 // model types the anchor paint content carries.
 use casual_doc_model::v1::{DashStyle, Fill, LineEnd, PathFill};
+// Own line (anti-conflict): a path's fill rule (`docs/182` G-2).
+use casual_doc_model::v1::FillRule;
 use serde::{Deserialize, Serialize};
 
 use crate::block::{BlockFragment, ResolvedEdge};
@@ -249,6 +251,10 @@ pub struct AnchorPath {
     pub fill: PathFill,
     /// Whether the shape's outline is drawn on this path (`a:path@stroke`).
     pub stroke: bool,
+    /// The geometry's fill rule (`CustomGeometry::fill_rule`), which applies to
+    /// each of its paths. Omitted when non-zero.
+    #[serde(default, skip_serializing_if = "FillRule::is_non_zero")]
+    pub fill_rule: FillRule,
 }
 
 fn is_norm_fill(fill: &PathFill) -> bool {

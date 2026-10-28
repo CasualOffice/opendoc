@@ -2523,7 +2523,10 @@ fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
         .iter()
         .filter_map(|item| match item {
             PaintItem::Shape {
-                geometry: DisplayShapeGeometry::Path { commands, closed },
+                geometry:
+                    DisplayShapeGeometry::Path {
+                        commands, closed, ..
+                    },
                 ..
             } => Some(*closed || closes(commands)),
             _ => None,

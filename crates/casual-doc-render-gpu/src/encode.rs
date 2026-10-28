@@ -367,7 +367,9 @@ impl Encoder<'_> {
                 self.rounded_rect_path(*rect, *radius),
                 self.device_bounds(*rect),
             ),
-            ShapeGeometry::Path { commands, closed } => (
+            ShapeGeometry::Path {
+                commands, closed, ..
+            } => (
                 self.command_path(commands, *closed),
                 self.command_path(commands, *closed)
                     .map(|path| path.bounding_box()),

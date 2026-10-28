@@ -33,6 +33,10 @@ use crate::report::{Disposition, Reporter};
 /// The feature id the export report names a regenerated VML drawing by.
 pub(crate) const REGENERATED_FEATURE: &str = "docx.export.vml.regenerated";
 
+/// The feature id for an even-odd geometry written without its fill rule
+/// (`docs/182` G-2).
+pub(crate) const FILL_RULE_FEATURE: &str = "docx.export.custom_geometry.even_odd_fill";
+
 /// One package's legacy VML bookkeeping, shared by every part's writer.
 ///
 /// Interior mutability for the reason `DocPrIds` gives: the parts are written
@@ -47,6 +51,12 @@ pub(crate) struct LegacyVmlWrites {
     written: RefCell<BTreeSet<NodeId>>,
     /// Leads one of whose members was written as its projection, with the part.
     regenerated: RefCell<BTreeMap<NodeId, String>>,
+    /// Even-odd custom geometries written without their fill rule, per part
+    /// (`docs/182` G-2). Not a VML concern: it rides on this struct because this
+    /// is the one per-package bookkeeping every part's writer already holds,
+    /// with the part name it is writing — threading a second handle through
+    /// every `Ctx` for one counter would be the larger change.
+    fill_rule_losses: RefCell<BTreeMap<String, u32>>,
 }
 
 impl LegacyVmlWrites {
@@ -118,9 +128,30 @@ impl LegacyVmlWrites {
         }
     }
 
+    /// Records that an even-odd geometry was written in the current part
+    /// without its fill rule: no re-winding paints it the same under non-zero.
+    pub(crate) fn note_fill_rule_loss(&self) {
+        let part = self.part.borrow().clone();
+        *self.fill_rule_losses.borrow_mut().entry(part).or_insert(0) += 1;
+    }
+
     /// Names every regenerated pict in the export report: shown, and saved as
     /// DrawingML, but no longer the VML it was — `degraded`, `not_retained`.
+    /// Also names every even-odd geometry whose fill rule the package does not
+    /// carry: the shape is written, its hole may fill — `degraded`,
+    /// `not_retained`.
     pub(crate) fn report(&self, reporter: &mut Reporter) {
+        for (part, count) in self.fill_rule_losses.borrow().iter() {
+            for _ in 0..*count {
+                reporter.record_construct(
+                    FILL_RULE_FEATURE,
+                    part,
+                    "custGeom",
+                    None,
+                    Disposition::DegradedNotRetained,
+                );
+            }
+        }
         let written = self.written.borrow();
         for (lead, part) in self.regenerated.borrow().iter() {
             if !written.contains(lead) {
