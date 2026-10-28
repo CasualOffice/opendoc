@@ -145,6 +145,22 @@ test("an <opendoc-editor ai-tools=webmcp> registers in its own frame and unregis
   const frame = await (await page.locator("[data-webmcp-demo] iframe").elementHandle()).contentFrame();
   await waitForFramedEditor(frame);
   expect(new URL(frame.url()).searchParams.get("aiTools")).toBe("webmcp");
+  // WebMCP's `tools` Permissions Policy defaults to `self`: an editor embedded on
+  // another origin can register tools only if its iframe allows them, and only an
+  // opted-in element delegates that.
+  const allow = await page.locator("[data-webmcp-demo] iframe").getAttribute("allow");
+  expect(allow.split(/;\s*/)).toContain("tools");
+  // An element that did not opt in delegates nothing.
+  await page.evaluate(() => {
+    const plain = document.createElement("opendoc-editor");
+    plain.dataset.webmcpPlain = "";
+    plain.setAttribute("editor-src", "./editor.html?fixture=rich");
+    plain.setAttribute("frame-title", "No WebMCP");
+    document.querySelector('[data-embed="element"] .embed-stage').append(plain);
+  });
+  const ordinary = await page.locator("[data-webmcp-plain] iframe").getAttribute("allow");
+  expect(ordinary.split(/;\s*/)).not.toContain("tools");
+  await page.evaluate(() => document.querySelector("[data-webmcp-plain]").remove());
   const commentor = [...READS, "add_comment", "propose_edits"];
   await expect.poll(() => registered(frame)).toEqual(commentor);
   // Registered in the FRAME's document: the host page holds no tool.

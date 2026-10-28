@@ -372,7 +372,13 @@ export class OpenDocEditorElement extends ElementBase {
     // `sandbox` and `src` are both set BEFORE the element enters the document,
     // so the frame never navigates once unsandboxed and again correctly.
     frame.setAttribute("sandbox", this.sandbox.join(" "));
-    frame.setAttribute("allow", "clipboard-read; clipboard-write");
+    // `tools` is the Permissions Policy WebMCP reads (`docs/178` M4): it defaults to
+    // `self`, so a cross-origin frame — an editor embedded on a host's site — may
+    // register tools only when its iframe allows it. Granted only on opt-in, so a
+    // host that did not ask for WebMCP never delegates it.
+    const allow = ["clipboard-read", "clipboard-write"];
+    if (url.searchParams.get(AI_TOOLS) === WEBMCP) allow.push("tools");
+    frame.setAttribute("allow", allow.join("; "));
     frame.setAttribute("referrerpolicy", "same-origin");
     frame.loading = "eager";
     const title = this.getAttribute("frame-title") ?? this.getAttribute("aria-label");
