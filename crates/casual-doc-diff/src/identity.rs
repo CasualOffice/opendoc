@@ -111,6 +111,7 @@ pub const DIGESTED_DEFINITION_FIELDS: &[&str] = &[
     "documentDefaults",
     "latentStyles",
     "fontTable",
+    "fontPrograms",
     "fontScheme",
     "colorScheme",
     "formatSchemeXml",
@@ -277,6 +278,11 @@ fn hash_definitions(document: &Document, hasher: &mut ContentHasher) {
     field(
         "fontTable",
         values.hash_value(&definitions.font_table),
+        hasher,
+    );
+    field(
+        "fontPrograms",
+        values.hash_value(&definitions.font_programs),
         hasher,
     );
     field(

@@ -70,6 +70,7 @@ pub const DEFINITION_FIELDS: &[&str] = &[
     "documentDefaults",
     "latentStyles",
     "fontTable",
+    "fontPrograms",
     "fontScheme",
     "colorScheme",
     "formatSchemeXml",
@@ -527,6 +528,18 @@ pub fn compare_definitions(
         "fontTable",
         &left_definitions.font_table,
         &right_definitions.font_table,
+        DiffFamily::Definition,
+        &mut changes,
+        findings,
+    );
+    // Embedded font programs (`docs/182` G-1): the declarations are compared;
+    // their bytes live in the resource map under `part_name`, as media bytes do,
+    // so two programs with the same declaration and different bytes are not told
+    // apart here. That is stated rather than hidden.
+    compare_field(
+        "fontPrograms",
+        &left_definitions.font_programs,
+        &right_definitions.font_programs,
         DiffFamily::Definition,
         &mut changes,
         findings,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! P0 measurement harness for PDF import (`docs/182` §10).
 //!
 //! ```sh

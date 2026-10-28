@@ -586,7 +586,7 @@ pub struct CustomGeometry {
     /// against its outer one). [`FillRule::EvenOdd`] comes from a source that
     /// states it: a PDF `f*`/`B*` fill. The DOCX writer re-winds such a geometry
     /// so it paints the same under either rule, or reports it when it cannot
-    /// (see [`CustomGeometry::to_fill_rule_independent`]). Additive: omitted
+    /// (see [`CustomGeometry::to_non_zero`]). Additive: omitted
     /// when non-zero so existing snapshots serialize byte-identically.
     #[serde(default, skip_serializing_if = "FillRule::is_non_zero")]
     pub fill_rule: FillRule,
