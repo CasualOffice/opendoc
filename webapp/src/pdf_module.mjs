@@ -14,7 +14,9 @@
 //   * wired: on load it hands the PDF module the faces the main module ships
 //     (the standard 14 resolve to Liberation, `casual-doc-pdf-read`
 //     `provision`), and hands the main module the PDF module's half of the
-//     byte-preserving save (`setPdfRevisionReader`).
+//     byte-preserving save (`setPdfSavePlanner`): the import's digests, the
+//     plan and the hayro half all live there, so the main module only lays
+//     out the overlay and writes the update.
 //
 // No service worker exists in this app, so there is no offline cache to join;
 // the browser's HTTP cache keeps the module like every other stamped asset.
@@ -23,7 +25,7 @@
 // map stamps the glue, and the wasm fetched here takes the same query, so a
 // deploy can never pair a new glue with a cached old binary.
 
-import { bundledFace, setPdfRevisionReader } from "../pkg/casual_doc_wasm.js";
+import { bundledFace, setPdfSavePlanner } from "../pkg/casual_doc_wasm.js";
 
 const GLUE = "../pkg-pdf/casual_doc_wasm_pdf.js";
 const WASM = "../pkg-pdf/casual_doc_wasm_pdf_bg.wasm";
@@ -114,8 +116,11 @@ export async function loadPdfModule(io = {}) {
       // The faces the PDF module draws the standard 14 with are the main
       // module's own: asked for once each, by family and style.
       glue.setFaceHost({ face: (family, bold, italic) => bundledFace(family, bold, italic) });
-      // And the main module's save asks this one for the original's revision.
-      setPdfRevisionReader({ readRevision: (original, request) => glue.readRevision(original, request) });
+      // And the main module's save asks this one what changed and for the
+      // original's edited pages (`docs/182` §17a).
+      setPdfSavePlanner({
+        planSave: (original, baseline, documentJson) => glue.planSave(original, baseline, documentJson),
+      });
       loaded = glue;
       return glue;
     } finally {

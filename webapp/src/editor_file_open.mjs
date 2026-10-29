@@ -10,6 +10,7 @@ import { hostIdentity, identityPromised } from "./host_identity.mjs";
 import { t } from "./i18n.mjs";
 import { createPdfImport } from "./pdf_import.mjs";
 import { isPdfBytes } from "./pdf_import_scheduler.mjs";
+import { createPdfCommands, ocrSummaryOf } from "./pdf_commands.mjs";
 import { hostParams } from "./capabilities.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
@@ -17,6 +18,11 @@ import { hostParams } from "./capabilities.mjs";
 export function createFileOpen(ed) {
   // The PDF progress dialog (`docs/182` P2). Built now, worded at open.
   const pdfImport = createPdfImport({ fallbackFocus: () => ed.pagesEl });
+  // Convert to flowing document and Recognise text (`docs/182` §17a): both
+  // import the session's PDF again through the same dialog, and open the
+  // result through `openBytes` below. Installed on `ed` for the palette.
+  const pdfCommands = createPdfCommands(ed, { pdfImport, openBytes: (...args) => openBytes(...args) });
+  ed.pdfCommands = pdfCommands;
 
   async function boot() {
     // Armed before the engine loads, because the hole it closes is open from the
@@ -183,21 +189,38 @@ export function createFileOpen(ed) {
     }
   }
 
-  async function openBytes(bytes, name, onOpened, onRendered) {
+  /**
+   * @param {object} [options] for a document another step prepares
+   *   (`pdf_commands.mjs`): `prepare()` resolves to `{doc}` or `{cancelled}`
+   *   in place of parsing `bytes`; `origin` names the summary to show
+   *   (`"pdf"`, `"pdfReflow"`); `sourceFormat` overrides the save format a
+   *   converted document defaults to; `cancelledStatus` and
+   *   `failedStatus(reason)` are what the status line says.
+   */
+  async function openBytes(bytes, name, onOpened, onRendered, options = {}) {
     let replaced = false; // set where the previous document is freed: past it, nothing is "still here" (HF-381)
     // A PDF is imported in slices behind its own progress dialog (`docs/182` §6),
     // never by the synchronous `open`: the bytes decide, not the name, exactly as
     // detection does for every other format. Cancel returns here with nothing
     // changed, which is the same promise a failed parse below keeps.
-    const pdf = isPdfBytes(bytes);
-    if (pdf && pdfImport.running) {
+    const prepared = typeof options.prepare === "function";
+    const pdf = !prepared && isPdfBytes(bytes);
+    const origin = options.origin ?? (pdf ? "pdf" : null);
+    if ((pdf || prepared) && pdfImport.running) {
       ed.setStatus(t("pdfImport.busy"), "error");
       return;
     }
     try {
       ed.setStatus(t("fileOpen.opening", { name }));
       let next;
-      if (pdf) {
+      if (prepared) {
+        const made = await options.prepare();
+        if (made.cancelled) {
+          ed.setStatus(options.cancelledStatus ?? t("pdfImport.cancelledKept", { name }));
+          return;
+        }
+        next = made.doc;
+      } else if (pdf) {
         const imported = await pdfImport.run(bytes, name);
         if (imported.cancelled) {
           ed.setStatus(t(ed.doc ? "pdfImport.cancelledKept" : "pdfImport.cancelled", { name }));
@@ -243,7 +266,7 @@ export function createFileOpen(ed) {
       // A different document, so the remembered object answer belongs to a
       // document that no longer exists.
       ed.objectPresence.forget();
-      ed.currentSourceFormat = ed.doc.sourceFormat;
+      ed.currentSourceFormat = options.sourceFormat ?? ed.doc.sourceFormat;
       ed.applyActiveAuthorToDocument();
       // The room's grant into the engine that ENFORCES it, per DOCUMENT because a new document is a new minting base.
       const grantProblem = ed.SESSION.adopt(ed.doc) || ed.SESSION.problemMessage();
@@ -327,7 +350,11 @@ export function createFileOpen(ed) {
       // the condition under which verbatim retention is an advantage at all.
       // A PDF's report is also the import summary docs/182 asks for: what was
       // inferred, approximated or left out, plus what the reconstruction is.
-      ed.compatFindings.show(ed.doc.importReportJson, "import", { origin: pdf ? "pdf" : null });
+      ed.compatFindings.show(ed.doc.importReportJson, "import", {
+        origin,
+        ocr: origin === "pdf" ? ocrSummaryOf(ed.doc) : null,
+        actions: origin ? () => pdfCommands.summaryActions() : null,
+      });
       ed.railOutline.disabled = ed.railPages.disabled = false;
       ed.reflowView.setEnabled();
       // The reader's formatting-mark preference, replayed onto the new handle: the
@@ -374,7 +401,7 @@ export function createFileOpen(ed) {
       // Word says what it did to a PDF before you edit it; so does this, once,
       // after the pages are on screen. Not for a restored draft or a version:
       // those were summarised when they were first opened.
-      if (pdf && !ed.activatingRestore) ed.compatFindings.open();
+      if (origin && !ed.activatingRestore) ed.compatFindings.open();
       ed.buildOutline();
       ed.referenceCommands.numbering.refresh();
       ed.tocCommands.fields.refresh();
@@ -419,6 +446,10 @@ export function createFileOpen(ed) {
       // A refusal with a finding id the reader can act on is said in words.
       if (/pdf\.import\.encrypted_unsupported/.test(message)) {
         ed.setStatus(`${t("pdfImport.encrypted", { name })}${kept}`, "error");
+        return;
+      }
+      if (options.failedStatus) {
+        ed.setStatus(`${options.failedStatus(message)}${kept}`, "error");
         return;
       }
       ed.setStatus(`Could not open ${name}: ${message}${kept}`, "error");

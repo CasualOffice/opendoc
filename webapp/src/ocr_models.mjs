@@ -2,8 +2,9 @@
 // they are checked, and where they are kept (`docs/182` §17a, §20).
 //
 // THE RULE: the editor bundles no model and fetches none on its own. A HOST
-// points it at a manifest (`?pdfOcrModels=<url>`, or the embed element's
-// `pdf-ocr-models` attribute) listing each file with its size and SHA-256; with
+// points it at a manifest (`?pdfOcrModels=<url>` on the editor's address, which
+// an embedding host sets through `editor-src`) listing each file with its size
+// and SHA-256; with
 // none, the import summary says text recognition is unavailable and why. With
 // one, the summary offers "Recognise text in scanned pages", and the first use
 // asks first, naming the download size: nothing is fetched before that click.
@@ -15,6 +16,8 @@
 //
 // Pure apart from the injected `fetch`, `indexedDB` and `digest`, so the
 // manifest rules, the digest refusal and the cache are tested in node.
+
+import { hostParams } from "./capabilities.mjs";
 
 /** The database. Its own, for `proof_store.mjs`'s reason: a model can be
  *  evicted or deleted wholesale, and nothing about it may ever touch a draft. */
@@ -66,10 +69,12 @@ export function manifestFiles(manifest) {
   return [manifest.detection, ...manifest.packs.flatMap((p) => [p.model, p.dictionary])];
 }
 
-/** The configured manifest URL, from the page's query (`pdfOcrModels`), or null. */
+/** The configured manifest URL, from the page's query (`pdfOcrModels`, matched
+ *  in any case like every host option, `capabilities.mjs`'s `hostParams`), or
+ *  null. */
 export function ocrManifestUrl(search) {
   try {
-    const value = new URLSearchParams(search ?? "").get("pdfOcrModels");
+    const value = hostParams(search ?? "").get("pdfocrmodels");
     return value ? new URL(value, globalThis.location?.href ?? "http://localhost/").href : null;
   } catch {
     return null;
@@ -145,4 +150,18 @@ export async function obtainModels(manifest, io) {
     packs.push({ name: pack.name, model, dictionary });
   }
   return { detection, packs };
+}
+
+/** The lower-case hex SHA-256 of `bytes`, through Web Crypto. */
+export async function sha256Hex(bytes, subtle = globalThis.crypto?.subtle) {
+  if (!subtle) throw new Error("this browser cannot verify downloads (no Web Crypto)");
+  const digest = new Uint8Array(await subtle.digest("SHA-256", bytes));
+  return [...digest].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Fetches and validates the manifest at `url`. */
+export async function fetchOcrManifest(url, { fetch: doFetch = globalThis.fetch, signal } = {}) {
+  const response = await doFetch(url, { signal });
+  if (!response.ok) throw new Error(`${url}: ${response.status}`);
+  return parseOcrManifest(await response.json(), url);
 }

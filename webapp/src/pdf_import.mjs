@@ -25,6 +25,14 @@
 // changes while it loads; Cancel during the fetch is the same promise as
 // Cancel at any page.
 //
+// The same dialog and sequence serve the two commands that import a PDF
+// again (`pdf_commands.mjs`): "Convert to flowing document" (`mode:
+// "reflow"`, finished by the job's `finishReflowed` and opened by the main
+// module's `openPdfReflow` as a NEW document) and "Recognise text in scanned
+// pages" (`prepareOcr`: after the module loads, the recognition models are
+// obtained and loaded behind the same bar and the same Cancel, then the
+// import runs with them).
+//
 // Escape, the backdrop and the close button all cancel, through the one modal
 // contract (`modal.mjs`): a dialog whose only safe dismissal is Cancel says so
 // by making every dismissal Cancel. The words are written at OPEN, never at
@@ -34,7 +42,7 @@
 // of 10") a screen reader reads on demand; the polite live region announces
 // only the phases (reading, laying out, cancelling), so a reader is not handed
 // a number per slice.
-import { openPdfImport } from "../pkg/casual_doc_wasm.js";
+import { openPdfImport, openPdfReflow } from "../pkg/casual_doc_wasm.js";
 import { loadPdfModule, pdfModuleLoaded } from "./pdf_module.mjs";
 import { registerModal } from "./modal.mjs";
 import { n, t } from "./i18n.mjs";
@@ -88,6 +96,13 @@ function buildDialog(view) {
 /** Megabytes, one decimal, for the module bar. */
 const mb = (bytes) => n(Math.round(bytes / 100_000) / 10);
 
+/** The words of each mode: the title, the intro and Cancel's name. */
+const MODES = Object.freeze({
+  import: Object.freeze({ title: "pdfImport.title", intro: "pdfImport.intro", cancelLabel: "pdfImport.cancelLabel" }),
+  reflow: Object.freeze({ title: "pdfReflow.title", intro: "pdfReflow.intro", cancelLabel: "pdfReflow.cancelLabel" }),
+  ocr: Object.freeze({ title: "pdfOcr.title", intro: "pdfOcr.intro", cancelLabel: "pdfOcr.cancelLabel" }),
+});
+
 /**
  * Fetches the predefined CMaps `names` from the host's source (`pdfCMaps`, a
  * base URL; each file is `<base>/<name>`) into the PDF module. Without a
@@ -112,6 +127,8 @@ async function provideCMaps(module, names, source, signal) {
  * @param {(io: object) => Promise<object>} [io.loadModule] `pdf_module.mjs`'s loader.
  * @param {(pkg: Uint8Array, bytes: Uint8Array) => object} [io.open] the main
  *   module's `openPdfImport`.
+ * @param {(pkg: Uint8Array) => object} [io.openReflow] the main module's
+ *   `openPdfReflow`.
  * @param {() => string|null} [io.cmapSource] the host's CMap base URL, or null.
  */
 export function createPdfImport(io = {}) {
@@ -119,6 +136,7 @@ export function createPdfImport(io = {}) {
   const scope = io.scope ?? globalThis;
   const loadModule = io.loadModule ?? loadPdfModule;
   const openImport = io.open ?? openPdfImport;
+  const openReflow = io.openReflow ?? openPdfReflow;
   const cmapSource = io.cmapSource ?? (() => null);
   const parts = buildDialog(view);
   /** The import in flight, or null. One at a time: the dialog is modal. */
@@ -157,10 +175,12 @@ export function createPdfImport(io = {}) {
     }
   }
 
-  function renderOpen(name) {
-    parts.title.textContent = t("pdfImport.title", { name });
-    parts.description.textContent = t("pdfImport.intro");
-    parts.close.setAttribute("aria-label", t("pdfImport.cancelLabel"));
+  function renderOpen(name, mode) {
+    const words = MODES[mode] ?? MODES.import;
+    parts.overlay.dataset.mode = mode;
+    parts.title.textContent = t(words.title, { name });
+    parts.description.textContent = t(words.intro);
+    parts.close.setAttribute("aria-label", t(words.cancelLabel));
     parts.close.title = t("pdfImport.cancel");
     parts.cancel.textContent = t("pdfImport.cancel");
     parts.cancel.disabled = false;
@@ -204,7 +224,7 @@ export function createPdfImport(io = {}) {
   }
 
   /** One staged import; `null` when the reader cancelled. */
-  async function importOnce(module, bytes, engine) {
+  async function importOnce(module, bytes, engine, mode) {
     let job = null;
     try {
       job = engine ? module.beginPdfImportWithOcr(bytes, engine) : module.beginPdfImport(bytes);
@@ -226,7 +246,7 @@ export function createPdfImport(io = {}) {
       if (active.cancelRequested) return null;
       clock.mark?.(FINISH_MARK);
       try {
-        const pkg = job.finish();
+        const pkg = mode === "reflow" ? job.finishReflowed() : job.finish();
         const ocr = job.ocrSummaryJson ? JSON.parse(job.ocrSummaryJson) : null;
         return { pkg, ocr };
       } catch (error) {
@@ -250,6 +270,11 @@ export function createPdfImport(io = {}) {
    * @param {object} [options]
    * @param {object} [options.ocr] a loaded `PdfOcrEngine`: recognise text in
    *   scanned pages.
+   * @param {(module: object, ui: object) => Promise<object>} [options.prepareOcr]
+   *   obtains and loads the engine after the module, behind this dialog: `ui`
+   *   is `{ progress(received, total), phase(text), signal, painted() }`.
+   * @param {"import"|"reflow"|"ocr"} [options.mode] what the dialog says and
+   *   how the job finishes: `reflow` opens the converted document instead.
    * @returns {Promise<{doc: object, ocr: object|null} | {cancelled: true}>}
    *   the new document, not yet adopted by the editor, and what OCR did; or a
    *   cancellation, with nothing changed.
@@ -258,7 +283,8 @@ export function createPdfImport(io = {}) {
   async function run(bytes, name, options = {}) {
     if (active) throw new Error(t("pdfImport.busy"));
     active = { cancelRequested: false, abort: new AbortController() };
-    renderOpen(name);
+    const mode = options.mode ?? (options.prepareOcr ? "ocr" : "import");
+    renderOpen(name, mode);
     modal.open();
     try {
       await painted();
@@ -271,18 +297,39 @@ export function createPdfImport(io = {}) {
         throw new Error(t("pdfImport.moduleFailed", { reason: String(error?.message ?? error) }));
       }
       if (active.cancelRequested) return { cancelled: true };
+      let engine = options.ocr ?? null;
+      if (options.prepareOcr) {
+        parts.bar.dataset.phase = "models";
+        try {
+          engine = await options.prepareOcr(module, {
+            progress: paintModule,
+            phase: (text) => {
+              parts.phase.textContent = text;
+            },
+            signal: active.abort.signal,
+            painted,
+          });
+        } catch (error) {
+          if (active.cancelRequested || error?.name === "AbortError") return { cancelled: true };
+          throw new Error(t("pdfOcr.failed", { reason: String(error?.message ?? error) }));
+        } finally {
+          delete parts.bar.dataset.phase;
+        }
+        if (active.cancelRequested) return { cancelled: true };
+      }
       let imported;
       try {
-        imported = await importOnce(module, bytes, options.ocr);
+        imported = await importOnce(module, bytes, engine, mode);
       } catch (error) {
         const source = cmapSource();
         if (!source || !error.neededCMaps?.length) throw error;
         await provideCMaps(module, error.neededCMaps, source, active.abort.signal);
         parts.cancel.disabled = false;
-        imported = await importOnce(module, bytes, options.ocr);
+        imported = await importOnce(module, bytes, engine, mode);
       }
       if (!imported) return { cancelled: true };
-      return { doc: openImport(imported.pkg, bytes), ocr: imported.ocr };
+      const doc = mode === "reflow" ? openReflow(imported.pkg) : openImport(imported.pkg, bytes);
+      return { doc, ocr: imported.ocr, engine };
     } finally {
       active = null;
       if (modal.isOpen) modal.close("done");

@@ -284,6 +284,15 @@ export const FEATURE_CATALOGUE = Object.freeze({
   "pdf.import.footnote_marker_renumbered": entry("findings.feature.pdfFootnoteMarkers", CONTENT),
   "pdf.import.justification_inferred": entry("findings.feature.pdfJustification", CONTENT),
   "pdf.import.page_break_inferred": entry("findings.feature.pdfPageBreaks", CONTENT),
+  // What saving a PDF-origin document as PDF did (`docs/182` §19, the export
+  // report): kept the original, added an update to it, or regenerated it.
+  "pdf.export.incremental_update": entry("findings.feature.pdfIncrementalUpdate", CONTENT),
+  "pdf.export.page_carried_over": entry("findings.feature.pdfPageCarriedOver", CONTENT),
+  "pdf.export.earlier_revision_retained": entry("findings.feature.pdfEarlierRevision", CONTENT),
+  "pdf.export.signature_covers_earlier_revision": entry("findings.feature.pdfSignatureEarlier", CONTENT),
+  "pdf.export.certification_invalidated": entry("findings.feature.pdfCertificationBroken", CONTENT),
+  "pdf.export.original_written_back": entry("findings.feature.pdfOriginalWrittenBack", CONTENT),
+  "pdf.export.preserve_fallback.*": entry("findings.feature.pdfPreserveFallback", CONTENT),
 });
 
 const PREFIXES = Object.keys(FEATURE_CATALOGUE)
