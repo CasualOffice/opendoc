@@ -2430,6 +2430,8 @@
   "findings.feature.pdfFootnoteMarkers": "फिर से क्रमांकित फ़ुटनोट चिह्न",
   "findings.feature.pdfJustification": "पंक्ति चौड़ाई से अनुमानित दोनों ओर संरेखण",
   "findings.feature.pdfPageBreaks": "पृष्ठों के अंत से अनुमानित पृष्ठ विराम",
+  "findings.feature.pdfFloats": "चित्र और ड्रॉइंग अपने पाठ के बगल में या पीछे रखे गए",
+  "findings.feature.pdfVectorsPlaced": "ड्रॉइंग आकृतियों के रूप में रखी गईं",
   "pdfImport.title": "{name} खोला जा रहा है",
   "pdfImport.intro": "इसी डिवाइस पर PDF के पेज संपादन योग्य फ़्रेम के रूप में फिर से बनाए जा रहे हैं।",
   "pdfImport.reading": "फ़ाइल पढ़ी जा रही है…",

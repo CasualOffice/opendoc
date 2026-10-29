@@ -2430,6 +2430,8 @@
   "findings.feature.pdfFootnoteMarkers": "Fußnotenzeichen neu nummeriert",
   "findings.feature.pdfJustification": "Aus Zeilenbreiten abgeleiteter Blocksatz",
   "findings.feature.pdfPageBreaks": "Aus Seitenenden abgeleitete Seitenumbrüche",
+  "findings.feature.pdfFloats": "Bilder und Zeichnungen neben oder hinter ihrem Text verankert",
+  "findings.feature.pdfVectorsPlaced": "Zeichnungen als Formen platziert",
   "pdfImport.title": "{name} wird geöffnet",
   "pdfImport.intro": "Die Seiten der PDF-Datei werden auf diesem Gerät als bearbeitbare Rahmen neu aufgebaut.",
   "pdfImport.reading": "Datei wird gelesen…",

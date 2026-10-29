@@ -2440,6 +2440,8 @@
   "findings.feature.pdfFootnoteMarkers": "Richiami di nota rinumerati",
   "findings.feature.pdfJustification": "Testo giustificato dedotto dalla larghezza delle righe",
   "findings.feature.pdfPageBreaks": "Interruzioni di pagina dedotte dalla fine delle pagine",
+  "findings.feature.pdfFloats": "Immagini e disegni mobili accanto o dietro al loro testo",
+  "findings.feature.pdfVectorsPlaced": "Disegni inseriti come forme",
   "pdfImport.title": "Apertura di {name}",
   "pdfImport.intro": "Ricostruzione delle pagine del PDF come cornici modificabili, su questo dispositivo.",
   "pdfImport.reading": "Lettura del file…",

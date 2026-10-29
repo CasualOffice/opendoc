@@ -417,6 +417,31 @@ impl Server {
         format!("doc_{:016x}{:016x}", parts[0], parts[1])
     }
 
+    /// Keeps `session` under a new handle and describes it the way
+    /// `open_document` does. `path` is the file it came from (a conversion's
+    /// is its PDF's, so an export never overwrites that file unasked).
+    fn register(&mut self, mut session: Session, path: PathBuf) -> Value {
+        let ocr = session.pdf_ocr_summary().map(ocr_json);
+        let pages = session.page_count();
+        let handle = self.mint_handle();
+        let mut result = json!({
+            "document": handle,
+            "name": session.name(),
+            "format": session.source_format(),
+            "revision": session.revision(),
+            "digest": session.digest(),
+            "pageCount": pages,
+            "importSummary": session.import_summary(),
+            "profile": self.options.profile,
+            "author": self.options.author,
+        });
+        if let Some(ocr) = ocr {
+            result["ocr"] = ocr;
+        }
+        self.documents.insert(handle, Open { session, path });
+        result
+    }
+
     fn session(&self, handle: &str) -> AiResult<&Session> {
         self.documents
             .get(handle)
@@ -727,31 +752,32 @@ impl Server {
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                let mut session = match &self.options.pdf_ocr {
+                let session = match &self.options.pdf_ocr {
                     Some(ocr) => {
                         Session::open_with_pdf_ocr(&bytes, &file_name, self.config(), ocr)?
                     }
                     None => Session::open(&bytes, &file_name, self.config())?,
                 };
-                let ocr = session.pdf_ocr_summary().map(ocr_json);
-                let pages = session.page_count();
-                let handle = self.mint_handle();
-                let result = json!({
-                    "document": handle,
-                    "name": file_name,
-                    "format": session.source_format(),
-                    "revision": session.revision(),
-                    "digest": session.digest(),
-                    "pageCount": pages,
-                    "importSummary": session.import_summary(),
-                    "profile": self.options.profile,
-                    "author": self.options.author,
-                });
-                let mut result = result;
-                if let Some(ocr) = ocr {
-                    result["ocr"] = ocr;
+                plain(self.register(session, path))
+            }
+            // "Convert to flowing document" (`docs/182` §18): a NEW handle
+            // over the reflow of a PDF session; the PDF's handle is unchanged.
+            "convert_pdf_to_flowing" => {
+                if self.documents.len() >= MAX_OPEN {
+                    return Err(AiError::new(
+                        "over-limit",
+                        "Too many documents are open; close one first.",
+                    ));
                 }
-                self.documents.insert(handle, Open { session, path });
+                let from = str_arg(args, "document")?;
+                let session = self.session(from)?.convert_pdf_to_flowing()?;
+                let path = self
+                    .documents
+                    .get(from)
+                    .map(|open| open.path.clone())
+                    .unwrap_or_default();
+                let mut result = self.register(session, path);
+                result["convertedFrom"] = json!(from);
                 plain(result)
             }
             "close_document" => {
@@ -1134,7 +1160,7 @@ fn parse_plan_value(value: Value) -> AiResult<EditPlan> {
 /// A one-line text summary beside the structured content. Never document text.
 fn summary(tool: &str, value: &Value) -> String {
     match tool {
-        "open_document" => format!(
+        "open_document" | "convert_pdf_to_flowing" => format!(
             "Opened as {} at revision {} ({} pages).",
             value["document"].as_str().unwrap_or("?"),
             value["revision"],
