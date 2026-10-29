@@ -11681,6 +11681,8 @@ mod tests {
                 height_emu: 317_500,
             },
             prog_id: None,
+            anchor: None,
+            relative_height: None,
         }));
         let placeholder = InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
             id: NodeId::from_parts(203, 1).unwrap(),
@@ -11693,6 +11695,8 @@ mod tests {
                 height_emu: 317_500,
             },
             prog_id: None,
+            anchor: None,
+            relative_height: None,
         }));
 
         let preview_inlines = [preview];
@@ -11749,6 +11753,8 @@ mod tests {
                 height_emu: 3_200_400,
             },
             prog_id: None,
+            anchor: None,
+            relative_height: None,
         }))];
         (definitions, inlines)
     }
@@ -13557,6 +13563,8 @@ mod tests {
                 height_emu: 635_000,
             },
             prog_id: None,
+            anchor: None,
+            relative_height: None,
         }));
         let math = InlineNode::Math(Box::new(Math {
             id: node(704),

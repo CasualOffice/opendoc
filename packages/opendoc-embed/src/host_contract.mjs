@@ -284,6 +284,11 @@ export const COMMAND_CONTRACT = Object.freeze([
   // Opening the compatibility findings reads a report the open already produced;
   // it changes nothing, so it requires nothing.
   exact("file.compatibilityReport", null),
+  // The two PDF commands (`pdf_commands.mjs`) replace the document on screen
+  // with a newly imported one, exactly as Open does, so they need what Open
+  // needs. Neither uploads anything: the PDF module runs here.
+  exact("file.pdf.recogniseText", "open"),
+  exact("file.pdf.convertToFlowing", "open"),
   // Recovering a draft requires the capability that WROTE it. A host that
   // withheld `autosave` has no drafts of this visitor's typing, and offering to
   // restore some would be offering work from a session the host refused to keep.
@@ -395,6 +400,26 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("insert.table", "mutate"),
   exact("insert.header", "mutate"),
   exact("insert.footer", "mutate"),
+  // Per band, because linkage and removal are per band (`docs/85` §8d Q7): a
+  // section whose header is inherited while its footer is its own is a real
+  // document. `layout.*` like `layout.firstPageVariant` and the breaks: what
+  // they write is the section's `w:headerReference` / `w:footerReference`,
+  // while Insert is where people look for them (`command_taxonomy.mjs` files
+  // them in the Insert menu). Agents' twins: `link_to_previous`,
+  // `remove_header_footer`.
+  exact("layout.header.linkToPrevious", "mutate"),
+  exact("layout.footer.linkToPrevious", "mutate"),
+  exact("layout.header.remove", "mutate"),
+  exact("layout.footer.remove", "mutate"),
+  // The six page-number positions (ONLYOFFICE's Insert ▸ Page Number gallery,
+  // Word's Top / Bottom of Page). Exact rows: the set is closed. Agents' twin:
+  // `insert_page_number`.
+  exact("layout.pageNumber.topLeft", "mutate"),
+  exact("layout.pageNumber.topCenter", "mutate"),
+  exact("layout.pageNumber.topRight", "mutate"),
+  exact("layout.pageNumber.bottomLeft", "mutate"),
+  exact("layout.pageNumber.bottomCenter", "mutate"),
+  exact("layout.pageNumber.bottomRight", "mutate"),
   exact("insert.footnote", "mutate"),
   exact("insert.endnote", "mutate"),
   exact("insert.lineBreak", "mutate"),
@@ -428,6 +453,8 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("layout.tabStops", "mutate"),
   exact("layout.lineNumbers", "mutate"),
   exact("layout.watermark", "mutate"),
+  // Page borders write the section's `w:pgBorders` (HF-193).
+  exact("layout.pageBorders", "mutate"),
   exact("layout.firstPageVariant", "mutate"),
   exact("layout.evenOddVariant", "mutate"),
   // Word's Header & Footer ▸ Options, plus the position and page-numbering fields.
@@ -489,9 +516,9 @@ export const COMMAND_CONTRACT = Object.freeze([
   // Deciding a tracked change is EDITING, not commenting: accepting a suggestion
   // writes it into the document outright. So these require `edit` and not
   // `mutate`, which means a `commentor` cannot accept their own suggestions —
-  // Google Docs' Commenter cannot either, and Word's reviewer cannot. This is
-  // the one place the API is deliberately STRICTER than the chrome currently is;
-  // see the PR, which reports it rather than widening the API to match a gap.
+  // Google Docs' Commenter cannot either, and Word's reviewer cannot. The chrome
+  // reads these rows for its own controls (`review_authority.mjs`, HF-199), so
+  // the API and the buttons give one answer.
   exact("review.acceptAtCaret", "edit"),
   exact("review.rejectAtCaret", "edit"),
   exact("review.acceptNext", "edit"),
@@ -592,6 +619,8 @@ export const COMMAND_CONTRACT = Object.freeze([
   // The AutoCorrect switches (TA-05/06): preferences, not document state.
   exact("tools.autoFormatLists", null),
   exact("tools.autocorrect", null),
+  // Word count reads the document and changes nothing (HF-051).
+  exact("tools.wordCount", null),
   exact("view.outline", null),
   // `view.pages` is a panel toggle and changes no document state, so it requires
   // nothing — the same shape as `view.outline`, which the taxonomy already puts
@@ -734,6 +763,9 @@ export const COMMAND_FAMILIES = Object.freeze([
   family("paragraph.listFormat.", "mutate", "always"),
   // Generated from the field-kind table, and from the document's own style list.
   family("insert.field.", "mutate", "always"),
+  // Insert ▸ Chart's per-type rows (`insert.chart.<kind>`, HF-258), generated
+  // from the chart-type table the ribbon's picker reads.
+  family("insert.chart.", "mutate", "always"),
   family("style.", "mutate", "always"),
   // Generated from the zoom menu's markup.
   family("view.zoom.", null, "always"),

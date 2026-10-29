@@ -313,7 +313,6 @@ dependencies = [
 name = "casual-doc-io"
 version = "0.0.1"
 dependencies = [
- "casual-doc-diff",
  "casual-doc-export",
  "casual-doc-import",
  "casual-doc-layout",
@@ -323,6 +322,8 @@ dependencies = [
  "casual-doc-pdf",
  "casual-doc-pdf-import",
  "casual-doc-pdf-read",
+ "casual-doc-pdf-save",
+ "casual-doc-pdf-wire",
  "casual-doc-rtf",
  "hayro",
  "zip",
@@ -410,6 +411,7 @@ dependencies = [
  "casual-doc-model",
  "casual-doc-ocr",
  "casual-doc-pdf-read",
+ "casual-doc-pdf-wire",
  "casual-doc-render",
  "flate2",
  "hayro",
@@ -422,12 +424,28 @@ name = "casual-doc-pdf-read"
 version = "0.0.1"
 dependencies = [
  "casual-doc-pdf",
+ "casual-doc-pdf-wire",
  "flate2",
  "hayro-interpret",
  "hayro-syntax",
  "kurbo 0.13.1",
  "png 0.18.1",
 ]
+
+[[package]]
+name = "casual-doc-pdf-save"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-diff",
+ "casual-doc-model",
+ "casual-doc-pdf-import",
+ "casual-doc-pdf-read",
+ "casual-doc-pdf-wire",
+]
+
+[[package]]
+name = "casual-doc-pdf-wire"
+version = "0.0.1"
 
 [[package]]
 name = "casual-doc-render"
@@ -531,9 +549,23 @@ dependencies = [
  "casual-doc-review",
  "casual-doc-selection",
  "casual-doc-transaction",
+ "casual-doc-wasm-pdf",
  "serde",
  "serde_json",
  "unicode-segmentation",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "casual-doc-wasm-pdf"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-model",
+ "casual-doc-ocr",
+ "casual-doc-pdf-import",
+ "casual-doc-pdf-read",
+ "casual-doc-pdf-save",
+ "casual-doc-pdf-wire",
  "wasm-bindgen",
 ]
 
@@ -1988,6 +2020,7 @@ name = "opendoc-pdf-measure"
 version = "0.0.1"
 dependencies = [
  "casual-doc-io",
+ "casual-doc-pdf-read",
  "flate2",
  "hayro-interpret",
  "hayro-syntax",

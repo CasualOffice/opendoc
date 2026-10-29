@@ -145,6 +145,20 @@ export const EN_STRINGS = Object.freeze({
   "status.paragraphs.one": "{count} paragraph",
   "status.paragraphs.other": "{count} paragraphs",
   "status.characters.withSpaces": "{count} characters (with spaces)",
+  // Word's status bar while text is selected: "23 of 1,204 words" (HF-051).
+  // Plural on the document's total, which is the noun the sentence ends on.
+  "status.wordsOfTotal.one": "{selected} of {count} word",
+  "status.wordsOfTotal.other": "{selected} of {count} words",
+  // Why Accept and Reject are unavailable in a container that may not edit
+  // (HF-199): deciding a tracked change writes the document, which is editing.
+  "review.decision.needsEdit": "Accepting or rejecting a change edits the document, and this editor may only comment here.",
+  // Page borders (HF-193): the palette's label, and what the dialog says.
+  "pageBorders.command": "Page borders…",
+  "pageBorders.noSection": "This document has no page setup to carry a border.",
+  "pageBorders.applied": "Page borders applied",
+  "pageBorders.removed": "Page borders removed",
+  // The Word count command's label on the palette and the Review menu (HF-051).
+  "wordCount.command": "Word count…",
   // Reassigned from script on every render, so the markup sweep never sees it.
   "status.pageOf": "Page {page} of {total}",
   // -- Reflow (pageless) ------------------------------------------------------
@@ -327,6 +341,7 @@ export const EN_STRINGS = Object.freeze({
   "list.reason.nothingToContinue": "There is no earlier numbered list to continue",
   "insert.reason.linkNeedsText": "Select text to add a link",
   "insert.chart": "Chart",
+  "insert.chartOfType": "Insert chart: {type}",
   // A disabled control has one channel — its title — and it must say what to
   // DO, not repeat what the control would have done. This one used to borrow
   // the margin button's own label, which describes the action rather than the
@@ -412,6 +427,56 @@ export const EN_STRINGS = Object.freeze({
   "headerFooter.stateOn": "on",
   "headerFooter.stateOff": "off",
   "headerFooter.changeFailed": "Could not change the page setup: {message}",
+  // Link to Previous, Remove and the page-number positions (HF-192, RM-23). The
+  // link rows read as switches with their state, like the two variant toggles,
+  // and each state is a whole sentence for the reason given above.
+  "headerFooter.linkHeaderOn": "Header: linked to previous section",
+  "headerFooter.linkHeaderOff": "Header: not linked to previous section",
+  "headerFooter.linkFooterOn": "Footer: linked to previous section",
+  "headerFooter.linkFooterOff": "Footer: not linked to previous section",
+  "headerFooter.removeHeader": "Remove header",
+  "headerFooter.removeFooter": "Remove footer",
+  "headerFooter.firstSectionNoPrevious": "The first section has no previous section to link to",
+  "headerFooter.noHeaderToRemove": "This page has no header to remove",
+  "headerFooter.noFooterToRemove": "This page has no footer to remove",
+  "headerFooter.headerLinked": "This section's header now follows the previous section's",
+  "headerFooter.headerUnlinked": "This section's header is its own now; editing it leaves the previous section's alone",
+  "headerFooter.footerLinked": "This section's footer now follows the previous section's",
+  "headerFooter.footerUnlinked": "This section's footer is its own now; editing it leaves the previous section's alone",
+  // `{items}` is the paste-loss family list ("bookmarks and comments"), the same
+  // nouns a structured paste names, because it is the same deep copy.
+  "headerFooter.copyLoss": "The copy could not carry {items}; they stay with the previous section's.",
+  "headerFooter.headerRemoved": "Header removed from this section; Undo brings it back",
+  "headerFooter.footerRemoved": "Footer removed from this section; Undo brings it back",
+  "headerFooter.notTrackable": "Header and footer changes cannot be tracked yet; switch to Editing",
+  "headerFooter.pageNumberInHeader": "Page number added to the header",
+  "headerFooter.pageNumberInFooter": "Page number added to the footer",
+  "headerFooter.pageNumberEdgeTable": "This band starts or ends with a table; put the caret where the number goes and use Page number at the cursor",
+  "headerFooter.bandChangeFailed": "Could not change the header or footer: {message}",
+  "pageNumber.topLeft": "Page number: top left",
+  "pageNumber.topCenter": "Page number: top center",
+  "pageNumber.topRight": "Page number: top right",
+  "pageNumber.bottomLeft": "Page number: bottom left",
+  "pageNumber.bottomCenter": "Page number: bottom center",
+  "pageNumber.bottomRight": "Page number: bottom right",
+  "menuGroup.pageNumbers": "Page numbers",
+  // The band's own chrome: the marker that opens an absent band, the status
+  // line while one is open, the label Word draws on the band ("Header
+  // -Section 2-"), and the footer half of the bar's Link to previous title (the
+  // header half is the markup's).
+  "runningBand.addHeader": "+ Header",
+  "runningBand.addFooter": "+ Footer",
+  "runningBand.editHeader": "Edit the page header",
+  "runningBand.editFooter": "Edit the page footer",
+  "runningBand.editingHeader": "Editing the header — press Esc to return to the document",
+  "runningBand.editingFooter": "Editing the footer — press Esc to return to the document",
+  "runningBand.header": "Header",
+  "runningBand.footer": "Footer",
+  "runningBand.headerSection": "Header -Section {number}-",
+  "runningBand.footerSection": "Footer -Section {number}-",
+  "runningBand.headerSectionLinked": "Header -Section {number}- · Same as Previous",
+  "runningBand.footerSectionLinked": "Footer -Section {number}- · Same as Previous",
+  "runningBand.linkFooterTitle": "Show the previous section's footer here, or give this section its own",
   // Word's own word for this group: the Header & Footer tab's OPTIONS group.
   // It was "settings", which is the word the Settings command owns — typing
   // "settings" in the palette then put this row ABOVE Settings itself, which is
@@ -668,7 +733,7 @@ export const EN_STRINGS = Object.freeze({
   "findings.pdf.title": "This is a reconstruction of a PDF",
   "findings.pdf.local": "It was converted on this device. Nothing was uploaded.",
   "findings.pdf.reconstruction": "Each page was rebuilt as text frames, pictures and shapes you can edit. It is not the PDF itself.",
-  "findings.pdf.original": "Your original file is untouched. Saved as PDF before any edit, it is that file byte for byte; after an edit, the PDF is regenerated from what you see.",
+  "findings.pdf.original": "Your original file is untouched. Saved as PDF, it is that file byte for byte until you edit; after an edit, your changes are added to it as an update where that is safe, and the PDF is regenerated where it is not.",
   "findings.pdf.none": "Nothing was inferred, approximated or left out.",
   "findings.feature.pdfActiveContent": "Scripts and actions in the PDF (never run)",
   "findings.feature.pdfAnnotations": "Annotations drawn on the PDF, such as comments and highlights",
@@ -722,6 +787,7 @@ export const EN_STRINGS = Object.freeze({
   "findings.feature.pdfVectorsPlaced": "Drawings placed as shapes",
   // Opening a PDF (`pdf_import.mjs`): the progress dialog over the staged import.
   "pdfImport.title": "Opening {name}",
+  "pdfImport.openFailed": "Could not open {name}: {message}",
   "pdfImport.intro": "Rebuilding the PDF's pages as editable frames, on this device.",
   "pdfImport.reading": "Reading the file…",
   "pdfImport.progress": "Page {done} of {total}",
@@ -733,6 +799,50 @@ export const EN_STRINGS = Object.freeze({
   "pdfImport.cancelled": "Opening {name} was cancelled",
   "pdfImport.cancelledKept": "Opening {name} was cancelled — the document you had open is still here",
   "pdfImport.encrypted": "{name} is password-protected. Password-protected PDFs cannot be opened yet.",
+  // The lazily loaded PDF module, Convert to flowing document and text
+  // recognition (`pdf_import.mjs`, `pdf_commands.mjs`, `docs/182` §17a).
+  "pdfImport.loadingModule": "Loading the PDF reader…",
+  "pdfImport.moduleProgress": "{done} of {total} MB",
+  "pdfImport.moduleFailed": "The PDF reader could not be loaded: {reason}",
+  "pdfReflow.command": "Convert to flowing document",
+  "pdfReflow.title": "Converting {name}",
+  "pdfReflow.intro": "Rebuilding the PDF as paragraphs, headings, lists and tables in a new document, on this device.",
+  "pdfReflow.cancelLabel": "Cancel converting this PDF",
+  "pdfReflow.cancelled": "Converting {name} was cancelled — the PDF is still open",
+  "pdfReflow.failed": "Could not convert {name}: {reason}",
+  "pdfReflow.notPdf": "Only a document opened from a PDF can be converted to a flowing document.",
+  "pdfReflow.fileName": "{name} (flowing).docx",
+  "findings.pdfReflow.title": "A flowing document rebuilt from a PDF",
+  "findings.pdfReflow.new": "This is a new document. The PDF it was rebuilt from is unchanged; open it again to return to its pages.",
+  "findings.pdfReflow.inferred": "Headings, lists, tables, columns and footnotes were inferred from the page layout. Check them before you rely on them.",
+  "findings.pdfReflow.source": "It was built from the PDF as it was opened: edits made to the PDF's pages are not in it.",
+  "pdfOcr.command": "Recognise text in scanned pages",
+  "pdfOcr.notPdf": "Text recognition applies to a document opened from a PDF.",
+  "pdfOcr.noScans": "This PDF has no scanned pages to read.",
+  "pdfOcr.done": "The scanned pages of this PDF have already been read.",
+  "pdfOcr.noModels": "Text recognition is unavailable: this editor has no recognition models. The site that provides the editor can add them.",
+  "pdfOcr.consentTitle": "Download text recognition?",
+  "pdfOcr.consentMessage": "Reading the scanned pages needs recognition models: {size} MB, downloaded once from {host} and kept in this browser. The PDF itself stays on this device.",
+  "pdfOcr.consentConfirm": "Download and recognise",
+  "pdfOcr.consentCancel": "Not now",
+  "pdfOcr.title": "Recognising text in {name}",
+  "pdfOcr.intro": "Reading the scanned pages on this device. Nothing is uploaded.",
+  "pdfOcr.downloading": "Downloading recognition models…",
+  "pdfOcr.loading": "Preparing text recognition…",
+  "pdfOcr.cancelLabel": "Cancel recognising text",
+  "pdfOcr.cancelled": "Text recognition was cancelled — the document is unchanged",
+  "pdfOcr.failed": "Text recognition failed: {reason}",
+  "findings.pdf.ocrTitle": "Scanned pages",
+  "findings.pdf.ocrPending": "Pages whose text is only a picture: {count}. Their text is not in the document yet.",
+  "findings.pdf.ocrApplied": "The text of the scanned pages was recognised on this device ({provider}). Check it against the page before you rely on it.",
+  "menuGroup.pdf": "PDF",
+  "findings.feature.pdfIncrementalUpdate": "Edited pages, added to the original PDF as an update",
+  "findings.feature.pdfPageCarriedOver": "Pages kept exactly as in the original PDF",
+  "findings.feature.pdfEarlierRevision": "Replaced text, still recoverable from the PDF's earlier version",
+  "findings.feature.pdfSignatureEarlier": "Signatures, which cover only the PDF's earlier version",
+  "findings.feature.pdfCertificationBroken": "The PDF's certification, which the edit invalidates",
+  "findings.feature.pdfOriginalWrittenBack": "The original PDF, written back unchanged",
+  "findings.feature.pdfPreserveFallback": "Edits that could not be added to the original PDF, so the PDF was regenerated",
   // The open path's status lines (`editor_file_open.mjs`, `editor_file_pick.mjs`).
   "fileOpen.ready": "Ready — open a .docx, .odt, .rtf, .pdf, .json or .txt",
   "fileOpen.opening": "Opening {name}…",
@@ -1427,6 +1537,33 @@ export const EN_STRINGS = Object.freeze({
   "shape.drawHint": "Drag on the page to draw the shape · click for the default size · Esc to cancel",
   "shape.drawCancelled": "Drawing cancelled",
   "shape.added": "{shape} added",
+  // Shape Outline ▸ Dashes and ▸ Arrows (`shape_outline_style.mjs`, RM-30): Word's names.
+  "shape.dashes": "Dashes",
+  "shape.dash.solid": "Solid",
+  "shape.dash.roundDot": "Round dot",
+  "shape.dash.squareDot": "Square dot",
+  "shape.dash.dash": "Dash",
+  "shape.dash.dashDot": "Dash dot",
+  "shape.dash.longDash": "Long dash",
+  "shape.dash.longDashDot": "Long dash dot",
+  "shape.dash.longDashDotDot": "Long dash dot dot",
+  "shape.arrows": "Arrows",
+  "shape.arrows.none": "No arrows",
+  "shape.arrows.end": "Arrow at end",
+  "shape.arrows.start": "Arrow at start",
+  "shape.arrows.both": "Arrows at both ends",
+  "shape.arrows.openEnd": "Open arrow at end",
+  "shape.arrows.stealthEnd": "Stealth arrow at end",
+  "shape.arrows.diamondEnd": "Diamond at end",
+  "shape.arrows.ovalEnd": "Round end",
+  // Shape Fill ▸ Gradient (`shape_gradient.mjs`, RM-30): Word's directions.
+  "shape.gradient": "Gradient",
+  "shape.gradient.linearDown": "Linear down",
+  "shape.gradient.linearUp": "Linear up",
+  "shape.gradient.linearRight": "Linear right",
+  "shape.gradient.linearLeft": "Linear left",
+  "shape.gradient.linearDiagonal": "Linear diagonal",
+  "shape.gradient.fromCenter": "From center",
   // Wrap. “In line” is the mode an inserted picture STARTS in, so it leads the
   // row — Google Docs puts it first for the same reason.
   "object.wrap.inline": "In line",
@@ -1454,6 +1591,23 @@ export const EN_STRINGS = Object.freeze({
   // Stacking. One engine op behind four commands, because “forward” and “to
   // front” are different intentions even when a document has two objects.
   "object.arrange": "Arrange",
+  // Arrange ▸ Align (`object_align.mjs`, RM-28): Word's and ONLYOFFICE's rows.
+  "object.align": "Align",
+  "object.align.left": "Align left",
+  "object.align.center": "Align center",
+  "object.align.right": "Align right",
+  "object.align.top": "Align top",
+  "object.align.middle": "Align middle",
+  "object.align.bottom": "Align bottom",
+  "object.align.distributeHorizontally": "Distribute horizontally",
+  "object.align.distributeVertically": "Distribute vertically",
+  "object.align.toPage": "Align to page",
+  "object.align.toMargin": "Align to margin",
+  "object.align.toSelected": "Align selected objects",
+  "object.align.aligned": "Objects aligned",
+  "object.align.distributed": "Objects distributed",
+  "object.align.reason.selectMore": "Hold {modifier} and click another object to align them to each other",
+  "object.align.reason.selectThree": "Hold {modifier} and click to select three or more objects to distribute them",
   "object.z.front": "Bring to front",
   "object.z.forward": "Bring forward",
   "object.z.backward": "Send backward",
@@ -1488,6 +1642,9 @@ export const EN_STRINGS = Object.freeze({
   // menu row is the second surface, because a gesture nobody told you about is
   // not reachable.
   "object.addText": "Add text",
+  // Change Shape (RM-30): Word's Edit Shape ▸ Change Shape.
+  "object.changeShape": "Change shape",
+  "object.changeShape.done": "Shape changed",
   "object.addText.notAShape": "Only a shape can hold text this way",
   // Word's Change Picture (`docs/109` HF-252). The status line says what was
   // KEPT, and asks for the one check a person must make: alt text written for
@@ -1514,6 +1671,21 @@ export const EN_STRINGS = Object.freeze({
   // Word's Picture Border: a picture's outline, under Word's name for it (HF-254).
   "object.pictureBorder": "Picture border",
   "object.pictureBorder.short": "Border",
+  // The picture tools beside Crop (`picture_tools.mjs`, RM-29): ONLYOFFICE's
+  // Crop ▸ Fill / Fit, Reset crop and Actual Size.
+  "object.picture.cropFill": "Crop to fill",
+  "object.picture.cropFit": "Crop to fit",
+  "object.picture.resetCrop": "Reset crop",
+  "object.picture.resetSize": "Reset to actual size",
+  "object.picture.cropFilled": "Picture cropped to fill its frame",
+  "object.picture.cropFitted": "Whole picture fitted inside its frame",
+  "object.picture.cropReset": "Crop removed",
+  "object.picture.sizeReset": "Picture set to its actual size",
+  "object.picture.reason.noNaturalSize": "This picture's original size cannot be read from its file",
+  "object.picture.reason.notCropped": "The picture is not cropped",
+  "object.picture.saveAs": "Save as picture",
+  "object.picture.fileName": "Picture",
+  "object.picture.reason.noFile": "This picture's image file is not in the document",
   // Crop mode's arrows move the kept area; with nothing cropped there is nothing
   // to move, and the key says so rather than doing nothing (`docs/104` HF-106).
   "object.crop.nothingToMove": "Crop an edge first — the arrow keys then move the cropped area",

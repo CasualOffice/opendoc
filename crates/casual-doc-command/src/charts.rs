@@ -76,6 +76,8 @@ pub fn insert_chart(at: Pos, kind: &str, ids: MintId<'_>) -> Result<Vec<Operatio
         preview: None,
         extent,
         prog_id: None,
+        anchor: None,
+        relative_height: None,
     };
     let projection = default_chart_projection(object_id, group);
     Ok(vec![

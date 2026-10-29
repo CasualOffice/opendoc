@@ -432,6 +432,148 @@ fn change_picture_reaches_an_inline_picture_and_refuses_what_it_cannot_use() {
     assert!(not_a_picture.starts_with("refused: "), "{not_a_picture}");
 }
 
+/// A PNG whose header states `width` x `height` pixels: the signature, then
+/// the IHDR chunk's length, type and the two big-endian sizes. Nothing after
+/// that is read by `pixel_size`, and the engine carries no image codec.
+fn png_header(width: u32, height: u32) -> Vec<u8> {
+    let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+    bytes.extend_from_slice(&13u32.to_be_bytes());
+    bytes.extend_from_slice(b"IHDR");
+    bytes.extend_from_slice(&width.to_be_bytes());
+    bytes.extend_from_slice(&height.to_be_bytes());
+    bytes.extend_from_slice(&[8, 6, 0, 0, 0]);
+    bytes
+}
+
+/// RM-29: a picture's natural size is read from ITS OWN bytes, wherever the
+/// picture sits, at 96 DPI — the read Reset size and Crop to fit / fill stand
+/// on. A member of a group answers nothing (its size is in group coordinates),
+/// and so does a picture whose format states no size.
+///
+/// Mutation: answering the picture's current extent instead of reading the
+/// header makes the first assertion fail (the frame is 1 x 2 inches, the image
+/// 40 x 20 px); dropping the group exclusion makes the third fail.
+#[test]
+fn a_picture_natural_size_comes_from_its_own_header_and_never_from_its_frame() {
+    let mut document = wrapped();
+    let node = picture_named(&document, "Field logo").to_string();
+    document
+        .replace_picture_inner(
+            &node,
+            png_header(40, 20),
+            914_400.0,
+            1_828_800.0,
+            "image/png",
+        )
+        .expect("give the picture a 40 x 20 px image in a 1 x 2 in frame");
+    assert_eq!(
+        document.picture_natural_size(&node),
+        vec![40.0 * 9_525.0, 20.0 * 9_525.0],
+        "the header's pixels at 96 DPI, not the frame"
+    );
+
+    let inline = picture_named(&document, "Inline logo").to_string();
+    document
+        .replace_picture_inner(&inline, vec![1, 2, 3], 914_400.0, 914_400.0, "image/png")
+        .expect("an image with no readable header");
+    assert!(
+        document.picture_natural_size(&inline).is_empty(),
+        "no header, no size: the host disables Reset size with a reason"
+    );
+
+    let member = picture_named(&document, "Partner A").to_string();
+    assert!(
+        document.picture_natural_size(&member).is_empty(),
+        "a group member is not a standalone picture"
+    );
+
+    // Save as Picture hands back the image file itself, byte for byte.
+    // Mutation: returning the first picture in the package instead of THIS
+    // picture's media makes the inline logo's bytes equal the field logo's.
+    assert_eq!(document.picture_bytes(&node), Some(png_header(40, 20)));
+    assert_eq!(
+        document.picture_media_type(&node).as_deref(),
+        Some("image/png")
+    );
+    assert_eq!(document.picture_bytes(&inline), Some(vec![1, 2, 3]));
+    assert_eq!(document.picture_bytes(&member), None);
+}
+
+/// RM-28: Arrange ▸ Align over two floating pictures, then to the margin, and
+/// the refusals a host disables the rows with.
+///
+/// The two logos float at 1 in and 4.5 in across. Aligning their left edges to
+/// each other moves the second to the first, in ONE undo step; aligning one to
+/// the margin writes Word's alignment token (`relativeFrom="margin"`,
+/// `wp:align right`), not an offset.
+///
+/// Mutation: emitting one action per object (a loop of `commit_anchor`) leaves
+/// the first undo restoring only the last object, and the undo assertion
+/// fails; writing an offset for the margin case fails the token assertion.
+#[test]
+fn align_left_moves_both_logos_in_one_step_and_the_margin_gets_a_token() {
+    let mut document = wrapped();
+    let field = picture_named(&document, "Field logo").to_string();
+    let control = picture_named(&document, "Control logo").to_string();
+    let both = serde_json::json!([field, control]).to_string();
+    let field_before = document.object_rect(&field);
+    let control_before = document.object_rect(&control);
+    assert_ne!(field_before[1], control_before[1], "they start apart");
+
+    assert_eq!(
+        document.can_align_objects(&both, "left", "selected"),
+        "{\"can\":true}"
+    );
+    document
+        .align_objects_inner(&both, "left", "selected")
+        .expect("align the two lefts");
+    assert_eq!(
+        document.object_rect(&control)[1],
+        field_before[1],
+        "the second logo's left edge meets the first's"
+    );
+    assert_eq!(
+        document.object_rect(&field),
+        field_before,
+        "the leftmost stays"
+    );
+    document.undo().expect("undo the alignment");
+    assert_eq!(
+        document.object_rect(&control),
+        control_before,
+        "one undo puts the arrangement back"
+    );
+
+    document
+        .align_objects_inner(&serde_json::json!([field]).to_string(), "right", "margin")
+        .expect("align one logo to the right margin");
+    let position: serde_json::Value =
+        serde_json::from_str(&document.object_position(&field)).expect("position JSON");
+    assert_eq!(
+        position["horizontal"]["relativeFrom"], "margin",
+        "{position}"
+    );
+    assert_eq!(position["horizontal"]["align"], "right", "{position}");
+
+    let two = document
+        .align_objects_inner(&both, "distributeHorizontally", "selected")
+        .expect_err("two objects cannot be distributed");
+    assert!(two.contains("object.distribute-needs-three"), "{two}");
+    let alone = document.can_align_objects(
+        &serde_json::json!([control]).to_string(),
+        "left",
+        "selected",
+    );
+    assert!(alone.contains("object.align-needs-two"), "{alone}");
+    let inline = picture_named(&document, "Inline logo").to_string();
+    let not_floating =
+        document.can_align_objects(&serde_json::json!([inline]).to_string(), "left", "margin");
+    assert!(
+        not_floating.contains("object.align-not-floating"),
+        "{not_floating}"
+    );
+}
+
 /// The media id a picture node currently shows, wherever it is nested.
 fn media_of(document: &WasmDocument, node: &str) -> casual_doc_model::v1::MediaId {
     fn in_children(children: &[GroupChild], id: NodeId) -> Option<casual_doc_model::v1::MediaId> {

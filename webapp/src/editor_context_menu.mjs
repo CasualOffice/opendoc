@@ -2,7 +2,15 @@
 // revision or an object offers, built from the command registry. Moved out of
 // `main.js` unchanged (docs/177); it reaches the rest of the editor only
 // through the context `ed`.
+import { mayDecideReview, reviewDecisionRefusal } from "./review_authority.mjs";
 import { buildObjectContextCommands } from "./object_context_menu.mjs";
+import { pictureToolCommands } from "./picture_tools.mjs";
+import { createObjectAlign } from "./object_align.mjs";
+import { outlineStyleCommands, readOutlineStyle } from "./shape_outline_style.mjs";
+import { gradientCommands } from "./shape_gradient.mjs";
+import { downloadBytes } from "./save_formats.mjs";
+import { editRefusalMessage } from "./edit_errors.mjs";
+import { formatShortcut } from "./keyboard.mjs";
 import { spellingContextCommands } from "./spell_check.mjs";
 import { shortcutForCommand } from "./keymap.mjs";
 import { POSITION_PRESETS, ROTATE_CHOICES, WRAP_CHOICES, Z_ORDER_CHOICES, activeWrapChoice, positionAvailability, wrapAvailability } from "./object_arrange.mjs";
@@ -128,6 +136,9 @@ export function createContextMenu(ed) {
 
   function decideContextRevision(revision, accept) {
     if (!revision) return;
+    // HF-199: every single-change decision passes here (context menu, inline
+    // card, Accept/Reject ▸ Next, the palette's at-cursor rows).
+    if (!mayDecideReview(ed.HOST_CAPS, ed.setStatus)) return;
     return ed.runEdit(() =>
       revision.movePair?.fromStart && revision.movePair?.toStart
         ? ed.doc.decideMovePair(
@@ -301,6 +312,8 @@ export function createContextMenu(ed) {
           label: "Accept suggestion",
           group: "review",
           icon: "accept",
+          enabled: !reviewDecisionRefusal("review.accept", ed.HOST_CAPS),
+          disabledReason: reviewDecisionRefusal("review.accept", ed.HOST_CAPS),
           run: () => decideContextRevision(context.revision, true),
         },
         {
@@ -309,6 +322,8 @@ export function createContextMenu(ed) {
           group: "review",
           icon: "reject",
           danger: true,
+          enabled: !reviewDecisionRefusal("review.reject", ed.HOST_CAPS),
+          disabledReason: reviewDecisionRefusal("review.reject", ed.HOST_CAPS),
           run: () => decideContextRevision(context.revision, false),
         },
       );
@@ -551,8 +566,57 @@ export function createContextMenu(ed) {
   // application state and the verbs it needs. Extracted to pay for the captions
   // work under the line ratchet, and to give 156 lines of menu policy its first
   // test (`tests/object_context_menu.test.mjs`).
+  /** Arrange ▸ Align and Distribute (`object_align.mjs`, RM-28). One instance,
+   *  so the target the reader picks stays chosen, as Word's does. */
+  const objectAlign = createObjectAlign({
+    doc: () => ed.doc,
+    nodes: () => ed.objectArrange.candidates(),
+    runEdit: (thunk, options) => ed.runEdit(thunk, options),
+    t,
+    explain: (raw) => editRefusalMessage(raw, { routeRefusal: ed.SESSION.sentenceFor }),
+    announce: (text) => ed.setStatus(text),
+    modifier: formatShortcut("⌘"),
+  });
   const objectContextMenuHost = {
     reviewMode: () => ed.reviewMode,
+    alignRows: (mutationEnabled, mutationReason) => objectAlign.rows(mutationEnabled, mutationReason),
+    changeShape: (token) => {
+      const node = ed.objectSelection?.node;
+      if (!node) return;
+      void ed.runEdit(() => ed.doc.changeShape(node, token), { gate: true }).then((applied) => {
+        if (applied) ed.setStatus(t("object.changeShape.done"));
+      });
+    },
+    gradientCommands: (mutationEnabled, mutationReason) => {
+      const node = ed.objectSelection?.node;
+      const format = node ? ed.doc.shapeFormat?.(node) : null;
+      const fill = format?.fill ?? null;
+      format?.free?.();
+      return gradientCommands({
+        fill,
+        mutationEnabled,
+        mutationReason,
+        t,
+        apply: (from, to, angle) => {
+          if (!node) return;
+          void ed.runEdit(() => ed.doc.setShapeGradient(node, from, to, angle), { gate: true }).then(() => ed.reflectShapeSwatches());
+        },
+      });
+    },
+    outlineStyleCommands: (picture, mutationEnabled, mutationReason) => {
+      const node = ed.objectSelection?.node;
+      return outlineStyleCommands({
+        style: node ? readOutlineStyle(ed.doc.shapeFormat?.(node)) : null,
+        picture,
+        mutationEnabled,
+        mutationReason,
+        t,
+        apply: (dash, head, tail) => {
+          if (!node) return;
+          void ed.runEdit(() => ed.doc.setShapeOutlineStyle(node, dash, head, tail), { gate: true }).then(() => ed.reflectShapeSwatches());
+        },
+      });
+    },
     readOnlyReason: () => ed.readOnlyReason,
     wrapModes: () => WRAP_CHOICES.map((choice) => [choice.value, t(choice.key)]),
     positionPresets: () => POSITION_PRESETS.map((preset) => [preset.id, t(preset.key), preset]),
@@ -599,6 +663,16 @@ export function createContextMenu(ed) {
     applyShapeOutline: ed.applyShapeOutline,
     enterCrop: () => ed.enterCropMode(),
     changePicture: () => ed.pictureReplace.choose(),
+    pictureToolCommands: (mutationEnabled, mutationReason) => pictureToolCommands({
+      doc: ed.doc,
+      node: ed.objectSelection?.node,
+      mutationEnabled,
+      mutationReason,
+      t,
+      runEdit: (thunk, options) => ed.runEdit(thunk, options),
+      announce: (text) => ed.setStatus(text),
+      download: (bytes, mime, name) => downloadBytes(bytes, mime, name, document),
+    }),
     openProperties: () => ed.toggleObjectInspector(true),
     deleteObject: () => ed.deleteSelectedObject(),
     moveInText: () => ed.keyboardObjectMove.begin(false),

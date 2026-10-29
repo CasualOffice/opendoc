@@ -99,3 +99,44 @@ test("Continue numbering is reachable from the command palette", async ({
 
   expect(consoleErrors).toEqual([]);
 });
+
+// HF-226. Every numbered list in a session used to be the SAME list — one
+// memoised instance — so a second list started where the first stopped (4 after
+// a three-item list) and Continue numbering could never be offered on it: there
+// was no other list to continue. A list is an object with identity in Word and
+// Docs, and now here: a list separated from the first by an ordinary paragraph is
+// its own list, which is exactly what makes Continue available on it.
+test("a second numbered list is its own list, so Continue is offered on it (HF-226)", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+
+  await page.keyboard.type("One");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Two");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Between");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Again");
+
+  // List A over the first two paragraphs.
+  await page.keyboard.press(`${MOD}+Home`);
+  await page.keyboard.press("Shift+ArrowDown");
+  await page.locator("#numberedList").click();
+  // List B on the fourth, below an ordinary paragraph.
+  await page.keyboard.press(`${MOD}+Home`);
+  for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowDown");
+  await page.locator("#numberedList").click();
+  await expect(page.locator("#numberedList")).toHaveAttribute("aria-pressed", "true");
+
+  // A different list from A, so there IS an earlier list to continue.
+  const continueBtn = page.locator("#continueList");
+  await expect(continueBtn).toBeEnabled();
+  await continueBtn.click();
+  await expect(continueBtn).toBeDisabled();
+
+  expect(consoleErrors).toEqual([]);
+});

@@ -1430,6 +1430,12 @@ button.compatibility-status:hover {
   margin-top: var(--space-1);
 }
 
+/* The PDF commands beside Done (`pdf_commands.mjs`): they lay out as the
+   footer's own buttons, wrapping on a phone like any other row of actions. */
+.findings-actions {
+  display: contents;
+}
+
 /* Opening a PDF (`pdf_import.mjs`): one bar, its count, its phase. The bar is
    the editor's accent on its line colour; indeterminate until the page count is
    known, which is only after admission. */
@@ -2210,6 +2216,70 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 
 /* Two columns: term and value on one line, the way a properties sheet reads.
    `auto auto` so neither column is wider than the text it holds. */
+/* Page borders (HF-193): the four edges read across, as Word's preview buttons
+   sit around one page. */
+.page-borders-dialog {
+  width: fit-content;
+  max-inline-size: min(100%, 60ch);
+}
+
+.page-borders-edges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+
+/* Word count (HF-051): a figures table, numbers right-aligned in tabular
+   figures so the columns compare at a glance, as Word's dialog does. */
+.word-count-dialog {
+  width: fit-content;
+  max-inline-size: min(100%, 52ch);
+}
+
+.word-count-table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.word-count-table th,
+.word-count-table td {
+  padding: var(--space-1) var(--space-3);
+  text-align: start;
+}
+
+.word-count-table td {
+  text-align: end;
+}
+
+.word-count-table thead th {
+  color: var(--ink-2, var(--ink));
+  font-size: var(--fs-caption, 12px);
+  font-weight: 600;
+  border-block-end: 1px solid var(--line);
+}
+
+.word-count-table thead th + th {
+  text-align: end;
+}
+
+.word-count-table tbody th {
+  font-weight: 400;
+}
+
+.word-count-table [hidden] {
+  display: none;
+}
+
+.word-count-scope {
+  margin: var(--space-3) 0 0;
+  color: var(--ink-2, var(--ink));
+  font-size: var(--fs-caption, 12px);
+}
+
+#stats[role="button"] {
+  cursor: pointer;
+}
+
 /* The brand mark in place of a generic info glyph: About is the one dialog
    whose subject IS the product. */
 .about-mark {
@@ -12464,6 +12534,87 @@ body[data-shape-draw] .page-wrap * {
 
 .running-marker[hidden] {
   display: none;
+}
+
+/* ---- The open band's bar (HF-192, RM-23) --------------------------------------- */
+/* Google Docs' in-place chrome: Link to previous, Different first page, Options
+   and Close, just inside the open band's boundary at the trailing edge, where the
+   band's own label is not. Overlay chrome over the sheet, never in the raster. */
+.running-band-bar {
+  position: absolute;
+  right: 8px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--accent-text);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--fs-small);
+  line-height: 1.4;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 18%);
+}
+
+.running-band-bar[hidden] {
+  display: none;
+}
+
+.running-band-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.running-band-check:has(input:disabled) {
+  cursor: default;
+  color: var(--muted);
+}
+
+.running-band-button {
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.running-band-button:hover,
+.running-band-button[aria-expanded="true"] {
+  background: var(--bg-2);
+}
+
+.running-band-button:focus-visible,
+.running-band-check:focus-within {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 1px;
+}
+
+.running-band-close {
+  padding: 0 4px;
+}
+
+.running-band-close .ms {
+  font-size: 16px;
+}
+
+/* Touch: a finger needs the full target (SKILL §10). */
+@media (pointer: coarse) {
+  .running-band-button {
+    min-height: 40px;
+    min-width: 40px;
+  }
+
+  .running-band-check input {
+    width: 20px;
+    height: 20px;
+  }
 }
 
 /* ---- ONE select treatment for the whole chrome (docs/114 §6) ---------------- */

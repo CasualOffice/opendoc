@@ -2,6 +2,7 @@
 // registry of real editor actions the palette, the menus and the ribbon read.
 // Moved out of `main.js` unchanged (docs/177); it reaches the rest of the
 // editor only through the context `ed`.
+import { narrowDecisionsToContainer } from "./review_authority.mjs";
 import { exportCommands } from "./export_commands.mjs";
 import { mutationBlockedMessage } from "./edit_errors.mjs";
 import { buildObjectContextCommands } from "./object_context_menu.mjs";
@@ -15,6 +16,7 @@ import { hostCapabilities } from "./capabilities.mjs";
 import { collabCommands } from "./collab_chrome.mjs";
 import { flattenCommandTree, tableCommandLabel, tableMenuPlaceholders } from "./command_taxonomy.mjs";
 import { FIELD_KINDS } from "./field_kinds.mjs";
+import { insertChartTypeCommands } from "./chart_insert.mjs";
 import { revealOnSettings } from "./surface_reveal.mjs";
 import { quickStyleCommands } from "./quick_styles.mjs";
 
@@ -271,6 +273,17 @@ export function createPalette(ed) {
       { id: "insert.image", label: "Picture…", group: "Insert", kw: "image picture insert photo file png jpeg jpg gif paste", enabled: ed.insertCommandEnabled("insert.image"), run: () => ed.insertImageFromFile() },
       { id: "insert.shape", label: "Shape…", group: "Insert", kw: "shape drawing autoshape rectangle rounded ellipse circle triangle diamond line arrow callout", enabled: ed.insertCommandEnabled("insert.shape"), run: () => ed.openShapeGallery() },
       { id: "insert.chart", label: t("insert.chart"), group: "Insert", kw: "chart graph column bar line area scatter pie doughnut plot data series", enabled: !!ed.selection, disabledReason: t("paragraph.caretRequired"), run: () => void ed.insertChartWithData() },
+      // One row per chart type, the rows the Insert ▸ Chart picker offers
+      // (HF-258), so a type is reachable without the ribbon.
+      ...insertChartTypeCommands(t, (kind) => void ed.insertChartWithData(kind)).map((row) => ({
+        id: row.id,
+        label: t("insert.chartOfType", { type: row.label }),
+        group: "Insert",
+        kw: `chart graph plot ${row.id.slice("insert.chart.".length).replace(/-/g, " ")}`,
+        enabled: !!ed.selection,
+        disabledReason: t("paragraph.caretRequired"),
+        run: row.run,
+      })),
       { id: "insert.textbox", label: "Text box", group: "Insert", kw: "text box textbox callout caption floating frame", enabled: ed.insertCommandEnabled("insert.textbox"), run: () => void ed.insertTextBoxObject() },
       { id: "insert.symbol", label: "Symbol…", group: "Insert", kw: "symbol special character glyph currency math greek arrow fraction diacritic omega degree unicode", enabled: ed.insertCommandEnabled("insert.symbol"), run: () => ed.openSymbolPicker() },
       { id: "insert.emoji", label: "Emoji…", group: "Insert", kw: "emoji emoticon smiley face reaction sticker unicode", enabled: ed.insertCommandEnabled("insert.emoji"), run: () => ed.openEmojiPicker() },
@@ -388,6 +401,8 @@ export function createPalette(ed) {
       // from the same place it was set (SKILL.md §10).
       { id: "tools.spellCheck", label: `Spell check: ${ed.settings.spellCheck === false ? "off" : "on"}`, group: "Tools", kw: "spelling spell check squiggle dictionary misspelled proofing language red underline glossary", noDoc: true, run: () => ed.setSpellCheckEnabled(ed.settings.spellCheck === false) },
       { id: "tools.grammarCheck", label: `Grammar check: ${ed.settings.grammarCheck === false ? "off" : "on"}`, group: "Tools", kw: "grammar check agreement doubled word article a an punctuation capitalisation capitalization proofing blue underline", noDoc: true, run: () => ed.setGrammarCheckEnabled(ed.settings.grammarCheck === false) },
+      // HF-051. Word's Review ▸ Proofing ▸ Word Count, and its ⌘⇧G.
+      { id: "tools.wordCount", label: t("wordCount.command"), group: "Tools", kw: "word count words characters paragraphs pages statistics length how many", enabled: !!ed.doc, disabledReason: t("command.needsDocument"), run: () => ed.wordCount.open() },
       { id: "tools.languages", label: t("proofLanguages.command"), group: "Tools", kw: "language pack proofing spelling dictionary install download offline locale manage languages", noDoc: true, run: () => ed.proofing.openLanguages() },
       { id: "review.toggle", label: "Toggle comments & suggestions", group: "Review", kw: "sidebar review panel", run: () => ed.toggleReview() },
       { id: "review.compare", label: t("compare.command"), group: "Review", kw: "compare diff difference changes two documents review merge", enabled: !!ed.doc, disabledReason: t("compare.needsDocument"), run: () => ed.comparePanel.open() },
@@ -651,13 +666,15 @@ export function createPalette(ed) {
     // the compact bar's tooltip and the shortcut reference all read
     // `command.shortcut`, and the only thing that can set it is the table the
     // dispatcher matches against.
-    cmds.push(...ed.compatFindings.commands(), ...ed.regionCycle.commands());
+    cmds.push(...ed.compatFindings.commands(), ...(ed.pdfCommands?.commands() ?? []), ...ed.regionCycle.commands());
     for (const command of cmds) command.shortcut = shortcutForCommand(command.id, ed.EDITOR_KEYBOARD_PLATFORM);
     // Narrowed to the ROOM's grant HERE, once, for every surface this registry
     // feeds — palette, menu bar, compact bar, context menus — rather than by a
     // clause in each governed row. A review command added later is governed by the
     // id it already has instead of shipping ungated (`SKILL` §10: fix the pattern).
-    return ed.SESSION.narrow(cmds.filter((command) => ed.doc || command.noDoc));
+    // Then to the CONTAINER's grant for deciding a tracked change, which the host
+    // contract has always required `edit` for (HF-199, `review_authority.mjs`).
+    return narrowDecisionsToContainer(ed.SESSION.narrow(cmds.filter((command) => ed.doc || command.noDoc)), ed.HOST_CAPS);
   }
 
   return { cmdInput, cmdList, cmdPalette, editorCommands, searchTrigger };

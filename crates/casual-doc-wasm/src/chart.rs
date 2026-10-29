@@ -2487,6 +2487,8 @@ mod tests {
                     height_emu: 914_400,
                 },
                 prog_id: None,
+                anchor: None,
+                relative_height: None,
             }))),
         })
         .expect("an embedded object that is not a chart");

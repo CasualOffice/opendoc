@@ -1483,6 +1483,13 @@ impl Document {
                     previous_run_properties = None;
                 }
                 InlineNode::EmbeddedObject(object) => {
+                    if let Some(anchor) = &object.anchor {
+                        check_anchor_offset(
+                            &anchor.horizontal.position,
+                            &anchor.vertical.position,
+                        )?;
+                        check_wrap_distances(&anchor.wrap_distances)?;
+                    }
                     self.check_embedded_part(&object.part)?;
                     for extra in &object.extra_parts {
                         self.check_embedded_part(extra)?;

@@ -416,3 +416,53 @@ test("an object that moves in the text offers Move to… with Word's F2, and onl
   assert.equal(viewing.enabled, false);
   assert.equal(viewing.disabledReason, "Turn on Editing to change this object");
 });
+
+// ---- The object-parity rows (RM-28, RM-29, RM-30) ----------------------------
+//
+// Each is offered only when its host hook exists and only on the kinds Word
+// offers it on. Mutations: offering Change shape on a picture; dropping the
+// Align submenu from the arrange block; offering the picture tools on a shape.
+
+test("Change shape is a shape's alone, with the Insert ▸ Shapes gallery, and runs with the token", async () => {
+  const { SHAPE_PRESETS } = await import("../src/shape_catalogue.mjs");
+  const changed = [];
+  const io = { ...host(), changeShape: (token) => changed.push(token) };
+  const change = row(shape, "object.changeShape", io);
+  assert.ok(change, "a shape offers Change shape");
+  assert.deepEqual(
+    change.submenu.map((entry) => entry.id),
+    SHAPE_PRESETS.map((preset) => `object.changeShape.${preset.token}`),
+  );
+  change.submenu.find((entry) => entry.id === "object.changeShape.ellipse").run();
+  assert.deepEqual(changed, ["ellipse"]);
+  assert.ok(!ids({ ...picture, kind: "image" }, io).includes("object.changeShape"));
+  assert.ok(!ids(textBox, io).includes("object.changeShape"));
+});
+
+test("Align sits in the arrange block, and the picture tools follow Crop on a picture only", () => {
+  const io = {
+    ...host(),
+    alignRows: () => [{ id: "object.align.left", label: "Align left", enabled: true, run: () => {} }],
+    pictureToolCommands: () => [{ id: "object.resetSize", label: "Reset", enabled: true, run: () => {} }],
+  };
+  const image = { ...picture, kind: "image" };
+  const order = ids(image, io);
+  assert.ok(order.indexOf("object.align") > order.indexOf("object.arrange"));
+  assert.equal(order.indexOf("object.resetSize"), order.indexOf("object.crop") + 1);
+  assert.ok(!ids(shape, io).includes("object.resetSize"));
+});
+
+test("Shape fill carries Gradient and Shape outline carries Dashes and Arrows when the host offers them", () => {
+  const io = {
+    ...host(),
+    gradientCommands: () => ({ id: "object.fill.gradient", label: "Gradient", submenu: [] }),
+    outlineStyleCommands: (isPicture) => [
+      { id: "object.outline.dashes", label: "Dashes", submenu: [] },
+      ...(isPicture ? [] : [{ id: "object.outline.arrows", label: "Arrows", submenu: [] }]),
+    ],
+  };
+  const fill = row(shape, "object.fill", io).submenu.map((entry) => entry.id);
+  assert.ok(fill.includes("object.fill.gradient"));
+  const outline = row(shape, "object.outline", io).submenu.map((entry) => entry.id);
+  assert.ok(outline.includes("object.outline.dashes") && outline.includes("object.outline.arrows"));
+});

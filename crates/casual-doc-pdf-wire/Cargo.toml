@@ -1,0 +1,19 @@
+[package]
+name = "casual-doc-pdf-wire"
+description = "The bytes that cross between OpenDoc's editor module and its lazily loaded PDF module: an import package and the byte-preserving save's revision request and parts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+# No dependencies, on purpose: both the editor's main WebAssembly module and the
+# PDF module link this crate, and the main module must not link hayro, the PDF
+# reader or the importer (`docs/182` §17a). Everything here is plain data and a
+# bounded binary codec.
+[dependencies]
+
+[lints]
+workspace = true

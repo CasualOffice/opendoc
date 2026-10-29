@@ -98,7 +98,9 @@ export function ribbonSurfaceReason(entry, state) {
  */
 export function reflectReviewSurface(rows, state) {
   for (const entry of rows) {
-    const room = state.refusalFor(entry.command);
+    // The room first, then the container's own refusal where a row carries one
+    // (HF-199: deciding a tracked change needs the container's `edit`).
+    const room = state.refusalFor(entry.command) || (entry.refusal?.() ?? "");
     for (const button of entry.buttons()) {
       if (!button) continue;
       if (entry.requires !== "always") {

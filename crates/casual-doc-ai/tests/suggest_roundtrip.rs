@@ -391,6 +391,12 @@ const DIRECT_EXCEPTIONS: &[(&str, Option<&str>)] = &[
     ("set_wrap", Some("Only a floating object has text wrapping")),
     // A fill belongs to a shape; agents cannot insert one yet.
     ("set_shape_fill", Some("engine")),
+    // The fixture has one section and no header or footer: there is no second
+    // section to link, and no footer to remove. Both refuse by name; the editor's
+    // guards on `sample.docx` (`casual-doc-wasm` `running_tests.rs`) run the same
+    // lowerings against three sections that each own a header and a footer.
+    ("link_to_previous", Some("There is no section 1")),
+    ("remove_header_footer", Some("no footer to remove")),
 ];
 
 /// `docs/181` §12 (lane families-b): every command that is not trackable runs

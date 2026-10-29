@@ -783,7 +783,7 @@
             <div class="rgroup-ctl">
               <button data-i18n-title="panelInsert.insertPictureFromFile.title" data-i18n-label="panelInsert.insertPicture.label" id="insertPictureBtn" type="button" class="fmt fmt-big" title="Insert a picture from a file" aria-label="Insert picture" disabled><span class="ms" aria-hidden="true">image</span><span data-i18n="insertPictureBtn.picture" class="fmt-big-label">Picture</span></button>
               <button data-i18n-title="panelInsert.insertShape.title" data-i18n-label="panelInsert.insertShape.label" id="insertShapeBtn" type="button" class="fmt fmt-big" title="Insert a shape" aria-label="Insert shape" aria-haspopup="menu" aria-expanded="false" aria-controls="shapeGalleryMenu" disabled><span class="ms" aria-hidden="true">interests</span><span data-i18n="insertShapeBtn.shapes" class="fmt-big-label">Shapes</span></button>
-              <button data-i18n-title="panelInsert.insertChart.title" data-i18n-label="panelInsert.insertChart.title" id="insertChartBtn" type="button" class="fmt fmt-big" title="Insert a chart" aria-label="Insert a chart" disabled><span class="ms" aria-hidden="true">bar_chart</span><span data-i18n="insertChartBtn.chart" class="fmt-big-label">Chart</span></button>
+              <button data-i18n-title="panelInsert.insertChart.title" data-i18n-label="panelInsert.insertChart.title" id="insertChartBtn" type="button" class="fmt fmt-big" title="Insert a chart" aria-label="Insert a chart" aria-haspopup="menu" disabled><span class="ms" aria-hidden="true">bar_chart</span><span data-i18n="insertChartBtn.chart" class="fmt-big-label">Chart</span></button>
               <button data-i18n-title="panelInsert.insertTextBox.title" data-i18n-label="panelInsert.insertTextBox.label" id="insertTextBoxBtn" type="button" class="fmt fmt-big" title="Insert a text box" aria-label="Insert text box" disabled><span class="ms" aria-hidden="true">text_fields</span><span data-i18n="insertTextBoxBtn.textBox" class="fmt-big-label">Text box</span></button>
             </div>
             <span data-i18n="panelInsert.illustrations" class="rgroup-label">Illustrations</span>
@@ -922,7 +922,12 @@
                    painted behind every page of a section — belongs with the rest of
                    the section's page setup, so it sits beside Line numbers. An icon
                    button for the same reason: the band is budgeted at 1280px. -->
+              <!-- Breaks, mirrored from Insert (HF-203): Word's Layout ▸ Page Setup
+                   ▸ Breaks, and ONLYOFFICE's Layout slot for the same button. -->
+              <button data-i18n-title="panelInsert.insertBreak.title" data-i18n-label="panelInsert.breaks.label" id="layoutBreaksBtn" type="button" class="fmt" title="Insert a page, column or section break" aria-label="Breaks" aria-haspopup="menu" aria-controls="layoutBreaksMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">insert_page_break</span></button>
               <button data-i18n-title="panelLayout.watermark.title" data-i18n-label="panelLayout.watermark.label" id="watermarkBtn" type="button" class="fmt" title="Watermark" aria-label="Watermark" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">branding_watermark</span></button>
+              <!-- Page borders (HF-193): Word's Borders and Shading ▸ Page Border. -->
+              <button data-i18n-title="panelLayout.pageBorders.title" data-i18n-label="panelLayout.pageBorders.label" id="pageBordersBtn" type="button" class="fmt" title="Page borders" aria-label="Page borders" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">border_style</span></button>
             </div>
             <span data-i18n="panelLayout.pageSetup" class="rgroup-label">Page setup</span>
           </div>
@@ -1226,6 +1231,8 @@
                    belongs. Its other two surfaces are the Review menu's Proofing
                    band and the command palette (`105` UX-004). -->
               <button data-i18n-title="panelReview.proofingLanguages.title" data-i18n-label="panelReview.proofingLanguages.label" id="reviewProofLanguagesBtn" type="button" class="fmt" title="Install proofing for another language" aria-label="Proofing languages" aria-haspopup="dialog"><span class="ms" aria-hidden="true">language</span></button>
+              <!-- Word count (HF-051): Word's Review ▸ Proofing ▸ Word Count. -->
+              <button data-i18n-title="panelReview.wordCount.title" data-i18n-label="panelReview.wordCount.label" id="reviewWordCountBtn" type="button" class="fmt" title="Count words, characters and paragraphs" aria-label="Word count" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">match_word</span></button>
             </div>
             <span data-i18n="panelReview.proofing" class="rgroup-label">Proofing</span>
           </div>
@@ -1367,6 +1374,42 @@
          way to tell which build you are looking at when reporting a bug. The
          version is read from the engine (`engineVersion()`, compiled from the
          crate manifest) rather than typed here, so it cannot drift. -->
+    <!-- Word count (HF-051). Word's dialog: the document's figures, and the
+         selection's beside them whenever there is one. `word_count.mjs`. -->
+    <div id="wordCountDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="wordCountTitle" aria-describedby="wordCountScope">
+      <section class="dialog-card word-count-dialog">
+        <header class="dialog-head">
+          <h2 data-i18n="wordCountDialog.title" id="wordCountTitle">Word count</h2>
+          <button data-word-count-dismiss data-i18n-title="wordCountDialog.close.title" data-i18n-label="wordCountDialog.close.label" id="wordCountClose" type="button" class="dialog-close" title="Close" aria-label="Close word count">
+            <span class="ms" aria-hidden="true">close</span>
+          </button>
+        </header>
+        <div class="dialog-body">
+          <table class="word-count-table">
+            <thead>
+              <tr>
+                <th data-i18n="wordCountDialog.statistic" scope="col">Statistic</th>
+                <th data-i18n="wordCountDialog.selection" data-word-count-selection scope="col">Selection</th>
+                <th data-i18n="wordCountDialog.document" scope="col">Document</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-stat="pages"><th data-i18n="wordCountDialog.pages" scope="row">Pages</th><td data-word-count-selection></td><td data-word-count-document></td></tr>
+              <tr data-stat="words"><th data-i18n="wordCountDialog.words" scope="row">Words</th><td data-word-count-selection></td><td data-word-count-document></td></tr>
+              <tr data-stat="characters"><th data-i18n="wordCountDialog.charactersNoSpaces" scope="row">Characters (no spaces)</th><td data-word-count-selection></td><td data-word-count-document></td></tr>
+              <tr data-stat="charactersWithSpaces"><th data-i18n="wordCountDialog.charactersWithSpaces" scope="row">Characters (with spaces)</th><td data-word-count-selection></td><td data-word-count-document></td></tr>
+              <tr data-stat="paragraphs"><th data-i18n="wordCountDialog.paragraphs" scope="row">Paragraphs</th><td data-word-count-selection></td><td data-word-count-document></td></tr>
+            </tbody>
+          </table>
+          <p data-i18n="wordCountDialog.scope" id="wordCountScope" class="word-count-scope">Counts include tables, text boxes, headers, footers, footnotes and endnotes.</p>
+        </div>
+        <footer class="dialog-foot">
+          <div class="dialog-actions">
+            <button data-word-count-dismiss data-i18n="wordCountDialog.closeButton" id="wordCountDone" type="button" class="dialog-button dialog-button-primary">Close</button>
+          </div>
+        </footer>
+      </section>
+    </div>
     <div id="aboutDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="aboutTitle" aria-describedby="aboutDescription">
       <section class="dialog-card about-dialog">
         <header class="dialog-head">
@@ -1613,30 +1656,22 @@
                  copy of the state. -->
             <label class="dialog-check"><input id="headerFooterDiffOddEven" type="checkbox" /><span data-i18n="headerFooterSettingsDialog.diffOddEven">Different odd and even pages</span></label>
             <label class="dialog-check"><input id="headerFooterDiffFirst" type="checkbox" /><span data-i18n="headerFooterSettingsDialog.diffFirst">Different first page</span></label>
-            <!-- Link to previous. ONLYOFFICE ships this as `chSameAs`
-                 (`view/HeaderFooterTab.js:219`) and DISABLES rather than hides it
-                 when there is no previous section to link to
-                 (`controller/HeaderFooterTab.js:247`, keyed on their core
-                 returning `null` rather than `false` for the first section) —
-                 which is the same rule this product states as "never a dead
-                 control, disabled with a reason".
-
-                 It is offered here READ-ONLY, reflecting the truth the engine
-                 already reports (`runningBands` returns `headerLinked` /
-                 `footerLinked`), and carrying why it cannot be changed yet. The
-                 reason is not laziness: in OOXML a section inherits by OMITTING
-                 `w:headerReference`, so UNLINKING has to materialise a copy of the
-                 inherited body — with fresh node ids for every descendant — or
-                 editing the newly "unlinked" header would still change the
-                 previous section's. The op that points a reference exists
-                 (`Operation::SetSectionRunningRef`, `None` being the linked form)
-                 and the deep copy does not. Shipping the toggle without it would
-                 produce exactly the silent cross-section mutation docs/104 T-01
-                 is about. Designed in docs/129, which also records that the only
-                 deep copy in the tree is the clipboard's and drops 23 of the 27
-                 inline kinds; tracked as its own row. -->
-            <label data-i18n-title="headerFooterSettingsDialog.linkReason" class="dialog-check" title="Unlinking has to copy the inherited header into this section, which the engine cannot do yet"><input id="headerFooterLinkToPrevious" type="checkbox" disabled aria-describedby="headerFooterLinkReason" /><span data-i18n="headerFooterSettingsDialog.linkToPrevious">Link to previous</span></label>
-            <p data-i18n="headerFooterSettingsDialog.linkReason" id="headerFooterLinkReason" class="dialog-note">Unlinking has to copy the inherited header into this section, which the engine cannot do yet — so this shows what the document says and cannot be changed.</p>
+            <!-- Link to previous, LIVE (HF-192). ONLYOFFICE ships one `chSameAs`
+                 checkbox on its contextual tab (`view/HeaderFooterTab.js:219`),
+                 acting on the band the caret is in. This dialog opens from the
+                 BODY, where "which band" has no answer (`docs/129` §5), so it
+                 offers one per band — header and footer link independently
+                 (`docs/85` §8d Q7) — for the page in view. Unlinking copies the
+                 inherited band into the section, page number and pictures
+                 included (`casual_doc_edit::clone`, #645), so nothing on the page
+                 changes until it is edited. They apply at once, like the two
+                 switches above, because they are the same commands as the band
+                 bar's checkbox and the Insert menu's rows. On the first section
+                 both are DISABLED and the reason is on screen, which is what
+                 ONLYOFFICE does (`controller/HeaderFooterTab.js:247`). -->
+            <label class="dialog-check"><input id="headerFooterLinkHeader" type="checkbox" aria-describedby="headerFooterLinkReason" /><span data-i18n="headerFooterSettingsDialog.linkHeader">Header: link to previous section</span></label>
+            <label class="dialog-check"><input id="headerFooterLinkFooter" type="checkbox" aria-describedby="headerFooterLinkReason" /><span data-i18n="headerFooterSettingsDialog.linkFooter">Footer: link to previous section</span></label>
+            <p data-i18n="headerFooterSettingsDialog.firstSectionReason" id="headerFooterLinkReason" class="dialog-note" hidden>The first section has no previous section to link to.</p>
           </fieldset>
           <fieldset class="dialog-group">
             <legend data-i18n="headerFooterSettingsDialog.pageNumbering">Page numbering</legend>
@@ -1694,6 +1729,70 @@
          …) is also left out: the field takes any text, so a preset list is a
          convenience, and it would be eight more sentences in eighteen languages
          buying no capability. -->
+    <!-- Page borders (HF-193). `page_borders.mjs` has the competitor shape and
+         what is deliberately not offered. -->
+    <div id="pageBordersDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="pageBordersTitle" aria-describedby="pageBordersDescription">
+      <section class="dialog-card page-borders-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="pageBordersDialog.title" id="pageBordersTitle">Page borders</h2>
+              <p data-i18n="pageBordersDialog.description" id="pageBordersDescription">A border drawn around the pages of the document.</p>
+            </div>
+          </div>
+          <button data-i18n-title="pageBordersDialog.close.title" data-i18n-label="pageBordersDialog.close.label" id="pageBordersClose" type="button" class="dialog-close" title="Close" aria-label="Close page borders">
+            <span class="ms" aria-hidden="true">close</span>
+          </button>
+        </header>
+        <div class="dialog-body">
+          <fieldset class="dialog-group page-borders-edges">
+            <legend data-i18n="pageBordersDialog.edges">Borders on</legend>
+            <label class="dialog-check"><input id="pageBordersTop" type="checkbox" checked /><span data-i18n="pageBordersDialog.top">Top</span></label>
+            <label class="dialog-check"><input id="pageBordersBottom" type="checkbox" checked /><span data-i18n="pageBordersDialog.bottom">Bottom</span></label>
+            <label class="dialog-check"><input id="pageBordersLeft" type="checkbox" checked /><span data-i18n="pageBordersDialog.left">Left</span></label>
+            <label class="dialog-check"><input id="pageBordersRight" type="checkbox" checked /><span data-i18n="pageBordersDialog.right">Right</span></label>
+          </fieldset>
+          <div class="dialog-field-grid">
+            <label data-i18n="pageBordersDialog.style" class="dialog-field">Style<select id="pageBordersStyle" class="dialog-select">
+              <option data-i18n="pageBordersDialog.styleSingle" value="single">Single</option>
+              <option data-i18n="pageBordersDialog.styleDouble" value="double">Double</option>
+              <option data-i18n="pageBordersDialog.styleDotted" value="dotted">Dotted</option>
+              <option data-i18n="pageBordersDialog.styleDashed" value="dashed">Dashed</option>
+              <option data-i18n="pageBordersDialog.styleDotDash" value="dotDash">Dot dash</option>
+              <option data-i18n="pageBordersDialog.styleTriple" value="triple">Triple</option>
+              <option data-i18n="pageBordersDialog.styleThick" value="thick">Thick</option>
+              <option data-i18n="pageBordersDialog.styleWave" value="wave">Wave</option>
+            </select></label>
+            <label data-i18n="pageBordersDialog.width" class="dialog-field">Width<select id="pageBordersWidth" class="dialog-select"></select></label>
+            <label data-i18n="pageBordersDialog.color" class="dialog-field">Color<input id="pageBordersColor" type="color" value="#000000" /></label>
+          </div>
+          <div class="dialog-field-grid">
+            <label data-i18n="pageBordersDialog.showOn" class="dialog-field">Show on<select id="pageBordersDisplay" class="dialog-select">
+              <option data-i18n="pageBordersDialog.allPages" value="allPages">Every page</option>
+              <option data-i18n="pageBordersDialog.firstPage" value="firstPage">First page only</option>
+              <option data-i18n="pageBordersDialog.notFirstPage" value="notFirstPage">Every page except the first</option>
+            </select></label>
+            <label data-i18n="pageBordersDialog.measureFrom" class="dialog-field">Measure from<select id="pageBordersOffsetFrom" class="dialog-select">
+              <option data-i18n="pageBordersDialog.pageEdge" value="page">Edge of page</option>
+              <option data-i18n="pageBordersDialog.text" value="text">Text</option>
+            </select></label>
+            <label data-i18n="pageBordersDialog.spacing" class="dialog-field">Spacing (pt)<input id="pageBordersSpacing" type="number" inputmode="numeric" min="0" max="31" step="1" value="24" /></label>
+          </div>
+          <label id="pageBordersApplyToField" data-i18n="pageBordersDialog.applyTo" class="dialog-field">Apply to<select id="pageBordersApplyTo" class="dialog-select">
+            <option data-i18n="pageBordersDialog.wholeDocument" value="document">Whole document</option>
+            <option data-i18n="pageBordersDialog.thisSection" value="section">This section</option>
+          </select></label>
+        </div>
+        <footer class="dialog-foot">
+          <span data-i18n="pageBordersDialog.note" class="dialog-note">Clear every edge to remove the border. Can be undone.</span>
+          <div class="dialog-actions">
+            <button data-i18n="pageBordersDialog.cancel" type="button" id="pageBordersCancel" class="dialog-button">Cancel</button>
+            <button data-i18n="pageBordersDialog.apply" type="button" id="pageBordersApply" class="dialog-button dialog-button-primary">Apply</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
     <div id="watermarkDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="watermarkTitle" aria-describedby="watermarkDescription">
       <section class="dialog-card watermark-dialog">
         <header class="dialog-head">
@@ -1960,6 +2059,45 @@
       <button data-i18n="break.section.continuous" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.continuous">Section break (continuous)</button>
       <button data-i18n="break.section.evenPage" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.evenPage">Section break (even page)</button>
       <button data-i18n="break.section.oddPage" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.oddPage">Section break (odd page)</button>
+    </div>
+    <!-- The Layout face's copy of the same roster (HF-203); `breaks.spec.mjs` holds the two equal. -->
+    <div data-i18n-label="panelInsert.breaks.label" id="layoutBreaksMenu" class="context-menu" hidden role="menu" aria-label="Breaks">
+      <button data-i18n="break.blankPage" type="button" role="menuitem" class="menu-item" data-command="layout.blankPage">Blank page</button>
+      <button data-i18n="break.page" type="button" role="menuitem" class="menu-item" data-command="layout.break.page">Page break</button>
+      <button data-i18n="break.column" type="button" role="menuitem" class="menu-item" data-command="layout.break.column">Column break</button>
+      <div class="menu-divider"></div>
+      <button data-i18n="break.section.nextPage" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.nextPage">Section break (next page)</button>
+      <button data-i18n="break.section.continuous" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.continuous">Section break (continuous)</button>
+      <button data-i18n="break.section.evenPage" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.evenPage">Section break (even page)</button>
+      <button data-i18n="break.section.oddPage" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.oddPage">Section break (odd page)</button>
+    </div>
+
+    <!-- The open header's or footer's own bar (HF-192, RM-23) — Google Docs'
+         shape: while a band is open it carries its own small chrome. ONLYOFFICE
+         carries the same controls on a contextual Header & Footer tab
+         (`view/HeaderFooterTab.js` L63-87); this chrome has no contextual tab to
+         spend, so they sit where the band is. `editor_header_footer.mjs` moves
+         this ONE element onto the open page's sheet; every command on it is also
+         an Insert-menu row and a palette row. Link to previous is DISABLED, with
+         its reason as the title, on the first section, which ONLYOFFICE does too
+         (`controller/HeaderFooterTab.js:247`). -->
+    <div data-i18n-label="runningBand.toolbar.label" id="runningBandBar" class="running-band-bar" role="toolbar" aria-label="Header and footer" hidden>
+      <label data-i18n-title="runningBand.linkHeaderTitle" id="runningBandLinkWrap" class="running-band-check" title="Show the previous section's header here, or give this section its own"><input id="runningBandLink" type="checkbox" /><span data-i18n="runningBand.linkToPrevious">Link to previous</span></label>
+      <label class="running-band-check"><input id="runningBandFirstPage" type="checkbox" /><span data-i18n="runningBand.differentFirstPage">Different first page</span></label>
+      <button data-i18n="runningBand.options" id="runningBandOptionsBtn" type="button" class="running-band-button" aria-haspopup="menu" aria-controls="runningBandMenu" aria-expanded="false">Options</button>
+      <button data-i18n-title="runningBand.close.title" data-i18n-label="runningBand.close.label" id="runningBandCloseBtn" type="button" class="running-band-button running-band-close" title="Close the header and footer (Esc)" aria-label="Close header and footer"><span class="ms" aria-hidden="true">close</span></button>
+    </div>
+    <div data-i18n-label="runningBand.options.label" id="runningBandMenu" class="context-menu" hidden role="menu" aria-label="Header and footer options">
+      <button data-i18n="runningBand.differentOddEven" id="runningBandOddEven" type="button" role="menuitemcheckbox" aria-checked="false" class="menu-item">Different odd and even pages</button>
+      <div class="menu-divider"></div>
+      <button data-i18n="runningBand.pageNumberLeft" type="button" role="menuitem" class="menu-item" data-page-number-align="left">Page number at the left</button>
+      <button data-i18n="runningBand.pageNumberCenter" type="button" role="menuitem" class="menu-item" data-page-number-align="center">Page number in the center</button>
+      <button data-i18n="runningBand.pageNumberRight" type="button" role="menuitem" class="menu-item" data-page-number-align="right">Page number at the right</button>
+      <button data-i18n="runningBand.pageNumberHere" id="runningBandPageNumberHere" type="button" role="menuitem" class="menu-item">Page number at the cursor</button>
+      <div class="menu-divider"></div>
+      <button data-i18n="runningBand.settings" id="runningBandSettings" type="button" role="menuitem" class="menu-item">Header and footer options…</button>
+      <button data-i18n="runningBand.removeHeader" id="runningBandRemoveHeader" type="button" role="menuitem" class="menu-item">Remove header</button>
+      <button data-i18n="runningBand.removeFooter" id="runningBandRemoveFooter" type="button" role="menuitem" class="menu-item" hidden>Remove footer</button>
     </div>
 
     <!-- A size grid, not a menu: the container is a dialog holding a `role="grid"`
@@ -3561,7 +3699,9 @@
              higher numbers are shed first as the window narrows, mirroring how
              Word drops its lowest-value indicators. Separators are generated in
              CSS so a shed count cannot orphan one. -->
-        <span class="stats" id="stats" hidden>
+        <!-- A button as well as a readout (HF-051): Word opens its Word Count
+             dialog from a click on these counts. -->
+        <span class="stats" id="stats" role="button" tabindex="0" aria-haspopup="dialog" hidden>
           <span data-i18n="stats.0Words" id="statWords" data-status-priority="1">0 words</span>
           <span data-i18n="stats.0Characters" id="statChars" data-status-priority="2">0 characters</span>
           <span data-i18n="stats.0Paragraphs" id="statParas" data-status-priority="3">0 paragraphs</span>

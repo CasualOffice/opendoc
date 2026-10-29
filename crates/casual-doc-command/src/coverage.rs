@@ -32,6 +32,7 @@ const SECTIONS: &str = "Mirrored margins are a document-wide setting a person ch
 const REFERENCES: &str = "Removing a field or a paragraph-spanning field (unlinking it to plain text) has no editor gesture to share yet; inserting and updating tables of contents, captions and cross-references is offered (docs/181 §12, lane references).";
 const NOTES: &str =
     "Removing a note or a header/footer body is not offered yet; inserting them is.";
+const PAGE_BORDERS: &str = "Page borders are a person's design choice in the Page Borders dialog; no agent command offers them yet.";
 const PROTECTION: &str =
     "Protection and tracking settings are a person's decision, never an agent's.";
 
@@ -116,6 +117,7 @@ classify! {
     SetSectionTitlePage => Agent,
     SetSectionWatermark => Agent,
     SetSectionLineNumbering => Agent,
+    SetSectionPageBorders => NotExposed(PAGE_BORDERS),
     SetSectionPageNumbering => Agent,
     SetSectionVerticalAlignment => Agent,
     SetEvenAndOddHeaders => Agent,

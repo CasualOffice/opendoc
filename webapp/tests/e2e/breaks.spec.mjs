@@ -106,6 +106,41 @@ test("the Breaks dropdown offers all seven, from the ribbon and from the Insert 
   }
 });
 
+// HF-203's third face. Word files Breaks under Layout ▸ Page Setup, and
+// ONLYOFFICE injects the one button into slots on both Insert and Layout
+// (`Toolbar.template:95` and `:143`). Read the EFFECT, not the markup: the Layout
+// copy must be enabled at a caret, hold exactly the Insert copy's rows, and a
+// page break from it must really add a page.
+test("the Layout band carries the same Breaks dropdown, and it inserts", async ({
+  page,
+  consoleErrors,
+}) => {
+  const pages = await blankDocumentWithText(page, "Laid out");
+  await expect(pages).toHaveCount(1);
+  await page.locator('[data-tab="insert"]').click();
+  await page.locator("#insertBreaksBtn").click();
+  const insertRoster = await page
+    .locator("#insertBreaksMenu [data-command]")
+    .evaluateAll((rows) => rows.map((r) => `${r.dataset.command}|${r.textContent}`));
+  await page.keyboard.press("Escape");
+
+  await page.locator('[data-tab="layout"]').click();
+  await expect(page.locator("#layoutBreaksBtn")).toBeEnabled();
+  await page.locator("#layoutBreaksBtn").click();
+  await expect(page.locator("#layoutBreaksMenu")).toBeVisible();
+  await expect(page.locator("#layoutBreaksBtn")).toHaveAttribute("aria-expanded", "true");
+  const layoutRoster = await page
+    .locator("#layoutBreaksMenu [data-command]")
+    .evaluateAll((rows) => rows.map((r) => `${r.dataset.command}|${r.textContent}`));
+  expect(layoutRoster).toEqual(insertRoster);
+  expect(layoutRoster).toHaveLength(7);
+
+  await page.locator('#layoutBreaksMenu [data-command="layout.break.page"]').click();
+  await expect(page.locator("#layoutBreaksMenu")).toBeHidden();
+  await expect(pages).toHaveCount(2);
+  expect(consoleErrors).toEqual([]);
+});
+
 test("a page break starts a new page, and the text after the caret is on it", async ({
   page,
   consoleErrors,

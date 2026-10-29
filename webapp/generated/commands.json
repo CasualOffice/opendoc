@@ -1124,6 +1124,75 @@
     },
     {
       "emits": [
+        "CreateHeaderFooterBody",
+        "SetSectionRunningRef"
+      ],
+      "example": {
+        "band": "header",
+        "linked": false,
+        "op": "link_to_previous",
+        "section": 1
+      },
+      "family": "headers_footers",
+      "id": "link_to_previous",
+      "summary": "Link a section's header or footer to the previous section's, or give it its own copy (page number, pictures and all) to change on its own.",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "layout.header.linkToPrevious",
+        "layout.footer.linkToPrevious"
+      ]
+    },
+    {
+      "emits": [
+        "CreateHeaderFooterBody",
+        "SetSectionRunningRef"
+      ],
+      "example": {
+        "band": "footer",
+        "op": "remove_header_footer",
+        "section": 0
+      },
+      "family": "headers_footers",
+      "id": "remove_header_footer",
+      "summary": "Remove the header or footer a section shows, from that section and the sections linked to it, never from an earlier one.",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "layout.header.remove",
+        "layout.footer.remove"
+      ]
+    },
+    {
+      "emits": [
+        "CreateHeaderFooterBody",
+        "SetSectionRunningRef",
+        "SplitParagraph",
+        "SetParagraphProperties",
+        "InsertField"
+      ],
+      "example": {
+        "band": "footer",
+        "op": "insert_page_number",
+        "section": 0,
+        "side": "center"
+      },
+      "family": "headers_footers",
+      "id": "insert_page_number",
+      "summary": "Put a page number in a section's header or footer, left, centred or right; the band is created when there is none, and what it holds is kept.",
+      "trackable": "no",
+      "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "layout.pageNumber.topLeft",
+        "layout.pageNumber.topCenter",
+        "layout.pageNumber.topRight",
+        "layout.pageNumber.bottomLeft",
+        "layout.pageNumber.bottomCenter",
+        "layout.pageNumber.bottomRight"
+      ]
+    },
+    {
+      "emits": [
         "InsertInlineObject",
         "SetChartDefinition"
       ],
@@ -1141,7 +1210,8 @@
       "trackable": "no",
       "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
       "uiCommands": [
-        "insert.chart"
+        "insert.chart",
+        "insert.chart."
       ]
     },
     {
@@ -1426,7 +1496,10 @@
         "insert_header",
         "insert_footer",
         "set_different_first_page",
-        "set_different_odd_even"
+        "set_different_odd_even",
+        "link_to_previous",
+        "remove_header_footer",
+        "insert_page_number"
       ],
       "name": "headers_footers"
     },
@@ -1795,5 +1868,5 @@
     }
   ],
   "uiNotExposedCeiling": 84,
-  "vocabularyVersion": "1.3"
+  "vocabularyVersion": "1.5"
 }

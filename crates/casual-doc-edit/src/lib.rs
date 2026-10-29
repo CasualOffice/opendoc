@@ -37,6 +37,7 @@ use std::collections::HashSet;
 use casual_doc_model::v1::FieldUpdateState;
 use casual_doc_model::v1::FormFieldKind;
 use casual_doc_model::v1::LineNumbering;
+use casual_doc_model::v1::PageBorders;
 use casual_doc_model::v1::PageNumbering;
 use casual_doc_model::v1::PageVerticalAlignment;
 use casual_doc_model::v1::PaginatedField;
@@ -1236,6 +1237,23 @@ pub enum Operation {
         section: SectionId,
         /// The rule to install; the empty value turns numbering off.
         line_numbering: LineNumbering,
+    },
+    /// Replace one section's page borders (`w:pgBorders`) — Word's Borders and
+    /// Shading ▸ Page Border — leaving every other section property alone
+    /// (HF-193).
+    ///
+    /// Self-inverse, carrying the previous borders. The EMPTY value removes
+    /// them, which is what import produces for a section without `w:pgBorders`
+    /// and what export skips. Rejected (doc left unchanged) if an edge falls
+    /// outside the model's domain: an empty or over-long style token, a width
+    /// over `w:sz`'s 1024 eighth-points, or a spacing over 31 points.
+    ///
+    /// Boxed to keep the enum small — four edges each carry a style `String`.
+    SetSectionPageBorders {
+        /// The section to update.
+        section: SectionId,
+        /// The borders to install; the empty value removes them.
+        page_borders: Box<PageBorders>,
     },
     /// Replace one section's page numbering (`w:pgNumType`) — the format the
     /// `PAGE` field renders in, and the number the section's first page takes —
@@ -3059,6 +3077,33 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
                 line_numbering: previous,
             })
         }
+        Operation::SetSectionPageBorders {
+            section,
+            page_borders,
+        } => {
+            let boundary = doc
+                .definitions_mut()
+                .sections
+                .iter_mut()
+                .find(|candidate| candidate.id == *section)
+                .ok_or(EditError::NodeNotFound)?;
+            let previous = core::mem::replace(&mut boundary.page_borders, (**page_borders).clone());
+            if doc.validate().is_err() {
+                // Put the section back before reporting, so a rejected edit
+                // leaves the document exactly as it was.
+                doc.definitions_mut()
+                    .sections
+                    .iter_mut()
+                    .find(|candidate| candidate.id == *section)
+                    .expect("the section we just found still exists")
+                    .page_borders = previous;
+                return Err(EditError::ValueTooLarge);
+            }
+            Ok(Operation::SetSectionPageBorders {
+                section: *section,
+                page_borders: Box::new(previous),
+            })
+        }
         Operation::SetSectionPageNumbering {
             section,
             page_numbering,
@@ -4355,6 +4400,51 @@ pub fn picture_border(document: &Document, object: NodeId) -> Option<Option<Shap
             }
         }
         None
+    }
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| in_blocks(blocks, object))
+}
+
+/// The media entry of the picture `object` when it is a picture of its OWN — an
+/// in-line or a floating drawing on any surface, inside any inline container —
+/// and `None` otherwise, a member of a shape group included.
+///
+/// A group member is excluded on purpose: its size is in the group's child
+/// coordinate space, so "its natural size" is not a size the extent setters
+/// accept for it. This is the read face Reset size and Crop to fit / fill stand
+/// on (`docs/109` RM-29).
+///
+/// **O(document)**, one walk over every surface.
+#[must_use]
+pub fn standalone_picture_media(document: &Document, object: NodeId) -> Option<MediaId> {
+    fn in_blocks(blocks: &[BlockNode], object: NodeId) -> Option<MediaId> {
+        blocks.iter().find_map(|block| match block {
+            BlockNode::Paragraph(paragraph) => in_inlines(&paragraph.inlines, object),
+            BlockNode::Table(table) => table.rows.iter().find_map(|row| {
+                row.cells
+                    .iter()
+                    .find_map(|cell| in_blocks(&cell.blocks, object))
+            }),
+            BlockNode::Sdt(sdt) => in_blocks(&sdt.blocks, object),
+            BlockNode::AltChunk(_) => None,
+        })
+    }
+    fn in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<MediaId> {
+        inlines.iter().find_map(|inline| match inline {
+            InlineNode::Drawing(drawing) if drawing.id == object => Some(drawing.media),
+            InlineNode::AnchoredDrawing(drawing) if drawing.id == object => Some(drawing.media),
+            _ => match inline_descent(inline) {
+                InlineDescent::Inlines(nested) => in_inlines(nested, object),
+                InlineDescent::Blocks(blocks) => in_blocks(blocks, object),
+                // A group member is not standalone (see the doc comment), but a
+                // picture in a text box INSIDE a group is.
+                InlineDescent::Group(children) => {
+                    find_in_group_block_stories(children, &mut |blocks| in_blocks(blocks, object))
+                }
+                InlineDescent::Leaf => None,
+            },
+        })
     }
     surface_block_lists(document)
         .into_iter()
@@ -11977,6 +12067,8 @@ mod tests {
                 height_emu: 457_200,
             },
             prog_id: None,
+            anchor: None,
+            relative_height: None,
         }));
         let projection = Chart {
             font: None,
@@ -14644,6 +14736,107 @@ mod tests {
         assert_eq!(drawing_extent(&d, object), resized);
     }
 
+    /// HF-195: a paragraph in a text box that sits inside an inline content
+    /// control, or inside a pending tracked insertion, takes the three keystroke
+    /// operations — typing, Enter and Backspace at the start — and each one's
+    /// inverse restores it.
+    ///
+    /// The walks that resolve, split and join a paragraph by id once omitted
+    /// `Sdt` and `Revision`, so every keystroke in such a box answered
+    /// `NodeNotFound`. They now descend the declared container set
+    /// (`inline_descent`), and this pins the guarantee for both wrappers. The
+    /// mutation that drives it red is making `inline_descent` answer `Leaf` for
+    /// `Sdt` (or for `Revision`) in `casual-doc-model`.
+    #[test]
+    fn a_text_box_inside_a_content_control_or_a_tracked_insertion_takes_keystrokes() {
+        let wrappers: [(&str, fn(InlineNode) -> InlineNode); 2] = [
+            ("content control", |boxed| sdt_holding(4, vec![boxed])),
+            ("tracked insertion", |boxed| {
+                InlineNode::Revision(Box::new(Revision {
+                    id: n(4),
+                    kind: RevisionKind::Insertion,
+                    author: Some("Reviewer".to_owned()),
+                    date: None,
+                    revision_id: Some("4".to_owned()),
+                    editor_group: None,
+                    inlines: vec![boxed],
+                }))
+            }),
+        ];
+        for (label, wrap) in wrappers {
+            let inner = n(7);
+            let boxed =
+                InlineNode::TextBox(text_box_holding(6, vec![para(7, vec![run(8, "Cap")])]));
+            let mut d = doc(vec![para(2, vec![run(3, "host"), wrap(boxed)])]);
+            let mut ids = IdGenerator::new(900);
+
+            let typed = apply(
+                &mut d,
+                &mut ids,
+                &Operation::InsertText {
+                    at: Pos::new(inner, 3),
+                    text: "tion".to_owned(),
+                },
+            )
+            .unwrap_or_else(|e| panic!("typing in a box inside a {label}: {e:?}"));
+            assert_eq!(
+                runs_text(
+                    &find_paragraph(d.body(), inner)
+                        .expect("the box paragraph")
+                        .inlines
+                ),
+                "Caption",
+                "the typed text lands in the box inside the {label}"
+            );
+
+            let second = n(950);
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::SplitParagraph {
+                    at: Pos::new(inner, 3),
+                    new_id: second,
+                    properties: None,
+                },
+            )
+            .unwrap_or_else(|e| panic!("Enter in a box inside a {label}: {e:?}"));
+            assert!(
+                find_paragraph(d.body(), second).is_some(),
+                "Enter makes a second paragraph inside the box inside the {label}"
+            );
+
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::JoinParagraphs {
+                    first: inner,
+                    second,
+                    properties: None,
+                },
+            )
+            .unwrap_or_else(|e| panic!("Backspace at the start inside a {label}: {e:?}"));
+            assert!(find_paragraph(d.body(), second).is_none());
+            assert_eq!(
+                runs_text(&find_paragraph(d.body(), inner).expect("joined").inlines),
+                "Caption",
+                "Backspace at the second paragraph's start joins it back, inside the {label}"
+            );
+
+            apply(&mut d, &mut ids, &typed)
+                .unwrap_or_else(|e| panic!("undoing the typing inside a {label}: {e:?}"));
+            assert_eq!(
+                runs_text(
+                    &find_paragraph(d.body(), inner)
+                        .expect("the box paragraph")
+                        .inlines
+                ),
+                "Cap",
+                "and the typing's inverse restores the box inside the {label}"
+            );
+            assert_eq!(text_of(&d, n(2)), "host", "the host paragraph is untouched");
+        }
+    }
+
     /// The authored extent of the drawing `object`, wherever it lives.
     fn drawing_extent(document: &Document, object: NodeId) -> Option<casual_doc_model::v1::Extent> {
         find_drawing(document, object).and_then(|drawing| drawing.extent)
@@ -14773,6 +14966,8 @@ mod tests {
                 height_emu: 457_200,
             },
             prog_id: None,
+            anchor: None,
+            relative_height: None,
         }));
         let mut d = Document::new(
             n(1000),

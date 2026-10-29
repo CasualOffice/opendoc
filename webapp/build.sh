@@ -131,14 +131,23 @@ run_wasm_pack() {
   # — `webapp/src/web_fonts.mjs` currently fetches Roboto, Noto Sans and Noto
   # Serif and none of these four families. Owner call, font-provisioning lane.
   #
-  # `pdf-import` (`docs/182` P2): File -> Open accepts a PDF, imported through
-  # the staged `beginPdfImport` job. Its size cost is recorded in
-  # `tests/wasm_size.test.mjs` and `docs/182` §17.
+  # No PDF reader here (`docs/182` §17a): File -> Open accepts a PDF, but the
+  # reader, the importer and OCR are the SECOND module below, fetched the first
+  # time a PDF is opened. `tests/wasm_size.test.mjs` holds this one to its
+  # pre-PDF ceilings and proves it links no hayro.
   wasm-pack build "$repo/crates/casual-doc-wasm" \
     --target web \
     --out-dir "$here/pkg" \
     --out-name casual_doc_wasm \
-    -- --features web-host-fonts,pdf-import
+    -- --features web-host-fonts
+  # The PDF module (`casual-doc-wasm-pdf`): hayro, the reader, the fixed-layout
+  # importer and PP-OCRv5 on rten, with no bundled faces, CMaps or models.
+  # `src/pdf_module.mjs` imports it on the first PDF open; its own budget is in
+  # `tests/wasm_size.test.mjs`.
+  wasm-pack build "$repo/crates/casual-doc-wasm-pdf" \
+    --target web \
+    --out-dir "$here/pkg-pdf" \
+    --out-name casual_doc_wasm_pdf
 }
 
 build_with_retry() {

@@ -480,6 +480,7 @@ const ed = {
   get pageSetup() { return pageSetup; },
   get pageWindow() { return pageWindow; }, set pageWindow(v) { pageWindow = v; },
   get pages() { return pages; },
+  get pdfCommands() { return pdfCommands; }, set pdfCommands(v) { pdfCommands = v; },
   get pagesEl() { return pagesEl; },
   get pagesPanel() { return pagesPanel; },
   get pagesPanelView() { return pagesPanelView; },
@@ -646,7 +647,7 @@ const ed = {
   get saveFormatEl() { return saveFormatEl; },
   get saveSettings() { return saveSettings; },
   get scaleOf() { return scaleOf; },
-  get scheduleChromeRefresh() { return scheduleChromeRefresh; },
+  get scheduleChromeRefresh() { return scheduleChromeRefresh; }, get wordCount() { return wordCount; },
   get scheduleReviewInlineCardHide() { return scheduleReviewInlineCardHide; },
   get scheduleReviewMarginRender() { return scheduleReviewMarginRender; },
   get scrollCaretIntoView() { return scrollCaretIntoView; },
@@ -1689,6 +1690,8 @@ let chromeRefreshOutline = false;
 let chromeRefreshA11y = false;
 /** The model-derived link currently represented by the host-owned link chip. */
 let activeLink = null;
+/** The PDF commands (`pdf_commands.mjs`), set by the file-open module. */
+let pdfCommands = null;
 /** Armed run formatting for typing at a collapsed caret (e.g. click Bold with no
  *  selection → next typed characters are bold). `null` when nothing is armed; else
  *  a subset of { bold, italic, underline, strike } → boolean. Cleared whenever the
@@ -2632,7 +2635,7 @@ for (const entry of INSERT_SURFACE) {
   // The ¶ control owns both of its halves and its popover's five checkmarks, so
   // it reflects itself rather than being swept here: its state is the ENGINE's
   // `any`, not a local flag, and nothing else on the band knows how to read it.
-  formattingMarks.reflect();
+  formattingMarks.reflect(); wordCount.reflect(); // HF-051: the status bar's "x of y words"
   // Ribbon: undo/redo/view controls need a document; the Table tab is contextual.
   undoBtn.disabled = !doc || !doc.canUndo;
   redoBtn.disabled = !doc || !doc.canRedo;
@@ -2775,7 +2778,7 @@ function runNodeEdit(thunk) {
 }
 const {
   accessChrome, comparePanel, documentProtection, formattingMarks, measurement, redlineOf,
-  showChange,
+  showChange, wordCount,
 } = createDocTools(ed);
 const {
   reflectTableProperties, toggleSplitCellDialog, toggleTableProperties,

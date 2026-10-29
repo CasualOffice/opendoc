@@ -5,7 +5,7 @@
 // answer is whether the gesture reaches the ENGINE and whether the DOCUMENT
 // changed — so every assertion here is about engine-reported state or about
 // what is now under the pointer, never about a DOM node existing.
-import { test, expect, gotoEditor, clickIntoFirstPage, stableBox, MOD } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, stableBox, runPaletteCommand, MOD } from "./fixtures.mjs";
 
 async function gotoFloat(page) {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -186,6 +186,39 @@ test("two shapes can be held together and grouped, and one undo separates them",
   await page.waitForTimeout(300);
   await expect(page.locator("#pages")).not.toHaveAttribute("data-object-kind", "group");
 
+  expect(consoleErrors).toEqual([]);
+});
+
+// RM-28: Arrange ▸ Align over a Ctrl/⌘+click selection, from the palette (the
+// right-click menu's flattening), and one undo for the whole arrangement.
+// Mutation: `object_align.mjs` sending only the primary node (`[nodes[0]]`)
+// makes the selected-objects target refuse, and the row is not enabled.
+test("two held shapes align their tops in one step, from the palette, and undo together", async ({
+  page,
+  consoleErrors,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await drawShape(page, "rect", { x: 0.12, y: 0.18 }, { x: 0.35, y: 0.3 });
+  const box = await drawShape(page, "ellipse", { x: 0.55, y: 0.28 }, { x: 0.8, y: 0.42 });
+  // The primary selection's own outline: the held shape's carries `is-co-selected`.
+  const primary = async () => stableBox(page.locator(".overlay .object-outline:not(.is-co-selected)").first());
+  const second = await primary();
+
+  const modifier = process.platform === "darwin" ? "Meta" : "Control";
+  await page.keyboard.down(modifier);
+  await page.mouse.click(box.x + box.width * 0.2, box.y + box.height * 0.26);
+  await page.keyboard.up(modifier);
+  await expect(page.locator(".overlay .object-outline.is-co-selected")).toHaveCount(1);
+
+  await runPaletteCommand(page, "object.align.top", "align top");
+  await expect(page.locator("#status")).toContainText("Objects aligned");
+  const aligned = await primary();
+  expect(aligned.y, "the lower shape rose to the upper one's top").toBeLessThan(second.y - 20);
+
+  await page.keyboard.press(`${MOD}+z`);
+  await expect.poll(async () => Math.round((await primary()).y)).toBe(Math.round(second.y));
   expect(consoleErrors).toEqual([]);
 });
 

@@ -119,7 +119,9 @@ use casual_doc_model::v1::{CROP_FULL, CropRect};
 #[cfg(test)]
 use casual_doc_model::v1::NoteId;
 use casual_doc_model::v1::NoteKind;
+use casual_doc_model::v1::PageBorders;
 use casual_doc_model::v1::PageVerticalAlignment;
+use casual_doc_model::v1::{DashStyle, LineEnd, LineEndKind};
 use casual_doc_model::v1::{DocumentProtection, DocumentProtectionEdit};
 use casual_doc_model::v1::{
     DropCapFrame, DropCapMode, FrameHorizontalAlignment, FrameHorizontalAnchor,
@@ -164,6 +166,10 @@ mod window;
 // the same reason as `references`: one feature, one document walk per command,
 // and this file is already 40k lines and is owned by other lanes.
 mod objects;
+
+// Arrange ▸ Align and Distribute over floating objects (`docs/109` RM-28): one
+// command, emitted as `SetAnchor`s in one action.
+mod object_align;
 
 // Moving an in-line object to a new place in the text (`docs/109` UX-OB-02).
 // Its own module for the reason `objects` gives, and because the whole feature
@@ -265,10 +271,15 @@ mod presence;
 // write and the gate that decides when the write survives a save.
 mod chart;
 
-// The staged PDF import (`docs/182` §6, P2): begin, step a page budget, cancel,
-// and an atomic finish into a session. Its own module because it is one binding
-// over `casual-doc-io`'s job and touches no live document until `finish`.
+// A PDF-origin session (`docs/182` §17a): the lazily loaded PDF module imports,
+// this module opens its package, and the byte-preserving save calls back into
+// that module for the hayro half. No PDF reader is linked here.
 mod pdf_import;
+
+// Header and footer band commands: Link to Previous, Remove, page-number
+// positions (`docs/109` HF-192, RM-23). Its own module for the reason `objects`
+// gives; the lowerings are `casual_doc_command::sections`, shared with agents.
+mod running;
 
 mod ai; // `editor.ai`: the in-page assistant's reads and private preview (`docs/181` §4.4).
 // The opt-in sparse-strip raster (`docs/architecture/179`, ADR-073 Proposed): one more export
@@ -990,6 +1001,7 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::UpdateReviewState { .. } => HistoryKind::Review,
         Operation::SetSectionGeometry { .. }
         | Operation::SetSectionLineNumbering { .. }
+        | Operation::SetSectionPageBorders { .. }
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetSectionWatermark { .. } => HistoryKind::PageSetup,
@@ -1221,38 +1233,35 @@ impl WasmDocument {
             && !matches!(mode, ExportMode::ExactIfUnchanged)
             && self.revision != 0;
         let statistics = refresh.then(|| self.current_statistics());
-        // A PDF opened here and saved as PDF before any edit is the original file,
-        // byte for byte (`docs/182` §7, MF-I4): the retained bytes, not a
-        // regeneration. Every other PDF save is the semantic writer below.
-        let original = (format.as_str() == formats::PDF
-            && mode == ExportMode::ExactIfUnchanged
-            && self.revision == 0)
-            .then(|| pdf_import::retained_original(self.format_state.source.as_ref()))
-            .flatten();
-        let artifact = if let Some(bytes) = original {
-            casual_doc_io::ExportArtifact {
-                bytes,
-                report: IoCompatibilityReport::default(),
-                format: casual_doc_io::FormatProfile {
-                    format: format.clone(),
-                    version: None,
-                },
-                mime_type: "application/pdf".to_owned(),
-                suggested_extension: "pdf".to_owned(),
+        // A PDF opened here and saved as PDF is `casual-doc-io`'s PDF-session save
+        // (`docs/182` §7, §17a): before any edit the original file, byte for byte
+        // (MF-I4); edited, an incremental update when that is safe, through the
+        // PDF module's plan; otherwise the semantic writer, reported. Any other
+        // document saved as PDF is the semantic writer.
+        let pdf_session = self
+            .format_state
+            .source
+            .as_ref()
+            .is_some_and(|source| casual_doc_io::pdf_retained_original(source).is_some());
+        let artifact = if format.as_str() == formats::PDF {
+            let request = ExportRequest {
+                document: &self.document,
+                resources: &self.resources,
+                source: self.format_state.source.as_ref(),
+                source_unchanged: self.revision == 0,
+                mode,
+            };
+            let semantic = |request: ExportRequest<'_>| {
+                PdfAdapter::default().export_with_shaper(request, &self.shaper)
+            };
+            if pdf_session {
+                pdf_import::with_planner(|planner| {
+                    casual_doc_io::export_pdf_session(request, planner, &semantic)
+                })
+            } else {
+                semantic(request)
             }
-        } else if format.as_str() == formats::PDF {
-            PdfAdapter::default()
-                .export_with_shaper(
-                    ExportRequest {
-                        document: &self.document,
-                        resources: &self.resources,
-                        source: self.format_state.source.as_ref(),
-                        source_unchanged: self.revision == 0,
-                        mode,
-                    },
-                    &self.shaper,
-                )
-                .map_err(|error| format!("export {format}: {error}"))?
+            .map_err(|error| format!("export {format}: {error}"))?
         } else {
             let registry = builtin_registry_with_limits(viewer_limits(), viewer_text_limits());
             // The host's opt-in `people.xml` entry (`docs/175` §6.2) on the editor's own Save
@@ -2323,24 +2332,22 @@ impl WasmDocument {
     /// Whether the band this page shows is INHERITED from an earlier section
     /// (Word's "Same as Previous"), rather than declared by the page's own section.
     ///
-    /// A section that declares the applicable variant owns its band; so does one
-    /// that declares only the default the variant falls back to. The first section
-    /// has nothing to inherit from, so it is never "same as previous".
+    /// Per VARIANT, the rule the layout applies (`merge_running_refs`) and the one
+    /// the Link to Previous control writes (`casual_doc_command::sections`): a
+    /// section that declares only a default header still INHERITS the chain's
+    /// first-page header, so its first page is "same as previous". This used to
+    /// count a declared default as owning every variant, which made the band's
+    /// label and the Link to Previous control disagree on such a page (HF-192).
+    /// The first section has nothing to inherit from, so it is never linked.
     fn running_is_linked(&self, page: u32, section_index: usize, region: RunningRegion) -> bool {
-        if section_index == 0 {
-            return false;
-        }
         let kind = self.running_kind_for_page(page, section_index);
-        let Some(section) = self.document.definitions().sections.get(section_index) else {
-            return false;
-        };
-        let references = match region {
-            RunningRegion::Header => &section.headers,
-            RunningRegion::Footer => &section.footers,
-        };
-        !references
-            .iter()
-            .any(|reference| reference.kind == kind || reference.kind == HeaderFooterKind::Default)
+        casual_doc_command::sections::is_linked_to_previous(
+            &self.document,
+            section_index,
+            region,
+            kind,
+        )
+        .unwrap_or(false)
     }
 
     /// One page's own running-content context, as JSON
@@ -4573,6 +4580,9 @@ impl WasmDocument {
                     outline: border.map(|stroke| hex_of(stroke.color)),
                     #[allow(clippy::cast_precision_loss)] // EMU widths are far below 2^53
                     outline_width_emu: border.map(|stroke| stroke.width_emu as f64),
+                    outline_dash: border.map(dash_token),
+                    head_end: border.map(|stroke| line_end_token(stroke.head_end)),
+                    tail_end: border.map(|stroke| line_end_token(stroke.tail_end)),
                 }),
             );
         };
@@ -4581,6 +4591,9 @@ impl WasmDocument {
             outline: shape.stroke.map(|stroke| hex_of(stroke.color)),
             #[allow(clippy::cast_precision_loss)] // EMU widths are far below 2^53
             outline_width_emu: shape.stroke.map(|stroke| stroke.width_emu as f64),
+            outline_dash: shape.stroke.map(dash_token),
+            head_end: shape.stroke.map(|stroke| line_end_token(stroke.head_end)),
+            tail_end: shape.stroke.map(|stroke| line_end_token(stroke.tail_end)),
         }))
     }
 
@@ -4602,6 +4615,61 @@ impl WasmDocument {
             HistoryKind::Formatting,
         )
         .map_err(to_js)
+    }
+
+    /// Word's Shape Fill ▸ Gradient: fills a shape with a two-stop gradient from
+    /// `from` to `to` (`#rrggbb`), linear along `angle_degrees` clockwise from
+    /// the positive x-axis, or radial from the centre when it is omitted — one
+    /// undoable action (`docs/109` RM-30).
+    ///
+    /// # Errors
+    ///
+    /// A malformed colour, or a `shape` that is not a shape (a picture has no
+    /// fill to set).
+    #[wasm_bindgen(js_name = setShapeGradient)]
+    pub fn set_shape_gradient(
+        &mut self,
+        shape: &str,
+        from: &str,
+        to: &str,
+        angle_degrees: Option<f64>,
+    ) -> Result<EditResult, JsValue> {
+        self.set_shape_gradient_inner(shape, from, to, angle_degrees)
+            .map_err(to_js)
+    }
+
+    /// [`set_shape_gradient`](Self::set_shape_gradient) with a plain error, for
+    /// native tests.
+    pub(crate) fn set_shape_gradient_inner(
+        &mut self,
+        shape: &str,
+        from: &str,
+        to: &str,
+        angle_degrees: Option<f64>,
+    ) -> Result<EditResult, String> {
+        let node = NodeId::from_str(shape).map_err(|_| "invalid node id".to_owned())?;
+        if find_shape(&self.document, node).is_none() {
+            return Err(SHAPE_FILL_NOT_A_SHAPE.to_owned());
+        }
+        let colour = |hex: &str| {
+            parse_hex_color(hex)
+                .map(|rgb| Rgba {
+                    r: rgb.r,
+                    g: rgb.g,
+                    b: rgb.b,
+                    a: 255,
+                })
+                .ok_or_else(|| format!("invalid color: {hex}"))
+        };
+        self.apply_action_as(
+            casual_doc_command::objects::set_shape_gradient(
+                node,
+                colour(from)?,
+                colour(to)?,
+                angle_degrees,
+            ),
+            HistoryKind::Formatting,
+        )
     }
 
     /// Word's Shape Outline: sets a shape's outline colour and width (EMU), or
@@ -4633,6 +4701,82 @@ impl WasmDocument {
             HistoryKind::Formatting,
         )
         .map_err(to_js)
+    }
+
+    /// Word's Shape Outline ▸ Dashes and ▸ Arrows, and ONLYOFFICE's line type and
+    /// begin / end arrow styles: sets the dash pattern and the two line ends of
+    /// a shape's outline or a picture's border, as one undoable action that keeps
+    /// the colour and the weight (`docs/109` RM-30).
+    ///
+    /// `dash` is a `DashStyle` token (`dot`, `dash`, `largeDash`, `dashDot`,
+    /// `largeDashDot`, `largeDashDotDot`, `systemDash`, `systemDot`, …) or
+    /// `solid` to clear the pattern; `head_end` / `tail_end` are a
+    /// `LineEndKind` token (`triangle`, `stealth`, `diamond`, `oval`, `arrow`)
+    /// or `none`. An omitted argument keeps what the outline has.
+    ///
+    /// # Errors
+    ///
+    /// An unknown token, or a `shape` that is not a shape or a picture.
+    #[wasm_bindgen(js_name = setShapeOutlineStyle)]
+    pub fn set_shape_outline_style(
+        &mut self,
+        shape: &str,
+        dash: Option<String>,
+        head_end: Option<String>,
+        tail_end: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        self.set_shape_outline_style_inner(
+            shape,
+            dash.as_deref(),
+            head_end.as_deref(),
+            tail_end.as_deref(),
+        )
+        .map_err(to_js)
+    }
+
+    /// [`set_shape_outline_style`](Self::set_shape_outline_style) with a plain
+    /// error, so its refusals are reachable from a native test.
+    pub(crate) fn set_shape_outline_style_inner(
+        &mut self,
+        shape: &str,
+        dash: Option<&str>,
+        head_end: Option<&str>,
+        tail_end: Option<&str>,
+    ) -> Result<EditResult, String> {
+        let node = NodeId::from_str(shape).map_err(|_| "invalid node id".to_owned())?;
+        if find_shape(&self.document, node).is_none()
+            && casual_doc_edit::picture_border(&self.document, node).is_none()
+        {
+            return Err(SHAPE_OUTLINE_NOT_A_SHAPE.to_owned());
+        }
+        let dash = match dash {
+            None => None,
+            Some("solid") => Some(None),
+            Some(token) => Some(Some(outline_token::<DashStyle>(token)?)),
+        };
+        let end = |token: Option<&str>| -> Result<Option<Option<LineEnd>>, String> {
+            Ok(match token {
+                None => None,
+                Some("none") => Some(None),
+                Some(token) => Some(Some(LineEnd {
+                    kind: outline_token::<LineEndKind>(token)?,
+                    width: None,
+                    length: None,
+                })),
+            })
+        };
+        let head_end = end(head_end)?;
+        let tail_end = end(tail_end)?;
+        self.apply_action_as(
+            casual_doc_command::objects::set_shape_outline_style(
+                &self.document,
+                node,
+                dash,
+                head_end,
+                tail_end,
+            ),
+            HistoryKind::Formatting,
+        )
     }
 
     /// Whether the first page of the section owning `page` uses its own
@@ -6480,8 +6624,13 @@ impl WasmDocument {
         end_offset: u32,
         kind: &str,
     ) -> Result<EditResult, JsValue> {
+        // A numbered list is an object with identity (HF-226): it joins the list
+        // beside it or starts a new one, never the session's one list.
+        if kind == "numbered" {
+            return self.toggle_numbered_list(start_node, start_offset, end_node, end_offset);
+        }
         // A checklist is a bullet-style list whose marker is a checkbox; new items
-        // start unchecked. `"numbered"` → numbered; anything else → plain bullet.
+        // start unchecked. Anything else is a plain bullet.
         let checklist = kind == "checklist";
         let (instance, install) = if checklist {
             self.ensure_checklist(false).map_err(to_js)?
@@ -9815,6 +9964,75 @@ impl WasmDocument {
                     restart: payload.restart,
                 },
             ),
+            caret,
+        )
+        .map_err(to_js)
+    }
+
+    /// The page borders of the section holding `node` — the Page Borders dialog's
+    /// read side (HF-193) — as JSON:
+    /// `{"section": id, "sections": [every section id, in order], "borders": {…}}`,
+    /// where `borders` is the model's own camelCase `PageBorders` shape (`display`,
+    /// `offsetFrom`, and `top`/`bottom`/`start`/`end` edges, each absent when unset).
+    /// `null` only when the document has no section at all.
+    ///
+    /// O(document): resolving `node` to its section is a document walk
+    /// (`section_of`). Call it when the dialog opens, not per frame.
+    #[wasm_bindgen(js_name = pageBorders)]
+    #[must_use]
+    pub fn page_borders(&self, node: &str) -> String {
+        let sections = &self.document.definitions().sections;
+        if sections.is_empty() {
+            return "null".to_string();
+        }
+        let current = self.section_of(node);
+        let borders = sections
+            .iter()
+            .find(|candidate| candidate.id.node_id() == current)
+            .map(|candidate| candidate.page_borders.clone())
+            .unwrap_or_default();
+        serde_json::json!({
+            "section": current.to_string(),
+            "sections": sections
+                .iter()
+                .map(|candidate| candidate.id.node_id().to_string())
+                .collect::<Vec<_>>(),
+            "borders": borders,
+        })
+        .to_string()
+    }
+
+    /// Installs page borders on every section `sections` names, from
+    /// `{"sections": [ids], "borders": {…}}` in [`page_borders`](Self::page_borders)'s
+    /// shape — the dialog's Apply, to "This section" or "Whole document". ONE undoable
+    /// action however many sections it covers. An empty `borders` object removes
+    /// them.
+    ///
+    /// Rejected, with the document left exactly as it was, when an id names no
+    /// section or an edge falls outside the model's domain (an empty style token, a
+    /// width over 1024 eighth-points, a spacing over 31 points).
+    #[wasm_bindgen(js_name = setPageBorders)]
+    pub fn set_page_borders(&mut self, payload_json: &str) -> Result<EditResult, JsValue> {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Payload {
+            sections: Vec<String>,
+            borders: PageBorders,
+        }
+        let payload: Payload = serde_json::from_str(payload_json)
+            .map_err(|e| to_js(format!("invalid page borders payload: {e}")))?;
+        let sections = payload
+            .sections
+            .iter()
+            .map(|id| NodeId::from_str(id).map(SectionId::new))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| to_js("invalid section id".to_string()))?;
+        if sections.is_empty() {
+            return Err(to_js("no section to apply page borders to".to_string()));
+        }
+        let caret = Pos::new(self.document.id(), 0);
+        self.apply_action_caret(
+            casual_doc_command::sections::set_page_borders(&sections, &payload.borders),
             caret,
         )
         .map_err(to_js)
@@ -16353,6 +16571,103 @@ impl WasmDocument {
         Ok((inst_id, install))
     }
 
+    /// `toggleList("numbered")`: Word's Numbering button, with list IDENTITY (HF-226,
+    /// `docs/142` §4.1 design D-1 — adjacency-based identity assignment).
+    ///
+    /// The session used to memoise ONE numbered instance, and counters are keyed by
+    /// `(instance, level)`, so every numbered list authored in a session was the same
+    /// list: a second list three paragraphs below a three-item list started at 4. Word
+    /// and Google Docs treat a list as an object, and ONLYOFFICE joins the previous
+    /// paragraph's list only when it is compatible and mints a new one otherwise
+    /// (`sdkjs/word/Editor/Paragraph/Run/RunAutoCorrect.js:991`,
+    /// `private_GetSuitableNumPr`). The rule, for the selection's paragraphs:
+    ///
+    /// 1. the first paragraph is already a numbered item → numbering is turned OFF
+    ///    (any numbered list, imported or ours — Word's toggle);
+    /// 2. else the paragraph immediately BEFORE the selection, in the same surface and
+    ///    container, is a numbered item → JOIN that list at that item's level;
+    /// 3. else the paragraph immediately AFTER it is → join that one (toggling the
+    ///    line above a list extends the list);
+    /// 4. else mint a FRESH instance, whose install operations go at the front of the
+    ///    same transaction, so undo removes the definition with the paragraphs.
+    ///
+    /// No new operation. Bullets and checklists keep their memo: a bullet level has no
+    /// counter, so sharing one definition is unobservable there.
+    ///
+    /// O(document): one ordered walk and one container map, per gesture, never per
+    /// keystroke.
+    fn toggle_numbered_list(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+    ) -> Result<EditResult, JsValue> {
+        let (start, end) = self
+            .order_endpoints(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        let current = paragraph_properties(&self.document, start.node).and_then(|p| p.numbering);
+        let already = current.is_some_and(|n| self.is_numbered_reference(&n));
+        let (target, install) = if already {
+            (None, Vec::new())
+        } else if let Some(join) = self.adjacent_numbered_list(start.node, end.node) {
+            (Some(join), Vec::new())
+        } else {
+            let ids = &mut self.edit_ids;
+            let (instance, install) =
+                casual_doc_command::lists::new_definition(true, &mut || ids.next_id().ok())
+                    .map_err(to_js)?;
+            (Some(NumberingRef { instance, level: 0 }), install)
+        };
+        self.apply_paragraph_props_after(
+            install,
+            start_node,
+            start_offset,
+            end_node,
+            end_offset,
+            HistoryKind::ListFormatting,
+            move |p| {
+                casual_doc_command::paragraph::ParagraphChange::Numbering(target).apply(p);
+            },
+        )
+    }
+
+    /// Whether `reference` names a NUMBERED list: ordered, and not a checklist.
+    fn is_numbered_reference(&self, reference: &NumberingRef) -> bool {
+        self.checklist_state_of_instance(reference.instance)
+            .is_none()
+            && self.numbering_ordered(reference)
+    }
+
+    /// The numbered list the paragraphs `first..=last` should join when numbering is
+    /// turned on: the neighbour immediately before `first`, else the one immediately
+    /// after `last`, when it is a numbered item in the same surface and the same
+    /// container (a table cell's list is not joined from the body). `None` → start a
+    /// new list. O(document).
+    fn adjacent_numbered_list(&self, first: NodeId, last: NodeId) -> Option<NumberingRef> {
+        let order = self.ordered_paragraphs_by_surface();
+        let containers = self.paragraph_container_map();
+        let at = order.iter().position(|(id, _, _)| *id == first)?;
+        let to = order
+            .iter()
+            .position(|(id, _, _)| *id == last)
+            .unwrap_or(at)
+            .max(at);
+        let (_, _, surface) = order[at];
+        let container = containers.get(&first).copied();
+        let numbered = |index: usize| -> Option<NumberingRef> {
+            let (id, _, other) = *order.get(index)?;
+            if other != surface || containers.get(&id).copied() != container {
+                return None;
+            }
+            let reference = paragraph_properties(&self.document, id)?.numbering?;
+            self.is_numbered_reference(&reference).then_some(reference)
+        };
+        at.checked_sub(1)
+            .and_then(numbered)
+            .or_else(|| numbered(to + 1))
+    }
+
     /// The number format of an imported list instance's first level, if it resolves —
     /// lets [`list_style_at`](Self::list_style_at) light the right button for a list
     /// the document already carried (not one this editor created).
@@ -22730,6 +23045,32 @@ pub struct ShapeFormat {
     /// back to `setShapeOutline`, which is exactly what the host does with it.
     #[wasm_bindgen(js_name = outlineWidthEmu)]
     pub outline_width_emu: Option<f64>,
+    /// The outline's dash token (`solid` when unpatterned), when it has an
+    /// outline — what Shape Outline ▸ Dashes checks (`docs/109` RM-30).
+    #[wasm_bindgen(js_name = outlineDash)]
+    pub outline_dash: Option<String>,
+    /// The start line end's token (`none` when bare), when it has an outline.
+    #[wasm_bindgen(js_name = headEnd)]
+    pub head_end: Option<String>,
+    /// The end line end's token (`none` when bare), when it has an outline.
+    #[wasm_bindgen(js_name = tailEnd)]
+    pub tail_end: Option<String>,
+}
+
+/// A stroke's dash as the token `setShapeOutlineStyle` takes. O(1).
+fn dash_token(stroke: ShapeStroke) -> String {
+    stroke
+        .dash
+        .and_then(|dash| serde_json::to_value(dash).ok())
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "solid".to_owned())
+}
+
+/// A line end as the token `setShapeOutlineStyle` takes. O(1).
+fn line_end_token(end: Option<LineEnd>) -> String {
+    end.and_then(|end| serde_json::to_value(end.kind).ok())
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "none".to_owned())
 }
 
 /// `#rrggbb` for a shape colour, dropping alpha (the picker applies opaque).
@@ -22779,6 +23120,25 @@ fn running_region(region: &str) -> Option<RunningRegion> {
 
 /// A shape colour from the host: `#rrggbb`, opaque. Shapes carry [`Rgba`] rather
 /// than the run-level [`RgbColor`], so this lifts the shared hex parser.
+/// `setShapeOutlineStyle`'s refusal for a node that carries no outline.
+const SHAPE_OUTLINE_NOT_A_SHAPE: &str = refused!(
+    "shape.outline-not-a-shape",
+    "Only a shape or a picture has an outline to style."
+);
+
+/// `setShapeGradient`'s refusal for a node that has no fill to set.
+const SHAPE_FILL_NOT_A_SHAPE: &str = refused!(
+    "shape.fill-not-a-shape",
+    "Only a shape has a fill. A picture's look is its image."
+);
+
+/// A model token (`DashStyle`, `LineEndKind`) from the host, through the
+/// type's own serde names so the two vocabularies cannot drift. O(token).
+fn outline_token<T: serde::de::DeserializeOwned>(token: &str) -> Result<T, String> {
+    serde_json::from_value(serde_json::Value::String(token.to_owned()))
+        .map_err(|_| format!("unknown outline style {token:?}"))
+}
+
 fn shape_rgba(hex: &str) -> Result<Rgba, JsValue> {
     let rgb =
         parse_hex_color(hex).ok_or_else(|| JsValue::from_str(&format!("invalid color: {hex}")))?;
@@ -24062,6 +24422,7 @@ fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document)
         // moves the text under the caret, and moving the caret too would lose the
         // user's place in a document they only asked to re-align.
         Operation::SetSectionLineNumbering { .. }
+        | Operation::SetSectionPageBorders { .. }
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetSectionWatermark { .. } => Pos::new(doc_id, 0),
@@ -35619,6 +35980,142 @@ mod tests {
         assert_eq!(d2.list_format_at(&node2), "bullet:\u{25aa}");
     }
 
+    /// HF-226: two numbered lists separated by an ordinary paragraph are TWO lists,
+    /// so the second one starts at 1; toggling numbering on the paragraph directly
+    /// below a list extends it; and undo takes a fresh list's definition away with
+    /// it. Mutation: route `toggle_numbered_list` back through `ensure_list(true)`
+    /// (the session memo) and the separated list shares the first one's instance.
+    #[test]
+    fn a_second_numbered_list_is_a_new_list_and_an_adjacent_one_joins() {
+        let mut d = open_document(b"Zero\nOne\nTwo\nThree\nFour").expect("open plain text");
+        let ids: Vec<String> = d
+            .ordered_paragraphs()
+            .iter()
+            .map(|(id, _)| id.to_string())
+            .collect();
+        assert_eq!(ids.len(), 5, "five paragraphs");
+        let instance = |d: &WasmDocument, node: &str| {
+            paragraph_properties(&d.document, NodeId::from_str(node).unwrap())
+                .and_then(|p| p.numbering)
+                .map(|n| n.instance)
+        };
+        // List A over paragraphs 0..=1, paragraph 2 plain, list B on paragraph 3.
+        d.toggle_list(&ids[0], 0, &ids[1], 0, "numbered")
+            .expect("list A");
+        let a = instance(&d, &ids[0]).expect("A is a list");
+        let definitions_before_b = d.document.definitions().numbering.len();
+        d.toggle_list(&ids[3], 0, &ids[3], 0, "numbered")
+            .expect("list B");
+        let b = instance(&d, &ids[3]).expect("B is a list");
+        assert_ne!(
+            a, b,
+            "a separated numbered list is a new list, not the session's one list"
+        );
+        assert_eq!(
+            d.document.definitions().numbering.len(),
+            definitions_before_b + 1
+        );
+        // Directly below B: joins B rather than starting a third list.
+        d.toggle_list(&ids[4], 0, &ids[4], 0, "numbered")
+            .expect("extend B");
+        assert_eq!(
+            instance(&d, &ids[4]),
+            Some(b),
+            "the adjacent paragraph joins the list above"
+        );
+        // Directly above A's first item would join A; paragraph 2 sits between A and
+        // B and joins A, the one BEFORE it, as Word does.
+        d.toggle_list(&ids[2], 0, &ids[2], 0, "numbered")
+            .expect("join");
+        assert_eq!(instance(&d, &ids[2]), Some(a));
+        // Toggling a numbered item turns numbering off, whichever list it is in.
+        d.toggle_list(&ids[3], 0, &ids[3], 0, "numbered")
+            .expect("off");
+        assert_eq!(instance(&d, &ids[3]), None);
+        // Four undos walk back to before B (off, join, extend, B), and B's
+        // definition goes with it.
+        for _ in 0..4 {
+            d.undo().expect("undo");
+        }
+        assert_eq!(instance(&d, &ids[3]), None);
+        assert_eq!(
+            d.document.definitions().numbering.len(),
+            definitions_before_b
+        );
+    }
+
+    /// HF-193: page borders round-trip through the dialog's two calls, apply to
+    /// every named section as ONE undo step, export as `w:pgBorders`, and come off
+    /// again with the empty value. Mutation: make `set_page_borders` in the command
+    /// crate emit the operation for the first section only → the second section
+    /// keeps no border and the whole-document assertion fails.
+    #[test]
+    fn page_borders_are_set_on_every_named_section_as_one_undo_step() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let node = d.ordered_paragraphs()[0].0.to_string();
+        d.insert_section_break(&node, d.paragraph_length(&node), "nextPage")
+            .expect("a second section");
+        let read: serde_json::Value = serde_json::from_str(&d.page_borders(&node)).unwrap();
+        let sections: Vec<String> = read["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|id| id.as_str().unwrap().to_string())
+            .collect();
+        assert!(sections.len() >= 2, "the fixture has more than one section");
+        let before = d.document.clone();
+        let edge = serde_json::json!({ "style": "double", "sizeEighthPoints": 12,
+            "color": { "r": 51, "g": 85, "b": 196 }, "spacePoints": 24 });
+        let payload = serde_json::json!({
+            "sections": sections,
+            "borders": { "display": "allPages", "offsetFrom": "page",
+                "top": edge, "bottom": edge, "start": edge, "end": edge },
+        });
+        d.set_page_borders(&payload.to_string())
+            .expect("borders on");
+        for section in &d.document.definitions().sections {
+            let top = section
+                .page_borders
+                .top
+                .as_ref()
+                .expect("every section bordered");
+            assert_eq!(top.style, "double");
+            assert_eq!(top.size_eighth_points, Some(12));
+            assert_eq!(top.space_points, Some(24));
+        }
+        let saved = d.export_docx().expect("save");
+        let reopened = open_document(&saved).expect("reopen");
+        assert!(
+            reopened
+                .document
+                .definitions()
+                .sections
+                .iter()
+                .all(|section| section.page_borders.end.is_some()),
+            "the borders survive a save"
+        );
+        // One action, so one undo restores the document exactly.
+        d.undo().expect("undo");
+        assert_eq!(d.document, before);
+        // The empty value removes them.
+        d.redo().expect("redo");
+        let off = serde_json::json!({ "sections": sections, "borders": {} });
+        d.set_page_borders(&off.to_string()).expect("borders off");
+        assert!(
+            d.document
+                .definitions()
+                .sections
+                .iter()
+                .all(|section| section.page_borders.is_empty())
+        );
+        // A value outside the model's domain is refused and changes nothing.
+        let wide = serde_json::json!({ "sections": sections,
+            "borders": { "top": { "style": "single", "spacePoints": 99 } } });
+        let unchanged = d.document.clone();
+        assert!(d.set_page_borders(&wide.to_string()).is_err());
+        assert_eq!(d.document, unchanged);
+    }
+
     #[test]
     fn restarting_numbered_list_carries_contiguous_items() {
         let mut d = open_document(RICH_DOCX).expect("open corpus docx");
@@ -36330,6 +36827,205 @@ mod tests {
         assert_eq!(after.color.g, 0xff);
         assert_eq!(after.dash, Some(DashStyle::Dash), "the dash must survive");
         assert_eq!(after.width_emu, 12_700, "the width is inherited too");
+    }
+
+    /// RM-30: Shape Outline ▸ Dashes and ▸ Arrows set the pattern and the line
+    /// ends and keep the colour and the weight; an unoutlined shape gets Word's
+    /// 0.75 pt black line so the choice is visible; `solid` and `none` clear;
+    /// one undo restores the outline.
+    ///
+    /// Mutation: building the stroke from `stroke_base(None, None)` instead of
+    /// the current outline loses the colour, and the colour assertion fails.
+    #[test]
+    fn dashes_and_arrows_restyle_an_outline_and_keep_its_colour() {
+        let red = ShapeStroke {
+            color: Rgba {
+                r: 0xcc,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            width_emu: 25_400,
+            dash: None,
+            head_end: None,
+            tail_end: None,
+        };
+        let mut d = wasm_document(document_with_shape(Some(red)));
+        let id = NodeId::from_parts(9, 4).unwrap();
+        let shape = id.to_string();
+        let stroke = |d: &WasmDocument| find_shape(&d.document, id).and_then(|s| s.stroke);
+
+        d.set_shape_outline_style_inner(&shape, Some("largeDashDot"), None, Some("triangle"))
+            .expect("dash the outline and give it an end arrow");
+        let after = stroke(&d).expect("still outlined");
+        assert_eq!(after.dash, Some(DashStyle::LargeDashDot));
+        assert_eq!(
+            after.tail_end.map(|end| end.kind),
+            Some(LineEndKind::Triangle)
+        );
+        assert_eq!(after.head_end, None, "the start was not asked about");
+        assert_eq!(
+            (after.color.r, after.width_emu),
+            (0xcc, 25_400),
+            "colour and weight kept"
+        );
+
+        d.set_shape_outline_style_inner(&shape, Some("solid"), Some("stealth"), Some("none"))
+            .expect("solid, with a start arrow only");
+        let after = stroke(&d).expect("still outlined");
+        assert_eq!(after.dash, None, "solid clears the pattern");
+        assert_eq!(
+            after.head_end.map(|end| end.kind),
+            Some(LineEndKind::Stealth)
+        );
+        assert_eq!(after.tail_end, None, "none clears the end");
+
+        d.undo().expect("undo");
+        assert_eq!(
+            stroke(&d).and_then(|s| s.dash),
+            Some(DashStyle::LargeDashDot)
+        );
+
+        assert!(
+            d.set_shape_outline_style_inner(&shape, Some("wavy"), None, None)
+                .is_err(),
+            "an unknown token is refused, not ignored"
+        );
+
+        let mut bare = wasm_document(document_with_shape(None));
+        bare.set_shape_outline_style_inner(&shape, Some("dot"), None, None)
+            .expect("dot an unoutlined shape");
+        let given = stroke(&bare).expect("the dash gives it an outline");
+        assert_eq!((given.dash, given.width_emu), (Some(DashStyle::Dot), 9_525));
+    }
+
+    /// RM-30: Shape Fill ▸ Gradient writes a two-stop `a:gradFill`, linear at
+    /// the asked angle (normalised into 0..360) or radial, and one undo puts the
+    /// old fill back.
+    ///
+    /// Mutation: writing the angle in degrees rather than 60000ths makes the
+    /// first `Linear` assertion fail; dropping the normalisation fails the -90
+    /// case.
+    #[test]
+    fn a_gradient_fill_has_two_stops_and_its_angle() {
+        use casual_doc_model::v1::{GradientKind, GradientStop};
+        let mut d = wasm_document(document_with_shape(None));
+        let id = NodeId::from_parts(9, 4).unwrap();
+        let shape = id.to_string();
+        let fill = |d: &WasmDocument| find_shape(&d.document, id).and_then(|s| s.fill.clone());
+        let before = fill(&d);
+
+        d.set_shape_gradient_inner(&shape, "#3355c4", "#ffffff", Some(90.0))
+            .expect("a linear gradient, top to bottom");
+        let Some(Fill::Gradient { stops, kind }) = fill(&d) else {
+            panic!("a gradient fill, got {:?}", fill(&d));
+        };
+        assert_eq!(kind, GradientKind::Linear { angle: 5_400_000 });
+        assert_eq!(
+            stops,
+            vec![
+                GradientStop {
+                    position: 0,
+                    color: Rgba {
+                        r: 0x33,
+                        g: 0x55,
+                        b: 0xc4,
+                        a: 255
+                    },
+                },
+                GradientStop {
+                    position: 100_000,
+                    color: Rgba {
+                        r: 0xff,
+                        g: 0xff,
+                        b: 0xff,
+                        a: 255
+                    },
+                },
+            ]
+        );
+
+        d.set_shape_gradient_inner(&shape, "#000000", "#ffffff", Some(-90.0))
+            .expect("up");
+        assert!(matches!(
+            fill(&d),
+            Some(Fill::Gradient {
+                kind: GradientKind::Linear { angle: 16_200_000 },
+                ..
+            })
+        ));
+        d.set_shape_gradient_inner(&shape, "#000000", "#ffffff", None)
+            .expect("from the centre");
+        assert!(matches!(
+            fill(&d),
+            Some(Fill::Gradient {
+                kind: GradientKind::Radial,
+                ..
+            })
+        ));
+
+        d.undo().expect("undo");
+        d.undo().expect("undo");
+        d.undo().expect("undo");
+        assert_eq!(fill(&d), before, "three undos restore the shape's own fill");
+        assert!(
+            d.set_shape_gradient_inner(&shape, "blue", "#ffffff", None)
+                .is_err()
+        );
+    }
+
+    /// RM-30: Change Shape swaps the outline and keeps the shape: its outline
+    /// stroke, its size, its id. One undo puts the rectangle back; an unknown
+    /// token and a node that is not a shape are refused with their codes.
+    ///
+    /// Mutation: rebuilding the shape from `insertShape`'s defaults (accent
+    /// fill and outline) instead of rewriting the geometry in place fails the
+    /// stroke assertion.
+    #[test]
+    fn change_shape_swaps_the_outline_and_keeps_the_formatting() {
+        use casual_doc_model::v1::ShapeGeometry;
+        let red = ShapeStroke {
+            color: Rgba {
+                r: 0xcc,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            width_emu: 25_400,
+            dash: None,
+            head_end: None,
+            tail_end: None,
+        };
+        let mut d = wasm_document(document_with_shape(Some(red)));
+        let id = NodeId::from_parts(9, 4).unwrap();
+        let shape = id.to_string();
+        let ellipse = ShapeGeometry::from_preset_token("ellipse").expect("a modeled preset");
+
+        d.change_shape_inner(&shape, "ellipse")
+            .expect("change to an ellipse");
+        let after = find_shape(&d.document, id).expect("the same shape, by id");
+        assert_eq!(after.geometry, ellipse);
+        assert_eq!(after.stroke, Some(red), "the outline is kept");
+        assert_eq!(after.extent.width_emu, 914_400, "the size is kept");
+
+        d.undo().expect("undo");
+        assert_eq!(
+            find_shape(&d.document, id).map(|s| s.geometry),
+            Some(ShapeGeometry::Rectangle)
+        );
+
+        let unknown = d
+            .change_shape_inner(&shape, "squiggle")
+            .expect_err("not a preset");
+        assert!(unknown.contains("object.change-shape-unknown"), "{unknown}");
+        let paragraph = NodeId::from_parts(9, 2).unwrap().to_string();
+        let not_a_shape = d
+            .change_shape_inner(&paragraph, "ellipse")
+            .expect_err("a paragraph has no outline shape");
+        assert!(
+            not_a_shape.contains("object.change-shape-not-a-shape"),
+            "{not_a_shape}"
+        );
     }
 
     /// Word's Weight submenu never asks for a colour: choosing one on a shape
@@ -41683,6 +42379,8 @@ mod tests {
                 preview: None,
                 extent,
                 prog_id: None,
+                anchor: None,
+                relative_height: None,
             })),
             InlineNode::Field(Box::new(Field {
                 id: id(),
@@ -43086,6 +43784,8 @@ mod tests {
                     height_emu: 914_400,
                 },
                 prog_id: None,
+                anchor: None,
+                relative_height: None,
             })),
             InlineNode::Sdt(Box::new(InlineSdt {
                 id: id(),
@@ -44018,6 +44718,8 @@ mod tests {
                         height_emu: 914_400,
                     },
                     prog_id: None,
+                    anchor: None,
+                    relative_height: None,
                 }))],
             })],
             definitions,
@@ -44112,6 +44814,8 @@ mod tests {
                             height_emu: 914_400,
                         },
                         prog_id: None,
+                        anchor: None,
+                        relative_height: None,
                     })),
                     InlineNode::NoteReference(NoteReference {
                         id: id(),

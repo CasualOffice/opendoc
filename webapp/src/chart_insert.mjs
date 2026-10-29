@@ -10,9 +10,19 @@
  *  Column, Line, Pie and "From Sheets". Neither is reachable here yet, because
  *  this build had no chart DATA editor — a type picker that hands the reader
  *  seven variations of uneditable placeholder data would be choice without
- *  consequence. So the first surface inserts Word's own default, a clustered
- *  column chart, and the type picker is owed rather than faked.
+ *  consequence. So the first surface inserted Word's own default, a clustered
+ *  column chart.
+ *
+ *  The data editor shipped (#811), so the type picker is no longer choice
+ *  without consequence, and Insert ▸ Chart now opens it first (`109` HF-258):
+ *  ONLYOFFICE's Insert Chart button carries a chart-type picker as its menu
+ *  (`web-apps/apps/documenteditor/main/app/view/Toolbar.js:2782`, the
+ *  `menu-insertchart` DataView over `Common.define.chartData`), and Google
+ *  Docs' Insert ▸ Chart is a submenu of families. The picker here is the SAME
+ *  grouped list the Chart tab's Change-type menu shows (`CHART_TYPE_GROUPS`),
+ *  so a type that can be chosen after insert can be chosen at insert.
  */
+import { CHART_TYPE_GROUPS, CHART_TYPE_KEYS } from "./chart_commands.mjs";
 
 /** The family a new chart is, until a picker exists.
  *
@@ -54,7 +64,7 @@ export function chartInsertFailure(err) {
  *  @returns {Promise<boolean>} whether a chart was inserted — the caller then
  *           selects it and opens its data, which is Word's Insert ▸ Chart.
  */
-export async function insertChartAtCaret({ doc, caret, blocked, suggesting, status, apply }) {
+export async function insertChartAtCaret({ doc, caret, blocked, suggesting, status, apply, kind = DEFAULT_CHART_KIND }) {
   if (!doc || !caret || blocked()) return false;
   if (suggesting()) {
     // Not a dead control and not a silent no-op: the reader is told which mode
@@ -63,10 +73,38 @@ export async function insertChartAtCaret({ doc, caret, blocked, suggesting, stat
     return false;
   }
   try {
-    await apply(doc.insertChart(caret.node, caret.offset, DEFAULT_CHART_KIND));
+    await apply(doc.insertChart(caret.node, caret.offset, kind));
   } catch (err) {
     status(chartInsertFailure(err), "error");
     return false;
   }
   return true;
+}
+
+/** The Insert ▸ Chart type picker as a command list, in ONLYOFFICE's picker
+ *  order and with one menu group per family, so the menu separates them the way
+ *  their DataView groups do.
+ *
+ *  Every entry is a family token the engine's `chart_group_for_kind` admits —
+ *  the same list the Chart tab's Change type offers — and each runs `insert`
+ *  with its token. The menu is the shared context menu, so it is keyboard
+ *  operable (arrows, Enter, Escape) and every row is a `menuitem` with its
+ *  translated name.
+ *
+ *  O(types): seventeen rows.
+ *
+ *  @param {(key: string, params?: object) => string} t
+ *  @param {(kind: string) => unknown} insert
+ *  @returns {{id: string, label: string, group: string, enabled: boolean, run: () => unknown}[]}
+ */
+export function insertChartTypeCommands(t, insert) {
+  return CHART_TYPE_GROUPS.flatMap((group) =>
+    group.kinds.map((kind) => ({
+      id: `insert.chart.${kind}`,
+      label: t(CHART_TYPE_KEYS[kind] ?? "chart.kind.column"),
+      group: group.key,
+      enabled: true,
+      run: () => insert(kind),
+    })),
+  );
 }
