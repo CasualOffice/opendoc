@@ -526,8 +526,11 @@
         </label>
         <label class="dialog-check">
           <input id="autocorrectToggle" type="checkbox" checked />
-          <span><strong data-i18n="settingsPanel.correctAsYouType">Correct as you type</strong><small data-i18n="settingsPanel.correctAsYouTypeDetail">-- becomes a dash, (c) ©, (tm) ™ and (r) ®, common typos are fixed and sentences start with a capital. Undo straight after reverses a correction.</small></span>
+          <span><strong data-i18n="settingsPanel.replaceAsYouType">Replace text as you type</strong><small data-i18n="settingsPanel.replaceAsYouTypeDetail">(c) becomes ©, (tm) ™ and common typos are fixed, from a list you can edit for each language. Undo straight after reverses a correction.</small></span>
         </label>
+        <!-- RM-19: every other switch (capitals, dashes, links) and the two
+             editable lists live in the AutoCorrect options dialog. -->
+        <button data-i18n="settingsPanel.autoCorrectOptions" type="button" id="settingsAutoCorrectOptions" class="dialog-button" aria-haspopup="dialog">AutoCorrect options…</button>
       </div>
         </div>
         <footer class="dialog-foot">
@@ -1406,6 +1409,72 @@
         <footer class="dialog-foot">
           <div class="dialog-actions">
             <button data-word-count-dismiss data-i18n="wordCountDialog.closeButton" id="wordCountDone" type="button" class="dialog-button dialog-button-primary">Close</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+    <!-- AutoCorrect options (RM-19; `autocorrect_dialog.mjs`): Word's AutoCorrect
+         and AutoFormat As You Type switches, the replace table and the
+         first-letter exceptions, both lists per language. Changes apply at once,
+         as ONLYOFFICE's do, so the dialog has Close and not OK/Cancel. -->
+    <div id="autoCorrectDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="autoCorrectTitle" aria-describedby="autoCorrectDescription">
+      <section class="dialog-card autocorrect-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="autoCorrectDialog.title" id="autoCorrectTitle">AutoCorrect options</h2>
+              <p data-i18n="autoCorrectDialog.description" id="autoCorrectDescription">What changes as you type. Undo straight after a change reverses only that change.</p>
+            </div>
+          </div>
+          <button data-autocorrect-dismiss data-i18n-title="autoCorrectDialog.close.title" data-i18n-label="autoCorrectDialog.close.label" id="autoCorrectClose" type="button" class="dialog-close" title="Close" aria-label="Close AutoCorrect options"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body autocorrect-body">
+          <fieldset class="autocorrect-group">
+            <legend data-i18n="autoCorrectDialog.asYouType">As you type</legend>
+            <label class="dialog-check"><input type="checkbox" data-autocorrect-switch="smartQuotes" checked /><span data-i18n="autoCorrectDialog.smartQuotes">Replace "straight quotes" with “smart quotes”</span></label>
+            <label class="dialog-check"><input type="checkbox" data-autocorrect-switch="dashes" checked /><span data-i18n="autoCorrectDialog.dashes">Replace hyphens (--) with a dash (—)</span></label>
+            <label class="dialog-check"><input type="checkbox" data-autocorrect-switch="hyperlinks" checked /><span data-i18n="autoCorrectDialog.hyperlinks">Internet and e-mail addresses with hyperlinks</span></label>
+            <label class="dialog-check"><input type="checkbox" data-autocorrect-switch="lists" checked /><span data-i18n="autoCorrectDialog.lists">Automatic bulleted and numbered lists</span></label>
+            <label class="dialog-check"><input type="checkbox" data-autocorrect-switch="capitalise" checked /><span data-i18n="autoCorrectDialog.capitalise">Capitalise the first letter of sentences</span></label>
+            <label class="dialog-check"><input type="checkbox" data-autocorrect-switch="capitaliseCells" checked /><span data-i18n="autoCorrectDialog.capitaliseCells">Capitalise the first letter of table cells</span></label>
+            <label class="dialog-check"><input type="checkbox" data-autocorrect-switch="autocorrect" checked /><span data-i18n="autoCorrectDialog.replace">Replace text as you type</span></label>
+          </fieldset>
+          <div class="autocorrect-language-row">
+            <label data-i18n="autoCorrectDialog.language" for="autoCorrectLanguage">Lists for</label>
+            <select id="autoCorrectLanguage" class="dialog-select"></select>
+            <button data-i18n="autoCorrectDialog.reset" id="autoCorrectReset" type="button" class="dialog-button">Reset to default</button>
+          </div>
+          <fieldset class="autocorrect-group">
+            <legend data-i18n="autoCorrectDialog.replaceTable">Replace text as you type</legend>
+            <div class="autocorrect-entry">
+              <label data-i18n="autoCorrectDialog.from" for="autoCorrectFrom">Replace</label>
+              <input id="autoCorrectFrom" type="text" autocomplete="off" spellcheck="false" maxlength="255" />
+              <label data-i18n="autoCorrectDialog.to" for="autoCorrectTo">With</label>
+              <input id="autoCorrectTo" type="text" autocomplete="off" spellcheck="false" maxlength="255" />
+            </div>
+            <select data-i18n-label="autoCorrectDialog.entries.label" id="autoCorrectList" class="dialog-listbox" size="6" aria-label="Replacements"></select>
+            <div class="dialog-actions">
+              <button data-i18n="autoCorrectDialog.delete" id="autoCorrectDelete" type="button" class="dialog-button" disabled>Delete</button>
+              <button data-i18n="autoCorrectDialog.add" id="autoCorrectAdd" type="button" class="dialog-button" disabled>Add</button>
+            </div>
+          </fieldset>
+          <fieldset class="autocorrect-group">
+            <legend data-i18n="autoCorrectDialog.exceptions">First-letter exceptions</legend>
+            <div class="autocorrect-entry">
+              <label data-i18n="autoCorrectDialog.exceptionLabel" for="autoCorrectExceptionInput">Do not capitalise after</label>
+              <input data-i18n-placeholder="autoCorrectDialog.exceptionExample.placeholder" id="autoCorrectExceptionInput" type="text" autocomplete="off" spellcheck="false" maxlength="255" placeholder="approx." />
+            </div>
+            <select data-i18n-label="autoCorrectDialog.exceptionList.label" id="autoCorrectExceptionList" class="dialog-listbox" size="5" aria-label="First-letter exceptions"></select>
+            <div class="dialog-actions">
+              <button data-i18n="autoCorrectDialog.deleteException" id="autoCorrectExceptionDelete" type="button" class="dialog-button" disabled>Delete</button>
+              <button data-i18n="autoCorrectDialog.addException" id="autoCorrectExceptionAdd" type="button" class="dialog-button" disabled>Add</button>
+            </div>
+          </fieldset>
+          <p id="autoCorrectNote" class="dialog-field-note" role="status" aria-live="polite"></p>
+        </div>
+        <footer class="dialog-foot">
+          <div class="dialog-actions">
+            <button data-autocorrect-dismiss data-i18n="autoCorrectDialog.done" id="autoCorrectDone" type="button" class="dialog-button dialog-button-primary">Close</button>
           </div>
         </footer>
       </section>

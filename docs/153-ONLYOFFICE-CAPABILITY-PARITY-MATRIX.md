@@ -129,7 +129,7 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-provenance -->
 | Side | Source | Inventory |
 | --- | --- | --- |
-| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 231 exact commands, 12 families |
+| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 236 exact commands, 12 families |
 | ONLYOFFICE | snapshot of 163 files, taken 2026-09-30 | 578 controls, 3529 locale keys, 2122 engine API methods, 114 boot flags (14 licence-gated, 3 desktop-only) |
 | Matrix | `tools/opendoc-parity/data/capabilities.json` | 422 graded rows |
 <!-- @end parity-provenance -->
@@ -139,11 +139,11 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-tally -->
 | Verdict | Rows | What it means |
 | --- | --- | --- |
-| Parity | 215 | both products ship it, and both anchors resolve |
+| Parity | 222 | both products ship it, and both anchors resolve |
 | Ours, ungated | 27 | we ship it in the editor itself; theirs is behind a licence result the document server issues, the desktop shell, or the integrator's own config |
 | Ours only | 25 | we ship it and their tree has no such surface |
-| Partial | 69 | we ship part of it; the row says what is missing |
-| Gap | 61 | their standalone browser session ships it and we do not |
+| Partial | 68 | we ship part of it; the row says what is missing |
+| Gap | 55 | their standalone browser session ships it and we do not |
 | Theirs, gated | 13 | theirs needs a licence result, the desktop shell or the integrator, and we lack it too |
 | Neither | 12 | neither product ships it, and the row records the search that established that |
 | **Total graded** | **422** | every row below |
@@ -163,9 +163,6 @@ least two surfaces (`SKILL` §10).
 | 2 | Display mode: original (document as if every change were rejected) | `review.display-mode-original` | `Common.Views.ReviewChanges.txtOriginal` | There is no way to preview the pre-review document; our markup toggle only chooses between showing and hiding the redline. |
 | 2 | Protect the document | `review.protect-document` | `btnProtectDoc` | Not licence-gated for them. The ENGINE now models and enforces document protection and can set it - `setDocumentProtection` with the edit mode, enforcement and formatting lock (ADR-052 for enforcement, ADR-059 for the setter) - and the import arm reads `w:documentProtection`. It is graded a gap anyway because no command id reaches it: `review.protectDocument` is absent from `COMMAND_CONTRACT`, so neither a user nor a host can invoke it. Built is not reachable. A password Word set is kept: the sixteen password attributes are carried verbatim through a save, never verified, and nothing here sets one. |
 | 2 | Banded rows and columns, header / total / first / last | `table.banded-rows-columns` | `DE.Views.TableSettings.textBanded` | The six w:tblLook conditional-formatting toggles. Our model carries TableLook and round-trips it, but no wasm setter or control writes it, so an applied table style cannot be tuned. |
-| 2 | Capitalise the first letter of a sentence | `text.autocapitalise` | `Common.Views.AutoCorrectDialog.textFLSentence` | Theirs also covers table cells and keeps a first-letter exceptions list. Ours does not autocapitalise at all. |
-| 2 | Replace text as you type (AutoCorrect table) | `text.autocorrect-replace` | `btnAutoCorrect` | Their File ▸ Advanced Settings opens a dialog with an editable replace/by table, per-language, plus Reset and Restore. We have no AutoCorrect table — `webapp/src/text_rules.mjs` implements smart quotes and nothing else. |
-| 2 | Turn a typed URL into a hyperlink | `text.autoformat-hyperlink` | `Common.Views.AutoCorrectDialog.textHyperlink` | We have `insert.link` but nothing recognises a URL as it is typed, so every pasted address needs the dialog. |
 | 3 | Insert a picture from a URL | `object.insert-image-url` | `asc_docs_api.AddImageUrlAction` | They ship a URL dialog beside the file picker; we have only the file, clipboard and drop routes. |
 | 3 | Insert SmartArt | `object.insert-smartart` | `btnInsertSmartArt` | Their Insert button renders live previews per layout group; we model a diagram only as a preserved reference. |
 | 3 | Content controls / structured document tags | `page.contentControls` | `btnContentControls` | We import and export w:sdt and refuse breaks inside one, but nothing can insert or configure a control. |
@@ -176,7 +173,6 @@ least two surfaces (`SKILL` §10).
 | 3 | Remove table of contents | `page.toc.remove` | `DE.Views.Links.textContentsRemove` | The field can be inserted and updated but not deleted as a unit. |
 | 3 | Table of contents settings (page numbers, alignment, links) | `page.toc.settings` | `DE.Views.TableOfContentsSettings.strShowPages` | Show page numbers, right-align them, hyperlink the entries and build from styles rather than outline levels are all fixed for us. |
 | 3 | Table of contents style gallery | `page.toc.styles` | `DE.Views.TableOfContentsSettings.textStyles` | Their dialog offers Simple, Standard, Modern, Classic and the rest; ours generates one shape. |
-| 3 | Replace text as you type (AutoCorrect table) | `review.autocorrect-replace-as-you-type` | `Common.Views.AutoCorrectDialog.textReplaceText` | — |
 | 3 | Display mode: simple markup (change bars only) | `review.display-mode-simple-markup` | `Common.Views.ReviewChanges.txtMarkupSimple` | Word's default review view. We always paint full markup or none. |
 | 3 | Manage or clear the personal dictionary | `review.personal-dictionary-manage` | `asc_docs_api.asc_spellCheckClearDictionary` | Words can be added on both sides, but only theirs can be cleared; ours has no list and no removal. |
 | 3 | Password on the editing restriction | `review.protection-password` | `asc_docs_api.asc_setDocumentProtection` | — |
@@ -193,8 +189,6 @@ least two surfaces (`SKILL` §10).
 | 3 | Convert table to text | `table.table-to-text` | `btnConvert` | Theirs takes a separator and a 'convert nested tables' flag. |
 | 3 | Convert text to table | `table.text-to-table` | `DE.Views.Toolbar.mniTextToTable` | Theirs takes a separator (paragraph, tab, semicolon or a typed character), a column count and an autofit choice. We have no conversion in either direction. |
 | 3 | Text wrapping around a table | `table.text-wrapping` | `btnWrapParallel` | Our importer and layout do place a w:tblpPr table on the float layer and wrap body text beside it, but nothing in the editor authors or changes that — the properties inspector has no wrapping control. |
-| 3 | Turn typed hyphens into dashes | `text.autoformat-dashes` | `Common.Views.AutoCorrectDialog.textHyphens` | Word and Docs both do this; it is the second most-noticed AutoCorrect after smart quotes. |
-| 3 | Insert a non-breaking space | `text.non-breaking-space` | `Common.Controllers.Shortcuts.txtDescriptionNonBreakingSpace` | They bind it and list it in the symbol dialog's special characters. We have neither the shortcut nor a picker entry, so keeping "10 kg" or "Fig. 3" on one line is not expressible. |
 | 4 | Distance from text, move with text, allow overlap | `object.advanced-layout-options` | `ApiDrawing.SetDistances` | DE.Views.ImageSettingsAdvanced.textOverlap and textMove are the two switches beside the distances in their advanced position tab. We author none of the three. |
 | 4 | Edit a shape's points | `object.edit-points` | `DE.Views.DocumentHolder.textEditPoints` | Custom geometry is typed now — guides, every path command, adjust handles (docs/119) — and every preset's own definition is available to convert, so there is something to move; the gesture itself is not built (docs/109 FID-SH-02). |
 | 4 | Insert a picture from host storage | `object.insert-image-storage` | `DE.Views.Toolbar.mniFromStorage` | Their From Storage row appears only when the integrator answers the insert-image request, so it is an integration point rather than a licence gate. docs/149 grades the same thing as editorConfig.fileChoiceUrl. |
@@ -233,10 +227,10 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Capability | Verdict | Ours | Theirs | Note |
 | --- | --- | --- | --- | --- |
 | All capitals (as a character effect) | Partial | `crates/casual-doc-model/src/v1/properties.rs` · `all_caps` — missing: no command applies `w:caps`; `format.case.upper` rewrites the letters instead, which is a different operation | `DE.Views.ParagraphSettingsAdvanced.strAllCaps` | Change case rewrites the text; the caps effect leaves the stored text alone. Only the second survives a style change or a copy into a lowercase context. |
-| Capitalise the first letter of a sentence | Gap | none (`tools.autoCapitalise` undeclared) | `Common.Views.AutoCorrectDialog.textFLSentence` | Theirs also covers table cells and keeps a first-letter exceptions list. Ours does not autocapitalise at all. |
-| Replace text as you type (AutoCorrect table) | Gap | none (`tools.autoCorrect` undeclared) | `btnAutoCorrect` | Their File ▸ Advanced Settings opens a dialog with an editable replace/by table, per-language, plus Reset and Restore. We have no AutoCorrect table — `webapp/src/text_rules.mjs` implements smart quotes and nothing else. |
-| Turn typed hyphens into dashes | Gap | none (`tools.autoFormatDashes` undeclared) | `Common.Views.AutoCorrectDialog.textHyphens` | Word and Docs both do this; it is the second most-noticed AutoCorrect after smart quotes. |
-| Turn a typed URL into a hyperlink | Gap | none (`tools.autoFormatHyperlink` undeclared) | `Common.Views.AutoCorrectDialog.textHyperlink` | We have `insert.link` but nothing recognises a URL as it is typed, so every pasted address needs the dialog. |
+| Capitalise the first letter of a sentence | Parity | `tools.autoCapitalise` | `Common.Views.AutoCorrectDialog.textFLSentence` | Both capitalise the first letter of a sentence and, under a separate switch, of a table cell, and keep a per-language first-letter exceptions list with Reset; ours is edited in the AutoCorrect options dialog. |
+| Replace text as you type (AutoCorrect table) | Parity | `tools.autoCorrectOptions` | `btnAutoCorrect` | Both open a dialog with an editable replace/with table per language and Reset to default; ours stores only the user's difference from the built-in list, as their exceptions list does. |
+| Turn typed hyphens into dashes | Parity | `tools.autoFormatDashes` | `Common.Views.AutoCorrectDialog.textHyphens` | word--word becomes an em dash; ` -- ` and ` - ` between words become an en dash once the next word is finished, Word's timing. |
+| Turn a typed URL into a hyperlink | Parity | `tools.autoFormatHyperlink` | `Common.Views.AutoCorrectDialog.textHyperlink` | A typed URL, www. address or e-mail address becomes a link when the word ends (space or Enter), and a pasted lone address at once; the link is its own undo step and is never applied inside an existing link. |
 | Bold | Parity | `format.bold` | `btnBold` | — |
 | Borders around text | Partial | `layout.paragraph` — missing: paragraph borders and shading only; no character-level border (`w:bdr`) control | `btnBorders` | Their Borders button is a toolbar split button; ours lives in the paragraph properties panel. Neither sets a run border, which we import but cannot author. |
 | Change case | Parity | `format.case.sentence` | `btnChangeCase` | We declare five: upper, lower, title, sentence and toggle, each its own command id. |
@@ -264,7 +258,7 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | OpenType ligature control | Gap | none (`format.ligatures` undeclared) | `cmbLigatures` | Their Advanced ▸ Font tab has a combo for standard, contextual, discretionary and historical ligatures. We have no ligature property in the model at all — shaping decides. |
 | Math AutoCorrect (\alpha to the glyph) | Gap | none (`tools.mathAutoCorrect` undeclared) | `Common.Views.AutoCorrectDialog.textMathCorrect` | Their AutoCorrect dialog has a math tab with an editable recognised-function and symbol table. |
 | Insert a non-breaking or soft hyphen | Partial | `crates/casual-doc-import/src/body.rs` · `NoBreakHyphen` — missing: no command or shortcut inserts one — `w:noBreakHyphen` and `w:softHyphen` are imported, laid out and exported only | `Common.Controllers.Shortcuts.txtDescriptionNonBreakingHyphen` | They bind both the non-breaking hyphen and the soft hyphen. Ours survive a round trip but cannot be typed. |
-| Insert a non-breaking space | Gap | none (`insert.nonBreakingSpace` undeclared) | `Common.Controllers.Shortcuts.txtDescriptionNonBreakingSpace` | They bind it and list it in the symbol dialog's special characters. We have neither the shortcut nor a picker entry, so keeping "10 kg" or "Fig. 3" on one line is not expressible. |
+| Insert a non-breaking space | Parity | `insert.nonBreakingSpace` | `Common.Controllers.Shortcuts.txtDescriptionNonBreakingSpace` | Ctrl/Cmd+Shift+Space, the Insert menu, the palette, and Symbol ▸ Special characters, as in Word and ONLYOFFICE. |
 | Paste | Parity | `edit.paste` | `btnPaste` | — |
 | Paste as picture | Gap | none (`edit.pasteImage` undeclared) | `DE.Views.DocumentHolder.txtPastePicture` | Their special-paste badge offers Picture, which flattens the pasted content into an image. |
 | Telling the user what a paste dropped | Ours only | `webapp/src/paste_loss.mjs` · `pasteLoss` | none (searched `grep over the surface snapshot for /paste/ — their paste surface is btnPaste, btnSpecialPaste and the asc_*SpecialPaste APIs; the only paste-adjacent warning is Common.Views.CopyWarningDialog, which is about the browser clipboard shortcut, not about content that was dropped`) | We name the references a same-document copy could not duplicate (bookmarks, comments, notes, field ranges, tracked moves) instead of dropping them silently. |
@@ -555,8 +549,8 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Accept or reject every change inside the selection | Theirs, gated | none (`review.acceptSelection`, `review.rejectSelection` undeclared) | `asc_docs_api.asc_AcceptChangesBySelection` behind `canReview` | Our engine exposes decideRevision, decideRevisionGroup and decideAllRevisions but nothing that takes a range, so a reviewer must step change by change. |
 | Sharing and access rights | Partial | `collab.share` — missing: Host-managed Share/join is implemented; invitation access settings backed by a host user directory remain open. | `btnShare` | Both editors delegate storage and authorization to the embedding host. Ours declares collab.share with a save grant; collaboration.spec.mjs verifies a real Share link, late join and remote selections against the local host. review.manageAccess handles roles of connected participants, but is not a host invitation/access-settings dialog. See docs/169; production host integration and translation review remain follow-up work. |
 | Accessibility checker | Neither | none (`tools.accessibilityCheck` undeclared) | none (searched `case-insensitive grep for accessibilitycheck, checkaccessibility and "accessibility checker" across web-apps and sdkjs returns nothing`) | Neither editor reports missing alt text, poor contrast or unstructured headings. Word and Docs both do. |
-| AutoCorrect options dialog | Partial | `tools.smartQuotes` — missing: every other AutoCorrect rule, and the dialog that holds them | `btnAutoCorrect` | Theirs covers hyperlinks, hyphens-to-dash, double-space-with-period, first letter of sentences, math AutoCorrect, recognised functions and a replace-as-you-type table. |
-| Replace text as you type (AutoCorrect table) | Gap | none (`tools.autoCorrect.replace` undeclared) | `Common.Views.AutoCorrectDialog.textReplaceText` | — |
+| AutoCorrect options dialog | Parity | `tools.autoCorrectOptions` | `btnAutoCorrect` | One dialog holds every switch (smart quotes, dashes, hyperlinks, lists, sentence and cell capitals, replace as you type) and the two per-language lists. Theirs also has math AutoCorrect and recognised functions, which are `docs/109` OO-016's remainder. |
+| Replace text as you type (AutoCorrect table) | Parity | `tools.autocorrect` | `Common.Views.AutoCorrectDialog.textReplaceText` | A switch in the AutoCorrect options dialog, Settings, the Review menu and the palette; each replacement is its own undo step. |
 | Smart quotes | Parity | `tools.smartQuotes` | `asc_docs_api.asc_SetAutoCorrectSmartQuotes` | — |
 | Review pane listing every change and comment | Ours, ungated | `review.toggle` | `Common.Views.ReviewChangesDialog.textTitle` behind `canReview` | Ours is a margin sidebar carrying comments and suggestions together; theirs is a floating dialog for the viewer role. |
 | Chat with the other people in the document | Theirs, gated | none (`review.chat` undeclared) | `btnChat` behind `canChat` | Needs a session; ours arrives with collaboration (docs/152). |

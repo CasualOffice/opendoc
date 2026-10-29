@@ -196,7 +196,7 @@ const ed = {
   get armFormatPainter() { return armFormatPainter; },
   get armOrApplyRun() { return armOrApplyRun; },
   get arrangeState() { return arrangeState; },
-  get autoCorrect() { return autoCorrect; }, get languageSelection() { return languageSelection; },
+  get autoCorrect() { return autoCorrect; }, get autoCorrectDialog() { return autoCorrectDialog; }, get languageSelection() { return languageSelection; },
   get autosaveToggle() { return autosaveToggle; },
   get backgroundMeasure() { return backgroundMeasure; }, set backgroundMeasure(v) { backgroundMeasure = v; },
   get bandEl() { return bandEl; },
@@ -2901,7 +2901,7 @@ const {
   commitComposedText, cut, editorTextInputEvent, hidePasteOptions, paste, pasteAsText,
   pasteOptionsShowing, pasteRichRunsJson, pasteText,
 } = createClipboard(ed);
-const { addWordToDictionary, autoCorrect, languageSelection } = createTextInput(ed);
+const { addWordToDictionary, autoCorrect, autoCorrectDialog, languageSelection } = createTextInput(ed);
 createKeyboard(ed);
 const { handleFile } = createFilePick(ed);
 const { clampZoom, computeFitZoom, updateZoomDisplay, zoomMenu } = createZoom(ed);

@@ -25,7 +25,8 @@
       "uiCommands": [
         "edit.pasteText",
         "insert.symbol",
-        "insert.emoji"
+        "insert.emoji",
+        "insert.nonBreakingSpace"
       ]
     },
     {

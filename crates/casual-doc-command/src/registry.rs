@@ -174,7 +174,12 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::Yes,
         example: r#"{"op":"insert_text","at":{"node":"1:2","exact":"days","side":"after"},"text":" (calendar)"}"#,
-        ui_commands: &["edit.pasteText", "insert.symbol", "insert.emoji"],
+        ui_commands: &[
+            "edit.pasteText",
+            "insert.symbol",
+            "insert.emoji",
+            "insert.nonBreakingSpace",
+        ],
     },
     Command {
         id: "replace_text",

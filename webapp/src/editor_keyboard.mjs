@@ -395,7 +395,7 @@ export function createKeyboard(ed) {
           return;
         }
       }
-      await ed.runEdit(() =>
+      const landed = await ed.runEdit(() =>
         ed.doc.insertPlainTextAs(
           anchor.node,
           anchor.offset,
@@ -405,6 +405,10 @@ export function createKeyboard(ed) {
           "paragraphBreak",
         ),
       );
+      // The break finished a word: AutoCorrect it on the paragraph it stayed in
+      // (a split keeps the original node for the text before the caret), as its
+      // own undo step after the break, which is Word's order (RM-19).
+      if (landed && !range) await ed.autoCorrect.afterBreak(focus.node, focus.offset);
       return;
     }
     // A printable character (single key, no modifiers). Counted in CODE POINTS,

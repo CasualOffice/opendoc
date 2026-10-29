@@ -46873,3 +46873,5 @@ mod batch5_paragraph_tests {
 mod character_format;
 // Set Language and per-run language spans (`docs/109` RM-42).
 mod language;
+// AutoCorrect's one engine query, whether a range is already linked (`docs/109` RM-19).
+mod autocorrect;

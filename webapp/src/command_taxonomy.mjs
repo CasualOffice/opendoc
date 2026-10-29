@@ -434,7 +434,8 @@ export const APP_MENU_SECTIONS = {
     ),
     band("menuGroup.text", "insert.textbox", "insert.dropCap"),
     sub("menuGroup.fields", "insert.field", "insert.field.page", "insert.field.date"),
-    sub("menuGroup.symbols", "insert.symbol", "insert.emoji"),
+    // RM-19: Word keeps the non-breaking space beside Symbol, under Special Characters.
+    sub("menuGroup.symbols", "insert.symbol", "insert.emoji", "insert.nonBreakingSpace"),
   ],
   // The References menu, which the compact chrome did not have at all.
   //
@@ -639,6 +640,11 @@ export const APP_MENU_SECTIONS = {
       "tools.smartQuotes",
       "tools.autoFormatLists",
       "tools.autocorrect",
+      // RM-19: the remaining AutoCorrect switches and the dialog holding them all.
+      "tools.autoCapitalise",
+      "tools.autoFormatDashes",
+      "tools.autoFormatHyperlink",
+      "tools.autoCorrectOptions",
       "tools.languages",
       // RM-42: Word's Review ▸ Language ▸ Set Proofing Language.
       "format.language",

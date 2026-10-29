@@ -287,6 +287,8 @@ export function createPalette(ed) {
       { id: "insert.textbox", label: "Text box", group: "Insert", kw: "text box textbox callout caption floating frame", enabled: ed.insertCommandEnabled("insert.textbox"), run: () => void ed.insertTextBoxObject() },
       { id: "insert.symbol", label: "Symbol…", group: "Insert", kw: "symbol special character glyph currency math greek arrow fraction diacritic omega degree unicode", enabled: ed.insertCommandEnabled("insert.symbol"), run: () => ed.openSymbolPicker() },
       { id: "insert.emoji", label: "Emoji…", group: "Insert", kw: "emoji emoticon smiley face reaction sticker unicode", enabled: ed.insertCommandEnabled("insert.emoji"), run: () => ed.openEmojiPicker() },
+      // RM-19: Word's and ONLYOFFICE's Ctrl+Shift+Space; also in Symbol ▸ Special characters.
+      { id: "insert.nonBreakingSpace", label: t("insert.nonBreakingSpace"), group: "Insert", kw: "non-breaking space nbsp hard space keep together same line ctrl shift space", enabled: !!ed.doc && !!ed.selection && ed.reviewMode !== "viewing", disabledReason: t("paragraph.caretRequired"), run: () => void ed.pasteText("\u00a0", "typing") },
       // The per-kind field shortcuts share Field…'s precondition; they are the
       // same dialog's choices reached directly from the palette.
       ...FIELD_KINDS.map((f) => ({
@@ -394,7 +396,12 @@ export function createPalette(ed) {
       },
       { id: "tools.smartQuotes", label: ed.autoCorrect.label("smartQuotes"), group: "Tools", kw: "smart curly typographic quotes apostrophe straight autocorrect", noDoc: true, run: () => ed.autoCorrect.toggle("smartQuotes") },
       { id: "tools.autoFormatLists", label: ed.autoCorrect.label("lists"), group: "Tools", kw: "automatic lists bullet numbered autoformat as you type 1. dash asterisk", noDoc: true, run: () => ed.autoCorrect.toggle("lists") },
-      { id: "tools.autocorrect", label: ed.autoCorrect.label("autocorrect"), group: "Tools", kw: "autocorrect correct typos dash em en copyright trademark registered capitalise capitalize sentence", noDoc: true, run: () => ed.autoCorrect.toggle("autocorrect") },
+      { id: "tools.autocorrect", label: ed.autoCorrect.label("autocorrect"), group: "Tools", kw: "autocorrect replace text as you type typos copyright trademark registered table", noDoc: true, run: () => ed.autoCorrect.toggle("autocorrect") },
+      // RM-19: the rest of Word's AutoCorrect switches, and the dialog that holds them all.
+      { id: "tools.autoCapitalise", label: ed.autoCorrect.label("capitalise"), group: "Tools", kw: "autocorrect capitalise capitalize first letter sentence table cell", noDoc: true, run: () => ed.autoCorrect.toggle("capitalise") },
+      { id: "tools.autoFormatDashes", label: ed.autoCorrect.label("dashes"), group: "Tools", kw: "autoformat hyphens dash em en -- typographic", noDoc: true, run: () => ed.autoCorrect.toggle("dashes") },
+      { id: "tools.autoFormatHyperlink", label: ed.autoCorrect.label("hyperlinks"), group: "Tools", kw: "autoformat hyperlink url web address email link automatic internet", noDoc: true, run: () => ed.autoCorrect.toggle("hyperlinks") },
+      { id: "tools.autoCorrectOptions", label: t("autocorrect.optionsCommand"), group: "Tools", kw: "autocorrect options autoformat as you type replace with table exceptions settings", noDoc: true, run: () => ed.autoCorrectDialog.open() },
       // RM-42: Word's Review ▸ Language ▸ Set Proofing Language.
       { id: "format.language", label: t("language.command"), group: "Format", kw: "language proofing spelling set language selection text french german w:lang", enabled: !!ed.doc && !!ed.selection && ed.reviewMode !== "viewing", disabledReason: t("paragraph.caretRequired"), run: () => ed.languageSelection.open() },
       // Reads as a switch, the shape `tools.smartQuotes` already uses, so the menu

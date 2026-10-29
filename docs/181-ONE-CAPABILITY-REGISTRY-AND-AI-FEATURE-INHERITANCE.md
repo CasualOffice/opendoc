@@ -194,7 +194,8 @@ agents later is one registry entry and lowers the ceiling back to 16. The editor
 language is one more field of the character patch inside `FormatText`, so `NOT_EXPOSED_CEILING`
 does not move. It is listed with `UI_CHARACTER` because `set_text_format` does not carry the
 character patch yet; when the formatting unification (§4.2 step 2) gives it that field, the
-entry leaves and the ceiling returns to 85.
+entry leaves and the ceiling returns to 85. `insert.nonBreakingSpace`, the other editor command
+this change adds, needs no entry: inserting U+00A0 is `insert_text`, which now names it.
 
 **What "a feature inherits MCP" therefore means, concretely.** A developer adding, say,
 footnote insertion writes `InsertFootnote: Command` with its `lower()` (moved out of
