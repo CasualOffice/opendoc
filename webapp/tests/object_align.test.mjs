@@ -45,7 +45,9 @@ function harness({ nodes = ["a", "b"], can = '{"can":true}', mutationEnabled = t
 }
 
 test("the menu offers the six alignments, two distributions and three targets, asking the engine twice", () => {
-  const { rows, calls } = harness();
+  // Three objects: distribution needs three, so with two it is closed by the
+  // count rule before the engine is asked, and only one read would happen.
+  const { rows, calls } = harness({ nodes: ["a", "b", "c"] });
   assert.deepEqual(
     rows.map((row) => row.id),
     [
@@ -56,7 +58,7 @@ test("the menu offers the six alignments, two distributions and three targets, a
     ],
   );
   assert.equal(calls.can.length, 2, "one read for the alignments, one for the distributions");
-  assert.equal(rows.find((row) => row.id === "object.align.to.selected").shortcut, "✓", "two objects: the selection");
+  assert.equal(rows.find((row) => row.id === "object.align.to.selected").shortcut, "✓", "several objects: the selection");
 });
 
 test("a row runs the engine over EVERY held object, against the target in force, and says so", async () => {

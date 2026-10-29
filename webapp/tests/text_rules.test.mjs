@@ -112,8 +112,9 @@ test("a quote typed after a non-ASCII letter closes, at an engine byte offset", 
       readPrefix: () => engine.copyText(0, engine.end),
     });
     assert.equal(typed, "’", `after ${word}`);
-    // The engine trap itself, kept visible: one byte back is inside the letter.
-    assert.equal(engine.copyText(engine.end - 1, engine.end), "");
+    // The engine trap itself, kept visible: one byte back is inside the last
+    // letter, when that letter is multi-byte ("Müller" ends in an ASCII r).
+    if (!/[\u0000-\u007f]$/u.test(word)) assert.equal(engine.copyText(engine.end - 1, engine.end), "");
   }
 });
 

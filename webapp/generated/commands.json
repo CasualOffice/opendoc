@@ -1851,6 +1851,10 @@
       "reason": "The Header & Footer options dialog also writes the header and footer distances, which agents are not offered; its toggles and page numbering are (set_different_first_page, set_different_odd_even, set_page_numbering)."
     },
     {
+      "id": "layout.pageBorders",
+      "reason": "Page borders are a person's design choice in the Page Borders dialog; no agent command offers them yet (docs/181 §3)."
+    },
+    {
       "id": "review.mode.editing",
       "reason": "Switches the editor's own editing mode, not the document; an agent's mode is its profile plus the plan's `mode`."
     },
@@ -1867,6 +1871,6 @@
       "reason": "No command deletes a comment yet; an agent resolves a thread with resolve_comment."
     }
   ],
-  "uiNotExposedCeiling": 84,
+  "uiNotExposedCeiling": 85,
   "vocabularyVersion": "1.5"
 }

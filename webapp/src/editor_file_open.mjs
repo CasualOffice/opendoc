@@ -445,14 +445,14 @@ export function createFileOpen(ed) {
       const kept = replaced ? " — the document you had open was already closed" : ed.doc ? " — the document you had open is still here" : "";
       // A refusal with a finding id the reader can act on is said in words.
       if (/pdf\.import\.encrypted_unsupported/.test(message)) {
-        ed.setStatus(`${t("pdfImport.encrypted", { name })}${kept}`, "error");
+        ed.setStatus(t("pdfImport.encrypted", { name }) + kept, "error");
         return;
       }
       if (options.failedStatus) {
         ed.setStatus(`${options.failedStatus(message)}${kept}`, "error");
         return;
       }
-      ed.setStatus(`${t("pdfImport.openFailed", { name, message })}${kept}`, "error");
+      ed.setStatus(t("pdfImport.openFailed", { name, message }) + kept, "error");
     }
   }
 

@@ -10017,6 +10017,13 @@ impl WasmDocument {
     /// width over 1024 eighth-points, a spacing over 31 points).
     #[wasm_bindgen(js_name = setPageBorders)]
     pub fn set_page_borders(&mut self, payload_json: &str) -> Result<EditResult, JsValue> {
+        self.set_page_borders_inner(payload_json).map_err(to_js)
+    }
+
+    /// [`set_page_borders`](Self::set_page_borders) with a `String` error, so the
+    /// refusals are reachable from a native test — a `JsValue` cannot be
+    /// constructed off a wasm target.
+    fn set_page_borders_inner(&mut self, payload_json: &str) -> Result<EditResult, String> {
         #[derive(serde::Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Payload {
@@ -10024,22 +10031,21 @@ impl WasmDocument {
             borders: PageBorders,
         }
         let payload: Payload = serde_json::from_str(payload_json)
-            .map_err(|e| to_js(format!("invalid page borders payload: {e}")))?;
+            .map_err(|e| format!("invalid page borders payload: {e}"))?;
         let sections = payload
             .sections
             .iter()
             .map(|id| NodeId::from_str(id).map(SectionId::new))
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| to_js("invalid section id".to_string()))?;
+            .map_err(|_| "invalid section id".to_string())?;
         if sections.is_empty() {
-            return Err(to_js("no section to apply page borders to".to_string()));
+            return Err("no section to apply page borders to".to_string());
         }
         let caret = Pos::new(self.document.id(), 0);
         self.apply_action_caret(
             casual_doc_command::sections::set_page_borders(&sections, &payload.borders),
             caret,
         )
-        .map_err(to_js)
     }
 
     /// EVERY section's page-layout properties — vertical alignment and page
@@ -36079,7 +36085,7 @@ mod tests {
             "borders": { "display": "allPages", "offsetFrom": "page",
                 "top": edge, "bottom": edge, "start": edge, "end": edge },
         });
-        d.set_page_borders(&payload.to_string())
+        d.set_page_borders_inner(&payload.to_string())
             .expect("borders on");
         for section in &d.document.definitions().sections {
             let top = section
@@ -36108,7 +36114,8 @@ mod tests {
         // The empty value removes them.
         d.redo().expect("redo");
         let off = serde_json::json!({ "sections": sections, "borders": {} });
-        d.set_page_borders(&off.to_string()).expect("borders off");
+        d.set_page_borders_inner(&off.to_string())
+            .expect("borders off");
         assert!(
             d.document
                 .definitions()
@@ -36120,7 +36127,7 @@ mod tests {
         let wide = serde_json::json!({ "sections": sections,
             "borders": { "top": { "style": "single", "spacePoints": 99 } } });
         let unchanged = d.document.clone();
-        assert!(d.set_page_borders(&wide.to_string()).is_err());
+        assert!(d.set_page_borders_inner(&wide.to_string()).is_err());
         assert_eq!(d.document, unchanged);
     }
 

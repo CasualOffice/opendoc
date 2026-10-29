@@ -946,6 +946,7 @@ const UI_LISTS: &str = "Numbering on/off, level, format and restart arrive with 
 const UI_STYLE_DEFINITIONS: &str = "Redefining a style changes every paragraph that uses it; agents apply styles and do not define them yet (docs/181 §4.2 step 2).";
 const UI_OBJECTS: &str = "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are.";
 const UI_OBJECT_MENU: &str = "The object menus are one contract family; its members that change a picture or shape (object.altText, object.crop, object.delete, object.fill, object.outline, object.wrap) are named by the objects commands, the rest are arrangement.";
+const UI_PAGE_BORDERS: &str = "Page borders are a person's design choice in the Page Borders dialog; no agent command offers them yet (docs/181 §3).";
 const UI_HEADER_FOOTER_SETTINGS: &str = "The Header & Footer options dialog also writes the header and footer distances, which agents are not offered; its toggles and page numbering are (set_different_first_page, set_different_odd_even, set_page_numbering).";
 const UI_TABLES: &str = "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1).";
 
@@ -1045,6 +1046,7 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
     ("table.properties", UI_TABLES),
     ("table.style.none", UI_TABLES),
     ("layout.headerFooterSettings", UI_HEADER_FOOTER_SETTINGS),
+    ("layout.pageBorders", UI_PAGE_BORDERS),
     ("review.mode.editing", UI_MODE),
     ("review.mode.suggesting", UI_MODE),
     ("review.restrictEditing", UI_PROTECTION),
@@ -1053,4 +1055,6 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
 
 /// The length of [`UI_NOT_EXPOSED`]. It may only fall: lower it when a command
 /// names an id; raising it needs an ADR line (`docs/181` §3).
-pub const UI_NOT_EXPOSED_CEILING: usize = 84;
+///
+/// 84 -> 85 with `layout.pageBorders` (`109` HF-193), recorded in `docs/181` §3.
+pub const UI_NOT_EXPOSED_CEILING: usize = 85;

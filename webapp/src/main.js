@@ -481,6 +481,7 @@ const ed = {
   get pageWindow() { return pageWindow; }, set pageWindow(v) { pageWindow = v; },
   get pages() { return pages; },
   get pdfCommands() { return pdfCommands; }, set pdfCommands(v) { pdfCommands = v; },
+  get headerFooterBand() { return headerFooterBand; }, set headerFooterBand(v) { headerFooterBand = v; },
   get pagesEl() { return pagesEl; },
   get pagesPanel() { return pagesPanel; },
   get pagesPanelView() { return pagesPanelView; },
@@ -1692,6 +1693,8 @@ let chromeRefreshA11y = false;
 let activeLink = null;
 /** The PDF commands (`pdf_commands.mjs`), set by the file-open module. */
 let pdfCommands = null;
+/** The open band's commands (`editor_header_footer.mjs`), set by that module. */
+let headerFooterBand = null;
 /** Armed run formatting for typing at a collapsed caret (e.g. click Bold with no
  *  selection → next typed characters are bold). `null` when nothing is armed; else
  *  a subset of { bold, italic, underline, strike } → boolean. Cleared whenever the
