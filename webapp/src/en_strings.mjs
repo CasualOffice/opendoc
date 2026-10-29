@@ -1455,6 +1455,23 @@ export const EN_STRINGS = Object.freeze({
   // Stacking. One engine op behind four commands, because “forward” and “to
   // front” are different intentions even when a document has two objects.
   "object.arrange": "Arrange",
+  // Arrange ▸ Align (`object_align.mjs`, RM-28): Word's and ONLYOFFICE's rows.
+  "object.align": "Align",
+  "object.align.left": "Align left",
+  "object.align.center": "Align center",
+  "object.align.right": "Align right",
+  "object.align.top": "Align top",
+  "object.align.middle": "Align middle",
+  "object.align.bottom": "Align bottom",
+  "object.align.distributeHorizontally": "Distribute horizontally",
+  "object.align.distributeVertically": "Distribute vertically",
+  "object.align.toPage": "Align to page",
+  "object.align.toMargin": "Align to margin",
+  "object.align.toSelected": "Align selected objects",
+  "object.align.aligned": "Objects aligned",
+  "object.align.distributed": "Objects distributed",
+  "object.align.reason.selectMore": "Hold {modifier} and click another object to align them to each other",
+  "object.align.reason.selectThree": "Hold {modifier} and click to select three or more objects to distribute them",
   "object.z.front": "Bring to front",
   "object.z.forward": "Bring forward",
   "object.z.backward": "Send backward",

@@ -488,6 +488,81 @@ fn a_picture_natural_size_comes_from_its_own_header_and_never_from_its_frame() {
     );
 }
 
+/// RM-28: Arrange ▸ Align over two floating pictures, then to the margin, and
+/// the refusals a host disables the rows with.
+///
+/// The two logos float at 1 in and 4.5 in across. Aligning their left edges to
+/// each other moves the second to the first, in ONE undo step; aligning one to
+/// the margin writes Word's alignment token (`relativeFrom="margin"`,
+/// `wp:align right`), not an offset.
+///
+/// Mutation: emitting one action per object (a loop of `commit_anchor`) leaves
+/// the first undo restoring only the last object, and the undo assertion
+/// fails; writing an offset for the margin case fails the token assertion.
+#[test]
+fn align_left_moves_both_logos_in_one_step_and_the_margin_gets_a_token() {
+    let mut document = wrapped();
+    let field = picture_named(&document, "Field logo").to_string();
+    let control = picture_named(&document, "Control logo").to_string();
+    let both = serde_json::json!([field, control]).to_string();
+    let field_before = document.object_rect(&field);
+    let control_before = document.object_rect(&control);
+    assert_ne!(field_before[1], control_before[1], "they start apart");
+
+    assert_eq!(
+        document.can_align_objects(&both, "left", "selected"),
+        "{\"can\":true}"
+    );
+    document
+        .align_objects_inner(&both, "left", "selected")
+        .expect("align the two lefts");
+    assert_eq!(
+        document.object_rect(&control)[1],
+        field_before[1],
+        "the second logo's left edge meets the first's"
+    );
+    assert_eq!(
+        document.object_rect(&field),
+        field_before,
+        "the leftmost stays"
+    );
+    document.undo().expect("undo the alignment");
+    assert_eq!(
+        document.object_rect(&control),
+        control_before,
+        "one undo puts the arrangement back"
+    );
+
+    document
+        .align_objects_inner(&serde_json::json!([field]).to_string(), "right", "margin")
+        .expect("align one logo to the right margin");
+    let position: serde_json::Value =
+        serde_json::from_str(&document.object_position(&field)).expect("position JSON");
+    assert_eq!(
+        position["horizontal"]["relativeFrom"], "margin",
+        "{position}"
+    );
+    assert_eq!(position["horizontal"]["align"], "right", "{position}");
+
+    let two = document
+        .align_objects_inner(&both, "distributeHorizontally", "selected")
+        .expect_err("two objects cannot be distributed");
+    assert!(two.contains("object.distribute-needs-three"), "{two}");
+    let alone = document.can_align_objects(
+        &serde_json::json!([control]).to_string(),
+        "left",
+        "selected",
+    );
+    assert!(alone.contains("object.align-needs-two"), "{alone}");
+    let inline = picture_named(&document, "Inline logo").to_string();
+    let not_floating =
+        document.can_align_objects(&serde_json::json!([inline]).to_string(), "left", "margin");
+    assert!(
+        not_floating.contains("object.align-not-floating"),
+        "{not_floating}"
+    );
+}
+
 /// The media id a picture node currently shows, wherever it is nested.
 fn media_of(document: &WasmDocument, node: &str) -> casual_doc_model::v1::MediaId {
     fn in_children(children: &[GroupChild], id: NodeId) -> Option<casual_doc_model::v1::MediaId> {

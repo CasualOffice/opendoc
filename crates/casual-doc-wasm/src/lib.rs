@@ -165,6 +165,10 @@ mod window;
 // and this file is already 40k lines and is owned by other lanes.
 mod objects;
 
+// Arrange ▸ Align and Distribute over floating objects (`docs/109` RM-28): one
+// command, emitted as `SetAnchor`s in one action.
+mod object_align;
+
 // Moving an in-line object to a new place in the text (`docs/109` UX-OB-02).
 // Its own module for the reason `objects` gives, and because the whole feature
 // is one command composed from two existing operations.

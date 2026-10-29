@@ -4,6 +4,9 @@
 // through the context `ed`.
 import { buildObjectContextCommands } from "./object_context_menu.mjs";
 import { pictureToolCommands } from "./picture_tools.mjs";
+import { createObjectAlign } from "./object_align.mjs";
+import { editRefusalMessage } from "./edit_errors.mjs";
+import { formatShortcut } from "./keyboard.mjs";
 import { spellingContextCommands } from "./spell_check.mjs";
 import { shortcutForCommand } from "./keymap.mjs";
 import { POSITION_PRESETS, ROTATE_CHOICES, WRAP_CHOICES, Z_ORDER_CHOICES, activeWrapChoice, positionAvailability, wrapAvailability } from "./object_arrange.mjs";
@@ -552,8 +555,20 @@ export function createContextMenu(ed) {
   // application state and the verbs it needs. Extracted to pay for the captions
   // work under the line ratchet, and to give 156 lines of menu policy its first
   // test (`tests/object_context_menu.test.mjs`).
+  /** Arrange ▸ Align and Distribute (`object_align.mjs`, RM-28). One instance,
+   *  so the target the reader picks stays chosen, as Word's does. */
+  const objectAlign = createObjectAlign({
+    doc: () => ed.doc,
+    nodes: () => ed.objectArrange.candidates(),
+    runEdit: (thunk, options) => ed.runEdit(thunk, options),
+    t,
+    explain: (raw) => editRefusalMessage(raw, { routeRefusal: ed.SESSION.sentenceFor }),
+    announce: (text) => ed.setStatus(text),
+    modifier: formatShortcut("⌘"),
+  });
   const objectContextMenuHost = {
     reviewMode: () => ed.reviewMode,
+    alignRows: (mutationEnabled, mutationReason) => objectAlign.rows(mutationEnabled, mutationReason),
     readOnlyReason: () => ed.readOnlyReason,
     wrapModes: () => WRAP_CHOICES.map((choice) => [choice.value, t(choice.key)]),
     positionPresets: () => POSITION_PRESETS.map((preset) => [preset.id, t(preset.key), preset]),

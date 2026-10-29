@@ -46,6 +46,7 @@
 //   `applyShapeOutline(o)`
 //   `enterCrop()`          enter crop mode on a picture
 //   `changePicture()`      Word's Change Picture: pick a file for the picture
+//   `alignRows(enabled, reason)` the Align submenu (`object_align.mjs`)
 //   `pictureToolCommands(enabled, reason)` the picture-tool rows
 //                          (`picture_tools.mjs`) for the selected picture
 //   `openProperties()`     open the object inspector
@@ -162,6 +163,20 @@ export function buildObjectContextCommands(context, io) {
         },
       ],
     });
+
+    // Align — Word's and ONLYOFFICE's Arrange ▸ Align: six alignments, two
+    // distributions and the page / margin / selected-objects target
+    // (`object_align.mjs`, RM-28). Rows and reasons come from the caller, which
+    // asks the engine twice per build, not once per row.
+    if (typeof io.alignRows === "function") {
+      commands.push({
+        id: "object.align",
+        label: io.text("object.align"),
+        group: "arrange",
+        icon: "position",
+        submenu: io.alignRows(mutationEnabled, mutationReason),
+      });
+    }
 
     // Rotate — Word's four rows. A top-level text box models no rotation, and
     // the refusal SAYS so rather than the row silently doing nothing.
