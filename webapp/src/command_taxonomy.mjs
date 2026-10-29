@@ -105,6 +105,12 @@ export const FILE_SURFACE = [
   // hidden on a phone, so without this row the report was a pointer-only
   // capability on one device class and unreachable on another.
   { nameKey: "menuGroup.document", ids: ["file.properties", "file.compatibilityReport"] },
+  // What a document opened from a PDF can become (`docs/182` §17a): Acrobat
+  // keeps "Recognize Text" and "Export PDF" together under its PDF tools, and
+  // so does this, behind one row so the File menu stays inside
+  // `menu-submenus.spec.mjs`'s cap. Disabled with the reason for any other
+  // document, never absent (SKILL §10).
+  { nameKey: "menuGroup.pdf", submenu: true, ids: ["file.pdf.recogniseText", "file.pdf.convertToFlowing"] },
   // Version history's PRIMARY home, and the one both references agree on: Google
   // Docs is File ▸ Version history ▸ See version history, ONLYOFFICE is a File
   // page item (`DE.Views.FileMenu.btnHistory`), Word puts it under File ▸ Info.

@@ -182,13 +182,16 @@ function buildDialog(view) {
   const body = make("div", { id: `${ID}Body`, className: "dialog-body findings-body" });
   const foot = make("footer", { className: "dialog-foot" });
   const actions = make("div", { className: "dialog-actions" });
+  // The PDF commands, as buttons, when the dialog summarises a PDF
+  // (`pdf_commands.mjs`): filled at render, empty otherwise.
+  const extra = make("div", { id: `${ID}Actions`, className: "findings-actions" });
   const done = make("button", { id: `${ID}Done`, type: "button", className: "dialog-button dialog-button-primary" });
-  actions.append(done);
+  actions.append(extra, done);
   foot.append(actions);
   card.append(head, body, foot);
   overlay.append(card);
   view.body.append(overlay);
-  return { overlay, close, body, done };
+  return { overlay, close, body, done, extra };
 }
 
 /**
@@ -206,9 +209,18 @@ export function createCompatibilityFindings(io) {
     fallbackFocus: io.fallbackFocus,
   });
   /** What the chip counts right now. */
-  let current = { reportJson: "", phase: "import", origin: null, totals: { headline: 0, bookkeeping: 0, entries: 0 } };
-  /** Whether the dialog has the PDF disclosure to say, findings or none. */
-  const disclosing = () => current.origin === "pdf" && current.phase === "import";
+  let current = {
+    reportJson: "",
+    phase: "import",
+    origin: null,
+    ocr: null,
+    actions: null,
+    totals: { headline: 0, bookkeeping: 0, entries: 0 },
+  };
+  /** Whether the dialog has the PDF disclosure to say, findings or none: a
+   *  PDF opened for editing, or a flowing document converted from one. */
+  const disclosing = () =>
+    (current.origin === "pdf" || current.origin === "pdfReflow") && current.phase === "import";
   /** Which kind groups' bookkeeping is open. Reset at every open, kept across a
    *  re-render while open, so a save under an open dialog does not fold what
    *  the reader just unfolded. */
@@ -306,14 +318,18 @@ export function createCompatibilityFindings(io) {
   /** What a PDF-origin document IS, said before its findings (`docs/182`,
    *  `docs/131` §16.2): processed here, a reconstruction, the original kept. */
   function pdfDisclosure() {
+    const reflowed = current.origin === "pdfReflow";
     const section = make("section", "findings-group findings-pdf");
-    section.dataset.kind = "pdfDisclosure";
+    section.dataset.kind = reflowed ? "pdfReflowDisclosure" : "pdfDisclosure";
     const title = make("h3", "findings-group-title");
-    title.textContent = t("findings.pdf.title");
+    title.textContent = t(reflowed ? "findings.pdfReflow.title" : "findings.pdf.title");
     const list = make("ul", "findings-pdf-facts");
-    for (const key of ["findings.pdf.local", "findings.pdf.reconstruction", "findings.pdf.original"]) {
+    const facts = reflowed
+      ? ["findings.pdfReflow.new", "findings.pdfReflow.inferred", "findings.pdfReflow.source", "findings.pdf.local"]
+      : ["findings.pdf.local", "findings.pdf.reconstruction", "findings.pdf.original"];
+    for (const key of facts) {
       const item = make("li");
-      item.dataset.fact = key.slice("findings.pdf.".length);
+      item.dataset.fact = key.slice(key.lastIndexOf(".") + 1);
       item.textContent = t(key);
       list.append(item);
     }
@@ -326,6 +342,57 @@ export function createCompatibilityFindings(io) {
     return section;
   }
 
+  /** What OCR did to a PDF, or could do: said whenever a page is a scan, so
+   *  "the text of page 3 is only a picture" is never left for the reader to
+   *  discover (`docs/182` §20). */
+  function ocrSection() {
+    const ocr = current.ocr;
+    const scanned = (ocr?.rasterPages ?? 0) + (ocr?.hybridPages ?? 0);
+    if (current.origin !== "pdf" || !ocr || scanned === 0) return null;
+    const section = make("section", "findings-group findings-ocr");
+    section.dataset.kind = "pdfOcr";
+    const title = make("h3", "findings-group-title");
+    title.textContent = t("findings.pdf.ocrTitle");
+    const note = make("p", "findings-note");
+    if (ocr.provider) {
+      note.dataset.state = "applied";
+      note.textContent = t("findings.pdf.ocrApplied", { provider: ocr.provider });
+    } else {
+      note.dataset.state = "pending";
+      note.textContent = t("findings.pdf.ocrPending", { count: n(scanned) });
+      const offer = (current.actions?.() ?? []).find((action) => action.id === "file.pdf.recogniseText");
+      if (offer && !offer.enabled && offer.reason) {
+        const why = make("p", "findings-note findings-ocr-reason");
+        why.dataset.state = "unavailable";
+        why.textContent = offer.reason;
+        section.append(title, note, why);
+        return section;
+      }
+    }
+    section.append(title, note);
+    return section;
+  }
+
+  /** The PDF commands as buttons beside Done. A disabled one keeps its
+   *  reason as its title; running one closes this dialog first. */
+  function renderActions() {
+    parts.extra.replaceChildren();
+    if (!disclosing()) return;
+    for (const action of current.actions?.() ?? []) {
+      const button = make("button", "dialog-button");
+      button.type = "button";
+      button.dataset.action = action.id;
+      button.textContent = action.label;
+      button.disabled = !action.enabled;
+      if (!action.enabled && action.reason) button.title = action.reason;
+      button.addEventListener("click", () => {
+        modal.close();
+        action.run();
+      });
+      parts.extra.append(button);
+    }
+  }
+
   function render() {
     view.getElementById(`${ID}Title`).textContent = t("findings.title");
     view.getElementById(`${ID}Description`).textContent = t(
@@ -336,6 +403,9 @@ export function createCompatibilityFindings(io) {
     parts.done.textContent = t("findings.close");
     parts.body.replaceChildren();
     if (disclosing()) parts.body.append(pdfDisclosure());
+    const ocr = disclosing() ? ocrSection() : null;
+    if (ocr) parts.body.append(ocr);
+    renderActions();
     if (current.totals.headline === 0 && current.totals.bookkeeping > 0) {
       const only = make("p", "findings-note findings-only-bookkeeping");
       only.textContent = t("findings.bookkeeping.only");
@@ -374,9 +444,12 @@ export function createCompatibilityFindings(io) {
     /** Records a report and paints the chip. Returns the HEADLINE count — the
      *  occurrences a reader would miss, Word's own bookkeeping excluded — which
      *  is the number the chip prints and the one a status line should say. */
-    show(reportJson, phase, { origin = null } = {}) {
+    show(reportJson, phase, { origin = null, ocr = null, actions = null } = {}) {
       const totals = reportJson ? findingTotals(reportJson) : { headline: 0, bookkeeping: 0, entries: 0 };
-      current = { reportJson: reportJson ?? "", phase, origin, totals };
+      // An export report keeps the open document's origin and actions: the
+      // document is still what it was opened as.
+      const keep = phase === "export" ? current : { origin, ocr, actions };
+      current = { reportJson: reportJson ?? "", phase, origin: keep.origin, ocr: keep.ocr, actions: keep.actions, totals };
       showCompatibilityFindings(io.chip, totals.headline, phase);
       if (modal.isOpen) render();
       return totals.headline;
