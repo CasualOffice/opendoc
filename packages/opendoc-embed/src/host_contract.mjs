@@ -395,6 +395,26 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("insert.table", "mutate"),
   exact("insert.header", "mutate"),
   exact("insert.footer", "mutate"),
+  // Per band, because linkage and removal are per band (`docs/85` §8d Q7): a
+  // section whose header is inherited while its footer is its own is a real
+  // document. `layout.*` like `layout.firstPageVariant` and the breaks: what
+  // they write is the section's `w:headerReference` / `w:footerReference`,
+  // while Insert is where people look for them (`command_taxonomy.mjs` files
+  // them in the Insert menu). Agents' twins: `link_to_previous`,
+  // `remove_header_footer`.
+  exact("layout.header.linkToPrevious", "mutate"),
+  exact("layout.footer.linkToPrevious", "mutate"),
+  exact("layout.header.remove", "mutate"),
+  exact("layout.footer.remove", "mutate"),
+  // The six page-number positions (ONLYOFFICE's Insert ▸ Page Number gallery,
+  // Word's Top / Bottom of Page). Exact rows: the set is closed. Agents' twin:
+  // `insert_page_number`.
+  exact("layout.pageNumber.topLeft", "mutate"),
+  exact("layout.pageNumber.topCenter", "mutate"),
+  exact("layout.pageNumber.topRight", "mutate"),
+  exact("layout.pageNumber.bottomLeft", "mutate"),
+  exact("layout.pageNumber.bottomCenter", "mutate"),
+  exact("layout.pageNumber.bottomRight", "mutate"),
   exact("insert.footnote", "mutate"),
   exact("insert.endnote", "mutate"),
   exact("insert.lineBreak", "mutate"),
@@ -734,6 +754,9 @@ export const COMMAND_FAMILIES = Object.freeze([
   family("paragraph.listFormat.", "mutate", "always"),
   // Generated from the field-kind table, and from the document's own style list.
   family("insert.field.", "mutate", "always"),
+  // Insert ▸ Chart's per-type rows (`insert.chart.<kind>`, HF-258), generated
+  // from the chart-type table the ribbon's picker reads.
+  family("insert.chart.", "mutate", "always"),
   family("style.", "mutate", "always"),
   // Generated from the zoom menu's markup.
   family("view.zoom.", null, "always"),

@@ -37,22 +37,21 @@
 //
 // ---- What it deliberately does NOT offer -------------------------------------
 //
-//   * "Link to previous" is READ-ONLY, disabled, carrying its reason. See the
-//     markup for why: in OOXML a section inherits by OMITTING a reference, so
-//     unlinking has to materialise a deep copy of the inherited body with fresh
-//     node ids, and the op that points a reference exists while the copy does
-//     not. `docs/129` designs it, and records two things that audit found: the
-//     only deep copy in the tree is the CLIPBOARD's, which drops 23 of the 27
-//     inline kinds — the page number and the logo among them — and the
-//     garbage-collection `docs/85` §8.4 assumed on re-link does not exist. A live
-//     toggle without the copy would edit the
-//     PREVIOUS section's header while claiming to edit this one, which is the
-//     docs/104 T-01 cross-surface mutation class.
+//   * a single "Link to previous" box. It used to be one READ-ONLY box, because
+//     unlinking has to copy the inherited band and the only deep copy in the
+//     tree dropped the page number and the logo (`docs/129` §2). #645 (HF-191)
+//     made the copy faithful, and HF-192 made the boxes live: one per BAND,
+//     because this dialog opens from the body, where "which band" has no
+//     answer, and a section whose header is inherited while its footer is its
+//     own is a real document one box cannot describe (`docs/129` §5). They run
+//     the same command as the open band's bar and the Insert menu
+//     (`editor_header_footer.mjs` `setLinked`).
 //   * the six page-number POSITION buttons ONLYOFFICE puts in the same panel
 //     (top-left … bottom-right, `HeaderFooterSettings.template` L55-69). Those
-//     insert a field into a band; this dialog sets section properties. The Insert
-//     band's Page number button already owns insertion, and two controls for one
-//     action is the drift the surface-parity guards exist to catch.
+//     insert a field into a band; this dialog sets section properties. They are
+//     Insert ▸ Page numbers and the open band's Options menu
+//     (`header_footer_commands.mjs`), and a third copy here would be the drift
+//     the surface-parity guards exist to catch.
 //   * `NumberFormat::Other` tokens, their `NumberInDash` format, their Russian
 //     locale pair and their "More types" picker — see the markup.
 import { TWIPS_PER_INCH, inchesToTwips } from "./units.mjs";
@@ -108,6 +107,8 @@ const NUMBER_FORMATS = new Set([
  *                         having already said so
  *   `setStatus(text, kind)`  the status line
  *   `registerModal(dialog, options)`  the host's modal registry
+ *   `band()`              the band commands (`editor_header_footer.mjs`
+ *                         `ed.headerFooterBand`): `linkState`, `setLinked`
  */
 export function createHeaderFooterSettings(io) {
   const el = (id) => document.getElementById(id);
@@ -189,7 +190,8 @@ export function createHeaderFooterSettings(io) {
   const footerFromBottom = el("footerFromBottom");
   const diffFirst = el("headerFooterDiffFirst");
   const diffOddEven = el("headerFooterDiffOddEven");
-  const linkToPrevious = el("headerFooterLinkToPrevious");
+  const linkBoxes = { header: el("headerFooterLinkHeader"), footer: el("headerFooterLinkFooter") };
+  const linkReason = el("headerFooterLinkReason");
   const numberContinue = el("pageNumberContinue");
   const numberRestart = el("pageNumberRestart");
   const numberStart = el("pageNumberStart");
@@ -295,25 +297,24 @@ export function createHeaderFooterSettings(io) {
     const variants = variantState();
     diffFirst.checked = variants.firstPage === true;
     diffOddEven.checked = variants.evenOdd === true;
-    // Link to previous: the truth the engine already reports, per PAGE, because
-    // inheritance is resolved per page and not per section. A section whose header
-    // is inherited and whose footer is not is a real document, so the box is only
-    // ticked when BOTH are — and it says so by staying disabled either way.
-    const bands = runningBands();
-    linkToPrevious.checked = bands !== null && bands.headerLinked && bands.footerLinked;
+    reflectLinks();
     return true;
   }
 
-  /** One page's running-content context, for the Link-to-previous indicator. */
-  function runningBands() {
-    const doc = io.getDoc();
-    const page = io.runningPage();
-    if (!doc || !page) return null;
-    try {
-      return JSON.parse(doc.runningBands(page.pageNumber));
-    } catch {
-      return null;
+  /** Link to previous, per band, for the page in view: the engine's answer, and
+   *  disabled — with the reason on screen — on the first section, which has no
+   *  previous section. Per PAGE, because inheritance resolves per page variant. */
+  function reflectLinks() {
+    const band = io.band?.();
+    let firstSection = false;
+    for (const [which, box] of Object.entries(linkBoxes)) {
+      if (!box) continue;
+      const state = band?.linkState?.(which) ?? null;
+      box.checked = state?.linked === true;
+      box.disabled = !state || state.linked === null;
+      if (state && state.linked === null) firstSection = true;
     }
+    if (linkReason) linkReason.hidden = !firstSection;
   }
 
   const modal = io.registerModal(dialog, {
@@ -432,6 +433,15 @@ export function createHeaderFooterSettings(io) {
     const variants = variantState();
     diffOddEven.checked = variants.evenOdd === true;
   });
+
+  // Live, like the two switches above and for the same reason: they are the same
+  // command as the band bar's checkbox, which applies at once.
+  for (const [which, box] of Object.entries(linkBoxes)) {
+    box?.addEventListener("change", async () => {
+      await io.band?.()?.setLinked?.(which, box.checked);
+      reflectLinks();
+    });
+  }
 
   // Typing a number is choosing "Start at": leaving the radio on "Continue" while
   // a number sits beside it would make Apply quietly ignore what was typed.

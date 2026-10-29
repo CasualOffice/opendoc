@@ -1,8 +1,10 @@
-# 129 — Link to Previous: design, and why it is not shipped yet
+# 129 — Link to Previous: design
 
-Status: **design; the control ships read-only.** This is the document
-`webapp/src/header_footer_settings.mjs` and `webapp/editor.html` cite as the reason the
-"Link to previous" checkbox in Header and footer settings is disabled rather than absent.
+Status: **shipped (2026-10-30, `109` HF-192).** Link to previous is live, per band and per
+variant, on four surfaces: the open band's own bar, the Insert menu, the command palette and
+the Header and footer dialog (one box per band). §8 records what was built against this
+design and where it differs. Until then this was the document `header_footer_settings.mjs`
+and `editor.html` cited as the reason the control shipped read-only.
 
 The semantics were decided long ago and are not reopened here: **`docs/85` §8.4 and §8d
 Q7** adopt Word's model — linkage is `HeaderFooterRef` presence or absence, header and
@@ -281,3 +283,36 @@ Every ONLYOFFICE claim here is from the source tree, not from their documentatio
 Word: Microsoft Support, "Link to previous" and "Configure headers and footers for
 different sections of a Word document" — already cited in `docs/85` §8d and not re-derived
 here.
+
+## 8. What shipped (2026-10-30, HF-192)
+
+The op sequence is §4's, unchanged and lowered once for the editor and agents in
+`casual_doc_command::sections::set_linked_to_previous`: unlink is `CreateHeaderFooterBody` +
+`SetSectionRunningRef { Some }` with the body a `casual_doc_edit::clone` deep copy of the
+band the page shows, re-link is `SetSectionRunningRef { None }`. No operation was added.
+
+* **Where the live control is.** §5 decided the band's own chrome, and that is where the
+  primary face is: the bar drawn on the open band (`editor_header_footer.mjs`, Google Docs'
+  shape, since this ribbon has no contextual tab to spend). The dialog's read-only indicator
+  became **two live boxes, one per band** — §5's objection was that one box cannot describe
+  "header inherited, footer not", and two can. Commands: `layout.header.linkToPrevious`,
+  `layout.footer.linkToPrevious`; agents: `link_to_previous`.
+* **The first section** is disabled with the reason on every face, as ONLYOFFICE does.
+* **The caret follows the band.** The copy is structural, so a caret in the inherited body
+  lands on the matching paragraph of the copy at the same offset (`paragraph_order`).
+* **Loss is reported, not silent.** Markers a copy cannot duplicate inside one document
+  (bookmarks, comment anchors, note references, field-range markers) come back on
+  `EditResult.pasteLoss` and the status line names them.
+* **Where it differs from Word.** Word asks before a re-link discards the section's own
+  band; here re-link is one undoable step and the status line says so.
+* **`runningBands` corrected.** `headerLinked`/`footerLinked` used to count a declared
+  default as owning every variant; they now use the per-variant rule the layout applies,
+  so the band label and the control agree on a first or even page.
+
+§6's guards, as built (`crates/casual-doc-wasm/src/running_tests.rs`, on `sample.docx`):
+1 the copy keeps the page number and the page shows the copy; 3 typing in the copy leaves the
+previous section's footer; 4 the round trip writes the section's own `w:footerReference`;
+5 one undo; 6 an unlink/re-link cycle leaves the footer-part count unchanged; 7 is the
+exhaustive match `casual_doc_edit::clone` already carries. Guard 2 (a picture) is covered by
+the clone's own tests rather than repeated here. In the browser,
+`webapp/tests/e2e/header-footer-bands.spec.mjs` asserts the same on the page's ink.

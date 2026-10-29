@@ -5,12 +5,17 @@
 //! the `-left` even-page variants) into a plain-text paragraph draft that
 //! [`crate::package`] turns into schema-v1 `HeaderFooter` definitions.
 //!
-//! The first checkpoint is deliberately bounded: paragraphs made of plain runs,
-//! explicit spaces (`text:s`), tabs (`text:tab`), and line breaks
-//! (`text:line-break`). Run/paragraph formatting, headings, lists, tables,
-//! links, notes, drawings, first-page regions, and additional master-pages are
-//! reported as compatibility findings rather than silently dropped, matching the
-//! crate's bounded-subset philosophy. The walk is lenient about
+//! The checkpoint is deliberately bounded: paragraphs made of plain runs,
+//! explicit spaces (`text:s`), tabs (`text:tab`), line breaks
+//! (`text:line-break`), entity and character references (`&amp;`, `&#x41;`) and
+//! the four field elements this crate's writer emits into a page region
+//! (`text:page-number`, `text:page-count`, `text:date`, `text:time` — `docs/109`
+//! HF-210: a LibreOffice footer's page number used to be dropped on the way
+//! in, so the round trip the writer made faithful in #650 was asymmetric). A
+//! hyperlink keeps its text and reports its lost target. Run/paragraph
+//! formatting, headings, lists, tables, notes, drawings, first-page regions, and
+//! additional master-pages are reported as compatibility findings rather than
+//! silently dropped, matching the crate's bounded-subset philosophy. The walk is lenient about
 //! unsupported-but-valid constructs (never turns a currently-importable ODT into
 //! a failure) and strict about malformed XML and resource limits (fails closed).
 
@@ -20,7 +25,9 @@ use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 
 use crate::content::{ModelOutcome, OdfImportLimits};
+// Fields in page regions (HF-210), on their own line per the parallel-lane rule.
 use crate::{OdfError, RetentionOutcome};
+use casual_doc_model::v1::FieldKind;
 
 /// One inline fragment inside a bounded header/footer paragraph. Text fragments
 /// are always maximal (adjacent text is merged) and separated by structural
@@ -33,6 +40,10 @@ pub(crate) enum HeaderFooterInline {
     Tab,
     /// An explicit line break.
     LineBreak,
+    /// A field the layout recomputes (`text:page-number` and its siblings). The
+    /// cached display text inside the element is not kept: the writer emits
+    /// these empty, and the layout computes the value per page.
+    Field(FieldKind),
 }
 
 /// One bounded header/footer paragraph (may be empty — a blank line).
@@ -190,8 +201,23 @@ pub(crate) fn parse_master_page(
                     append_text(&mut state, &value, limits)?;
                 }
             }
+            // quick-xml 0.41 delivers every entity and character reference as an
+            // event of its own, NOT inside `Event::Text`, so the `unescape` above
+            // never sees one. This arm used to be the wildcard's, which made
+            // `a&lt;b&gt;c&amp;d` import as `abcd` with no finding (`docs/109`
+            // HF-209). Resolved exactly as `content.rs` resolves them in the body.
+            Event::GeneralRef(reference) => {
+                if state.skip_depth.is_none() && state.para_open {
+                    let value = crate::content::decode_reference(&reference)?;
+                    append_text(&mut state, &value, limits)?;
+                }
+            }
             Event::End(_) => close_element(&mut state, limits)?,
-            _ => {}
+            // Markup that carries no header/footer content. Listed rather than
+            // left to a wildcard, so the next event kind quick-xml adds is a
+            // compile error here instead of a fifth silent `_ => {}` (HF-191,
+            // HF-194, HF-196 and HF-209 were all that shape).
+            Event::Comment(_) | Event::Decl(_) | Event::PI(_) => {}
         }
         buffer.clear();
     }
@@ -421,6 +447,32 @@ fn open_paragraph_child(
             flush_text(state, limits)?;
             push_inline(state, HeaderFooterInline::LineBreak, limits)
         }
+        // The fields a page region holds (HF-210). The element's own content is
+        // the producer's cached display ("1" in LibreOffice's footer), which the
+        // layout recomputes per page, so the subtree is skipped once the field
+        // is taken.
+        b"page-number" | b"page-count" | b"date" | b"time" => {
+            flush_text(state, limits)?;
+            let kind = match local {
+                b"page-number" => FieldKind::Page,
+                b"page-count" => FieldKind::NumPages,
+                b"date" => FieldKind::Date { format: None },
+                _ => FieldKind::Time { format: None },
+            };
+            push_inline(state, HeaderFooterInline::Field(kind), limits)?;
+            skip_if_start(state, element_depth, empty);
+            Ok(())
+        }
+        // A hyperlink keeps its TEXT, which used to be dropped with the element;
+        // its target is not modeled in a page region yet, and says so.
+        b"a" => {
+            state.findings.record(
+                "odf.master-page.hyperlink",
+                ModelOutcome::Degraded,
+                RetentionOutcome::NotRetained,
+            );
+            Ok(())
+        }
         _ => {
             // Links, notes, fields, drawings, and similar inline content drop to
             // a finding; their text is not salvaged in this checkpoint.
@@ -609,6 +661,57 @@ mod tests {
         // balance check must reject the truncated region rather than drop it.
         let xml = b"<office:document-styles><office:master-styles><style:master-page><style:header><text:p>hi";
         assert!(parse_master_page(xml, OdfImportLimits::default()).is_err());
+    }
+
+    /// HF-209. Mutation: restore the wildcard in place of the `GeneralRef` arm —
+    /// the header then reads `abcd` (the character reference is an event too)
+    /// and the assertion fails.
+    #[test]
+    fn entity_and_character_references_in_a_header_survive() {
+        let xml = br#"<office:document-styles><office:master-styles><style:master-page><style:header><text:p>a&lt;b&gt;c&amp;d&#x45;</text:p></style:header></style:master-page></office:master-styles></office:document-styles>"#;
+        let content = parse_master_page(xml, OdfImportLimits::default()).unwrap();
+        assert_eq!(
+            content.default_header.unwrap().paragraphs[0].inlines,
+            vec![HeaderFooterInline::Text("a<b>c&dE".to_owned())]
+        );
+    }
+
+    /// HF-210. LibreOffice writes the page number WITH its cached display; the
+    /// field is taken, the cached "7" is not, and the text around it is kept.
+    /// Mutation: drop the `page-number` arm — the element falls to the
+    /// unsupported branch and the field is missing.
+    #[test]
+    fn a_footer_page_number_imports_as_a_field() {
+        let xml = br#"<office:document-styles><office:master-styles><style:master-page><style:footer><text:p>Page <text:page-number text:select-page="current">7</text:page-number> of <text:page-count/></text:p></style:footer></style:master-page></office:master-styles></office:document-styles>"#;
+        let content = parse_master_page(xml, OdfImportLimits::default()).unwrap();
+        assert_eq!(
+            content.default_footer.unwrap().paragraphs[0].inlines,
+            vec![
+                HeaderFooterInline::Text("Page ".to_owned()),
+                HeaderFooterInline::Field(FieldKind::Page),
+                HeaderFooterInline::Text(" of ".to_owned()),
+                HeaderFooterInline::Field(FieldKind::NumPages),
+            ]
+        );
+        assert!(content.findings.is_empty(), "{:?}", content.findings);
+    }
+
+    /// A hyperlink's text survives and its lost target is reported. Mutation:
+    /// remove the `a` arm — the text is dropped and the equality fails.
+    #[test]
+    fn a_header_hyperlink_keeps_its_text_and_reports_its_target() {
+        let xml = br#"<office:document-styles><office:master-styles><style:master-page><style:header><text:p>See <text:a xlink:href="https://example.org">the site</text:a></text:p></style:header></style:master-page></office:master-styles></office:document-styles>"#;
+        let content = parse_master_page(xml, OdfImportLimits::default()).unwrap();
+        assert_eq!(
+            content.default_header.unwrap().paragraphs[0].inlines,
+            vec![HeaderFooterInline::Text("See the site".to_owned())]
+        );
+        assert!(
+            content
+                .findings
+                .iter()
+                .any(|(feature, ..)| feature == "odf.master-page.hyperlink")
+        );
     }
 
     #[test]
