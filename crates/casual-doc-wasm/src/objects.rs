@@ -389,6 +389,18 @@ pub(crate) const CAPABILITY_UNAVAILABLE: &str = refused!(
     "That change doesn't apply to this object."
 );
 
+/// Change Shape on something that has no preset geometry (a picture, a chart).
+pub(crate) const CHANGE_SHAPE_NOT_A_SHAPE: &str = refused!(
+    "object.change-shape-not-a-shape",
+    "Only a shape or a text box has an outline shape to change."
+);
+
+/// Change Shape to a token this build does not model.
+pub(crate) const CHANGE_SHAPE_UNKNOWN: &str = refused!(
+    "object.change-shape-unknown",
+    "That shape is not one this editor can draw."
+);
+
 // ---------------------------------------------------------------------------
 // OOXML tokens
 //
@@ -1858,6 +1870,63 @@ impl WasmDocument {
         )
     }
 
+    /// Word's Shape Format ▸ Edit Shape ▸ Change Shape and ONLYOFFICE's Change
+    /// shape (`web-apps/apps/documenteditor/main/app/view/ShapeSettings.js`,
+    /// `btnChangeShape`): swaps the shape `node`'s outline for the preset
+    /// `geometry` — the same `a:prstGeom@prst` tokens `insertShape` takes — as
+    /// one undoable action, keeping everything else the shape has: its size and
+    /// position, fill and outline, text, rotation and flips (`docs/109` RM-30).
+    ///
+    /// The old preset's adjust values and any custom path are dropped: they are
+    /// parameters OF the old outline (a rounded rectangle's corner radius means
+    /// nothing to a star), which is also what Word does.
+    ///
+    /// # Errors
+    ///
+    /// An unknown token, or a `node` that is not a shape or a grouped text box.
+    ///
+    /// **O(document), ONE walk.**
+    #[wasm_bindgen(js_name = changeShape)]
+    pub fn change_shape(&mut self, node: &str, geometry: &str) -> Result<EditResult, JsValue> {
+        self.change_shape_inner(node, geometry).map_err(to_js)
+    }
+
+    /// [`change_shape`](Self::change_shape) with a plain error, so the
+    /// behaviour is reachable from a native test.
+    pub(crate) fn change_shape_inner(
+        &mut self,
+        node: &str,
+        geometry: &str,
+    ) -> Result<EditResult, String> {
+        let object = node
+            .parse::<NodeId>()
+            .map_err(|_| "invalid node id".to_owned())?;
+        let geometry = match geometry {
+            "rectangle" => ShapeGeometry::Rectangle,
+            "roundRectangle" => ShapeGeometry::RoundRectangle,
+            "rightTriangle" => ShapeGeometry::RightTriangle,
+            token => ShapeGeometry::from_preset_token(token)
+                .ok_or_else(|| CHANGE_SHAPE_UNKNOWN.to_owned())?,
+        };
+        let paragraph = self
+            .paragraph_containing_inline_deep(object)
+            .ok_or_else(|| CHANGE_SHAPE_NOT_A_SHAPE.to_owned())?;
+        let source = find_paragraph_any(&self.document, paragraph)
+            .ok_or_else(|| CHANGE_SHAPE_NOT_A_SHAPE.to_owned())?;
+        let mut inlines = source.inlines.clone();
+        if !change_shape_in_inlines(&mut inlines, object, geometry) {
+            return Err(CHANGE_SHAPE_NOT_A_SHAPE.to_owned());
+        }
+        self.apply_action_caret_as(
+            vec![Operation::SetInlines {
+                node: paragraph,
+                inlines,
+            }],
+            Pos::new(object, 0),
+            HistoryKind::Formatting,
+        )
+    }
+
     /// The rotation and flips of the object `node`, as
     /// `{"rotationDegrees":45.0,"flipH":false,"flipV":false}` — or `""` if
     /// `node` is not an object that models them.
@@ -2698,6 +2767,54 @@ enum AddText {
 
 /// Converts the group shape `object` into a text-bearing shape with one empty
 /// paragraph identified by `body`, keeping everything `GroupTextBox` can model.
+/// Rewrites the preset geometry of the grouped shape or text box `object`,
+/// wherever it sits in `inlines`: inside a group at any depth, or inside the
+/// declared inline wrappers. Reports whether it was found.
+/// **O(inlines and group members in the subtree)**.
+fn change_shape_in_inlines(
+    inlines: &mut [InlineNode],
+    object: NodeId,
+    geometry: ShapeGeometry,
+) -> bool {
+    fn in_children(children: &mut [GroupChild], object: NodeId, geometry: ShapeGeometry) -> bool {
+        for child in children.iter_mut() {
+            match child {
+                GroupChild::Shape(shape) if shape.id == object => {
+                    shape.geometry = geometry;
+                    shape.preset = None;
+                    shape.adjustments.clear();
+                    shape.path = None;
+                    return true;
+                }
+                GroupChild::TextBox(text_box) if text_box.id == object => {
+                    text_box.geometry = geometry;
+                    text_box.preset = None;
+                    text_box.adjustments.clear();
+                    return true;
+                }
+                GroupChild::Group(nested) => {
+                    if in_children(&mut nested.children, object, geometry) {
+                        return true;
+                    }
+                }
+                GroupChild::Shape(_) | GroupChild::TextBox(_) | GroupChild::Picture(_) => {}
+            }
+        }
+        false
+    }
+    for inline in inlines.iter_mut() {
+        let found = match inline {
+            InlineNode::Group(group) => in_children(&mut group.children, object, geometry),
+            other => crate::contained_inlines_mut(other)
+                .is_some_and(|nested| change_shape_in_inlines(nested, object, geometry)),
+        };
+        if found {
+            return true;
+        }
+    }
+    false
+}
+
 fn add_text_in_inlines(
     inlines: &mut [InlineNode],
     object: NodeId,

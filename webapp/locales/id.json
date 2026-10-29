@@ -957,6 +957,8 @@
   "numberGalleryMenu.uppercaseLetters.label": "Huruf besar",
   "numberGalleryMenu.uppercaseRomanNumerals.label": "Angka Romawi besar",
   "object.addText": "Tambahkan teks",
+  "object.changeShape": "Ubah bentuk",
+  "object.changeShape.done": "Bentuk diubah",
   "object.addText.notAShape": "Hanya bentuk yang dapat memuat teks dengan cara ini",
   "object.addedToSelection": "Ditambahkan ke pilihan",
   "object.arrange": "Atur",

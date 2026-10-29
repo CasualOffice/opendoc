@@ -962,6 +962,8 @@
   "numberGalleryMenu.uppercaseLetters.label": "أحرف كبيرة",
   "numberGalleryMenu.uppercaseRomanNumerals.label": "أرقام رومانية كبيرة",
   "object.addText": "إضافة نص",
+  "object.changeShape": "تغيير الشكل",
+  "object.changeShape.done": "تم تغيير الشكل",
   "object.addText.notAShape": "يمكن للأشكال فقط أن تحتوي على نص بهذه الطريقة",
   "object.addedToSelection": "تمت الإضافة إلى التحديد",
   "object.arrange": "ترتيب",

@@ -1181,6 +1181,8 @@
   "object.changePicture.menu": "Change picture…",
   "object.changePicture.unreadable": "Could not read that image",
   "object.changePicture.unsupported": "That file can’t be used as a picture. Choose a PNG, JPEG, GIF, BMP, TIFF or WebP image.",
+  "object.changeShape": "Change shape",
+  "object.changeShape.done": "Shape changed",
   "object.copied": "Copy placed",
   "object.copyTo.prompt": "Copy to where? Put the insertion point where the copy should go, then press Enter. Esc cancels.",
   "object.crop.nothingToMove": "Crop an edge first — the arrow keys then move the cropped area",

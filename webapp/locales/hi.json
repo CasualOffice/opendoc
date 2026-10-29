@@ -958,6 +958,8 @@
   "numberGalleryMenu.uppercaseLetters.label": "बड़े अक्षर",
   "numberGalleryMenu.uppercaseRomanNumerals.label": "बड़े रोमन अंक",
   "object.addText": "पाठ जोड़ें",
+  "object.changeShape": "आकृति बदलें",
+  "object.changeShape.done": "आकृति बदली गई",
   "object.addText.notAShape": "केवल आकृति ही इस तरह पाठ रख सकती है",
   "object.addedToSelection": "चयन में जोड़ा गया",
   "object.arrange": "व्यवस्थित करें",

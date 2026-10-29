@@ -958,6 +958,8 @@
   "numberGalleryMenu.uppercaseLetters.label": "Großbuchstaben",
   "numberGalleryMenu.uppercaseRomanNumerals.label": "Große römische Zahlen",
   "object.addText": "Text hinzufügen",
+  "object.changeShape": "Form ändern",
+  "object.changeShape.done": "Form geändert",
   "object.addText.notAShape": "Nur eine Form kann auf diese Weise Text enthalten",
   "object.addedToSelection": "Zur Auswahl hinzugefügt",
   "object.arrange": "Anordnen",

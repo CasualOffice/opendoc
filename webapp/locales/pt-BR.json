@@ -959,6 +959,8 @@
   "numberGalleryMenu.uppercaseLetters.label": "Letras maiúsculas",
   "numberGalleryMenu.uppercaseRomanNumerals.label": "Números romanos maiúsculos",
   "object.addText": "Adicionar texto",
+  "object.changeShape": "Alterar forma",
+  "object.changeShape.done": "Forma alterada",
   "object.addText.notAShape": "Apenas uma forma pode conter texto desta maneira",
   "object.addedToSelection": "Adicionado à seleção",
   "object.arrange": "Organizar",

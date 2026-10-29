@@ -960,6 +960,8 @@
   "numberGalleryMenu.uppercaseLetters.label": "Великі літери",
   "numberGalleryMenu.uppercaseRomanNumerals.label": "Великі римські цифри",
   "object.addText": "Додати текст",
+  "object.changeShape": "Змінити фігуру",
+  "object.changeShape.done": "Фігуру змінено",
   "object.addText.notAShape": "Лише фігура може так містити текст",
   "object.addedToSelection": "Додано до вибраного",
   "object.arrange": "Упорядкувати",

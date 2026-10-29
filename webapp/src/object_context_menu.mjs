@@ -57,6 +57,9 @@
 //   `deleteObject()`       delete the selected object
 //   `moveInText()`         Word's F2, "Move to where?" — move an in-line object
 //                          to another place in the text by keyboard
+//   `changeShape(token)`   Change Shape to the `a:prstGeom` preset `token`
+import { SHAPE_GROUPS } from "./shape_catalogue.mjs";
+
 export function buildObjectContextCommands(context, io) {
   // Object edits are untrackable, so they are read-only in Viewing and blocked
   // (untracked) in Suggesting — the same gate `runEdit({ gate:true })` applies.
@@ -197,6 +200,29 @@ export function buildObjectContextCommands(context, io) {
         disabledReason: mutationEnabled ? io.text("object.rotate.unsupported") : mutationReason,
         run: () => io.rotate(value),
       })),
+    });
+  }
+
+  // Change Shape — Word's Shape Format ▸ Edit Shape ▸ Change Shape and
+  // ONLYOFFICE's Change shape (`ShapeSettings.js` `btnChangeShape`): the same
+  // gallery Insert ▸ Shapes offers (`shape_catalogue.mjs`), one group per
+  // category, and the engine keeps everything but the outline (RM-30).
+  if (context.kind === "shape" && typeof io.changeShape === "function") {
+    commands.push({
+      id: "object.changeShape",
+      label: io.text("object.changeShape"),
+      group: "arrange",
+      icon: "format",
+      submenu: SHAPE_GROUPS.flatMap((category) =>
+        category.shapes.map((shape) => ({
+          id: `object.changeShape.${shape.token}`,
+          label: io.text(shape.key),
+          group: category.id,
+          enabled: mutationEnabled,
+          disabledReason: mutationReason,
+          run: () => io.changeShape(shape.token),
+        })),
+      ),
     });
   }
 

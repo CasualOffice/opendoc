@@ -957,6 +957,8 @@
   "numberGalleryMenu.uppercaseLetters.label": "大寫字母",
   "numberGalleryMenu.uppercaseRomanNumerals.label": "大寫羅馬數字",
   "object.addText": "新增文字",
+  "object.changeShape": "變更圖案",
+  "object.changeShape.done": "已變更圖案",
   "object.addText.notAShape": "只有圖形才能以這種方式容納文字",
   "object.addedToSelection": "已加入選取",
   "object.arrange": "排列",

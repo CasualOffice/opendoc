@@ -960,6 +960,8 @@
   "numberGalleryMenu.uppercaseLetters.label": "Прописные буквы",
   "numberGalleryMenu.uppercaseRomanNumerals.label": "Прописные римские цифры",
   "object.addText": "Добавить текст",
+  "object.changeShape": "Изменить фигуру",
+  "object.changeShape.done": "Фигура изменена",
   "object.addText.notAShape": "Так текст может содержать только фигура",
   "object.addedToSelection": "Добавлено к выделению",
   "object.arrange": "Упорядочить",

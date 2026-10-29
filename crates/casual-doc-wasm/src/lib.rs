@@ -36664,6 +36664,60 @@ mod tests {
         );
     }
 
+    /// RM-30: Change Shape swaps the outline and keeps the shape: its outline
+    /// stroke, its size, its id. One undo puts the rectangle back; an unknown
+    /// token and a node that is not a shape are refused with their codes.
+    ///
+    /// Mutation: rebuilding the shape from `insertShape`'s defaults (accent
+    /// fill and outline) instead of rewriting the geometry in place fails the
+    /// stroke assertion.
+    #[test]
+    fn change_shape_swaps_the_outline_and_keeps_the_formatting() {
+        use casual_doc_model::v1::ShapeGeometry;
+        let red = ShapeStroke {
+            color: Rgba {
+                r: 0xcc,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            width_emu: 25_400,
+            dash: None,
+            head_end: None,
+            tail_end: None,
+        };
+        let mut d = wasm_document(document_with_shape(Some(red)));
+        let id = NodeId::from_parts(9, 4).unwrap();
+        let shape = id.to_string();
+        let ellipse = ShapeGeometry::from_preset_token("ellipse").expect("a modeled preset");
+
+        d.change_shape_inner(&shape, "ellipse")
+            .expect("change to an ellipse");
+        let after = find_shape(&d.document, id).expect("the same shape, by id");
+        assert_eq!(after.geometry, ellipse);
+        assert_eq!(after.stroke, Some(red), "the outline is kept");
+        assert_eq!(after.extent.width_emu, 914_400, "the size is kept");
+
+        d.undo().expect("undo");
+        assert_eq!(
+            find_shape(&d.document, id).map(|s| s.geometry),
+            Some(ShapeGeometry::Rectangle)
+        );
+
+        let unknown = d
+            .change_shape_inner(&shape, "squiggle")
+            .expect_err("not a preset");
+        assert!(unknown.contains("object.change-shape-unknown"), "{unknown}");
+        let paragraph = NodeId::from_parts(9, 2).unwrap().to_string();
+        let not_a_shape = d
+            .change_shape_inner(&paragraph, "ellipse")
+            .expect_err("a paragraph has no outline shape");
+        assert!(
+            not_a_shape.contains("object.change-shape-not-a-shape"),
+            "{not_a_shape}"
+        );
+    }
+
     /// Word's Weight submenu never asks for a colour: choosing one on a shape
     /// with no outline gives it the default outline rather than doing nothing.
     #[test]

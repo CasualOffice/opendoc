@@ -957,6 +957,8 @@
   "numberGalleryMenu.uppercaseLetters.label": "大文字",
   "numberGalleryMenu.uppercaseRomanNumerals.label": "大文字のローマ数字",
   "object.addText": "テキストの追加",
+  "object.changeShape": "図形の変更",
+  "object.changeShape.done": "図形を変更しました",
   "object.addText.notAShape": "この方法でテキストを入れられるのは図形だけです",
   "object.addedToSelection": "選択範囲に追加しました",
   "object.arrange": "配置",

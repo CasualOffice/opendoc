@@ -958,6 +958,8 @@
   "numberGalleryMenu.uppercaseLetters.label": "Hoofdletters",
   "numberGalleryMenu.uppercaseRomanNumerals.label": "Grote Romeinse cijfers",
   "object.addText": "Tekst toevoegen",
+  "object.changeShape": "Vorm wijzigen",
+  "object.changeShape.done": "Vorm gewijzigd",
   "object.addText.notAShape": "Alleen een vorm kan op deze manier tekst bevatten",
   "object.addedToSelection": "Toegevoegd aan de selectie",
   "object.arrange": "Schikken",

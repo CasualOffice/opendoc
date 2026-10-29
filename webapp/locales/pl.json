@@ -960,6 +960,8 @@
   "numberGalleryMenu.uppercaseLetters.label": "Wielkie litery",
   "numberGalleryMenu.uppercaseRomanNumerals.label": "Wielkie cyfry rzymskie",
   "object.addText": "Dodaj tekst",
+  "object.changeShape": "Zmień kształt",
+  "object.changeShape.done": "Zmieniono kształt",
   "object.addText.notAShape": "Tylko kształt może w ten sposób zawierać tekst",
   "object.addedToSelection": "Dodano do zaznaczenia",
   "object.arrange": "Rozmieść",

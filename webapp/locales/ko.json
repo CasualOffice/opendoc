@@ -957,6 +957,8 @@
   "numberGalleryMenu.uppercaseLetters.label": "대문자",
   "numberGalleryMenu.uppercaseRomanNumerals.label": "대문자 로마 숫자",
   "object.addText": "텍스트 추가",
+  "object.changeShape": "도형 변경",
+  "object.changeShape.done": "도형을 변경했습니다",
   "object.addText.notAShape": "이 방식으로 텍스트를 담을 수 있는 것은 도형뿐입니다",
   "object.addedToSelection": "선택 항목에 추가됨",
   "object.arrange": "정렬",

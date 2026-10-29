@@ -1533,6 +1533,9 @@ export const EN_STRINGS = Object.freeze({
   // menu row is the second surface, because a gesture nobody told you about is
   // not reachable.
   "object.addText": "Add text",
+  // Change Shape (RM-30): Word's Edit Shape ▸ Change Shape.
+  "object.changeShape": "Change shape",
+  "object.changeShape.done": "Shape changed",
   "object.addText.notAShape": "Only a shape can hold text this way",
   // Word's Change Picture (`docs/109` HF-252). The status line says what was
   // KEPT, and asks for the one check a person must make: alt text written for

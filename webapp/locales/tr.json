@@ -958,6 +958,8 @@
   "numberGalleryMenu.uppercaseLetters.label": "Büyük harfler",
   "numberGalleryMenu.uppercaseRomanNumerals.label": "Büyük Roma rakamları",
   "object.addText": "Metin ekle",
+  "object.changeShape": "Şekli değiştir",
+  "object.changeShape.done": "Şekil değiştirildi",
   "object.addText.notAShape": "Bu şekilde yalnızca bir şekil metin tutabilir",
   "object.addedToSelection": "Seçime eklendi",
   "object.arrange": "Yerleştir",

@@ -957,6 +957,8 @@
   "numberGalleryMenu.uppercaseLetters.label": "Chữ hoa",
   "numberGalleryMenu.uppercaseRomanNumerals.label": "Số La Mã chữ hoa",
   "object.addText": "Thêm văn bản",
+  "object.changeShape": "Thay đổi hình",
+  "object.changeShape.done": "Đã thay đổi hình",
   "object.addText.notAShape": "Chỉ hình mới có thể chứa văn bản theo cách này",
   "object.addedToSelection": "Đã thêm vào vùng chọn",
   "object.arrange": "Sắp xếp",

@@ -571,6 +571,13 @@ export function createContextMenu(ed) {
   const objectContextMenuHost = {
     reviewMode: () => ed.reviewMode,
     alignRows: (mutationEnabled, mutationReason) => objectAlign.rows(mutationEnabled, mutationReason),
+    changeShape: (token) => {
+      const node = ed.objectSelection?.node;
+      if (!node) return;
+      void ed.runEdit(() => ed.doc.changeShape(node, token), { gate: true }).then((applied) => {
+        if (applied) ed.setStatus(t("object.changeShape.done"));
+      });
+    },
     gradientCommands: (mutationEnabled, mutationReason) => {
       const node = ed.objectSelection?.node;
       const format = node ? ed.doc.shapeFormat?.(node) : null;
