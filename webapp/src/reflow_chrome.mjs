@@ -51,7 +51,7 @@
 // the band on screen is reflowed and at what scale.
 
 import { t } from "./i18n.mjs";
-import { PHONE_MAX_WIDTH } from "./phone_chrome.mjs";
+import { PHONE_MAX_WIDTH, mediaWidth } from "./phone_chrome.mjs";
 import { registerPopover } from "./popover_manager.mjs";
 import { readPref, writePref } from "./prefs.mjs";
 import { createReflowTableScroll } from "./reflow_table_scroll.mjs";
@@ -145,7 +145,7 @@ export function createReflowChrome({
 
   /** The phone rung, asked once so the default and the panel rule cannot
    *  disagree about where it is. */
-  const onPhoneRung = () => view.matchMedia(`(max-width: ${PHONE_MAX_WIDTH}px)`).matches;
+  const onPhoneRung = () => view.matchMedia(mediaWidth(PHONE_MAX_WIDTH)).matches;
 
   const wanted = () => (chosen === null ? onPhoneRung() : chosen === "1");
 

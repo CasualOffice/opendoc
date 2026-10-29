@@ -13,6 +13,7 @@ import { closePopover } from "./popover_manager.mjs";
 import { groupsToOverflow } from "./ribbon_overflow.mjs";
 import { makeMenuHeading } from "./picker_chrome.mjs";
 import { readPref, writePref } from "./prefs.mjs";
+import { onChromeScaleChange } from "./chrome_scale.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -469,6 +470,10 @@ export function createRibbon(ed) {
     // resizing the observed element, and the wrong decision stood permanently.
     // Re-decide when the real metrics are in.
     if (document.fonts?.ready) document.fonts.ready.then(scheduleRibbonOverflow).catch(() => {});
+    // The same blind spot for the chrome's own size: the groups are rem, so a
+    // `--chrome-scale` or browser-font change resizes them without resizing the
+    // band (HF-413). Re-decide on the root, not on the band.
+    onChromeScaleChange(scheduleRibbonOverflow);
   }
 
   return {

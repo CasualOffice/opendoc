@@ -46,8 +46,19 @@
  *  phone could have one of its own is exactly the "second breakpoint that only
  *  the rail knows about" that `style.css` argues against where it sheds those
  *  labels. `phone_chrome.test.mjs` asserts the stylesheet's own
- *  `@media (max-width: 620px)` literal still names this number. */
+ *  `@media (max-width: 38.75em)` rung still names this number.
+ *
+ *  Declared in CSS px at the default 16px font size, and QUERIED in em
+ *  (`mediaWidth`): the stylesheet's breakpoints are em (docs/109 HF-413), and a
+ *  px query here would part company with them for a reader whose browser font
+ *  setting is not 16px. */
 export const PHONE_MAX_WIDTH = 620;
+
+/** A `max-width` media query for a width given in default-size CSS px, written
+ *  in em the way every breakpoint in `style.css` is (HF-413). Media queries
+ *  resolve em against the INITIAL font size, so this tracks the reader's own
+ *  browser setting and zoom, and not the chrome's fluid root. */
+export const mediaWidth = (px) => `(max-width: ${px / 16}em)`;
 
 /** The width below which the comment column stops being a margin and becomes a
  *  bottom sheet (HF-088). Above the phone rung, because a tablet in portrait
@@ -172,7 +183,7 @@ export function phoneRegions() {
  *            onReviewSheetChange:(fn:Function)=>void, release:()=>void}}
  */
 export function createPhoneChrome({ view, body, root, header = null }) {
-  const media = (px) => view?.matchMedia?.(`(max-width: ${px}px)`) ?? null;
+  const media = (px) => view?.matchMedia?.(mediaWidth(px)) ?? null;
   const phoneQuery = media(PHONE_MAX_WIDTH);
   const sheetQuery = media(REVIEW_SHEET_MAX_WIDTH);
   const isPhone = () => !!phoneQuery?.matches;

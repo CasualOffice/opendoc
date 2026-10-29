@@ -80,6 +80,7 @@
 import { APP_MENU_SECTIONS, TABLE_MENU_LABELS, sectionCommandIds } from "./command_taxonomy.mjs";
 import { has, t } from "./i18n.mjs";
 import { createMenuSheet } from "./menu_sheet.mjs";
+import { onChromeScaleChange } from "./chrome_scale.mjs";
 
 /** `data-i18n-*` suffix → the attribute it names, exactly as `localize.mjs`
  *  reads them — the two of its four this bar uses. Restated rather than
@@ -1208,6 +1209,10 @@ export function createCompactToolbar({
   // fits. Re-decide when the real metrics are in. (The ResizeObserver cannot
   // save us: the bar stays exactly as wide as the window.)
   if (document.fonts?.ready) document.fonts.ready.then(scheduleReflow).catch(() => {});
+  // And when the chrome itself changes size: the groups are rem, so a
+  // `--chrome-scale` or browser-font change moves them while the bar's width
+  // stands still (HF-413).
+  onChromeScaleChange(scheduleReflow);
 
   // The compact chrome's OTHER phone surface: its menu bar, behind the header's
   // menus button (`menu_sheet.mjs`, docs/148 §5.3b). It is the same `isPhone`

@@ -309,6 +309,19 @@ test("below the budget the bar folds instead of scrolling, and the fold keeps ev
   // it is where the bar used to be worst.
   await page.setViewportSize({ width: 1152, height: 800 });
   await intoCompact(page);
+  // The chrome is rem on a fluid root (docs/109 HF-413), which eases to 15px
+  // at 1152px, so the bar is SMALLER here than at the budget width and might
+  // simply fit. This test is about the fold, not the curve
+  // (`chrome-root-scale.spec.mjs` owns that), so hold the root at the 16px the
+  // budget was measured at: a 1152px window of 1280px-sized chrome.
+  await page.evaluate(() => {
+    const root = parseFloat(getComputedStyle(document.documentElement).fontSize);
+    document.documentElement.style.setProperty("--chrome-scale", String(16 / root));
+  });
+  await expect
+    .poll(() => page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)))
+    .toBeCloseTo(16, 3);
+  await expect.poll(async () => (await geometry(page)).moreShown).toBe(true);
 
   const g = await geometry(page);
   expect(g.scroll, "the bar must never scroll sideways").toBeLessThanOrEqual(g.client);

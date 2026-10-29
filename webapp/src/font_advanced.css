@@ -33,5 +33,5 @@
 }
 .font-advanced-dialog .dialog-field > input[type='color'] {
   inline-size: 3.5rem;
-  padding: 2px;
+  padding: 0.125rem;
 }
