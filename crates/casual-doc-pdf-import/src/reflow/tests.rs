@@ -2241,7 +2241,7 @@ fn a_borderless_table_whose_cells_are_each_a_block_is_one_table() {
     assert_eq!(rows.len(), 5);
 }
 
-/// Lines 18 pt apart at 10 pt (a generous leading the block grouping splits)
+/// Lines 24 pt apart at 10 pt, double spaced (the block grouping splits them)
 /// on a page whose text is narrower than another page's: one paragraph, not
 /// one per line. Mutations: measure every page against the document-wide
 /// right edge in `emit::column` (the lines look short and stay apart); drop
@@ -2256,7 +2256,7 @@ fn widely_leaded_lines_on_a_narrow_page_join_into_one_paragraph() {
     ];
     let mut first = String::new();
     for (i, l) in lines.iter().enumerate() {
-        first.push_str(&text("F1", 10.0, 72.0, 700.0 - 18.0 * i as f64, 18.0, &[l]));
+        first.push_str(&text("F1", 10.0, 72.0, 700.0 - 24.0 * i as f64, 24.0, &[l]));
     }
     let second = text(
         "F1",
