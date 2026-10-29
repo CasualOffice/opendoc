@@ -165,6 +165,10 @@ test("a page-number position from the palette adds the number to every page of t
   await runPaletteCommand(page, "layout.pageNumber.bottomRight", "Page number: bottom right");
   await expect(page.locator("#pages")).toHaveAttribute("data-running-edit", "footer");
   await expect(page.locator("#status")).toContainText("Page number added to the footer");
+  // Leave the band before measuring: an open band paints its own edit chrome,
+  // so ink measured while editing is not comparable with ink measured in the body.
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#pages")).not.toHaveAttribute("data-running-edit", "footer");
 
   // More ink than before: the number joined the footer, it did not replace it.
   await expect.poll(async () => (await footerInk(page, FIRST_PAGE)).ink).toBeGreaterThan(before.ink);
