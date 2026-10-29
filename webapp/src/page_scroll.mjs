@@ -123,9 +123,52 @@ export const PAGE_WINDOW_OVERSCAN_PX = 1000;
  *          `buildPageBand`.
  */
 export function pageBandPitch(reflowing, ratio = backingRatio()) {
-  return reflowing
-    ? { gap: 0, maxScroll: MAX_SCROLL_PX, snap: ratio }
+  if (reflowing) return { gap: 0, maxScroll: MAX_SCROLL_PX, snap: ratio };
+  // Multiple pages is a PAPER view: reflow has no pages to set side by side.
+  return pageGrid.on
+    ? { gap: PAGE_GAP_PX, maxScroll: MAX_SCROLL_PX, rowWidth: pageGrid.availableWidth }
     : { gap: PAGE_GAP_PX, maxScroll: MAX_SCROLL_PX };
+}
+
+// ---- MULTIPLE PAGES (`docs/153` shell.multiple-pages-view) ------------------
+//
+// Word's View ▸ Multiple Pages and ONLYOFFICE's View ▸ Multiple pages
+// (`web-apps/apps/documenteditor/main/app/controller/ViewTab.js:302-309`,
+// `SetMultipageViewMode`, remembered in local storage as `de-zoom-multipage`)
+// set as many pages across as fit the window at the current zoom, in rows,
+// reading order left to right. It is a view of the paper, never of the file.
+//
+// The band stays the one model every consumer reads: a row's pages share one
+// `top`, so `tops` is still non-decreasing and every vertical question
+// (`pageIndexAtDocY`, `pageRangeAt`, `docToScroll`, the status position, the
+// Pages panel's jump) keeps working unchanged; `lefts` is the one new array,
+// read through `pageBandLeft`.
+//
+// Module state rather than a parameter because the single call site
+// (`main.js`'s render) already spreads `pageBandPitch(reflowing)` into
+// `buildPageBand`; the view module turns the grid on and asks for a render.
+
+/** Whether pages are set side by side, and how wide a row may be in CSS px. */
+const pageGrid = { on: false, availableWidth: 0 };
+
+/** Turns the page grid on or off. `availableWidth` is the viewport's usable
+ *  width in CSS px; a row never grows wider than it. O(1). */
+export function setPageGrid({ on, availableWidth = 0 }) {
+  pageGrid.on = Boolean(on);
+  pageGrid.availableWidth = Math.max(0, Number(availableWidth) || 0);
+}
+
+/** Whether the page grid is on. */
+export function pageGridOn() {
+  return pageGrid.on;
+}
+
+/** The band-local x of page `index`'s left edge: its grid column when pages
+ *  sit side by side, else centred in the band as a single column always was.
+ *  O(1). */
+export function pageBandLeft(band, index) {
+  if (band.lefts) return band.lefts[index];
+  return Math.round((band.width - band.widths[index]) / 2);
 }
 
 // ---- SEAMLESS TILES: the reflow band is built on the raster's pixel grid ------
@@ -205,6 +248,9 @@ export function buildPageBand(sizes, cssPerTwip, options = {}) {
   // `BASE_DPI * zoom * backingDpr()`, and `cssPerTwip` is `BASE_DPI * zoom /
   // 1440`, so this is the same dpi the tiles are rendered at.
   const dpi = snap ? cssPerTwip * TWIPS_PER_INCH * snap : 0;
+  if (!snap && options.rowWidth > 0 && count > 1) {
+    return buildPageGrid(sizes, cssPerTwip, gap, maxScroll, options.rowWidth);
+  }
   let row = 0;
   for (let i = 0; i < count; i++) {
     if (snap) {
@@ -238,6 +284,66 @@ export function buildPageBand(sizes, cssPerTwip, options = {}) {
     tops,
     heights,
     widths,
+    width,
+    docHeight,
+    height,
+    scale: height > 0 ? docHeight / height : 1,
+  };
+}
+
+/**
+ * `buildPageBand` with pages set side by side: as many per row as fit in
+ * `rowWidth` (at least one), each row centred in the band, rows stacked with
+ * the same gap as a single column. Every page in a row shares the row's top.
+ * O(pages).
+ */
+function buildPageGrid(sizes, cssPerTwip, gap, maxScroll, rowWidth) {
+  const count = sizes.length;
+  const tops = new Float64Array(count);
+  const heights = new Float64Array(count);
+  const widths = new Float64Array(count);
+  const lefts = new Float64Array(count);
+  const rows = [];
+  let start = 0;
+  let x = 0;
+  let rowHeight = 0;
+  let y = 0;
+  let width = 0;
+  for (let i = 0; i < count; i++) {
+    const w = sizes[i].widthTwip * cssPerTwip;
+    const h = sizes[i].heightTwip * cssPerTwip;
+    widths[i] = w;
+    heights[i] = h;
+    // A page that does not fit starts the next row; a row always holds one.
+    if (i > start && x + w > rowWidth) {
+      rows.push({ start, end: i, width: x - gap });
+      width = Math.max(width, x - gap);
+      y += rowHeight + gap;
+      start = i;
+      x = 0;
+      rowHeight = 0;
+    }
+    lefts[i] = x;
+    tops[i] = y;
+    x += w + gap;
+    rowHeight = Math.max(rowHeight, h);
+  }
+  rows.push({ start, end: count, width: x - gap });
+  width = Math.max(width, x - gap);
+  for (const row of rows) {
+    const shift = Math.round((width - row.width) / 2);
+    for (let i = row.start; i < row.end; i++) lefts[i] = Math.round(lefts[i] + shift);
+  }
+  const docHeight = count === 0 ? 0 : y + rowHeight;
+  const height = Math.min(docHeight, maxScroll);
+  return {
+    count,
+    gap,
+    tops,
+    heights,
+    widths,
+    lefts,
+    columns: rows.reduce((most, row) => Math.max(most, row.end - row.start), 0),
     width,
     docHeight,
     height,
@@ -341,7 +447,7 @@ export function pageRangeAt(band, top, bottom) {
 export function pageClientRect(bandRect, band, index, offset) {
   const width = band.widths[index];
   const height = band.heights[index];
-  const left = bandRect.left + Math.round((band.width - width) / 2);
+  const left = bandRect.left + pageBandLeft(band, index);
   const top = bandRect.top + offset + band.tops[index];
   return { left, top, width, height, right: left + width, bottom: top + height, x: left, y: top };
 }
@@ -366,5 +472,7 @@ export function pageIndexAtDocY(band, docY) {
     if (band.tops[mid] <= docY) lo = mid;
     else hi = mid - 1;
   }
+  // Side by side, a row's pages share one top: the row starts at its first.
+  while (lo > 0 && band.tops[lo - 1] === band.tops[lo]) lo -= 1;
   return lo;
 }

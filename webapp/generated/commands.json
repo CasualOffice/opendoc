@@ -1700,6 +1700,14 @@
       "reason": "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2)."
     },
     {
+      "id": "insert.symbolByCode",
+      "reason": "Alt+X converts the code point before the caret into its character; an agent writes the character itself with insert_text or replace_text."
+    },
+    {
+      "id": "insert.textFromFile",
+      "reason": "Insert text from file merges another file's body, which an agent does not hold as bytes; it inserts the content it means with insert_text and the table and list commands."
+    },
+    {
       "id": "paragraph.list.settings",
       "reason": "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3)."
     },
@@ -1948,6 +1956,6 @@
       "reason": "Removing a table of contents, a table of figures and Add text's contents levels are not offered to agents yet; insert_table_of_contents and update_table_of_contents are (docs/181 §3)."
     }
   ],
-  "uiNotExposedCeiling": 102,
+  "uiNotExposedCeiling": 104,
   "vocabularyVersion": "1.5"
 }

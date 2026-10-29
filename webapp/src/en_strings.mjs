@@ -2393,4 +2393,39 @@ export const EN_STRINGS = Object.freeze({
   "ai.refusal.gone": "This suggestion is no longer open.",
   "ai.refusal.noDocument": "Open a document first.",
   "ai.refusal.generic": "This change can’t be applied.",
+  // ---- View and text extras (`editor_view_text.mjs`, `docs/153`) -------------
+  // Find with a regular expression: the pattern's own error, inline.
+  "findPanel.regexInvalid": "Not a valid pattern: {reason}",
+  // Dark document and Multiple pages: view switches, never the file.
+  "darkDocument.commandOn": "Dark document: on",
+  "darkDocument.commandOff": "Dark document: off",
+  "darkDocument.on": "Dark document on — the file is unchanged",
+  "darkDocument.off": "Dark document off",
+  "multiplePages.commandOn": "Multiple pages: on",
+  "multiplePages.commandOff": "Multiple pages: off",
+  "multiplePages.on": "Multiple pages on",
+  "multiplePages.off": "Multiple pages off",
+  "multiplePages.reflow": "Reflow has no pages to show side by side",
+  "menuGroup.pageDisplay": "Page display",
+  // Print selection.
+  "printSelection.command": "Print selection",
+  "printSelection.needsRange": "Select the text to print first",
+  // The personal dictionary.
+  "dictionaryDialog.command": "Personal dictionary…",
+  "dictionaryDialog.remove": "Remove",
+  "dictionaryDialog.removeWord": "Remove “{word}” from your dictionary",
+  "dictionaryDialog.added": "Added “{word}”",
+  "dictionaryDialog.removed": "Removed “{word}” — it is checked again",
+  "dictionaryDialog.cleared": "Your dictionary is empty",
+  "dictionaryDialog.notSaved": "Changed for this session only — your dictionary could not be saved",
+  "dictionaryDialog.oneWord": "Type one word, with no spaces",
+  // Alt+X.
+  "unicodeToggle.command": "Toggle character code",
+  "unicodeToggle.nothing": "Nothing before the insertion point to convert",
+  // Insert text from file.
+  "insertFile.command": "Text from file…",
+  "insertFile.done": "Inserted the content of {name}",
+  "insertFile.loss": "Inserted {name}, without {items} — those belong to the other document.",
+  "paste.loss.sectionBreak": "section breaks",
+  "paste.loss.embeddedObject": "embedded objects and charts",
 });

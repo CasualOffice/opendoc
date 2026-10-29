@@ -952,6 +952,8 @@ const UI_CLIPBOARD: &str = "Rich paste reads the person's clipboard; an agent in
 const UI_DIRECTION: &str =
     "Paragraph direction arrives with the paragraph family (docs/181 §4.2 step 2).";
 const UI_CHARACTER: &str = "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2).";
+const UI_CODE_TOGGLE: &str = "Alt+X converts the code point before the caret into its character; an agent writes the character itself with insert_text or replace_text.";
+const UI_TEXT_FROM_FILE: &str = "Insert text from file merges another file's body, which an agent does not hold as bytes; it inserts the content it means with insert_text and the table and list commands.";
 const UI_PAINTER: &str = "Format painter copies the caret's formatting, a gesture with no document-addressed equivalent; an agent sets formatting with set_text_format.";
 const UI_CASE: &str = "Change case keeps each run's formatting, which replace_text would flatten; it arrives with rewrite_block (docs/181 §4.3).";
 const UI_PARAGRAPH: &str = "Alignment, indents, spacing, tab stops and drop caps arrive with the paragraph family (docs/181 §4.2 step 2).";
@@ -1024,6 +1026,8 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
     ("layout.spacing", UI_PARAGRAPH),
     ("layout.tabStops", UI_PARAGRAPH),
     ("insert.dropCap", UI_PARAGRAPH),
+    ("insert.symbolByCode", UI_CODE_TOGGLE),
+    ("insert.textFromFile", UI_TEXT_FROM_FILE),
     ("paragraph.list.settings", UI_LISTS),
     ("paragraph.list.checklist", UI_LISTS),
     ("paragraph.listFormat.", UI_LISTS),
@@ -1096,5 +1100,7 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
 /// `reference.removeToc`, `reference.tableOfFigures` and `reference.addText.`
 /// (`109` RM-25), 99 -> 101 with `reference.noteSettings` and
 /// `reference.convertNotes` (`109` RM-24), and 101 -> 102 with `format.language`
-/// (`109` RM-42), each recorded in `docs/181` §3.
-pub const UI_NOT_EXPOSED_CEILING: usize = 102;
+/// (`109` RM-42), each recorded in `docs/181` §3; 102 -> 104 with `insert.symbolByCode`
+/// and `insert.textFromFile` (`docs/153` text.unicode-code-toggle, page.textFromFile),
+/// recorded in `docs/181` §3.
+pub const UI_NOT_EXPOSED_CEILING: usize = 104;
