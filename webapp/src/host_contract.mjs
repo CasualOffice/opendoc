@@ -391,6 +391,10 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("insert.symbol", "mutate"),
   exact("insert.emoji", "mutate"),
   exact("insert.table", "mutate"),
+  // Insert Table by a typed size, and Convert Text to Table (`table_tools.mjs`).
+  // Both write: one inserts a table, the other replaces paragraphs with one.
+  exact("insert.tableDialog", "mutate"),
+  exact("insert.textToTable", "mutate"),
   exact("insert.header", "mutate"),
   exact("insert.footer", "mutate"),
   // Per band, because linkage and removal are per band (`docs/85` §8d Q7): a

@@ -313,6 +313,7 @@ bolds
 bool
 booleans
 breakpoint
+btLr
 buildable
 bypassable
 callout
@@ -634,6 +635,7 @@ svg
 swappable
 tabindex
 tarball
+tbRl
 tblLook
 tblpPr
 teardown

@@ -83,6 +83,9 @@ test("the Table menu covers every structural table command", () => {
     "table.move",
     "table.select",
     "table.layout",
+    // The table tools' two submenus (`table_tools.mjs`).
+    "table.look",
+    "table.textDirection",
   ]);
   const built = new Set(
     [

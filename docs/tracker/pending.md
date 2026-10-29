@@ -168,7 +168,6 @@ currently assigned. Rows stay in their queue order.
 | 188 | RM-19 | P2 | Typing aids and special characters: autoCorrect engine, replace table and options dialog; AutoFormat as you type; Spaces, hyphens and shortcut characters; Symbols by code and math shorthand | Open |
 | 193 | RM-24 | P2 | Footnotes and endnotes: note settings, and layout honouring format, restart and position; Convert footnotes to endnotes; Go to next or previous note; Separator customisation | Open |
 | 194 | RM-25 | P2 | Contents, captions and cross-references: contents settings and leader; Contents styles, removal and adding a paragraph; Table of figures; Cross-references and links to headings | Open |
-| 195 | RM-26 | P2 | Tables: structure: insert dialog and nested tables; Split a table; Convert between text and tables; Insert and delete cells with a shift; Select the current cell | Open |
 | 196 | RM-27 | P2 | Tables: look and tools: table style options and built-in gallery; Table fill, width and margins; Borders: presets and the dialog with a preview; Eraser and draw table; Formula picker and recalculation | Open |
 | 200 | RM-31 | P2 | Review: display modes: simple markup, original, final; Decide changes in a selection; resolve all comments; Suggesting table and list structure; table revisions listed and decided; Comments over several paragraphs; highlight drawn by the engine | Open |
 | 201 | RM-32 | P2 | Protection: protect the document from the editor; Set a password (needs the ADR-052 decision); Editable ranges (w:permStart/w:permEnd): model, shade, edit; A tracked-changes restriction forces Suggesting | Open |
@@ -176,7 +175,6 @@ currently assigned. Rows stay in their queue order.
 | 203 | RM-34 | P2 | Content controls and forms: insert and configure a content control; Operate dropdown, combo and date controls; Control chrome and placeholder text; Protect a form | Open |
 | 204 | RM-35 | P2 | Charts: chart type gallery and change type; Edit the data; Chart elements; Remaining chart families and 3-D | Open |
 | 205 | RM-36 | P2 | Hyphenation: pattern hyphenator honouring zone, limit and caps; Hyphenation control; Optional hyphens shown and honoured | Open |
-| 206 | RM-37 | P2 | Vertical and rotated text: section and cell text direction through flow, paint and hit-testing; Text direction in a cell; Vertical and rotated text-box content | Open |
 | 207 | RM-38 | P2 | Rendering fidelity: line numbers in table cells; Forced paragraph base level and embedding depth; SmartArt drawn from the cached drawing Word stores; VML positioning and custom paths; math typesetting; SVG text in the browser, EMF/WMF; shape effects and text rectangles (with the drawing lane) | Open |
 | 208 | RM-39 | P2 | Editing complex objects: equation editing; Insert SmartArt; edit its text; WordArt and the picture watermark; Edit a VML shape by converting it; Embed fonts on save; drop-cap options; links on pictures | Open |
 | 212 | RM-11 | P3 | No container image, compose file or deployment guide | Open |

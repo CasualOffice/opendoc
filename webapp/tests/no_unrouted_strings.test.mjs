@@ -292,6 +292,9 @@ const CEILINGS = new Map([
   // drift; that is its own piece of work.
   ["src/spacing_menu.mjs", 1],
   ["src/table_commands.mjs", 9],
+  // The table tools' dialogs and popovers (`docs/153` table rows): routed from
+  // the first commit, measured at zero.
+  ["src/table_tools.mjs", 0],
   // The object right-click menu's nine row labels ("Wrap text", "Alt text…",
   // "Shape fill", "No fill", "Shape outline", "No outline", "Crop image",
   // "Properties…", "Delete"). They were nine of `main.js`'s 342 and moved here

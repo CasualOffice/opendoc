@@ -5143,20 +5143,16 @@
       "area": "table",
       "title": "Banded rows and columns, header / total / first / last",
       "ours": {
-        "absent": [
-          "table.look.bandedRows",
-          "table.look.bandedColumns",
-          "table.look.headerRow",
-          "table.look.totalRow",
-          "table.look.firstColumn",
-          "table.look.lastColumn"
-        ]
+        "anchor": {
+          "file": "webapp/src/table_commands.mjs",
+          "literal": "table.look.bandedRows"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.TableSettings.textBanded"
       },
       "rank": 2,
-      "note": "The six w:tblLook conditional-formatting toggles. Our model carries TableLook and round-trips it, but no wasm setter or control writes it, so an applied table style cannot be tuned."
+      "note": "The six w:tblLook toggles (header row, first column, total row, last column, banded rows, banded columns) are table.look.* commands on the Table menu, the right-click menu and the palette, checkboxes in the Table band's Style options popover and in Table properties; each is one SetTableProperties through casual_doc_command::table_tools::set_look_option."
     },
     {
       "id": "table.border-width-style",
@@ -5299,15 +5295,16 @@
       "area": "table",
       "title": "Text direction in a cell",
       "ours": {
-        "absent": [
-          "table.cell.textDirection"
-        ]
+        "anchor": {
+          "file": "webapp/src/table_commands.mjs",
+          "literal": "table.textDirection.rotateDown"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.DocumentHolder.directionText"
       },
       "rank": 3,
-      "note": "Theirs offers horizontal, rotate down and rotate up on the cell context menu. We never consume w:`textDirection` anywhere in flow, composition or hit-testing; the value round-trips only."
+      "note": "Horizontal, rotate down (tbRl) and rotate up (btLr) on the Table band, Table menu, right-click menu and palette, and for agents through table_set_cell_format. Layout lays a turned cell's content along the cell height (an auto row grows to fit, an exact row clips), paint draws it in a rotated layer, and hit-testing maps clicks into it."
     },
     {
       "id": "table.cell-vertical-align",
@@ -5359,15 +5356,16 @@
       "area": "table",
       "title": "Delete cells with a shift direction",
       "ours": {
-        "absent": [
-          "table.delete.cells"
-        ]
+        "anchor": {
+          "file": "webapp/src/table_commands.mjs",
+          "literal": "table.deleteCells"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.CellsRemoveDialog.textTitle"
       },
       "rank": 3,
-      "note": "Theirs opens a Delete cells dialog that shifts remaining cells left or up. We delete whole rows, columns or the table."
+      "note": "Word's Delete cells dialog: shift left (the row ends short with w:gridAfter), shift up (the column moves up and its bottom is left empty), entire row, entire column. Refuses a table with merged cells, by name."
     },
     {
       "id": "table.delete-column",
@@ -5556,15 +5554,16 @@
       "area": "table",
       "title": "Insert cells with a shift direction",
       "ours": {
-        "absent": [
-          "table.insert.cells"
-        ]
+        "anchor": {
+          "file": "webapp/src/table_commands.mjs",
+          "literal": "table.insertCells"
+        }
       },
       "theirs": {
         "control": "cmbRowCol"
       },
       "rank": 3,
-      "note": "Theirs opens an Insert cells dialog that shifts the existing cells right or down. We only insert whole rows and columns."
+      "note": "Word's Insert cells dialog: shift right (a wider grid and w:gridAfter on the other rows), shift down (rows added at the bottom), entire row, entire column. Refuses a table with merged cells, by name."
     },
     {
       "id": "table.insert-column",
@@ -5587,15 +5586,13 @@
       "area": "table",
       "title": "Insert table with a typed row and column count",
       "ours": {
-        "absent": [
-          "table.insert.custom"
-        ]
+        "command": "insert.tableDialog"
       },
       "theirs": {
         "localeKey": "Common.Views.InsertTableDialog.txtTitle"
       },
       "rank": 3,
-      "note": "Our only insert path is the grid picker, which caps at 8x10; a larger table has to be grown with repeated row and column inserts. The engine already clamps at 50x20, so the gap is the dialog."
+      "note": "Insert ▸ Insert table by size opens a typed columns-and-rows dialog (up to the engine's 20 x 50), beside the 8 x 10 grid on the Insert band, in the Insert menu and the palette; the agent twin is insert_table."
     },
     {
       "id": "table.insert-grid",
@@ -5700,15 +5697,16 @@
       "area": "table",
       "title": "Insert a table inside a table cell",
       "ours": {
-        "absent": [
-          "table.insert.nested"
-        ]
+        "anchor": {
+          "file": "crates/casual-doc-wasm/src/table_tools.rs",
+          "literal": "fn table_insertion_point"
+        }
       },
       "theirs": {
         "localeKey": "Common.Controllers.Shortcuts.txtDescriptionSpecialOptionsNestTable"
       },
       "rank": 3,
-      "note": "insert_table always passes container: None and drops the new table at body_index_after, so inserting from inside a cell puts the table after the outer table rather than in the cell. Nested tables imported from a file do render."
+      "note": "Insert table from a paragraph in a table cell nests the new table in that cell, after the paragraph and sized to the cell's content width; from anywhere else it goes after the caret's top-level block as before."
     },
     {
       "id": "table.position-dialog",
@@ -5868,15 +5866,16 @@
       "area": "table",
       "title": "Split a table into two",
       "ours": {
-        "absent": [
-          "table.splitTable"
-        ]
+        "anchor": {
+          "file": "webapp/src/table_commands.mjs",
+          "literal": "table.splitTable"
+        }
       },
       "theirs": {
         "localeKey": "Common.Controllers.Shortcuts.txtDescriptionInsertTableBreak"
       },
       "rank": 3,
-      "note": "Theirs has a table-break shortcut that divides the table at the caret's row. We have no command and no engine operation for it."
+      "note": "Split table at the caret's row, Ctrl/Cmd+Shift+Enter as in Word and ONLYOFFICE, from the Table band, menu, right-click menu and palette; in the first row it inserts a paragraph above the table, as Word does."
     },
     {
       "id": "table.styles",
@@ -5941,30 +5940,29 @@
       "area": "table",
       "title": "Convert table to text",
       "ours": {
-        "absent": [
-          "table.convert.tableToText"
-        ]
+        "anchor": {
+          "file": "webapp/src/table_commands.mjs",
+          "literal": "table.convertToText"
+        }
       },
       "theirs": {
         "control": "btnConvert"
       },
       "rank": 3,
-      "note": "Theirs takes a separator and a 'convert nested tables' flag."
+      "note": "Convert to text with paragraph marks, tabs, commas, semicolons or a typed character, and ONLYOFFICE's convert-nested-tables flag; inline ids are kept, so anchors in the cells survive."
     },
     {
       "id": "table.text-to-table",
       "area": "table",
       "title": "Convert text to table",
       "ours": {
-        "absent": [
-          "table.convert.textToTable"
-        ]
+        "command": "insert.textToTable"
       },
       "theirs": {
         "localeKey": "DE.Views.Toolbar.mniTextToTable"
       },
       "rank": 3,
-      "note": "Theirs takes a separator (paragraph, tab, semicolon or a typed character), a column count and an autofit choice. We have no conversion in either direction."
+      "note": "Convert text to table: paragraphs, tabs, commas, semicolons or a typed character; a column count no smaller than the widest row, pre-filled from the text; fixed, autofit to contents or autofit to window. Runs keep their formatting and the first cell of each row keeps its paragraph's id."
     },
     {
       "id": "table.text-wrapping",

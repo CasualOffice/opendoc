@@ -5446,6 +5446,18 @@ body.compact-mode {
   min-height: 32px;
 }
 
+/* Two small controls stacked beside a big one (Insert ▸ Table: Insert table by
+   size, Convert text to table), so the pair costs one control's width. */
+.rgroup-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rgroup-stack .fmt {
+  height: calc(var(--h-control) - 4px);
+}
+
 .rgroup-mini-divider {
   width: 1px;
   height: 22px;
