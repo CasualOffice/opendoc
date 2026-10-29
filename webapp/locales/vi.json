@@ -2779,7 +2779,7 @@
   "tableTools.look.lastColumn": "Cột cuối cùng",
   "tableTools.look.totalRow": "Hàng tổng",
   "tableTools.separator.comma": "Dấu phẩy",
-  "tableTools.separator.other": "Khác",
+  "tableTools.separator.custom": "Khác",
   "tableTools.separator.otherCharacter": "Ký tự khác",
   "tableTools.separator.paragraph": "Đoạn văn",
   "tableTools.separator.paragraphMarks": "Dấu đoạn",

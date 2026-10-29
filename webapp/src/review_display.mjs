@@ -127,7 +127,9 @@ export function createReviewDisplay(ed) {
       await ed.showVersionPreview(copy, { reason: t("reviewDisplay.originalReadOnly") });
     } else {
       await leaveOriginal();
-      hidden = next === "none";
+      // Only an off choice is remembered: All markup leaves it, so markup turned
+      // off again by something else returns to the reader's own off mode.
+      if (next !== "all") hidden = next === "none";
       await ed.setShowingChanges(next === "all");
       ed.drawSelection();
     }

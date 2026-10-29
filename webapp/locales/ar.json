@@ -2834,7 +2834,7 @@
   "tableTools.look.lastColumn": "العمود الأخير",
   "tableTools.look.totalRow": "صف الإجمالي",
   "tableTools.separator.comma": "فواصل",
-  "tableTools.separator.other": "أخرى",
+  "tableTools.separator.custom": "أخرى",
   "tableTools.separator.otherCharacter": "حرف آخر",
   "tableTools.separator.paragraph": "فقرات",
   "tableTools.separator.paragraphMarks": "علامات الفقرة",

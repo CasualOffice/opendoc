@@ -2352,7 +2352,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 .dialog-listbox:focus {
   outline: none;
   border-color: var(--accent-text);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: 0 0 0 0.1875rem var(--accent-soft);
 }
 
 .text-language-body {
@@ -5591,11 +5591,11 @@ body.compact-mode {
 .rgroup-stack {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0.125rem;
 }
 
 .rgroup-stack .fmt {
-  height: calc(var(--h-control) - 4px);
+  height: calc(var(--h-control) - 0.25rem);
 }
 
 .rgroup-mini-divider {
@@ -10637,10 +10637,10 @@ body:not(.doc-loaded) .drop-title {
 .text-language-status {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
+  gap: 0.25rem;
+  padding: 0.125rem 0.375rem;
   border: 0;
-  border-radius: 4px;
+  border-radius: 0.25rem;
   background: none;
   color: inherit;
   font: inherit;
@@ -10657,7 +10657,7 @@ body:not(.doc-loaded) .drop-title {
 }
 
 .text-language-status .ms {
-  font-size: 16px;
+  font-size: 1rem;
   line-height: 1;
 }
 

@@ -2790,7 +2790,7 @@
   "tableTools.look.lastColumn": "Letzte Spalte",
   "tableTools.look.totalRow": "Ergebniszeile",
   "tableTools.separator.comma": "Kommas",
-  "tableTools.separator.other": "Andere",
+  "tableTools.separator.custom": "Andere",
   "tableTools.separator.otherCharacter": "Anderes Zeichen",
   "tableTools.separator.paragraph": "Absätze",
   "tableTools.separator.paragraphMarks": "Absatzmarken",

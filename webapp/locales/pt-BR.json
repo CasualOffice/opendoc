@@ -2801,7 +2801,7 @@
   "tableTools.look.lastColumn": "Última coluna",
   "tableTools.look.totalRow": "Linha de totais",
   "tableTools.separator.comma": "Vírgulas",
-  "tableTools.separator.other": "Outro",
+  "tableTools.separator.custom": "Outro",
   "tableTools.separator.otherCharacter": "Outro caractere",
   "tableTools.separator.paragraph": "Parágrafos",
   "tableTools.separator.paragraphMarks": "Marcas de parágrafo",

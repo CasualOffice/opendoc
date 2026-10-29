@@ -2779,7 +2779,7 @@
   "tableTools.look.lastColumn": "마지막 열",
   "tableTools.look.totalRow": "요약 행",
   "tableTools.separator.comma": "쉼표",
-  "tableTools.separator.other": "기타",
+  "tableTools.separator.custom": "기타",
   "tableTools.separator.otherCharacter": "다른 문자",
   "tableTools.separator.paragraph": "단락",
   "tableTools.separator.paragraphMarks": "단락 표시",

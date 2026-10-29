@@ -259,6 +259,17 @@ export const CURSOR_TARGETS = [
     why: "Eight grips, eight axis cursors — the mapping every editor shares.",
   },
   {
+    id: "review-change-bar",
+    cursor: "pointer",
+    owner: "css",
+    selector: ".overlay .review-change-bar",
+    gesture: "Clicking a change bar in Simple markup",
+    why:
+      "The bar is a control: clicking it shows All markup at that change, as in " +
+      "Word's Simple Markup (`docs/153` review.display-mode-simple-markup), so it " +
+      "promises a click the way a link does.",
+  },
+  {
     id: "object-move-pad",
     cursor: "move",
     owner: "css",

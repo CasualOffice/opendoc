@@ -2790,7 +2790,7 @@
   "tableTools.look.lastColumn": "Laatste kolom",
   "tableTools.look.totalRow": "Totaalrij",
   "tableTools.separator.comma": "Komma's",
-  "tableTools.separator.other": "Overig",
+  "tableTools.separator.custom": "Overig",
   "tableTools.separator.otherCharacter": "Ander teken",
   "tableTools.separator.paragraph": "Alinea's",
   "tableTools.separator.paragraphMarks": "Alinea-einden",

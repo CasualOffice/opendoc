@@ -916,13 +916,16 @@ export function tableCommandLabel(id, label, trail, surface) {
  * the commands they stand in for.
  */
 export function tableMenuPlaceholders(disabledReason) {
-  return [...TABLE_MENU_LABELS].map(([id]) => ({
+  return [...TABLE_MENU_LABELS].map(([id]) => {
+    const label = tableMenuLabel(id);
+    return {
     id,
-    label: tableMenuLabel(id),
+    label,
     group: "Table",
     kw: `table ${label}`.toLowerCase(),
     enabled: false,
     disabledReason,
     run: () => {},
-  }));
+    };
+  });
 }

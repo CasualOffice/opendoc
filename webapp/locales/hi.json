@@ -2790,7 +2790,7 @@
   "tableTools.look.lastColumn": "अंतिम स्तंभ",
   "tableTools.look.totalRow": "कुल पंक्ति",
   "tableTools.separator.comma": "अल्पविराम",
-  "tableTools.separator.other": "अन्य",
+  "tableTools.separator.custom": "अन्य",
   "tableTools.separator.otherCharacter": "अन्य वर्ण",
   "tableTools.separator.paragraph": "अनुच्छेद",
   "tableTools.separator.paragraphMarks": "अनुच्छेद चिह्न",

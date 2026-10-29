@@ -3392,7 +3392,7 @@
   "tableTools.look.lastColumn": "Last column",
   "tableTools.look.totalRow": "Total row",
   "tableTools.separator.comma": "Commas",
-  "tableTools.separator.other": "Other",
+  "tableTools.separator.custom": "Other",
   "tableTools.separator.otherCharacter": "Other character",
   "tableTools.separator.paragraph": "Paragraphs",
   "tableTools.separator.paragraphMarks": "Paragraph marks",

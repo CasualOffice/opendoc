@@ -2801,7 +2801,7 @@
   "tableTools.look.lastColumn": "Dernière colonne",
   "tableTools.look.totalRow": "Ligne Total",
   "tableTools.separator.comma": "Virgules",
-  "tableTools.separator.other": "Autre",
+  "tableTools.separator.custom": "Autre",
   "tableTools.separator.otherCharacter": "Autre caractère",
   "tableTools.separator.paragraph": "Paragraphes",
   "tableTools.separator.paragraphMarks": "Marques de paragraphe",

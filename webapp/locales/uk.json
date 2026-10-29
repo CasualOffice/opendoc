@@ -2812,7 +2812,7 @@
   "tableTools.look.lastColumn": "Останній стовпець",
   "tableTools.look.totalRow": "Рядок підсумків",
   "tableTools.separator.comma": "Коми",
-  "tableTools.separator.other": "Інший",
+  "tableTools.separator.custom": "Інший",
   "tableTools.separator.otherCharacter": "Інший символ",
   "tableTools.separator.paragraph": "Абзаци",
   "tableTools.separator.paragraphMarks": "Позначки абзаців",

@@ -2779,7 +2779,7 @@
   "tableTools.look.lastColumn": "最後の列",
   "tableTools.look.totalRow": "集計行",
   "tableTools.separator.comma": "カンマ",
-  "tableTools.separator.other": "その他",
+  "tableTools.separator.custom": "その他",
   "tableTools.separator.otherCharacter": "その他の文字",
   "tableTools.separator.paragraph": "段落",
   "tableTools.separator.paragraphMarks": "段落記号",

@@ -2790,7 +2790,7 @@
   "tableTools.look.lastColumn": "Son sütun",
   "tableTools.look.totalRow": "Toplam satırı",
   "tableTools.separator.comma": "Virgüller",
-  "tableTools.separator.other": "Diğer",
+  "tableTools.separator.custom": "Diğer",
   "tableTools.separator.otherCharacter": "Diğer karakter",
   "tableTools.separator.paragraph": "Paragraflar",
   "tableTools.separator.paragraphMarks": "Paragraf işaretleri",

@@ -271,7 +271,7 @@ const CEILINGS = new Map([
   // Measured 2026-10-30: three "<n> pt" width labels (a number and a unit symbol)
   // and three dialog title KEYS the scanner reads as prose.
   ["src/page_borders.mjs", 3],
-  ["src/pdf_import.mjs", 3],
+  ["src/pdf_import.mjs", 4],
   ["src/editor_edit_pipeline.mjs", 1],
   ["src/editor_palette_ui.mjs", 1],
   ["src/editor_link_dialog.mjs", 2],

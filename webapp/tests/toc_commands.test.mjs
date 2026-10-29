@@ -6,6 +6,7 @@
 // never sent — the defect this guards — shows up here as a missing field.
 import assert from "node:assert/strict";
 import test from "node:test";
+import { EN_STRINGS } from "../src/en_strings.mjs";
 
 // `popover_manager.mjs` installs document-level listeners when it is imported.
 globalThis.document = {
@@ -102,8 +103,12 @@ test("every surface row this module declares is a host-contract command with a r
     const contract = commandContract(row.command);
     assert.ok(contract, `${row.command} is not in the host contract`);
     assert.equal(contract.requires, "mutate", `${row.command} changes the document`);
-    // A key that is missing from the catalogue comes back as the key itself.
-    assert.ok(!row.label.startsWith("toc."), `${row.command}'s label is a raw key: ${row.label}`);
+    // The label routes through the catalogue: a unit test runs without one loaded,
+    // so `t()` hands back the key, and the guarantee is that the key is declared.
+    assert.ok(
+      !row.label.startsWith("toc.") || row.label in EN_STRINGS,
+      `${row.command}'s label is an undeclared key: ${row.label}`,
+    );
     assert.equal(typeof row.run, "function");
   }
   assert.equal(addTextLabel(-1), t("toc.addText.none"));

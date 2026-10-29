@@ -2812,7 +2812,7 @@
   "tableTools.look.lastColumn": "Последний столбец",
   "tableTools.look.totalRow": "Строка итогов",
   "tableTools.separator.comma": "Запятые",
-  "tableTools.separator.other": "Другой",
+  "tableTools.separator.custom": "Другой",
   "tableTools.separator.otherCharacter": "Другой символ",
   "tableTools.separator.paragraph": "Абзацы",
   "tableTools.separator.paragraphMarks": "Знаки абзаца",

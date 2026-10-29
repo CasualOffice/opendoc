@@ -2779,7 +2779,7 @@
   "tableTools.look.lastColumn": "Kolom terakhir",
   "tableTools.look.totalRow": "Baris total",
   "tableTools.separator.comma": "Koma",
-  "tableTools.separator.other": "Lainnya",
+  "tableTools.separator.custom": "Lainnya",
   "tableTools.separator.otherCharacter": "Karakter lain",
   "tableTools.separator.paragraph": "Paragraf",
   "tableTools.separator.paragraphMarks": "Tanda paragraf",

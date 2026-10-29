@@ -2812,7 +2812,7 @@
   "tableTools.look.lastColumn": "Ostatnia kolumna",
   "tableTools.look.totalRow": "Wiersz sumy",
   "tableTools.separator.comma": "Przecinki",
-  "tableTools.separator.other": "Inny",
+  "tableTools.separator.custom": "Inny",
   "tableTools.separator.otherCharacter": "Inny znak",
   "tableTools.separator.paragraph": "Akapity",
   "tableTools.separator.paragraphMarks": "Znaczniki akapitu",

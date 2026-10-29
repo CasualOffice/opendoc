@@ -2779,7 +2779,7 @@
   "tableTools.look.lastColumn": "最後一欄",
   "tableTools.look.totalRow": "合計列",
   "tableTools.separator.comma": "逗號",
-  "tableTools.separator.other": "其他",
+  "tableTools.separator.custom": "其他",
   "tableTools.separator.otherCharacter": "其他字元",
   "tableTools.separator.paragraph": "段落",
   "tableTools.separator.paragraphMarks": "段落標記",
