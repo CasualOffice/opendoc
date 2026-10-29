@@ -332,6 +332,21 @@ export const EN_STRINGS = Object.freeze({
   "toc.noneToUpdate": "This document has no generated table of contents to update",
   "toc.jumpedTo": "Jumped to {heading}",
   "toc.notAnEntry": "Put the caret on a table-of-contents entry first",
+  // The settings dialog, Remove, Add text and the table of figures (RM-25).
+  "toc.styleLevel": "Contents level for {style}",
+  "toc.noStylesChosen": "Give at least one style a contents level",
+  "toc.caretInOtherTable": "The caret is in another kind of table; move it out to insert this one",
+  "toc.figures.inserted": "Table of figures inserted",
+  "toc.figures.command": "Insert table of figures…",
+  "toc.remove.command": "Remove table of contents",
+  "toc.removed": "Table of contents removed",
+  "toc.update.command": "Update table…",
+  "toc.addText.none": "Do not show in table of contents",
+  "toc.addText.level": "Level {level}",
+  "toc.addText.paletteNone": "Add text: do not show in table of contents",
+  "toc.addText.paletteLevel": "Add text to table of contents: level {level}",
+  "toc.addText.done": "Listed in the table of contents at level {level}",
+  "toc.addText.removed": "No longer listed in the table of contents",
   "paragraph.caretRequired": "Place the caret in a paragraph",
   // Why Restart / Continue numbering and Insert ▸ Link are unavailable. They were
   // the palette rows' English literals while the buttons for the same commands

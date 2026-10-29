@@ -188,6 +188,11 @@ already excluded; `casual_doc_command::sections::set_page_borders` exists, so of
 agents later is one registry entry and lowers the ceiling back to 16. The editor command
 `layout.pageBorders` is listed in `registry::UI_NOT_EXPOSED` for the same reason
 (`UI_NOT_EXPOSED_CEILING` 84 → 85).
+`reference.removeToc`, `reference.tableOfFigures` and the `reference.addText.`
+family (`109` RM-25: Remove table of contents, Insert table of figures, and Add
+text's contents levels) are listed there too, until a contents command grows
+`remove`, `captions` and outline-level arguments (`UI_NOT_EXPOSED_CEILING`
+85 → 88).
 
 **What "a feature inherits MCP" therefore means, concretely.** A developer adding, say,
 footnote insertion writes `InsertFootnote: Command` with its `lower()` (moved out of

@@ -403,6 +403,7 @@ export function createDialogs(ed) {
     registerModal, getDoc: () => ed.doc, status: ed.setStatus, fallbackFocus: () => ed.pagesEl,
     mutationBlocked: () => ed.blockMutationInViewing() || ed.blockUntrackedInSuggesting(),
     caretNode: () => ed.selection?.focus.node ?? "",
+    selection: () => ed.selection ?? null,
     applyEdit: (run) => ed.runEdit(run, { gate: true }),
     changed: () => ed.updateToolbar(),
   });

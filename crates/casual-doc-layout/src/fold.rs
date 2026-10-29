@@ -301,8 +301,12 @@ pub fn heading_level_of(
     direct: &ParagraphProperties,
     definitions: &Definitions,
 ) -> Option<u8> {
-    if let Some(level) = effective.outline_level.filter(|level| *level <= 8) {
-        return Some(level + 1);
+    // `w:outlineLvl` 9 is Word's explicit BODY TEXT: it overrides a heading
+    // style rather than falling through to it. Word's own `TOC Heading` style is
+    // based on `Heading 1` and says 9, and "Do not show in table of contents"
+    // writes it on a heading-styled paragraph (`docs/153` `page.toc.addText`).
+    if let Some(level) = effective.outline_level {
+        return (level <= 8).then_some(level + 1);
     }
     let mut style_id = direct.style_ref;
     for _ in 0..24 {
@@ -449,6 +453,56 @@ mod tests {
         assert_ne!(both.fingerprint(), one.fingerprint());
         assert_eq!(both.len(), 2);
         assert!(both.contains(node(7)));
+    }
+
+    /// Body text (`w:outlineLvl` 9) overrides a heading style. Mutation: return
+    /// to `outline_level.filter(|level| *level <= 8)` and the paragraph falls
+    /// through to its `Heading 1` style name, so it reads as level 1.
+    #[test]
+    fn an_explicit_body_text_level_overrides_a_heading_style() {
+        use casual_doc_model::v1::{Style, StyleId, StyleKind};
+        let style = StyleId::new(node(90));
+        let mut definitions = Definitions::default();
+        definitions.styles.insert(
+            style,
+            Style {
+                kind: StyleKind::Paragraph,
+                is_default: false,
+                name: Some("Heading 1".to_owned()),
+                aliases: None,
+                based_on: None,
+                next: None,
+                link: None,
+                hidden: false,
+                ui_priority: None,
+                semi_hidden: false,
+                unhide_when_used: false,
+                q_format: false,
+                locked: false,
+                paragraph: None,
+                run: None,
+                table: None,
+                table_row: None,
+                table_cell: None,
+                conditional: Vec::new(),
+                custom_style: false,
+            },
+        );
+        let cascade = StyleCascade::new(&definitions);
+        let styled = ParagraphProperties {
+            style_ref: Some(style),
+            ..ParagraphProperties::default()
+        };
+        assert_eq!(heading_level(&styled, &definitions, &cascade), Some(1));
+        let body_text = ParagraphProperties {
+            outline_level: Some(9),
+            ..styled
+        };
+        assert_eq!(
+            heading_level(&body_text, &definitions, &cascade),
+            None,
+            "outline level 9 is body text, whatever the style says"
+        );
     }
 
     #[test]

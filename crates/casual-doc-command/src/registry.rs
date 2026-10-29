@@ -828,8 +828,11 @@ pub const COMMANDS: &[Command] = &[
         id: "update_table_of_contents",
         family: Family::References,
         summary: "Update a table of contents: its page numbers only, or the entire table from the headings.",
+        // `CreateBookmark`: a hyperlinked (`\h`) table plants a `_Toc` bookmark on
+        // a heading added since it was built (`references` contents note).
         emits: &[
             "SetStyleDefinition",
+            "CreateBookmark",
             "DeleteBlocks",
             "InsertBlocks",
             "InsertFieldRange",
@@ -955,6 +958,7 @@ const UI_PROTECTION: &str =
     "Protection and tracking settings are a person's decision, never an agent's.";
 const UI_COMMENT_DELETE: &str =
     "No command deletes a comment yet; an agent resolves a thread with resolve_comment.";
+const UI_CONTENTS: &str = "Removing a table of contents, a table of figures and Add text's contents levels are not offered to agents yet; insert_table_of_contents and update_table_of_contents are (docs/181 §3).";
 
 /// Editor command ids (`webapp/src/host_contract.mjs` `COMMAND_CONTRACT` and
 /// `COMMAND_FAMILIES`) that can change the document but that no registry
@@ -1051,10 +1055,15 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
     ("review.mode.suggesting", UI_MODE),
     ("review.restrictEditing", UI_PROTECTION),
     ("review.comment.delete", UI_COMMENT_DELETE),
+    ("reference.removeToc", UI_CONTENTS),
+    ("reference.tableOfFigures", UI_CONTENTS),
+    ("reference.addText.", UI_CONTENTS),
 ];
 
 /// The length of [`UI_NOT_EXPOSED`]. It may only fall: lower it when a command
 /// names an id; raising it needs an ADR line (`docs/181` §3).
 ///
 /// 84 -> 85 with `layout.pageBorders` (`109` HF-193), recorded in `docs/181` §3.
-pub const UI_NOT_EXPOSED_CEILING: usize = 85;
+/// 85 -> 88 with `reference.removeToc`, `reference.tableOfFigures` and
+/// `reference.addText.` (`109` RM-25), recorded in `docs/181` §3.
+pub const UI_NOT_EXPOSED_CEILING: usize = 88;
