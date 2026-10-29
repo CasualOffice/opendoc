@@ -576,6 +576,12 @@ pub(crate) struct Flow {
     /// Per page, where its body content ends (the lowest text or table
     /// edge), for page-break inference.
     pub page_bottoms: Vec<f64>,
+    /// Per page, its text's left and right edges (the column a paragraph on
+    /// that page wraps in when the page has no column region). A document
+    /// whose pages differ in size (a landscape section) has a different
+    /// measure per page, and one document-wide edge made every portrait
+    /// line look short (found by `tools/opendoc-reflow-score`).
+    pub page_body: Vec<(f64, f64)>,
 }
 
 /// The font key of a character, through the families the fixed build chose.
@@ -642,7 +648,19 @@ fn furniture(
                 .map(|l| l.chars.iter().map(|c| c.text.as_str()).collect::<String>())
                 .collect::<Vec<_>>()
                 .join(" ");
-            let key = (top_band, normalized(&text), (bb.top / 6.0).round() as i64);
+            // Where it sits, measured from the edge of its band: a footer on
+            // a landscape page is as far from that page's bottom as on a
+            // portrait one, not at the same distance from the top.
+            let from_edge = if top_band {
+                bb.top
+            } else {
+                page.height - bb.bottom
+            };
+            let key = (
+                top_band,
+                normalized(&text),
+                (from_edge / 6.0).round() as i64,
+            );
             seen.entry(key).or_default().push((page.index, b));
         }
     }
@@ -961,6 +979,19 @@ pub fn build(
     );
     let mut tagged_pages = 0;
     let mut xy_pages = 0;
+    // The most common page size, for the document's margins.
+    let common_size = {
+        let mut counts: BTreeMap<(i64, i64), usize> = BTreeMap::new();
+        for page in &state.pages {
+            *counts
+                .entry((page.width.round() as i64, page.height.round() as i64))
+                .or_default() += 1;
+        }
+        counts
+            .into_iter()
+            .max_by_key(|(_, n)| *n)
+            .map_or((612.0, 792.0), |((w, h), _)| (w as f64, h as f64))
+    };
     let mut masks = 0;
     let mut vectors_placed = 0;
     let mut floats = 0;
@@ -1012,15 +1043,7 @@ pub fn build(
                 page_tables.push(table);
             }
         }
-        // Vector art that is only flat rectangles inside a ruled table is that
-        // table's shading (now on its cells), not a drawing of its own.
-        let shading_art: BTreeSet<usize> = page
-            .vectors
-            .iter()
-            .enumerate()
-            .filter(|(_, v)| tables::is_shading(v, &page_tables))
-            .map(|(i, _)| i)
-            .collect();
+
         // Footnotes leave the body; a note the previous page left open
         // continues in this page's note area.
         if flow
@@ -1109,6 +1132,20 @@ pub fn build(
             page_tables.len() as u32,
             Some(page.index),
         );
+        // Filled rectangles under a whitespace table's cells are its shading
+        // too (a borderless table with a shaded header row).
+        for table in page_tables.iter_mut().filter(|t| !t.ruled) {
+            tables::shade(table, &page.fills, &mut work.tables);
+        }
+        // Vector art that is only flat rectangles inside a table is that
+        // table's shading (now on its cells), not a drawing of its own.
+        let shading_art: BTreeSet<usize> = page
+            .vectors
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| tables::is_shading(v, &page_tables))
+            .map(|(i, _)| i)
+            .collect();
 
         // A reply anchors where its root does (replies often carry no
         // rectangle of their own).
@@ -1262,15 +1299,22 @@ pub fn build(
             });
         }
         let mut page_bottom = f64::NEG_INFINITY;
+        let (mut px0, mut px1) = (f64::INFINITY, f64::NEG_INFINITY);
         for e in &elements {
             if matches!(e.kind, EKind::Text(_) | EKind::Table(_)) {
                 page_bottom = page_bottom.max(e.rect.y1);
-                bx0 = bx0.min(e.rect.x0);
-                by0 = by0.min(e.rect.y0);
-                bx1 = bx1.max(e.rect.x1);
-                by1 = by1.max(e.rect.y1);
+                px0 = px0.min(e.rect.x0);
+                px1 = px1.max(e.rect.x1);
+                // The document's margins are its common page size's.
+                if (page.width.round(), page.height.round()) == common_size {
+                    bx0 = bx0.min(e.rect.x0);
+                    by0 = by0.min(e.rect.y0);
+                    bx1 = bx1.max(e.rect.x1);
+                    by1 = by1.max(e.rect.y1);
+                }
             }
         }
+        flow.page_body.push((px0, px1));
 
         flow.page_bottoms.push(page_bottom);
         // Reading order: XY-Cut++ always (it also finds the column regions);

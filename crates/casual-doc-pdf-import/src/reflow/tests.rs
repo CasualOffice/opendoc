@@ -108,11 +108,13 @@ fn headings_become_styles_and_lines_become_paragraphs() {
         .map(|p| (style_name(document, p), para_text(p)))
         .filter(|(_, t)| !t.is_empty())
         .collect();
+    // The one 20 pt line over 14 pt headings is the Title; the headings
+    // are the first level under it (no level is skipped).
     assert_eq!(
         named[0],
-        (Some("heading 1".into()), "Annual Synthetic Review".into())
+        (Some("Title".into()), "Annual Synthetic Review".into())
     );
-    assert_eq!(named[1], (Some("heading 2".into()), "Background".into()));
+    assert_eq!(named[1], (Some("heading 1".into()), "Background".into()));
     // Four PDF lines are one paragraph; the line-end hyphen is removed.
     assert_eq!(named[2].0, None);
     assert!(
@@ -123,8 +125,8 @@ fn headings_become_styles_and_lines_become_paragraphs() {
         named[2].1
     );
     assert!(named[2].1.ends_with("regenerates on any machine."));
-    assert_eq!(named[3], (Some("heading 2".into()), "Method".into()));
-    assert_eq!(named[5], (Some("heading 2".into()), "Results".into()));
+    assert_eq!(named[3], (Some("heading 1".into()), "Method".into()));
+    assert_eq!(named[5], (Some("heading 1".into()), "Results".into()));
     // Normal carries the body font, and the heading styles derive from it.
     let styles = &document.definitions().styles;
     let normal = styles
@@ -2183,4 +2185,393 @@ fn the_writer_corpus_table_with_merges_reflows_as_a_real_table() {
     let body = texts(document).join("\n");
     assert!(body.contains("After the table."), "{body}");
     assert!(!body.contains("B2"), "{body}");
+}
+
+// --- Found by the ground truth (`tools/opendoc-reflow-score`, docs/182 §18.10) --
+
+/// A borderless table the way Word and LibreOffice print one: every cell its
+/// own line, rows 22 pt apart at 9 pt (farther than a paragraph's leading, so
+/// every cell is its own block), a header row left-aligned over a column
+/// whose body is centred.
+fn spaced_table_pdf() -> Vec<u8> {
+    let mut content = text("F2", 11.0, 72.0, 720.0, 14.0, &["A borderless table."]);
+    let header = ["Feature", "Input", "Status"];
+    let rows = [
+        ["Paragraph styles", "Heading 1", "PASS"],
+        ["Cell shading", "Blue", "PASS"],
+        ["Text wrapping", "Long cell", "REVIEW"],
+        ["Merged cells", "Two columns", "PASS"],
+    ];
+    for (c, cell) in header.iter().enumerate() {
+        content.push_str(&text(
+            "F3",
+            9.0,
+            [84.0, 200.0, 400.0][c],
+            680.0,
+            11.0,
+            &[cell],
+        ));
+    }
+    for (r, row) in rows.iter().enumerate() {
+        let y = 680.0 - 22.0 * (r + 1) as f64;
+        for (c, cell) in row.iter().enumerate() {
+            // The status column is centred on x = 420.
+            let x = if c == 2 {
+                420.0 - 2.5 * cell.len() as f64
+            } else {
+                [84.0, 200.0][c]
+            };
+            content.push_str(&text("F2", 9.0, x, y, 11.0, &[cell]));
+        }
+    }
+    synth::document(&[Page::new(content)], "", "")
+}
+
+/// Mutations, each driven red: drop the row linking in
+/// `whitespace_candidates` (every row is its own one-row candidate, no
+/// table); give `whitespace_table` a column per element (twelve columns).
+#[test]
+fn a_borderless_table_whose_cells_are_each_a_block_is_one_table() {
+    let (_, reflowed) = reflow_of(spaced_table_pdf());
+    let document = &reflowed.document;
+    assert_eq!(tables_in(document).len(), 1, "{:?}", texts(document));
+    let rows = cell_texts(document, 0);
+    assert_eq!(rows[0], vec!["Feature", "Input", "Status"]);
+    assert_eq!(rows[3], vec!["Text wrapping", "Long cell", "REVIEW"]);
+    assert_eq!(rows.len(), 5);
+}
+
+/// Lines 18 pt apart at 10 pt (a generous leading the block grouping splits)
+/// on a page whose text is narrower than another page's: one paragraph, not
+/// one per line. Mutations: measure every page against the document-wide
+/// right edge in `emit::column` (the lines look short and stay apart); drop
+/// the word-fit test in `text::continues` (the same).
+#[test]
+fn widely_leaded_lines_on_a_narrow_page_join_into_one_paragraph() {
+    let lines = [
+        "Every line of this paragraph is set with a generous",
+        "leading, so the grouping puts each one in a block of",
+        "its own; the reflow must still join them as a single",
+        "paragraph because each one ran to the column's edge.",
+    ];
+    let mut first = String::new();
+    for (i, l) in lines.iter().enumerate() {
+        first.push_str(&text("F1", 10.0, 72.0, 700.0 - 18.0 * i as f64, 18.0, &[l]));
+    }
+    let second = text(
+        "F1",
+        10.0,
+        72.0,
+        700.0,
+        14.0,
+        &[
+            "A wide page: this line runs much further to the right than any line of the first page does.",
+        ],
+    );
+    let (_, reflowed) = reflow_of(synth::document(
+        &[Page::new(first), Page::new(second)],
+        "",
+        "",
+    ));
+    let body = texts(&reflowed.document);
+    assert!(
+        body.iter()
+            .any(|t| t.starts_with("Every line") && t.ends_with("column's edge.")),
+        "{body:?}"
+    );
+}
+
+/// A hanging indent and a bullet whose wrapped line hangs under its text
+/// stay one paragraph each; code lines in a monospaced face stay one
+/// paragraph per line. Mutations: drop the `under` inset in
+/// `text::continues` (the wrapped lines split off); drop the monospaced
+/// short-line break from `text::segment` (the code joins into one paragraph).
+#[test]
+fn hanging_lines_join_and_code_lines_do_not() {
+    let mut content = String::new();
+    content.push_str(&text(
+        "F1",
+        10.0,
+        72.0,
+        700.0,
+        14.0,
+        &["Hanging indent: the first line begins at the left edge while the lines"],
+    ));
+    content.push_str(&text(
+        "F1",
+        10.0,
+        108.0,
+        682.0,
+        14.0,
+        &["that follow begin half an inch further in, as glossaries set them."],
+    ));
+    content.push_str(&text("F1", 10.0, 72.0, 640.0, 14.0, &["Code follows."]));
+    for (i, l) in [
+        "pub fn render(document: &Document) {",
+        "    let layout = document.layout();",
+        "}",
+    ]
+    .iter()
+    .enumerate()
+    {
+        content.push_str(&text("F6", 10.0, 72.0, 610.0 - 14.0 * i as f64, 14.0, &[l]));
+    }
+    let (_, reflowed) = reflow_of(synth::document(&[Page::new(content)], "", ""));
+    let body = texts(&reflowed.document);
+    assert!(
+        body.iter()
+            .any(|t| t.starts_with("Hanging indent") && t.ends_with("glossaries set them.")),
+        "{body:?}"
+    );
+    assert!(
+        body.iter()
+            .any(|t| t == "pub fn render(document: &Document) {"),
+        "{body:?}"
+    );
+    assert!(
+        body.iter()
+            .any(|t| t.trim() == "let layout = document.layout();"),
+        "{body:?}"
+    );
+}
+
+/// A title used once, two heading levels used more than once, and a one-off
+/// larger subtitle: Title, Heading 1, Heading 2, and the subtitle stays body
+/// text, with no level skipped. Mutations: drop `HEADING_MIN_PARAGRAPHS`
+/// (the subtitle takes a level and pushes the rest down); drop the title
+/// (the document's levels start at the title).
+#[test]
+fn a_title_and_dense_heading_levels() {
+    let first = format!(
+        "{}{}{}{}{}{}",
+        text("F3", 26.0, 72.0, 720.0, 30.0, &["Annual Synthetic Review"]),
+        text(
+            "F1",
+            14.0,
+            72.0,
+            690.0,
+            18.0,
+            &["A subtitle set once, larger than the body"]
+        ),
+        text("F3", 16.0, 72.0, 650.0, 20.0, &["Background"]),
+        text("F3", 13.0, 72.0, 620.0, 16.0, &["Scope"]),
+        text("F2", 11.0, 72.0, 600.0, 14.0, &PROSE[0..2]),
+        text("F3", 13.0, 72.0, 560.0, 16.0, &["Method"]),
+    );
+    let second = format!(
+        "{}{}{}",
+        text("F2", 11.0, 72.0, 720.0, 14.0, &PROSE[2..4]),
+        text("F3", 16.0, 72.0, 680.0, 20.0, &["Results"]),
+        text("F2", 11.0, 72.0, 660.0, 14.0, &PROSE[4..8]),
+    );
+    let (_, reflowed) = reflow_of(synth::document(
+        &[Page::new(first), Page::new(second)],
+        "",
+        "",
+    ));
+    let document = &reflowed.document;
+    let named: Vec<(Option<String>, String)> = paragraphs(document)
+        .into_iter()
+        .map(|p| (style_name(document, p), para_text(p)))
+        .collect();
+    let style = |text: &str| {
+        named
+            .iter()
+            .find(|(_, t)| t == text)
+            .map(|(s, _)| s.clone())
+            .unwrap_or_else(|| panic!("{text}: {named:?}"))
+    };
+    assert_eq!(style("Annual Synthetic Review").as_deref(), Some("Title"));
+    assert_eq!(style("Background").as_deref(), Some("heading 1"));
+    assert_eq!(style("Results").as_deref(), Some("heading 1"));
+    assert_eq!(style("Scope").as_deref(), Some("heading 2"));
+    assert_eq!(style("A subtitle set once, larger than the body"), None);
+}
+
+/// Two rows of short cells side by side are not a page set in columns.
+/// Mutation: drop `MIN_COLUMN_WIDTH` from `order::xy_cut_pp` (a three-column
+/// section).
+#[test]
+fn short_side_by_side_cells_are_not_a_column_section() {
+    let mut content = text("F2", 11.0, 72.0, 720.0, 14.0, &PROSE[0..2]);
+    for (r, row) in [["A1", "B1", "C1"], ["A2", "B2", "C2"]].iter().enumerate() {
+        for (c, cell) in row.iter().enumerate() {
+            content.push_str(&text(
+                "F2",
+                10.0,
+                [84.0, 240.0, 396.0][c],
+                660.0 - 22.0 * r as f64,
+                12.0,
+                &[cell],
+            ));
+        }
+    }
+    content.push_str(&text("F2", 11.0, 72.0, 580.0, 14.0, &PROSE[2..4]));
+    let (_, reflowed) = reflow_of(synth::document(&[Page::new(content)], "", ""));
+    assert!(
+        !reflowed.report.has(report::COLUMNS_INFERRED),
+        "{:?}",
+        reflowed.report.findings
+    );
+    assert!(
+        reflowed
+            .document
+            .definitions()
+            .sections
+            .iter()
+            .all(|s| s.columns.count <= 1)
+    );
+}
+
+/// A borderless table cut by a page break whose next page does not repeat
+/// the header (our writer's, and many producers'), with its centred column's
+/// text at another offset: one table. Mutation: compare whitespace columns by
+/// width in `continues` (two tables).
+#[test]
+fn a_borderless_table_cut_by_a_page_break_is_one_table() {
+    let rows = |first: usize, n: usize, top: f64, header: bool| {
+        let mut out = String::new();
+        let mut y = top;
+        if header {
+            for (c, cell) in ["ID", "Feature", "Result"].iter().enumerate() {
+                out.push_str(&text("F3", 9.0, [84.0, 140.0, 400.0][c], y, 11.0, &[cell]));
+            }
+            y -= 22.0;
+        }
+        for k in 0..n {
+            let id = format!("R-{:02}", first + k);
+            out.push_str(&text("F2", 9.0, 92.0, y, 11.0, &[&id]));
+            out.push_str(&text(
+                "F2",
+                9.0,
+                140.0,
+                y,
+                11.0,
+                &[&format!("Feature {}", first + k)],
+            ));
+            out.push_str(&text("F2", 9.0, 412.0, y, 11.0, &["ok"]));
+            y -= 22.0;
+        }
+        out
+    };
+    let first = format!(
+        "{}{}",
+        text("F2", 11.0, 72.0, 720.0, 14.0, &["A long borderless table."]),
+        rows(1, 20, 680.0, true)
+    );
+    let second = format!(
+        "{}{}",
+        rows(21, 5, 700.0, false),
+        text("F2", 11.0, 72.0, 560.0, 14.0, &["After the table."])
+    );
+    let (_, reflowed) = reflow_of(synth::document(
+        &[Page::new(first), Page::new(second)],
+        "",
+        "",
+    ));
+    let document = &reflowed.document;
+    assert_eq!(
+        tables_in(document).len(),
+        1,
+        "{:?}",
+        reflowed.report.findings
+    );
+    assert_eq!(cell_texts(document, 0).len(), 1 + 25);
+}
+
+/// One visual line written as several marked-content sequences, the way
+/// Chromium writes every link, citation and styled run (Wikipedia's PDFs):
+/// one paragraph with its spaces, the raised citation on the line, and no
+/// table made of the pieces. Mutations: drop `same_line` from the
+/// continuation in `emit` (each piece is a paragraph); drop the gutter test
+/// in `whitespace_candidates` (with the second line below, the pieces form a
+/// table).
+#[test]
+fn a_line_written_in_pieces_is_one_paragraph() {
+    // Courier: every character is 0.6 em, so the pieces abut exactly.
+    let piece = |mcid: usize, x: f64, y: f64, size: f64, s: &str| {
+        format!(
+            "/Span <</MCID {mcid}>> BDC BT /F6 {size} Tf {x} {y} Td ({}) Tj ET EMC\n",
+            synth::literal(s)
+        )
+    };
+    let mut content = String::new();
+    let mut mcid = 0;
+    for (row, y) in [700.0, 688.0].into_iter().enumerate() {
+        let mut x = 72.0;
+        let parts: &[&str] = if row == 0 {
+            &[
+                "Portable Document Format",
+                " (PDF), standardized",
+                " as ISO 32000",
+            ]
+        } else {
+            &["is a file format", " developed by Adobe", " in 1992."]
+        };
+        for part in parts {
+            content.push_str(&piece(mcid, x, y, 10.0, part));
+            mcid += 1;
+            x += 6.0 * part.chars().count() as f64;
+        }
+        if row == 0 {
+            content.push_str(&piece(mcid, x, y + 3.0, 7.0, "[2]"));
+            mcid += 1;
+        }
+    }
+    let (_, reflowed) = reflow_of(synth::document(&[Page::new(content)], "", ""));
+    let body = texts(&reflowed.document);
+    assert!(
+        body.iter()
+            .any(|t| t.starts_with("Portable Document Format (PDF), standardized as ISO 32000[2]")),
+        "{body:?}"
+    );
+    assert!(tables_in(&reflowed.document).is_empty(), "{body:?}");
+}
+
+/// An indent past the model's 22-inch domain is clamped, not a validation
+/// failure that loses the whole flowing document (`arxiv-2210.11416` in the
+/// corpus). Mutation: return `twips(points)` unclamped.
+#[test]
+fn an_indent_past_the_models_domain_is_clamped() {
+    assert_eq!(super::emit::indent_twips(10_000.0), 31_680);
+    assert_eq!(super::emit::indent_twips(-10_000.0), -31_680);
+    assert_eq!(super::emit::indent_twips(36.0), 720);
+}
+
+/// A whitespace table whose measured column comes out negative (text that
+/// overhangs the next column's start) still validates: widths are clamped
+/// into the model's domain (the corpus sweep's `table.grid.column.width`
+/// failure, which lost a whole flowing document). Mutation: drop the clamp
+/// in `Emitter::table`.
+#[test]
+fn a_table_with_an_overhanging_column_still_validates() {
+    use super::tables::{ICell, ITable};
+    let table = ITable {
+        rows: vec![vec![
+            ICell {
+                span: 1,
+                x0: 100.0,
+                x1: 90.0,
+                ..ICell::default()
+            },
+            ICell {
+                span: 1,
+                x0: 90.0,
+                x1: 3000.0,
+                ..ICell::default()
+            },
+        ]],
+        columns: vec![-10.0, 2910.0],
+        ..ITable::default()
+    };
+    let grid: Vec<i32> = table
+        .columns
+        .iter()
+        .map(|w| super::emit::grid_width(*w))
+        .collect();
+    assert_eq!(grid, vec![1, 31_680]);
+    assert_eq!(
+        super::emit::cell_width(table.rows[0][0].x1 - table.rows[0][0].x0),
+        0
+    );
 }

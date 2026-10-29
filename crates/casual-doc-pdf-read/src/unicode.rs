@@ -59,6 +59,8 @@ impl FontCodes {
     /// subset prefix, or a PostScript name). O(name).
     #[must_use]
     pub fn of(name: &str) -> Self {
+        // A subset prefix (`ABCDEF+`) says nothing about the face.
+        let name = name.split_once('+').map_or(name, |(_, rest)| rest);
         let lower: String = name
             .chars()
             .filter(|c| c.is_ascii_alphanumeric())
@@ -295,13 +297,12 @@ pub fn normalize(text: Option<&str>, codes: FontCodes) -> Normalized {
             Some((code - 0xF000) as u8)
         } else if code == 0x20 {
             None
-        } else if matches!(
+        } else if (matches!(
             codes,
             FontCodes::Wingdings | FontCodes::Dingbats | FontCodes::OtherSymbol
-        ) && code <= 0xFF
+        ) && code <= 0xFF)
+            || (codes == FontCodes::Symbol && c.is_ascii_alphabetic())
         {
-            Some(code as u8)
-        } else if codes == FontCodes::Symbol && c.is_ascii_alphabetic() {
             Some(code as u8)
         } else {
             None

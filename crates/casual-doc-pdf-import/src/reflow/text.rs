@@ -47,6 +47,16 @@ pub const HEADING_MAX_LINES: usize = 3;
 pub const HEADING_MAX_CHARS: usize = 200;
 /// Larger than Normal by this factor.
 pub const HEADING_SIZE_FACTOR: f64 = 1.15;
+/// A key used by fewer paragraphs than this is not a heading level (a
+/// letterhead, a subtitle, a one-off callout): a level is a typography rule
+/// the document applies more than once. The title is the exception.
+pub const HEADING_MIN_PARAGRAPHS: usize = 2;
+/// The title: the largest heading key, at least this many times Normal's
+/// size, used by at most [`TITLE_MAX_PARAGRAPHS`] paragraphs, when another
+/// heading level exists below it.
+pub const TITLE_SIZE_FACTOR: f64 = 1.6;
+/// See [`TITLE_SIZE_FACTOR`].
+pub const TITLE_MAX_PARAGRAPHS: usize = 2;
 
 /// A font identity for clustering.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -61,24 +71,43 @@ pub struct FontKey {
     pub italic: bool,
 }
 
-/// The inferred sheet: Normal and the heading levels (index 0 is level 1).
+/// The inferred sheet: Normal, the Title and the heading levels (index 0 is
+/// level 1).
 #[derive(Clone, Debug, Default)]
 pub struct StyleSheet {
     /// Normal's key.
     pub body: Option<FontKey>,
+    /// The Title's key, when the document has one.
+    pub title: Option<FontKey>,
     /// Heading keys by level.
     pub headings: Vec<FontKey>,
 }
 
 impl StyleSheet {
-    /// The heading level (1-based) of `key`, if it is one.
+    /// The heading level (1-based) of `key`, if it is one; 0 is the Title.
     #[must_use]
     pub fn level(&self, key: &FontKey) -> Option<u8> {
+        let same = |k: &FontKey| k.half_points == key.half_points && k.bold == key.bold;
+        if self.title.as_ref().is_some_and(same) {
+            return Some(0);
+        }
         self.headings
             .iter()
-            .position(|k| k.half_points == key.half_points && k.bold == key.bold)
+            .position(same)
             .and_then(|i| u8::try_from(i + 1).ok())
     }
+}
+
+/// Whether a font key is a monospaced family. A monospaced line that stops
+/// short of the column is a line of code (or a typed list), a paragraph of
+/// its own however it ends; monospaced prose that fills its column joins as
+/// any prose does.
+#[must_use]
+pub fn monospaced(key: &FontKey) -> bool {
+    let family = key.family.to_ascii_lowercase();
+    ["mono", "courier", "consol", "menlo", "code", "fixed"]
+        .iter()
+        .any(|m| family.contains(m))
 }
 
 /// Whether `text` ends a sentence.
@@ -325,11 +354,17 @@ pub fn segment(
                 && lines
                     .get(i + 1)
                     .is_none_or(|next| next.x0 < line.x0 - INDENT_EMS * em * 0.5);
+            // A first-line indent starts a paragraph only after a line that
+            // could end one (short, or ending a sentence): otherwise the
+            // indented line is a hanging indent's second line.
+            let could_end = short || terminal(&line_text(prev));
             let breaks = marker(&line.chars, false).is_some()
                 || keys[i] != keys[i - 1]
+                || (short && keys[i - 1].as_ref().is_some_and(monospaced))
                 || gap > PARAGRAPH_GAP * height
                 || (short && terminal(&line_text(prev)))
                 || (indented
+                    && could_end
                     && prev.x0 < line.x0 - INDENT_EMS * em * 0.5
                     && marker(&prev.chars, false).is_none());
             if breaks && !current.lines.is_empty() {
@@ -400,9 +435,12 @@ pub fn join(lines: &[&ILine]) -> (Vec<PChar>, u32) {
 }
 
 /// Whether a paragraph ending `last` continues into one starting `next`:
-/// `last` ran to within an em of the column's right edge and does not end a
-/// sentence; `next` starts lowercase (or `last` ends in a hyphen), is not
-/// indented, carries no marker, and has the same font. O(1) amortised.
+/// `last` was wrapped (it ran to within an em of the column's right edge, or
+/// the first word of `next` would not have fitted after it, the test a line
+/// breaker applies to ragged-right text) and does not end a sentence; `next`
+/// starts lowercase (or `last` ends in a hyphen, or `next` sits directly
+/// under `last` on its page), is not indented, carries no marker, and has the
+/// same font. O(1) amortised.
 #[must_use]
 pub fn continues(
     last: &ILine,
@@ -414,7 +452,32 @@ pub fn continues(
     let em = last.size.max(1.0);
     let text = line_text(last);
     let hyphen = text.trim_end().ends_with('-');
-    let full = last.x1 >= right - em;
+    // The first word of `next`, and whether it would have fitted on `last`.
+    let word: f64 = next
+        .chars
+        .iter()
+        .skip_while(|c| c.text.trim().is_empty())
+        .take_while(|c| !c.text.trim().is_empty())
+        .map(|c| c.x1 - c.x0)
+        .sum();
+    // Directly under it: the next line of the same block of text, which a
+    // block grouping with a tight line margin split (double spacing, a
+    // generous leading, text in a shaded box narrower than the column).
+    let under =
+        next.page == last.page && next.top >= last.top && next.top - last.bottom <= 0.9 * em;
+    // Under it, the block's own right edge is the wrap edge, provided the
+    // line is long for the column (so two short lines one under the other,
+    // a list of labels, are not run together).
+    let right = if under && last.x1 - last.x0 >= 0.45 * (right - next_left) {
+        right.min(last.x1.max(next.x1))
+    } else {
+        right
+    };
+    let code = dominant(last.chars.iter(), key).is_some_and(|k| monospaced(&k));
+    // Monospaced text is set to the column or it is code: only a line that
+    // reaches the edge runs on.
+    let wrapped = !code && last.x1 + 0.25 * em + word > right - 0.5 * em;
+    let full = last.x1 >= right - em || wrapped;
     let lower = next
         .chars
         .iter()
@@ -422,10 +485,60 @@ pub fn continues(
         .and_then(|c| c.text.chars().next())
         .is_some_and(char::is_lowercase);
     full && !terminal(&text)
-        && (lower || hyphen)
-        && next.x0 <= next_left + INDENT_EMS * em
+        && (lower || hyphen || under)
+        && (next.x0 <= next_left + INDENT_EMS * em
+            // Under it, the line may be inset like it (a shaded box's text)
+            // or hang under its text (a list item's, a hanging indent's).
+            || (under && next.x0 >= last.x0 - 1.0 && next.x0 <= last.x0 + (4.0 * em).max(40.0)))
         && marker(&next.chars, false).is_none()
         && dominant(last.chars.iter(), key) == dominant(next.chars.iter(), key)
+}
+
+/// Whether `next` continues `last`'s visual line: the same page, sharing
+/// half the smaller line's height (so a raised citation mark is on the
+/// line), starting at or after where `last` ends and within three ems of
+/// it. O(1).
+#[must_use]
+pub fn same_line(last: &ILine, next: &ILine) -> bool {
+    let em = last.size.max(next.size).max(1.0);
+    let shared = last.bottom.min(next.bottom) - last.top.max(next.top);
+    let smaller = (last.bottom - last.top)
+        .min(next.bottom - next.top)
+        .max(0.1);
+    next.page == last.page
+        && shared >= 0.5 * smaller
+        && next.x0 >= last.x1 - 0.1 * em
+        && next.x0 - last.x1 <= 3.0 * em
+}
+
+/// `chars` followed by `more`, the rest of the same line starting with
+/// `next`: a space between them only where the line has a gap a space
+/// would fill and neither side has one. O(characters).
+#[must_use]
+pub fn abut(mut chars: Vec<PChar>, more: Vec<PChar>, next: &ILine) -> Vec<PChar> {
+    // From the first character kept (a leading space was trimmed by the
+    // join, and the space it stood for is this gap).
+    let start = more.first().map_or(next.x0, |c| c.x0);
+    let gap = chars.last().map_or(0.0, |c| start - c.x1);
+    let spaced = chars
+        .last()
+        .is_some_and(|c| c.text.ends_with(char::is_whitespace))
+        || more
+            .first()
+            .is_some_and(|c| c.text.starts_with(char::is_whitespace));
+    if !spaced
+        && gap > 0.15 * next.size.max(1.0)
+        && let Some(last) = chars.last()
+    {
+        let mut space = last.clone();
+        space.text = " ".to_owned();
+        space.sup = false;
+        space.note = None;
+        space.comments = Vec::new();
+        chars.push(space);
+    }
+    chars.extend(more);
+    chars
 }
 
 /// Per key: (characters, paragraphs, short paragraphs).
@@ -468,7 +581,7 @@ pub fn sheet(stats: &KeyStats) -> StyleSheet {
         return StyleSheet::default();
     };
     let body = body.clone();
-    let mut headings: Vec<FontKey> = stats
+    let mut candidates: Vec<(FontKey, usize)> = stats
         .iter()
         .filter(|(k, (_, paragraphs, short))| {
             let larger =
@@ -479,13 +592,39 @@ pub fn sheet(stats: &KeyStats) -> StyleSheet {
                 && *paragraphs > 0
                 && (*short as f64) >= HEADING_SHORT_SHARE * (*paragraphs as f64)
         })
-        .map(|(k, _)| k.clone())
+        .map(|(k, (_, paragraphs, _))| (k.clone(), *paragraphs))
         .collect();
-    headings.sort_by(|a, b| b.half_points.cmp(&a.half_points).then(b.bold.cmp(&a.bold)));
-    headings.dedup_by(|a, b| a.half_points == b.half_points && a.bold == b.bold);
+    candidates.sort_by(|a, b| {
+        b.0.half_points
+            .cmp(&a.0.half_points)
+            .then(b.0.bold.cmp(&a.0.bold))
+    });
+    // Keys of one size and weight in several families are one level.
+    let mut merged: Vec<(FontKey, usize)> = Vec::new();
+    for (k, n) in candidates {
+        match merged.last_mut() {
+            Some((last, m)) if last.half_points == k.half_points && last.bold == k.bold => *m += n,
+            _ => merged.push((k, n)),
+        }
+    }
+    let title = merged.first().and_then(|(k, n)| {
+        (f64::from(k.half_points) >= TITLE_SIZE_FACTOR * f64::from(body.half_points)
+            && *n <= TITLE_MAX_PARAGRAPHS
+            && merged[1..]
+                .iter()
+                .any(|(_, m)| *m >= HEADING_MIN_PARAGRAPHS))
+        .then(|| k.clone())
+    });
+    let mut headings: Vec<FontKey> = merged
+        .into_iter()
+        .skip(usize::from(title.is_some()))
+        .filter(|(_, n)| *n >= HEADING_MIN_PARAGRAPHS)
+        .map(|(k, _)| k)
+        .collect();
     headings.truncate(9);
     StyleSheet {
         body: Some(body),
+        title,
         headings,
     }
 }

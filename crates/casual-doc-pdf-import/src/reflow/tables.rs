@@ -522,19 +522,20 @@ pub fn shade(table: &mut ITable, fills: &[Fill], work: &mut u64) {
     }
 }
 
-/// Whether vector art is a ruled table's shading: every path a flat fill of
+/// Whether vector art is a table's shading: every path a flat fill of
 /// rectangles inside one of `tables` (a point of slack). O(paths x tables).
 #[must_use]
 pub fn is_shading(vector: &SourceVector, tables: &[ITable]) -> bool {
-    const SLACK: f64 = 1.0;
     let b = vector.bounds;
     tables.iter().any(|t| {
+        // A whitespace table's bounds are its text's; its cells' fills reach
+        // past the text by the cell padding.
+        let slack = if t.ruled { 1.0 } else { 12.0 };
         let (left, top, right, bottom) = t.bounds;
-        t.ruled
-            && b.x0 >= left - SLACK
-            && b.x1 <= right + SLACK
-            && b.y0 >= top - SLACK
-            && b.y1 <= bottom + SLACK
+        b.x0 >= left - slack
+            && b.x1 <= right + slack
+            && b.y0 >= top - slack
+            && b.y1 <= bottom + slack
             && vector.paths.iter().all(|path| {
                 matches!(path.fill, Some(Some(_)))
                     && path.stroke.is_none()
@@ -562,14 +563,51 @@ fn row_text(row: &[ICell]) -> Vec<String> {
 /// [`CONTINUATION_TOLERANCE`], from the same left edge, and the same kind
 /// (ruled or not).
 fn continues(table: &ITable, next: &ITable) -> bool {
+    if table.ruled != next.ruled || table.columns.len() != next.columns.len() {
+        return false;
+    }
+    if table.ruled {
+        return (table.bounds.0 - next.bounds.0).abs() <= CONTINUATION_TOLERANCE
+            && table
+                .columns
+                .iter()
+                .zip(&next.columns)
+                .all(|(a, b)| (a - b).abs() <= CONTINUATION_TOLERANCE);
+    }
+    // A whitespace table's columns are its text's extents on that page (a
+    // centred column's text moves with its content): each column of one
+    // must overlap the same column of the other.
+    let spans = |t: &ITable| {
+        let mut start = t.bounds.0;
+        t.columns
+            .iter()
+            .map(|w| {
+                let span = (start, start + w);
+                start += w;
+                span
+            })
+            .collect::<Vec<_>>()
+    };
+    spans(table)
+        .iter()
+        .zip(spans(next))
+        .all(|(a, b)| a.0.max(b.0) < a.1.min(b.1))
+}
+
+/// Whether `next` opens with the header row `table` opened with, over as
+/// many columns: the strongest evidence of a continued table, whatever the
+/// columns' measured edges (a whitespace table's are its text's).
+fn repeats_header(table: &ITable, next: &ITable) -> bool {
     table.ruled == next.ruled
         && table.columns.len() == next.columns.len()
-        && (table.bounds.0 - next.bounds.0).abs() <= CONTINUATION_TOLERANCE
-        && table
-            .columns
+        && !table.rows.is_empty()
+        && !next.rows.is_empty()
+        && row_text(&table.rows[0]) == row_text(&next.rows[0])
+        && row_text(&table.rows[0])
             .iter()
-            .zip(&next.columns)
-            .all(|(a, b)| (a - b).abs() <= CONTINUATION_TOLERANCE)
+            .filter(|t| !t.is_empty())
+            .count()
+            >= 2
 }
 
 /// Joins each table a page break cut in two: a table that is the last
@@ -582,27 +620,34 @@ fn continues(table: &ITable, next: &ITable) -> bool {
 pub fn continue_across_pages(elements: &mut Vec<Element>, work: &mut u64) -> u32 {
     let mut joined = 0;
     let mut out: Vec<Element> = Vec::with_capacity(elements.len());
-    // The last page the element at the end of `out` reaches.
-    let mut through = 0usize;
+    // Per element of `out`, the last page it reaches.
+    let mut through: Vec<usize> = Vec::with_capacity(elements.len());
     for element in elements.drain(..) {
         *work += 1;
         let page = element.page;
-        let joins = match (out.last(), &element.kind) {
-            (Some(last), EKind::Table(next)) => {
-                through + 1 == page
-                    && matches!(&last.kind, EKind::Table(table) if continues(table, next))
+        // The text or table before it: a picture or drawing in between (a
+        // shading run the table did not take, a logo) does not separate a
+        // table from its continuation.
+        let previous = out
+            .iter()
+            .rposition(|e| matches!(e.kind, EKind::Text(_) | EKind::Table(_)));
+        let joins = match (previous, &element.kind) {
+            (Some(k), EKind::Table(next)) => {
+                through[k] + 1 == page
+                    && matches!(&out[k].kind, EKind::Table(table) if continues(table, next)
+                        || repeats_header(table, next))
             }
             _ => false,
         };
-        if !joins {
-            through = page;
+        let Some(k) = previous.filter(|_| joins) else {
+            through.push(page);
             out.push(element);
             continue;
-        }
+        };
         let EKind::Table(mut next) = element.kind else {
             unreachable!("checked above")
         };
-        let Some(EKind::Table(table)) = out.last_mut().map(|e| &mut e.kind) else {
+        let EKind::Table(table) = &mut out[k].kind else {
             unreachable!("checked above")
         };
         let repeated = !table.rows.is_empty()
@@ -616,11 +661,56 @@ pub fn continue_across_pages(elements: &mut Vec<Element>, work: &mut u64) -> u32
         *work += next.rows.len() as u64;
         // The bounds stay the first page's: they place the table on it.
         table.rows.append(&mut next.rows);
-        through = page;
+        through[k] = page;
         joined += 1;
     }
     *elements = out;
     joined
+}
+
+/// An aligned row: its baseline, its largest em size, and its cells (left,
+/// right, element) left to right.
+type AlignedRow = (f64, f64, Vec<(f64, f64, usize)>);
+
+/// Cells of an aligned row are at least this many ems apart: closer pieces
+/// on a baseline are one line written as several text objects.
+pub const CELL_GUTTER_EMS: f64 = 0.6;
+/// Two aligned rows are of one table when their baselines are at most this
+/// many ems apart (a cell's wrapped line between them included).
+pub const ROW_REACH: f64 = 4.0;
+/// Cell edges within this many points are one column edge.
+pub const COLUMN_TOLERANCE: f64 = 4.0;
+
+/// Whether two aligned rows' cells line up as one table's columns.
+///
+/// - As many cells: each cell sits in the gutter-bounded slot of the cell
+///   above it (it overlaps no other cell of the other row and lies between
+///   that cell's neighbours), so a header left-aligned over a centred or
+///   right-aligned column still agrees.
+/// - Fewer cells (merged or empty cells): every cell of the shorter row
+///   starts, ends or centres on a cell of the other.
+///
+/// At least two cells either way. O(cells²), a handful.
+#[must_use]
+pub fn columns_agree(upper: &[(f64, f64, usize)], lower: &[(f64, f64, usize)]) -> bool {
+    let near = |a: f64, b: f64| (a - b).abs() <= COLUMN_TOLERANCE;
+    if upper.len() == lower.len() && upper.len() >= 2 {
+        return upper.iter().zip(lower).enumerate().all(|(i, (a, b))| {
+            let left_ok = i == 0 || (a.0 > lower[i - 1].1 && b.0 > upper[i - 1].1);
+            let right_ok = i + 1 == upper.len() || (a.1 < lower[i + 1].0 && b.1 < upper[i + 1].0);
+            left_ok && right_ok
+        });
+    }
+    let (fewer, more) = if upper.len() <= lower.len() {
+        (upper, lower)
+    } else {
+        (lower, upper)
+    };
+    let edge = |a: &(f64, f64, usize)| {
+        more.iter()
+            .any(|b| near(a.0, b.0) || near(a.1, b.1) || near((a.0 + a.1) / 2.0, (b.0 + b.1) / 2.0))
+    };
+    fewer.len() >= 2 && fewer.iter().all(edge)
 }
 
 /// A whitespace-table candidate: the blocks it links and its confidence.
@@ -655,6 +745,9 @@ pub fn whitespace_candidates(
         aligned_lines[e] = vec![false; lines.len()];
     }
     let mut rows_of: BTreeMap<usize, usize> = BTreeMap::new();
+    // Every aligned row: its baseline, its largest em size and its cells
+    // (left, right, element), left to right.
+    let mut aligned_rows: Vec<AlignedRow> = Vec::new();
     let mut start = 0;
     while start < all.len() {
         let mut end = start + 1;
@@ -671,7 +764,16 @@ pub fn whitespace_candidates(
                 .map(|&(_, e, l)| (elements[e].0[l].x0, elements[e].0[l].x1, e, l))
                 .collect();
             by_x.sort_by(|a, b| a.0.total_cmp(&b.0));
-            let disjoint = by_x.windows(2).all(|w| w[0].1 <= w[1].0 + 0.5);
+            // Side by side with a gutter between: pieces of one line that a
+            // producer wrote as separate text objects (Chromium writes every
+            // link and styled run as its own) abut, and are not cells.
+            let em = group
+                .iter()
+                .map(|&(_, e, l)| elements[e].0[l].size)
+                .fold(1.0, f64::max);
+            let disjoint = by_x
+                .windows(2)
+                .all(|w| w[1].0 - w[0].1 >= CELL_GUTTER_EMS * em);
             if disjoint {
                 for w in by_x.windows(2) {
                     uf.union(w[0].2, w[1].2);
@@ -680,9 +782,29 @@ pub fn whitespace_candidates(
                     aligned_lines[e][l] = true;
                 }
                 *rows_of.entry(by_x[0].2).or_default() += 1;
+                let size = by_x
+                    .iter()
+                    .map(|&(_, _, e, l)| elements[e].0[l].size)
+                    .fold(0.0, f64::max);
+                aligned_rows.push((
+                    group[0].0,
+                    size,
+                    by_x.iter().map(|&(x0, x1, e, _)| (x0, x1, e)).collect(),
+                ));
             }
         }
         start = end;
+    }
+    // A row whose cells are each their own block (a table whose rows are
+    // farther apart than a paragraph's leading, the usual case for Word and
+    // LibreOffice tables, every cell one line) links to no other row by
+    // baseline. Consecutive aligned rows whose columns line up are one table.
+    for pair in aligned_rows.windows(2) {
+        *work += 1;
+        let ((b0, s0, upper), (b1, _, lower)) = (&pair[0], &pair[1]);
+        if b1 - b0 <= ROW_REACH * s0.max(1.0) && columns_agree(upper, lower) {
+            uf.union(upper[0].2, lower[0].2);
+        }
     }
     let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for e in 0..elements.len() {
@@ -726,18 +848,74 @@ pub fn whitespace_candidates(
     out
 }
 
-/// Builds the table for an accepted whitespace candidate: rows by baseline,
-/// a column per element; a line that aligns with nothing continues the cell
-/// above it in its column, so no text is dropped. O(l log l).
+/// Gap (points) under which two cells' horizontal extents are one column:
+/// a header left-aligned over a centred column sits a few points off it.
+pub const COLUMN_SLACK: f64 = 6.0;
+
+/// Builds the table for an accepted whitespace candidate.
+///
+/// Columns are clustered from the elements' horizontal extents, narrowest
+/// first: an element overlapping (within [`COLUMN_SLACK`]) one column joins
+/// it; one overlapping several is a cell spanning them; one overlapping none
+/// starts a column. So a table whose every cell is its own block (Word's and
+/// LibreOffice's, rows farther apart than a paragraph's leading) has as many
+/// columns as the page shows, not one per cell. Rows are baselines at least
+/// two cells share; a line that aligns with nothing continues the cell above
+/// it in its column, so no text is dropped. O(e² + l log l) for `e` elements,
+/// a table's cells.
 #[must_use]
 pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))]) -> ITable {
-    let mut baselines: Vec<f64> = Vec::new();
+    // Columns: (left, right), and per element (column, span).
+    let mut order: Vec<usize> = (0..columns.len()).collect();
+    order.sort_by(|&a, &b| {
+        let wa = columns[a].1.1 - columns[a].1.0;
+        let wb = columns[b].1.1 - columns[b].1.0;
+        wa.total_cmp(&wb).then(a.cmp(&b))
+    });
+    let mut clusters: Vec<(f64, f64)> = Vec::new();
+    let mut spanning: Vec<usize> = Vec::new();
+    for &e in &order {
+        let (x0, x1) = columns[e].1;
+        let hits: Vec<usize> = (0..clusters.len())
+            .filter(|&k| x0 <= clusters[k].1 + COLUMN_SLACK && x1 >= clusters[k].0 - COLUMN_SLACK)
+            .collect();
+        match hits.as_slice() {
+            [] => clusters.push((x0, x1)),
+            [k] => {
+                clusters[*k].0 = clusters[*k].0.min(x0);
+                clusters[*k].1 = clusters[*k].1.max(x1);
+            }
+            _ => spanning.push(e),
+        }
+    }
+    clusters.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let place = |x0: f64, x1: f64| -> (usize, usize) {
+        let hits: Vec<usize> = (0..clusters.len())
+            .filter(|&k| x0 <= clusters[k].1 + COLUMN_SLACK && x1 >= clusters[k].0 - COLUMN_SLACK)
+            .collect();
+        match (hits.first(), hits.last()) {
+            (Some(&a), Some(&b)) => (a, b - a + 1),
+            _ => {
+                // Between columns: the nearest by centre.
+                let c = (x0 + x1) / 2.0;
+                let k = (0..clusters.len())
+                    .min_by(|&a, &b| {
+                        let da = ((clusters[a].0 + clusters[a].1) / 2.0 - c).abs();
+                        let db = ((clusters[b].0 + clusters[b].1) / 2.0 - c).abs();
+                        da.total_cmp(&db)
+                    })
+                    .unwrap_or(0);
+                (k, 1)
+            }
+        }
+    };
     let mut all: Vec<f64> = columns
         .iter()
         .flat_map(|(lines, _)| lines.iter().map(|l| l.baseline))
         .collect();
     all.sort_by(f64::total_cmp);
-    // A row is a baseline at least two columns share.
+    // A row is a baseline at least two cells share.
+    let mut baselines: Vec<f64> = Vec::new();
     let mut i = 0;
     while i < all.len() {
         let mut j = i + 1;
@@ -749,23 +927,11 @@ pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))]) -> ITable {
         }
         i = j;
     }
-    let mut rows: Vec<Vec<ICell>> = baselines
-        .iter()
-        .map(|_| {
-            columns
-                .iter()
-                .map(|(_, (x0, x1))| ICell {
-                    lines: Vec::new(),
-                    span: 1,
-                    vmerge: None,
-                    x0: *x0,
-                    x1: *x1,
-                    ..ICell::default()
-                })
-                .collect()
-        })
-        .collect();
-    for (c, (lines, _)) in columns.iter().enumerate() {
+    let width = clusters.len().max(1);
+    let mut grid: Vec<Vec<Vec<ILine>>> = vec![vec![Vec::new(); width]; baselines.len()];
+    let mut spans: BTreeMap<(usize, usize), usize> = BTreeMap::new();
+    for (e, (lines, (x0, x1))) in columns.iter().enumerate() {
+        let (c, span) = place(*x0, *x1);
         for line in lines {
             let at = baselines.partition_point(|b| *b < line.baseline - BASELINE_TOLERANCE);
             let row = if baselines
@@ -776,16 +942,64 @@ pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))]) -> ITable {
             } else {
                 at.saturating_sub(1)
             };
-            if let Some(r) = rows.get_mut(row) {
-                r[c].lines.push(line.clone());
+            if let Some(r) = grid.get_mut(row) {
+                r[c.min(width - 1)].push(line.clone());
+                if span > 1 && spanning.contains(&e) {
+                    let entry = spans.entry((row, c)).or_insert(1);
+                    *entry = (*entry).max(span);
+                }
             }
         }
     }
-    let left = columns.first().map_or(0.0, |c| c.1.0);
-    let right = columns.last().map_or(0.0, |c| c.1.1);
-    let mut widths: Vec<f64> = columns.windows(2).map(|w| w[1].1.0 - w[0].1.0).collect();
-    if let Some(last) = columns.last() {
-        widths.push((last.1.1 - last.1.0).max(1.0));
+    // Each row's band, top to bottom: from its lines' top to the next row's,
+    // so a fill painted behind the row covers its cells.
+    let mut bands: Vec<(f64, f64)> = grid
+        .iter()
+        .map(|cells| {
+            let lines = cells.iter().flatten();
+            (
+                lines.clone().map(|l| l.top).fold(f64::INFINITY, f64::min),
+                lines.map(|l| l.bottom).fold(f64::NEG_INFINITY, f64::max),
+            )
+        })
+        .collect();
+    for r in 0..bands.len().saturating_sub(1) {
+        let middle = (bands[r].1 + bands[r + 1].0) / 2.0;
+        if middle.is_finite() && middle > bands[r].1 {
+            bands[r].1 = middle;
+            bands[r + 1].0 = middle;
+        }
+    }
+    let mut rows: Vec<Vec<ICell>> = Vec::with_capacity(grid.len());
+    for (r, cells) in grid.into_iter().enumerate() {
+        let mut row = Vec::new();
+        let mut cells = cells.into_iter().enumerate().peekable();
+        while let Some((c, mut lines)) = cells.next() {
+            let span = spans.get(&(r, c)).copied().unwrap_or(1).min(width - c);
+            for _ in 1..span {
+                if let Some((_, more)) = cells.next() {
+                    lines.extend(more);
+                }
+            }
+            let last = (c + span - 1).min(width - 1);
+            row.push(ICell {
+                lines: rejoin(lines),
+                span: u32::try_from(span).unwrap_or(1),
+                vmerge: None,
+                x0: clusters.get(c).map_or(0.0, |k| k.0),
+                x1: clusters.get(last).map_or(0.0, |k| k.1),
+                y0: bands[r].0,
+                y1: bands[r].1,
+                ..ICell::default()
+            });
+        }
+        rows.push(row);
+    }
+    let left = clusters.first().map_or(0.0, |c| c.0);
+    let right = clusters.last().map_or(0.0, |c| c.1);
+    let mut widths: Vec<f64> = clusters.windows(2).map(|w| w[1].0 - w[0].0).collect();
+    if let Some(last) = clusters.last() {
+        widths.push((last.1 - last.0).max(1.0));
     }
     let top = columns
         .iter()
