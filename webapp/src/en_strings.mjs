@@ -1932,9 +1932,25 @@ export const EN_STRINGS = Object.freeze({
   "units.refused.outOfRange": "{field}: “{value}” is too large for a measurement.",
   "units.refused.unreadable": "{field}: “{value}” could not be read as a measurement.",
 
-  // The border line style's palette and context-menu row. The ellipsis is this
-  // chrome's convention for a row that opens a control rather than acting.
-  "table.borderStyleCommand": "Border line style\u2026",
+  // Borders and shading (`table_borders_dialog.mjs`): the Table menu, palette
+  // and context-menu row (the ellipsis: it opens a dialog), and what the status
+  // line says once it applies.
+  "table.bordersShadingCommand": "Borders and shading\u2026",
+  "tableBorders.applied": "Borders and shading applied",
+
+  // Text wrapping and Positioning (`table_position_dialog.mjs`).
+  "tablePosition.wrapAround": "Text now wraps around the table",
+  "tablePosition.wrapNone": "The table is back in line with the text",
+  "tablePosition.applied": "Table position updated",
+  "tablePosition.needsAround": "Set Text wrapping to Around to position the table",
+  "tablePosition.invalid": "Enter a measurement of no more than 22 inches",
+
+  // Draw table (`table_draw_mode.mjs`): the command row and the status line.
+  "tableDraw.command": "Draw table",
+  "tableDraw.armed": "Draw table: drag on the page to draw a table, or across a table to split its cells. Press Esc to stop.",
+  "tableDraw.off": "Draw table off",
+  "tableDraw.drawn": "Table drawn",
+  "tableDraw.split": "Cells split",
 
   // Restrict Editing. The dialog's own strings are markup; these are the command
   // row, the two things the status bar says, and the one disabled reason.

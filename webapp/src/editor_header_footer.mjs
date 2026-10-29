@@ -621,7 +621,7 @@ export function createHeaderFooter(ed) {
     try {
       // "Page X of Y": the raw pattern, split around its two placeholders, so a
       // language that puts words after the count ("第 1 页，共 3 页") gets them.
-      const words = ofTotal ? splitPageOfTotal(t("pageNumber.ofTotalPattern")) : null;
+      const words = ofTotal ? splitPageOfTotal(t("pageNumber.ofTotalPattern", { page: "{page}", pages: "{pages}" })) : null;
       result = words
         ? ed.doc.insertRunningPageNumber(band, page.pageNumber, align, words.before, words.between, words.after)
         : ed.doc.insertRunningPageNumber(band, page.pageNumber, align);

@@ -2,7 +2,7 @@
 
 # The OpenDoc edit vocabulary, version 1.6
 
-73 commands in 14 families. 14 can be tracked suggestions, 56 are refused in suggest mode with the published reason, and 3 are not content edits (comments and review decisions). They are the agent-side twins of 124 editor command ids; 88 editor ids that can change a document are not exposed to agents, each with a reason (`commands.json` `uiNotExposed`).
+73 commands in 14 families. 14 can be tracked suggestions, 56 are refused in suggest mode with the published reason, and 3 are not content edits (comments and review decisions). They are the agent-side twins of 125 editor command ids; 88 editor ids that can change a document are not exposed to agents, each with a reason (`commands.json` `uiNotExposed`).
 
 | `op` | Family | Summary | Trackable | Editor twins |
 | --- | --- | --- | --- | --- |
@@ -21,7 +21,7 @@
 | `set_cell_text` | tables | Set the text of one table cell. | yes | none (agent-only) |
 | `table_insert_row` | tables | Insert an empty row at an index; a vertical merge it lands inside grows to cover it. | no: Table rows cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`. | `table.insert.rowAbove`, `table.insert.rowBelow` |
 | `table_delete_row` | tables | Delete one row; a merged cell anchored in it keeps its content on the next row. | no: Table rows cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`. | `table.delete.row` |
-| `insert_table` | tables | Insert an empty table (rows x columns, with a thin grid) after an anchor's top-level block. | no: Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`. | `insert.table`, `insert.tableDialog` |
+| `insert_table` | tables | Insert an empty table (rows x columns, with a thin grid) after an anchor's top-level block. | no: Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`. | `insert.table`, `insert.tableDialog`, `insert.drawTable` |
 | `table_insert_column` | tables | Insert an empty column at a grid index; a merged cell it lands inside grows to cover it. | no: Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`. | `table.insert.columnLeft`, `table.insert.columnRight` |
 | `table_delete_column` | tables | Delete one grid column; a merged cell crossing it shrinks. | no: Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`. | `table.delete.column` |
 | `table_merge_cells` | tables | Merge the rectangle between two cells into one; every cell's text moves into it in reading order. | no: Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`. | `table.merge` |

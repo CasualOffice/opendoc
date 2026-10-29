@@ -82,8 +82,8 @@ test("the AutoCorrect options dialog: an added entry replaces as you type, and R
   await runAppMenuCommand(page, "review", "tools.autoCorrectOptions");
   const dialog = page.getByRole("dialog", { name: "AutoCorrect options" });
   await expect(dialog).toBeVisible();
-  await page.getByLabel("Replace", { exact: true }).fill("qzomw");
-  await page.getByLabel("With", { exact: true }).fill("on my way");
+  await dialog.getByLabel("Replace", { exact: true }).fill("qzomw");
+  await dialog.getByLabel("With", { exact: true }).fill("on my way");
   await page.locator("#autoCorrectAdd").click();
   await expect(page.getByRole("listbox", { name: "Replacements" }).locator('option[value="qzomw"]')).toHaveCount(1);
   await expect(page.locator("#autoCorrectReset")).toBeEnabled();

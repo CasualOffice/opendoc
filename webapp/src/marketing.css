@@ -6024,3 +6024,79 @@ body {
     padding: 18px 20px;
   }
 }
+
+/* ---- Hero poster: a real capture of the editor --------------------------
+   The drawn mock-up is replaced by editor.html?demo=1 itself, captured at
+   1440x900 @2x (docs/assets/site-editor.webp). The image IS the poster: it
+   fills the stage edge to edge, and the Run control still sits over it. */
+.home-embed-poster--shot {
+  display: block;
+  line-height: 0;
+  background: var(--surface);
+}
+
+.home-embed-poster--shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* ---- Formats strip -------------------------------------------------------- */
+.home-formats {
+  padding: 28px 0 8px;
+  text-align: center;
+}
+
+.home-formats-title {
+  margin: 0 0 12px;
+  color: var(--muted-3);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.home-formats-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.home-formats-list li {
+  padding: 8px 16px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 650;
+  font-size: 15px;
+  letter-spacing: 0.01em;
+}
+
+.home-formats-note {
+  margin: 12px 0 0;
+  color: var(--muted-3);
+  font-size: 13px;
+}
+
+/* ---- Why teams switch ----------------------------------------------------- */
+.home-vs {
+  display: inline-block;
+  margin-bottom: 10px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent-2);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.home-cards--switch .home-card h3 {
+  font-size: 22px;
+  letter-spacing: -0.01em;
+}

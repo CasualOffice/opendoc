@@ -18,6 +18,7 @@ import { flattenCommandTree, tableCommandLabel, tableMenuPlaceholders } from "./
 import { FIELD_KINDS } from "./field_kinds.mjs";
 import { insertChartTypeCommands } from "./chart_insert.mjs";
 import { tableTools } from "./table_tools.mjs";
+import { tableDrawMode } from "./table_draw_mode.mjs";
 import { revealOnSettings } from "./surface_reveal.mjs";
 import { quickStyleCommands } from "./quick_styles.mjs";
 
@@ -262,6 +263,15 @@ export function createPalette(ed) {
         kw: "table rows columns size dialog custom number",
         enabled: ed.insertCommandEnabled("insert.tableDialog"),
         run: () => tableTools.openDialog("insertTable"),
+      },
+      // Draw Table: toggles the pencil (`table_draw_mode.mjs`).
+      {
+        id: "insert.drawTable",
+        label: t("tableDraw.command"),
+        group: "Insert",
+        kw: "draw table pencil pen lines split cells outline",
+        enabled: ed.insertCommandEnabled("insert.drawTable"),
+        run: () => tableDrawMode.toggle(),
       },
       {
         id: "insert.textToTable",

@@ -3,13 +3,17 @@
 // reaches the rest of the editor only through the context `ed`.
 import { registerModal } from "./modal.mjs";
 import { bindRadioGroup } from "./radio_group.mjs";
-import { onButton, closePopover, registerPopover } from "./popover_manager.mjs";
+import { onButton, closeAllPopovers, closePopover, registerPopover } from "./popover_manager.mjs";
 import { tablePropertiesPatch as tablePatch } from "./table_properties_patch.mjs";
 import { optionalInchesToTwips, signedInchesToTwips, twipsToDialogInches } from "./units.mjs";
 import { bindSplitCellDialog } from "./table_cell_chrome.mjs";
 import { announceTableEdit, bindTableBand, tableContextLabel } from "./table_band.mjs";
 import { createTableGridPicker } from "./table_grid_picker.mjs";
 import { createTableTools } from "./table_tools.mjs";
+import { createTableBordersDialog } from "./table_borders_dialog.mjs";
+import { createTablePosition, tablePosition } from "./table_position_dialog.mjs";
+import { createTableDrawMode, tableDrawMode } from "./table_draw_mode.mjs";
+import { t } from "./i18n.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -101,6 +105,7 @@ export function createTableProps(ed) {
     tableAlignGroup.reflect(info.alignment);
     updateTableRowHeightField();
     tableTools.reflectProperties();
+    tablePosition.reflect();
 
     tablePropertiesCurrent = {
       alignment: info.alignment,
@@ -241,6 +246,51 @@ export function createTableProps(ed) {
       ed.updateToolbar();
     },
   });
+
+  // -- Borders and shading, text wrapping and positioning, Draw table ----------
+  // (`table_borders_dialog.mjs`, `table_position_dialog.mjs`, `table_draw_mode.mjs`;
+  // `docs/153` table.borders-dialog, table.text-wrapping, table.position-dialog,
+  // table.draw). Each is a facade the menu, the palette and the ribbon reach.
+  const tableEditIo = {
+    doc: () => ed.doc,
+    caretNode: () => (ed.selection && ed.doc ? ed.selection.focus.node : null),
+    runEdit: (fn, options) => ed.runEdit(fn, options),
+    status: (text, kind) => ed.setStatus(text, kind),
+    registerModal,
+    onButton,
+    fallbackFocus: () => ed.pagesEl,
+    afterEdit: () => {
+      ed.updateToolbar();
+      if (!ed.tablePropertiesPanel.hidden) reflectTableProperties();
+    },
+  };
+  createTableBordersDialog({
+    ...tableEditIo,
+    cellRange: () => {
+      const range = ed.tableRange.descriptor();
+      return range?.anchorNode ? [range.anchorNode, range.focusNode] : null;
+    },
+  });
+  createTablePosition(tableEditIo);
+  const drawButtons = [document.getElementById("tableDrawBtn"), document.getElementById("insertTableDrawBtn")].filter(Boolean);
+  createTableDrawMode({
+    ...tableEditIo,
+    pointToTwip: (page, event) => ed.pointToTwip(page, event),
+    scaleOf: (page) => ed.scaleOf(page),
+    anchorAt: (page, event) => ed.anchorAt(page, event),
+    blocked: () => ed.blockMutationInViewing(),
+    buttons: () => drawButtons,
+    t,
+  });
+  // The Insert table popover's own row (Word: Insert ▸ Table ▸ Draw Table). The
+  // Table band's button is the ribbon face `INSERT_SURFACE` wires.
+  const drawRow = document.getElementById("insertTableDrawBtn");
+  if (drawRow) {
+    onButton(drawRow, () => {
+      closeAllPopovers();
+      tableDrawMode.toggle();
+    });
+  }
 
   /** Rebuilds the off-screen accessibility mirror for the caret's part of the
    *  document. The projection lives in `a11y_mirror.mjs`; what stays here is the
