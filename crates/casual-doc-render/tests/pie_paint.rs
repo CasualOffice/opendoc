@@ -135,6 +135,8 @@ fn document(kind: ChartGroupKind, values: &[&str]) -> Document {
                     height_emu: 3_657_600,
                 },
                 prog_id: None,
+                anchor: None,
+                relative_height: None,
             }))],
         })],
         definitions,

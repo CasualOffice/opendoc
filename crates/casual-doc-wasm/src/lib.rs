@@ -42069,6 +42069,8 @@ mod tests {
                 preview: None,
                 extent,
                 prog_id: None,
+                anchor: None,
+                relative_height: None,
             })),
             InlineNode::Field(Box::new(Field {
                 id: id(),
@@ -43472,6 +43474,8 @@ mod tests {
                     height_emu: 914_400,
                 },
                 prog_id: None,
+                anchor: None,
+                relative_height: None,
             })),
             InlineNode::Sdt(Box::new(InlineSdt {
                 id: id(),
@@ -44404,6 +44408,8 @@ mod tests {
                         height_emu: 914_400,
                     },
                     prog_id: None,
+                    anchor: None,
+                    relative_height: None,
                 }))],
             })],
             definitions,
@@ -44498,6 +44504,8 @@ mod tests {
                             height_emu: 914_400,
                         },
                         prog_id: None,
+                        anchor: None,
+                        relative_height: None,
                     })),
                     InlineNode::NoteReference(NoteReference {
                         id: id(),

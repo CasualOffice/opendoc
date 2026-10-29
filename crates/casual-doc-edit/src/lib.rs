@@ -12022,6 +12022,8 @@ mod tests {
                 height_emu: 457_200,
             },
             prog_id: None,
+            anchor: None,
+            relative_height: None,
         }));
         let projection = Chart {
             font: None,
@@ -14919,6 +14921,8 @@ mod tests {
                 height_emu: 457_200,
             },
             prog_id: None,
+            anchor: None,
+            relative_height: None,
         }));
         let mut d = Document::new(
             n(1000),
