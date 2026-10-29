@@ -720,7 +720,10 @@ pub fn split_table(
             Operation::InsertBlocks {
                 container,
                 index: at(index + 1)?,
-                blocks: vec![BlockNode::Paragraph(paragraph), BlockNode::Table(Box::new(second))],
+                blocks: vec![
+                    BlockNode::Paragraph(paragraph),
+                    BlockNode::Table(Box::new(second)),
+                ],
             },
         ],
         between,
@@ -1379,7 +1382,9 @@ mod tests {
                 }
             }
         }
-        outer.rows[0].cells[1].blocks.push(BlockNode::Table(Box::new(inner)));
+        outer.rows[0].cells[1]
+            .blocks
+            .push(BlockNode::Table(Box::new(inner)));
         let mut mint = ids();
         let kept =
             table_to_text_blocks(&outer, Separator::Tab, false, &mut mint).expect("converts");

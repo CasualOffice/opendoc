@@ -41,7 +41,7 @@ fn container_blocks(document: &Document, container: Option<NodeId>) -> Option<&[
                     for row in &table.rows {
                         for cell in &row.cells {
                             if cell.id == id {
-                                return Some(&cell.blocks);
+                                return Some(cell.blocks.as_slice());
                             }
                             if let Some(found) = walk(&cell.blocks, id) {
                                 return Some(found);
@@ -51,7 +51,7 @@ fn container_blocks(document: &Document, container: Option<NodeId>) -> Option<&[
                 }
                 BlockNode::Sdt(sdt) => {
                     if sdt.id == id {
-                        return Some(&sdt.blocks);
+                        return Some(sdt.blocks.as_slice());
                     }
                     if let Some(found) = walk(&sdt.blocks, id) {
                         return Some(found);
