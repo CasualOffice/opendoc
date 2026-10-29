@@ -6480,8 +6480,13 @@ impl WasmDocument {
         end_offset: u32,
         kind: &str,
     ) -> Result<EditResult, JsValue> {
+        // A numbered list is an object with identity (HF-226): it joins the list
+        // beside it or starts a new one, never the session's one list.
+        if kind == "numbered" {
+            return self.toggle_numbered_list(start_node, start_offset, end_node, end_offset);
+        }
         // A checklist is a bullet-style list whose marker is a checkbox; new items
-        // start unchecked. `"numbered"` → numbered; anything else → plain bullet.
+        // start unchecked. Anything else is a plain bullet.
         let checklist = kind == "checklist";
         let (instance, install) = if checklist {
             self.ensure_checklist(false).map_err(to_js)?
@@ -16351,6 +16356,103 @@ impl WasmDocument {
             self.bullet_list = Some(inst_id);
         }
         Ok((inst_id, install))
+    }
+
+    /// `toggleList("numbered")`: Word's Numbering button, with list IDENTITY (HF-226,
+    /// `docs/142` §4.1 design D-1 — adjacency-based identity assignment).
+    ///
+    /// The session used to memoise ONE numbered instance, and counters are keyed by
+    /// `(instance, level)`, so every numbered list authored in a session was the same
+    /// list: a second list three paragraphs below a three-item list started at 4. Word
+    /// and Google Docs treat a list as an object, and ONLYOFFICE joins the previous
+    /// paragraph's list only when it is compatible and mints a new one otherwise
+    /// (`sdkjs/word/Editor/Paragraph/Run/RunAutoCorrect.js:991`,
+    /// `private_GetSuitableNumPr`). The rule, for the selection's paragraphs:
+    ///
+    /// 1. the first paragraph is already a numbered item → numbering is turned OFF
+    ///    (any numbered list, imported or ours — Word's toggle);
+    /// 2. else the paragraph immediately BEFORE the selection, in the same surface and
+    ///    container, is a numbered item → JOIN that list at that item's level;
+    /// 3. else the paragraph immediately AFTER it is → join that one (toggling the
+    ///    line above a list extends the list);
+    /// 4. else mint a FRESH instance, whose install operations go at the front of the
+    ///    same transaction, so undo removes the definition with the paragraphs.
+    ///
+    /// No new operation. Bullets and checklists keep their memo: a bullet level has no
+    /// counter, so sharing one definition is unobservable there.
+    ///
+    /// O(document): one ordered walk and one container map, per gesture, never per
+    /// keystroke.
+    fn toggle_numbered_list(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+    ) -> Result<EditResult, JsValue> {
+        let (start, end) = self
+            .order_endpoints(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        let current = paragraph_properties(&self.document, start.node).and_then(|p| p.numbering);
+        let already = current.is_some_and(|n| self.is_numbered_reference(&n));
+        let (target, install) = if already {
+            (None, Vec::new())
+        } else if let Some(join) = self.adjacent_numbered_list(start.node, end.node) {
+            (Some(join), Vec::new())
+        } else {
+            let ids = &mut self.edit_ids;
+            let (instance, install) =
+                casual_doc_command::lists::new_definition(true, &mut || ids.next_id().ok())
+                    .map_err(to_js)?;
+            (Some(NumberingRef { instance, level: 0 }), install)
+        };
+        self.apply_paragraph_props_after(
+            install,
+            start_node,
+            start_offset,
+            end_node,
+            end_offset,
+            HistoryKind::ListFormatting,
+            move |p| {
+                casual_doc_command::paragraph::ParagraphChange::Numbering(target).apply(p);
+            },
+        )
+    }
+
+    /// Whether `reference` names a NUMBERED list: ordered, and not a checklist.
+    fn is_numbered_reference(&self, reference: &NumberingRef) -> bool {
+        self.checklist_state_of_instance(reference.instance)
+            .is_none()
+            && self.numbering_ordered(reference)
+    }
+
+    /// The numbered list the paragraphs `first..=last` should join when numbering is
+    /// turned on: the neighbour immediately before `first`, else the one immediately
+    /// after `last`, when it is a numbered item in the same surface and the same
+    /// container (a table cell's list is not joined from the body). `None` → start a
+    /// new list. O(document).
+    fn adjacent_numbered_list(&self, first: NodeId, last: NodeId) -> Option<NumberingRef> {
+        let order = self.ordered_paragraphs_by_surface();
+        let containers = self.paragraph_container_map();
+        let at = order.iter().position(|(id, _, _)| *id == first)?;
+        let to = order
+            .iter()
+            .position(|(id, _, _)| *id == last)
+            .unwrap_or(at)
+            .max(at);
+        let (_, _, surface) = order[at];
+        let container = containers.get(&first).copied();
+        let numbered = |index: usize| -> Option<NumberingRef> {
+            let (id, _, other) = *order.get(index)?;
+            if other != surface || containers.get(&id).copied() != container {
+                return None;
+            }
+            let reference = paragraph_properties(&self.document, id)?.numbering?;
+            self.is_numbered_reference(&reference).then_some(reference)
+        };
+        at.checked_sub(1)
+            .and_then(numbered)
+            .or_else(|| numbered(to + 1))
     }
 
     /// The number format of an imported list instance's first level, if it resolves —
@@ -35617,6 +35719,70 @@ mod tests {
             .map(|(id, _)| id.to_string())
             .expect("a non-empty paragraph after round-trip");
         assert_eq!(d2.list_format_at(&node2), "bullet:\u{25aa}");
+    }
+
+    /// HF-226: two numbered lists separated by an ordinary paragraph are TWO lists,
+    /// so the second one starts at 1; toggling numbering on the paragraph directly
+    /// below a list extends it; and undo takes a fresh list's definition away with
+    /// it. Mutation: route `toggle_numbered_list` back through `ensure_list(true)`
+    /// (the session memo) and the separated list shares the first one's instance.
+    #[test]
+    fn a_second_numbered_list_is_a_new_list_and_an_adjacent_one_joins() {
+        let mut d = open_document(b"Zero\nOne\nTwo\nThree\nFour").expect("open plain text");
+        let ids: Vec<String> = d
+            .ordered_paragraphs()
+            .iter()
+            .map(|(id, _)| id.to_string())
+            .collect();
+        assert_eq!(ids.len(), 5, "five paragraphs");
+        let instance = |d: &WasmDocument, node: &str| {
+            paragraph_properties(&d.document, NodeId::from_str(node).unwrap())
+                .and_then(|p| p.numbering)
+                .map(|n| n.instance)
+        };
+        // List A over paragraphs 0..=1, paragraph 2 plain, list B on paragraph 3.
+        d.toggle_list(&ids[0], 0, &ids[1], 0, "numbered")
+            .expect("list A");
+        let a = instance(&d, &ids[0]).expect("A is a list");
+        let definitions_before_b = d.document.definitions().numbering.len();
+        d.toggle_list(&ids[3], 0, &ids[3], 0, "numbered")
+            .expect("list B");
+        let b = instance(&d, &ids[3]).expect("B is a list");
+        assert_ne!(
+            a, b,
+            "a separated numbered list is a new list, not the session's one list"
+        );
+        assert_eq!(
+            d.document.definitions().numbering.len(),
+            definitions_before_b + 1
+        );
+        // Directly below B: joins B rather than starting a third list.
+        d.toggle_list(&ids[4], 0, &ids[4], 0, "numbered")
+            .expect("extend B");
+        assert_eq!(
+            instance(&d, &ids[4]),
+            Some(b),
+            "the adjacent paragraph joins the list above"
+        );
+        // Directly above A's first item would join A; paragraph 2 sits between A and
+        // B and joins A, the one BEFORE it, as Word does.
+        d.toggle_list(&ids[2], 0, &ids[2], 0, "numbered")
+            .expect("join");
+        assert_eq!(instance(&d, &ids[2]), Some(a));
+        // Toggling a numbered item turns numbering off, whichever list it is in.
+        d.toggle_list(&ids[3], 0, &ids[3], 0, "numbered")
+            .expect("off");
+        assert_eq!(instance(&d, &ids[3]), None);
+        // Four undos walk back to before B (off, join, extend, B), and B's
+        // definition goes with it.
+        for _ in 0..4 {
+            d.undo().expect("undo");
+        }
+        assert_eq!(instance(&d, &ids[3]), None);
+        assert_eq!(
+            d.document.definitions().numbering.len(),
+            definitions_before_b
+        );
     }
 
     #[test]
