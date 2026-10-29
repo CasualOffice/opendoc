@@ -68,7 +68,7 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | --- | ---: | ---: |
 | P0 | 7 | 0 |
 | P1 | 33 | 3 |
-| P2 | 52 | 16 |
+| P2 | 52 | 15 |
 | P3 | 22 | 12 |
 | Behavioural audit — 2026-09-04 | 18 | 4 |
 | Layout-space audit — 2026-09-09 | 14 | 0 |
@@ -76,7 +76,7 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | Ribbon keyboard reachability — 2026-09-10 | 2 | 0 |
 | Paragraph-level revision mapping — 2026-09-17 | 4 | 0 |
 | Large-document admission — 2026-09-18 | 1 | 0 |
-| **Total** | **158** | **35** |
+| **Total** | **158** | **34** |
 
 "Still open" counts any status *beginning* `Open`, `Partly fixed`, or `In progress` —
 the prefix matters, because real statuses qualify themselves (`Open (owner decision)`,
@@ -96,7 +96,7 @@ by re-reading the code they cite: **HF-016**, **HF-022** and **HF-034**.)
 
 ### Progress
 
-**35 of 158 rows remain open. Every P0 is closed.** HF-030 closed with #559. (Re-derive these counts, do not edit them by hand.)
+**34 of 158 rows remain open. Every P0 is closed.** HF-030 closed with #559. (Re-derive these counts, do not edit them by hand.)
 
 **Staleness sweep, 2026-09-20.** Every P1 row of this tracker and of `105` was re-read
 against the code it cites, because `109` is now the only queue and a stale `Open` there is
@@ -234,7 +234,7 @@ Still waiting on an owner decision, not on engineering:
 | HF-097 | Tools and Help scroll out of the menu bar behind a hidden scrollbar | responsive | M | Internal audit | Fixed — the two menus that scrolled off the end do not exist any more. Settings and the Help rows are File-surface items (ONLYOFFICE's File page holds both) and the two proofing switches are Review rows and a Review band group (Word's Review ▸ Proofing), so the bar is seven names and no longer clips at 460px. The fade affordance stays and its guard moved to 360px, where the bar does still clip. See `122-ONE-AXIS-NAVIGATION-DESIGN.md` §4.3. |
 | HF-053 | Toolbar formatting state is wrong for a caret in a header, footer or note — so Bold toggles the wrong way | rust-core | S | Internal audit | Fixed |
 | HF-054 | Pasting from Word or a web page inserts a blank paragraph before the content | import-export | S | Internal audit | Fixed |
-| HF-055 | Smart quotes insert the wrong glyph after any non-ASCII character | webapp-js | S | Internal audit | Open |
+| HF-055 | Smart quotes insert the wrong glyph after any non-ASCII character | webapp-js | S | Internal audit | Fixed (`lane/parity-pipeline`; docs/tracker/completed.md) |
 | HF-056 | Images cannot be rotated or flipped — a sideways phone photo has to be fixed outside the editor | images | L | Sibling gap (docs (ProseMirror)) | Fixed (`ux/objects-v2`; see `109`) |
 | HF-057 | Object properties panel shows stale geometry and Apply reverts a drag-resize | editor-ux | M | Internal audit | Fixed (`ux/objects-v2`; see `109`) |
 | HF-058 | The object action bar stays frozen on screen while the object scrolls away | layout | S | Internal audit | Fixed (`ux/objects-v2`; see `109`) |
