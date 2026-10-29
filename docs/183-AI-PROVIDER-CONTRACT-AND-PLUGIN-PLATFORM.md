@@ -435,19 +435,345 @@ All three are read by `hostConfig()`, the one configuration channel, and reporte
 | T9 | Clickjacking the grant prompt | The prompt is editor chrome, outside the plugin frame; the frame cannot overlay it | — |
 | T10 | Data residency | The disclosure names the endpoint; hosts route through their own backend; `?aiProvider=off` | The person's choice of BYOK endpoint is theirs |
 
-## 11. The competitive survey
+## 11. The competitive survey (2026-10-30)
 
-Pending on this branch: the cited survey of Google Docs, Word, ONLYOFFICE, open-source
-editors, "AI-native" ONLYOFFICE forks, Notion and Coda (owner instruction, 2026-10-30) is
-written here before any user-facing AI feature is built.
+Public help pages, release notes and admin documentation only; every fact carries its URL.
+"Unverified" means no primary source was found. No AGPL code was read for this section.
+The load-bearing facts (ONLYOFFICE 10.0's licence change, Gemini's private suggestions) were
+re-read at the source on 2026-10-30.
+
+### 11.1 Google Docs (Gemini)
+
+- **Entry points:** the "Ask Gemini" side panel; a bottom prompt bar ("hover over the spark
+  near the bottom"); a floating **Refine** bar on a selection (Match writing style, Enhance,
+  Rephrase, Shorten, Elaborate, More formal, More casual); `@` to reference files and skills,
+  and a Sources button. <https://support.google.com/docs/answer/14206696>,
+  <https://workspaceupdates.googleblog.com/2026/04/new-gemini-capabilities-in-google-docs-help-you-go-from-blank-page-to-brilliance.html>.
+  `@` also references a Gemini Notebook (September 2026):
+  <https://workspaceupdates.googleblog.com/2026/09/ground-ai-prompts-in-google-docs-on-existing-sources-from-Gemini-Notebook.html>.
+- **Features:** summarise a document or selection, write and rewrite, tone, "Help me create"
+  (formatted first drafts from Drive, Gmail, Chat and the web), "Match doc format" (a source
+  document as a template), persistent custom instructions
+  (<https://workspaceupdates.googleblog.com/2026/05/set-custom-instructions-for-gemini-in-Google-Docs.html>),
+  images and diagrams
+  (<https://workspaceupdates.googleblog.com/2026/07/generate-and-edit-visuals-with-gemini-in-Google-Docs.html>),
+  and comment workflows: summarise threads, find unresolved issues, draft grounded replies and
+  "generate suggested edits for you to review, approve, and seamlessly apply"
+  (<https://workspaceupdates.googleblog.com/2026/07/streamline-collaboration-in-google-docs-with-Gemini-powered-comment-workflows.html>).
+- **Applying edits:** Insert, Retry, Preview, Copy, Accept all and Reject all; suggested edits
+  are "only visible to you until you approve them" (April 2026 post above). Conversation
+  history is lost on reload (support page above). Whether an approved edit lands as a native
+  Suggesting revision: unverified.
+- **Grounding:** Drive, Gmail and the web (web only when asked); a Sources button; inline
+  citations with Notebook grounding; retrieval honours Workspace permissions
+  (<https://knowledge.workspace.google.com/admin/generative-ai/generative-ai-in-google-workspace-privacy-hub>).
+- **Admin and privacy:** per-service on/off, default on
+  (<https://knowledge.workspace.google.com/admin/generative-ai/workspace-with-gemini/manage-access-to-gemini-features-in-workspace-services>);
+  non-regionalised features can be switched off per data region
+  (<https://knowledge.workspace.google.com/admin/compliance/set-up-advanced-settings-for-data-regions>);
+  no training on customer data; retention 90 days to indefinite; users are told when an
+  injection defence fires (privacy hub above). Gemini only; no bring-your-own model.
+- **Gate:** paid Workspace tiers and consumer AI plans (April 2026 post).
+
+### 11.2 Microsoft Word (Copilot)
+
+- **Entry points:** a Copilot button opening the chat pane, "Edit with Copilot" on a
+  selection and in the mini toolbar, an auto-summary at the top, a "Chat only" mode, and `/` to
+  reference a file, mail or meeting
+  (<https://support.microsoft.com/en-us/office/welcome-to-copilot-in-word-2135e85f-a467-463b-b2f0-c51a46d625d1>,
+  <https://support.microsoft.com/en-us/word/edit-with-copilot-in-word>).
+- **Features:** draft from a prompt, outline or referenced file; rewrite, tone, concise;
+  summary, key points, open questions, actions; convert text to a table
+  (<https://support.microsoft.com/en-us/word/copilot/draft-and-add-content-with-copilot-in-word>);
+  "Edit with Copilot" (formerly Agent Mode) creates, reformats and reorganises; the
+  Researcher agent writes cited reports over web and work content
+  (<https://learn.microsoft.com/en-us/microsoft-365/copilot/researcher-agent>). Copilot Pages
+  inside Word: unverified.
+- **Applying edits:** Replace, Insert below, Regenerate; Keep or Discard; in a shared
+  document "nothing is added to the document until you review and approve it". The support
+  page says Copilot respects Track Changes when it is on and warns that an edit can delete a
+  comment anchored in the paragraph. Message Center MC1384426 (June 2026, mirrored at
+  <https://mc.merill.net/message/MC1384426>) announces word-level tracked changes, visible by
+  default; it disagrees with the support page, so we treat word-level tracking as shipping, not
+  universal.
+- **Grounding:** answers show references with citations into the document
+  (<https://support.microsoft.com/en-us/office/chat-with-copilot-about-your-word-document-4482c688-a495-4571-bfcd-4a9fc6608090>);
+  Microsoft Graph content the user can view, permissions honoured
+  (<https://learn.microsoft.com/en-us/copilot/microsoft-365/microsoft-365-copilot-privacy>).
+  Whether a citation jumps to the text: unverified.
+- **Admin and privacy** (privacy page above): EU Data Boundary (Anthropic models excluded);
+  no training; prompts and responses retained and searchable through Purview; admins allow or
+  block OpenAI and Anthropic subprocessors; injection (XPIA) classifiers; agents allow-listed.
+  No bring-your-own model.
+- **Gate:** a Copilot licence; Edit with Copilot on premium tiers.
+
+### 11.3 ONLYOFFICE
+
+- **Entry points:** an AI tab, AI Chat, and an inline panel on Ctrl/Cmd+/
+  (<https://helpcenter.onlyoffice.com/ai/gettingstarted/quick-start-guide/ai-quick-start.aspx>);
+  from 9.0.4 a floating "AI inline agent"
+  (<https://onlyoffice.com/blog/2025/08/meet-the-new-ai-agent-for-onlyoffice>); in 10.0,
+  actions on a tab or the context menu (<https://www.onlyoffice.com/blog/2026/10/onlyoffice-ai-tools>).
+- **Features:** generate, rewrite, expand, summarise, translate, grammar, tone; in 10.0 a
+  generated table of contents, "Quick AI actions" for one-off tasks, and "AI assistants" that
+  "work continuously and respond to changes in your document as you edit", document editor
+  only (<https://www.onlyoffice.com/blog/2026/10/onlyoffice-docs-10>); optional web search and
+  MCP servers configured as JSON (quick-start guide above).
+- **Applying edits:** results stream into the document; rewrites "with optional track
+  changes"; explanations as comments; no approval step is described (August 2025 post).
+- **Providers:** bring your own key per user (OpenAI, Anthropic, Gemini, Mistral, DeepSeek,
+  Groq, xAI, Together, OpenRouter, custom; Ollama and LM Studio by URL). Ollama needs
+  `OLLAMA_ORIGINS`, i.e. the browser calls the provider
+  (<https://helpcenter.onlyoffice.com/docs/userguides/ai/ollama.aspx>). Commercial 10.0 adds an
+  admin panel with central providers, per-task model mapping and a server `/ai-proxy`
+  (<https://api.onlyoffice.com/docs/ai/guides/server-ai-providers>).
+- **Licence gate, the fact that matters most here:** 10.0 says "we've removed built-in AI from
+  the open-source versions"; AI tools must be added separately
+  (<https://www.onlyoffice.com/blog/2026/10/onlyoffice-docs-10>). An Apache-2.0 editor with a
+  complete AI layer and a host proxy contract is therefore a licence wedge (SKILL §1).
+
+### 11.4 Open-source and embeddable editors
+
+- **Collabora Online 26.04:** optional AI in Writer (suggestions and improvements), off by
+  default, admin-chosen provider, external or self-hosted
+  (<https://www.collaboraonline.com/blog/cool-26-04-release/>). Entry points and how edits
+  apply: unverified.
+- **Nextcloud Assistant / Text:** a per-paragraph AI button, summarise and Q&A, Context Chat
+  over your own files, local or OpenAI-compatible backends
+  (<https://docs.nextcloud.com/server/stable/admin_manual/ai/app_assistant.html>); Context
+  Agent uses tool calls and an MCP server
+  (<https://docs.nextcloud.com/server/stable/admin_manual/ai/app_context_agent.html>).
+- **SuperDoc** (AGPL community licence, facts only): agent edits arrive as tracked changes
+  with accept and reject; "the model never edits raw XML. It calls structured tools"; an MCP
+  server (<https://docs.superdoc.dev/getting-started/ai-agents>,
+  <https://docs.superdoc.dev/extensions/track-changes>).
+- **Tiptap AI Toolkit** (paid): agent tools for insert, proofread, edit and comments; AI edits
+  shown as suggestions to accept or reject; any model
+  (<https://tiptap.dev/docs/content-ai/capabilities/ai-toolkit/overview>).
+- **CKEditor AI** (commercial): chat panel with history, Quick Actions on a selection, AI
+  Review (grammar, style, tone), AI Translate, each switchable; suggestions as track changes;
+  a Context Library of prompts and reference files; role permissions
+  (<https://ckeditor.com/docs/ckeditor5/latest/features/ai/ckeditor-ai-overview.html>).
+- **BlockNote AI:** an agent edits and formats, with accept or reject per suggestion and a
+  visible step log; any model, bring your own key (<https://www.blocknotejs.org/docs/features/ai>).
+
+### 11.5 ONLYOFFICE forks marketed as "AI"
+
+- **Euro-Office** (a 2026 fork by Nextcloud, IONOS and others; ONLYOFFICE disputes it,
+  <https://alternativeto.net/news/2026/4/onlyoffice-ends-its-partnership-with-nextcloud-over-new-unauthorized-euro-office-fork>):
+  no primary source shows AI in the editor itself; the AI in that stack is Nextcloud
+  Assistant around it.
+- **ONLYOFFICE DocSpace 3.7** (the vendor's own product): agent chat that saves DOCX/PDF/PPTX,
+  seven providers plus custom, an admin kill switch
+  (<https://www.onlyoffice.com/blog/2026/06/onlyoffice-docspace-3-7>).
+- No fork marketed as "AI-native" or "native AI ready" was found that ships AI of its own.
+  Recorded as searched, not found.
+
+### 11.6 Notion and Coda, for the patterns
+
+- **Notion** (<https://www.notion.com/help/notion-ai-faqs>): Space on an empty line, `/AI
+  Block`, "Edit with AI" on a selection, an agent chat, `@`-mention a page for context;
+  changes proposed with accept / discard / try again; Q&A over the workspace and connected
+  apps "with citations"; database autofill; admin toggles for web search, a model allow-list
+  and per-member credit limits; zero-retention providers by default
+  (<https://www.notion.com/help/notion-ai-security-practices>).
+- **Coda:** a chat side panel, AI columns that fill cells from row data, AI blocks; Coda Brain
+  cites sources and honours permissions
+  (<https://coda.io/blog/ai/enterprise-ai-more-than-answer-questions>). The help pages
+  answered 403, so the panel details rest on search snippets: unverified.
+
+### 11.7 Industry practice, cited
+
+- **Prompt injection:** OWASP LLM01:2025 "separate and clearly denote untrusted content",
+  least privilege, human approval for privileged operations, output validation, adversarial
+  testing (<https://genai.owasp.org/llmrisk/llm01-prompt-injection/>). Microsoft's spotlighting
+  (data-marking untrusted input), Prompt Shields, consent and deterministic exfiltration
+  blocking (<https://www.microsoft.com/msrc/blog/2025/07/how-microsoft-defends-against-indirect-prompt-injection-attacks>).
+  Google: injection classifiers, markdown sanitisation with suspicious-URL redaction, user
+  confirmation and notification
+  (<https://blog.google/security/google-workspaces-continuous-approach-to-mitigating-indirect-prompt-injections/>).
+- **Agency:** OWASP LLM06:2025 Excessive Agency: limit functions, permissions and autonomy,
+  and put the approval inside the high-impact operation
+  (<https://genai.owasp.org/llmrisk/llm062025-excessive-agency/>).
+- **Evaluation:** groundedness and tool-call evaluators
+  (<https://learn.microsoft.com/en-us/azure/foundry/concepts/built-in-evaluators>); OWASP's
+  RAG triad (context relevance, groundedness, answer relevance).
+
+### 11.8 What users generally get
+
+| Capability | Docs | Word | ONLYOFFICE 10 | Notion | CKEditor | Tiptap / BlockNote / SuperDoc |
+| --- | --- | --- | --- | --- | --- | --- |
+| Side-panel chat on the document | yes | yes | yes | yes | yes | SDK |
+| Inline or bottom prompt | yes | yes | Ctrl+/ | Space | — | SDK |
+| Selection actions (rewrite, shorten, tone) | yes | yes | yes | yes | yes | yes |
+| `@` or `/` references to other files | `@` | `/` | desktop attach | `@` | Context Library | — |
+| Draft from a prompt and sources | yes | yes | yes | yes | yes | yes |
+| Summarise and Q&A | yes | yes | yes | yes | yes | yes |
+| Comment workflows | yes | announced | explain in a comment | — | yes | Tiptap, SuperDoc |
+| Edits reviewed before they apply | private suggestions | approve / tracked | optional tracking | proposed | tracked | tracked |
+| Citations to sources | yes | yes | clickable references | yes | — | — |
+| Agents, MCP | Drive actions | agents | MCP | agent | API | MCP (SuperDoc) |
+| Bring your own model or local LLM | no | no | yes (commercial admin in 10.0) | no | on-prem | yes |
+| Admin switch, per-feature | yes | partial | yes | partial | per feature | app-defined |
+| Licence gate | paid tier | Copilot licence | **removed from open source** | Business+ | commercial | paid / copyleft / AGPL |
+
+**Table stakes:** a chat panel grounded in the document; selection actions; draft from a
+prompt; summarise and Q&A; review before apply with Replace / Insert / Retry / Discard and
+undo; an admin switch and no training on customer data.
+
+**Differentiators in 2026:** AI edits as word-level tracked changes and AI on comment
+threads; citations that jump to the source passage; bring-your-own provider with a host
+proxy, local models and air-gapped use (now commercial-only at ONLYOFFICE); agents over
+structured tools and MCP with host-set allow-lists; continuous review assistants and
+persistent instructions; visible injection defences.
+
+**What we already have that they do not, all built:** edits compiled to the engine's closed
+vocabulary and shown privately before anything changes (`181` §4.4), tracked by default for
+every role (Word tracks only when the person had tracking on); MCP and WebMCP over the same
+registry; the engine refusing at the choke point whatever the UI decided.
 
 ## 12. RAG, MCP both ways and the agent loop
 
-Pending on this branch, with §11.
+### 12.1 Retrieval with anchors (RAG)
 
-## 13. Proposed features and UI
+- **Chunks:** `178` §4.4's anchored chunker (heading plus following paragraphs to a ceiling,
+  a table header with a run of rows, a comment thread with its anchor), each with a
+  deterministic id (chunker version + ordered anchors + text hash), its `NodeId` anchors and its
+  heading path. Re-indexing re-embeds only chunks whose id changed: an edit is O(chunks
+  touched).
+- **Embeddings over the same contract:** OpenAI-compatible `POST {baseUrl}/embeddings`
+  (`{model, input: string[], encoding_format: "float"}` → `{data: [{index, embedding}],
+  model, usage}`, <https://platform.openai.com/docs/api-reference/embeddings>), through the
+  host channel as a request with `purpose: "embed"`, or BYOK. Anthropic has no embeddings
+  endpoint; with an Anthropic-only provider, retrieval falls back to lexical (below).
+- **Index:** in the browser, a flat Float32 cosine index in a worker (exact search; a 300-page
+  document is ~1,500 chunks × 1,536 floats ≈ 9 MB, searched in milliseconds), persisted in
+  IndexedDB keyed by document fingerprint and chunk id, never inside the document (ADR-030 I4).
+  An HNSW index is not needed at document scale and is deferred until a host collection needs
+  it. **Hybrid**: BM25 over the same chunks, fused by reciprocal rank fusion, so retrieval
+  works with no embeddings at all and names and numbers are found exactly.
+- **Host collections:** a host may answer `purpose: "retrieve"` requests (`{query, k}` →
+  `[{id, title, text, uri}]`) for its own corpus (Drive-like grounding); results are data, cited
+  by `uri`, never followed automatically.
+- **Answers with citations:** the model is asked to cite chunk ids in brackets; the UI turns a
+  cited id into a chip that scrolls to and selects the anchored paragraph (`NodeId`, so it
+  survives edits elsewhere). A citation to an id that was not retrieved is dropped and counted
+  (output verification).
 
-Pending on this branch, with §11; the owner discusses it before P3.
+### 12.2 MCP both ways
+
+- **Server (built):** `opendoc-mcp` and WebMCP (`178`, `181`).
+- **Client (new):** the assistant may use tools from MCP servers the host lists
+  (`?mcp=<catalogue>`) or the person connects in standalone settings, over Streamable HTTP
+  (<https://modelcontextprotocol.io/specification/2026-07-28/basic/transports>), never stdio
+  in a browser. Each server has its own grant: which tools are allowed, "ask every time" or
+  "allow for this document", and whether tool results may contain document text sent out.
+  Tool descriptions and results are untrusted (§12.4): shown to the person, labelled with the
+  server's origin, and never able to call editor write tools except through `propose_edits`.
+  OAuth per the MCP authorization spec for servers that need it; tokens on the device only.
+
+### 12.3 The agent loop
+
+- **Shape:** read → plan → propose → self-check → present. The model gets the read tools and
+  `propose_edits` (the private preview) as Chat Completions function tools, plus any granted MCP
+  client tools. It cannot accept, apply directly, save or change grants.
+- **Budgets:** at most 12 tool rounds, 60 s wall clock per round and 5 minutes per task, the
+  session token budget of §3.6, and a visible step list ("Reading section 3…", "Proposing 4
+  changes") with Stop, which aborts the in-flight provider call and every pending tool.
+- **Long documents:** outline first; map-reduce summaries by heading; retrieval to pick the
+  sections a question needs; edits planned per section against a fixed `base_revision`, so a
+  stale plan is refused rather than applied over newer typing.
+- **Self-check:** before presenting, the loop re-reads each proposed paragraph and asks the
+  model to verify the change matches the instruction and introduces no facts absent from the
+  cited sources; a failed check is shown on the card, not hidden.
+- **Human in the loop by default:** every edit reaches the document only through the card's
+  Accept, as suggestions by "Casual AI". Direct application exists only where the host
+  granted it, and still through the card.
+
+### 12.4 Practices
+
+| Practice | Design |
+| --- | --- |
+| Injection defence | Document, comment, retrieval and MCP text is sent inside data-marked blocks (`<document_text id=…>`) the system prompt declares as data; instructions found there are never followed; the only write tool proposes; links in model output are rendered inert unless they point into the document; a detected instruction in data is shown to the person ("This text contains instructions; they were ignored") |
+| Grounding and verification | Cited chunk ids validated against what was retrieved; quotes in answers checked against the anchored text; edit plans validated by the engine compiler before the card opens |
+| Streaming and Stop | Chunks render as they arrive; Stop aborts the fetch; partial text is kept or discarded by the person |
+| Token and cost limits | §3.6 budgets; a per-request estimate shown before long tasks ("about 40,000 tokens") |
+| Logging and audit | A local, per-page log of each call: purpose, endpoint origin, model, token usage, duration, result code; never prompt or document text (`178` §5.9's rule). A host receives the same record on its channel to keep its own audit |
+| Admin controls | Host config: `aiProvider=off`, an allowed-features list (`aiFeatures=chat,rewrite,…`), allowed BYOK presets or endpoints (`aiEndpoints=`), budgets, and the provider itself (which fixes data residency). Standalone settings show the same switches |
+| Evaluation | `webapp/tests/ai_evals/`: about 30 tasks (rewrite, summarise with citations, translate, review, an injection document, a stale-revision plan), each with an expected outcome checked structurally (edit kinds, anchors, citations resolvable, injected instruction not obeyed), run in CI against a deterministic mock provider; the same set runs against a real model locally with a key, reported, never in CI |
+
+## 13. Proposed features and UI, ranked by user value (for the owner's review)
+
+Ranked by how often a user reaches for it (table stakes first), then by what nobody else
+offers under a permissive licence.
+
+| # | Feature | Entry points | How the result applies |
+| --- | --- | --- | --- |
+| 1 | **Selection actions:** rewrite, shorten, expand, fix grammar, tone (formal, friendly, confident), translate, summarise | A ✦ button in the selection toolbar, the context menu ("Casual AI ▸"), the palette, Ctrl/Cmd+J | Private card: redline, Replace / Insert below / Retry / Discard; Replace lands as suggestions |
+| 2 | **Ask / chat** about the document, with citations | Side panel (Review ▸ Add-ins ▸ Casual AI, or Ctrl/Cmd+Shift+J) | Answers with citation chips that jump to paragraphs; "Insert" sends an answer to the card |
+| 3 | **Draft from a prompt** at the caret, or a new document from a prompt and optional files | An empty-paragraph hint ("Press Ctrl+J to draft"), the panel, the palette | Card with the drafted paragraphs; Insert as suggestions |
+| 4 | **Summarise the document** (summary, key points, open questions, action items) | Panel quick chip; File ▸ Info | Panel answer with citations; optional "Insert at top" |
+| 5 | **Review this document** (clarity, consistency, terminology, factual claims flagged) | Review ▸ Add-ins ▸ Review with AI | Comments and suggestions authored "Casual AI", previewed as one card, grouped by kind |
+| 6 | **Comment helpers:** draft a reply, summarise a thread, resolve-with-edit | A ✦ in each comment's actions | Reply draft in the comment box (the person sends it); resolve-with-edit through the card |
+| 7 | **Grammar and style** (LanguageTool plugin, host-configured server) | Review band, live underlines like spell check | Suggestions from rule hits, previewed; no model needed |
+| 8 | **Diagrams from text** (Mermaid plugin) | Insert ▸ Add-ins ▸ Diagram | A picture with its source kept for re-editing |
+| 9 | **Ask across files** (host collections, RAG) | `@` in the chat box | Citations to host URIs |
+| 10 | **Tools from MCP servers** | Settings ▸ AI ▸ Connected tools | Per-server grant prompt; results shown as steps |
+
+**Mockups.** The card is the one already built (`181` §4.4); the new surfaces are:
+
+```
+Selection toolbar                          Context menu
+┌──────────────────────────────────┐       ┌─────────────────────────┐
+│ B I U  Link  Comment  ✦ Casual AI ▾│      │ Cut   Copy   Paste       │
+└──────────────────────────────────┘       │ ───────────────────────  │
+          ┌──────────────────────┐         │ ✦ Casual AI            ▸ │──┐
+          │ Rewrite              │         └─────────────────────────┘  │
+          │ Shorten   Expand     │                 ┌─────────────────────┴┐
+          │ Fix grammar          │                 │ Rewrite  Shorten ... │
+          │ Tone            ▸    │                 └──────────────────────┘
+          │ Translate       ▸    │
+          │ Summarise            │
+          │ ──────────────────── │
+          │ Ask about this…      │
+          │ Sends text to api.openai.com │
+          └──────────────────────┘
+
+Side panel (Ask / Chat)                       Review band
+┌ Casual AI ───────────────── ✕ ┐            ┌ … Track changes │ Comments │ Add-ins ▾ ┐
+│ Sends text to api.openai.com  │            │                               ┌─────────┴────────┐
+│ ───────────────────────────── │            │                               │ ✦ Casual AI       │
+│ You: What does §3 commit to?  │            │                               │ ✦ Review with AI  │
+│ AI: Three outcomes [1] [2] …  │            │                               │ ✓ Check grammar   │
+│     [1] → 3. Goals ¶2         │            │                               │ ◇ Diagram         │
+│ ── Reading section 3 ✓        │            │                               │ ───────────────── │
+│ ── Proposing 2 changes  ■Stop │            │                               │ Manage add-ins…   │
+│ [Summarise] [Key points] [Review]          │                               └───────────────────┘
+│ ┌───────────────────────────┐ │
+│ │ Ask about this document…  │ │
+│ └──────────────── @ ─ Send ─┘ │
+└───────────────────────────────┘
+
+No provider configured (every AI entry point)
+┌──────────────────────────────────────────────────────────────┐
+│ Casual AI needs a model. Nothing is sent until you set one.  │
+│ [Set up AI provider…]   (embedded: "Your administrator has   │
+│                          not enabled AI for this editor.")   │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Questions for the owner.**
+
+- **F1.** Is the ranking right, and is anything missing that users expect (image generation
+  is deliberately absent: it needs a different provider class)?
+- **F2.** The ✦ entry in the selection toolbar: Docs and Word both put AI on the selection;
+  our selection toolbar is small. One ✦ button with a menu, as drawn?
+- **F3.** Ctrl/Cmd+J for selection actions and Ctrl/Cmd+Shift+J for the panel (Notion's
+  binding; Ctrl+/ is ONLYOFFICE's and is taken here by the palette)?
+- **F4.** Chat history: keep per document on this device (Docs loses it on reload), or never?
+- **F5.** Review pass output: comments only, or comments plus suggestions?
+- **F6.** MCP sampling: ship the adapter given its deprecation (§3.7), or drop it?
+- **F7.** The eval set in CI with the mock provider only (as proposed), never a real model?
 
 ## 14. Phases
 
