@@ -47,6 +47,8 @@
 //   `enterCrop()`          enter crop mode on a picture
 //   `changePicture()`      Word's Change Picture: pick a file for the picture
 //   `alignRows(enabled, reason)` the Align submenu (`object_align.mjs`)
+//   `gradientCommands(enabled, reason)` the Shape fill ▸ Gradient submenu
+//                          (`shape_gradient.mjs`)
 //   `outlineStyleCommands(picture, enabled, reason)` Dashes and Arrows
 //                          (`shape_outline_style.mjs`)
 //   `pictureToolCommands(enabled, reason)` the picture-tool rows
@@ -285,6 +287,8 @@ export function buildObjectContextCommands(context, io) {
             ...swatch(hex),
             run: () => io.applyShapeFill(hex),
           })),
+          // Word's Shape Fill ▸ Gradient (`shape_gradient.mjs`, RM-30).
+          ...(typeof io.gradientCommands === "function" ? [io.gradientCommands(mutationEnabled, mutationReason)] : []),
         ],
       });
     }

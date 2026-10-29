@@ -6,6 +6,7 @@ import { buildObjectContextCommands } from "./object_context_menu.mjs";
 import { pictureToolCommands } from "./picture_tools.mjs";
 import { createObjectAlign } from "./object_align.mjs";
 import { outlineStyleCommands, readOutlineStyle } from "./shape_outline_style.mjs";
+import { gradientCommands } from "./shape_gradient.mjs";
 import { editRefusalMessage } from "./edit_errors.mjs";
 import { formatShortcut } from "./keyboard.mjs";
 import { spellingContextCommands } from "./spell_check.mjs";
@@ -570,6 +571,22 @@ export function createContextMenu(ed) {
   const objectContextMenuHost = {
     reviewMode: () => ed.reviewMode,
     alignRows: (mutationEnabled, mutationReason) => objectAlign.rows(mutationEnabled, mutationReason),
+    gradientCommands: (mutationEnabled, mutationReason) => {
+      const node = ed.objectSelection?.node;
+      const format = node ? ed.doc.shapeFormat?.(node) : null;
+      const fill = format?.fill ?? null;
+      format?.free?.();
+      return gradientCommands({
+        fill,
+        mutationEnabled,
+        mutationReason,
+        t,
+        apply: (from, to, angle) => {
+          if (!node) return;
+          void ed.runEdit(() => ed.doc.setShapeGradient(node, from, to, angle), { gate: true }).then(() => ed.reflectShapeSwatches());
+        },
+      });
+    },
     outlineStyleCommands: (picture, mutationEnabled, mutationReason) => {
       const node = ed.objectSelection?.node;
       return outlineStyleCommands({

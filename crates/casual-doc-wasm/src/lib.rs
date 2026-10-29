@@ -4615,6 +4615,61 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
+    /// Word's Shape Fill ▸ Gradient: fills a shape with a two-stop gradient from
+    /// `from` to `to` (`#rrggbb`), linear along `angle_degrees` clockwise from
+    /// the positive x-axis, or radial from the centre when it is omitted — one
+    /// undoable action (`docs/109` RM-30).
+    ///
+    /// # Errors
+    ///
+    /// A malformed colour, or a `shape` that is not a shape (a picture has no
+    /// fill to set).
+    #[wasm_bindgen(js_name = setShapeGradient)]
+    pub fn set_shape_gradient(
+        &mut self,
+        shape: &str,
+        from: &str,
+        to: &str,
+        angle_degrees: Option<f64>,
+    ) -> Result<EditResult, JsValue> {
+        self.set_shape_gradient_inner(shape, from, to, angle_degrees)
+            .map_err(to_js)
+    }
+
+    /// [`set_shape_gradient`](Self::set_shape_gradient) with a plain error, for
+    /// native tests.
+    pub(crate) fn set_shape_gradient_inner(
+        &mut self,
+        shape: &str,
+        from: &str,
+        to: &str,
+        angle_degrees: Option<f64>,
+    ) -> Result<EditResult, String> {
+        let node = NodeId::from_str(shape).map_err(|_| "invalid node id".to_owned())?;
+        if find_shape(&self.document, node).is_none() {
+            return Err(SHAPE_FILL_NOT_A_SHAPE.to_owned());
+        }
+        let colour = |hex: &str| {
+            parse_hex_color(hex)
+                .map(|rgb| Rgba {
+                    r: rgb.r,
+                    g: rgb.g,
+                    b: rgb.b,
+                    a: 255,
+                })
+                .ok_or_else(|| format!("invalid color: {hex}"))
+        };
+        self.apply_action_as(
+            casual_doc_command::objects::set_shape_gradient(
+                node,
+                colour(from)?,
+                colour(to)?,
+                angle_degrees,
+            ),
+            HistoryKind::Formatting,
+        )
+    }
+
     /// Word's Shape Outline: sets a shape's outline colour and width (EMU), or
     /// clears the outline entirely with `rgba = None`.
     ///
@@ -22898,6 +22953,12 @@ const SHAPE_OUTLINE_NOT_A_SHAPE: &str = refused!(
     "Only a shape or a picture has an outline to style."
 );
 
+/// `setShapeGradient`'s refusal for a node that has no fill to set.
+const SHAPE_FILL_NOT_A_SHAPE: &str = refused!(
+    "shape.fill-not-a-shape",
+    "Only a shape has a fill. A picture's look is its image."
+);
+
 /// A model token (`DashStyle`, `LineEndKind`) from the host, through the
 /// type's own serde names so the two vocabularies cannot drift. O(token).
 fn outline_token<T: serde::de::DeserializeOwned>(token: &str) -> Result<T, String> {
@@ -36526,6 +36587,81 @@ mod tests {
             .expect("dot an unoutlined shape");
         let given = stroke(&bare).expect("the dash gives it an outline");
         assert_eq!((given.dash, given.width_emu), (Some(DashStyle::Dot), 9_525));
+    }
+
+    /// RM-30: Shape Fill ▸ Gradient writes a two-stop `a:gradFill`, linear at
+    /// the asked angle (normalised into 0..360) or radial, and one undo puts the
+    /// old fill back.
+    ///
+    /// Mutation: writing the angle in degrees rather than 60000ths makes the
+    /// first `Linear` assertion fail; dropping the normalisation fails the -90
+    /// case.
+    #[test]
+    fn a_gradient_fill_has_two_stops_and_its_angle() {
+        use casual_doc_model::v1::{GradientKind, GradientStop};
+        let mut d = wasm_document(document_with_shape(None));
+        let id = NodeId::from_parts(9, 4).unwrap();
+        let shape = id.to_string();
+        let fill = |d: &WasmDocument| find_shape(&d.document, id).and_then(|s| s.fill.clone());
+        let before = fill(&d);
+
+        d.set_shape_gradient_inner(&shape, "#3355c4", "#ffffff", Some(90.0))
+            .expect("a linear gradient, top to bottom");
+        let Some(Fill::Gradient { stops, kind }) = fill(&d) else {
+            panic!("a gradient fill, got {:?}", fill(&d));
+        };
+        assert_eq!(kind, GradientKind::Linear { angle: 5_400_000 });
+        assert_eq!(
+            stops,
+            vec![
+                GradientStop {
+                    position: 0,
+                    color: Rgba {
+                        r: 0x33,
+                        g: 0x55,
+                        b: 0xc4,
+                        a: 255
+                    },
+                },
+                GradientStop {
+                    position: 100_000,
+                    color: Rgba {
+                        r: 0xff,
+                        g: 0xff,
+                        b: 0xff,
+                        a: 255
+                    },
+                },
+            ]
+        );
+
+        d.set_shape_gradient_inner(&shape, "#000000", "#ffffff", Some(-90.0))
+            .expect("up");
+        assert!(matches!(
+            fill(&d),
+            Some(Fill::Gradient {
+                kind: GradientKind::Linear { angle: 16_200_000 },
+                ..
+            })
+        ));
+        d.set_shape_gradient_inner(&shape, "#000000", "#ffffff", None)
+            .expect("from the centre");
+        assert!(matches!(
+            fill(&d),
+            Some(Fill::Gradient {
+                kind: GradientKind::Radial,
+                ..
+            })
+        ));
+
+        d.undo().expect("undo");
+        d.undo().expect("undo");
+        d.undo().expect("undo");
+        assert_eq!(fill(&d), before, "three undos restore the shape's own fill");
+        assert!(
+            d.set_shape_gradient_inner(&shape, "blue", "#ffffff", None)
+                .is_err()
+        );
     }
 
     /// Word's Weight submenu never asks for a colour: choosing one on a shape

@@ -1447,6 +1447,14 @@ export const EN_STRINGS = Object.freeze({
   "shape.arrows.stealthEnd": "Stealth arrow at end",
   "shape.arrows.diamondEnd": "Diamond at end",
   "shape.arrows.ovalEnd": "Round end",
+  // Shape Fill ▸ Gradient (`shape_gradient.mjs`, RM-30): Word's directions.
+  "shape.gradient": "Gradient",
+  "shape.gradient.linearDown": "Linear down",
+  "shape.gradient.linearUp": "Linear up",
+  "shape.gradient.linearRight": "Linear right",
+  "shape.gradient.linearLeft": "Linear left",
+  "shape.gradient.linearDiagonal": "Linear diagonal",
+  "shape.gradient.fromCenter": "From center",
   // Wrap. “In line” is the mode an inserted picture STARTS in, so it leads the
   // row — Google Docs puts it first for the same reason.
   "object.wrap.inline": "In line",
