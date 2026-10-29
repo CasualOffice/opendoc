@@ -9,21 +9,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "alloc-no-stdlib"
-version = "2.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc7bb162ec39d46ab1ca8c77bf72e890535becd1751bb45f64c597edb4c8c6b3"
-
-[[package]]
-name = "alloc-stdlib"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e76a019e91224d279006ff972f1e984179a6e9feb050adba6ce8274aef23195"
-dependencies = [
- "alloc-no-stdlib",
-]
-
-[[package]]
 name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -46,27 +31,6 @@ name = "bitflags"
 version = "2.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
-
-[[package]]
-name = "brotli"
-version = "8.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cc91aac060a7a1e25823bdccbfb6af1875b88f17c6daac97894eed8207166b3"
-dependencies = [
- "alloc-no-stdlib",
- "alloc-stdlib",
- "brotli-decompressor",
-]
-
-[[package]]
-name = "brotli-decompressor"
-version = "5.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a32acac15fe1967bc3986b2a6347dffc965602354ea6f450ad07e8bfd253583"
-dependencies = [
- "alloc-no-stdlib",
- "alloc-stdlib",
-]
 
 [[package]]
 name = "bytemuck"
@@ -148,6 +112,7 @@ dependencies = [
  "casual-doc-model",
  "casual-doc-ocr",
  "casual-doc-pdf-read",
+ "casual-doc-pdf-wire",
  "hayro",
  "read-fonts 0.40.2",
  "skrifa 0.43.2",
@@ -157,12 +122,17 @@ dependencies = [
 name = "casual-doc-pdf-read"
 version = "0.0.1"
 dependencies = [
+ "casual-doc-pdf-wire",
  "flate2",
  "hayro-interpret",
  "hayro-syntax",
  "kurbo",
  "png",
 ]
+
+[[package]]
+name = "casual-doc-pdf-wire"
+version = "0.0.1"
 
 [[package]]
 name = "casual-doc-rtf"
@@ -361,7 +331,6 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "24d285dc30731c8485de5fa732fbdf2b3affdf01e4da7c2135022ca6fa664bf6"
 dependencies = [
- "brotli",
  "hayro-postscript",
 ]
 

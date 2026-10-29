@@ -27,11 +27,6 @@ web-host-fonts = ["casual-doc-layout/external-web-fonts"]
 # module and `renderPage` are unchanged; a host that builds with it gets one more
 # export with `renderPage`'s exact contract to A/B against.
 sparse-raster = ["dep:casual-doc-render-gpu", "casual-doc-render-gpu/sparse-cpu"]
-# PDF import into the editor (`docs/182` P2): the hayro-based reader and the
-# fixed-layout importer behind `beginPdfImport`'s staged job. `webapp/build.sh`
-# turns it on. Without it the binding still exists and refuses with a sentence,
-# so the webapp's import of it always links.
-pdf-import = ["casual-doc-io/pdf-import"]
 
 # Modern rustc emits bulk-memory / sign-ext / nontrapping-fptoint instructions by
 # default; `wasm-opt` must be told to accept them, or validation fails. These
@@ -51,7 +46,11 @@ casual-doc-diff.workspace = true
 casual-doc-edit.workspace = true
 casual-doc-export.workspace = true
 casual-doc-import.workspace = true
-casual-doc-io.workspace = true
+# `pdf-source`: a PDF-origin session without the PDF reader (`docs/182`
+# §17a). The reader, the importer and hayro are in the lazily loaded PDF
+# module (`casual-doc-wasm-pdf`); `webapp/tests/wasm_size.test.mjs` fails the
+# build if hayro is ever linked here again.
+casual-doc-io = { workspace = true, features = ["pdf-source"] }
 casual-doc-layout.workspace = true
 casual-doc-model.workspace = true
 casual-doc-ooxml.workspace = true
@@ -89,6 +88,11 @@ wasm-bindgen = "0.2"
 
 [dev-dependencies]
 casual-doc-pdf.workspace = true
+# The native tests run a real import through the PDF module's own code and the
+# in-process revision reader; dev-dependencies, so the shipped module links
+# neither.
+casual-doc-wasm-pdf.workspace = true
+casual-doc-io = { workspace = true, features = ["pdf-import"] }
 
 [lints]
 workspace = true

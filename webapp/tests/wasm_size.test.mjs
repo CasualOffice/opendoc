@@ -122,11 +122,21 @@ const WASM = fileURLToPath(new URL("../pkg/casual_doc_wasm_bg.wasm", import.meta
 // Re-measured by CI with reflow (P3) and the OCR plumbing merged: 32,437,447 B
 // total, 17,222,892 B code. Ceilings at that plus ~128 KiB, under the same ship-now
 // decision; the lazy PDF module returns the main module to the pre-PDF size.
-const MAX_TOTAL_BYTES = 32_570_000;
+// The lazy PDF module (`docs/182` §17a): the reader, the importer, reflow, OCR and
+// the byte-preserving save's planner moved to `pkg-pdf/`, so this module is back
+// to the pre-PDF engine plus the save's writing half (the overlay layout and
+// `write_incremental_update`), the wire codec and `openPdfImport`. The pre-PDF
+// base (75f91629) measured 27,015,500 B with `build.sh`'s settings, already 5,500 B
+// over the old 27,010,000; its code section was about 13,033,000 B (13,009,766 B at
+// 502ff112 plus that base's growth). Ceilings are that base plus ~128 KiB:
+// 27,150,000 / 13,170,000. AN ESTIMATE, not a measurement: the lane that moved
+// the planner could not run `build.sh` (owner rule, 2026-10-29), so CI's first
+// measurement of this branch replaces both numbers.
+const MAX_TOTAL_BYTES = 27_150_000;
 /** What the browser then compiles. Measured: 10,594,266 B (#805); 11,585,101 B
  *  after §19; 12,349,976 B with HF-360, whose opt-level-3 build is 14,144,617 B,
  *  so a dropped `z` still lands far outside this. */
-const MAX_CODE_BYTES = 17_355_000;
+const MAX_CODE_BYTES = 13_170_000;
 /** The engine is actually in here: a stub or a truncated file must not pass. */
 const MIN_CODE_BYTES = 3_000_000;
 
@@ -191,4 +201,78 @@ test("the code the browser must compile stays inside its budget", () => {
       `12,376,042 B, so first check that webapp/build.sh still exports ` +
       `CARGO_PROFILE_RELEASE_OPT_LEVEL=z.`,
   );
+});
+
+// ---- The lazily loaded PDF module (`docs/182` §17a) -------------------------
+//
+// What a visitor downloads the first time they open a PDF, and never for a
+// DOCX: hayro and the reader, the fixed-layout importer, reflow, the PP-OCRv5
+// runtime (never its models) and the save planner. Budgeted on its own so it
+// cannot quietly absorb the 9 MB of faces the main module ships (it asks the
+// main module for them, `bundledFace`) or grow back into the main module.
+//
+// Before the planner, reflow and the CI-merged P3 fonts, it measured
+// 6,625,258 B. The ceiling adds an ESTIMATE for those (reflow and the CFF/Type1
+// wrapping about 0.7 MB, the planner with the snapshot parser it needs about
+// 0.5 MB) and headroom; CI's first measurement replaces it.
+const PDF_WASM = fileURLToPath(new URL("../pkg-pdf/casual_doc_wasm_pdf_bg.wasm", import.meta.url));
+const PDF_GLUE = fileURLToPath(new URL("../pkg-pdf/casual_doc_wasm_pdf.js", import.meta.url));
+const MAIN_GLUE = fileURLToPath(new URL("../pkg/casual_doc_wasm.js", import.meta.url));
+// MEASURED by CI at 9,359,261 B (the 8,500,000 estimate predated reflow, the P3
+// fonts and the save planner in this module); the ceiling is that plus ~128 KiB.
+const MAX_PDF_TOTAL_BYTES = 9_490_000;
+const MIN_PDF_TOTAL_BYTES = 1_000_000;
+
+/** Every name a wasm-bindgen glue file exports. */
+function exportsOf(glue) {
+  const source = readFileSync(glue, "utf8");
+  const names = new Set();
+  for (const match of source.matchAll(/export (?:async )?(?:function|class|const|let) ([A-Za-z0-9_$]+)/g)) names.add(match[1]);
+  for (const match of source.matchAll(/export \{([^}]*)\}/g)) {
+    for (const part of match[1].split(",")) {
+      const name = part.trim().split(/\s+as\s+/).pop();
+      if (name) names.add(name);
+    }
+  }
+  return names;
+}
+
+/** Whether `bytes` holds the ASCII text `needle` (a crate path in a panic
+ *  location, a type name in a message: what linking a crate leaves behind). */
+function holds(bytes, needle) {
+  return Buffer.from(bytes).includes(Buffer.from(needle, "latin1"));
+}
+
+test("the PDF module stays inside its own budget", () => {
+  assert.ok(existsSync(PDF_WASM), `${PDF_WASM} is missing. ${STALE}`);
+  const total = statSync(PDF_WASM).size;
+  assert.ok(total >= MIN_PDF_TOTAL_BYTES, `the PDF module is only ${total} B — not this module. ${STALE}`);
+  assert.ok(
+    total <= MAX_PDF_TOTAL_BYTES,
+    `the PDF module is ${total.toLocaleString("en-US")} B, over its ` +
+      `${MAX_PDF_TOTAL_BYTES.toLocaleString("en-US")} B budget. If it now carries fonts, it ` +
+      `stopped asking the main module for them (\`setFaceHost\`).`,
+  );
+});
+
+test("the main module exports no PDF import entry point, and links no PDF reader", () => {
+  assert.ok(existsSync(MAIN_GLUE) && existsSync(PDF_GLUE), STALE);
+  const main = exportsOf(MAIN_GLUE);
+  const pdf = exportsOf(PDF_GLUE);
+  // The PDF module's own entry points: the staged import, OCR and the save plan.
+  const importer = ["beginPdfImport", "beginPdfImportWithOcr", "PdfImportJob", "PdfOcrEngine", "PdfOcrModels", "planSave"];
+  for (const name of importer) {
+    assert.ok(pdf.has(name), `the PDF module should export ${name} (the check must be able to see it)`);
+    assert.ok(!main.has(name), `the main module exports ${name}: the PDF importer is linked into the editor again`);
+  }
+  // What the main module does export for a PDF session: open the package, and
+  // hand the save to the PDF module.
+  for (const name of ["openPdfImport", "openPdfReflow", "setPdfSavePlanner", "bundledFace"]) {
+    assert.ok(main.has(name), `the main module should export ${name}`);
+  }
+  // hayro leaves its crate paths in panic locations wherever it is linked; the
+  // PDF module proves the needle is visible at all.
+  assert.ok(holds(readFileSync(PDF_WASM), "hayro"), "the PDF module should link hayro");
+  assert.ok(!holds(readFileSync(WASM), "hayro"), "the main module links hayro again");
+  assert.ok(!holds(readFileSync(WASM), "casual-doc-pdf-save"), "the main module links the save planner");
 });

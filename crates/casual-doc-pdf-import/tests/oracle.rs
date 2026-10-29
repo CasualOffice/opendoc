@@ -209,6 +209,14 @@ fn every_page_matches_hayros_render_of_the_original() {
     for name in &names {
         for (index, (recall, precision)) in agreement(name).into_iter().enumerate() {
             let page = index + 1;
+            // `OPENDOC_ORACLE_SCORES=1` prints every page's score, so a change
+            // that should not move evidence (the font/CMap trim, `docs/182`
+            // §17a) can be compared before and after, not just against 0.85.
+            // Opt-in diagnostics only, so stderr is the right channel.
+            #[allow(clippy::print_stderr)]
+            if std::env::var_os("OPENDOC_ORACLE_SCORES").is_some() {
+                eprintln!("oracle {name} page {page}: recall {recall:.6} precision {precision:.6}");
+            }
             if let Some((_, _, feature)) = REPORTED_LOSSES
                 .iter()
                 .find(|(file, at, _)| file == name && *at == page)
