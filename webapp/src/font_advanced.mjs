@@ -13,7 +13,7 @@ export function characterNumber(key, value) {
   return result;
 }
 export function typeArmedCharacter(doc, focus, text, pf, session, mode) {
-  return doc.typeCharacterText(focus.node, focus.offset, text, pf.bold, pf.italic, pf.underline, pf.strike, pf.sizeHalfPoints, pf.color, pf.highlight, pf.vertAlign, pf.font, session, pf.underlineStyle, pf.underlineColor, JSON.stringify(pf.character), mode === 'suggesting', new Date().toISOString());
+  return doc.typeCharacterText(focus.node, focus.offset, text, pf.bold, pf.italic, pf.underline, pf.strike, pf.sizeHalfPoints, pf.color, pf.highlight, pf.vertAlign, pf.font, session, pf.underlineStyle, pf.underlineColor, JSON.stringify(pf.character ?? {}), mode === 'suggesting', new Date().toISOString());
 }
 export function applyCharacterPatch(io, character) {
   if (io.blockMutationInViewing()) return;

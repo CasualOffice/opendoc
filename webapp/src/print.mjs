@@ -35,12 +35,48 @@ function teardownPrint() {
   printStyleEl = null;
 }
 
+/**
+ * One named `@page` rule per distinct page size, and the name each page uses
+ * (HF-036).
+ *
+ * A single `@page { size }` taken from the FIRST page printed every sheet at
+ * that size, so a portrait document with a landscape section clipped the
+ * landscape pages to a portrait sheet — silently, with the right-hand third of
+ * each wide page missing from the paper. CSS named pages (`@page name { size }`
+ * plus `page: name` on the element) give each sheet its own size, which is what
+ * the real-text PDF path already does with a `/MediaBox` per page.
+ *
+ * Pure, so the grouping is a unit test's business. Sizes compare in whole
+ * twips. O(pages).
+ *
+ * @param {ReadonlyArray<{widthTwip: number, heightTwip: number}>} sizes one per page
+ * @returns {{rules: string, names: string[]}} the CSS and each page's name
+ */
+export function namedPageRules(sizes) {
+  const byKey = new Map();
+  const rules = [];
+  const names = sizes.map(({ widthTwip, heightTwip }) => {
+    const key = `${Math.round(widthTwip)}x${Math.round(heightTwip)}`;
+    if (!byKey.has(key)) {
+      const name = `opendoc-sheet-${byKey.size}`;
+      byKey.set(key, name);
+      const w = widthTwip / TWIPS_PER_INCH;
+      const h = heightTwip / TWIPS_PER_INCH;
+      rules.push(`@page ${name} { size: ${w}in ${h}in; margin: 0; }`);
+    }
+    return byKey.get(key);
+  });
+  return { rules: rules.join("\n  "), names };
+}
+
 /** Build the print-only stylesheet. On screen `#printContainer` is hidden; in
  *  print it is the ONLY visible element (all editor chrome is hidden) and each
  *  page sheet breaks to its own physical page. `@page` is sized to the document
  *  page with zero margin — the rendered raster already includes the document's
- *  own margins, so a sheet margin here would double them. */
-function buildPrintStyle(wIn, hIn) {
+ *  own margins, so a sheet margin here would double them. The unnamed rule is
+ *  the first page's size, for a browser without named pages; `namedRules` give
+ *  every other size its own sheet (HF-036). */
+function buildPrintStyle(wIn, hIn, namedRules = "") {
   const style = document.createElement("style");
   style.id = "printStyle";
   style.textContent = `
@@ -52,6 +88,7 @@ function buildPrintStyle(wIn, hIn) {
   #printContainer .print-page { display: block; break-after: page; page-break-after: always; }
   #printContainer .print-page:last-child { break-after: auto; page-break-after: auto; }
   @page { size: ${wIn}in ${hIn}in; margin: 0; }
+  ${namedRules}
 }`;
   return style;
 }
@@ -323,6 +360,15 @@ function printViaRaster(doc) {
   container.id = "printContainer";
   container.setAttribute("aria-hidden", "true");
 
+  // Every page's own size, read once, so each sheet is its own size (HF-036).
+  const sizes = [];
+  for (let i = 0; i < count; i++) {
+    const size = doc.pageSize(i);
+    sizes.push({ widthTwip: size.widthTwip, heightTwip: size.heightTwip });
+    size.free();
+  }
+  const named = namedPageRules(sizes);
+
   for (let i = 0; i < count; i++) {
     let bmp;
     try {
@@ -339,14 +385,14 @@ function printViaRaster(doc) {
     bmp.free(); // return the RGBA buffer to WASM now, not at GC.
     // Present the high-res raster at the page's true physical size so it fills
     // the (margin-0) sheet exactly and prints at full resolution.
-    const size = doc.pageSize(i);
-    canvas.style.width = `${size.widthTwip / TWIPS_PER_INCH}in`;
-    canvas.style.height = `${size.heightTwip / TWIPS_PER_INCH}in`;
-    size.free();
+    canvas.style.width = `${sizes[i].widthTwip / TWIPS_PER_INCH}in`;
+    canvas.style.height = `${sizes[i].heightTwip / TWIPS_PER_INCH}in`;
+    canvas.style.page = named.names[i];
+    canvas.dataset.printSheet = named.names[i];
     container.appendChild(canvas);
   }
 
-  printStyleEl = buildPrintStyle(sheetWIn, sheetHIn);
+  printStyleEl = buildPrintStyle(sheetWIn, sheetHIn, named.rules);
   document.head.appendChild(printStyleEl); // hides the container on screen first
   document.body.appendChild(container);
   try {

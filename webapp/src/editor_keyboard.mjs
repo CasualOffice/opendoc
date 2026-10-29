@@ -448,18 +448,12 @@ export function createKeyboard(ed) {
         );
       } else if (ed.pendingFormat) {
         const pf = ed.pendingFormat; // armed format persists across consecutive typing
-        if (
-          ed.reviewMode === "suggesting" &&
-          !pf.character && (pf.underlineStyle != null || pf.underlineColor != null)
-        ) {
-          ed.setStatus(
-            "Underline style and color are not tracked yet; switch to Editing to type with them",
-            "error",
-          );
-          return;
-        }
+        // An armed underline style or colour types through the character path,
+        // which records both as a tracked insert in Suggesting mode (HF-255) —
+        // the plain styled insert below has no field for either.
+        const armedUnderline = pf.underlineStyle != null || pf.underlineColor != null;
         await ed.runEdit(
-          () => pf.character ? typeArmedCharacter(ed.doc, focus, typed, pf, session, ed.reviewMode) : ed.reviewMode === "suggesting"
+          () => pf.character || (armedUnderline && ed.reviewMode === "suggesting") ? typeArmedCharacter(ed.doc, focus, typed, pf, session, ed.reviewMode) : ed.reviewMode === "suggesting"
             ? ed.doc.suggestStyledInsert(
               focus.node,
               focus.offset,

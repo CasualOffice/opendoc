@@ -36116,6 +36116,53 @@ mod tests {
         assert_eq!(d.document, unchanged);
     }
 
+    /// HF-121: the caret on an EMPTY centred or right-aligned paragraph sits where
+    /// the first typed character lands, not at the left margin. Mutation: drop the
+    /// anchor run in `flow::ensure_nonempty_paragraph` (`line.runs.extend(anchor)`)
+    /// and the centred caret reads the left text's x, so the first assertion fails.
+    #[test]
+    fn an_empty_aligned_paragraph_puts_the_caret_where_typing_will_land() {
+        let mut d = open_document(b"Text\n\n\nMore").expect("open plain text");
+        let ids: Vec<String> = d
+            .ordered_paragraphs()
+            .iter()
+            .map(|(id, _)| id.to_string())
+            .collect();
+        assert_eq!(ids.len(), 4, "two empty paragraphs between two lines");
+        d.set_alignment(&ids[1], 0, &ids[1], 0, "center")
+            .expect("centre");
+        d.set_alignment(&ids[2], 0, &ids[2], 0, "right")
+            .expect("right-align");
+        let x = |d: &WasmDocument, node: &str| d.caret_rect(node, 0)[1];
+        let left = x(&d, &ids[0]);
+        let centred = x(&d, &ids[1]);
+        let right = x(&d, &ids[2]);
+        assert!(
+            centred > left + 2_000,
+            "the centred caret ({centred}) is near the middle, not at the margin ({left})"
+        );
+        assert!(
+            right > centred + 2_000,
+            "the right-aligned caret ({right}) is at the far edge"
+        );
+        // Typing lands where the caret was: one centred character starts within
+        // half its own width of the empty-line caret.
+        d.insert_text(&ids[1], 0, "M".to_owned()).expect("type");
+        let typed = x(&d, &ids[1]);
+        assert!(
+            (typed - centred).abs() <= 200,
+            "the typed character starts at {typed}, the caret was at {centred}"
+        );
+        // A start-aligned empty paragraph is unchanged: its caret is the margin.
+        let plain = open_document(b"Text\n\nMore").expect("open plain text");
+        let plain_ids: Vec<String> = plain
+            .ordered_paragraphs()
+            .iter()
+            .map(|(id, _)| id.to_string())
+            .collect();
+        assert_eq!(x(&plain, &plain_ids[1]), x(&plain, &plain_ids[0]));
+    }
+
     #[test]
     fn restarting_numbered_list_carries_contiguous_items() {
         let mut d = open_document(RICH_DOCX).expect("open corpus docx");
