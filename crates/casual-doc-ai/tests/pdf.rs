@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use casual_doc_ai::{Session, SessionConfig};
+use casual_doc_ai::{PdfLayout, Session, SessionConfig};
 use casual_doc_io::pdf_ocr;
 
 fn prose() -> Vec<u8> {
@@ -136,9 +136,41 @@ fn a_session_opened_with_the_hosts_ocr_reads_a_scan() {
     assert!(text.pdf_ocr_summary().is_none());
 }
 
+/// A PDF opens as a flowing document by default (`docs/182` §4): no frames,
+/// the text in body paragraphs, and it does not convert again. Mutation:
+/// make `PdfLayout::default()` `Fixed` and the body holds `TextBox`.
+#[test]
+fn a_pdf_session_opens_as_a_flowing_document_by_default() {
+    let pdf = Session::open(&prose(), "prose.pdf", SessionConfig::default()).expect("opens");
+    assert!(!body(&pdf).contains("TextBox"), "{}", body(&pdf));
+    assert!(body(&pdf).contains("quick brown fox"));
+    assert_eq!(pdf.pdf_layout(), Some(PdfLayout::Flowing));
+    assert_eq!(
+        pdf.convert_pdf_to_flowing().unwrap_err().code,
+        "already-flowing"
+    );
+    let fixed = Session::open_pdf(
+        &prose(),
+        "prose.pdf",
+        SessionConfig::default(),
+        None,
+        PdfLayout::Fixed,
+    )
+    .expect("opens");
+    assert!(body(&fixed).contains("TextBox"), "fixed layout: frames");
+    assert_eq!(fixed.pdf_layout(), Some(PdfLayout::Fixed));
+}
+
 #[test]
 fn converting_a_pdf_session_opens_a_new_flowing_session() {
-    let pdf = Session::open(&prose(), "prose.pdf", SessionConfig::default()).expect("opens");
+    let pdf = Session::open_pdf(
+        &prose(),
+        "prose.pdf",
+        SessionConfig::default(),
+        None,
+        PdfLayout::Fixed,
+    )
+    .expect("opens");
     let before = pdf.document().clone();
     assert!(body(&pdf).contains("TextBox"), "fixed layout: frames");
     let flowing = pdf.convert_pdf_to_flowing().expect("converts");

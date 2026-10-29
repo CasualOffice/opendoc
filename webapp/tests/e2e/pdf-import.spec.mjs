@@ -44,13 +44,58 @@ async function closeFindingsIfOpen(page) {
 test.describe("PDF import in the editor", () => {
   test.setTimeout(120_000);
 
-  test("a PDF opens behind a progress dialog, is summarised, edits in a frame, and saves as PDF and DOCX", async ({
+  // `docs/182` §4: a PDF opens as a flowing document, as Word and Google Docs
+  // open one. The progress dialog offers "Keep exact page layout"; left
+  // unticked, what opens is body paragraphs, saved as DOCX by default, and
+  // the summary says the layout was inferred. Mutation: make `layoutOf`
+  // return "fixed" for `import` and the summary is `pdfDisclosure`.
+  test("a PDF opens as a flowing document by default, and Keep exact page layout reopens its pages", async ({
     page,
     consoleErrors,
   }) => {
     await installIdleGate(page);
     await gotoEditor(page);
     await startHeldPdfImport(page);
+    const keep = page.locator("#pdfImportDialogKeepLayout");
+    await expect(keep).toBeVisible();
+    await expect(keep).not.toBeChecked();
+    await expect(page.locator("#pdfImportDialogKeepLayoutLabel")).toHaveText("Keep exact page layout");
+    await page.evaluate(() => window.__releaseIdle());
+    await expect(dialog(page)).toBeHidden({ timeout: 60_000 });
+    await expect(page.locator("#docTitle")).toHaveValue(NAME);
+    await expect(findings(page)).toBeVisible();
+    const disclosure = findings(page).locator('[data-kind="pdfFlowingDisclosure"]');
+    await expect(disclosure).toContainText("A flowing document rebuilt from a PDF");
+    await expect(disclosure.locator('[data-fact="keepLayout"]')).toContainText("Keep exact page layout");
+    await expect(findings(page).locator('[data-feature="pdf.import.layout_inferred"]')).toBeVisible();
+    await closeFindingsIfOpen(page);
+    await expect(page.locator("#a11yDocument")).toContainText("quick brown fox");
+    await expect(page.locator("#saveFormat")).toHaveValue("org.openxmlformats.wordprocessingml.document");
+    // Saved as PDF it is a new file, never the original written back.
+    const original = await readFile(FIXTURE);
+    const pdf = await download(page, "file.export.pdf");
+    expect(pdf.bytes.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(pdf.bytes.equals(original), "a flowing document does not write the original back").toBe(false);
+
+    // The command, from the File menu: the same PDF with its pages as drawn.
+    await runAppMenuCommand(page, "file", "file.pdf.keepExactLayout");
+    await expect(findings(page)).toBeVisible({ timeout: 60_000 });
+    await expect(findings(page).locator('[data-kind="pdfDisclosure"]')).toContainText("This is a reconstruction of a PDF");
+    await closeFindingsIfOpen(page);
+    await expect.poll(() => pageCount(page)).toBe(2);
+    const exact = await download(page, "file.export.pdf");
+    expect(exact.bytes.equals(original), "the exact layout saves back as the original bytes").toBe(true);
+    expect(consoleErrors).toEqual([]);
+  });
+
+  test("with its exact page layout kept, a PDF is summarised, edits in a frame, and saves as PDF and DOCX", async ({
+    page,
+    consoleErrors,
+  }) => {
+    await installIdleGate(page);
+    await gotoEditor(page, "&pdfLayout=fixed");
+    await startHeldPdfImport(page);
+    await expect(page.locator("#pdfImportDialogKeepLayout")).toBeChecked();
 
     // The dialog, before any page: titled with the file, Cancel focused, the bar
     // determinate once admission has counted the pages.

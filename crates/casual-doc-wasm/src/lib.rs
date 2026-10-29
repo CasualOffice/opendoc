@@ -1264,6 +1264,7 @@ impl WasmDocument {
             .map_err(|error| format!("export {format}: {error}"))?
         } else {
             let registry = builtin_registry_with_limits(viewer_limits(), viewer_text_limits());
+
             // The host's opt-in `people.xml` entry (`docs/175` §6.2) on the editor's own Save
             // too, not only on `exportDocx`: one rule, both paths. A save that adds one is a
             // changed document, so it is never the source bytes copied through.
@@ -1280,6 +1281,12 @@ impl WasmDocument {
                 let copy = person
                     .clone()
                     .map(|person| save_identity::with_person(document, person));
+                // A PDF-origin session saved as anything but PDF has no
+                // envelope that writer could use: a flowing PDF opens as a
+                // DOCX-shaped document (`docs/182` §4), and offering the DOCX
+                // writer the PDF's envelope would only report a source it
+                // cannot read.
+                let source = source.filter(|source| source.format().as_str() != formats::PDF);
                 registry.export(
                     &format,
                     ExportRequest {

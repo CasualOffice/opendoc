@@ -110,7 +110,7 @@ export const FILE_SURFACE = [
   // so does this, behind one row so the File menu stays inside
   // `menu-submenus.spec.mjs`'s cap. Disabled with the reason for any other
   // document, never absent (SKILL §10).
-  { nameKey: "menuGroup.pdf", submenu: true, ids: ["file.pdf.recogniseText", "file.pdf.convertToFlowing"] },
+  { nameKey: "menuGroup.pdf", submenu: true, ids: ["file.pdf.keepExactLayout", "file.pdf.recogniseText", "file.pdf.convertToFlowing"] },
   // Version history's PRIMARY home, and the one both references agree on: Google
   // Docs is File ▸ Version history ▸ See version history, ONLYOFFICE is a File
   // page item (`DE.Views.FileMenu.btnHistory`), Word puts it under File ▸ Info.

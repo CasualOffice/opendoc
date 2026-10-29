@@ -352,6 +352,9 @@ export function createFileOpen(ed) {
       // inferred, approximated or left out, plus what the reconstruction is.
       ed.compatFindings.show(ed.doc.importReportJson, "import", {
         origin,
+        // A PDF opens flowing unless its exact layout was kept (`docs/182` §4):
+        // the summary says which document this is.
+        layout: origin === "pdf" ? ed.doc.pdfLayout || "fixed" : null,
         ocr: origin === "pdf" ? ocrSummaryOf(ed.doc) : null,
         actions: origin ? () => pdfCommands.summaryActions() : null,
       });

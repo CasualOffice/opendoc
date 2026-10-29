@@ -24,9 +24,15 @@
 //! rejected a second). Keeping it, and the digests, in one lazily loaded
 //! module is the point of the split.
 //!
-//! **Convert to flowing document** (`docs/182` §4.2, §18) is the PDF module's
-//! too: it re-runs the staged import over [`WasmDocument::pdf_original`] and
-//! reflows it, and [`open_pdf_reflow`] opens the result as a new document.
+//! **A PDF opens as a flowing document** (`docs/182` §4), as Word's PDF Reflow
+//! and Google Docs open one: the PDF module finishes the staged import with
+//! `finishReflowed`, and [`open_pdf_reflow`] opens that flowing document,
+//! keeping the original only so the editor can open the PDF again ("Keep
+//! exact page layout", "Recognise text"). It saves as DOCX by default; saved
+//! as PDF it is a new file. [`open_pdf_import`] opens the fixed layout, the
+//! explicit choice, and the only one whose save goes back into the original.
+//! "Convert to flowing document" from a fixed-layout session is the same
+//! finish over [`WasmDocument::pdf_original`].
 //!
 //! [`bundled_face`] is the other direction: the PDF module draws the standard
 //! 14 with the Liberation faces this module ships, asked for by name.
@@ -63,22 +69,29 @@ pub(crate) fn open(package: &[u8], original: Vec<u8>) -> Result<WasmDocument, St
     session_from_import(imported, MAX_WHOLE_LAYOUT_BLOCKS)
 }
 
-/// Opens the PDF module's reflowed package ("Convert to flowing document") as
-/// a NEW document. It is not a PDF-origin session: it keeps no original, so
-/// it saves through the semantic writers and cannot be converted again. Its
-/// import report is the reflow's inferences. O(document).
+/// Opens the PDF module's flowing package (the default open, and "Convert to
+/// flowing document") as a flowing document. `original`, when given, must be
+/// the PDF the package was made from; it is kept so the editor can open the
+/// PDF again (in its exact layout, or with OCR), never written back: saved as
+/// PDF the document is the semantic writer, reported. Without it the session
+/// is not PDF-origin. Its import report is the whole import's, with
+/// `pdf.import.layout_inferred`. O(document).
 ///
 /// # Errors
 ///
-/// A malformed package or a document the snapshot importer refuses.
+/// A malformed package, an original that is not the converted file, or a
+/// document the snapshot importer refuses.
 #[wasm_bindgen(js_name = openPdfReflow)]
-pub fn open_pdf_reflow(package: &[u8]) -> Result<WasmDocument, JsValue> {
-    open_reflow(package).map_err(to_js)
+pub fn open_pdf_reflow(package: &[u8], original: Option<Vec<u8>>) -> Result<WasmDocument, JsValue> {
+    open_reflow(package, original).map_err(to_js)
 }
 
 /// [`open_pdf_reflow`] without `JsValue`.
-pub(crate) fn open_reflow(package: &[u8]) -> Result<WasmDocument, String> {
-    let imported = import_pdf_reflow_package(package, SnapshotLimits::default())
+pub(crate) fn open_reflow(
+    package: &[u8],
+    original: Option<Vec<u8>>,
+) -> Result<WasmDocument, String> {
+    let imported = import_pdf_reflow_package(package, original, SnapshotLimits::default())
         .map_err(|error| format!("convert PDF: {error}"))?;
     session_from_import(imported, MAX_WHOLE_LAYOUT_BLOCKS)
 }
@@ -95,6 +108,20 @@ impl WasmDocument {
             .source
             .as_ref()
             .is_some_and(|source| casual_doc_io::pdf_retained_original(source).is_some())
+    }
+
+    /// How this PDF-origin session was opened: `"flowing"` (the default open)
+    /// or `"fixed"` ("Keep exact page layout"); empty for a session that is
+    /// not PDF-origin. O(1).
+    #[wasm_bindgen(getter, js_name = pdfLayout)]
+    #[must_use]
+    pub fn pdf_layout(&self) -> String {
+        self.format_state
+            .source
+            .as_ref()
+            .filter(|source| casual_doc_io::pdf_retained_original(source).is_some())
+            .and_then(casual_doc_io::pdf_layout)
+            .map_or_else(String::new, |layout| layout.as_str().to_owned())
     }
 
     /// The PDF this session was opened from, byte for byte, for the PDF
@@ -375,13 +402,64 @@ mod tests {
         assert_eq!(docx.pdf_ocr_summary_json(), "");
     }
 
+    /// The default open (`docs/182` §4): the flowing package with its
+    /// original is a PDF-origin flowing session that saves as DOCX by
+    /// default and, saved as PDF, writes a new file rather than the original.
+    /// Mutation: make the flowing branch of `export_pdf_session` fall through
+    /// and the unchanged save is `PROSE` again.
+    #[test]
+    fn a_pdf_opens_as_a_flowing_session_that_never_writes_the_original_back() {
+        install_planner(Box::new(casual_doc_io::InProcessSavePlanner));
+        let mut job = casual_doc_wasm_pdf::begin(PROSE.to_vec(), None).expect("begin");
+        let package = job.finish_reflowed_package().expect("reflow");
+        let mut doc = open_reflow(&package, Some(PROSE.to_vec())).expect("open");
+        assert_eq!(
+            doc.source_format(),
+            DOCX,
+            "a flowing document saves as DOCX"
+        );
+        assert_eq!(doc.pdf_layout(), "flowing");
+        assert!(doc.pdf_origin(), "the original is kept to open it again");
+        assert_eq!(doc.pdf_original().as_deref(), Some(PROSE));
+        assert!(
+            doc.import_report_json()
+                .contains("pdf.import.layout_inferred"),
+            "{}",
+            doc.import_report_json()
+        );
+        let pdf = doc
+            .export_as_inner(PDF, "exact_if_unchanged")
+            .expect("export");
+        assert!(pdf.bytes != PROSE && !pdf.bytes.starts_with(PROSE));
+        assert!(
+            pdf.report_json
+                .contains("pdf.export.preserve_fallback.flowing_layout"),
+            "{}",
+            pdf.report_json
+        );
+        // Saved as DOCX the PDF's envelope is not offered to the DOCX writer.
+        let docx = doc
+            .export_as_inner(DOCX, "preserve_when_safe")
+            .expect("docx");
+        assert!(
+            !docx.report_json.contains("source_envelope"),
+            "{}",
+            docx.report_json
+        );
+        // Another file's package is refused.
+        let mut other = PROSE.to_vec();
+        other.push(b'\n');
+        assert!(open_reflow(&package, Some(other)).is_err());
+    }
+
     #[test]
     fn a_reflowed_pdf_opens_as_a_new_document_that_is_not_a_pdf_session() {
         let mut job = casual_doc_wasm_pdf::begin(PROSE.to_vec(), None).expect("begin");
         let package = job.finish_reflowed_package().expect("reflow");
-        let doc = open_reflow(&package).expect("open");
+        let doc = open_reflow(&package, None).expect("open");
         assert!(!doc.pdf_origin(), "a converted document keeps no original");
         assert_eq!(doc.pdf_original(), None);
+        assert_eq!(doc.pdf_layout(), "");
         assert!(
             doc.import_report_json().contains("pdf.import."),
             "the reflow's inferences are its report: {}",

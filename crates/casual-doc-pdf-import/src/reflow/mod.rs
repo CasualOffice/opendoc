@@ -40,7 +40,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::v1::Document;
 use casual_doc_pdf_read::{AnnotationEvidence, AnnotationKind, Bounds, LinkTarget, StructNode};
 
-pub use record::{PdfSourceState, Rule, SourceBlock, SourceImage, SourcePage, SourceVector};
+pub use record::{Fill, PdfSourceState, Rule, SourceBlock, SourceImage, SourcePage, SourceVector};
 
 use crate::PdfImportError;
 use crate::group::{self, Line};
@@ -115,9 +115,11 @@ impl ILine {
             .map(|c| c.baseline)
             .next()
             .unwrap_or(line.baseline);
+        // A glyph with no Unicode (empty text) has no character to edit.
         let chars = line
             .chars
             .iter()
+            .filter(|c| !c.text.is_empty())
             .map(|c| PChar {
                 text: c.text.clone(),
                 x0: c.x0,
@@ -427,6 +429,7 @@ fn tagged_table(cells: Vec<Element>) -> Element {
                         vmerge: None,
                         x0: left,
                         x1: right,
+                        ..tables::ICell::default()
                     })
                     .collect()
             })
@@ -434,6 +437,7 @@ fn tagged_table(cells: Vec<Element>) -> Element {
         columns: widths,
         ruled: false,
         bounds: (x0, y0, x1, y1),
+        ..ITable::default()
     };
     Element {
         page,
@@ -1001,11 +1005,22 @@ pub fn build(
         attach_markers(&mut lines_only, &mut work.paragraphs);
         let mut page_tables: Vec<ITable> = Vec::new();
         let grids = tables::grids(&page.rules, &mut work.tables);
-        for table in tables::ruled_tables(&grids, &mut lines_only, &mut work.tables) {
+        for mut table in tables::ruled_tables(&grids, &mut lines_only, &mut work.tables) {
             if table.rows.iter().flatten().any(|c| !c.lines.is_empty()) {
+                // Filled rectangles under its cells are their shading.
+                tables::shade(&mut table, &page.fills, &mut work.tables);
                 page_tables.push(table);
             }
         }
+        // Vector art that is only flat rectangles inside a ruled table is that
+        // table's shading (now on its cells), not a drawing of its own.
+        let shading_art: BTreeSet<usize> = page
+            .vectors
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| tables::is_shading(v, &page_tables))
+            .map(|(i, _)| i)
+            .collect();
         // Footnotes leave the body; a note the previous page left open
         // continues in this page's note area.
         if flow
@@ -1204,7 +1219,13 @@ pub fn build(
             .images
             .iter()
             .map(|image| Graphic::Image(image.clone()))
-            .chain(page.vectors.iter().map(|v| Graphic::Vector(v.clone())));
+            .chain(
+                page.vectors
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| !shading_art.contains(i))
+                    .map(|(_, v)| Graphic::Vector(v.clone())),
+            );
         for graphic in graphics {
             let b = graphic.bounds();
             let rect = Rect {
@@ -1330,6 +1351,10 @@ pub fn build(
             Some(page.index),
         );
     }
+    // A table the page break cut in two is one table (its repeated header
+    // row, when the next page repeats it, becomes a header row).
+    let continued = tables::continue_across_pages(&mut flow.elements, &mut work.tables);
+    findings.record(report::TABLE_CONTINUED, Outcome::Mapped, continued, None);
     findings.record(
         report::READING_ORDER_INFERRED,
         Outcome::Mapped,

@@ -154,6 +154,12 @@ fn substitute_family(font: &FontEvidence) -> String {
             name[..cut].to_owned()
         });
     let lower = base.to_ascii_lowercase();
+    // A symbol font's codes were mapped to real characters by the reader
+    // (`casual_doc_pdf_read::unicode`), which the symbol face does not draw:
+    // a text face (and the shaper's fallback) does.
+    if casual_doc_pdf_read::unicode::FontCodes::of(&font.name).symbolic() {
+        return "Arial".to_owned();
+    }
     if lower.starts_with("helvetica") || lower == "arialmt" {
         "Arial".to_owned()
     } else if lower.starts_with("times") {
@@ -366,6 +372,26 @@ impl Builder {
             report::IMAGE_UNDECODABLE,
             Outcome::Omitted,
             notes.undecodable_images,
+            at,
+        );
+        // The reader made the text fit for editing (`casual_doc_pdf_read::
+        // unicode`): reported, because the characters are not the PDF's.
+        self.findings.record(
+            report::LIGATURE_DECOMPOSED,
+            Outcome::Mapped,
+            notes.ligatures_decomposed,
+            at,
+        );
+        self.findings.record(
+            report::SYMBOL_FONT_MAPPED,
+            Outcome::Mapped,
+            notes.symbols_mapped,
+            at,
+        );
+        self.findings.record(
+            report::MARKS_COMPOSED,
+            Outcome::Mapped,
+            notes.marks_composed,
             at,
         );
 
@@ -853,7 +879,13 @@ impl Builder {
                     && c.style == style
                     && link_of[at] == link
                 {
-                    text.push_str(&c.text);
+                    // A soft hyphen the PDF drew is a hyphen on the page; in a
+                    // frame whose lines are the PDF's it must stay visible.
+                    if c.text.contains('\u{ad}') {
+                        text.push_str(&c.text.replace('\u{ad}', "-"));
+                    } else {
+                        text.push_str(&c.text);
+                    }
                     at += 1;
                 }
                 if text.is_empty() {

@@ -4,7 +4,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { convertRefusal, ocrSummaryOf, recogniseRefusal } from "../src/pdf_commands.mjs";
+import {
+  convertRefusal,
+  hostPdfLayout,
+  keepLayoutRefusal,
+  ocrSummaryOf,
+  recogniseRefusal,
+} from "../src/pdf_commands.mjs";
 import { ocrManifestUrl } from "../src/ocr_models.mjs";
 
 const scan = { rasterPages: 2, hybridPages: 0, regionsRecognized: 0, regionsSkipped: 2, wordsKept: 0, provider: null };
@@ -30,9 +36,27 @@ test("Recognise text runs only on a PDF's unread scans with a host's models", ()
   assert.equal(recogniseRefusal({ pdfOrigin: true, ocr: null, manifestUrl: url }), "pdfOcr.noScans");
 });
 
-test("Convert to flowing document runs only on a PDF-origin session", () => {
-  assert.equal(convertRefusal({ pdfOrigin: true }), "");
-  assert.equal(convertRefusal({ pdfOrigin: false }), "pdfReflow.notPdf");
+test("Convert to flowing document runs only on a PDF opened with its exact layout", () => {
+  assert.equal(convertRefusal({ pdfOrigin: true, pdfLayout: "fixed" }), "");
+  assert.equal(convertRefusal({ pdfOrigin: true, pdfLayout: "flowing" }), "pdfReflow.alreadyFlowing");
+  assert.equal(convertRefusal({ pdfOrigin: false, pdfLayout: "" }), "pdfReflow.notPdf");
+});
+
+// `docs/182` §4: a PDF opens flowing, so "Keep exact page layout" is offered
+// on a flowing PDF and refused, with the reason, on anything else. Mutation:
+// return "" for `pdfLayout: "fixed"` and the second assertion fails.
+test("Keep exact page layout runs only on a flowing PDF session", () => {
+  assert.equal(keepLayoutRefusal({ pdfOrigin: true, pdfLayout: "flowing" }), "");
+  assert.equal(keepLayoutRefusal({ pdfOrigin: true, pdfLayout: "fixed" }), "pdfFixed.already");
+  assert.equal(keepLayoutRefusal({ pdfOrigin: false, pdfLayout: "" }), "pdfFixed.notPdf");
+});
+
+test("the host's layout option keeps the exact layout only when it says so, in any case", () => {
+  assert.equal(hostPdfLayout(""), "flowing");
+  assert.equal(hostPdfLayout("?pdfLayout=fixed"), "fixed");
+  assert.equal(hostPdfLayout("?PDFLAYOUT=Fixed"), "fixed");
+  assert.equal(hostPdfLayout("?pdfLayout=flowing"), "flowing");
+  assert.equal(hostPdfLayout("?pdfLayout=sideways"), "flowing");
 });
 
 test("the OCR summary is read from the session, and a session without one has none", () => {

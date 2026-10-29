@@ -364,7 +364,7 @@ pub fn join(lines: &[&ILine]) -> (Vec<PChar>, u32) {
                 .is_some_and(char::is_lowercase);
             let hyphen = out
                 .last()
-                .is_some_and(|c| c.text == "-" || c.text == "\u{ad}");
+                .is_some_and(|c| matches!(c.text.as_str(), "-" | "\u{2010}" | "\u{ad}"));
             let before_letter = out.len() >= 2
                 && out[out.len() - 2]
                     .text
@@ -388,6 +388,13 @@ pub fn join(lines: &[&ILine]) -> (Vec<PChar>, u32) {
             chars.remove(0);
         }
         out.extend(chars);
+    }
+    // A soft hyphen the PDF drew at the end of the paragraph is a hyphen the
+    // reader saw; one inside the text is the discretionary hyphen it means.
+    if let Some(last) = out.last_mut()
+        && last.text == "\u{ad}"
+    {
+        last.text = "-".to_owned();
     }
     (out, removed)
 }

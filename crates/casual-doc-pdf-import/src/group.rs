@@ -64,7 +64,9 @@ pub struct Style {
 /// One glyph placed on a line.
 #[derive(Clone, Debug)]
 pub struct Char {
-    /// Its text (U+FFFD when unmapped).
+    /// Its text; empty when the glyph has no Unicode (reported
+    /// `native_text_invalid`, read by OCR when a provider is present). The
+    /// glyph keeps its place and its show, never a U+FFFD.
     pub text: String,
     /// Left edge.
     pub x0: f64,
@@ -166,7 +168,7 @@ pub fn blocks_counted(runs: &[&GlyphRunEvidence], params: LayoutParams) -> (Vec<
         };
         for glyph in &run.glyphs {
             let c = Char {
-                text: glyph.text.clone().unwrap_or_else(|| "\u{fffd}".to_owned()),
+                text: glyph.text.clone().unwrap_or_default(),
                 x0: glyph.origin.x,
                 x1: glyph.origin.x + glyph.advance.max(0.0),
                 baseline: glyph.origin.y,

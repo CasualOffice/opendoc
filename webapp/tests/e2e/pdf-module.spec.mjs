@@ -174,7 +174,8 @@ test.describe("the lazily loaded PDF module", () => {
     page,
     consoleErrors,
   }) => {
-    await gotoEditor(page);
+    // Only the exact page layout saves back into the original (`docs/182` §4).
+    await gotoEditor(page, "&pdfLayout=fixed");
     await page.locator("#file").setInputFiles(PDF_FIXTURE);
     await expect.poll(() => page.locator("#docTitle").inputValue(), { timeout: 60_000 }).toBe("synthetic-prose.pdf");
     await closeFindings(page);
@@ -210,8 +211,12 @@ test.describe("the lazily loaded PDF module", () => {
     const action = findings(page).locator('[data-action="file.pdf.recogniseText"]');
     await expect(action).toBeDisabled();
     await expect(action).toHaveAttribute("title", /no recognition models/);
-    // The other command is live for a PDF.
-    await expect(findings(page).locator('[data-action="file.pdf.convertToFlowing"]')).toBeEnabled();
+    // A PDF opens flowing: keeping its exact layout is live, converting is
+    // not (it already is a flowing document), said with the reason.
+    await expect(findings(page).locator('[data-action="file.pdf.keepExactLayout"]')).toBeEnabled();
+    const convert = findings(page).locator('[data-action="file.pdf.convertToFlowing"]');
+    await expect(convert).toBeDisabled();
+    await expect(convert).toHaveAttribute("title", "This PDF is already open as a flowing document.");
   });
 
   // Quarantined, owned by the PDF lane: with `?pdfOcrModels=` the editor never reaches
@@ -261,7 +266,8 @@ test.describe("the lazily loaded PDF module", () => {
       const row = await menuCommandRow(page, "file", "file.pdf.convertToFlowing");
       return row;
     };
-    await gotoEditor(page);
+    // Conversion starts from a PDF opened with its exact page layout.
+    await gotoEditor(page, "&pdfLayout=fixed");
     // A DOCX: the row is there, disabled with the reason (SKILL §10).
     let row = await convertRow();
     await expect(row).toBeDisabled();

@@ -286,6 +286,16 @@ export const FEATURE_CATALOGUE = Object.freeze({
   "pdf.import.page_break_inferred": entry("findings.feature.pdfPageBreaks", CONTENT),
   "pdf.import.float_inferred": entry("findings.feature.pdfFloats", CONTENT),
   "pdf.import.vector_placed": entry("findings.feature.pdfVectorsPlaced", CONTENT),
+  // The default open, a flowing document (`docs/182` §4), and the characters
+  // made fit for editing (§18.8).
+  "pdf.import.layout_inferred": entry("findings.feature.pdfLayoutInferred", CONTENT),
+  "pdf.import.exact_save_fixed_layout_only": entry("findings.feature.pdfExactSaveFixedOnly", CONTENT),
+  "pdf.import.flowing_unavailable": entry("findings.feature.pdfFlowingUnavailable", CONTENT),
+  "pdf.import.ligature_decomposed": entry("findings.feature.pdfLigatures", CONTENT),
+  "pdf.import.symbol_font_mapped": entry("findings.feature.pdfSymbolFonts", CONTENT),
+  "pdf.import.marks_composed": entry("findings.feature.pdfMarksComposed", CONTENT),
+  "pdf.import.quote_from_glyph_name": entry("findings.feature.pdfQuotes", CONTENT),
+  "pdf.import.table_continued": entry("findings.feature.pdfTableContinued", CONTENT),
   // What saving a PDF-origin document as PDF did (`docs/182` §19, the export
   // report): kept the original, added an update to it, or regenerated it.
   "pdf.export.incremental_update": entry("findings.feature.pdfIncrementalUpdate", CONTENT),

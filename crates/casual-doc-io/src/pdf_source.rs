@@ -38,12 +38,61 @@ use crate::{
     ModelOutcome, RecoveryReport, RetentionOutcome, SourceEnvelope, formats,
 };
 
+/// How a PDF opens (`docs/182` §4): the host's choice, made at open.
+///
+/// **Flowing** is the default, the way Word's PDF Reflow and Google Docs
+/// open a PDF: the page layout is evidence, and the document is an ordinary
+/// flowing one (paragraphs with styles, lists, tables, header and footer,
+/// footnotes, columns, inline pictures), with no text boxes and no
+/// positioned frames. It saves as DOCX by default, and saved as PDF it is a
+/// new file. **Fixed** ("Keep exact page layout") keeps every page as it is
+/// drawn, one positioned frame per text block; only fixed layout saves back
+/// into the original PDF (the byte-preserving save, P4).
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum PdfLayout {
+    /// Reconstructed as a flowing document (the default).
+    #[default]
+    Flowing,
+    /// Every page as drawn, in positioned frames.
+    Fixed,
+}
+
+impl PdfLayout {
+    /// `flowing` or `fixed`: the token hosts pass (`?pdfLayout=`, MCP's
+    /// `layout`). O(1).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Flowing => "flowing",
+            Self::Fixed => "fixed",
+        }
+    }
+
+    /// The layout a host's token names, in any case; `None` for anything
+    /// else. O(token).
+    #[must_use]
+    pub fn parse(token: &str) -> Option<Self> {
+        if token.eq_ignore_ascii_case("flowing") {
+            Some(Self::Flowing)
+        } else if token.eq_ignore_ascii_case("fixed") {
+            Some(Self::Fixed)
+        } else {
+            None
+        }
+    }
+}
+
 /// The original bytes an import retained, and what a byte-preserving save
 /// compares the document against (the `I4` sidecar, `docs/182` §7 P4). No PDF
 /// object reaches the model (MF-I1).
 #[derive(Debug)]
 pub(crate) struct PdfSourceState {
+    /// Fixed layout's original is what the exact and byte-preserving saves
+    /// write; a flowing document's is kept only so the host can open the PDF
+    /// again (in its exact layout, or with OCR). Never written back.
     pub(crate) original: Option<Arc<Vec<u8>>>,
+    /// How this session's document was made from the PDF.
+    pub(crate) layout: PdfLayout,
     /// The encoded `casual-doc-pdf-wire` `Baseline`: opaque here.
     pub(crate) baseline: Option<Vec<u8>>,
     /// What OCR did, reduced to what the editor's summary shows (no
@@ -74,6 +123,7 @@ pub(crate) struct SessionParts<'a> {
     pub(crate) ocr_detail: Option<casual_doc_pdf_import::OcrSummary>,
     #[cfg(feature = "pdf-import")]
     pub(crate) reflow: Option<(casual_doc_pdf_import::PdfSourceState, u64)>,
+    pub(crate) layout: PdfLayout,
 }
 
 fn pdf_format() -> FormatId {
@@ -104,6 +154,7 @@ pub fn pdf_session_artifact(
         ocr_detail: None,
         #[cfg(feature = "pdf-import")]
         reflow: None,
+        layout: PdfLayout::Fixed,
     })
 }
 
@@ -120,6 +171,7 @@ pub(crate) fn session_artifact(parts: SessionParts<'_>) -> ImportArtifact {
         ocr_detail,
         #[cfg(feature = "pdf-import")]
         reflow,
+        layout,
     } = parts;
     let mut report = CompatibilityReport {
         entries: findings
@@ -149,9 +201,19 @@ pub(crate) fn session_artifact(parts: SessionParts<'_>) -> ImportArtifact {
             .collect(),
     };
     report.sort();
-    // A baseline without the original it describes preserves nothing.
-    let baseline = baseline.filter(|_| original.is_some());
+    // A baseline without the original it describes preserves nothing, and a
+    // flowing document has nothing of the original's pages to preserve.
+    let baseline = baseline.filter(|_| original.is_some() && layout == PdfLayout::Fixed);
     let format = pdf_format();
+    // A flowing document is a DOCX-shaped document: that is what it saves as
+    // unless the host asks otherwise. The envelope stays the PDF's, so the
+    // host can still open the original again.
+    let profile = match layout {
+        PdfLayout::Fixed => format.clone(),
+        PdfLayout::Flowing => {
+            FormatId::new(formats::DOCX).expect("built-in DOCX format id is valid")
+        }
+    };
     ImportArtifact {
         document,
         resources,
@@ -161,6 +223,7 @@ pub(crate) fn session_artifact(parts: SessionParts<'_>) -> ImportArtifact {
             PdfSourceState {
                 baseline,
                 original,
+                layout,
                 ocr,
                 #[cfg(feature = "pdf-import")]
                 ocr_detail,
@@ -171,7 +234,7 @@ pub(crate) fn session_artifact(parts: SessionParts<'_>) -> ImportArtifact {
         report,
         recovery: RecoveryReport::default(),
         format: FormatProfile {
-            format,
+            format: profile,
             version: None,
         },
     }
@@ -215,23 +278,37 @@ pub fn import_pdf_package(
         ocr_detail: None,
         #[cfg(feature = "pdf-import")]
         reflow: None,
+        layout: PdfLayout::Fixed,
     }))
 }
 
-/// Opens the PDF module's reflowed package ("Convert to flowing document",
-/// `docs/182` §4.2, §18) as a new document: its document, media and the
-/// reflow's own inference report. It retains no original and no baseline, so
-/// it is not a PDF-origin session: saved as PDF it is the semantic writer, and
-/// it cannot be converted again. O(document).
+/// Opens the PDF module's flowing package (the default open, and "Convert to
+/// flowing document", `docs/182` §4.2, §18) as a flowing document: its
+/// document, media and report. `original`, when the host passes the file the
+/// package was made from, must be that file (same length and hash); it is
+/// kept only so the host can open the PDF again (in its exact page layout,
+/// or with OCR), never written back. There is no baseline: saved as PDF the
+/// document is the semantic writer, reported. It does not convert again.
+/// O(document + original).
 ///
 /// # Errors
 ///
-/// A malformed package, or a document the snapshot importer refuses.
+/// A malformed package, an original that is not the converted file, or a
+/// document the snapshot importer refuses.
 pub fn import_pdf_reflow_package(
     package: &[u8],
+    original: Option<Vec<u8>>,
     limits: SnapshotLimits,
 ) -> Result<ImportArtifact, AdapterError> {
     let package = ImportPackage::decode(package).map_err(|e| AdapterError::new(e.to_string()))?;
+    if let Some(original) = &original
+        && (package.original_len != original.len() as u64
+            || package.original_hash != fnv1a64(original))
+    {
+        return Err(AdapterError::new(
+            "the PDF module's conversion is of a different file than the one being opened",
+        ));
+    }
     let document = Document::from_json(&package.document_json, limits)
         .map_err(|e| AdapterError::new(format!("the converted PDF's document: {e}")))?;
     let mut resources = DocumentResources::default();
@@ -243,13 +320,21 @@ pub fn import_pdf_reflow_package(
         resources,
         findings: &package.findings,
         baseline: None,
-        original: None,
+        original: original.map(Arc::new),
         ocr: package.ocr,
         #[cfg(feature = "pdf-import")]
         ocr_detail: None,
         #[cfg(feature = "pdf-import")]
         reflow: None,
+        layout: PdfLayout::Flowing,
     }))
+}
+
+/// How the PDF-origin session `source` was opened; `None` when `source` is
+/// not a PDF's. O(1).
+#[must_use]
+pub fn pdf_layout(source: &SourceEnvelope) -> Option<PdfLayout> {
+    source.state::<PdfSourceState>().map(|state| state.layout)
 }
 
 /// What OCR did during the import a PDF-origin session came from, reduced to
@@ -261,7 +346,9 @@ pub fn pdf_ocr_record(source: &SourceEnvelope) -> Option<&OcrSummary> {
 }
 
 /// The original bytes `source` retained, when it is a PDF session made with
-/// retention. O(1).
+/// retention: what the host imports again (in either layout, or with OCR).
+/// Only a fixed-layout session's original is ever saved back
+/// ([`export_pdf_session`]). O(1).
 #[must_use]
 pub fn pdf_retained_original(source: &SourceEnvelope) -> Option<&[u8]> {
     source
@@ -306,6 +393,17 @@ pub fn export_pdf_session(
     };
     if request.mode == ExportMode::Semantic {
         return semantic(request);
+    }
+    // A flowing document is a new document: its PDF is the semantic writer's,
+    // and the report says why the original was not kept (`docs/182` §7).
+    if state.is_some_and(|state| state.layout == PdfLayout::Flowing) {
+        let mut exported = semantic(request)?;
+        exported
+            .report
+            .entries
+            .push(Fallback::new("flowing_layout").entry());
+        exported.report.sort();
+        return Ok(exported);
     }
     if request.mode == ExportMode::ExactIfUnchanged
         && request.source_unchanged

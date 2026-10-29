@@ -68,6 +68,7 @@ Embeddability
 Embeddable
 Endnote
 Esc
+FFFD
 FFM
 FID
 FNV
@@ -220,6 +221,7 @@ TLS
 TOC
 TXT
 Tauri
+TeX
 Tesseract
 TrueType
 Twip

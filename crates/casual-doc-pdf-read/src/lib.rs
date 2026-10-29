@@ -28,6 +28,7 @@
 
 mod admit;
 mod annots;
+mod compose_table;
 pub mod content;
 mod device;
 mod evidence;
@@ -35,6 +36,7 @@ mod limits;
 pub mod provision;
 pub mod revision;
 mod structure;
+pub mod unicode;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;

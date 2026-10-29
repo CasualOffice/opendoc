@@ -29,7 +29,14 @@
 
 use std::collections::BTreeMap;
 
-use super::record::Rule;
+use super::record::{Fill, Rule, SourceVector};
+use super::{EKind, Element};
+
+/// A fill covering at least this share of a cell is the cell's shading.
+pub const SHADING_COVER: f64 = 0.9;
+/// Two tables on consecutive pages continue one another when their columns
+/// agree within this many points.
+pub const CONTINUATION_TOLERANCE: f64 = 3.0;
 use super::{ILine, PChar};
 
 /// Rules closer than this (points) meet.
@@ -56,6 +63,12 @@ pub struct ICell {
     pub x0: f64,
     /// Right edge.
     pub x1: f64,
+    /// Top edge (its row's), when the table knows it.
+    pub y0: f64,
+    /// Bottom edge.
+    pub y1: f64,
+    /// Background, from a filled rectangle under the cell.
+    pub shading: Option<[u8; 3]>,
 }
 
 /// One table.
@@ -69,6 +82,13 @@ pub struct ITable {
     pub ruled: bool,
     /// Bounds: left, top, right, bottom.
     pub bounds: (f64, f64, f64, f64),
+    /// The colour of its rules, when they agree on one (else black).
+    pub border_color: Option<[u8; 3]>,
+    /// The thickness of its rules, in points (the most common one).
+    pub border_width: f64,
+    /// Leading rows that repeat as a header on every page the table spans
+    /// (`w:tblHeader`): the row a table continued across a page repeated.
+    pub header_rows: usize,
 }
 
 struct UnionFind(Vec<usize>);
@@ -183,6 +203,75 @@ fn split_line(line: &ILine, xs: &[f64]) -> Vec<(usize, ILine)> {
 struct Borders {
     vertical: Vec<Vec<(f64, f64)>>,
     horizontal: Vec<Vec<(f64, f64)>>,
+    /// The rules' colour (when they agree) and most common thickness.
+    style: (Option<[u8; 3]>, f64),
+}
+
+/// The colour all `rules` share (`None` when they disagree or none says)
+/// and their most common thickness in points (to a tenth). O(r log r).
+fn rule_style(rules: &[Rule]) -> (Option<[u8; 3]>, f64) {
+    let mut colors = rules.iter().map(|r| r.color.map(|[r, g, b, _]| [r, g, b]));
+    let first = colors.next().flatten();
+    let color = first.filter(|c| colors.all(|other| other == Some(*c)));
+    let mut widths: BTreeMap<u32, usize> = BTreeMap::new();
+    for r in rules {
+        let thickness = (r.x1 - r.x0).min(r.y1 - r.y0).max(0.0);
+        *widths.entry((thickness * 10.0).round() as u32).or_default() += 1;
+    }
+    let width = widths
+        .into_iter()
+        .max_by_key(|(w, n)| (*n, std::cmp::Reverse(*w)))
+        .map_or(0.5, |(w, _)| f64::from(w) / 10.0);
+    (color, width)
+}
+
+/// A cell's lines with the pieces of one visual line put back together: a
+/// line the grid split at a column border, in a cell spanning that border,
+/// is two pieces on one baseline. Sorted top to bottom, then left to right.
+/// O(l log l).
+#[must_use]
+pub fn rejoin(mut lines: Vec<ILine>) -> Vec<ILine> {
+    lines.sort_by(|a, b| {
+        a.baseline
+            .total_cmp(&b.baseline)
+            .then(a.x0.total_cmp(&b.x0))
+    });
+    let mut out: Vec<ILine> = Vec::with_capacity(lines.len());
+    for line in lines {
+        match out.last_mut() {
+            Some(last) if (last.baseline - line.baseline).abs() <= BASELINE_TOLERANCE => {
+                let mut chars = std::mem::take(&mut last.chars);
+                let gap = line.x0 - chars.last().map_or(line.x0, |c| c.x1);
+                let spaced = chars
+                    .last()
+                    .is_some_and(|c| c.text.ends_with(char::is_whitespace))
+                    || line
+                        .chars
+                        .first()
+                        .is_some_and(|c| c.text.starts_with(char::is_whitespace));
+                if gap > 0.25 * line.size.max(1.0)
+                    && !spaced
+                    && let Some(previous) = chars.last()
+                {
+                    let mut space = previous.clone();
+                    space.text = " ".to_owned();
+                    space.x0 = previous.x1;
+                    space.x1 = line.x0;
+                    space.note = None;
+                    space.comments = Vec::new();
+                    space.sup = false;
+                    chars.push(space);
+                }
+                chars.extend(line.chars.iter().cloned());
+                let mut joined = last.with_chars(chars);
+                joined.top = joined.top.min(line.top);
+                joined.bottom = joined.bottom.max(line.bottom);
+                *last = joined;
+            }
+            _ => out.push(line),
+        }
+    }
+    out
 }
 
 /// The index of the position in `at` nearest `v`, within the tolerance.
@@ -201,6 +290,7 @@ impl Borders {
         let mut out = Self {
             vertical: vec![Vec::new(); xs.len()],
             horizontal: vec![Vec::new(); ys.len()],
+            style: rule_style(rules),
         };
         for r in rules {
             if r.horizontal() {
@@ -318,11 +408,15 @@ fn build(
     let (left, top, right, bottom) = (xs[0], ys[0], xs[cols], ys[rows]);
     // Merges: a missing inner vertical border in a row spans; a missing inner
     // horizontal border continues a vertical merge.
+    let (border_color, border_width) = borders.style;
     let mut table = ITable {
         rows: Vec::with_capacity(rows),
         columns: xs.windows(2).map(|w| w[1] - w[0]).collect(),
         ruled: true,
         bounds: (left, top, right, bottom),
+        border_color,
+        border_width,
+        header_rows: 0,
     };
     let mut owner: Vec<Vec<usize>> = vec![vec![usize::MAX; cols]; rows];
     for r in 0..rows {
@@ -340,16 +434,15 @@ fn build(
                 vmerge: None,
                 x0: xs[start],
                 x1: xs[c + 1],
+                y0: ys[r],
+                y1: ys[r + 1],
+                shading: None,
             };
             for k in start..=c {
                 cell.lines.append(&mut contents[r][k]);
                 owner[r][k] = row.len();
             }
-            cell.lines.sort_by(|a, b| {
-                a.baseline
-                    .total_cmp(&b.baseline)
-                    .then(a.x0.total_cmp(&b.x0))
-            });
+            cell.lines = rejoin(std::mem::take(&mut cell.lines));
             row.push(cell);
             c += 1;
         }
@@ -394,6 +487,140 @@ fn build(
         }
     }
     table
+}
+
+/// Gives each cell of `table` the colour of the last flat fill (in paint
+/// order) covering at least [`SHADING_COVER`] of it; a white fill over an
+/// earlier colour clears it, as on the page. Only fills that meet the table
+/// are weighed. O(cells x fills meeting the table).
+pub fn shade(table: &mut ITable, fills: &[Fill], work: &mut u64) {
+    let (left, top, right, bottom) = table.bounds;
+    let meeting: Vec<&Fill> = fills
+        .iter()
+        .filter(|f| {
+            f.bounds.x1 > left && f.bounds.x0 < right && f.bounds.y1 > top && f.bounds.y0 < bottom
+        })
+        .collect();
+    if meeting.is_empty() {
+        return;
+    }
+    for cell in table.rows.iter_mut().flatten() {
+        let area = (cell.x1 - cell.x0) * (cell.y1 - cell.y0);
+        if area <= 0.0 {
+            continue;
+        }
+        for fill in &meeting {
+            *work += 1;
+            let b = fill.bounds;
+            let w = (b.x1.min(cell.x1) - b.x0.max(cell.x0)).max(0.0);
+            let h = (b.y1.min(cell.y1) - b.y0.max(cell.y0)).max(0.0);
+            if w * h >= SHADING_COVER * area {
+                let [r, g, bl, _] = fill.color;
+                cell.shading = ([r, g, bl] != [255, 255, 255]).then_some([r, g, bl]);
+            }
+        }
+    }
+}
+
+/// Whether vector art is a ruled table's shading: every path a flat fill of
+/// rectangles inside one of `tables` (a point of slack). O(paths x tables).
+#[must_use]
+pub fn is_shading(vector: &SourceVector, tables: &[ITable]) -> bool {
+    const SLACK: f64 = 1.0;
+    let b = vector.bounds;
+    tables.iter().any(|t| {
+        let (left, top, right, bottom) = t.bounds;
+        t.ruled
+            && b.x0 >= left - SLACK
+            && b.x1 <= right + SLACK
+            && b.y0 >= top - SLACK
+            && b.y1 <= bottom + SLACK
+            && vector.paths.iter().all(|path| {
+                matches!(path.fill, Some(Some(_)))
+                    && path.stroke.is_none()
+                    && super::record::rectangles(path).is_some()
+            })
+    })
+}
+
+/// The text of a row's cells, for comparing a repeated header.
+fn row_text(row: &[ICell]) -> Vec<String> {
+    row.iter()
+        .map(|cell| {
+            cell.lines
+                .iter()
+                .flat_map(|l| l.chars.iter().map(|c| c.text.as_str()))
+                .collect::<String>()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect()
+}
+
+/// Whether `next` continues `table`: as many columns, each within
+/// [`CONTINUATION_TOLERANCE`], from the same left edge, and the same kind
+/// (ruled or not).
+fn continues(table: &ITable, next: &ITable) -> bool {
+    table.ruled == next.ruled
+        && table.columns.len() == next.columns.len()
+        && (table.bounds.0 - next.bounds.0).abs() <= CONTINUATION_TOLERANCE
+        && table
+            .columns
+            .iter()
+            .zip(&next.columns)
+            .all(|(a, b)| (a - b).abs() <= CONTINUATION_TOLERANCE)
+}
+
+/// Joins each table a page break cut in two: a table that is the last
+/// element of its page, followed in reading order by a table that is the
+/// first of the next page with the same columns, takes that table's rows.
+/// When the continuation's first row repeats the table's first row (a header
+/// the producer repeated), the repeat is dropped and the first row becomes a
+/// header row that repeats on every page. Returns how many joins were made.
+/// O(elements + rows).
+pub fn continue_across_pages(elements: &mut Vec<Element>, work: &mut u64) -> u32 {
+    let mut joined = 0;
+    let mut out: Vec<Element> = Vec::with_capacity(elements.len());
+    // The last page the element at the end of `out` reaches.
+    let mut through = 0usize;
+    for element in elements.drain(..) {
+        *work += 1;
+        let page = element.page;
+        let joins = match (out.last(), &element.kind) {
+            (Some(last), EKind::Table(next)) => {
+                through + 1 == page
+                    && matches!(&last.kind, EKind::Table(table) if continues(table, next))
+            }
+            _ => false,
+        };
+        if !joins {
+            through = page;
+            out.push(element);
+            continue;
+        }
+        let EKind::Table(mut next) = element.kind else {
+            unreachable!("checked above")
+        };
+        let Some(EKind::Table(table)) = out.last_mut().map(|e| &mut e.kind) else {
+            unreachable!("checked above")
+        };
+        let repeated = !table.rows.is_empty()
+            && !next.rows.is_empty()
+            && row_text(&table.rows[0]) == row_text(&next.rows[0])
+            && row_text(&table.rows[0]).iter().any(|t| !t.is_empty());
+        if repeated {
+            next.rows.remove(0);
+            table.header_rows = table.header_rows.max(1);
+        }
+        *work += next.rows.len() as u64;
+        // The bounds stay the first page's: they place the table on it.
+        table.rows.append(&mut next.rows);
+        through = page;
+        joined += 1;
+    }
+    *elements = out;
+    joined
 }
 
 /// A whitespace-table candidate: the blocks it links and its confidence.
@@ -533,6 +760,7 @@ pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))]) -> ITable {
                     vmerge: None,
                     x0: *x0,
                     x1: *x1,
+                    ..ICell::default()
                 })
                 .collect()
         })
@@ -572,5 +800,6 @@ pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))]) -> ITable {
         columns: widths,
         ruled: false,
         bounds: (left, top, right, bottom),
+        ..ITable::default()
     }
 }

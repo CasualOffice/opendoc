@@ -22,6 +22,8 @@ use casual_doc_model::v1::{
     WidthType,
 };
 use casual_doc_model::v1::{BorderEdge, NoteNumberRestart, NoteProperties, TableBorders};
+// Own line: cell shading from the PDF's filled rectangles.
+use casual_doc_model::v1::Shading;
 // Own line: floating pictures and vector art.
 use casual_doc_model::v1::{
     AnchorHorizontal, AnchorVertical, AnchoredDrawing, DrawingAnchor, HorizontalAnchor,
@@ -505,15 +507,17 @@ impl Emitter<'_> {
 
     fn table(&mut self, table: &ITable) -> Result<Table, PdfImportError> {
         let mut rows = Vec::with_capacity(table.rows.len());
+        // The rules' own thickness and colour (Word's floor is a quarter
+        // point, `w:sz` 2), so a hairline grid stays a hairline.
         let border = BorderEdge {
             style: "single".to_owned(),
-            size_eighth_points: Some(4),
-            color: None,
+            size_eighth_points: Some(((table.border_width * 8.0).round() as u32).clamp(2, 96)),
+            color: table.border_color.map(|[r, g, b]| RgbColor { r, g, b }),
             theme_color: None,
             space_points: None,
         };
         let body = self.sheet.body.clone();
-        for row in &table.rows {
+        for (r, row) in table.rows.iter().enumerate() {
             let mut cells = Vec::with_capacity(row.len());
             for cell in row {
                 let mut blocks = Vec::new();
@@ -554,6 +558,10 @@ impl Emitter<'_> {
                             value: twips(cell.x1 - cell.x0),
                             width_type: WidthType::Dxa,
                         }),
+                        shading: Shading {
+                            fill: cell.shading.map(|[r, g, b]| RgbColor { r, g, b }),
+                            ..Shading::default()
+                        },
                         ..TableCellProperties::default()
                     },
                     blocks,
@@ -561,7 +569,10 @@ impl Emitter<'_> {
             }
             rows.push(TableRow {
                 id: self.id()?,
-                properties: TableRowProperties::default(),
+                properties: TableRowProperties {
+                    header: r < table.header_rows,
+                    ..TableRowProperties::default()
+                },
                 cells,
             });
         }

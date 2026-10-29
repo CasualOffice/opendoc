@@ -36,9 +36,22 @@
 //! SHA-256 of every model, is in [`pdf_ocr_summary`] of the import's source
 //! envelope (PDFR-I8). Nothing here fetches a model.
 //!
+//! # A PDF opens as a flowing document
+//!
+//! [`PdfImportAdapter`] opens a PDF the way Word's PDF Reflow and Google Docs
+//! do (`docs/182` §4): the page layout is evidence, and the document is an
+//! ordinary flowing one ([`PdfLayout::Flowing`], `PdfImport::flowing`), whose
+//! report lists what was reconstructed (`pdf.import.layout_inferred` and the
+//! `*_inferred` rows). It saves as DOCX by default (its artifact's
+//! [`crate::FormatProfile`] is DOCX); saved as PDF it is a new file. The
+//! original is retained (with `retain_source`) only so the host can open the
+//! PDF again. [`PdfImportAdapter::with_layout`] with [`PdfLayout::Fixed`]
+//! ("Keep exact page layout") opens every page as drawn, in positioned
+//! frames; only that layout saves back into the original (P4).
+//!
 //! # Reflow
 //!
-//! The envelope also keeps the import's reflow source (`docs/182` §3, the I4
+//! A fixed-layout envelope also keeps the import's reflow source (`docs/182` §3, the I4
 //! sidecar: text blocks, rules, pictures by part name, vector art,
 //! annotations, the structure tree), so [`pdf_reflow`] makes "Convert to
 //! flowing document" from an open session without parsing the PDF again
@@ -55,6 +68,8 @@ use crate::pdf_source::{
     PdfSavePlanner, PdfSourceState, SessionParts, export_pdf_session, pdf_retained_original,
     session_artifact,
 };
+// Own line: how a PDF opens (`docs/182` §4).
+use crate::pdf_source::PdfLayout;
 use crate::{
     AdapterError, DocumentResources, ExportArtifact, ExportRequest, FormatDescriptor,
     FormatExporter, FormatId, FormatImporter, FormatRegistry, ImportArtifact, ImportRequest,
@@ -107,6 +122,7 @@ pub struct PdfImportAdapter {
     writer: PdfAdapter,
     limits: PdfReadLimits,
     ocr: OcrOptions,
+    layout: PdfLayout,
 }
 
 impl PdfImportAdapter {
@@ -134,7 +150,22 @@ impl PdfImportAdapter {
             writer,
             limits,
             ocr,
+            layout: PdfLayout::default(),
         }
+    }
+
+    /// The adapter opening PDFs in `layout`: [`PdfLayout::Flowing`] (the
+    /// default) or [`PdfLayout::Fixed`] ("Keep exact page layout").
+    #[must_use]
+    pub fn with_layout(mut self, layout: PdfLayout) -> Self {
+        self.layout = layout;
+        self
+    }
+
+    /// How this adapter opens a PDF. O(1).
+    #[must_use]
+    pub fn layout(&self) -> PdfLayout {
+        self.layout
     }
 
     /// The original bytes `source` retained, when it is a PDF envelope made
@@ -161,6 +192,7 @@ impl PdfImportAdapter {
             job,
             retain_source,
             format: self.descriptor.id.clone(),
+            layout: self.layout,
         })
     }
 }
@@ -178,6 +210,7 @@ pub struct PdfStagedImport {
     job: ImportJob,
     retain_source: bool,
     format: FormatId,
+    layout: PdfLayout,
 }
 
 impl PdfStagedImport {
@@ -205,7 +238,10 @@ impl PdfStagedImport {
     /// Cancellation, a page that broke a limit, or an invalid model.
     pub fn finish(self) -> Result<ImportArtifact, AdapterError> {
         let imported = self.job.finish().map_err(adapter_error)?;
-        Ok(artifact(imported, self.retain_source, self.format))
+        Ok(match self.layout {
+            PdfLayout::Fixed => artifact(imported, self.retain_source, self.format),
+            PdfLayout::Flowing => flowing_artifact(imported, self.retain_source),
+        })
     }
 }
 
@@ -255,9 +291,54 @@ pub fn pdf_reflow(
                 ocr: state.ocr.clone(),
                 ocr_detail: state.ocr_detail.clone(),
                 reflow: None,
+                layout: PdfLayout::Flowing,
             })
         }),
     )
+}
+
+/// The default open: the import reconstructed as a flowing document
+/// (`PdfImport::flowing`). Should the reconstruction fail validation (an
+/// importer defect, never a property of the input), the PDF still opens, in
+/// its exact layout, and the report says so
+/// (`pdf.import.flowing_unavailable`). O(document log document).
+fn flowing_artifact(imported: PdfImport, retain_source: bool) -> ImportArtifact {
+    let reflowed = match imported.flowing() {
+        Ok(reflowed) => reflowed,
+        Err(_) => {
+            let mut fixed = artifact(
+                imported,
+                retain_source,
+                FormatId::new(formats::PDF).expect("valid"),
+            );
+            fixed.report.entries.push(crate::CompatibilityEntry {
+                feature: casual_doc_pdf_import::report::FLOWING_UNAVAILABLE.to_owned(),
+                occurrences: 1,
+                location: crate::FeatureLocation::default(),
+                model_outcome: crate::ModelOutcome::Degraded,
+                retention_outcome: crate::RetentionOutcome::NotApplicable,
+            });
+            fixed.report.sort();
+            return fixed;
+        }
+    };
+    let findings = casual_doc_pdf_import::wire::findings(&reflowed.report);
+    let ocr = casual_doc_pdf_import::wire::ocr(&imported.ocr);
+    let mut resources = DocumentResources::default();
+    for (name, bytes) in reflowed.resources {
+        resources.insert(name, bytes);
+    }
+    session_artifact(SessionParts {
+        document: reflowed.document,
+        resources,
+        findings: &findings,
+        baseline: None,
+        original: retain_source.then_some(imported.original),
+        ocr,
+        ocr_detail: Some(imported.ocr),
+        reflow: None,
+        layout: PdfLayout::Flowing,
+    })
 }
 
 fn artifact(imported: PdfImport, retain_source: bool, _format: FormatId) -> ImportArtifact {
@@ -286,6 +367,7 @@ fn artifact(imported: PdfImport, retain_source: bool, _format: FormatId) -> Impo
         ocr,
         ocr_detail: Some(imported.ocr),
         reflow: Some((imported.source, imported.namespace)),
+        layout: PdfLayout::Fixed,
     })
 }
 
@@ -343,9 +425,25 @@ pub fn enable_pdf_import_with_ocr(
     limits: PdfReadLimits,
     ocr: OcrOptions,
 ) -> Result<(), IoError> {
+    enable_pdf_import_with_layout(registry, limits, ocr, PdfLayout::default())
+}
+
+/// [`enable_pdf_import_with_ocr`] opening PDFs in `layout`: the host's
+/// "Keep exact page layout" ([`PdfLayout::Fixed`]) or the default flowing
+/// document.
+///
+/// # Errors
+///
+/// Never in practice: re-registration into a cleared slot cannot collide.
+pub fn enable_pdf_import_with_layout(
+    registry: &mut FormatRegistry,
+    limits: PdfReadLimits,
+    ocr: OcrOptions,
+    layout: PdfLayout,
+) -> Result<(), IoError> {
     let id = FormatId::new(formats::PDF).expect("built-in PDF format id is valid");
     registry.unregister(&id);
-    let adapter = Arc::new(PdfImportAdapter::with_ocr(limits, ocr));
+    let adapter = Arc::new(PdfImportAdapter::with_ocr(limits, ocr).with_layout(layout));
     registry.register_importer(adapter.clone())?;
     registry.register_exporter(adapter)
 }
@@ -541,9 +639,61 @@ mod tests {
         ));
     }
 
+    /// The default open is the flowing document (`docs/182` §4): paragraphs
+    /// in the body, not one positioned frame per text block, saved as DOCX
+    /// by default, its report saying the layout was inferred. Mutation:
+    /// make `PdfLayout::default()` `Fixed` and `body` holds `TextBox`.
+    #[test]
+    fn a_pdf_opens_as_a_flowing_document_by_default() {
+        let registry = builtin_registry_with_pdf_import();
+        let artifact = registry
+            .import(
+                DetectionRequest {
+                    bytes: PROSE,
+                    selection: FormatSelection::Auto,
+                    file_name_hint: Some("prose.pdf"),
+                    mime_hint: None,
+                },
+                true,
+            )
+            .expect("import");
+        let body = format!("{:?}", artifact.document.body());
+        assert!(!body.contains("TextBox"), "{body}");
+        assert!(body.contains("Paragraph"), "{body}");
+        assert_eq!(artifact.format.format.as_str(), formats::DOCX);
+        let features: Vec<&str> = artifact
+            .report
+            .entries
+            .iter()
+            .map(|e| e.feature.as_str())
+            .collect();
+        for wanted in [
+            "pdf.import.layout_inferred",
+            "pdf.import.exact_save_fixed_layout_only",
+            "pdf.import.paragraph_boundary_inferred",
+            // What reading the pages found is in the flowing report too.
+            "pdf.import.font_substituted",
+        ] {
+            assert!(features.contains(&wanted), "{wanted}: {features:?}");
+        }
+        assert_eq!(
+            crate::pdf_layout(&artifact.source),
+            Some(PdfLayout::Flowing)
+        );
+        // A flowing document does not convert again.
+        assert!(pdf_reflow(&artifact.source, &artifact.resources).is_none());
+    }
+
     #[test]
     fn an_opted_in_registry_detects_imports_and_reports() {
-        let registry = builtin_registry_with_pdf_import();
+        let mut registry = crate::builtin_registry();
+        enable_pdf_import_with_layout(
+            &mut registry,
+            PdfReadLimits::default(),
+            OcrOptions::default(),
+            PdfLayout::Fixed,
+        )
+        .unwrap();
         assert_eq!(detect(&registry, PROSE).unwrap().as_str(), formats::PDF);
         let descriptor = registry
             .descriptors()
@@ -581,7 +731,7 @@ mod tests {
 
     #[test]
     fn an_unchanged_session_writes_the_original_back_exactly() {
-        let adapter = PdfImportAdapter::default();
+        let adapter = PdfImportAdapter::default().with_layout(PdfLayout::Fixed);
         let artifact = adapter
             .import(ImportRequest {
                 bytes: PROSE,
@@ -631,7 +781,7 @@ mod tests {
 
     #[test]
     fn the_staged_job_cancels_without_producing_anything() {
-        let adapter = PdfImportAdapter::default();
+        let adapter = PdfImportAdapter::default().with_layout(PdfLayout::Fixed);
         let mut job = adapter.begin(PROSE, false).unwrap();
         assert_eq!(job.step(1), Progress::Pending { page: 1, of: 2 });
         job.cancel();
@@ -646,7 +796,7 @@ mod tests {
 
     #[test]
     fn an_open_pdf_converts_to_a_new_flowing_document_from_its_envelope() {
-        let adapter = PdfImportAdapter::default();
+        let adapter = PdfImportAdapter::default().with_layout(PdfLayout::Fixed);
         let artifact = adapter
             .import(ImportRequest {
                 bytes: PROSE,
