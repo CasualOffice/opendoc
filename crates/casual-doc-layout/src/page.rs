@@ -241,6 +241,15 @@ pub enum AnchorContent {
         /// The flowed rows, stacked from the anchor rectangle's origin.
         rows: Vec<BlockFragment>,
     },
+    /// A FLOATING chart (`wp:anchor` around `c:chart`, `docs/109` HF-260): the
+    /// same box-local primitives an in-line chart paints
+    /// ([`crate::text::InlineChart`]), placed at the anchor rectangle and
+    /// clipped to it. Empty when the chart has no drawable projection, so the
+    /// frame is still placed, hit-tested and selectable.
+    Chart {
+        /// The chart's paint primitives, relative to the rectangle's origin.
+        primitives: Vec<crate::text::ChartPrimitive>,
+    },
 }
 
 /// A full turn in `a:xfrm@rot` units (60000ths of a degree).

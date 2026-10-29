@@ -326,6 +326,11 @@ fn anchor_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<DrawingAn
                 }
             }
             InlineNode::Group(group) if group.id == object => return group.anchor.clone(),
+            // A floating chart or diagram (`docs/109` HF-260); an in-line one
+            // answers `None`, as an in-line text box does.
+            InlineNode::EmbeddedObject(embedded) if embedded.id == object => {
+                return embedded.anchor.clone();
+            }
             // Every inline wrapper in the declared container set (`Hyperlink`,
             // `Field`, `Revision`, `Sdt`): a float inside a field result or an
             // inline content control is still a float (`109` HF-166, HF-214).

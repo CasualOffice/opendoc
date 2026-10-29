@@ -153,6 +153,16 @@ fn visit_inlines(inlines: &[InlineNode], measure: Twip, found: &mut Survey) {
                     found.page_anchored_drawing = true;
                 }
             }
+            InlineNode::EmbeddedObject(object) => {
+                if let Some(anchor) = object.anchor.as_ref()
+                    && anchor_is_paper_relative(
+                        anchor.horizontal.relative_from,
+                        anchor.vertical.relative_from,
+                    )
+                {
+                    found.page_anchored_drawing = true;
+                }
+            }
             InlineNode::Group(group) => {
                 if let Some(anchor) = group.anchor.as_ref()
                     && anchor_is_paper_relative(

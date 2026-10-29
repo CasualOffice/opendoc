@@ -776,6 +776,16 @@ fn top_level_anchor(inlines: &[InlineNode], object: NodeId) -> Option<Option<Dra
                 return Some(text_box.anchor.clone());
             }
             InlineNode::Group(group) if group.id == object => return Some(group.anchor.clone()),
+            // A FLOATING chart or diagram positions, wraps and restacks like a
+            // floating picture (`docs/109` HF-260). An in-line one is left out,
+            // as it was: converting a chart between in line and floating is not
+            // offered, so reporting it as an in-line object would offer a wrap
+            // control that could only refuse.
+            InlineNode::EmbeddedObject(embedded)
+                if embedded.id == object && embedded.anchor.is_some() =>
+            {
+                return Some(embedded.anchor.clone());
+            }
             // The declared inline wrappers — `Hyperlink`, `Field`, `Revision`,
             // `Sdt` — so an object inside a field result is reached too (`109`
             // HF-166, HF-214).
@@ -802,6 +812,9 @@ fn top_level_z(inlines: &[InlineNode], object: NodeId) -> Option<u32> {
                 return text_box.relative_height;
             }
             InlineNode::Group(group) if group.id == object => return group.relative_height,
+            InlineNode::EmbeddedObject(embedded) if embedded.id == object => {
+                return embedded.relative_height;
+            }
             // The declared inline wrappers — `Hyperlink`, `Field`, `Revision`,
             // `Sdt` — so an object inside a field result is reached too (`109`
             // HF-166, HF-214).

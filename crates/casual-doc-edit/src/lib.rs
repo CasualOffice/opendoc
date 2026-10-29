@@ -3988,6 +3988,15 @@ fn set_object_anchor_in_inlines(
             InlineNode::Group(group) if group.id == object => {
                 return group.anchor.replace(anchor.clone());
             }
+            // An already-floating chart or diagram (`docs/109` HF-260), on the
+            // same terms as a text box: re-anchoring does not float an in-line
+            // one, which is the anchor-kind conversion's job.
+            InlineNode::EmbeddedObject(embedded) if embedded.id == object => {
+                return embedded
+                    .anchor
+                    .as_mut()
+                    .map(|current| core::mem::replace(current, anchor.clone()));
+            }
             _ => {}
         }
         match inline_descent_mut(inline) {
