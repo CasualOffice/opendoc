@@ -148,3 +148,26 @@ fn a_scan_opens_with_its_text_when_the_host_supplies_ocr() {
     let text = read.plain_text();
     assert!(text.contains("Scanned"), "{text}");
 }
+
+#[test]
+fn the_reflow_option_opens_a_pdf_as_a_flowing_document() {
+    let bytes = fixture("synthetic-prose.pdf");
+    let fixed = ViewerDocument::open(&bytes).expect("opens");
+    let frames =
+        |document: &ViewerDocument| format!("{:?}", document.document().body()).contains("TextBox");
+    assert!(frames(&fixed), "the default is the fixed layout's frames");
+    let options = opendoc_viewer::ViewerOptions::default().with_pdf_reflow(true);
+    let flowing = ViewerDocument::open_with(&bytes, &options).expect("opens");
+    assert!(!frames(&flowing), "reflowed: paragraphs, not frames");
+    let text = flowing.plain_text();
+    assert!(text.contains("quick brown fox"), "{text}");
+    assert!(flowing.page_count() >= 1);
+    // The option means nothing to a format that is not PDF.
+    let docx =
+        std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sample.docx"))
+            .expect("sample.docx");
+    let plain = ViewerDocument::open(&docx).unwrap();
+    let asked = ViewerDocument::open_with(&docx, &options).unwrap();
+    assert_eq!(plain.page_count(), asked.page_count());
+    assert_eq!(plain.plain_text(), asked.plain_text());
+}

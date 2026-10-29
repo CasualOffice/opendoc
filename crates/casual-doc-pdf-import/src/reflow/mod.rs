@@ -22,6 +22,7 @@
 //! | markers with a hanging indent to numbering | `text`, `emit` | `list_inferred` |
 //! | column regions to `SectionColumns` | `order`, `emit` | `columns_inferred` |
 //! | links, notes as comments, destinations as bookmarks | `emit` | `hyperlink_inferred`, `comment_inferred`, `bookmark_inferred`, `link_unresolved` |
+//! | pictures beside text and vector art under it float on their paragraph; other vector art is a group on its own line | here, `emit` | `float_inferred`, `vector_placed`; masks over a picture `vector_omitted` |
 //!
 //! Complexity: O(document log document); every grouping and ordering pass is
 //! guarded by an n-versus-2n work test (SKILL §8), and the counters are on
@@ -39,7 +40,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::v1::Document;
 use casual_doc_pdf_read::{AnnotationEvidence, AnnotationKind, Bounds, LinkTarget, StructNode};
 
-pub use record::{PdfSourceState, Rule, SourceBlock, SourceImage, SourcePage};
+pub use record::{PdfSourceState, Rule, SourceBlock, SourceImage, SourcePage, SourceVector};
 
 use crate::PdfImportError;
 use crate::group::{self, Line};
@@ -187,8 +188,131 @@ pub enum EKind {
     Text(Vec<ILine>),
     /// A table.
     Table(ITable),
+    /// A picture on its own line.
+    Image(SourceImage),
+    /// Vector art on its own line.
+    Vector(SourceVector),
+}
+
+/// A graphic that floats.
+#[derive(Clone, Debug)]
+pub enum Graphic {
     /// A picture.
     Image(SourceImage),
+    /// Vector art, drawn as a shape group.
+    Vector(SourceVector),
+}
+
+impl Graphic {
+    /// Where it sits on its page.
+    #[must_use]
+    pub fn bounds(&self) -> Bounds {
+        match self {
+            Self::Image(image) => image.bounds,
+            Self::Vector(vector) => vector.bounds,
+        }
+    }
+}
+
+/// How a floating graphic wraps.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FloatWrap {
+    /// Text runs down its sides (`wp:wrapSquare`): a graphic beside text.
+    Beside,
+    /// It paints behind the text (`wp:wrapNone behindDoc`): art under text.
+    Behind,
+}
+
+/// A graphic floated on the text element it belongs with.
+#[derive(Clone, Debug)]
+pub struct Float {
+    /// Page.
+    pub page: usize,
+    /// The graphic.
+    pub graphic: Graphic,
+    /// Its wrap.
+    pub wrap: FloatWrap,
+}
+
+/// A graphic at most this share of the page's text width may float beside
+/// text; a wider one has no room for a text channel and stays on its line.
+pub const FLOAT_MAX_WIDTH: f64 = 0.6;
+/// Text beside a graphic shares at least this share of the shorter one's
+/// height with it.
+pub const FLOAT_BAND_SHARE: f64 = 0.5;
+/// Text beside a graphic is at most this far (points) from its edge; text
+/// further away is another column's.
+pub const FLOAT_GAP: f64 = 36.0;
+/// Vector art under at least this share of a text element's area is behind
+/// that text (shading, a panel).
+pub const BEHIND_TEXT_SHARE: f64 = 0.5;
+
+/// Where a graphic goes: `Some((text element, wrap))` when it floats on a
+/// text element, `None` when it keeps its own line in reading order.
+///
+/// - Vector art under at least [`BEHIND_TEXT_SHARE`] of a text element is
+///   behind that text, anchored on the topmost such element.
+/// - A graphic at most [`FLOAT_MAX_WIDTH`] of the text width, with text
+///   beside it (sharing [`FLOAT_BAND_SHARE`] of the shorter height, within
+///   [`FLOAT_GAP`] of its side), floats beside the topmost such text, unless
+///   text above or below it is no wider than 1.25 times the graphic: then it
+///   fills its own column and keeps its line (Word's inline picture).
+///
+/// O(text elements on the page).
+#[must_use]
+pub fn placement(
+    graphic: &Rect,
+    vector: bool,
+    texts: &[(usize, Rect)],
+) -> Option<(usize, FloatWrap)> {
+    let (g, gw, gh) = (graphic, graphic.width(), graphic.height());
+    if vector {
+        let under = texts
+            .iter()
+            .filter(|(_, t)| {
+                let w = (t.x1.min(g.x1) - t.x0.max(g.x0)).max(0.0);
+                let h = (t.y1.min(g.y1) - t.y0.max(g.y0)).max(0.0);
+                let area = (t.width() * t.height()).max(f64::MIN_POSITIVE);
+                w * h >= BEHIND_TEXT_SHARE * area
+            })
+            .min_by(|a, b| a.1.y0.total_cmp(&b.1.y0).then(a.0.cmp(&b.0)));
+        if let Some(&(i, _)) = under {
+            return Some((i, FloatWrap::Behind));
+        }
+    }
+    let left = texts
+        .iter()
+        .map(|(_, t)| t.x0)
+        .fold(f64::INFINITY, f64::min);
+    let right = texts
+        .iter()
+        .map(|(_, t)| t.x1)
+        .fold(f64::NEG_INFINITY, f64::max);
+    if texts.is_empty() || gw > FLOAT_MAX_WIDTH * (right - left) {
+        return None;
+    }
+    let mut beside: Option<(usize, f64)> = None;
+    for &(i, t) in texts {
+        let overlap_x = t.x1.min(g.x1) - t.x0.max(g.x0);
+        if overlap_x > 2.0 {
+            // Above or below it: a column no wider than the graphic is the
+            // graphic's own.
+            if t.width() <= 1.25 * gw {
+                return None;
+            }
+            continue;
+        }
+        let gap = (g.x0 - t.x1).max(t.x0 - g.x1);
+        let shared = t.y1.min(g.y1) - t.y0.max(g.y0);
+        if gap <= FLOAT_GAP
+            && shared > 0.0
+            && shared >= FLOAT_BAND_SHARE * gh.min(t.height())
+            && beside.is_none_or(|(_, top)| t.y0 < top)
+        {
+            beside = Some((i, t.y0));
+        }
+    }
+    beside.map(|(i, _)| (i, FloatWrap::Beside))
 }
 
 /// One element of a page, before and after ordering.
@@ -210,6 +334,8 @@ pub struct Element {
     pub region: Option<usize>,
     /// The structure elements from the root down to the leaf's owner.
     pub lineage: Vec<StructNode>,
+    /// Graphics floated on it (text elements only).
+    pub floats: Vec<Float>,
 }
 
 /// The ordinal of the nearest `role` element on a lineage.
@@ -241,7 +367,9 @@ fn tagged_table(cells: Vec<Element>) -> Element {
     );
     let leaf = cells.iter().filter_map(|c| c.leaf).min();
     let region = cells[0].region;
-    for cell in cells {
+    let mut floats = Vec::new();
+    for mut cell in cells {
+        floats.append(&mut cell.floats);
         x0 = x0.min(cell.rect.x0);
         y0 = y0.min(cell.rect.y0);
         x1 = x1.max(cell.rect.x1);
@@ -316,6 +444,7 @@ fn tagged_table(cells: Vec<Element>) -> Element {
         role: Some("Table".to_owned()),
         region,
         lineage: Vec::new(),
+        floats,
     }
 }
 
@@ -404,6 +533,8 @@ pub struct ReflowWork {
     pub paragraphs: u64,
     /// Annotation placement.
     pub annotations: u64,
+    /// Picture and vector-art placement (text elements weighed per graphic).
+    pub graphics: u64,
 }
 
 /// A finished reflow.
@@ -826,13 +957,15 @@ pub fn build(
     );
     let mut tagged_pages = 0;
     let mut xy_pages = 0;
-    let mut vectors = 0;
+    let mut masks = 0;
+    let mut vectors_placed = 0;
+    let mut floats = 0;
     let mut rotated = 0;
     for page in &state.pages {
         *sizes
             .entry((page.width.round() as i64, page.height.round() as i64))
             .or_default() += 1;
-        vectors += page.vectors;
+        masks += page.masks;
         rotated += page.rotated_runs;
         // Links and notes on this page.
         let mut page_links: Vec<(usize, Bounds)> = Vec::new();
@@ -1035,6 +1168,7 @@ pub fn build(
                 role: node.map(|n| n.role().to_owned()),
                 region: None,
                 lineage: node.map(|n| n.lineage.clone()).unwrap_or_default(),
+                floats: Vec::new(),
             });
         }
         for table in page_tables {
@@ -1055,24 +1189,55 @@ pub fn build(
                 role: None,
                 region: None,
                 lineage: Vec::new(),
+                floats: Vec::new(),
             });
         }
-        for image in &page.images {
-            let b = image.bounds;
+        // Pictures and vector art: floated on the text they sit beside or
+        // under, else on their own line in reading order.
+        let text_rects: Vec<(usize, Rect)> = elements
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| matches!(e.kind, EKind::Text(_)))
+            .map(|(i, e)| (i, e.rect))
+            .collect();
+        let graphics = page
+            .images
+            .iter()
+            .map(|image| Graphic::Image(image.clone()))
+            .chain(page.vectors.iter().map(|v| Graphic::Vector(v.clone())));
+        for graphic in graphics {
+            let b = graphic.bounds();
+            let rect = Rect {
+                x0: b.x0,
+                y0: b.y0,
+                x1: b.x1,
+                y1: b.y1,
+            };
+            let vector = matches!(graphic, Graphic::Vector(_));
+            vectors_placed += u32::from(vector);
+            work.graphics += text_rects.len() as u64;
+            if let Some((anchor, wrap)) = placement(&rect, vector, &text_rects) {
+                floats += 1;
+                elements[anchor].floats.push(Float {
+                    page: page.index,
+                    graphic,
+                    wrap,
+                });
+                continue;
+            }
             elements.push(Element {
                 page: page.index,
-                rect: Rect {
-                    x0: b.x0,
-                    y0: b.y0,
-                    x1: b.x1,
-                    y1: b.y1,
+                rect,
+                kind: match graphic {
+                    Graphic::Image(image) => EKind::Image(image),
+                    Graphic::Vector(vector) => EKind::Vector(vector),
                 },
-                kind: EKind::Image(image.clone()),
                 leaf: None,
                 struct_element: None,
                 role: None,
                 region: None,
                 lineage: Vec::new(),
+                floats: Vec::new(),
             });
         }
         let mut page_bottom = f64::NEG_INFINITY;
@@ -1174,7 +1339,9 @@ pub fn build(
     if state.structure.is_some() && tagged_pages == 0 {
         findings.record(report::TAG_STRUCTURE_IGNORED, Outcome::Degraded, 1, None);
     }
-    findings.record(report::VECTOR_OMITTED, Outcome::Omitted, vectors, None);
+    findings.record(report::VECTOR_OMITTED, Outcome::Omitted, masks, None);
+    findings.record(report::VECTOR_PLACED, Outcome::Mapped, vectors_placed, None);
+    findings.record(report::FLOAT_INFERRED, Outcome::Mapped, floats, None);
     findings.record(report::TEXT_ROTATED, Outcome::Degraded, rotated, None);
     flow.page_size = sizes
         .iter()
@@ -1195,6 +1362,22 @@ pub fn build(
         &mut work,
         namespace,
     )
+}
+
+/// [`build`] in the id namespace [`crate::PdfImport::reflow`] uses for an
+/// import whose own namespace is `import_namespace`: what a host that kept
+/// only the source state and the resources (`casual-doc-io`'s source
+/// envelope) calls to get the same document. O(document log document).
+///
+/// # Errors
+///
+/// As [`build`].
+pub fn build_for_import(
+    state: &PdfSourceState,
+    resources: &BTreeMap<String, Vec<u8>>,
+    import_namespace: u64,
+) -> Result<Reflowed, PdfImportError> {
+    build(state, resources, import_namespace ^ crate::REFLOW_NAMESPACE)
 }
 
 /// Sorts one annotation into links, comments or the omitted count.
