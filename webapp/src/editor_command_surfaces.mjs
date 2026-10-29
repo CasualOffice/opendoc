@@ -159,6 +159,10 @@ export function createCommandSurfaces(ed) {
     { command: "layout.arrange.wrap", label: "Wrap text around object", kw: "wrap text square tight through behind front object image shape arrange", buttons: () => [ed.layoutWrapBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-inspector-wrap-select]") },
     { command: "layout.arrange.position", label: "Object position and size", kw: "position size move object image shape arrange exact geometry", buttons: () => [ed.layoutPositionBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-prop=left]") },
     ...breakSurfaceRows(BREAK_IO),
+    // Link to Previous, Remove and the six page-number positions (HF-192, RM-23):
+    // palette and Insert-menu rows from `editor_header_footer.mjs`, whose band
+    // bar is their in-place face.
+    ...ed.headerFooterBand.surfaceRows(),
     ...arrangeSurfaceRows(ed.objectArrange, {
       bringForward: () => ed.layoutBringForwardBtn,
       sendBackward: () => ed.layoutSendBackwardBtn,

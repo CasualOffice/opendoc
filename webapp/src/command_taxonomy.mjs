@@ -406,7 +406,25 @@ export const APP_MENU_SECTIONS = {
       "insert.footer",
       "layout.firstPageVariant",
       "layout.evenOddVariant",
+      // Link to Previous and Remove, per band (HF-192, RM-23): Word's Header &
+      // Footer tab and ONLYOFFICE's header menu (`mniRemoveHeader`) both carry
+      // them beside Edit header; in compact chrome this menu is their home.
+      "layout.header.linkToPrevious",
+      "layout.footer.linkToPrevious",
+      "layout.header.remove",
+      "layout.footer.remove",
       "layout.headerFooterSettings",
+    ),
+    // ONLYOFFICE's Insert ▸ Page Number gallery and Word's Top / Bottom of Page:
+    // the six positions. "At the cursor" is the Fields submenu's Page number.
+    sub(
+      "menuGroup.pageNumbers",
+      "layout.pageNumber.topLeft",
+      "layout.pageNumber.topCenter",
+      "layout.pageNumber.topRight",
+      "layout.pageNumber.bottomLeft",
+      "layout.pageNumber.bottomCenter",
+      "layout.pageNumber.bottomRight",
     ),
     band("menuGroup.text", "insert.textbox", "insert.dropCap"),
     sub("menuGroup.fields", "insert.field", "insert.field.page", "insert.field.date"),

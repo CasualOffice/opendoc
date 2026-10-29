@@ -1656,30 +1656,22 @@
                  copy of the state. -->
             <label class="dialog-check"><input id="headerFooterDiffOddEven" type="checkbox" /><span data-i18n="headerFooterSettingsDialog.diffOddEven">Different odd and even pages</span></label>
             <label class="dialog-check"><input id="headerFooterDiffFirst" type="checkbox" /><span data-i18n="headerFooterSettingsDialog.diffFirst">Different first page</span></label>
-            <!-- Link to previous. ONLYOFFICE ships this as `chSameAs`
-                 (`view/HeaderFooterTab.js:219`) and DISABLES rather than hides it
-                 when there is no previous section to link to
-                 (`controller/HeaderFooterTab.js:247`, keyed on their core
-                 returning `null` rather than `false` for the first section) —
-                 which is the same rule this product states as "never a dead
-                 control, disabled with a reason".
-
-                 It is offered here READ-ONLY, reflecting the truth the engine
-                 already reports (`runningBands` returns `headerLinked` /
-                 `footerLinked`), and carrying why it cannot be changed yet. The
-                 reason is not laziness: in OOXML a section inherits by OMITTING
-                 `w:headerReference`, so UNLINKING has to materialise a copy of the
-                 inherited body — with fresh node ids for every descendant — or
-                 editing the newly "unlinked" header would still change the
-                 previous section's. The op that points a reference exists
-                 (`Operation::SetSectionRunningRef`, `None` being the linked form)
-                 and the deep copy does not. Shipping the toggle without it would
-                 produce exactly the silent cross-section mutation docs/104 T-01
-                 is about. Designed in docs/129, which also records that the only
-                 deep copy in the tree is the clipboard's and drops 23 of the 27
-                 inline kinds; tracked as its own row. -->
-            <label data-i18n-title="headerFooterSettingsDialog.linkReason" class="dialog-check" title="Unlinking has to copy the inherited header into this section, which the engine cannot do yet"><input id="headerFooterLinkToPrevious" type="checkbox" disabled aria-describedby="headerFooterLinkReason" /><span data-i18n="headerFooterSettingsDialog.linkToPrevious">Link to previous</span></label>
-            <p data-i18n="headerFooterSettingsDialog.linkReason" id="headerFooterLinkReason" class="dialog-note">Unlinking has to copy the inherited header into this section, which the engine cannot do yet — so this shows what the document says and cannot be changed.</p>
+            <!-- Link to previous, LIVE (HF-192). ONLYOFFICE ships one `chSameAs`
+                 checkbox on its contextual tab (`view/HeaderFooterTab.js:219`),
+                 acting on the band the caret is in. This dialog opens from the
+                 BODY, where "which band" has no answer (`docs/129` §5), so it
+                 offers one per band — header and footer link independently
+                 (`docs/85` §8d Q7) — for the page in view. Unlinking copies the
+                 inherited band into the section, page number and pictures
+                 included (`casual_doc_edit::clone`, #645), so nothing on the page
+                 changes until it is edited. They apply at once, like the two
+                 switches above, because they are the same commands as the band
+                 bar's checkbox and the Insert menu's rows. On the first section
+                 both are DISABLED and the reason is on screen, which is what
+                 ONLYOFFICE does (`controller/HeaderFooterTab.js:247`). -->
+            <label class="dialog-check"><input id="headerFooterLinkHeader" type="checkbox" aria-describedby="headerFooterLinkReason" /><span data-i18n="headerFooterSettingsDialog.linkHeader">Header: link to previous section</span></label>
+            <label class="dialog-check"><input id="headerFooterLinkFooter" type="checkbox" aria-describedby="headerFooterLinkReason" /><span data-i18n="headerFooterSettingsDialog.linkFooter">Footer: link to previous section</span></label>
+            <p data-i18n="headerFooterSettingsDialog.firstSectionReason" id="headerFooterLinkReason" class="dialog-note" hidden>The first section has no previous section to link to.</p>
           </fieldset>
           <fieldset class="dialog-group">
             <legend data-i18n="headerFooterSettingsDialog.pageNumbering">Page numbering</legend>
@@ -2078,6 +2070,34 @@
       <button data-i18n="break.section.continuous" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.continuous">Section break (continuous)</button>
       <button data-i18n="break.section.evenPage" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.evenPage">Section break (even page)</button>
       <button data-i18n="break.section.oddPage" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.oddPage">Section break (odd page)</button>
+    </div>
+
+    <!-- The open header's or footer's own bar (HF-192, RM-23) — Google Docs'
+         shape: while a band is open it carries its own small chrome. ONLYOFFICE
+         carries the same controls on a contextual Header & Footer tab
+         (`view/HeaderFooterTab.js` L63-87); this chrome has no contextual tab to
+         spend, so they sit where the band is. `editor_header_footer.mjs` moves
+         this ONE element onto the open page's sheet; every command on it is also
+         an Insert-menu row and a palette row. Link to previous is DISABLED, with
+         its reason as the title, on the first section, which ONLYOFFICE does too
+         (`controller/HeaderFooterTab.js:247`). -->
+    <div data-i18n-label="runningBand.toolbar.label" id="runningBandBar" class="running-band-bar" role="toolbar" aria-label="Header and footer" hidden>
+      <label data-i18n-title="runningBand.linkHeaderTitle" id="runningBandLinkWrap" class="running-band-check" title="Show the previous section's header here, or give this section its own"><input id="runningBandLink" type="checkbox" /><span data-i18n="runningBand.linkToPrevious">Link to previous</span></label>
+      <label class="running-band-check"><input id="runningBandFirstPage" type="checkbox" /><span data-i18n="runningBand.differentFirstPage">Different first page</span></label>
+      <button data-i18n="runningBand.options" id="runningBandOptionsBtn" type="button" class="running-band-button" aria-haspopup="menu" aria-controls="runningBandMenu" aria-expanded="false">Options</button>
+      <button data-i18n-title="runningBand.close.title" data-i18n-label="runningBand.close.label" id="runningBandCloseBtn" type="button" class="running-band-button running-band-close" title="Close the header and footer (Esc)" aria-label="Close header and footer"><span class="ms" aria-hidden="true">close</span></button>
+    </div>
+    <div data-i18n-label="runningBand.options.label" id="runningBandMenu" class="context-menu" hidden role="menu" aria-label="Header and footer options">
+      <button data-i18n="runningBand.differentOddEven" id="runningBandOddEven" type="button" role="menuitemcheckbox" aria-checked="false" class="menu-item">Different odd and even pages</button>
+      <div class="menu-divider"></div>
+      <button data-i18n="runningBand.pageNumberLeft" type="button" role="menuitem" class="menu-item" data-page-number-align="left">Page number at the left</button>
+      <button data-i18n="runningBand.pageNumberCenter" type="button" role="menuitem" class="menu-item" data-page-number-align="center">Page number in the center</button>
+      <button data-i18n="runningBand.pageNumberRight" type="button" role="menuitem" class="menu-item" data-page-number-align="right">Page number at the right</button>
+      <button data-i18n="runningBand.pageNumberHere" id="runningBandPageNumberHere" type="button" role="menuitem" class="menu-item">Page number at the cursor</button>
+      <div class="menu-divider"></div>
+      <button data-i18n="runningBand.settings" id="runningBandSettings" type="button" role="menuitem" class="menu-item">Header and footer options…</button>
+      <button data-i18n="runningBand.removeHeader" id="runningBandRemoveHeader" type="button" role="menuitem" class="menu-item">Remove header</button>
+      <button data-i18n="runningBand.removeFooter" id="runningBandRemoveFooter" type="button" role="menuitem" class="menu-item" hidden>Remove footer</button>
     </div>
 
     <!-- A size grid, not a menu: the container is a dialog holding a `role="grid"`

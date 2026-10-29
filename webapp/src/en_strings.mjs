@@ -426,6 +426,56 @@ export const EN_STRINGS = Object.freeze({
   "headerFooter.stateOn": "on",
   "headerFooter.stateOff": "off",
   "headerFooter.changeFailed": "Could not change the page setup: {message}",
+  // Link to Previous, Remove and the page-number positions (HF-192, RM-23). The
+  // link rows read as switches with their state, like the two variant toggles,
+  // and each state is a whole sentence for the reason given above.
+  "headerFooter.linkHeaderOn": "Header: linked to previous section",
+  "headerFooter.linkHeaderOff": "Header: not linked to previous section",
+  "headerFooter.linkFooterOn": "Footer: linked to previous section",
+  "headerFooter.linkFooterOff": "Footer: not linked to previous section",
+  "headerFooter.removeHeader": "Remove header",
+  "headerFooter.removeFooter": "Remove footer",
+  "headerFooter.firstSectionNoPrevious": "The first section has no previous section to link to",
+  "headerFooter.noHeaderToRemove": "This page has no header to remove",
+  "headerFooter.noFooterToRemove": "This page has no footer to remove",
+  "headerFooter.headerLinked": "This section's header now follows the previous section's",
+  "headerFooter.headerUnlinked": "This section's header is its own now; editing it leaves the previous section's alone",
+  "headerFooter.footerLinked": "This section's footer now follows the previous section's",
+  "headerFooter.footerUnlinked": "This section's footer is its own now; editing it leaves the previous section's alone",
+  // `{items}` is the paste-loss family list ("bookmarks and comments"), the same
+  // nouns a structured paste names, because it is the same deep copy.
+  "headerFooter.copyLoss": "The copy could not carry {items}; they stay with the previous section's.",
+  "headerFooter.headerRemoved": "Header removed from this section; Undo brings it back",
+  "headerFooter.footerRemoved": "Footer removed from this section; Undo brings it back",
+  "headerFooter.notTrackable": "Header and footer changes cannot be tracked yet; switch to Editing",
+  "headerFooter.pageNumberInHeader": "Page number added to the header",
+  "headerFooter.pageNumberInFooter": "Page number added to the footer",
+  "headerFooter.pageNumberEdgeTable": "This band starts or ends with a table; put the caret where the number goes and use Page number at the cursor",
+  "headerFooter.bandChangeFailed": "Could not change the header or footer: {message}",
+  "pageNumber.topLeft": "Page number: top left",
+  "pageNumber.topCenter": "Page number: top center",
+  "pageNumber.topRight": "Page number: top right",
+  "pageNumber.bottomLeft": "Page number: bottom left",
+  "pageNumber.bottomCenter": "Page number: bottom center",
+  "pageNumber.bottomRight": "Page number: bottom right",
+  "menuGroup.pageNumbers": "Page numbers",
+  // The band's own chrome: the marker that opens an absent band, the status
+  // line while one is open, the label Word draws on the band ("Header
+  // -Section 2-"), and the footer half of the bar's Link to previous title (the
+  // header half is the markup's).
+  "runningBand.addHeader": "+ Header",
+  "runningBand.addFooter": "+ Footer",
+  "runningBand.editHeader": "Edit the page header",
+  "runningBand.editFooter": "Edit the page footer",
+  "runningBand.editingHeader": "Editing the header — press Esc to return to the document",
+  "runningBand.editingFooter": "Editing the footer — press Esc to return to the document",
+  "runningBand.header": "Header",
+  "runningBand.footer": "Footer",
+  "runningBand.headerSection": "Header -Section {number}-",
+  "runningBand.footerSection": "Footer -Section {number}-",
+  "runningBand.headerSectionLinked": "Header -Section {number}- · Same as Previous",
+  "runningBand.footerSectionLinked": "Footer -Section {number}- · Same as Previous",
+  "runningBand.linkFooterTitle": "Show the previous section's footer here, or give this section its own",
   // Word's own word for this group: the Header & Footer tab's OPTIONS group.
   // It was "settings", which is the word the Settings command owns — typing
   // "settings" in the palette then put this row ABOVE Settings itself, which is

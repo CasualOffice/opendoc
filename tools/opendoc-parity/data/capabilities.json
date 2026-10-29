@@ -1415,21 +1415,13 @@
       "area": "page",
       "title": "Link to previous",
       "ours": {
-        "partial": {
-          "evidence": {
-            "anchor": {
-              "file": "webapp/editor.html",
-              "literal": "headerFooterLinkToPrevious"
-            }
-          },
-          "missing": "the ability to change it — the checkbox ships disabled and read-only"
-        }
+        "command": "layout.header.linkToPrevious"
       },
       "theirs": {
         "localeKey": "DE.Views.HeaderFooterTab.txtSameAs"
       },
       "rank": 2,
-      "note": "Our dialog shows what the document says and says why it cannot be changed: unlinking needs a deep copy of the inherited band the engine cannot make (docs/129)."
+      "note": "Per band (layout.header.linkToPrevious, layout.footer.linkToPrevious): the open band's bar, the Insert menu, the palette and the Header and footer dialog. Unlinking copies the inherited band, page number and pictures included (casual_doc_edit::clone, docs/129); disabled with the reason on the first section, as theirs is."
     },
     {
       "id": "page.header.oddEven",
@@ -1448,15 +1440,13 @@
       "area": "page",
       "title": "Remove header or footer",
       "ours": {
-        "absent": [
-          "insert.header.remove"
-        ]
+        "command": "layout.header.remove"
       },
       "theirs": {
         "localeKey": "DE.Views.Toolbar.mniRemoveHeader"
       },
       "rank": 3,
-      "note": "There is no removeRunningContent binding, so a band that exists can be emptied but not deleted."
+      "note": "layout.header.remove and layout.footer.remove remove the band from this section and the sections linked to it only; theirs empties a later section's body in place, which also empties every earlier section linked to it."
     },
     {
       "id": "page.hyperlink.insert",
@@ -1759,15 +1749,13 @@
       "area": "page",
       "title": "Page number position presets",
       "ours": {
-        "absent": [
-          "insert.pageNumber.position"
-        ]
+        "command": "layout.pageNumber.bottomCenter"
       },
       "theirs": {
         "localeKey": "DE.Views.HeaderFooterTab.capCurrentPos"
       },
       "rank": 3,
-      "note": "They offer six top and bottom by left, centre and right placements; ours inserts at the caret only."
+      "note": "The six top/bottom by left/centre/right presets (layout.pageNumber.*) plus the field at the caret. They create the band when there is none and keep what it holds, where theirs clears it first."
     },
     {
       "id": "page.pageNumber.startAt",

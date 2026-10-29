@@ -21,6 +21,9 @@ use casual_doc_command::edit::{
     BreakName, LineNumberRestartName, OrientationName, PageKind, PageNumberFormat, WatermarkAngle,
 };
 use casual_doc_command::paragraph::ParagraphChange;
+// Link to Previous, Remove and page-number positions (`docs/109` HF-192, RM-23),
+// on their own line per the parallel-lane import rule.
+use casual_doc_command::edit::{Band, PageNumberSide};
 use casual_doc_command::table::TableEdit;
 use casual_doc_edit::RunningRegion;
 use casual_doc_edit::{Operation, Pos, Range};
@@ -116,6 +119,9 @@ fn needs(edit: &Edit, mode: Mode) -> Profile {
         | Edit::InsertFooter { .. }
         | Edit::SetDifferentFirstPage { .. }
         | Edit::SetDifferentOddEven { .. }
+        | Edit::LinkToPrevious { .. }
+        | Edit::RemoveHeaderFooter { .. }
+        | Edit::InsertPageNumber { .. }
         | Edit::InsertChart { .. }
         | Edit::InsertTableOfContents { .. }
         | Edit::UpdateTableOfContents { .. }
@@ -391,6 +397,21 @@ fn emu(points: f64, label: &str) -> AiResult<i64> {
 }
 
 /// The pages a header or footer is for, as the model's kind. O(1).
+const fn band_region(band: Band) -> RunningRegion {
+    match band {
+        Band::Header => RunningRegion::Header,
+        Band::Footer => RunningRegion::Footer,
+    }
+}
+
+const fn number_align(side: PageNumberSide) -> casual_doc_command::sections::PageNumberAlign {
+    match side {
+        PageNumberSide::Left => casual_doc_command::sections::PageNumberAlign::Left,
+        PageNumberSide::Center => casual_doc_command::sections::PageNumberAlign::Center,
+        PageNumberSide::Right => casual_doc_command::sections::PageNumberAlign::Right,
+    }
+}
+
 fn page_kind(pages: PageKind) -> HeaderFooterKind {
     match pages {
         PageKind::Default => HeaderFooterKind::Default,
@@ -1804,6 +1825,74 @@ fn apply_edit(
                 state,
                 casual_doc_command::sections::set_even_and_odd(*enabled),
             )?;
+        }
+        // The editor's own lowerings (`casual_doc_command::sections`), so an
+        // agent's unlink copies the band exactly as a person's does.
+        Edit::LinkToPrevious {
+            section,
+            band,
+            pages,
+            linked,
+        } => {
+            refuse_untracked(kind, mode)?;
+            sections_of(state, Some(*section))?;
+            let ids = &mut state.ids;
+            let lowered = casual_doc_command::sections::set_linked_to_previous(
+                &state.document,
+                *section as usize,
+                band_region(*band),
+                page_kind(*pages),
+                *linked,
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            if lowered.operations.is_empty() {
+                return Err(AiError::invalid(if *linked {
+                    "That section's band is already linked to the previous section's."
+                } else {
+                    "That section already has its own; it is not linked."
+                }));
+            }
+            commit(state, lowered.operations)?;
+        }
+        Edit::RemoveHeaderFooter {
+            section,
+            band,
+            pages,
+        } => {
+            refuse_untracked(kind, mode)?;
+            sections_of(state, Some(*section))?;
+            let ids = &mut state.ids;
+            let operations = casual_doc_command::sections::remove_running_content(
+                &state.document,
+                *section as usize,
+                band_region(*band),
+                page_kind(*pages),
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            commit(state, operations)?;
+        }
+        Edit::InsertPageNumber {
+            section,
+            band,
+            pages,
+            side,
+        } => {
+            refuse_untracked(kind, mode)?;
+            sections_of(state, Some(*section))?;
+            let ids = &mut state.ids;
+            let lowered = casual_doc_command::sections::insert_page_number(
+                &state.document,
+                *section as usize,
+                band_region(*band),
+                page_kind(*pages),
+                number_align(*side),
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            nodes.push(lowered.caret.node);
+            commit(state, lowered.operations)?;
         }
         Edit::InsertChart { at, kind: chart } => {
             refuse_untracked(kind, mode)?;
