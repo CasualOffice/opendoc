@@ -1495,6 +1495,8 @@ const {
   paragraphRevisionRects, reviewRangeClientRect, revisionRange, scheduleReviewMarginRender,
   setReviewMode, updateReviewControls,
 } = createReviewMargin(ed);
+const reviewDisplay = createReviewDisplay(ed); // Review ▸ Display for review (RM-31)
+const noteCommands = createNoteCommands(ed); // Go to, settings and convert notes (RM-24)
 const linkChip = document.getElementById("linkChip");
 const linkChipKind = document.getElementById("linkChipKind");
 const linkChipTarget = document.getElementById("linkChipTarget");
@@ -2950,8 +2952,6 @@ function saveSettings() {
 }
 
 const { showVersionPreview, versionHistory } = createVersions(ed);
-const reviewDisplay = createReviewDisplay(ed); // Review ▸ Display for review (RM-31)
-const noteCommands = createNoteCommands(ed); // Go to, settings and convert notes (RM-24)
 /** The live document and the chrome state a preview borrowed, or null. */
 let versionPreviewHome = null;
 /** Set while a restore is activating, so the open path does not ALSO record an
