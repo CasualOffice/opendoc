@@ -1595,6 +1595,7 @@
   "region.next": "次の領域へ移動",
   "region.previous": "前の領域へ移動",
   "review.comment.needsRange": "コメントするテキストを選択してください",
+  "review.decision.needsEdit": "変更を承諾または元に戻すと文書が編集されます。ここではこのエディターはコメントのみ可能です。",
   "reviewAcceptBtn.accept": "反映",
   "reviewBulkActions.acceptAll": "すべて反映",
   "reviewBulkActions.acceptAllChanges.title": "すべての変更を反映",

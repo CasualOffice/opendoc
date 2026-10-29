@@ -1596,6 +1596,7 @@
   "region.next": "Sonraki bölgeye git",
   "region.previous": "Önceki bölgeye git",
   "review.comment.needsRange": "Yorum yapmak istediğiniz metni seçin",
+  "review.decision.needsEdit": "Bir değişikliği kabul etmek veya reddetmek belgeyi düzenler; bu düzenleyici burada yalnızca yorum yapabilir.",
   "reviewAcceptBtn.accept": "Kabul et",
   "reviewBulkActions.acceptAll": "Tümünü kabul et",
   "reviewBulkActions.acceptAllChanges.title": "Tüm değişiklikleri kabul et",

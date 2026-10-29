@@ -1598,6 +1598,7 @@
   "region.next": "Перейти до наступної області",
   "region.previous": "Перейти до попередньої області",
   "review.comment.needsRange": "Виділіть текст, який хочете прокоментувати",
+  "review.decision.needsEdit": "Прийняття або відхилення зміни редагує документ, а тут цей редактор може лише коментувати.",
   "reviewAcceptBtn.accept": "Прийняти",
   "reviewBulkActions.acceptAll": "Прийняти всі",
   "reviewBulkActions.acceptAllChanges.title": "Прийняти всі зміни",

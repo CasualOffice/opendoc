@@ -1596,6 +1596,7 @@
   "region.next": "अगले क्षेत्र पर जाएँ",
   "region.previous": "पिछले क्षेत्र पर जाएँ",
   "review.comment.needsRange": "वह पाठ चुनें जिस पर आप टिप्पणी करना चाहते हैं",
+  "review.decision.needsEdit": "किसी परिवर्तन को स्वीकार या अस्वीकार करना दस्तावेज़ को संपादित करता है, और यह संपादक यहाँ केवल टिप्पणी कर सकता है।",
   "reviewAcceptBtn.accept": "स्वीकारें",
   "reviewBulkActions.acceptAll": "सभी स्वीकारें",
   "reviewBulkActions.acceptAllChanges.title": "सभी बदलाव स्वीकारें",

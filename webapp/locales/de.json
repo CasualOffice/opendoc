@@ -1596,6 +1596,7 @@
   "region.next": "Zum nächsten Bereich wechseln",
   "region.previous": "Zum vorherigen Bereich wechseln",
   "review.comment.needsRange": "Markieren Sie den Text, den Sie kommentieren möchten",
+  "review.decision.needsEdit": "Eine Änderung anzunehmen oder abzulehnen bearbeitet das Dokument, und dieser Editor darf hier nur kommentieren.",
   "reviewAcceptBtn.accept": "Annehmen",
   "reviewBulkActions.acceptAll": "Alle annehmen",
   "reviewBulkActions.acceptAllChanges.title": "Alle Änderungen annehmen",

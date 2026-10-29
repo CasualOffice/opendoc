@@ -1597,6 +1597,7 @@
   "region.next": "Passa all'area successiva",
   "region.previous": "Passa all'area precedente",
   "review.comment.needsRange": "Seleziona il testo che vuoi commentare",
+  "review.decision.needsEdit": "Accettare o rifiutare una modifica modifica il documento, e qui questo editor può solo commentare.",
   "reviewAcceptBtn.accept": "Accetta",
   "reviewBulkActions.acceptAll": "Accetta tutto",
   "reviewBulkActions.acceptAllChanges.title": "Accetta tutte le modifiche",

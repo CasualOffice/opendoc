@@ -1600,6 +1600,7 @@
   "region.next": "الانتقال إلى المنطقة التالية",
   "region.previous": "الانتقال إلى المنطقة السابقة",
   "review.comment.needsRange": "حدد النص الذي تريد التعليق عليه",
+  "review.decision.needsEdit": "قبول التغيير أو رفضه يعدّل المستند، وهذا المحرر مسموح له بالتعليق فقط هنا.",
   "reviewAcceptBtn.accept": "قبول",
   "reviewBulkActions.acceptAll": "قبول الكل",
   "reviewBulkActions.acceptAllChanges.title": "قبول كل التغييرات",

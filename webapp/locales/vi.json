@@ -1595,6 +1595,7 @@
   "region.next": "Chuyển đến vùng tiếp theo",
   "region.previous": "Chuyển đến vùng trước",
   "review.comment.needsRange": "Chọn văn bản bạn muốn nhận xét",
+  "review.decision.needsEdit": "Chấp nhận hoặc từ chối một thay đổi là chỉnh sửa tài liệu, và trình soạn thảo này ở đây chỉ được nhận xét.",
   "reviewAcceptBtn.accept": "Chấp nhận",
   "reviewBulkActions.acceptAll": "Chấp nhận tất cả",
   "reviewBulkActions.acceptAllChanges.title": "Chấp nhận mọi thay đổi",

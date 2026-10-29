@@ -482,9 +482,9 @@ export const COMMAND_CONTRACT = Object.freeze([
   // Deciding a tracked change is EDITING, not commenting: accepting a suggestion
   // writes it into the document outright. So these require `edit` and not
   // `mutate`, which means a `commentor` cannot accept their own suggestions —
-  // Google Docs' Commenter cannot either, and Word's reviewer cannot. This is
-  // the one place the API is deliberately STRICTER than the chrome currently is;
-  // see the PR, which reports it rather than widening the API to match a gap.
+  // Google Docs' Commenter cannot either, and Word's reviewer cannot. The chrome
+  // reads these rows for its own controls (`review_authority.mjs`, HF-199), so
+  // the API and the buttons give one answer.
   exact("review.acceptAtCaret", "edit"),
   exact("review.rejectAtCaret", "edit"),
   exact("review.acceptNext", "edit"),

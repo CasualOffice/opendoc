@@ -1595,6 +1595,7 @@
   "region.next": "Pindah ke wilayah berikutnya",
   "region.previous": "Pindah ke wilayah sebelumnya",
   "review.comment.needsRange": "Pilih teks yang ingin Anda beri komentar",
+  "review.decision.needsEdit": "Menerima atau menolak perubahan berarti mengedit dokumen, dan editor ini di sini hanya boleh berkomentar.",
   "reviewAcceptBtn.accept": "Terima",
   "reviewBulkActions.acceptAll": "Terima semua",
   "reviewBulkActions.acceptAllChanges.title": "Terima semua perubahan",

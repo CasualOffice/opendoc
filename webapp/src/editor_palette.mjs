@@ -2,6 +2,7 @@
 // registry of real editor actions the palette, the menus and the ribbon read.
 // Moved out of `main.js` unchanged (docs/177); it reaches the rest of the
 // editor only through the context `ed`.
+import { narrowDecisionsToContainer } from "./review_authority.mjs";
 import { exportCommands } from "./export_commands.mjs";
 import { mutationBlockedMessage } from "./edit_errors.mjs";
 import { buildObjectContextCommands } from "./object_context_menu.mjs";
@@ -659,7 +660,9 @@ export function createPalette(ed) {
     // feeds — palette, menu bar, compact bar, context menus — rather than by a
     // clause in each governed row. A review command added later is governed by the
     // id it already has instead of shipping ungated (`SKILL` §10: fix the pattern).
-    return ed.SESSION.narrow(cmds.filter((command) => ed.doc || command.noDoc));
+    // Then to the CONTAINER's grant for deciding a tracked change, which the host
+    // contract has always required `edit` for (HF-199, `review_authority.mjs`).
+    return narrowDecisionsToContainer(ed.SESSION.narrow(cmds.filter((command) => ed.doc || command.noDoc)), ed.HOST_CAPS);
   }
 
   return { cmdInput, cmdList, cmdPalette, editorCommands, searchTrigger };

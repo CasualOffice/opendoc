@@ -1866,6 +1866,7 @@
   "region.next": "Move to the next region",
   "region.previous": "Move to the previous region",
   "review.comment.needsRange": "Select the text you want to comment on",
+  "review.decision.needsEdit": "Accepting or rejecting a change edits the document, and this editor may only comment here.",
   "reviewAcceptBtn.accept": "Accept",
   "reviewBulkActions.acceptAll": "Accept all",
   "reviewBulkActions.acceptAllChanges.title": "Accept all changes",

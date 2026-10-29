@@ -1596,6 +1596,7 @@
   "region.next": "Naar het volgende gebied",
   "region.previous": "Naar het vorige gebied",
   "review.comment.needsRange": "Selecteer de tekst waarop je een opmerking wilt plaatsen",
+  "review.decision.needsEdit": "Een wijziging accepteren of weigeren bewerkt het document, en deze editor mag hier alleen opmerkingen maken.",
   "reviewAcceptBtn.accept": "Accepteren",
   "reviewBulkActions.acceptAll": "Alles accepteren",
   "reviewBulkActions.acceptAllChanges.title": "Alle wijzigingen accepteren",

@@ -1598,6 +1598,7 @@
   "region.next": "Przejdź do następnego obszaru",
   "region.previous": "Przejdź do poprzedniego obszaru",
   "review.comment.needsRange": "Zaznacz tekst, który chcesz skomentować",
+  "review.decision.needsEdit": "Zaakceptowanie lub odrzucenie zmiany edytuje dokument, a ten edytor może tu tylko komentować.",
   "reviewAcceptBtn.accept": "Zaakceptuj",
   "reviewBulkActions.acceptAll": "Zaakceptuj wszystko",
   "reviewBulkActions.acceptAllChanges.title": "Zaakceptuj wszystkie zmiany",

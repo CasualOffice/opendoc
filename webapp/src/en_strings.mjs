@@ -149,6 +149,9 @@ export const EN_STRINGS = Object.freeze({
   // Plural on the document's total, which is the noun the sentence ends on.
   "status.wordsOfTotal.one": "{selected} of {count} word",
   "status.wordsOfTotal.other": "{selected} of {count} words",
+  // Why Accept and Reject are unavailable in a container that may not edit
+  // (HF-199): deciding a tracked change writes the document, which is editing.
+  "review.decision.needsEdit": "Accepting or rejecting a change edits the document, and this editor may only comment here.",
   // The Word count command's label on the palette and the Review menu (HF-051).
   "wordCount.command": "Word count…",
   // Reassigned from script on every render, so the markup sweep never sees it.

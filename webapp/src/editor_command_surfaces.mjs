@@ -2,6 +2,7 @@
 // per command, read by the ribbon, the menus and the palette alike. Moved out
 // of `main.js` unchanged (docs/177); it reaches the rest of the editor only
 // through the context `ed`.
+import { reviewDecisionRefusal } from "./review_authority.mjs";
 import { breakSurfaceRows } from "./break_commands.mjs";
 import { objectMenuRows } from "./reference_commands.mjs";
 import { ribbonSurfaceEnabled as surfaceEnabled, ribbonSurfaceReason as surfaceReason } from "./ribbon_surface.mjs";
@@ -289,10 +290,10 @@ export function createCommandSurfaces(ed) {
     { command: "view.showChanges", buttons: () => [ed.reviewShowChangesBtn], run: () => ed.toggleShowChanges(), pressed: () => ed.showingChanges },
     { command: "review.previous", buttons: () => [ed.reviewPrevBtn], run: () => ed.navigateReview(-1) },
     { command: "review.next", buttons: () => [ed.reviewNextBtn], run: () => ed.navigateReview(1) },
-    { command: "review.acceptNext", buttons: () => [ed.reviewAcceptBtn], run: () => ed.decideReviewAndAdvance(true) },
-    { command: "review.rejectNext", buttons: () => [ed.reviewRejectBtn], run: () => ed.decideReviewAndAdvance(false) },
-    { command: "review.acceptAll", buttons: () => [ed.reviewAcceptAllBtn], run: () => void ed.decideAllReviewChanges(true) },
-    { command: "review.rejectAll", buttons: () => [ed.reviewRejectAllBtn], run: () => void ed.decideAllReviewChanges(false) },
+    { command: "review.acceptNext", buttons: () => [ed.reviewAcceptBtn], refusal: () => reviewDecisionRefusal("review.acceptNext", ed.HOST_CAPS), run: () => ed.decideReviewAndAdvance(true) },
+    { command: "review.rejectNext", buttons: () => [ed.reviewRejectBtn], refusal: () => reviewDecisionRefusal("review.rejectNext", ed.HOST_CAPS), run: () => ed.decideReviewAndAdvance(false) },
+    { command: "review.acceptAll", buttons: () => [ed.reviewAcceptAllBtn], refusal: () => reviewDecisionRefusal("review.acceptAll", ed.HOST_CAPS), run: () => void ed.decideAllReviewChanges(true) },
+    { command: "review.rejectAll", buttons: () => [ed.reviewRejectAllBtn], refusal: () => reviewDecisionRefusal("review.rejectAll", ed.HOST_CAPS), run: () => void ed.decideAllReviewChanges(false) },
     // Three faces, and the third is on the INSERT band: ONLYOFFICE carries Comment
     // on both Insert and Collaboration, and Word's Insert tab has a Comments group
     // of its own. Commenting was already in this editor's Insert MENU (Google

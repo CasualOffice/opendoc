@@ -1598,6 +1598,7 @@
   "region.next": "Перейти к следующей области",
   "region.previous": "Перейти к предыдущей области",
   "review.comment.needsRange": "Выделите текст, который хотите прокомментировать",
+  "review.decision.needsEdit": "Принятие или отклонение изменения редактирует документ, а здесь этот редактор может только комментировать.",
   "reviewAcceptBtn.accept": "Принять",
   "reviewBulkActions.acceptAll": "Принять все",
   "reviewBulkActions.acceptAllChanges.title": "Принять все изменения",
