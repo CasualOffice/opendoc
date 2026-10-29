@@ -195,6 +195,9 @@ mkdir -p "$here/assets"
 cp "$repo/fixtures/corpus/real-producer-rich.docx" "$here/demo.docx"
 cp "$repo/sample.docx" "$here/sample.docx"
 cp "$repo/docs/assets/editor.jpg" "$here/assets/editor.jpg"
+# The home hero's poster: a real capture of the editor (editor.html?demo=1 at
+# 1440x900, 2x), not a drawn mock-up.
+cp "$repo/docs/assets/site-editor.webp" "$here/assets/site-editor.webp"
 
 # --- Static multi-page site -----------------------------------------------
 # Inline the shared header/footer partials into every *.page.html template and
