@@ -172,7 +172,10 @@ pub fn render(
     //    what lets its opacity apply to the whole stamp instead of per glyph.
     //
     // The cost is one page-sized transparent pixmap while a bracket is open.
-    // There is at most one per page (the watermark), so it is not on any hot path.
+    // The watermark is one per page; a turned text box or a turned table cell
+    // (`w:textDirection`) is one each, so a header row of N turned cells costs N
+    // such composites per raster — linear in turned cells, never in document
+    // size, and only on a repaint of that page.
     let mut items = list.items.iter();
     #[allow(clippy::while_let_on_iterator)] // the transform arm consumes ahead
     while let Some(item) = items.next() {

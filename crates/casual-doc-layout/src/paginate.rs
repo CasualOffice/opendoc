@@ -2964,6 +2964,7 @@ mod tests {
     /// A one-column cell holding the given block fragments.
     fn cell_of(id: u64, blocks: Vec<BlockFragment>) -> CellFragment {
         CellFragment {
+            rotation: None,
             id: tnode(id),
             grid_span: 1,
             x: Twip::ZERO,

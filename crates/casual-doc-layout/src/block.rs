@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::text::LineLayout;
 use crate::units::Twip;
+// Separate `use` lines to minimize import-block merge conflicts.
+use crate::page::{QUARTER_TURN, TextOrientation};
+use crate::units::{Point, Rect, Size};
 
 /// The box edges around a block (margins, border width, padding), in twips. The
 /// visual border/shading themselves are emitted as paint items; these are the
@@ -487,6 +490,75 @@ pub struct CellFragment {
     /// `None` = no shading.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shading: Option<[u8; 4]>,
+    /// The cell's text turned a quarter turn (`w:textDirection` `tbRl` or
+    /// `btLr`), or `None` for horizontal text — every cell that states no
+    /// direction, and `lrTb`. See [`CellRotation`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<CellRotation>,
+}
+
+/// Which way a rotated cell's lines run (`w:textDirection`, ECMA-376
+/// §17.4.72).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CellTurn {
+    /// `tbRl` — Word's "rotate all text 90°": lines read top to bottom and stack
+    /// from the cell's right edge leftwards (a clockwise quarter turn).
+    Down,
+    /// `btLr` — Word's "rotate all text 270°": lines read bottom to top and stack
+    /// from the cell's left edge rightwards (three clockwise quarter turns).
+    Up,
+}
+
+impl CellTurn {
+    /// The clockwise rotation, in `a:xfrm@rot` units, that turns the upright
+    /// content onto the cell. O(1).
+    #[must_use]
+    pub fn rotation(self) -> i32 {
+        match self {
+            Self::Down => QUARTER_TURN,
+            Self::Up => 3 * QUARTER_TURN,
+        }
+    }
+}
+
+/// A cell whose text is turned a quarter turn (`docs/168` RM-37,
+/// `table.cell-text-direction`).
+///
+/// The cell's blocks are flowed through the SAME pipeline as any other cell
+/// (the uniform-flow rule), UPRIGHT, at a line length of
+/// [`length`](Self::length) — the cell's content HEIGHT, because a turned line runs
+/// along the row — and then painted and hit through one quarter turn about the
+/// centre of the cell's content box ([`CellFragment::turned_content`]). The
+/// stacked lines run across the cell's content width.
+///
+/// While the row is being sized, `length` is the content's natural (unwrapped)
+/// length, which is the row height a rotated cell asks for; once the row height
+/// is resolved the cell is re-flowed at the content height it actually has, so
+/// after layout `length` is always that height.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct CellRotation {
+    /// Which way the lines run.
+    pub turn: CellTurn,
+    /// The line length the content was flowed at (twips): the cell's content
+    /// height once layout is done.
+    pub length: Twip,
+}
+
+/// Where a rotated cell's content is painted and hit, in the coordinates of the
+/// cell origin the caller passed: see [`CellFragment::turned_content`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TurnedContent {
+    /// The quarter turn, about the centre of [`frame`](Self::frame).
+    pub orientation: TextOrientation,
+    /// The cell's content box on the page (inside its margins and borders):
+    /// [`CellRotation::length`] tall, the cell's content width wide.
+    pub frame: Rect,
+    /// The upright origin the cell's first block is composed at: the exchanged
+    /// box's top-left, moved across by the `w:vAlign` share of the slack.
+    pub origin: Point,
+    /// The upright measure (line length) the blocks were flowed at.
+    pub measure: Twip,
 }
 
 impl CellVAlign {
@@ -525,12 +597,92 @@ impl CellFragment {
     }
 
     /// The stacked height of the cell's flowed content (twips), excluding margins.
+    ///
+    /// For a ROTATED cell this is the line length its content was flowed at
+    /// ([`CellRotation::length`]): a turned cell's content runs along the row,
+    /// so that is the height it occupies. Every row-height, merge, measure and
+    /// pagination path reads the cell through this method, so none of them
+    /// needs to know a cell can be turned.
     #[must_use]
     pub fn content_height(&self) -> Twip {
+        match self.rotation {
+            Some(rotation) => rotation.length,
+            None => self.stacked_height(),
+        }
+    }
+
+    /// The summed height of the cell's flowed blocks, as stacked in the
+    /// direction they were flowed — upright, for a rotated cell, which is its
+    /// thickness ACROSS the cell. O(blocks).
+    #[must_use]
+    pub fn stacked_height(&self) -> Twip {
         self.blocks
             .iter()
             .map(BlockFragment::height)
             .fold(Twip::ZERO, |a, h| a + h)
+    }
+
+    /// The width the cell's content was flowed at for horizontal text, and the
+    /// width rotated content stacks across: the border box less the content
+    /// margins and the band the vertical borders take (the same quantity the
+    /// flow engine wraps against). O(1).
+    #[must_use]
+    pub fn content_width(&self) -> Twip {
+        Twip(
+            (self.width.raw()
+                - self.margins.start.raw()
+                - self.margins.end.raw()
+                - self.border_reserve.start.raw()
+                - self.border_reserve.end.raw())
+            .max(1),
+        )
+    }
+
+    /// Where a ROTATED cell's content goes, for a cell whose border box starts
+    /// at `cell_origin` (its leading edge, below any separated-cell gap); `None`
+    /// for horizontal text.
+    ///
+    /// The frame is the cell's content box — inset by the start margin as the
+    /// horizontal path insets it, and by the top border band and top margin —
+    /// [`CellRotation::length`] tall and [`content_width`](Self::content_width)
+    /// wide. The blocks are composed upright in that box with its width and
+    /// height exchanged (centred on the same point), so one quarter turn about
+    /// the centre lands them exactly on the frame.
+    ///
+    /// `w:vAlign` applies ACROSS the cell for turned text: the slack is the
+    /// content width less the stacked lines, and `top` keeps the first line on
+    /// the edge the text's own top faces (the right edge for `tbRl`, the left
+    /// for `btLr`). That is ONLYOFFICE's reading
+    /// (`sdkjs/word/Editor/Table/TableRecalculate.js:3475-3495`, `CellHeight` is
+    /// taken from the cell's x extent for a vertical cell).
+    ///
+    /// Composition, hit-testing and the caret all read this one answer. O(blocks)
+    /// for the stacked height.
+    #[must_use]
+    pub fn turned_content(&self, cell_origin: Point) -> Option<TurnedContent> {
+        let rotation = self.rotation?;
+        let across = self.content_width();
+        let frame = Rect::new(
+            Point::new(
+                cell_origin.x + self.margins.start,
+                cell_origin.y + self.border_reserve.top + self.margins.top,
+            ),
+            Size::new(across, rotation.length.max(Twip(1))),
+        );
+        let orientation = TextOrientation::new(i64::from(rotation.turn.rotation()), true);
+        let upright = orientation.content_box(frame);
+        let slack = (across.raw() - self.stacked_height().raw()).max(0);
+        let shift = match self.vertical_alignment {
+            CellVAlign::Top => 0,
+            CellVAlign::Center => slack / 2,
+            CellVAlign::Bottom => slack,
+        };
+        Some(TurnedContent {
+            orientation,
+            frame,
+            origin: Point::new(upright.origin.x, upright.origin.y + Twip(shift)),
+            measure: rotation.length,
+        })
     }
 
     /// The cell's content height plus its top and bottom margins **and the band
@@ -576,8 +728,16 @@ impl CellFragment {
     /// and is the same quantity [`occupied_height`](Self::occupied_height)
     /// charges the row for, so the slack stays the true leftover and a centred
     /// cell is still centred.
+    ///
+    /// A rotated cell fills its row (its [`content_height`](Self::content_height)
+    /// IS the row's content height), so it has no slack along the row; its
+    /// alignment applies across the cell, in
+    /// [`turned_content`](Self::turned_content).
     #[must_use]
     pub fn content_y_offset(&self, row_height: Twip) -> Twip {
+        if self.rotation.is_some() {
+            return Twip(self.border_reserve.top.raw() + self.margins.top.raw());
+        }
         let slack = (row_height.raw() - self.occupied_height().raw()).max(0);
         let valign = match self.vertical_alignment {
             CellVAlign::Top => 0,
