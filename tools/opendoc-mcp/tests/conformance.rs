@@ -1031,11 +1031,13 @@ fn a_read_only_agent_converts_a_pdf_into_a_new_flowing_document() {
     assert!(new.is_string() && new != pdf, "a new handle: {flowing}");
     assert_eq!(flowing["convertedFrom"], pdf);
     assert_eq!(flowing["name"], "prose.pdf (flowing)");
-    assert!(
-        flowing["importSummary"]
-            .to_string()
-            .contains("pdf.import.paragraph_boundary_inferred"),
-        "the reflow's findings reach the agent: {flowing}"
+    // The summary lists what was lost or degraded; a reflow's inferences
+    // (`paragraph_boundary_inferred`) are `Mapped` and stay out of it, as every
+    // import's mapped findings do. All-prose input loses nothing.
+    assert_eq!(
+        flowing["importSummary"]["findings"],
+        json!([]),
+        "nothing in all-prose input is lost: {flowing}"
     );
     let hits = client.ok(
         "search",
