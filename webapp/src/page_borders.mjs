@@ -119,6 +119,17 @@ export function createPageBorders(io) {
     width.appendChild(option);
   }
 
+
+  // The band button opens a dialog, so it takes focus BEFORE the shared surface
+  // handler runs: surface buttons keep the caret by design, and without this the
+  // dialog would record the editor as its opener and Escape would not come back
+  // here (dialog-contract). Capture on the target runs before its click handlers.
+  document.getElementById("pageBordersBtn")?.addEventListener(
+    "click",
+    (event) => event.currentTarget.focus({ preventScroll: true }),
+    { capture: true },
+  );
+
   let state = null;
   const modal = registerModal(dialog, {
     initialFocus: () => edgeBoxes[0][1],
