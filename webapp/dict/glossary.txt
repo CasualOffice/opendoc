@@ -314,6 +314,7 @@ blitted
 bolds
 bool
 booleans
+borderless
 breakpoint
 buildable
 bypassable

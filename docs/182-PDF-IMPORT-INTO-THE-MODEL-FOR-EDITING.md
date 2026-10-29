@@ -1527,3 +1527,149 @@ one base plus marks in order. Wingdings 2/3, Webdings and other pictograph fonts
 unmapped path rather than a guessed character. Tables in fixed layout stay frames. A
 `Title` style is not inferred separately from Heading 1. Nothing here was run locally
 (owner rule): CI is the test run.
+
+### 18.10 The reflow, measured: a ground truth and a corpus (2026-10-30)
+
+The owner (2026-10-30): "the reflow needs a lot of work … it needs a corpus and fine-tuning
+on a lot of PDFs … convert our sample.docx into PDF, try to load that, find all the issues
+and fix them." So the reflow is now measured, not judged by eye.
+
+**The instrument.** `tools/opendoc-reflow-score`:
+
+- `loop <source.docx> <out-dir> [label=file.pdf …] [--soffice]` imports the DOCX (its own
+  model is the answer), prints it to PDF with our writer (and with LibreOffice when
+  `--soffice` is given and installed), opens every PDF the way every host does (flowing), and
+  scores it per family against the source, from 0 to 1.
+  - The families: text (edit distance over all text), paragraphs (aligned pairs with
+    similarity ≥ 0.9, over the larger count), headings and lists (F1 × level agreement on the
+    aligned pairs), tables and grid tables (aligned in order by text; shape and cell text),
+    pictures, header and footer, notes, columns, page (size and margins), formatting
+    (bold, italic and size on the aligned pairs), special characters (recall of every
+    non-ASCII character) and frames (no text boxes).
+  - A one-cell table is scored as its paragraphs: it is a shaded box, and every flowing
+    reading of its PDF (Word's, Google Docs', ours) makes it paragraphs.
+- `corpus <dir> <out.json>` opens every PDF under a directory and records, per file: opened
+  or why not, milliseconds, the findings, the structure counts, and the sanity checks a
+  flowing document must pass (no text boxes, no U+FFFD, tables, headings, the reason a
+  reflow failed).
+- `dump <file.pdf>` prints the flowing document's paragraphs and tables, for reading one
+  failure.
+
+**The corpus.** 64 PDFs, all licensed for this use; the manifest (URL, licence, kind,
+SHA-256) and the aggregates are in `fixtures/pdf-reflow-corpus/`:
+
+- US federal works (public domain, 17 U.S.C. 105): IRS forms, instructions and
+  publications, NIST standards and reports, Supreme Court opinions, the US Code, FAA
+  handbook chapters, USGS reports (InDesign), a NASA handbook, FAFSA.
+- Wikipedia's PDF rendering (CC BY-SA 4.0; Chromium) in English, Japanese, Chinese,
+  Korean, Arabic, Hebrew, Persian, Hindi, Thai, Russian, Greek, German and French.
+- LaTeX papers under CC BY 4.0: arXiv (licence checked on each abstract page) and the
+  ACL Anthology (two-column).
+
+Only three public-domain files are committed (`irs-fw9.pdf`, `nist-ir8105.pdf`,
+`uscode-title1.pdf`); the rest stay outside the repository. Not in it, because no source
+with a clear licence was found in this session: slides, scans, invoices, résumés, Excel
+exports and Google Docs exports. Ten more federal sources refused automated download
+(BLS, SEC, CBO, GAO, OSHA, CDC, FEMA, NRC).
+
+**`sample.docx` through our own writer, per family** (`scores.json`; LibreOffice was not
+installed on the measuring machine, so there is one producer):
+
+| Family | Before | After |
+| --- | --- | --- |
+| text | 0.573 | 0.957 |
+| paragraphs | 0.133 | 0.873 |
+| headings | 0.473 | 1.000 |
+| lists | 0.982 | 0.983 |
+| tables (grid tables) | 0.000 | 0.792 |
+| header and footer | 0.599 | 0.941 |
+| columns | 0.000 | 1.000 |
+| page (size, margins) | 0.851 | 0.967 |
+| formatting (bold, italic, size on the matched paragraphs) | 1.000 over 57 of 121 | 0.852 over 110 of 121 (sizes disagree on 49) |
+| special characters | 0.420 | 0.371 |
+| pictures, notes, frames | 1.000 | 1.000 |
+
+The special-character score fell because the writer no longer names `.notdef` after an
+Arabic letter (below): the CJK, Indic and Arabic text the bundled faces cannot draw is now
+reported missing instead of copied as `ا`. Raising that score is the writer's font fallback,
+not the reflow's.
+
+**The corpus, before and after** (61 of 64 open):
+
+| Measure | Before | After |
+| --- | --- | --- |
+| Paragraphs | 180,823 | 78,111 |
+| Share of paragraphs of three words or fewer | 0.641 | 0.328 |
+| Mean words per paragraph | 13.96 | 23.75 |
+| Files with a heading | 42 | 43 |
+| Files with a list | 50 | 51 |
+| Files with a header or footer | 38 | 39 |
+| Files whose flowing document failed validation (opened in fixed layout) | 1 | 0 |
+| Files with U+FFFD in the text | 0 | 0 |
+| Files with a multi-column section | 57 | 47 |
+
+**What each finding was, and the fix.**
+
+- Writer, `casual-doc-pdf` `cluster.rs`: every space of a document whose footer read "1 of
+  14" copied as " 14". The model text and the shaped text diverge at a field, and the
+  cluster offset landed in other characters. A glyph is now named only after text it could
+  draw (a whitespace glyph after whitespace, any other glyph after no whitespace).
+- Writer, `font.rs`: `.notdef` was named after one of the characters it stood in for (U+0627,
+  U+2610), so every character the faces lack copied as that one. `.notdef` is never named.
+- Tables, `whitespace_candidates`: a borderless table whose rows are farther apart than a
+  paragraph's leading (Word's and LibreOffice's) is one block per cell, so no row linked to
+  another. Consecutive aligned rows whose columns agree are now linked (`columns_agree`:
+  equal cell counts interleave, fewer cells start, end or centre on a column).
+- Tables, `whitespace_table`: one column per element gave a nine-row, three-column table 27
+  columns. Columns are now clustered from cell extents, narrowest first, and wider cells span.
+- Tables: cells of an aligned row must be 0.6 em apart. Pieces of one line written as
+  separate text objects (Chromium) abut, and they had made a table on every Wikipedia page.
+- Tables: a borderless table cut by a page break joins when its columns overlap the
+  previous page's, or when it repeats the header row, and a drawing between them does not
+  separate them. Fills under a whitespace table's cells are their shading too.
+- Paragraphs, `emit::column`: one document-wide right edge (set by a landscape page) made
+  every portrait line look short, so nothing joined across blocks. Each page now has its own
+  text edges.
+- Paragraphs, `text::continues`: a line is wrapped when the next line's first word would not
+  have fitted on it (a line breaker's test, for ragged-right text). A line directly under
+  another joins it even if it starts uppercase, inset (text in a shaded box) or hanging (a
+  list item, a hanging indent). A first-line indent starts a paragraph only after a line that
+  could end one.
+- Paragraphs: a monospaced line that stops short of the column is a line of code and stays a
+  paragraph of its own; monospaced prose that fills the column joins.
+- Paragraphs, `text::same_line`: the rest of the same visual line (Chromium writes every
+  link, citation and styled run as its own marked-content sequence) continues the paragraph,
+  with a space only where the line has a gap. Superscripts are on the line, and
+  `order::geometric` reads boxes that share a line left to right.
+- Headings, `text::sheet`: a level needs two paragraphs (a letterhead or a subtitle used once
+  is not a level), levels are dense (no Heading 4 under a Heading 2), and the largest key, at
+  least 1.6 times Normal and used at most twice, is the `Title` style.
+- Headings, `casual-doc-pdf-read` `admit.rs`: bold is read from the names producers give it
+  (`-Medi` for URW's Nimbus, `Demi`, `Semibold`, `Bd`, `CMBX`). Every LaTeX paper's headings
+  had read as body text.
+- Columns, `order.rs`: a column is at least an inch wide. Two rows of a borderless table had
+  made a three-column section.
+- Furniture: a repeated band is keyed by its distance from its own edge of the page, so a
+  landscape page's footer is the portrait pages' footer.
+- Validation: indents and table widths are clamped into the model's domain. One out-of-domain
+  value had failed a whole flowing document, which then opened in fixed layout.
+
+Every fix has a regression test in `reflow/tests.rs`, `casual-doc-pdf-read`'s `tests.rs` or
+`casual-doc-pdf`'s `font.rs` and `cluster.rs`, each with the mutation it was written against.
+
+**Still weak, ranked by what the corpus shows.**
+
+1. Heading levels on documents whose headings differ only in weight and size by less than
+   15 per cent. Wikipedia's section heads read as bold body text.
+2. Multi-column detection still fires on 47 of 61 files, against about a dozen genuinely
+   multi-column documents (the ACL and Federal Register layouts). The column cut accepts
+   sub-regions too readily.
+3. A line that ends in a colon is treated as the end of a paragraph, and in prose it often
+   is not.
+4. Forms (IRS) reflow as many short paragraphs and small tables; a form has no flowing
+   reading, and Google Docs does no better.
+5. Three LaTeX papers exceed the 32 MiB per-stream decode limit (one large figure each) and
+   are refused whole; skipping the picture instead is a security-limit decision for the owner.
+6. Time: `irs-p17.pdf` (300 pages) takes 19 to 26 s on the measuring machine, which was busy
+   with other jobs; the reflow's doubling guards hold, but the absolute figure needs a quiet
+   machine.
