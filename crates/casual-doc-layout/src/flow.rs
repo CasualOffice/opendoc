@@ -4110,6 +4110,17 @@ fn collect_items_with_measure<'a>(
                     out.push(item);
                 }
             }
+            // A FLOATING chart or diagram is placed by the float pass
+            // (`anchor::place_floats`); in the run it contributes only the text
+            // exclusion its wrap asks for, exactly as a floating picture does
+            // (`docs/109` HF-260).
+            InlineNode::EmbeddedObject(object) if object.anchor.is_some() => {
+                if intrinsic.is_none()
+                    && let Some(anchor) = &object.anchor
+                {
+                    out.extend(float_flow_items(anchor, &object.extent, width));
+                }
+            }
             InlineNode::EmbeddedObject(object) => {
                 embedded_object_items(object, out, shaper, ctx);
             }
@@ -4413,6 +4424,67 @@ fn chart_item<'a>(
         primitives,
         model_len: embedded_object_label(object).len() as u32,
     })
+}
+
+/// The paint primitives of a FLOATING chart (`docs/109` HF-260), box-local,
+/// composed exactly as an in-line chart's are by [`chart_item`] — the same
+/// projection, theme palette and label shaping — so a chart looks the same
+/// whether it floats or sits on a line. `None` when the chart has no drawable
+/// projection, which the float pass then paints as an empty frame rather than
+/// inventing content.
+///
+/// The float pass has no galley context of its own, so this builds the one
+/// [`flow_running_blocks`] builds for running content. Complexity: O(points in
+/// the chart) plus building the chart index once, O(charts in the document).
+pub(crate) fn floating_chart_primitives(
+    document: &Document,
+    object: &EmbeddedObject,
+    shaper: &dyn LineShaper,
+) -> Option<Vec<ChartPrimitive>> {
+    if object.kind != EmbeddedKind::Chart {
+        return None;
+    }
+    let resolver = FontResolver::new();
+    let mut report = FontResolutionReport::new();
+    let palette = document
+        .definitions()
+        .color_scheme
+        .as_ref()
+        .map(resolve_palette);
+    let declared_fonts = DeclaredFamilies::from_font_table(&document.definitions().font_table);
+    let notes = NoteFlow::default();
+    let mut ctx = FlowCtx {
+        fit: MeasureFit::Bleed,
+        review_view: ReviewView::Editing,
+        resolver: &resolver,
+        scheme: document.definitions().font_scheme.as_ref(),
+        declared_fonts: &declared_fonts,
+        report: &mut report,
+        default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
+        media: &document.definitions().media,
+        palette: palette.as_ref(),
+        cascade: StyleCascade::new(document.definitions()),
+        para_style: None,
+        table_style: None,
+        sections: &[],
+        definitions: document.definitions(),
+        numbering: NumberingState::new(),
+        folds: &FoldSet::EMPTY,
+        suppress_above_level: None,
+        resume_snapshot: None,
+        text_scale: 100_000,
+        line_spacing_reduction: 0,
+        line_grid: None,
+        table_depth: 0,
+        paragraph_float_exclusions: None,
+        note_label: notes.label,
+        note_labels: notes.labels,
+        chart_index: ChartIndex::default(),
+    };
+    match chart_item(object, shaper, &mut ctx)? {
+        FlowItem::Chart { primitives, .. } => Some(primitives),
+        _ => None,
+    }
 }
 
 /// The run properties one chart label is shaped with, from its resolved
@@ -4792,6 +4864,11 @@ fn paragraph_wrap_carries(
             InlineNode::TextBox(text_box) => match (&text_box.anchor, &text_box.extent) {
                 (Some(anchor), Some(extent)) => wrap_carries(anchor, *extent, content_width),
                 _ => Vec::new(),
+            },
+            // A floating chart or diagram carries as a picture does (HF-260).
+            InlineNode::EmbeddedObject(object) => match &object.anchor {
+                Some(anchor) => wrap_carries(anchor, object.extent, content_width),
+                None => Vec::new(),
             },
             InlineNode::Group(group) => match &group.anchor {
                 Some(anchor) => wrap_carries(anchor, group.extent, content_width),
@@ -8039,6 +8116,9 @@ fn carries_flow_relative_float(inlines: &[InlineNode]) -> bool {
     inlines.iter().any(|inline| match inline {
         InlineNode::AnchoredDrawing(drawing) => flow_relative_overlay(&drawing.anchor),
         InlineNode::Group(group) => group.anchor.as_ref().is_some_and(flow_relative_overlay),
+        InlineNode::EmbeddedObject(object) => {
+            object.anchor.as_ref().is_some_and(flow_relative_overlay)
+        }
         _ => false,
     })
 }
@@ -11890,6 +11970,62 @@ mod tests {
             "the box reports the bytes the `[chart]` run reported, so drawing a \
              chart moves no caret offset (see `FlowItem::Chart`)"
         );
+    }
+
+    /// HF-260: a FLOATING chart leaves the run flow (it contributes only its
+    /// wrap's exclusion) and the float pass composes the same primitives an
+    /// in-line one paints. Mutation: dropping the `anchor.is_some()` arm in
+    /// `collect_items` flows it as an in-line chart box, and the first
+    /// assertion fails; returning `None` from `floating_chart_primitives`
+    /// fails the second.
+    #[test]
+    fn a_floating_chart_leaves_the_line_and_paints_on_the_float_layer() {
+        use casual_doc_model::v1::{
+            AnchorHorizontal, AnchorVertical, DrawingAnchor, HorizontalPosition, VerticalPosition,
+            WrapDistances,
+        };
+        let (definitions, mut inlines) = chart_document(Some(bar_chart(&["1", "2", "3", "4"])));
+        let InlineNode::EmbeddedObject(object) = &mut inlines[0] else {
+            unreachable!("the fixture is one chart object");
+        };
+        object.anchor = Some(DrawingAnchor {
+            horizontal: AnchorHorizontal {
+                relative_from: HorizontalAnchor::Margin,
+                position: HorizontalPosition::Offset(0),
+            },
+            vertical: AnchorVertical {
+                relative_from: VerticalAnchor::Paragraph,
+                position: VerticalPosition::Offset(0),
+            },
+            wrap: WrapMode::Square,
+            wrap_text: None,
+            wrap_distances: WrapDistances::default(),
+            behind_doc: false,
+            wrap_polygon: None,
+        });
+        let items = collected_items(&definitions, &inlines);
+        assert!(
+            !items
+                .iter()
+                .any(|item| matches!(item, FlowItem::Chart { .. })),
+            "a floating chart is not a box on the line, got {items:?}"
+        );
+        let InlineNode::EmbeddedObject(object) = &inlines[0] else {
+            unreachable!("the fixture is one chart object");
+        };
+        let document = Document::new(
+            NodeId::from_parts(900, 1).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: NodeId::from_parts(900, 2).unwrap(),
+                properties: ParagraphProperties::default().into(),
+                inlines: inlines.clone(),
+            })],
+            definitions,
+        )
+        .expect("a floating chart document is valid");
+        let primitives = floating_chart_primitives(&document, object, &ParleyShaper::new())
+            .expect("the float pass composes the chart");
+        assert!(primitives.len() > 4, "real geometry, as in line");
     }
 
     #[test]

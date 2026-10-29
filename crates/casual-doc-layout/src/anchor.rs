@@ -240,6 +240,21 @@ fn collect_body_wrap_inlines(
                     );
                 }
             }
+            // A floating chart or diagram wraps text as a picture does (HF-260).
+            InlineNode::EmbeddedObject(object) => {
+                if let Some(anchor) = object.anchor.clone() {
+                    push_body_wrap_rect(
+                        layout,
+                        ctx,
+                        paragraph,
+                        section,
+                        anchor,
+                        object.extent,
+                        None,
+                        out,
+                    );
+                }
+            }
             InlineNode::Hyperlink(link) => {
                 collect_body_wrap_inlines(layout, ctx, paragraph, section, &link.inlines, out)
             }
@@ -324,6 +339,7 @@ fn inlines_have_anchor(inlines: &[InlineNode]) -> bool {
         InlineNode::AnchoredDrawing(_) => true,
         InlineNode::TextBox(text_box) => text_box.anchor.is_some(),
         InlineNode::Group(group) => group.anchor.is_some(),
+        InlineNode::EmbeddedObject(object) => object.anchor.is_some(),
         InlineNode::Hyperlink(link) => inlines_have_anchor(&link.inlines),
         InlineNode::Field(field) => inlines_have_anchor(&field.inlines),
         InlineNode::Revision(revision) => inlines_have_anchor(&revision.inlines),
@@ -504,6 +520,12 @@ fn float_extent_inlines(
             InlineNode::AnchoredDrawing(drawing) => {
                 let rect = resolve_anchor_rect(&drawing.anchor, drawing.extent, refs);
                 *bottom = (*bottom).max(rect.bottom());
+            }
+            InlineNode::EmbeddedObject(object) => {
+                if let Some(anchor) = &object.anchor {
+                    let rect = resolve_anchor_rect(anchor, object.extent, refs);
+                    *bottom = (*bottom).max(rect.bottom());
+                }
             }
             InlineNode::TextBox(text_box) if text_box.anchor.is_some() => {
                 let anchor = text_box.anchor.clone().expect("guarded");
@@ -789,6 +811,37 @@ fn collect_inlines(
                             drawing.flip_v,
                             drawing.rotation,
                         ),
+                    },
+                );
+            }
+            // A FLOATING chart (or diagram) is placed exactly as a floating
+            // picture is — same anchor resolution, same z-key — and paints the
+            // primitives an in-line chart would (`docs/109` HF-260). A diagram,
+            // or a chart with no drawable projection, places an empty frame:
+            // still hit-tested and selectable, never invented content.
+            InlineNode::EmbeddedObject(object) if object.anchor.is_some() => {
+                let anchor = object.anchor.clone().expect("guarded");
+                let z = AnchorZ {
+                    relative_height: object.relative_height.unwrap_or(0),
+                    order: ctx.next_order(),
+                };
+                let (page_index, refs) =
+                    target(layout, ctx, paragraph, scope, section, known_target);
+                let rect = resolve_anchor_rect(&anchor, object.extent, &refs);
+                let primitives =
+                    crate::flow::floating_chart_primitives(ctx.document, object, ctx.shaper)
+                        .unwrap_or_default();
+                push(
+                    layout,
+                    page_index,
+                    PlacedAnchor {
+                        node: Some(object.id),
+                        content: AnchorContent::Chart { primitives },
+                        rect,
+                        behind_doc: anchor.behind_doc,
+                        z,
+                        descr: None,
+                        transform: None,
                     },
                 );
             }

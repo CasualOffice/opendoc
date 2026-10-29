@@ -977,6 +977,16 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor, marks: &mut Mar
                 list.push(PaintItem::PopLayer);
             }
         }
+        AnchorContent::Chart { primitives } => {
+            // A floating chart paints through the SAME primitive translation an
+            // in-line chart takes, clipped to its authored extent so labels
+            // cannot spill over the text it floats beside (HF-260).
+            list.push(PaintItem::PushClip(anchor.rect));
+            for primitive in primitives {
+                compose_chart_primitive(list, primitive, anchor.rect.origin);
+            }
+            list.push(PaintItem::PopClip);
+        }
         AnchorContent::Table { rows } => {
             // A positioned table's rows are ordinary block fragments stacked
             // from the anchor rectangle's origin, so they paint through the
@@ -1114,7 +1124,8 @@ fn push_shape_items(
         }),
         AnchorContent::Image { .. }
         | AnchorContent::TextBox { .. }
-        | AnchorContent::Table { .. } => {}
+        | AnchorContent::Table { .. }
+        | AnchorContent::Chart { .. } => {}
     }
 }
 

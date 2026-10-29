@@ -171,6 +171,10 @@ mod objects;
 // command, emitted as `SetAnchor`s in one action.
 mod object_align;
 
+// A floating Word chart opened, placed, re-wrapped and saved (`docs/109` HF-260).
+#[cfg(test)]
+mod floating_chart_tests;
+
 // Moving an in-line object to a new place in the text (`docs/109` UX-OB-02).
 // Its own module for the reason `objects` gives, and because the whole feature
 // is one command composed from two existing operations.
@@ -16430,6 +16434,10 @@ impl WasmDocument {
                     // object box. Named explicitly rather than swept up by a
                     // wildcard, which would silently absorb a future variant.
                     AnchorContent::Table { .. } => continue,
+                    // A floating chart (`docs/109` HF-260) is the same object an
+                    // in-line one is, so it reports the same kind and the chart
+                    // surfaces (Chart tab, data, settings) open on it.
+                    AnchorContent::Chart { .. } => "chart",
                 };
                 if let Some(reference) = group_ref {
                     let frame = object_resize_handles(self.document.body(), reference.root);
