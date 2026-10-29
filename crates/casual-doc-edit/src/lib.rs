@@ -14749,7 +14749,8 @@ mod tests {
     /// `Sdt` (or for `Revision`) in `casual-doc-model`.
     #[test]
     fn a_text_box_inside_a_content_control_or_a_tracked_insertion_takes_keystrokes() {
-        let wrappers: [(&str, fn(InlineNode) -> InlineNode); 2] = [
+        type Wrap = fn(InlineNode) -> InlineNode;
+        let wrappers: [(&str, Wrap); 2] = [
             ("content control", |boxed| sdt_holding(4, vec![boxed])),
             ("tracked insertion", |boxed| {
                 InlineNode::Revision(Box::new(Revision {
