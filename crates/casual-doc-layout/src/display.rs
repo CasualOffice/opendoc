@@ -471,9 +471,10 @@ pub enum PaintItem {
     /// opaque table fill erases it, or in front, where it dims the text. Multiplied,
     /// it does not have to choose — see [`LayerBlend::Multiply`].
     ///
-    /// Introduced for the watermark (`109` OO-006). `docs/105` FID-L-08 (vertical
-    /// and rotated text) is the other caller this seam is waiting for; it is not
-    /// implemented by this existing, and no flow content emits a layer yet.
+    /// Introduced for the watermark (`109` OO-006). Turned text-box text
+    /// (`docs/182` G-3) and turned table-cell text (`w:textDirection`,
+    /// `CellFragment::turned_content`, `docs/105` FID-L-08) paint through it
+    /// too: each turned cell is one clipped layer.
     PushLayer {
         /// Rotation/flip about a centre point, or `None` for an upright layer.
         #[serde(default, skip_serializing_if = "Option::is_none")]
