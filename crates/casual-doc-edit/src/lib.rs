@@ -14644,6 +14644,107 @@ mod tests {
         assert_eq!(drawing_extent(&d, object), resized);
     }
 
+    /// HF-195: a paragraph in a text box that sits inside an inline content
+    /// control, or inside a pending tracked insertion, takes the three keystroke
+    /// operations — typing, Enter and Backspace at the start — and each one's
+    /// inverse restores it.
+    ///
+    /// The walks that resolve, split and join a paragraph by id once omitted
+    /// `Sdt` and `Revision`, so every keystroke in such a box answered
+    /// `NodeNotFound`. They now descend the declared container set
+    /// (`inline_descent`), and this pins the guarantee for both wrappers. The
+    /// mutation that drives it red is making `inline_descent` answer `Leaf` for
+    /// `Sdt` (or for `Revision`) in `casual-doc-model`.
+    #[test]
+    fn a_text_box_inside_a_content_control_or_a_tracked_insertion_takes_keystrokes() {
+        let wrappers: [(&str, fn(InlineNode) -> InlineNode); 2] = [
+            ("content control", |boxed| sdt_holding(4, vec![boxed])),
+            ("tracked insertion", |boxed| {
+                InlineNode::Revision(Box::new(Revision {
+                    id: n(4),
+                    kind: RevisionKind::Insertion,
+                    author: Some("Reviewer".to_owned()),
+                    date: None,
+                    revision_id: Some("4".to_owned()),
+                    editor_group: None,
+                    inlines: vec![boxed],
+                }))
+            }),
+        ];
+        for (label, wrap) in wrappers {
+            let inner = n(7);
+            let boxed =
+                InlineNode::TextBox(text_box_holding(6, vec![para(7, vec![run(8, "Cap")])]));
+            let mut d = doc(vec![para(2, vec![run(3, "host"), wrap(boxed)])]);
+            let mut ids = IdGenerator::new(900);
+
+            let typed = apply(
+                &mut d,
+                &mut ids,
+                &Operation::InsertText {
+                    at: Pos::new(inner, 3),
+                    text: "tion".to_owned(),
+                },
+            )
+            .unwrap_or_else(|e| panic!("typing in a box inside a {label}: {e:?}"));
+            assert_eq!(
+                runs_text(
+                    &find_paragraph(d.body(), inner)
+                        .expect("the box paragraph")
+                        .inlines
+                ),
+                "Caption",
+                "the typed text lands in the box inside the {label}"
+            );
+
+            let second = n(950);
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::SplitParagraph {
+                    at: Pos::new(inner, 3),
+                    new_id: second,
+                    properties: None,
+                },
+            )
+            .unwrap_or_else(|e| panic!("Enter in a box inside a {label}: {e:?}"));
+            assert!(
+                find_paragraph(d.body(), second).is_some(),
+                "Enter makes a second paragraph inside the box inside the {label}"
+            );
+
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::JoinParagraphs {
+                    first: inner,
+                    second,
+                    properties: None,
+                },
+            )
+            .unwrap_or_else(|e| panic!("Backspace at the start inside a {label}: {e:?}"));
+            assert!(find_paragraph(d.body(), second).is_none());
+            assert_eq!(
+                runs_text(&find_paragraph(d.body(), inner).expect("joined").inlines),
+                "Caption",
+                "Backspace at the second paragraph's start joins it back, inside the {label}"
+            );
+
+            apply(&mut d, &mut ids, &typed)
+                .unwrap_or_else(|e| panic!("undoing the typing inside a {label}: {e:?}"));
+            assert_eq!(
+                runs_text(
+                    &find_paragraph(d.body(), inner)
+                        .expect("the box paragraph")
+                        .inlines
+                ),
+                "Cap",
+                "and the typing's inverse restores the box inside the {label}"
+            );
+            assert_eq!(text_of(&d, n(2)), "host", "the host paragraph is untouched");
+        }
+    }
+
     /// The authored extent of the drawing `object`, wherever it lives.
     fn drawing_extent(document: &Document, object: NodeId) -> Option<casual_doc_model::v1::Extent> {
         find_drawing(document, object).and_then(|drawing| drawing.extent)
