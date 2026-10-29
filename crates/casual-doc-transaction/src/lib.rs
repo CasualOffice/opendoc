@@ -1564,6 +1564,7 @@ fn push_mapping_step(map: &mut PositionMap, operation: &Operation, inverse: &Ope
         | Operation::SetSectionTitlePage { .. }
         | Operation::SetSectionWatermark { .. }
         | Operation::SetSectionLineNumbering { .. }
+        | Operation::SetSectionPageBorders { .. }
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetEvenAndOddHeaders { .. }

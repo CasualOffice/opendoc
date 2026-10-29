@@ -1028,9 +1028,7 @@
       "area": "page",
       "title": "Page borders",
       "ours": {
-        "absent": [
-          "layout.pageBorders"
-        ]
+        "command": "layout.pageBorders"
       },
       "theirs": {
         "absent": {
@@ -1038,7 +1036,7 @@
         }
       },
       "rank": 3,
-      "note": "Neither product ships a page-borders dialog although both model the property; we import and export w:pgBorders too."
+      "note": "Theirs ships no page-borders dialog although it models the property. Ours is Word's Page Border tab without Art, Shadow and 3-D: four edges, style, width, colour, every page or first or all but first, measured from the page edge or the text, for the whole document or one section, one undo step."
     },
     {
       "id": "page.break.column",

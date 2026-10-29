@@ -12,6 +12,7 @@
 use casual_doc_edit::table_structure::MintId;
 use casual_doc_edit::{Operation, Pos, RunningRegion};
 use casual_doc_model::NodeId;
+use casual_doc_model::v1::PageBorders;
 use casual_doc_model::v1::{
     BlockNode, Document, FontName, HeaderFooterId, HeaderFooterKind, HeaderFooterRef,
     LineNumbering, NumberFormat, PageMargins, PageNumbering, PageOrientation, PageSize,
@@ -84,6 +85,20 @@ pub fn set_line_numbering(section: SectionId, line_numbering: LineNumbering) -> 
         section,
         line_numbering,
     }]
+}
+
+/// Installs page borders on each of `sections` in ONE action, as the editor's
+/// Page Borders dialog applies them to "This section" or "Whole document" — one
+/// operation per section, one undo step. The empty value removes them. O(sections).
+#[must_use]
+pub fn set_page_borders(sections: &[SectionId], page_borders: &PageBorders) -> Vec<Operation> {
+    sections
+        .iter()
+        .map(|&section| Operation::SetSectionPageBorders {
+            section,
+            page_borders: Box::new(page_borders.clone()),
+        })
+        .collect()
 }
 
 /// Installs a section's page numbering and vertical alignment together, as the

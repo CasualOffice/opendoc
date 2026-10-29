@@ -1213,6 +1213,7 @@ fn the_editor_builds_no_moved_lowering_itself() {
         "Operation::SpliceSectionBoundary {",
         "Operation::SetSectionGeometry {",
         "Operation::SetSectionLineNumbering {",
+        "Operation::SetSectionPageBorders {",
         "Operation::SetSectionPageNumbering {",
         "Operation::SetSectionWatermark {",
         "Operation::SetSectionTitlePage {",

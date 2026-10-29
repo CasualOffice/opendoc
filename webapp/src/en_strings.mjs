@@ -152,6 +152,11 @@ export const EN_STRINGS = Object.freeze({
   // Why Accept and Reject are unavailable in a container that may not edit
   // (HF-199): deciding a tracked change writes the document, which is editing.
   "review.decision.needsEdit": "Accepting or rejecting a change edits the document, and this editor may only comment here.",
+  // Page borders (HF-193): the palette's label, and what the dialog says.
+  "pageBorders.command": "Page borders…",
+  "pageBorders.noSection": "This document has no page setup to carry a border.",
+  "pageBorders.applied": "Page borders applied",
+  "pageBorders.removed": "Page borders removed",
   // The Word count command's label on the palette and the Review menu (HF-051).
   "wordCount.command": "Word count…",
   // Reassigned from script on every render, so the markup sweep never sees it.

@@ -2,6 +2,8 @@
 // per command, read by the ribbon, the menus and the palette alike. Moved out
 // of `main.js` unchanged (docs/177); it reaches the rest of the editor only
 // through the context `ed`.
+import { createPageBorders } from "./page_borders.mjs";
+import { t } from "./i18n.mjs";
 import { reviewDecisionRefusal } from "./review_authority.mjs";
 import { breakSurfaceRows } from "./break_commands.mjs";
 import { objectMenuRows } from "./reference_commands.mjs";
@@ -100,6 +102,14 @@ export function createCommandSurfaces(ed) {
   //                thing docs/63 forbids outright, and hiding it would make the
   //                gap invisible to the person deciding what to build next.
   const BREAK_IO = { doc: () => ed.doc, caret: () => ed.selection?.focus ?? null, runEdit: (thunk, options) => ed.runEdit(thunk, options), setStatus: (text) => ed.setStatus(text) };
+  // Page borders (HF-193): Word's Borders and Shading ▸ Page Border.
+  const pageBorders = createPageBorders({
+    getDoc: () => ed.doc,
+    selectionNode: () => ed.selection?.focus?.node ?? null,
+    runEdit: (thunk, options) => ed.runEdit(thunk, options),
+    setStatus: (text, kind) => ed.setStatus(text, kind),
+    fallbackFocus: () => document.getElementById("pageBordersBtn") ?? ed.pagesEl,
+  });
   const LAYOUT_SURFACE = [
     // Page setup: one dialog, four fieldsets. Word's four buttons are four routes
     // into the same section geometry; each one opens the dialog with its own
@@ -118,6 +128,9 @@ export function createCommandSurfaces(ed) {
     // itself, so the click belongs to this table's own wiring — the popover
     // manager is not involved, and `page_setup.mjs` deliberately binds no listener
     // of its own to the button.
+    // Page borders: a modal this table's own wiring opens, the watermark's shape.
+    // `label` is a getter so the palette reads it after the catalogue lands.
+    { command: "layout.pageBorders", get label() { return t("pageBorders.command"); }, kw: "page border borders box frame outline around page art", buttons: () => [document.getElementById("pageBordersBtn")].filter(Boolean), requires: "doc", run: () => pageBorders.open() },
     { command: "layout.watermark", label: "Watermark", kw: "watermark draft confidential sample stamp diagonal background behind text", buttons: () => [ed.watermarkBtn], requires: "doc", run: () => ed.pageSetup.openWatermark(true) },
     // Paragraph: the existing relative nudges, plus the two fieldsets of the
     // paragraph-properties panel that hold the absolute indent and spacing values.

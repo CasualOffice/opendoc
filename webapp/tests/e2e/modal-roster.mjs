@@ -407,6 +407,19 @@ export const MODALS = [
     },
   },
   {
+    id: "pageBordersDialog",
+    name: "Page borders",
+    // HF-193. Opened from its Layout-band button, which is where focus returns.
+    opener: "#pageBordersBtn",
+    focus: "#pageBordersTop",
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="layout"]').click();
+      await page.locator("#pageBordersBtn").click();
+    },
+  },
+  {
     id: "wordCountDialog",
     name: "Word count",
     // HF-051. Word's Review ▸ Proofing ▸ Word Count; the band button is the

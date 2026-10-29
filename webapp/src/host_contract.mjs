@@ -421,6 +421,8 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("layout.tabStops", "mutate"),
   exact("layout.lineNumbers", "mutate"),
   exact("layout.watermark", "mutate"),
+  // Page borders write the section's `w:pgBorders` (HF-193).
+  exact("layout.pageBorders", "mutate"),
   exact("layout.firstPageVariant", "mutate"),
   exact("layout.evenOddVariant", "mutate"),
   // Word's Header & Footer ▸ Options, plus the position and page-numbering fields.

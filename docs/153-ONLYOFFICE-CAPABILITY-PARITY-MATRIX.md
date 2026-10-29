@@ -129,7 +129,7 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-provenance -->
 | Side | Source | Inventory |
 | --- | --- | --- |
-| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 217 exact commands, 11 families |
+| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 218 exact commands, 11 families |
 | ONLYOFFICE | snapshot of 163 files, taken 2026-09-30 | 578 controls, 3529 locale keys, 2122 engine API methods, 114 boot flags (14 licence-gated, 3 desktop-only) |
 | Matrix | `tools/opendoc-parity/data/capabilities.json` | 422 graded rows |
 <!-- @end parity-provenance -->
@@ -141,11 +141,11 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 | --- | --- | --- |
 | Parity | 200 | both products ship it, and both anchors resolve |
 | Ours, ungated | 27 | we ship it in the editor itself; theirs is behind a licence result the document server issues, the desktop shell, or the integrator's own config |
-| Ours only | 24 | we ship it and their tree has no such surface |
+| Ours only | 25 | we ship it and their tree has no such surface |
 | Partial | 68 | we ship part of it; the row says what is missing |
 | Gap | 77 | their standalone browser session ships it and we do not |
 | Theirs, gated | 13 | theirs needs a licence result, the desktop shell or the integrator, and we lack it too |
-| Neither | 13 | neither product ships it, and the row records the search that established that |
+| Neither | 12 | neither product ships it, and the row records the search that established that |
 | **Total graded** | **422** | every row below |
 <!-- @end parity-tally -->
 
@@ -492,7 +492,7 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | --- | --- | --- | --- | --- |
 | Insert blank page | Parity | `webapp/src/break_commands.mjs` · `layout.blankPage` | `btnBlankPage` | Two page breaks in one undoable action, reached from Insert and the palette. |
 | Bookmarks | Parity | `insert.bookmark` | `btnBookmarks` | Create, rename, delete and go to, each one undoable action. |
-| Page borders | Neither | none (`layout.pageBorders` undeclared) | none (searched `No PageBorders view file in web-apps/apps/documenteditor/main/app/view, no PageBorder localeKey and no PageBorder apiMethod in the snapshot; sdkjs touches pgBorders only in fromToJSON.js serialisation.`) | Neither product ships a page-borders dialog although both model the property; we import and export w:pgBorders too. |
+| Page borders | Ours only | `layout.pageBorders` | none (searched `No PageBorders view file in web-apps/apps/documenteditor/main/app/view, no PageBorder localeKey and no PageBorder apiMethod in the snapshot; sdkjs touches pgBorders only in fromToJSON.js serialisation.`) | Theirs ships no page-borders dialog although it models the property. Ours is Word's Page Border tab without Art, Shadow and 3-D: four edges, style, width, colour, every page or first or all but first, measured from the page edge or the text, for the whole document or one section, one undo step. |
 | Column break | Parity | `layout.break.column` | `DE.Views.Toolbar.textInsColumnBreak` | `insertBreak('column')` had no caller; it is the second row of the same `Breaks` dropdown now, beside the page break, which is where theirs is (`Toolbar.js:2385`). |
 | Page break | Parity | `layout.break.page` | `DE.Views.Toolbar.textInsPageBreak` | Both put it on Insert and both bind Ctrl+Enter. Ours is one `Breaks` dropdown on the Insert band plus a `Breaks` submenu in the Insert menu, so it is reachable in the compact chrome where the ribbon is hidden, and the chord is one row in `keymap.mjs` rather than a second path through the editor's key handler (`docs/104` HF-127). Refused outside the body's own block list by the engine, by name. |
 | Section break (next page, continuous, even, odd) | Parity | `layout.break.section.nextPage` | `DE.Views.Toolbar.textInsSectionBreak` | All four start types ship: `layout.break.section.continuous`, `evenPage` and `oddPage` are the other three, each its own command and its own row in the same dropdown theirs uses (`Toolbar.js:2372-2380`). Guarded on the EFFECT: the four are inserted into one document and the `sectionType` each wrote is read back out of a normalized-JSON export, so a chrome that sent one start type four times fails. |

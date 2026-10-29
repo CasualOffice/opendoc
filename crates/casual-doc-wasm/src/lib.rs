@@ -119,6 +119,7 @@ use casual_doc_model::v1::{CROP_FULL, CropRect};
 #[cfg(test)]
 use casual_doc_model::v1::NoteId;
 use casual_doc_model::v1::NoteKind;
+use casual_doc_model::v1::PageBorders;
 use casual_doc_model::v1::PageVerticalAlignment;
 use casual_doc_model::v1::{DocumentProtection, DocumentProtectionEdit};
 use casual_doc_model::v1::{
@@ -990,6 +991,7 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::UpdateReviewState { .. } => HistoryKind::Review,
         Operation::SetSectionGeometry { .. }
         | Operation::SetSectionLineNumbering { .. }
+        | Operation::SetSectionPageBorders { .. }
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetSectionWatermark { .. } => HistoryKind::PageSetup,
@@ -9820,6 +9822,75 @@ impl WasmDocument {
                     restart: payload.restart,
                 },
             ),
+            caret,
+        )
+        .map_err(to_js)
+    }
+
+    /// The page borders of the section holding `node` — the Page Borders dialog's
+    /// read side (HF-193) — as JSON:
+    /// `{"section": id, "sections": [every section id, in order], "borders": {…}}`,
+    /// where `borders` is the model's own camelCase `PageBorders` shape (`display`,
+    /// `offsetFrom`, and `top`/`bottom`/`start`/`end` edges, each absent when unset).
+    /// `null` only when the document has no section at all.
+    ///
+    /// O(document): resolving `node` to its section is a document walk
+    /// (`section_of`). Call it when the dialog opens, not per frame.
+    #[wasm_bindgen(js_name = pageBorders)]
+    #[must_use]
+    pub fn page_borders(&self, node: &str) -> String {
+        let sections = &self.document.definitions().sections;
+        if sections.is_empty() {
+            return "null".to_string();
+        }
+        let current = self.section_of(node);
+        let borders = sections
+            .iter()
+            .find(|candidate| candidate.id.node_id() == current)
+            .map(|candidate| candidate.page_borders.clone())
+            .unwrap_or_default();
+        serde_json::json!({
+            "section": current.to_string(),
+            "sections": sections
+                .iter()
+                .map(|candidate| candidate.id.node_id().to_string())
+                .collect::<Vec<_>>(),
+            "borders": borders,
+        })
+        .to_string()
+    }
+
+    /// Installs page borders on every section `sections` names, from
+    /// `{"sections": [ids], "borders": {…}}` in [`page_borders`](Self::page_borders)'s
+    /// shape — the dialog's Apply, to "This section" or "Whole document". ONE undoable
+    /// action however many sections it covers. An empty `borders` object removes
+    /// them.
+    ///
+    /// Rejected, with the document left exactly as it was, when an id names no
+    /// section or an edge falls outside the model's domain (an empty style token, a
+    /// width over 1024 eighth-points, a spacing over 31 points).
+    #[wasm_bindgen(js_name = setPageBorders)]
+    pub fn set_page_borders(&mut self, payload_json: &str) -> Result<EditResult, JsValue> {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Payload {
+            sections: Vec<String>,
+            borders: PageBorders,
+        }
+        let payload: Payload = serde_json::from_str(payload_json)
+            .map_err(|e| to_js(format!("invalid page borders payload: {e}")))?;
+        let sections = payload
+            .sections
+            .iter()
+            .map(|id| NodeId::from_str(id).map(SectionId::new))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| to_js("invalid section id".to_string()))?;
+        if sections.is_empty() {
+            return Err(to_js("no section to apply page borders to".to_string()));
+        }
+        let caret = Pos::new(self.document.id(), 0);
+        self.apply_action_caret(
+            casual_doc_command::sections::set_page_borders(&sections, &payload.borders),
             caret,
         )
         .map_err(to_js)
@@ -24164,6 +24235,7 @@ fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document)
         // moves the text under the caret, and moving the caret too would lose the
         // user's place in a document they only asked to re-align.
         Operation::SetSectionLineNumbering { .. }
+        | Operation::SetSectionPageBorders { .. }
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetSectionWatermark { .. } => Pos::new(doc_id, 0),
@@ -35783,6 +35855,78 @@ mod tests {
             d.document.definitions().numbering.len(),
             definitions_before_b
         );
+    }
+
+    /// HF-193: page borders round-trip through the dialog's two calls, apply to
+    /// every named section as ONE undo step, export as `w:pgBorders`, and come off
+    /// again with the empty value. Mutation: make `set_page_borders` in the command
+    /// crate emit the operation for the first section only → the second section
+    /// keeps no border and the whole-document assertion fails.
+    #[test]
+    fn page_borders_are_set_on_every_named_section_as_one_undo_step() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let node = d.ordered_paragraphs()[0].0.to_string();
+        d.insert_section_break(&node, d.paragraph_length(&node), "nextPage")
+            .expect("a second section");
+        let read: serde_json::Value = serde_json::from_str(&d.page_borders(&node)).unwrap();
+        let sections: Vec<String> = read["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|id| id.as_str().unwrap().to_string())
+            .collect();
+        assert!(sections.len() >= 2, "the fixture has more than one section");
+        let before = d.document.clone();
+        let edge = serde_json::json!({ "style": "double", "sizeEighthPoints": 12,
+            "color": { "r": 51, "g": 85, "b": 196 }, "spacePoints": 24 });
+        let payload = serde_json::json!({
+            "sections": sections,
+            "borders": { "display": "allPages", "offsetFrom": "page",
+                "top": edge, "bottom": edge, "start": edge, "end": edge },
+        });
+        d.set_page_borders(&payload.to_string())
+            .expect("borders on");
+        for section in &d.document.definitions().sections {
+            let top = section
+                .page_borders
+                .top
+                .as_ref()
+                .expect("every section bordered");
+            assert_eq!(top.style, "double");
+            assert_eq!(top.size_eighth_points, Some(12));
+            assert_eq!(top.space_points, Some(24));
+        }
+        let saved = d.export_docx().expect("save");
+        let reopened = open_document(&saved).expect("reopen");
+        assert!(
+            reopened
+                .document
+                .definitions()
+                .sections
+                .iter()
+                .all(|section| section.page_borders.end.is_some()),
+            "the borders survive a save"
+        );
+        // One action, so one undo restores the document exactly.
+        d.undo().expect("undo");
+        assert_eq!(d.document, before);
+        // The empty value removes them.
+        d.redo().expect("redo");
+        let off = serde_json::json!({ "sections": sections, "borders": {} });
+        d.set_page_borders(&off.to_string()).expect("borders off");
+        assert!(
+            d.document
+                .definitions()
+                .sections
+                .iter()
+                .all(|section| section.page_borders.is_empty())
+        );
+        // A value outside the model's domain is refused and changes nothing.
+        let wide = serde_json::json!({ "sections": sections,
+            "borders": { "top": { "style": "single", "spacePoints": 99 } } });
+        let unchanged = d.document.clone();
+        assert!(d.set_page_borders(&wide.to_string()).is_err());
+        assert_eq!(d.document, unchanged);
     }
 
     #[test]

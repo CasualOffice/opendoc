@@ -926,6 +926,8 @@
                    ▸ Breaks, and ONLYOFFICE's Layout slot for the same button. -->
               <button data-i18n-title="panelInsert.insertBreak.title" data-i18n-label="panelInsert.breaks.label" id="layoutBreaksBtn" type="button" class="fmt" title="Insert a page, column or section break" aria-label="Breaks" aria-haspopup="menu" aria-controls="layoutBreaksMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">insert_page_break</span></button>
               <button data-i18n-title="panelLayout.watermark.title" data-i18n-label="panelLayout.watermark.label" id="watermarkBtn" type="button" class="fmt" title="Watermark" aria-label="Watermark" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">branding_watermark</span></button>
+              <!-- Page borders (HF-193): Word's Borders and Shading ▸ Page Border. -->
+              <button data-i18n-title="panelLayout.pageBorders.title" data-i18n-label="panelLayout.pageBorders.label" id="pageBordersBtn" type="button" class="fmt" title="Page borders" aria-label="Page borders" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">border_style</span></button>
             </div>
             <span data-i18n="panelLayout.pageSetup" class="rgroup-label">Page setup</span>
           </div>
@@ -1735,6 +1737,70 @@
          …) is also left out: the field takes any text, so a preset list is a
          convenience, and it would be eight more sentences in eighteen languages
          buying no capability. -->
+    <!-- Page borders (HF-193). `page_borders.mjs` has the competitor shape and
+         what is deliberately not offered. -->
+    <div id="pageBordersDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="pageBordersTitle" aria-describedby="pageBordersDescription">
+      <section class="dialog-card page-borders-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="pageBordersDialog.title" id="pageBordersTitle">Page borders</h2>
+              <p data-i18n="pageBordersDialog.description" id="pageBordersDescription">A border drawn around the pages of the document.</p>
+            </div>
+          </div>
+          <button data-i18n-title="pageBordersDialog.close.title" data-i18n-label="pageBordersDialog.close.label" id="pageBordersClose" type="button" class="dialog-close" title="Close" aria-label="Close page borders">
+            <span class="ms" aria-hidden="true">close</span>
+          </button>
+        </header>
+        <div class="dialog-body">
+          <fieldset class="dialog-group page-borders-edges">
+            <legend data-i18n="pageBordersDialog.edges">Borders on</legend>
+            <label class="dialog-check"><input id="pageBordersTop" type="checkbox" checked /><span data-i18n="pageBordersDialog.top">Top</span></label>
+            <label class="dialog-check"><input id="pageBordersBottom" type="checkbox" checked /><span data-i18n="pageBordersDialog.bottom">Bottom</span></label>
+            <label class="dialog-check"><input id="pageBordersLeft" type="checkbox" checked /><span data-i18n="pageBordersDialog.left">Left</span></label>
+            <label class="dialog-check"><input id="pageBordersRight" type="checkbox" checked /><span data-i18n="pageBordersDialog.right">Right</span></label>
+          </fieldset>
+          <div class="dialog-field-grid">
+            <label data-i18n="pageBordersDialog.style" class="dialog-field">Style<select id="pageBordersStyle" class="dialog-select">
+              <option data-i18n="pageBordersDialog.styleSingle" value="single">Single</option>
+              <option data-i18n="pageBordersDialog.styleDouble" value="double">Double</option>
+              <option data-i18n="pageBordersDialog.styleDotted" value="dotted">Dotted</option>
+              <option data-i18n="pageBordersDialog.styleDashed" value="dashed">Dashed</option>
+              <option data-i18n="pageBordersDialog.styleDotDash" value="dotDash">Dot dash</option>
+              <option data-i18n="pageBordersDialog.styleTriple" value="triple">Triple</option>
+              <option data-i18n="pageBordersDialog.styleThick" value="thick">Thick</option>
+              <option data-i18n="pageBordersDialog.styleWave" value="wave">Wave</option>
+            </select></label>
+            <label data-i18n="pageBordersDialog.width" class="dialog-field">Width<select id="pageBordersWidth" class="dialog-select"></select></label>
+            <label data-i18n="pageBordersDialog.color" class="dialog-field">Color<input id="pageBordersColor" type="color" value="#000000" /></label>
+          </div>
+          <div class="dialog-field-grid">
+            <label data-i18n="pageBordersDialog.showOn" class="dialog-field">Show on<select id="pageBordersDisplay" class="dialog-select">
+              <option data-i18n="pageBordersDialog.allPages" value="allPages">Every page</option>
+              <option data-i18n="pageBordersDialog.firstPage" value="firstPage">First page only</option>
+              <option data-i18n="pageBordersDialog.notFirstPage" value="notFirstPage">Every page except the first</option>
+            </select></label>
+            <label data-i18n="pageBordersDialog.measureFrom" class="dialog-field">Measure from<select id="pageBordersOffsetFrom" class="dialog-select">
+              <option data-i18n="pageBordersDialog.pageEdge" value="page">Edge of page</option>
+              <option data-i18n="pageBordersDialog.text" value="text">Text</option>
+            </select></label>
+            <label data-i18n="pageBordersDialog.spacing" class="dialog-field">Spacing (pt)<input id="pageBordersSpacing" type="number" inputmode="numeric" min="0" max="31" step="1" value="24" /></label>
+          </div>
+          <label id="pageBordersApplyToField" data-i18n="pageBordersDialog.applyTo" class="dialog-field">Apply to<select id="pageBordersApplyTo" class="dialog-select">
+            <option data-i18n="pageBordersDialog.wholeDocument" value="document">Whole document</option>
+            <option data-i18n="pageBordersDialog.thisSection" value="section">This section</option>
+          </select></label>
+        </div>
+        <footer class="dialog-foot">
+          <span data-i18n="pageBordersDialog.note" class="dialog-note">Clear every edge to remove the border. Can be undone.</span>
+          <div class="dialog-actions">
+            <button data-i18n="pageBordersDialog.cancel" type="button" id="pageBordersCancel" class="dialog-button">Cancel</button>
+            <button data-i18n="pageBordersDialog.apply" type="button" id="pageBordersApply" class="dialog-button dialog-button-primary">Apply</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
     <div id="watermarkDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="watermarkTitle" aria-describedby="watermarkDescription">
       <section class="dialog-card watermark-dialog">
         <header class="dialog-head">

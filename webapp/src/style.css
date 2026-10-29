@@ -2165,6 +2165,19 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 
 /* Two columns: term and value on one line, the way a properties sheet reads.
    `auto auto` so neither column is wider than the text it holds. */
+/* Page borders (HF-193): the four edges read across, as Word's preview buttons
+   sit around one page. */
+.page-borders-dialog {
+  width: fit-content;
+  max-inline-size: min(100%, 60ch);
+}
+
+.page-borders-edges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+
 /* Word count (HF-051): a figures table, numbers right-aligned in tabular
    figures so the columns compare at a glance, as Word's dialog does. */
 .word-count-dialog {

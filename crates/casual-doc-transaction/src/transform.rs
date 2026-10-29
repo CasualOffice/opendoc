@@ -798,6 +798,7 @@ fn anchors(operation: &Operation, out: &mut Vec<NodeId>) {
         | Operation::SetSectionTitlePage { .. }
         | Operation::SetSectionWatermark { .. }
         | Operation::SetSectionLineNumbering { .. }
+        | Operation::SetSectionPageBorders { .. }
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetEvenAndOddHeaders { .. }
@@ -828,6 +829,7 @@ fn anchor_key(operation: &Operation) -> Option<Key> {
         | Operation::SetSectionTitlePage { section, .. }
         | Operation::SetSectionWatermark { section, .. }
         | Operation::SetSectionLineNumbering { section, .. }
+        | Operation::SetSectionPageBorders { section, .. }
         | Operation::SetSectionPageNumbering { section, .. }
         | Operation::SetSectionVerticalAlignment { section, .. }
         | Operation::SetSectionFormProtection { section, .. } => Some(Key::Section(*section)),
@@ -1805,6 +1807,12 @@ fn footprint(operation: &Operation) -> Option<(Target, Aspects)> {
         }
         Operation::SetSectionLineNumbering { section, .. } => {
             Some((Target::Section(*section), Aspects::SECTION_LINE_NUMBERING))
+        }
+        // The aspect set is a full `u32`, so page borders share the page-setup
+        // aspect: a concurrent margin change and border change on one section
+        // contend, which is the conservative answer, never a lost write.
+        Operation::SetSectionPageBorders { section, .. } => {
+            Some((Target::Section(*section), Aspects::SECTION_GEOMETRY))
         }
         Operation::SetSectionPageNumbering { section, .. } => {
             Some((Target::Section(*section), Aspects::SECTION_PAGE_NUMBERING))
