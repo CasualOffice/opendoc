@@ -1091,18 +1091,9 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
 /// names an id; raising it needs an ADR line (`docs/181` §3).
 ///
 /// 84 -> 85 with `layout.pageBorders` (`109` HF-193), recorded in `docs/181` §3.
-<<<<<<< HEAD
-<<<<<<< HEAD
-/// 85 -> 96 with the eleven table-tool ids (`109` RM-26, RM-27), and
-/// 96 -> 99 with `reference.removeToc`, `reference.tableOfFigures` and
-/// `reference.addText.` (`109` RM-25), both recorded in `docs/181` §3.
-pub const UI_NOT_EXPOSED_CEILING: usize = 99;
-=======
-/// 85 -> 87 with `reference.noteSettings` and `reference.convertNotes` (`109`
-/// RM-24), recorded in `docs/181` §3.
-pub const UI_NOT_EXPOSED_CEILING: usize = 87;
->>>>>>> origin/lane/parity-review-notes
-=======
-/// 85 -> 86 with `format.language` (`109` RM-42), recorded in `docs/181` §3.
-pub const UI_NOT_EXPOSED_CEILING: usize = 86;
->>>>>>> origin/lane/parity-autocorrect-language
+/// 85 -> 96 with the eleven table-tool ids (`109` RM-26, RM-27), 96 -> 99 with
+/// `reference.removeToc`, `reference.tableOfFigures` and `reference.addText.`
+/// (`109` RM-25), 99 -> 101 with `reference.noteSettings` and
+/// `reference.convertNotes` (`109` RM-24), and 101 -> 102 with `format.language`
+/// (`109` RM-42), each recorded in `docs/181` §3.
+pub const UI_NOT_EXPOSED_CEILING: usize = 102;
