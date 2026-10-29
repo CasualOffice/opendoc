@@ -1825,15 +1825,13 @@
       "area": "page",
       "title": "Table of figures",
       "ours": {
-        "absent": [
-          "reference.tableOfFigures"
-        ]
+        "command": "reference.tableOfFigures"
       },
       "theirs": {
         "control": "btnTableFigures"
       },
       "rank": 3,
-      "note": "We have captions but nothing that collects them into a table."
+      "note": "The contents dialog in its figures mode: a caption label, include label and number (`\\c` / `\\a`), page numbers, leader and links; Update entire rebuilds it from the captions."
     },
     {
       "id": "page.textFromFile",
@@ -1868,15 +1866,13 @@
       "area": "page",
       "title": "Add paragraph to table of contents",
       "ours": {
-        "absent": [
-          "reference.addText"
-        ]
+        "family": "reference.addText."
       },
       "theirs": {
         "localeKey": "DE.Views.Links.capBtnAddText"
       },
       "rank": 4,
-      "note": "Their Add text marks the current paragraph at a chosen contents level without restyling it as a heading."
+      "note": "Do not show and levels 1..9 set the paragraph's outline level without restyling it; theirs applies Heading n instead (sdkjs word/api.js:12183-12187). Outline level 9 now overrides a heading style, as Word's body text does."
     },
     {
       "id": "page.toc.followEntry",
@@ -1909,14 +1905,16 @@
       "area": "page",
       "title": "Tab leader for contents entries",
       "ours": {
-        "absent": [
-          "reference.tocLeader"
-        ]
+        "anchor": {
+          "file": "webapp/src/toc_commands.mjs",
+          "literal": "TOC_LEADERS"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.TableOfContentsSettings.textLeader"
       },
-      "rank": 3
+      "rank": 3,
+      "note": "None, dots, dashes or line, as their dialog offers; the leader lives on the entries' right tab and survives Update entire."
     },
     {
       "id": "page.toc.levels",
@@ -1939,45 +1937,45 @@
       "area": "page",
       "title": "Remove table of contents",
       "ours": {
-        "absent": [
-          "reference.removeToc"
-        ]
+        "command": "reference.removeToc"
       },
       "theirs": {
         "localeKey": "DE.Views.Links.textContentsRemove"
       },
       "rank": 3,
-      "note": "The field can be inserted and updated but not deleted as a unit."
+      "note": "One RemoveFieldRange: the field and every entry, one undo step; on the References band, the References menu, the palette and the entry's right-click menu."
     },
     {
       "id": "page.toc.settings",
       "area": "page",
       "title": "Table of contents settings (page numbers, alignment, links)",
       "ours": {
-        "absent": [
-          "reference.tocSettings"
-        ]
+        "anchor": {
+          "file": "webapp/src/toc_commands.mjs",
+          "literal": "tocSettingsFromForm"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.TableOfContentsSettings.strShowPages"
       },
       "rank": 3,
-      "note": "Show page numbers, right-align them, hyperlink the entries and build from styles rather than outline levels are all fixed for us."
+      "note": "Closed on lane/parity-tables-toc (RM-25): the contents dialog carries show page numbers (`\\n`), right align, links (`\\h`, planting a `_Toc` bookmark only on a heading without one), levels, and outline levels or selected styles (`\\t`); every choice is read back from the instruction and the entries' tab stop, so Update entire keeps it and the dialog reopens on it."
     },
     {
       "id": "page.toc.styles",
       "area": "page",
       "title": "Table of contents style gallery",
       "ours": {
-        "absent": [
-          "reference.tocStyle"
-        ]
+        "anchor": {
+          "file": "webapp/src/toc_commands.mjs",
+          "literal": "TOC_FORMATS"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.TableOfContentsSettings.textStyles"
       },
       "rank": 3,
-      "note": "Their dialog offers Simple, Standard, Modern, Classic and the rest; ours generates one shape."
+      "note": "From document, Simple, Standard, Modern, Classic and Online rewrite the TOC 1..n style definitions, after their CreateTOC shapes (sdkjs word/Editor/Styles.js:6750)."
     },
     {
       "id": "page.toc.updateEntire",

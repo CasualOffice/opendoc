@@ -354,6 +354,29 @@ export function createContextMenu(ed) {
         run: () => void ed.followTocEntry(ed.selection?.focus?.node),
       });
     }
+    // On a generated contents (or figures) entry: Word's right-click offers
+    // Update Field, and ONLYOFFICE's offers Update table and Remove
+    // (`docs/153` `page.toc.remove`). Both run the same commands the References
+    // band does, so the menu cannot disagree with the band about what they do.
+    if (ed.tocCommands.fields.count > 0 && ed.tocEntryTargetAt(ed.selection?.focus?.node)) {
+      annotate.push(
+        {
+          id: "reference.updateFields",
+          label: t("toc.update.command"),
+          group: "annotate",
+          icon: "linkOpen",
+          run: () => ed.tocCommands.update.open(),
+        },
+        {
+          id: "reference.removeToc",
+          label: t("toc.remove.command"),
+          group: "annotate",
+          icon: "reject",
+          danger: true,
+          run: () => void ed.tocCommands.remove.run(),
+        },
+      );
+    }
     if (context.link) {
       const linkReason = context.suggesting
         ? "Link changes cannot be tracked in Suggesting mode"

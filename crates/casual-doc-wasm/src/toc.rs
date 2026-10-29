@@ -34,9 +34,13 @@
 //! guards it by DOUBLING the heading count rather than by timing.
 
 use casual_doc_command::references::{self, LayoutFacts, TocUpdate};
+// Their own lines (rustfmt is set to Preserve; a shared `use` list is where
+// parallel lanes collide).
+use casual_doc_command::references::{TocOptions, TocSource, TocStyle};
 use casual_doc_layout::cascade::StyleCascade;
 use casual_doc_layout::paginate::first_page_labels;
 use casual_doc_model::NodeId;
+use casual_doc_model::v1::TabLeader;
 use casual_doc_model::v1::{Definitions, Document, FieldRangeId, Paragraph};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -254,6 +258,317 @@ impl WasmDocument {
         )?;
         drop(facts);
         self.apply_action_as(operations, HistoryKind::FieldChange)
+    }
+}
+
+// ---- Settings, removal, Add text, table of figures (`docs/153` RM-25) -------
+
+/// The settings dialog's answers, as the host sends them. Every field is
+/// optional and defaults to what the editor generated before settings existed,
+/// so `{}` is the old table.
+#[derive(Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TocSettings {
+    /// Levels shown, 1..=9 (outline-level tables).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) levels: Option<u32>,
+    /// Show page numbers (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) page_numbers: Option<bool>,
+    /// Right-align page numbers (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) right_align: Option<bool>,
+    /// `none`, `dot`, `hyphen` or `underscore` (default `dot`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) leader: Option<String>,
+    /// Link each entry to its heading (default false).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) hyperlinks: Option<bool>,
+    /// Build from these `[style name, level]` pairs instead of outline levels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) styles: Option<Vec<(String, u8)>>,
+    /// Build a table of FIGURES from the captions of this label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) caption: Option<String>,
+    /// Keep "Figure 3" in front of each caption's text (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) include_label: Option<bool>,
+    /// The gallery format: `current`, `simple`, `standard`, `modern`,
+    /// `classic` or `online` (default `current`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) format: Option<String>,
+}
+
+/// The wire token of a leader. O(1).
+fn leader_token(leader: Option<TabLeader>) -> &'static str {
+    match leader {
+        None => "none",
+        Some(TabLeader::Hyphen) => "hyphen",
+        Some(TabLeader::Underscore) => "underscore",
+        // Middle dot and heavy are Word leaders its dialog does not offer; the
+        // dialog shows them as dots, the nearest it has.
+        Some(TabLeader::Dot | TabLeader::MiddleDot | TabLeader::Heavy) => "dot",
+    }
+}
+
+impl TocSettings {
+    /// The options these settings ask for. O(styles named).
+    ///
+    /// # Errors
+    /// An unknown leader or format token, a style level outside 1..=9, or an
+    /// empty caption label or style list.
+    pub(crate) fn options(&self) -> Result<TocOptions, String> {
+        let mut options = TocOptions {
+            max_level: references::toc_level(self.levels.unwrap_or(0)),
+            ..TocOptions::default()
+        };
+        options.page_numbers = self.page_numbers.unwrap_or(true);
+        options.right_align = self.right_align.unwrap_or(true);
+        options.hyperlinks = self.hyperlinks.unwrap_or(false);
+        options.leader = match self.leader.as_deref().unwrap_or("dot") {
+            "none" => None,
+            "dot" => Some(TabLeader::Dot),
+            "hyphen" => Some(TabLeader::Hyphen),
+            "underscore" => Some(TabLeader::Underscore),
+            other => return Err(format!("unknown tab leader {other:?}")),
+        };
+        if let Some(format) = &self.format {
+            options.style = TocStyle::parse(format)
+                .ok_or_else(|| format!("unknown contents format {format:?}"))?;
+        }
+        if let Some(label) = &self.caption {
+            let label = label.trim();
+            if label.is_empty() || label.contains('"') {
+                return Err("a table of figures needs a caption label".to_owned());
+            }
+            options.source = TocSource::Captions {
+                label: label.to_owned(),
+                include_label: self.include_label.unwrap_or(true),
+            };
+        } else if let Some(styles) = &self.styles {
+            if styles.is_empty() {
+                return Err("choose at least one style to build the table from".to_owned());
+            }
+            for (name, level) in styles {
+                if name.trim().is_empty() || name.contains(['"', ',']) {
+                    return Err(format!("{name:?} cannot be named in a contents field"));
+                }
+                if !(1..=references::MAX_TOC_LEVEL).contains(level) {
+                    return Err("a contents level is 1 to 9".to_owned());
+                }
+            }
+            options.source = TocSource::Styles(styles.clone());
+        }
+        Ok(options)
+    }
+
+    /// The settings that describe `options` — what the dialog opens on.
+    /// O(styles named).
+    pub(crate) fn of(options: &TocOptions) -> Self {
+        let mut settings = Self {
+            levels: Some(u32::from(options.max_level)),
+            page_numbers: Some(options.page_numbers),
+            right_align: Some(options.right_align),
+            leader: Some(leader_token(options.leader).to_owned()),
+            hyperlinks: Some(options.hyperlinks),
+            format: Some(options.style.token().to_owned()),
+            ..Self::default()
+        };
+        match &options.source {
+            TocSource::OutlineLevels => {}
+            TocSource::Styles(styles) => settings.styles = Some(styles.clone()),
+            TocSource::Captions {
+                label,
+                include_label,
+            } => {
+                settings.caption = Some(label.clone());
+                settings.include_label = Some(*include_label);
+            }
+        }
+        settings
+    }
+}
+
+#[wasm_bindgen]
+impl WasmDocument {
+    /// Inserts a table of contents — or, with `caption` set, a table of
+    /// figures — with the settings dialog's answers, a JSON object of
+    /// `TocSettings` (`levels`, `pageNumbers`, `rightAlign`, `leader`,
+    /// `hyperlinks`, `styles`, `caption`, `includeLabel`, `format`). With the
+    /// caret inside an existing table it REPLACES that table, which is how
+    /// Word's dialog changes a table's settings.
+    ///
+    /// One undoable action. **O(document)**, plus O(new bookmarks × document)
+    /// the first time a hyperlinked table is generated
+    /// (`casual_doc_command::references` contents note).
+    ///
+    /// # Errors
+    /// Unreadable settings, and every refusal of
+    /// [`insertTableOfContents`](Self::insert_table_of_contents).
+    #[wasm_bindgen(js_name = insertTableOfContentsWith)]
+    pub fn insert_table_of_contents_with(
+        &mut self,
+        node: &str,
+        settings: &str,
+    ) -> Result<EditResult, JsValue> {
+        self.insert_table_of_contents_with_inner(node, settings)
+            .map_err(to_js)
+    }
+
+    /// The settings of a table of contents or figures, as the JSON
+    /// `TocSettings` the dialog opens on: its instruction's switches plus its
+    /// entries' tab format. `id` as for
+    /// [`updateTableOfContents`](Self::update_table_of_contents); empty means
+    /// the only one. **O(body blocks).**
+    ///
+    /// # Errors
+    /// No such table, or several and `id` was empty.
+    #[wasm_bindgen(js_name = tableOfContentsSettings)]
+    pub fn table_of_contents_settings(&self, id: &str) -> Result<String, JsValue> {
+        self.table_of_contents_settings_inner(id).map_err(to_js)
+    }
+
+    /// Removes a table of contents or figures as a unit: its field definition
+    /// and every entry paragraph, one undoable action. `id` as for
+    /// [`updateTableOfContents`](Self::update_table_of_contents).
+    ///
+    /// # Errors
+    /// No such table; several and `id` was empty.
+    #[wasm_bindgen(js_name = removeTableOfContents)]
+    pub fn remove_table_of_contents(&mut self, id: &str) -> Result<EditResult, JsValue> {
+        self.remove_table_of_contents_inner(id).map_err(to_js)
+    }
+
+    /// Marks every paragraph the selection `start..end` touches at contents
+    /// level `level` (1..=9) without restyling it, or — with `-1` — as "Do not
+    /// show in table of contents" (ONLYOFFICE's References ▸ Add text). One
+    /// undoable action. **O(document)** for the walks that find them.
+    ///
+    /// # Errors
+    /// A level outside -1 and 1..=9, a paragraph outside the body, or nothing
+    /// to change.
+    #[wasm_bindgen(js_name = addParagraphsToContents)]
+    pub fn add_paragraphs_to_contents(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        level: i32,
+    ) -> Result<EditResult, JsValue> {
+        self.add_paragraphs_to_contents_inner(start_node, start_offset, end_node, end_offset, level)
+            .map_err(to_js)
+    }
+
+    /// The contents level the paragraph `node` is listed at (1..=9), or `-1`
+    /// when a table of contents would not list it — what checks the Add text
+    /// menu's current row. **O(document)** for the paragraph lookup plus
+    /// O(style chain); called when the menu opens, never per keystroke.
+    #[wasm_bindgen(js_name = contentsLevelAt)]
+    #[must_use]
+    pub fn contents_level_at(&self, node: &str) -> i32 {
+        let Ok(id) = NodeId::from_str(node) else {
+            return -1;
+        };
+        let Some(direct) = casual_doc_edit::paragraph_properties(&self.document, id) else {
+            return -1;
+        };
+        let definitions = self.document.definitions();
+        let cascade = StyleCascade::new(definitions);
+        casual_doc_layout::fold::heading_level(&direct, definitions, &cascade).map_or(-1, i32::from)
+    }
+}
+
+impl WasmDocument {
+    /// See [`WasmDocument::insert_table_of_contents_with`].
+    pub(crate) fn insert_table_of_contents_with_inner(
+        &mut self,
+        node: &str,
+        settings: &str,
+    ) -> Result<EditResult, String> {
+        let settings = if settings.trim().is_empty() {
+            "{}"
+        } else {
+            settings
+        };
+        let settings: TocSettings = serde_json::from_str(settings)
+            .map_err(|error| format!("unreadable contents settings: {error}"))?;
+        let options = settings.options()?;
+        let Ok(before) = NodeId::from_str(node) else {
+            return Err(casual_doc_edit::refused!(
+                "toc.body-only",
+                "A table of contents goes in the document body, not in a header, footer or note."
+            )
+            .to_owned());
+        };
+        let tab = self.toc_tab_position();
+        let facts = Self::toc_facts(&self.document, &self.layout);
+        let ids = &mut self.edit_ids;
+        let placed = references::insert_table_of_contents_with(
+            &self.document,
+            &facts,
+            before,
+            &options,
+            tab,
+            &mut || ids.next_id().ok(),
+        )?;
+        drop(facts);
+        self.apply_action_caret_as(placed.operations, placed.caret, HistoryKind::FieldChange)
+    }
+
+    /// The field-range id `id` names, or `None` for "the only one". O(1).
+    fn toc_field_id(id: &str) -> Result<Option<FieldRangeId>, String> {
+        if id.is_empty() {
+            return Ok(None);
+        }
+        let node = NodeId::from_str(id).map_err(|_| "invalid field range id".to_owned())?;
+        Ok(Some(FieldRangeId::new(node)))
+    }
+
+    /// See [`WasmDocument::table_of_contents_settings`].
+    pub(crate) fn table_of_contents_settings_inner(&self, id: &str) -> Result<String, String> {
+        let options = references::toc_options(&self.document, Self::toc_field_id(id)?)?;
+        serde_json::to_string(&TocSettings::of(&options)).map_err(|error| error.to_string())
+    }
+
+    /// See [`WasmDocument::remove_table_of_contents`].
+    pub(crate) fn remove_table_of_contents_inner(
+        &mut self,
+        id: &str,
+    ) -> Result<EditResult, String> {
+        let operations =
+            references::remove_table_of_contents(&self.document, Self::toc_field_id(id)?)?;
+        self.apply_action_as(operations, HistoryKind::FieldChange)
+    }
+
+    /// See [`WasmDocument::add_paragraphs_to_contents`].
+    pub(crate) fn add_paragraphs_to_contents_inner(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        level: i32,
+    ) -> Result<EditResult, String> {
+        let level = match level {
+            -1 => None,
+            1..=9 => Some(level as u8),
+            _ => return Err("a contents level is 1 to 9, or -1 for do not show".to_owned()),
+        };
+        let (start, end) = self.order_endpoints(start_node, start_offset, end_node, end_offset)?;
+        let paragraphs = self.paragraphs_in_selection(start, end);
+        let facts = EditorFacts::with_pages(self.document.definitions(), HashMap::new());
+        let operations =
+            references::add_paragraphs_to_contents(&self.document, &facts, &paragraphs, level)?;
+        drop(facts);
+        if operations.is_empty() {
+            return Err(casual_doc_edit::refused!(
+                "toc.add-text-unchanged",
+                "This paragraph is already listed that way."
+            )
+            .to_owned());
+        }
+        self.apply_action_as(operations, HistoryKind::ParagraphFormatting)
     }
 }
 
@@ -664,6 +979,472 @@ mod tests {
             "contents generation must roughly double, not quadruple: {small} block \
              visits at {small_n} headings and {large} at {}",
             small_n * 2
+        );
+    }
+
+    // ---- Settings, removal, Add text, table of figures (RM-25) -------------
+
+    /// Fixture ids in a namespace the editor's own minting never reaches.
+    fn fixture_id(n: u64) -> NodeId {
+        NodeId::from_parts(91, n).expect("non-zero")
+    }
+
+    fn fixture_run(id: u64, text: &str) -> InlineNode {
+        InlineNode::Run(casual_doc_model::v1::Run {
+            id: fixture_id(id),
+            properties: casual_doc_model::v1::RunProperties::default().into(),
+            text: text.to_owned(),
+        })
+    }
+
+    fn fixture_paragraph(
+        id: u64,
+        style: Option<casual_doc_model::v1::StyleId>,
+        inlines: Vec<InlineNode>,
+    ) -> BlockNode {
+        BlockNode::Paragraph(Paragraph {
+            id: fixture_id(id),
+            properties: casual_doc_model::v1::ParagraphProperties {
+                style_ref: style,
+                ..casual_doc_model::v1::ParagraphProperties::default()
+            }
+            .into(),
+            inlines,
+        })
+    }
+
+    /// A caption paragraph: `"{label} "`, a `SEQ {label}` field showing
+    /// `number`, then `": {text}"` — the shape Insert Caption writes.
+    fn fixture_caption(id: u64, label: &str, number: &str, text: &str) -> BlockNode {
+        fixture_paragraph(
+            id,
+            None,
+            vec![
+                fixture_run(id + 1, &format!("{label} ")),
+                InlineNode::Field(Box::new(casual_doc_model::v1::Field {
+                    id: fixture_id(id + 2),
+                    instruction: format!("SEQ {label} \\* ARABIC"),
+                    kind: casual_doc_model::v1::FieldKind::Seq {
+                        name: label.to_owned(),
+                    },
+                    inlines: vec![fixture_run(id + 3, number)],
+                    form: None,
+                    update: casual_doc_model::v1::FieldUpdateState::default(),
+                })),
+                fixture_run(id + 4, &format!(": {text}")),
+            ],
+        )
+    }
+
+    /// A plain paragraph style named `name`.
+    fn fixture_style(name: &str) -> casual_doc_model::v1::Style {
+        casual_doc_model::v1::Style {
+            kind: casual_doc_model::v1::StyleKind::Paragraph,
+            is_default: false,
+            name: Some(name.to_owned()),
+            aliases: None,
+            based_on: None,
+            next: None,
+            link: None,
+            hidden: false,
+            ui_priority: None,
+            semi_hidden: false,
+            unhide_when_used: false,
+            q_format: false,
+            locked: false,
+            paragraph: None,
+            run: None,
+            table: None,
+            table_row: None,
+            table_cell: None,
+            conditional: Vec::new(),
+            custom_style: false,
+        }
+    }
+
+    /// The paragraph style named `name`, as the document now defines it.
+    fn style_named(d: &WasmDocument, name: &str) -> casual_doc_model::v1::Style {
+        d.document
+            .definitions()
+            .styles
+            .iter()
+            .find(|(_, style)| style.name.as_deref() == Some(name))
+            .map(|(_, style)| style.clone())
+            .unwrap_or_else(|| panic!("no style named {name:?}"))
+    }
+
+    /// The first body block's paragraph.
+    fn first_paragraph(d: &WasmDocument) -> &Paragraph {
+        match d.document.body().first() {
+            Some(BlockNode::Paragraph(paragraph)) => paragraph,
+            _ => panic!("the body starts with a paragraph"),
+        }
+    }
+
+    /// The contents field's instruction, from the facade's own accessor.
+    fn instruction(d: &WasmDocument) -> String {
+        d.field_range_spans()[0]
+            .split('\t')
+            .nth(1)
+            .expect("an instruction")
+            .to_owned()
+    }
+
+    /// Mutation: make `references::toc_options` skip `entry_format_of`, and the
+    /// rebuilt entries carry the default dot leader — the update forgets the
+    /// leader the author chose.
+    #[test]
+    fn the_settings_dialog_choices_survive_an_update_and_read_back() {
+        let mut d = wasm_document(heading_document(2, 2));
+        let anchor = first_body_paragraph(&d);
+        d.insert_table_of_contents_with_inner(
+            &anchor,
+            r#"{"leader":"hyphen","levels":2,"format":"standard"}"#,
+        )
+        .expect("insert with settings");
+        let leader = |d: &WasmDocument| {
+            first_paragraph(d)
+                .properties
+                .get()
+                .tabs
+                .first()
+                .map(|stop| (stop.alignment, stop.leader))
+        };
+        assert_eq!(
+            leader(&d),
+            Some((
+                casual_doc_model::v1::TabAlignment::End,
+                Some(TabLeader::Hyphen)
+            )),
+            "the entry's page number sits on a right tab with the chosen leader"
+        );
+        assert!(
+            instruction(&d).contains("\\o \"1-2\""),
+            "{}",
+            instruction(&d)
+        );
+        let read: TocSettings =
+            serde_json::from_str(&d.table_of_contents_settings_inner("").expect("settings"))
+                .expect("json");
+        assert_eq!(read.leader.as_deref(), Some("hyphen"));
+        assert_eq!(read.levels, Some(2));
+        assert_eq!(read.right_align, Some(true));
+
+        d.update_table_of_contents_inner("", "entire")
+            .expect("update entire");
+        assert_eq!(
+            leader(&d),
+            Some((
+                casual_doc_model::v1::TabAlignment::End,
+                Some(TabLeader::Hyphen)
+            )),
+            "Update entire keeps the leader, read back from the entries"
+        );
+
+        // The Standard format: the top level is bold 14 pt, the second 13 pt.
+        let top = style_named(&d, "TOC 1").run.expect("a run format");
+        assert_eq!((top.bold, top.size_half_points), (Some(true), Some(28)));
+        let second = style_named(&d, "TOC 2").run.expect("a run format");
+        assert_eq!(second.size_half_points, Some(26));
+    }
+
+    /// Mutation: always push the Tab in `toc_blocks` — the entry then reads
+    /// "Chapter 0\t" and the first assertion goes red.
+    #[test]
+    fn page_numbers_off_and_left_aligned_numbers_are_honoured() {
+        let mut d = wasm_document(heading_document(2, 1));
+        let anchor = first_body_paragraph(&d);
+        d.insert_table_of_contents_with_inner(&anchor, r#"{"pageNumbers":false}"#)
+            .expect("insert");
+        assert_eq!(
+            &body_lines(&d)[..2],
+            ["Chapter 0", "Chapter 1"],
+            "no tab and no number"
+        );
+        assert!(instruction(&d).contains("\\n"), "{}", instruction(&d));
+        d.update_table_of_contents_inner("", "pageNumbers")
+            .expect("a table with no numbers rebuilds rather than refusing");
+        assert_eq!(&body_lines(&d)[..2], ["Chapter 0", "Chapter 1"]);
+
+        let mut d = wasm_document(heading_document(1, 1));
+        let anchor = first_body_paragraph(&d);
+        d.insert_table_of_contents_with_inner(&anchor, r#"{"rightAlign":false}"#)
+            .expect("insert");
+        assert!(body_lines(&d)[0].starts_with("Chapter 0\t"));
+        assert!(
+            first_paragraph(&d).properties.get().tabs.is_empty(),
+            "no right-aligned stop: the number follows the text"
+        );
+    }
+
+    /// Mutation: in `toc_entries`, skip `toc_bookmark_in` so every entry looks
+    /// unbookmarked — the update then plants a second bookmark per heading and
+    /// the count assertion goes red.
+    #[test]
+    fn hyperlinked_entries_point_at_a_bookmark_on_their_heading_and_an_update_reuses_it() {
+        let mut d = wasm_document(heading_document(2, 1));
+        let anchor = first_body_paragraph(&d);
+        d.insert_table_of_contents_with_inner(&anchor, r#"{"hyperlinks":true}"#)
+            .expect("insert");
+        assert!(instruction(&d).contains("\\h"), "{}", instruction(&d));
+        let link = first_paragraph(&d)
+            .inlines
+            .iter()
+            .find_map(|inline| match inline {
+                InlineNode::Hyperlink(link) => Some(link.clone()),
+                _ => None,
+            })
+            .expect("the entry is a hyperlink");
+        let casual_doc_model::v1::HyperlinkTarget::Internal(target) = &link.target else {
+            panic!("an internal link");
+        };
+        assert!(target.anchor.starts_with("_Toc"), "{}", target.anchor);
+        let heading = NodeId::from_str(&paragraph_with_text(&d, "Chapter 0")).expect("id");
+        let marked = d.document.body().iter().any(|block| match block {
+            BlockNode::Paragraph(paragraph) if paragraph.id == heading => {
+                paragraph.inlines.iter().any(|inline| match inline {
+                    InlineNode::BookmarkStart(marker) => d
+                        .document
+                        .definitions()
+                        .bookmarks
+                        .get(&marker.bookmark)
+                        .is_some_and(|bookmark| bookmark.name == target.anchor),
+                    _ => false,
+                })
+            }
+            _ => false,
+        });
+        assert!(marked, "the heading carries the bookmark the entry names");
+        assert!(body_lines(&d)[0].starts_with("Chapter 0\t"));
+
+        let planted = d.document.definitions().bookmarks.len();
+        assert_eq!(planted, 2, "one bookmark per heading");
+        d.update_table_of_contents_inner("", "entire")
+            .expect("update");
+        assert_eq!(
+            d.document.definitions().bookmarks.len(),
+            planted,
+            "an update reuses each heading's bookmark"
+        );
+        d.update_table_of_contents_inner("", "pageNumbers")
+            .expect("page numbers inside a link are renumbered");
+        assert_eq!(covered(&d).len(), 2);
+    }
+
+    /// Mutation: make `remove_table_of_contents` return `DeleteBlocks` of the
+    /// first entry only — the field definition stays and the first assertion
+    /// goes red.
+    #[test]
+    fn removing_a_table_of_contents_takes_the_field_and_every_entry_as_one_step() {
+        let mut d = wasm_document(heading_document(3, 1));
+        let original = body_lines(&d);
+        let anchor = first_body_paragraph(&d);
+        d.insert_table_of_contents_inner(&anchor, 3)
+            .expect("insert");
+        d.remove_table_of_contents_inner("").expect("remove");
+        assert!(d.field_range_entries().is_empty(), "the field is gone");
+        assert_eq!(body_lines(&d), original, "and so is every entry");
+        d.undo().expect("undo");
+        assert_eq!(covered(&d).len(), 3, "removal is one undoable step");
+        let none = wasm_document(heading_document(1, 1))
+            .remove_table_of_contents_inner("")
+            .expect_err("nothing to remove");
+        assert_eq!(
+            casual_doc_edit::refusal::split(&none).1,
+            Some("toc.none-to-remove")
+        );
+    }
+
+    /// Mutation: in `add_paragraphs_to_contents`, return `None` instead of the
+    /// body-text level 9 for "Do not show" — the heading-styled paragraph keeps
+    /// listing at level 1 and the last assertion goes red.
+    #[test]
+    fn add_text_lists_a_paragraph_without_restyling_it_and_do_not_show_overrides_a_style() {
+        let mut d = wasm_document(heading_document(1, 2));
+        let body = paragraph_with_text(&d, "Body 0.0");
+        assert_eq!(d.contents_level_at(&body), -1);
+        d.add_paragraphs_to_contents_inner(&body, 0, &body, 0, 2)
+            .expect("add at level 2");
+        assert_eq!(d.contents_level_at(&body), 2);
+        let node = NodeId::from_str(&body).expect("id");
+        assert_eq!(
+            casual_doc_edit::paragraph_properties(&d.document, node).and_then(|p| p.style_ref),
+            None,
+            "the paragraph is not restyled"
+        );
+        let anchor = first_body_paragraph(&d);
+        d.insert_table_of_contents_inner(&anchor, 3)
+            .expect("insert");
+        assert!(
+            body_lines(&d)[1].starts_with("Body 0.0\t"),
+            "the table lists it: {:?}",
+            body_lines(&d)
+        );
+        assert!(
+            d.add_paragraphs_to_contents_inner(&body, 0, &body, 0, 2)
+                .expect_err("unchanged")
+                .contains("already")
+        );
+
+        // A paragraph whose STYLE makes it a heading is kept out by body text.
+        let heading_style = casual_doc_model::v1::StyleId::new(fixture_id(50));
+        let mut definitions = casual_doc_model::v1::Definitions::default();
+        definitions
+            .styles
+            .insert(heading_style, fixture_style("Heading 1"));
+        let document = Document::new(
+            fixture_id(1),
+            vec![
+                fixture_paragraph(2, Some(heading_style), vec![fixture_run(3, "Styled")]),
+                fixture_paragraph(4, None, vec![fixture_run(5, "Text")]),
+            ],
+            definitions,
+        )
+        .expect("a valid document");
+        let mut d = wasm_document(document);
+        let styled = fixture_id(2).to_string();
+        assert_eq!(d.contents_level_at(&styled), 1);
+        d.add_paragraphs_to_contents_inner(&styled, 0, &styled, 0, -1)
+            .expect("do not show");
+        assert_eq!(
+            casual_doc_edit::paragraph_properties(&d.document, fixture_id(2))
+                .and_then(|p| p.outline_level),
+            Some(9),
+            "body text, written explicitly because the style says heading"
+        );
+        assert_eq!(d.contents_level_at(&styled), -1);
+    }
+
+    /// Mutation: make `TocOptions::from_instruction` ignore `\c` — the update
+    /// then reads the table as an outline table, finds no headings and refuses.
+    #[test]
+    fn a_table_of_figures_lists_the_captions_of_its_label_and_updates_from_them() {
+        let document = Document::new(
+            fixture_id(1),
+            vec![
+                fixture_paragraph(2, None, vec![fixture_run(3, "Intro")]),
+                fixture_caption(10, "Figure", "1", "Revenue"),
+                fixture_caption(20, "Table", "1", "Rates"),
+                fixture_caption(30, "Figure", "2", "Costs"),
+            ],
+            casual_doc_model::v1::Definitions::default(),
+        )
+        .expect("a valid document");
+        let mut d = wasm_document(document);
+        let intro = fixture_id(2).to_string();
+        d.insert_table_of_contents_with_inner(&intro, r#"{"caption":"Figure"}"#)
+            .expect("insert a table of figures");
+        let lines = body_lines(&d);
+        assert!(lines[0].starts_with("Figure 1: Revenue\t"), "{lines:?}");
+        assert!(lines[1].starts_with("Figure 2: Costs\t"), "{lines:?}");
+        assert_eq!(lines[2], "Intro", "the Table caption is not listed");
+        assert!(
+            instruction(&d).contains("\\c \"Figure\""),
+            "{}",
+            instruction(&d)
+        );
+        assert!(
+            first_paragraph(&d)
+                .properties
+                .get()
+                .style_ref
+                .is_some_and(|id| d
+                    .document
+                    .definitions()
+                    .styles
+                    .get(&id)
+                    .and_then(|s| s.name.as_deref())
+                    == Some("table of figures")),
+            "entries carry Word's table-of-figures style"
+        );
+        d.update_table_of_contents_inner("", "entire")
+            .expect("an update rebuilds from the captions");
+        assert!(body_lines(&d)[1].starts_with("Figure 2: Costs\t"));
+
+        d.remove_table_of_contents_inner("").expect("remove");
+        d.insert_table_of_contents_with_inner(
+            &intro,
+            r#"{"caption":"Figure","includeLabel":false}"#,
+        )
+        .expect("caption text only");
+        let lines = body_lines(&d);
+        assert!(lines[0].starts_with("Revenue\t"), "{lines:?}");
+        assert!(lines[1].starts_with("Costs\t"), "{lines:?}");
+    }
+
+    /// Mutation: drop the `\t` arm in `TocOptions::from_instruction` — the
+    /// update reads an outline table, finds no headings and refuses.
+    #[test]
+    fn a_table_built_from_chosen_styles_lists_them_at_their_levels_and_keeps_them() {
+        let callout = casual_doc_model::v1::StyleId::new(fixture_id(60));
+        let mut definitions = casual_doc_model::v1::Definitions::default();
+        definitions.styles.insert(callout, fixture_style("Callout"));
+        let document = Document::new(
+            fixture_id(1),
+            vec![
+                fixture_paragraph(2, None, vec![fixture_run(3, "Intro")]),
+                fixture_paragraph(4, Some(callout), vec![fixture_run(5, "Key point")]),
+            ],
+            definitions,
+        )
+        .expect("a valid document");
+        let mut d = wasm_document(document);
+        let intro = fixture_id(2).to_string();
+        d.insert_table_of_contents_with_inner(&intro, r#"{"styles":[["Callout",2]]}"#)
+            .expect("insert from styles");
+        assert!(body_lines(&d)[0].starts_with("Key point\t"));
+        assert!(
+            first_paragraph(&d)
+                .properties
+                .get()
+                .style_ref
+                .is_some_and(|id| d
+                    .document
+                    .definitions()
+                    .styles
+                    .get(&id)
+                    .and_then(|s| s.name.as_deref())
+                    == Some("TOC 2")),
+            "listed at the level its style is paired with"
+        );
+        assert!(
+            instruction(&d).contains("\\t \"Callout,2\""),
+            "{}",
+            instruction(&d)
+        );
+        d.update_table_of_contents_inner("", "entire")
+            .expect("the update keeps building from the styles");
+        assert!(body_lines(&d)[0].starts_with("Key point\t"));
+        assert!(
+            d.insert_table_of_contents_with_inner(&intro, r#"{"styles":[]}"#)
+                .is_err(),
+            "an empty style list is refused rather than read as outline levels"
+        );
+    }
+
+    /// The settings dialog run with the caret IN a table replaces it rather
+    /// than nesting a second field inside the first. Mutation: drop the
+    /// `contents_field_covering` branch — the insert lands inside the field and
+    /// is refused (or nests), and the one-field assertion goes red.
+    #[test]
+    fn the_settings_dialog_on_an_existing_table_replaces_it() {
+        let mut d = wasm_document(heading_document(2, 1));
+        let anchor = first_body_paragraph(&d);
+        d.insert_table_of_contents_inner(&anchor, 3)
+            .expect("insert");
+        let entry = first_body_paragraph(&d);
+        d.insert_table_of_contents_with_inner(&entry, r#"{"leader":"none"}"#)
+            .expect("replace");
+        assert_eq!(d.field_range_entries().len(), 1, "still one table");
+        assert_eq!(covered(&d).len(), 2);
+        assert_eq!(
+            first_paragraph(&d)
+                .properties
+                .get()
+                .tabs
+                .first()
+                .map(|stop| stop.leader),
+            Some(None)
         );
     }
 }

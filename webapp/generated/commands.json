@@ -1244,6 +1244,7 @@
     {
       "emits": [
         "SetStyleDefinition",
+        "CreateBookmark",
         "DeleteBlocks",
         "InsertBlocks",
         "InsertFieldRange"
@@ -1919,8 +1920,20 @@
     {
       "id": "review.comment.delete",
       "reason": "No command deletes a comment yet; an agent resolves a thread with resolve_comment."
+    },
+    {
+      "id": "reference.removeToc",
+      "reason": "Removing a table of contents, a table of figures and Add text's contents levels are not offered to agents yet; insert_table_of_contents and update_table_of_contents are (docs/181 §3)."
+    },
+    {
+      "id": "reference.tableOfFigures",
+      "reason": "Removing a table of contents, a table of figures and Add text's contents levels are not offered to agents yet; insert_table_of_contents and update_table_of_contents are (docs/181 §3)."
+    },
+    {
+      "id": "reference.addText.",
+      "reason": "Removing a table of contents, a table of figures and Add text's contents levels are not offered to agents yet; insert_table_of_contents and update_table_of_contents are (docs/181 §3)."
     }
   ],
-  "uiNotExposedCeiling": 96,
+  "uiNotExposedCeiling": 99,
   "vocabularyVersion": "1.5"
 }

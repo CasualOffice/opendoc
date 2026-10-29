@@ -976,6 +976,12 @@
           <div class="rgroup" data-group="ref-navigation" data-ribbon-pinned>
             <div class="rgroup-ctl">
               <button data-i18n-title="toc.description" data-i18n-label="panelReferences.tableContents.label" id="refTocBtn" type="button" class="fmt fmt-big" title="Lists every heading with the page it is on, as a field you can update later." aria-label="Table of contents" aria-haspopup="dialog" aria-controls="tocDialog" disabled><span class="ms" aria-hidden="true">toc</span><span data-i18n="refTocBtn.contents" class="fmt-big-label">Contents</span></button>
+              <!-- ONLYOFFICE's Table of Contents dropdown carries Remove, and its
+                   Add text dropdown sits beside it (`DE.Views.Links`
+                   `textContentsRemove`, `capBtnAddText`). Icon buttons, so the
+                   band's 1280px budget is barely touched. -->
+              <button data-i18n-title="panelReferences.removeToc.title" data-i18n-label="panelReferences.removeToc.label" id="refTocRemoveBtn" type="button" class="fmt" title="Remove the table of contents the caret is in" aria-label="Remove table of contents" disabled><span class="ms" aria-hidden="true">playlist_remove</span></button>
+              <button data-i18n-title="panelReferences.addText.title" data-i18n-label="panelReferences.addText.label" id="refAddTextBtn" type="button" class="fmt" title="List this paragraph in the table of contents at a level, without restyling it" aria-label="Add text" aria-haspopup="menu" aria-controls="refAddTextMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">playlist_add</span></button>
               <!-- Following a contents entry from the keyboard. The pointer path
                    is a plain click on the entry; this is the second surface, and
                    `contextMenu: true` on its declaration gives the third. -->
@@ -1000,6 +1006,10 @@
             <div class="rgroup-ctl">
               <button data-i18n-title="panelReferences.insertCaption.title" data-i18n-label="panelReferences.insertCaption.label" id="refCaptionBtn" type="button" class="fmt fmt-big" title="Insert a numbered caption for a picture, table or equation" aria-label="Insert caption" aria-haspopup="dialog" aria-controls="captionDialog" disabled><span class="ms" aria-hidden="true">closed_caption</span><span data-i18n="tablePropertiesPanel.caption" class="fmt-big-label">Caption</span></button>
               <button data-i18n-title="panelReferences.insertCrossReference.title" data-i18n-label="panelReferences.crossReference.label" id="refCrossRefBtn" type="button" class="fmt fmt-big" title="Insert a reference to a caption, heading, bookmark or note" aria-label="Cross-reference" aria-haspopup="dialog" aria-controls="crossRefDialog" disabled><span class="ms" aria-hidden="true">swap_calls</span><span data-i18n="refCrossRefBtn.crossReference" class="fmt-big-label">Cross-reference</span></button>
+              <!-- Word's References ▸ Captions ▸ Insert Table of Figures and
+                   ONLYOFFICE's `btnTableFigures`: the contents dialog in its
+                   figures mode, built from the captions of one label. -->
+              <button data-i18n-title="panelReferences.tableOfFigures.title" data-i18n-label="panelReferences.tableOfFigures.label" id="refTableOfFiguresBtn" type="button" class="fmt" title="Insert a table of figures from the captions" aria-label="Table of figures" aria-haspopup="dialog" aria-controls="tocDialog" disabled><span class="ms" aria-hidden="true">photo_library</span></button>
               <!-- Word has no equivalent button, and does not need one: it
                    recomputes fields on print, on F9 and on open. Ours deliberately
                    do NOT renumber on a Backspace, because that would make a
@@ -2064,6 +2074,9 @@
          `data-command` here is NOT read by the Insert surface-parity guard: that
          one scans `.ribbon-panel .rgroup button[data-command]`, and a popover is
          not inside a ribbon panel. -->
+    <!-- References ▸ Add text: rows built when it opens, so the current level
+         is checked (`toc_commands.mjs`). -->
+    <div data-i18n-label="panelReferences.addText.label" id="refAddTextMenu" class="context-menu" hidden role="menu" aria-label="Add text"></div>
     <div data-i18n-label="panelInsert.breaks.label" id="insertBreaksMenu" class="context-menu" hidden role="menu" aria-label="Breaks">
       <button data-i18n="break.blankPage" type="button" role="menuitem" class="menu-item" data-command="layout.blankPage">Blank page</button>
       <button data-i18n="break.page" type="button" role="menuitem" class="menu-item" data-command="layout.break.page">Page break</button>
@@ -2962,14 +2975,47 @@
         <header class="dialog-head">
           <div class="dialog-heading">
             <div>
-              <h2 data-i18n="toc.title" id="tocTitle">Table of contents</h2>
-              <p data-i18n="toc.description" id="tocDescription">Lists every heading with the page it is on, as a field you can update later.</p>
+              <h2 id="tocTitle"><span data-i18n="toc.title" data-toc-mode="contents">Table of contents</span><span data-i18n="toc.figures.title" data-toc-mode="figures" hidden>Table of figures</span></h2>
+              <p id="tocDescription"><span data-i18n="toc.description" data-toc-mode="contents">Lists every heading with the page it is on, as a field you can update later.</span><span data-i18n="toc.figures.description" data-toc-mode="figures" hidden>Lists every caption of one label with the page it is on, as a field you can update later.</span></p>
             </div>
           </div>
           <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="toc.close.label" id="tocClose" type="button" class="dialog-close" title="Close" aria-label="Close table of contents"><span class="ms" aria-hidden="true">close</span></button>
         </header>
+        <!-- The settings both rivals' dialogs carry, in ONLYOFFICE's order
+             (`TableOfContentsSettings.js:157-247`): page numbers, right align,
+             leader, links, then what to build from and the format. One dialog,
+             two modes: Table of figures swaps the build-from controls for the
+             caption label, as theirs does (`type==1`). -->
         <form id="tocForm" class="dialog-body">
-          <label data-i18n="toc.showLevels" class="dialog-field">Show levels<input data-i18n-title="toc.showLevels.title" id="tocLevels" type="number" min="1" max="9" step="1" inputmode="numeric" value="3" title="How deep to list: 1 lists only Heading 1, 3 is Word's default" /></label>
+          <label class="dialog-check"><input id="tocPageNumbers" type="checkbox" checked /><span data-i18n="toc.showPageNumbers">Show page numbers</span></label>
+          <label class="dialog-check"><input id="tocRightAlign" type="checkbox" checked /><span data-i18n="toc.rightAlign">Right align page numbers</span></label>
+          <label class="dialog-field"><span data-i18n="toc.leader">Tab leader</span><select id="tocLeader" class="dialog-select">
+            <option data-i18n="toc.leader.none" value="none">None</option>
+            <option data-i18n="toc.leader.dot" value="dot" selected>Dots</option>
+            <option data-i18n="toc.leader.hyphen" value="hyphen">Dashes</option>
+            <option data-i18n="toc.leader.underscore" value="underscore">Line</option>
+          </select></label>
+          <label class="dialog-check"><input id="tocHyperlinks" type="checkbox" /><span data-i18n="toc.hyperlinks">Format entries as links</span></label>
+          <div data-toc-mode="contents">
+            <fieldset class="dialog-group" data-i18n-label="toc.buildFrom" aria-label="Build from">
+              <label class="dialog-check"><input type="radio" name="tocSource" value="outline" checked /><span data-i18n="toc.source.outline">Outline levels</span></label>
+              <label class="dialog-check"><input type="radio" name="tocSource" value="styles" /><span data-i18n="toc.source.styles">Selected styles</span></label>
+            </fieldset>
+            <label data-i18n="toc.showLevels" class="dialog-field">Show levels<input data-i18n-title="toc.showLevels.title" id="tocLevels" type="number" min="1" max="9" step="1" inputmode="numeric" value="3" title="How deep to list: 1 lists only Heading 1, 3 is Word's default" /></label>
+            <div data-i18n-label="toc.stylesList.label" id="tocStylesList" class="dialog-group" role="group" aria-label="Styles and their contents levels" hidden></div>
+            <label class="dialog-field"><span data-i18n="toc.format">Format</span><select id="tocFormat" class="dialog-select">
+              <option data-i18n="toc.format.current" value="current" selected>From document</option>
+              <option data-i18n="toc.format.simple" value="simple">Simple</option>
+              <option data-i18n="toc.format.standard" value="standard">Standard</option>
+              <option data-i18n="toc.format.modern" value="modern">Modern</option>
+              <option data-i18n="toc.format.classic" value="classic">Classic</option>
+              <option data-i18n="toc.format.online" value="online">Online</option>
+            </select></label>
+          </div>
+          <div data-toc-mode="figures" hidden>
+            <label class="dialog-field"><span data-i18n="toc.captionLabel">Caption label</span><select id="tocCaptionLabel" class="dialog-select"></select></label>
+            <label class="dialog-check"><input id="tocIncludeLabel" type="checkbox" checked /><span data-i18n="toc.includeLabel">Include label and number</span></label>
+          </div>
         </form>
         <footer class="dialog-foot">
           <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
