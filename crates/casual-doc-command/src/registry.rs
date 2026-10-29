@@ -404,7 +404,10 @@ pub const COMMANDS: &[Command] = &[
         emits: &["InsertTable"],
         trackable: Trackable::No(TABLE_NOT_TRACKABLE),
         example: r#"{"op":"insert_table","after":{"node":"1:2"},"rows":2,"columns":3}"#,
-        ui_commands: &["insert.table", "insert.tableDialog"],
+        // `insert.drawTable` is Draw Table's pencil: its outline inserts a table,
+        // which is this command; an agent splits cells with the row and column
+        // inserts below, which the pencil's lines are the pointer form of.
+        ui_commands: &["insert.table", "insert.tableDialog", "insert.drawTable"],
     },
     Command {
         id: "table_insert_column",

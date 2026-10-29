@@ -392,7 +392,8 @@
       "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
       "uiCommands": [
         "insert.table",
-        "insert.tableDialog"
+        "insert.tableDialog",
+        "insert.drawTable"
       ]
     },
     {
