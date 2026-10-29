@@ -39,6 +39,11 @@ const FAMILIES = [
   { key: "note", label: () => t("paste.loss.note") },
   { key: "fieldRange", label: () => t("paste.loss.fieldRange") },
   { key: "trackedMove", label: () => t("paste.loss.trackedMove") },
+  // Insert ▸ Text from file (`insert_file.rs`, `docs/153` page.textFromFile):
+  // the destination's section setup governs, and an embedded object's parts
+  // live in the source package.
+  { key: "sectionBreak", label: () => t("paste.loss.sectionBreak") },
+  { key: "embeddedObject", label: () => t("paste.loss.embeddedObject") },
 ];
 
 /**
@@ -73,6 +78,25 @@ export function pasteLossFamilies(kinds) {
   if (!Array.isArray(kinds) || kinds.length === 0) return [];
   const wanted = new Set(kinds);
   return FAMILIES.filter((family) => wanted.has(family.key)).map((family) => family.key);
+}
+
+/**
+ * The sentence for Insert ▸ Text from file when the inserted document carried
+ * something that could not come across, or `null` when everything did. The same
+ * family keys as a paste, and a different sentence: the reason is that the
+ * content came from another document, not that it cannot be duplicated in this
+ * one (`insert_file.rs`).
+ *
+ * @param {readonly string[] | undefined | null} kinds `EditResult.pasteLoss`.
+ * @param {string} name the inserted file's name
+ * @returns {string | null}
+ */
+export function insertFileLossMessage(kinds, name) {
+  if (!Array.isArray(kinds) || kinds.length === 0) return null;
+  const wanted = new Set(kinds);
+  const named = FAMILIES.filter((family) => wanted.has(family.key));
+  if (!named.length) return null;
+  return t("insertFile.loss", { name, items: list(named.map((family) => family.label())) });
 }
 
 // ── Foreign HTML (`docs/174` TA-11) ──────────────────────────────────────────

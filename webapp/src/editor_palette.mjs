@@ -433,6 +433,9 @@ export function createPalette(ed) {
       // HF-051. Word's Review ▸ Proofing ▸ Word Count, and its ⌘⇧G.
       { id: "tools.wordCount", label: t("wordCount.command"), group: "Tools", kw: "word count words characters paragraphs pages statistics length how many", enabled: !!ed.doc, disabledReason: t("command.needsDocument"), run: () => ed.wordCount.open() },
       { id: "tools.languages", label: t("proofLanguages.command"), group: "Tools", kw: "language pack proofing spelling dictionary install download offline locale manage languages", noDoc: true, run: () => ed.proofing.openLanguages() },
+      // Dark document, Multiple pages, Print selection, the personal dictionary,
+      // Alt+X and Insert text from file (`editor_view_text.mjs`, `docs/153`).
+      ...ed.viewText.paletteRows(),
       { id: "review.toggle", label: "Toggle comments & suggestions", group: "Review", kw: "sidebar review panel", run: () => ed.toggleReview() },
       { id: "review.compare", label: t("compare.command"), group: "Review", kw: "compare diff difference changes two documents review merge", enabled: !!ed.doc, disabledReason: t("compare.needsDocument"), run: () => ed.comparePanel.open() },
       // ⌘⇧E worked before this row and was advertised NOWHERE — no palette row, no

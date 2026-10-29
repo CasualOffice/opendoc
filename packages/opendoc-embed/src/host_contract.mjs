@@ -279,6 +279,9 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("file.export.text", "download"),
   exact("file.export.json", "download"),
   exact("file.print", "print"),
+  // Print ▸ Selection (`docs/153` shell.print-selection): a throwaway copy of the
+  // selection through the same print path, so the same grant.
+  exact("file.printSelection", "print"),
   // Reading the metadata is not a grant: the document is already on screen.
   exact("file.properties", null),
   // Opening the compatibility findings reads a report the open already produced;
@@ -402,6 +405,10 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("insert.emoji", "mutate"),
   // Ctrl/Cmd+Shift+Space types U+00A0, an insert like any other (RM-19).
   exact("insert.nonBreakingSpace", "mutate"),
+  // Alt+X (`docs/153` text.unicode-code-toggle) and Insert ▸ Text from file
+  // (page.textFromFile): both change the document.
+  exact("insert.symbolByCode", "mutate"),
+  exact("insert.textFromFile", "mutate"),
   exact("insert.table", "mutate"),
   // Insert Table by a typed size, and Convert Text to Table (`table_tools.mjs`).
   // Both write: one inserts a table, the other replaces paragraphs with one.
@@ -644,6 +651,9 @@ export const COMMAND_CONTRACT = Object.freeze([
   // Declared because a capability the editor offers and this file does not name
   // is invisible to a host, which is the one audience this file has.
   exact("tools.languages", null),
+  // The personal dictionary (`docs/153` review.personal-dictionary-manage): the
+  // reader's own words, kept in their browser, never in the document.
+  exact("tools.personalDictionary", null),
   exact("tools.grammarCheck", null),
   exact("tools.smartQuotes", null),
   // The AutoCorrect switches (TA-05/06): preferences, not document state.
@@ -661,6 +671,10 @@ export const COMMAND_CONTRACT = Object.freeze([
   // nothing — the same shape as `view.outline`, which the taxonomy already puts
   // beside it because the two are the same kind of thing.
   exact("view.pages", null),
+  // Dark document and Multiple pages (`docs/153` shell.dark-document,
+  // shell.multiple-pages-view): how the page is shown, never what it holds.
+  exact("view.darkDocument", null),
+  exact("view.multiplePages", null),
   exact("view.settings", null),
   exact("view.showChanges", null),
   // F6 / Shift+F6 move the keyboard between the window's regions. Focus is not

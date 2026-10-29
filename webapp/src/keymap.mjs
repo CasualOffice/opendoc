@@ -226,6 +226,13 @@ export const KEYMAP = [
   // chord. Outside a table the command is absent, the dispatcher claims nothing
   // and the keystroke goes on to the editor as before.
   { chord: "⌘⇧⏎", command: "table.splitTable", scope: EDITOR_SCOPE },
+  // Alt+X, Word's code-point toggle (`docs/153` text.unicode-code-toggle).
+  // ONLYOFFICE binds Alt+X off Apple and Alt+Cmd+X on a Mac
+  // (`sdkjs/word/Editor/Shortcuts.js:311`, `:228`): bare Option+X TYPES "≈" on a
+  // Mac keyboard, so the Mac row carries ⌘ as theirs does. MEASURED free: no
+  // other row binds X with Alt.
+  { chord: "⌥X", command: "insert.symbolByCode", scope: EDITOR_SCOPE, platform: STANDARD_PLATFORM },
+  { chord: "⌘⌥X", command: "insert.symbolByCode", scope: EDITOR_SCOPE, platform: APPLE_PLATFORM },
 
   // ---- View ----------------------------------------------------------------
   { chord: "⌘=", command: "view.zoomIn", scope: APP_SCOPE },

@@ -1493,6 +1493,40 @@
         </footer>
       </section>
     </div>
+    <!-- Personal dictionary (`docs/153` review.personal-dictionary-manage;
+         `editor_view_text.mjs`). Word's Custom Dictionaries ▸ Edit Word List:
+         the words, Add, Delete, Delete all. Changes apply at once. -->
+    <div id="dictionaryDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="dictionaryTitle" aria-describedby="dictionaryDescription">
+      <section class="dialog-card dialog-card-compact dictionary-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="dictionaryDialog.title" id="dictionaryTitle">Personal dictionary</h2>
+              <p data-i18n="dictionaryDialog.description" id="dictionaryDescription">Words you added are never marked as misspelled. They are kept in this browser only.</p>
+            </div>
+          </div>
+          <button data-dictionary-dismiss data-i18n-title="dictionaryDialog.close.title" data-i18n-label="dictionaryDialog.close.label" id="dictionaryClose" type="button" class="dialog-close" title="Close" aria-label="Close personal dictionary"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <form id="dictionaryAddForm" class="dictionary-add">
+            <label class="dialog-field"><span data-i18n="dictionaryDialog.word">Word</span><input id="dictionaryWord" type="text" autocomplete="off" spellcheck="false" maxlength="64" /></label>
+            <button data-i18n="dictionaryDialog.add" id="dictionaryAdd" type="submit" class="dialog-button">Add</button>
+          </form>
+          <ul data-i18n-label="dictionaryDialog.list.label" id="dictionaryWords" class="dictionary-words" aria-label="Words in your dictionary"></ul>
+          <p data-i18n="dictionaryDialog.empty" id="dictionaryEmpty" class="dialog-note" hidden>Your dictionary is empty. Right-click a flagged word and choose Add to dictionary, or type one above.</p>
+          <p id="dictionaryStatus" class="dialog-note" role="status"></p>
+        </div>
+        <footer class="dialog-foot">
+          <div class="dialog-actions">
+            <button data-i18n="dictionaryDialog.clear" id="dictionaryClear" type="button" class="dialog-button">Delete all</button>
+            <button data-dictionary-dismiss data-i18n="dictionaryDialog.done" id="dictionaryDone" type="button" class="dialog-button dialog-button-primary">Close</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+    <!-- Insert ▸ Text from file (`docs/153` page.textFromFile): the picker the
+         command opens. Word's list: Word, OpenDocument, Rich Text, text, Markdown. -->
+    <input id="insertFromFileInput" type="file" accept=".docx,.odt,.rtf,.txt,.md,.markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/rtf,text/plain,text/markdown" hidden />
     <!-- AutoCorrect options (RM-19; `autocorrect_dialog.mjs`): Word's AutoCorrect
          and AutoFormat As You Type switches, the replace table and the
          first-letter exceptions, both lists per language. Changes apply at once,
@@ -3586,6 +3620,7 @@
           <label class="find-option"><input id="findCase" type="checkbox" /> Match case</label>
           <label class="find-option"><input id="findWholeWord" type="checkbox" /> Whole words</label>
           <label class="find-option"><input id="findSelection" type="checkbox" /> Selection only</label>
+          <label class="find-option"><input id="findRegex" type="checkbox" /> <span data-i18n="findPanel.regex">Regular expression</span></label>
         </div>
         <input data-i18n-label="findPanel.replace.label" data-i18n-placeholder="findPanel.replace.placeholder" id="replaceInput" class="find-replacement" type="text" placeholder="Replace with" autocomplete="off" spellcheck="false" aria-label="Replace with" />
         <div class="find-actions">

@@ -135,6 +135,7 @@ import { createShapeGallery } from "./editor_shape_gallery.mjs";
 import { createParagraphInspector } from "./editor_paragraph_inspector.mjs";
 import { createTableFormat } from "./editor_table_format.mjs";
 import { createDocTools } from "./editor_doc_tools.mjs";
+import { createViewTextExtras } from "./editor_view_text.mjs";
 import { createTableProps } from "./editor_table_props.mjs";
 import { createFilePage } from "./editor_file_page.mjs";
 import { createRibbon } from "./editor_ribbon.mjs";
@@ -437,6 +438,7 @@ const ed = {
   get navigateToAnchor() { return navigateToAnchor; },
   get newBlankDocument() { return newBlankDocument; },
   get noteCommands() { return noteCommands; },
+  get viewText() { return viewText; },
   get noteDocumentEdited() { return noteDocumentEdited; },
   get noteDraftDirty() { return noteDraftDirty; },
   get nudgeSelectedObject() { return nudgeSelectedObject; },
@@ -1497,6 +1499,7 @@ const {
 } = createReviewMargin(ed);
 const reviewDisplay = createReviewDisplay(ed); // Review ▸ Display for review (RM-31)
 const noteCommands = createNoteCommands(ed); // Go to, settings and convert notes (RM-24)
+const viewText = createViewTextExtras(ed); // Dark document, Multiple pages, Print selection, dictionary, Alt+X, Text from file (docs/153)
 const linkChip = document.getElementById("linkChip");
 const linkChipKind = document.getElementById("linkChipKind");
 const linkChipTarget = document.getElementById("linkChipTarget");

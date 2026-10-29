@@ -222,6 +222,14 @@ character patch yet; when the formatting unification (§4.2 step 2) gives it tha
 entry leaves and the ceiling returns to 85. `insert.nonBreakingSpace`, the other editor command
 this change adds, needs no entry: inserting U+00A0 is `insert_text`, which now names it.
 
+**Raised again (2026-10-30):** `UI_NOT_EXPOSED_CEILING` 102 → 104 with the editor commands
+`insert.symbolByCode` (Alt+X, `docs/153` text.unicode-code-toggle) and `insert.textFromFile`
+(Insert ▸ Text from file, `docs/153` page.textFromFile). Neither adds an `Operation`: Alt+X is
+`replaceSelection`'s delete-and-insert, and Text from file is structured paste's
+`InsertBlocks` with the definition operations (`SetStyleDefinition`, `SetAbstractNumbering`,
+`SetNumberingInstance`, `SetMediaReference`) that already exist. An agent writes a character
+with `insert_text`, and does not hold another file's bytes, so neither has an agent twin yet.
+
 **What "a feature inherits MCP" therefore means, concretely.** A developer adding, say,
 footnote insertion writes `InsertFootnote: Command` with its `lower()` (moved out of
 `lib.rs:4658`), adds one line to `commands!`, and points the editor's method at it. With no
