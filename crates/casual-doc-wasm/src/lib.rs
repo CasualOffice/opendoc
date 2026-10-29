@@ -305,6 +305,12 @@ mod ai; // `editor.ai`: the in-page assistant's reads and private preview (`docs
 // with `renderPage`'s contract, compiled only with the `sparse-raster` feature.
 #[cfg(feature = "sparse-raster")]
 mod sparse_raster;
+// Content controls, form roles and the accessibility checker's contrast rule (`109` RM-34, HF-064).
+mod accessibility_check;
+mod content_controls;
+#[cfg(test)]
+mod content_controls_tests;
+mod form_roles;
 
 use window::BodyLayout;
 use window::WindowedBody;
@@ -691,6 +697,8 @@ pub struct WasmDocument {
     /// operations would be the wrong axis — the same `SetInlines` is legitimate
     /// inside a field and forbidden outside one.
     editing_a_form_field: bool,
+    /// Who fills which content control: a sidecar, not the document (`form_roles.rs`).
+    form_roles: form_roles::FormRoles,
     /// What **this participant** is allowed to do — `152` §10 Q4's host-signed grant,
     /// as the engine sees it after the host has verified the token.
     ///
@@ -15285,6 +15293,8 @@ impl WasmDocument {
             self.capabilities,
         )
         .map_err(|refusal| refusal.reason().to_owned())?;
+        // A content control's `w:lock` binds every reader, form fillers included.
+        content_controls::refuse_if_locked(&self.document, ops)?;
         if self.editing_a_form_field {
             return Ok(());
         }
@@ -15319,7 +15329,9 @@ impl WasmDocument {
             if self.forms_leave_open(op) {
                 continue;
             }
-            if !self.op_is_inside_a_form_field(op) {
+            if !self.op_is_inside_a_form_field(op)
+                && !content_controls::fills_a_control(&self.document, &self.form_roles, op)
+            {
                 return Err(refused!(
                     "document.protected-forms-only",
                     "This document is protected: only its form fields can be edited."
@@ -22905,6 +22917,7 @@ fn session_from_import(
         next_transaction: 0,
         typing_history: None,
         editing_a_form_field: false,
+        form_roles: form_roles::FormRoles::default(),
         capabilities: Capabilities::local(),
         host_ceiling: Capabilities::local(),
         revision_ids,
@@ -31810,6 +31823,7 @@ mod tests {
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let mut d = WasmDocument {
             editing_a_form_field: false,
+            form_roles: form_roles::FormRoles::default(),
             capabilities: Capabilities::local(),
             host_ceiling: Capabilities::local(),
             edit_context: EditContext::Body,
@@ -32266,6 +32280,7 @@ mod tests {
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let d = WasmDocument {
             editing_a_form_field: false,
+            form_roles: form_roles::FormRoles::default(),
             capabilities: Capabilities::local(),
             host_ceiling: Capabilities::local(),
             edit_context: EditContext::Body,
@@ -32582,6 +32597,7 @@ mod tests {
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let mut d = WasmDocument {
             editing_a_form_field: false,
+            form_roles: form_roles::FormRoles::default(),
             capabilities: Capabilities::local(),
             host_ceiling: Capabilities::local(),
             edit_context: EditContext::Body,
@@ -36660,6 +36676,7 @@ mod tests {
         let revision_ids = RevisionIdAllocator::from_document(&document);
         WasmDocument {
             editing_a_form_field: false,
+            form_roles: form_roles::FormRoles::default(),
             capabilities: Capabilities::local(),
             host_ceiling: Capabilities::local(),
             edit_context: EditContext::Body,
@@ -38047,6 +38064,7 @@ mod tests {
         let revision_ids = RevisionIdAllocator::from_document(&document);
         WasmDocument {
             editing_a_form_field: false,
+            form_roles: form_roles::FormRoles::default(),
             capabilities: Capabilities::local(),
             host_ceiling: Capabilities::local(),
             edit_context: EditContext::Body,
@@ -39547,6 +39565,7 @@ mod tests {
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let handle = WasmDocument {
             editing_a_form_field: false,
+            form_roles: form_roles::FormRoles::default(),
             capabilities: Capabilities::local(),
             host_ceiling: Capabilities::local(),
             edit_context: EditContext::Body,
