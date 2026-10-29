@@ -90,6 +90,15 @@ fn needs(edit: &Edit, mode: Mode) -> Profile {
         | Edit::TableSplitCell { .. }
         | Edit::TableDelete { .. }
         | Edit::TableSetCellFormat { .. }
+        | Edit::TableSetStyleOptions { .. }
+        | Edit::TableSplit { .. }
+        | Edit::TableInsertCells { .. }
+        | Edit::TableDeleteCells { .. }
+        | Edit::TableToText { .. }
+        | Edit::TextToTable { .. }
+        | Edit::RemoveTableOfContents { .. }
+        | Edit::InsertTableOfFigures { .. }
+        | Edit::SetContentsLevel { .. }
         | Edit::ClearFormatting { .. }
         | Edit::RestartNumbering { .. }
         | Edit::ContinueNumbering { .. }
@@ -244,6 +253,17 @@ fn refuse_untracked(kind: &str, mode: Mode) -> AiResult<()> {
 fn refusal(message: &str) -> AiError {
     let (text, _) = casual_doc_edit::refusal::split(message);
     AiError::invalid(text.strip_prefix("refused: ").unwrap_or(text).to_owned())
+}
+
+/// Where body table `table` sits: its container and index. Splitting and
+/// converting work on tables in the body and its cells, as the editor's do.
+/// O(document).
+fn body_table_place(state: &State, table: NodeId) -> AiResult<(Option<NodeId>, usize)> {
+    casual_doc_command::references::locate_block(&state.document, table).ok_or_else(|| {
+        AiError::invalid(
+            "This works on tables in the document body, not in a header, footer or note.",
+        )
+    })
 }
 
 /// A clone of the table `id` names. O(document).
@@ -1170,6 +1190,185 @@ fn apply_edit(
                 }),
             )?;
         }
+        // `docs/181` §3: the editor's table tools (`casual_doc_command::
+        // table_tools`), resolved from the agent's table id and cell
+        // references instead of the caret.
+        Edit::TableSetStyleOptions {
+            table,
+            header_row,
+            first_column,
+            total_row,
+            last_column,
+            banded_rows,
+            banded_columns,
+        } => {
+            use casual_doc_command::table_tools::LookOption;
+            refuse_untracked(kind, mode)?;
+            let changes: Vec<(LookOption, bool)> = [
+                (LookOption::HeaderRow, *header_row),
+                (LookOption::FirstColumn, *first_column),
+                (LookOption::TotalRow, *total_row),
+                (LookOption::LastColumn, *last_column),
+                (LookOption::BandedRows, *banded_rows),
+                (LookOption::BandedColumns, *banded_columns),
+            ]
+            .into_iter()
+            .filter_map(|(option, on)| on.map(|on| (option, on)))
+            .collect();
+            if changes.is_empty() {
+                return Err(AiError::invalid(
+                    "Set at least one of `header_row`, `first_column`, `total_row`, \
+                     `last_column`, `banded_rows`, `banded_columns`.",
+                ));
+            }
+            let found = table_of(state, table)?;
+            nodes.push(found.id);
+            commit(
+                state,
+                casual_doc_command::table_tools::set_look_options(&found, &changes),
+            )?;
+        }
+        Edit::TableSplit { table, row } => {
+            refuse_untracked(kind, mode)?;
+            let found = table_of(state, table)?;
+            let (container, index) = body_table_place(state, found.id)?;
+            let ids = &mut state.ids;
+            let (ops, between) = casual_doc_command::table_tools::split_table(
+                container,
+                index,
+                &found,
+                *row as usize,
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            nodes.push(between);
+            commit(state, ops)?;
+        }
+        Edit::TableInsertCells {
+            table,
+            from,
+            to,
+            shift,
+        } => {
+            refuse_untracked(kind, mode)?;
+            let found = table_of(state, table)?;
+            let from = cell_of(&found, *from)?;
+            let to = to.map_or(Ok(from), |to| cell_of(&found, to))?;
+            let range = casual_doc_command::table_tools::CellRange::between(from, to);
+            let ids = &mut state.ids;
+            let edit = casual_doc_command::table_tools::insert_cells(
+                &found,
+                range,
+                shift.shift(),
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            nodes.push(found.id);
+            commit(state, edit.operations)?;
+        }
+        Edit::TableDeleteCells {
+            table,
+            from,
+            to,
+            shift,
+        } => {
+            refuse_untracked(kind, mode)?;
+            let found = table_of(state, table)?;
+            let from = cell_of(&found, *from)?;
+            let to = to.map_or(Ok(from), |to| cell_of(&found, to))?;
+            let range = casual_doc_command::table_tools::CellRange::between(from, to);
+            let ids = &mut state.ids;
+            let edit = casual_doc_command::table_tools::delete_cells(
+                &found,
+                range,
+                shift.shift(),
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            nodes.push(found.id);
+            commit(state, edit.operations)?;
+        }
+        Edit::TableToText {
+            table,
+            separator,
+            character,
+            nested,
+        } => {
+            refuse_untracked(kind, mode)?;
+            let separator = casual_doc_command::table_tools::Separator::parse(
+                separator.name(),
+                character.as_deref().unwrap_or_default(),
+            )
+            .map_err(|message| refusal(&message))?;
+            let found = table_of(state, table)?;
+            let (container, index) = body_table_place(state, found.id)?;
+            let ids = &mut state.ids;
+            let edit = casual_doc_command::table_tools::table_to_text(
+                container,
+                index,
+                &found,
+                separator,
+                *nested,
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            nodes.extend(edit.caret);
+            commit(state, edit.operations)?;
+        }
+        Edit::TextToTable {
+            from,
+            to,
+            separator,
+            character,
+            columns,
+            autofit,
+        } => {
+            refuse_untracked(kind, mode)?;
+            let separator = casual_doc_command::table_tools::Separator::parse(
+                separator.name(),
+                character.as_deref().unwrap_or_default(),
+            )
+            .map_err(|message| refusal(&message))?;
+            let first = paragraph(&state.document, &from.node)?.id;
+            let last = match to {
+                Some(to) => paragraph(&state.document, &to.node)?.id,
+                None => first,
+            };
+            let (container, index, paragraphs) =
+                casual_doc_command::table_tools::paragraph_run(&state.document, first, last)
+                    .map_err(|message| refusal(&message))?;
+            let page = casual_doc_layout::document_layout::document_page_config(&state.document);
+            let page_width =
+                page.page_size.width.raw() - page.margin_start.raw() - page.margin_end.raw();
+            let leading = paragraphs.first().map_or(first, |paragraph| paragraph.id);
+            let options = casual_doc_command::table_tools::TextToTable {
+                separator,
+                columns: columns.unwrap_or(0),
+                autofit: casual_doc_command::table_tools::Autofit::parse(autofit.name()),
+                content_width: casual_doc_command::table_tools::content_width_in(
+                    &state.document,
+                    container,
+                    leading,
+                    page_width,
+                ),
+            };
+            let refs: Vec<&Paragraph> = paragraphs.iter().collect();
+            let ids = &mut state.ids;
+            let edit = casual_doc_command::table_tools::text_to_table(
+                container,
+                index,
+                &refs,
+                options,
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            drop(refs);
+            nodes.extend(edit.operations.iter().filter_map(|op| match op {
+                Operation::InsertTable { table, .. } => Some(table.id),
+                _ => None,
+            }));
+            commit(state, edit.operations)?;
+        }
         Edit::SetCellText {
             table,
             row,
@@ -1991,6 +2190,69 @@ fn apply_edit(
                     }));
                 }
             }
+            commit(state, ops)?;
+        }
+        Edit::RemoveTableOfContents { field } => {
+            refuse_untracked(kind, mode)?;
+            let field = field
+                .as_deref()
+                .map(node_id)
+                .transpose()?
+                .map(casual_doc_model::v1::FieldRangeId::new);
+            let ops =
+                casual_doc_command::references::remove_table_of_contents(&state.document, field)
+                    .map_err(|message| refusal(&message))?;
+            commit(state, ops)?;
+        }
+        Edit::InsertTableOfFigures {
+            before,
+            label,
+            include_label,
+        } => {
+            refuse_untracked(kind, mode)?;
+            let node = paragraph(&state.document, &before.node)?.id;
+            let page = casual_doc_layout::document_layout::document_page_config(&state.document);
+            let tab = page.page_size.width.raw() - page.margin_start.raw() - page.margin_end.raw();
+            let facts = crate::layout_facts::AgentFacts::paginated(&state.document);
+            let ids = &mut state.ids;
+            let placed = casual_doc_command::references::insert_table_of_figures(
+                &state.document,
+                &facts,
+                node,
+                label,
+                include_label.unwrap_or(true),
+                tab,
+                &mut || ids.next_id().ok(),
+            )
+            .map_err(|message| refusal(&message))?;
+            drop(facts);
+            nodes.push(placed.caret.node);
+            commit(state, placed.operations)?;
+        }
+        Edit::SetContentsLevel { paragraphs, level } => {
+            refuse_untracked(kind, mode)?;
+            if paragraphs.is_empty() {
+                return Err(AiError::invalid("Name at least one paragraph."));
+            }
+            let level = match *level {
+                0 => None,
+                level @ 1..=9 => Some(level),
+                _ => return Err(AiError::invalid("`level` is 0 (do not show) or 1 to 9.")),
+            };
+            let ids = paragraphs
+                .iter()
+                .map(|node| paragraph(&state.document, node).map(|p| p.id))
+                .collect::<AiResult<Vec<NodeId>>>()?;
+            let facts = crate::layout_facts::AgentFacts::headings(&state.document);
+            let ops = casual_doc_command::references::add_paragraphs_to_contents(
+                &state.document,
+                &facts,
+                &ids,
+                level,
+            )
+            .map_err(|message| refusal(&message))?;
+            drop(facts);
+            nodes.extend(ids);
             commit(state, ops)?;
         }
         Edit::InsertCaption {

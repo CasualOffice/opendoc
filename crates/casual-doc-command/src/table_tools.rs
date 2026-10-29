@@ -40,7 +40,9 @@
 
 use casual_doc_edit::table_structure::{MintId, normalize_vertical_merges, sync_cell_widths};
 use casual_doc_edit::{Operation, refused};
+use casual_doc_edit::{find_table, locate_table_cell, locate_table_row};
 use casual_doc_model::NodeId;
+use casual_doc_model::v1::Document;
 use casual_doc_model::v1::{
     BlockNode, GridColumn, InlineNode, Paragraph, ParagraphProperties, Run, RunProperties, Tab,
     Table, TableCell, TableCellProperties, TableGridMap, TableLayout, TableLook, TableProperties,
@@ -154,8 +156,22 @@ pub fn look_options_on(look: &TableLook) -> Vec<&'static str> {
 /// materialised. O(1) plus the properties clone.
 #[must_use]
 pub fn set_look_option(table: &Table, option: LookOption, on: bool) -> Vec<Operation> {
+    set_look_options(table, &[(option, on)])
+}
+
+/// Turns several style options on or off at once: ONE `SetTableProperties`,
+/// so an agent setting three options is one step rather than three that each
+/// restate the others. An empty `changes` changes nothing and emits nothing.
+/// O(changes) plus the properties clone.
+#[must_use]
+pub fn set_look_options(table: &Table, changes: &[(LookOption, bool)]) -> Vec<Operation> {
+    if changes.is_empty() {
+        return Vec::new();
+    }
     let mut properties: TableProperties = table.properties.clone();
-    option.set(&mut properties.look, on);
+    for &(option, on) in changes {
+        option.set(&mut properties.look, on);
+    }
     vec![Operation::SetTableProperties {
         table: table.id,
         properties: Box::new(properties),
@@ -193,7 +209,113 @@ pub fn cell_content_width(table: &Table, row: usize, cell: usize) -> Option<i32>
     Some((total - start - end).max(1))
 }
 
+/// The width a table made in `container` should span: `page_content_width`
+/// in the body, the content width of the cell holding `paragraph` in a cell.
+/// O(document) for the lookups.
+#[must_use]
+pub fn content_width_in(
+    document: &Document,
+    container: Option<NodeId>,
+    paragraph: NodeId,
+    page_content_width: i32,
+) -> i32 {
+    if container.is_some()
+        && let Some((table, row, _)) = locate_table_row(document, paragraph)
+        && let Some((_, cell)) = locate_table_cell(document, paragraph)
+        && let Some(table) = find_table(document, table)
+        && let Some(width) = cell_content_width(table, row as usize, cell as usize)
+    {
+        return width;
+    }
+    page_content_width
+}
+
 // ---- Text to table -----------------------------------------------------------
+
+/// The blocks of `container` (`None` = the body, else a table cell or content
+/// control), searching the body. O(document).
+#[must_use]
+pub fn container_blocks(document: &Document, container: Option<NodeId>) -> Option<&[BlockNode]> {
+    fn walk(blocks: &[BlockNode], id: NodeId) -> Option<&[BlockNode]> {
+        for block in blocks {
+            match block {
+                BlockNode::Table(table) => {
+                    for row in &table.rows {
+                        for cell in &row.cells {
+                            if cell.id == id {
+                                return Some(cell.blocks.as_slice());
+                            }
+                            if let Some(found) = walk(&cell.blocks, id) {
+                                return Some(found);
+                            }
+                        }
+                    }
+                }
+                BlockNode::Sdt(sdt) => {
+                    if sdt.id == id {
+                        return Some(sdt.blocks.as_slice());
+                    }
+                    if let Some(found) = walk(&sdt.blocks, id) {
+                        return Some(found);
+                    }
+                }
+                BlockNode::Paragraph(_) | BlockNode::AltChunk(_) => {}
+            }
+        }
+        None
+    }
+    match container {
+        None => Some(document.body()),
+        Some(id) => walk(document.body(), id),
+    }
+}
+
+/// The paragraphs `from..=to` (either order), which must be consecutive
+/// paragraphs of one container, with that container and the first one's
+/// index — what Convert Text to Table converts, for the editor's selection and
+/// an agent's two anchors alike. O(document) to resolve, then O(paragraphs).
+///
+/// # Errors
+/// Either paragraph is outside the body and its cells, the two are in
+/// different containers, or a table or other block sits between them.
+pub fn paragraph_run(
+    document: &Document,
+    from: NodeId,
+    to: NodeId,
+) -> Result<(Option<NodeId>, usize, Vec<Paragraph>), String> {
+    let outside = || {
+        refused!(
+            "table.convert-outside",
+            "Select paragraphs in the document body or in one table cell."
+        )
+        .to_owned()
+    };
+    let span = || {
+        refused!(
+            "table.convert-span",
+            "Select paragraphs that sit together, outside any table, to convert them."
+        )
+        .to_owned()
+    };
+    let locate = crate::references::locate_block;
+    let (container, a) = locate(document, from).ok_or_else(outside)?;
+    let (other, b) = locate(document, to).ok_or_else(outside)?;
+    if container != other {
+        return Err(span());
+    }
+    let (first, last) = (a.min(b), a.max(b));
+    let blocks = container_blocks(document, container).ok_or_else(outside)?;
+    let mut paragraphs = Vec::with_capacity(last - first + 1);
+    for block in blocks.get(first..=last).ok_or_else(outside)? {
+        match block {
+            BlockNode::Paragraph(paragraph) => paragraphs.push(paragraph.clone()),
+            BlockNode::Table(_) | BlockNode::Sdt(_) | BlockNode::AltChunk(_) => {
+                return Err(span());
+            }
+        }
+    }
+    Ok((container, first, paragraphs))
+}
 
 /// Where text is divided into cells, and what joins cells back into text.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
