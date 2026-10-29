@@ -138,7 +138,10 @@ classify! {
 
 /// The most operations that may be not exposed. Lower it when a family moves
 /// into the registry; raising it needs an ADR line (`docs/181` §3).
-pub const NOT_EXPOSED_CEILING: usize = 16;
+///
+/// 16 -> 17 with `SetSectionPageBorders` (`109` HF-193, #912): page borders are a
+/// person's design choice in the Page Borders dialog, recorded in `docs/181` §3.
+pub const NOT_EXPOSED_CEILING: usize = 17;
 
 /// The reach of the variant named `name`, if it is one. O(variants).
 #[must_use]
