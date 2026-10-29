@@ -7,6 +7,7 @@ import { onButton, registerPopover } from "./popover_manager.mjs";
 import {
   BAND_COMMANDS, PAGE_NUMBER_POSITIONS, bandCommandLabel, bandCommandReason, bandLabel, parseLinkState,
 } from "./header_footer_commands.mjs";
+import { PAGE_OF_TOTAL, splitPageOfTotal } from "./header_footer_commands.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -594,7 +595,7 @@ export function createHeaderFooter(ed) {
    *  — Word opens the header too, so the person sees what was added and can
    *  type beside it. The context is set BEFORE the edit for the reason
    *  `createRunningContent` gives. */
-  async function insertPageNumber(band, align, page = runningEditPageOrView()) {
+  async function insertPageNumber(band, align, page = runningEditPageOrView(), ofTotal = false) {
     if (!ed.doc || !page) return false;
     if (ed.blockMutationInViewing()) return false;
     if (ed.reviewMode === "suggesting") {
@@ -605,7 +606,12 @@ export function createHeaderFooter(ed) {
     setRunningContext(band, page);
     let result;
     try {
-      result = ed.doc.insertRunningPageNumber(band, page.pageNumber, align);
+      // "Page X of Y": the raw pattern, split around its two placeholders, so a
+      // language that puts words after the count ("第 1 页，共 3 页") gets them.
+      const words = ofTotal ? splitPageOfTotal(t("pageNumber.ofTotalPattern")) : null;
+      result = words
+        ? ed.doc.insertRunningPageNumber(band, page.pageNumber, align, words.before, words.between, words.after)
+        : ed.doc.insertRunningPageNumber(band, page.pageNumber, align);
     } catch (err) {
       if (previous.band) setRunningContext(previous.band, { pageNumber: previous.page });
       else exitRunningEdit();
@@ -731,6 +737,12 @@ export function createHeaderFooter(ed) {
     for (const item of bandMenu.querySelectorAll("[data-page-number-align]")) {
       choose(item, () => insertPageNumber(barBand ?? ed.runningEditBand ?? "footer", item.dataset.pageNumberAlign));
     }
+    const ofTotal = byId("runningBandPageOfTotal");
+    if (ofTotal) {
+      choose(ofTotal, () =>
+        insertPageNumber(barBand ?? ed.runningEditBand ?? "footer", "center", undefined, true),
+      );
+    }
     const here = byId("runningBandPageNumberHere");
     if (here) choose(here, () => ed.insertFieldAtCaret("page"));
     const settings = byId("runningBandSettings");
@@ -779,6 +791,16 @@ export function createHeaderFooter(ed) {
         requires: "doc",
         run: () => void insertPageNumber(row.band, row.align),
       })),
+      {
+        command: PAGE_OF_TOTAL.command,
+        get label() {
+          return t(PAGE_OF_TOTAL.labelKey);
+        },
+        kw: "page x of y number count total numpages footer insert field",
+        buttons: () => [],
+        requires: "doc",
+        run: () => void insertPageNumber(PAGE_OF_TOTAL.band, PAGE_OF_TOTAL.align, undefined, true),
+      },
     ];
   }
 

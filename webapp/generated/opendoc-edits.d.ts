@@ -3,7 +3,7 @@
 // Regenerate: cargo run -p casual-doc-command --bin opendoc-command-gen
 
 /** The edit vocabulary version (docs/181 §4.1): a minor bump adds commands; a major bump changes or removes one. */
-export declare const VOCABULARY_VERSION: "1.4";
+export declare const VOCABULARY_VERSION: "1.5";
 
 /**
  * Insert text at an anchor.
@@ -1475,7 +1475,7 @@ export interface RemoveHeaderFooterEdit {
 }
 
 /**
- * Put a page number in a section's header or footer, left, centred or right; the band is created when there is none, and what it holds is kept.
+ * Put a page number, or "Page X of Y", in a section's header or footer, left, centred or right; the band is created when there is none, and what it holds is kept.
  *
  * Family `headers_footers`; trackable: no. Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.
  *
@@ -1483,8 +1483,25 @@ export interface RemoveHeaderFooterEdit {
  */
 export interface InsertPageNumberEdit {
   op: "insert_page_number";
+  /** With `of_total`: the words after the count (none when omitted). */
+  after?: string | null;
   /** The header or the footer. */
   band: "header" | "footer";
+  /**
+   * With `of_total`: the words before the number, in the document's
+   * language ("Page " when omitted).
+   */
+  before?: string | null;
+  /**
+   * With `of_total`: the words between the number and the count (" of "
+   * when omitted).
+   */
+  between?: string | null;
+  /**
+   * Write "Page X of Y" — the number and the page count — rather than
+   * the number alone.
+   */
+  of_total?: boolean;
   /** Which pages (default every page). */
   pages?: "default" | "first" | "even";
   /** The 0-based section. */

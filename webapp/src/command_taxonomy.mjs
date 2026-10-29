@@ -425,6 +425,7 @@ export const APP_MENU_SECTIONS = {
       "layout.pageNumber.bottomLeft",
       "layout.pageNumber.bottomCenter",
       "layout.pageNumber.bottomRight",
+      "layout.pageNumber.pageOfTotal",
     ),
     band("menuGroup.text", "insert.textbox", "insert.dropCap"),
     sub("menuGroup.fields", "insert.field", "insert.field.page", "insert.field.date"),

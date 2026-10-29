@@ -1169,7 +1169,7 @@
         "SetSectionRunningRef",
         "SplitParagraph",
         "SetParagraphProperties",
-        "InsertField"
+        "SetInlines"
       ],
       "example": {
         "band": "footer",
@@ -1179,7 +1179,7 @@
       },
       "family": "headers_footers",
       "id": "insert_page_number",
-      "summary": "Put a page number in a section's header or footer, left, centred or right; the band is created when there is none, and what it holds is kept.",
+      "summary": "Put a page number, or \"Page X of Y\", in a section's header or footer, left, centred or right; the band is created when there is none, and what it holds is kept.",
       "trackable": "no",
       "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
       "uiCommands": [
@@ -1188,7 +1188,8 @@
         "layout.pageNumber.topRight",
         "layout.pageNumber.bottomLeft",
         "layout.pageNumber.bottomCenter",
-        "layout.pageNumber.bottomRight"
+        "layout.pageNumber.bottomRight",
+        "layout.pageNumber.pageOfTotal"
       ]
     },
     {
@@ -1867,5 +1868,5 @@
     }
   ],
   "uiNotExposedCeiling": 84,
-  "vocabularyVersion": "1.4"
+  "vocabularyVersion": "1.5"
 }

@@ -787,13 +787,13 @@ pub const COMMANDS: &[Command] = &[
     Command {
         id: "insert_page_number",
         family: Family::HeadersFooters,
-        summary: "Put a page number in a section's header or footer, left, centred or right; the band is created when there is none, and what it holds is kept.",
+        summary: "Put a page number, or \"Page X of Y\", in a section's header or footer, left, centred or right; the band is created when there is none, and what it holds is kept.",
         emits: &[
             "CreateHeaderFooterBody",
             "SetSectionRunningRef",
             "SplitParagraph",
             "SetParagraphProperties",
-            "InsertField",
+            "SetInlines",
         ],
         trackable: Trackable::No(SECTION_NOT_TRACKABLE),
         example: r#"{"op":"insert_page_number","section":0,"band":"footer","side":"center"}"#,
@@ -804,6 +804,7 @@ pub const COMMANDS: &[Command] = &[
             "layout.pageNumber.bottomLeft",
             "layout.pageNumber.bottomCenter",
             "layout.pageNumber.bottomRight",
+            "layout.pageNumber.pageOfTotal",
         ],
     },
     Command {
