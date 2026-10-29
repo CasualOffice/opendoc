@@ -213,6 +213,8 @@ fn every_page_matches_hayros_render_of_the_original() {
             // that should not move evidence (the font/CMap trim, `docs/182`
             // §17a) can be compared before and after, not just against 0.85.
             if std::env::var_os("OPENDOC_ORACLE_SCORES").is_some() {
+                // Opt-in diagnostics only, so stderr is the right channel.
+                #[allow(clippy::print_stderr)]
                 eprintln!("oracle {name} page {page}: recall {recall:.6} precision {precision:.6}");
             }
             if let Some((_, _, feature)) = REPORTED_LOSSES
