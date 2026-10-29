@@ -2420,6 +2420,8 @@
   "findings.feature.pdfFootnoteMarkers": "重新編號的註腳標記",
   "findings.feature.pdfJustification": "根據行寬推斷的左右對齊",
   "findings.feature.pdfPageBreaks": "根據頁面結尾推斷的分頁符號",
+  "findings.feature.pdfFloats": "圖片和繪圖浮動在文字旁邊或後面",
+  "findings.feature.pdfVectorsPlaced": "繪圖已作為圖形放置",
   "pdfImport.title": "正在開啟 {name}",
   "pdfImport.intro": "正在此裝置上將 PDF 的頁面重建為可編輯的框架。",
   "pdfImport.reading": "正在讀取檔案…",

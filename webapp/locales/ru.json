@@ -2450,6 +2450,8 @@
   "findings.feature.pdfFootnoteMarkers": "Знаки сносок перенумерованы",
   "findings.feature.pdfJustification": "Выравнивание по ширине определено по длине строк",
   "findings.feature.pdfPageBreaks": "Разрывы страниц определены по концам страниц",
+  "findings.feature.pdfFloats": "Изображения и рисунки размещены рядом с текстом или за ним",
+  "findings.feature.pdfVectorsPlaced": "Рисунки размещены как фигуры",
   "pdfImport.title": "Открытие {name}",
   "pdfImport.intro": "Страницы PDF воссоздаются как редактируемые рамки на этом устройстве.",
   "pdfImport.reading": "Чтение файла…",

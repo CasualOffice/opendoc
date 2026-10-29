@@ -2440,6 +2440,8 @@
   "findings.feature.pdfFootnoteMarkers": "Appels de note renumérotés",
   "findings.feature.pdfJustification": "Texte justifié déduit de la largeur des lignes",
   "findings.feature.pdfPageBreaks": "Sauts de page déduits de la fin des pages",
+  "findings.feature.pdfFloats": "Images et dessins flottants à côté ou derrière leur texte",
+  "findings.feature.pdfVectorsPlaced": "Dessins placés sous forme de formes",
   "pdfImport.title": "Ouverture de {name}",
   "pdfImport.intro": "Reconstruction des pages du PDF en cadres modifiables, sur cet appareil.",
   "pdfImport.reading": "Lecture du fichier…",

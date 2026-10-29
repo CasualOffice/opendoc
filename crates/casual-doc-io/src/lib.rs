@@ -80,4 +80,7 @@ pub use pdf_import::{
     PdfImportAdapter, PdfStagedImport, builtin_registry_with_pdf_import, enable_pdf_import,
     enable_pdf_import_with_ocr, pdf_ocr_summary,
 };
+// Own line: "Convert to flowing document" from a PDF import (`docs/182` §18).
+#[cfg(feature = "pdf-import")]
+pub use pdf_import::pdf_reflow;
 pub use text::{PlainTextAdapter, PlainTextLimits};
