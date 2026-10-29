@@ -230,11 +230,12 @@ function realBandControls() {
 
 test("with the caret outside a table, every band button is disabled AND says why", () => {
   const controls = realBandControls();
-  // 19 -> 25 with the table tools (RM-26/27: style options, text direction,
-  // insert by size, convert, split, cells), measured from the markup.
-  assert.equal(controls.length, 25, "the band is twenty-five buttons; re-measure if the markup changed");
+  // 19 -> 25 with the table tools (split table, insert/delete cells, convert,
+  // style options, text direction), measured from the markup; 25 -> 27 with Draw table
+  // and Borders and shading.
+  assert.equal(controls.length, 27, "the band is twenty-seven buttons; re-measure if the markup changed");
   const states = tableBandStates(bandRoot(controls), { inTable: false });
-  assert.equal(states.length, 25);
+  assert.equal(states.length, 27);
   for (const state of states) {
     assert.equal(state.enabled, false);
     assert.equal(

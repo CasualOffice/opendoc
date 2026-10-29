@@ -13642,3 +13642,176 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
   }
   .ai-preview-actions .dialog-button { min-height: 2.75rem; flex: 1 1 0; }
 }
+
+/* ---- Draw table: the pencil (`table_draw_mode.mjs`) ----------------------- */
+.table-draw-preview {
+  position: absolute;
+  pointer-events: none;
+  outline: 1px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.table-draw-line {
+  position: absolute;
+  pointer-events: none;
+  background: var(--accent);
+  min-width: 1px;
+  min-height: 1px;
+}
+
+body[data-table-draw] .page-wrap,
+body[data-table-draw] .page-wrap * {
+  cursor: crosshair;
+}
+
+#tableDrawBtn[aria-pressed="true"],
+#insertTableDrawBtn[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.grid-draw {
+  width: 100%;
+  margin-top: var(--space-1);
+  justify-content: center;
+}
+
+/* ---- Borders and shading (`table_borders_dialog.mjs`) --------------------- */
+.table-borders-presets {
+  margin-bottom: var(--space-2);
+}
+
+.table-borders-presets [aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.table-borders-layout {
+  display: grid;
+  grid-template-columns: 9.5rem 1fr;
+  gap: var(--space-3);
+  align-items: start;
+  margin-bottom: var(--space-2);
+}
+
+/* The preview: a 2 x 2 sketch of cells, and six line buttons laid over its
+   edges. Each button is a generous hit target; the line it draws is its child. */
+.table-borders-preview {
+  position: relative;
+  width: 9.5rem;
+  height: 7.5rem;
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.table-borders-preview .tbp-cells {
+  position: absolute;
+  inset: 0.75rem;
+  display: grid;
+  grid-template: 1fr 1fr / 1fr 1fr;
+  background: var(--table-borders-fill, transparent);
+}
+
+.table-borders-preview .tbp-cells span {
+  margin: 0.5rem;
+  background: repeating-linear-gradient(to bottom, var(--line) 0 2px, transparent 2px 7px);
+  opacity: 0.7;
+}
+
+.tbp-edge {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+}
+
+.tbp-edge:hover,
+.tbp-edge:focus-visible {
+  background: var(--accent-soft);
+}
+
+.tbp-edge:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+.tbp-edge > span {
+  display: block;
+  box-sizing: border-box;
+}
+
+/* An "off" line shows where it would go, faintly, so it can be found. */
+.tbp-edge > span[data-state="off"] {
+  outline: 1px dotted var(--faint);
+}
+
+.tbp-edge > span[data-state="mixed"] {
+  opacity: 0.45;
+}
+
+.tbp-top,
+.tbp-bottom,
+.tbp-inside-h {
+  left: 0.75rem;
+  right: 0.75rem;
+  height: 1.25rem;
+}
+
+.tbp-top > span,
+.tbp-bottom > span,
+.tbp-inside-h > span {
+  width: 100%;
+  height: 0;
+}
+
+.tbp-top { top: 0.125rem; }
+.tbp-bottom { bottom: 0.125rem; }
+.tbp-inside-h { top: calc(50% - 0.625rem); }
+
+.tbp-left,
+.tbp-right,
+.tbp-inside-v {
+  top: 0.75rem;
+  bottom: 0.75rem;
+  width: 1.25rem;
+}
+
+.tbp-left > span,
+.tbp-right > span,
+.tbp-inside-v > span {
+  width: 0;
+  height: 100%;
+}
+
+.tbp-left { left: 0.125rem; }
+.tbp-right { right: 0.125rem; }
+.tbp-inside-v { left: calc(50% - 0.625rem); }
+
+.table-borders-pen {
+  display: grid;
+  gap: var(--space-1);
+}
+
+/* ---- Table positioning (`table_position_dialog.mjs`) ---------------------- */
+.table-position-row {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.table-position-distances {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+@media (max-width: 620px) {
+  .table-borders-layout,
+  .table-position-row,
+  .table-position-distances {
+    grid-template-columns: 1fr 1fr;
+  }
+}
