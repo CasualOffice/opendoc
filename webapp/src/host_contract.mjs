@@ -277,6 +277,11 @@ export const COMMAND_CONTRACT = Object.freeze([
   // Opening the compatibility findings reads a report the open already produced;
   // it changes nothing, so it requires nothing.
   exact("file.compatibilityReport", null),
+  // The two PDF commands (`pdf_commands.mjs`) replace the document on screen
+  // with a newly imported one, exactly as Open does, so they need what Open
+  // needs. Neither uploads anything: the PDF module runs here.
+  exact("file.pdf.recogniseText", "open"),
+  exact("file.pdf.convertToFlowing", "open"),
   // Recovering a draft requires the capability that WROTE it. A host that
   // withheld `autosave` has no drafts of this visitor's typing, and offering to
   // restore some would be offering work from a session the host refused to keep.
@@ -751,6 +756,9 @@ export const COMMAND_FAMILIES = Object.freeze([
   family("paragraph.listFormat.", "mutate", "always"),
   // Generated from the field-kind table, and from the document's own style list.
   family("insert.field.", "mutate", "always"),
+  // Insert ▸ Chart's per-type rows (`insert.chart.<kind>`, HF-258), generated
+  // from the chart-type table the ribbon's picker reads.
+  family("insert.chart.", "mutate", "always"),
   family("style.", "mutate", "always"),
   // Generated from the zoom menu's markup.
   family("view.zoom.", null, "always"),

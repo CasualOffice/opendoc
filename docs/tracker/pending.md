@@ -26,11 +26,9 @@ currently assigned. Rows stay in their queue order.
 | 25 | HF-185 | P2 | The galley cache holds two copies of the body paint tier | Open |
 | 26 | HF-186 | P2 | `command-activation-contract`'s inert-control assertion cannot fail | Open |
 | 27 | HF-189 | P2 | The site pages have no contrast sweep, and the shared docs shell fails AA | Open |
-| 28 | HF-195 | P2 | A paragraph in a text box inside a content control or a pending tracked insertion cannot be typed in at all | Open |
 | 29 | HF-197 | P2 | Find cannot match across a non-breaking or soft hyphen, and an equation reaches a screen reader as silence | Open |
 | 30 | HF-198 | P2 | The site has no localisation seam at all, so its English cannot be routed and its string debt cannot fall | Open |
 | 31 | HF-204 | P2 | A page break inside a table cell is refused, where Word splits the row across the page boundary | Open |
-| 33 | HF-213 | P2 | Three paragraph-length and child-walking helpers do not enter a text box or a group, so offsets drift wherever they are trusted | Open |
 | 34 | HF-215 | P2 | A host that composes away the ribbon and menu strands five granted capabilities with no affordance and no warning | Open |
 | 35 | HF-218 | P2 | Tab in a table's last cell does nothing and says nothing — the only table gesture that refuses in silence | Open |
 | 36 | HF-219 | P2 | Shading or aligning a selected row formats exactly one cell, silently | Open |
@@ -40,7 +38,6 @@ currently assigned. Rows stay in their queue order.
 | 40 | HF-230 | P2 | Left and Right arrow keys are not mirrored for RTL anywhere in the chrome, and Arabic is a shipped locale | Open |
 | 41 | HF-231 | P2 | `setReviewMode` always ends by focusing the editor, and two callers now undo that afterwards | Open |
 | 42 | HF-255 | P2 | Suggesting mode refuses an underline style or colour edit, and nothing is known about whether it says so | Open |
-| 43 | HF-258 | P2 | A chart can be inserted by the engine and by nothing a user can reach: no ribbon button, no menu item, no palette row | Open |
 | 44 | HF-260 | P2 | A chart cannot be floating, and the hit-test wildcard means one would be silently unselectable if it were | Open |
 | 45 | FONT-01 | P2 | Arabic and Indic draw real glyphs but their SHAPING is unverified — no shaped-output guard exists for either family | Open |
 | 46 | FONT-03 | P2 | The deployed demo still fetches CJK and colour emoji from a third-party CDN | Open (owner decision) |
@@ -173,9 +170,6 @@ currently assigned. Rows stay in their queue order.
 | 194 | RM-25 | P2 | Contents, captions and cross-references: contents settings and leader; Contents styles, removal and adding a paragraph; Table of figures; Cross-references and links to headings | Open |
 | 195 | RM-26 | P2 | Tables: structure: insert dialog and nested tables; Split a table; Convert between text and tables; Insert and delete cells with a shift; Select the current cell | Open |
 | 196 | RM-27 | P2 | Tables: look and tools: table style options and built-in gallery; Table fill, width and margins; Borders: presets and the dialog with a preview; Eraser and draw table; Formula picker and recalculation | Open |
-| 197 | RM-28 | P2 | Arranging objects: align and distribute; Commands on a multi-selection; Position relative to, distance, move with text, overlap; Wrap boundary editing and snapping | Open |
-| 198 | RM-29 | P2 | Pictures: replace a picture and restore its size; Crop: reset, fit, fill; Insert from a URL or host storage; Border, effects, transparency and alt-text title; Save as picture, paste as picture | Open |
-| 199 | RM-30 | P2 | Shapes: fills: solid, gradient, texture, pattern, picture; Outline dash, cap, join and arrowheads; Shape shadow; Change shape and the full gallery; Edit points, adjust handles, merge shapes | Open |
 | 200 | RM-31 | P2 | Review: display modes: simple markup, original, final; Decide changes in a selection; resolve all comments; Suggesting table and list structure; table revisions listed and decided; Comments over several paragraphs; highlight drawn by the engine | Open |
 | 201 | RM-32 | P2 | Protection: protect the document from the editor; Set a password (needs the ADR-052 decision); Editable ranges (w:permStart/w:permEnd): model, shade, edit; A tracked-changes restriction forces Suggesting | Open |
 | 202 | RM-33 | P2 | Fields: field catalogue and date formats; Update all fields; Operate dropdown form fields; Cached field results wrap like text; Insert text from a file | Open |

@@ -16,6 +16,7 @@ import { hostCapabilities } from "./capabilities.mjs";
 import { collabCommands } from "./collab_chrome.mjs";
 import { flattenCommandTree, tableCommandLabel, tableMenuPlaceholders } from "./command_taxonomy.mjs";
 import { FIELD_KINDS } from "./field_kinds.mjs";
+import { insertChartTypeCommands } from "./chart_insert.mjs";
 import { revealOnSettings } from "./surface_reveal.mjs";
 import { quickStyleCommands } from "./quick_styles.mjs";
 
@@ -272,6 +273,17 @@ export function createPalette(ed) {
       { id: "insert.image", label: "Picture…", group: "Insert", kw: "image picture insert photo file png jpeg jpg gif paste", enabled: ed.insertCommandEnabled("insert.image"), run: () => ed.insertImageFromFile() },
       { id: "insert.shape", label: "Shape…", group: "Insert", kw: "shape drawing autoshape rectangle rounded ellipse circle triangle diamond line arrow callout", enabled: ed.insertCommandEnabled("insert.shape"), run: () => ed.openShapeGallery() },
       { id: "insert.chart", label: t("insert.chart"), group: "Insert", kw: "chart graph column bar line area scatter pie doughnut plot data series", enabled: !!ed.selection, disabledReason: t("paragraph.caretRequired"), run: () => void ed.insertChartWithData() },
+      // One row per chart type, the rows the Insert ▸ Chart picker offers
+      // (HF-258), so a type is reachable without the ribbon.
+      ...insertChartTypeCommands(t, (kind) => void ed.insertChartWithData(kind)).map((row) => ({
+        id: row.id,
+        label: t("insert.chartOfType", { type: row.label }),
+        group: "Insert",
+        kw: `chart graph plot ${row.id.slice("insert.chart.".length).replace(/-/g, " ")}`,
+        enabled: !!ed.selection,
+        disabledReason: t("paragraph.caretRequired"),
+        run: row.run,
+      })),
       { id: "insert.textbox", label: "Text box", group: "Insert", kw: "text box textbox callout caption floating frame", enabled: ed.insertCommandEnabled("insert.textbox"), run: () => void ed.insertTextBoxObject() },
       { id: "insert.symbol", label: "Symbol…", group: "Insert", kw: "symbol special character glyph currency math greek arrow fraction diacritic omega degree unicode", enabled: ed.insertCommandEnabled("insert.symbol"), run: () => ed.openSymbolPicker() },
       { id: "insert.emoji", label: "Emoji…", group: "Insert", kw: "emoji emoticon smiley face reaction sticker unicode", enabled: ed.insertCommandEnabled("insert.emoji"), run: () => ed.openEmojiPicker() },
@@ -654,7 +666,7 @@ export function createPalette(ed) {
     // the compact bar's tooltip and the shortcut reference all read
     // `command.shortcut`, and the only thing that can set it is the table the
     // dispatcher matches against.
-    cmds.push(...ed.compatFindings.commands(), ...ed.regionCycle.commands());
+    cmds.push(...ed.compatFindings.commands(), ...(ed.pdfCommands?.commands() ?? []), ...ed.regionCycle.commands());
     for (const command of cmds) command.shortcut = shortcutForCommand(command.id, ed.EDITOR_KEYBOARD_PLATFORM);
     // Narrowed to the ROOM's grant HERE, once, for every surface this registry
     // feeds — palette, menu bar, compact bar, context menus — rather than by a

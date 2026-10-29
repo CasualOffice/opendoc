@@ -15,12 +15,28 @@ publish = false
 # The native-evidence provider chosen in docs/182 §3.1 and measured in P0
 # (fixtures/pdf/measurement.json). Apache-2.0 OR MIT, pure Rust, WASM-clean.
 hayro-syntax = "0.8.0"
-hayro-interpret = "0.8.0"
+# Default features OFF (`docs/182` §17a): they bundle Foxit's standard-14
+# faces (320 KB) and Adobe's predefined CMaps (256 KB plus a Brotli decoder).
+# `provision` supplies both from the host instead; the two features below turn
+# the in-tree fallbacks on for native hosts.
+hayro-interpret = { version = "0.8.0", default-features = false }
 kurbo = "0.13"
 # Bounded inflate for the decompression-bomb pre-pass (docs/21 PDF limits).
 flate2 = "1.1"
 # Re-encodes decoded rasters for the model's media table (PNG is lossless).
 png = "0.18"
+# The byte-preserving save's request and answer, as they cross from the
+# editor's main module to the PDF module (`docs/182` §17a). No dependencies.
+casual-doc-pdf-wire.workspace = true
+
+[features]
+default = []
+# The standard 14 resolve to the Liberation faces the layout crate ships when
+# the host registered none (`provision`). Native hosts turn this on; the
+# browser's PDF module does not, and is given the faces by the editor.
+liberation-faces = []
+# Predefined CMaps from hayro-cmap's bundle when the host provided none.
+embedded-cmaps = ["hayro-interpret/embed-cmaps"]
 
 [lints]
 workspace = true

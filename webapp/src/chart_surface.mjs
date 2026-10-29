@@ -18,6 +18,7 @@ import { buildChartCommands, createChartBridge, PALETTE_KEYS } from "./chart_com
 import { createChartDataDialog } from "./chart_data.mjs";
 import { createChartPanel } from "./chart_panel.mjs";
 import { newestObject, placedObjectIds } from "./placed_objects.mjs";
+import { insertChartTypeCommands } from "./chart_insert.mjs";
 
 /**
  * @param {object} io
@@ -163,8 +164,18 @@ export function createChartSurface(io) {
     return dialog.open(chart.node);
   }
 
+  /** Insert ▸ Chart's type picker, dropped from `button`: ONLYOFFICE's Insert
+   *  Chart menu and Google Docs' Insert ▸ Chart submenu (`109` HF-258). Each
+   *  row runs `insert(kind)`, which is the same insert-select-open-data path
+   *  the palette's per-type rows take. */
+  function openInsertMenu(button, insert) {
+    if (!button) return;
+    io.showMenu(button, insertChartTypeCommands(io.t, insert));
+  }
+
   return {
     insertAndOpen,
+    openInsertMenu,
     openData: (node = selectedChart()) => (node ? dialog.open(node) : false),
     openSettings: (node = selectedChart()) => (node ? panel.open(node) : false),
     commandsFor,

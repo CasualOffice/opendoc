@@ -1,5 +1,5 @@
 {
-  "description": "One edit of the `styles` family of the OpenDoc edit vocabulary 1.4.",
+  "description": "One edit of the `styles` family of the OpenDoc edit vocabulary 1.5.",
   "oneOf": [
     {
       "additionalProperties": false,

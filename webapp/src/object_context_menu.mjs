@@ -46,10 +46,20 @@
 //   `applyShapeOutline(o)`
 //   `enterCrop()`          enter crop mode on a picture
 //   `changePicture()`      Word's Change Picture: pick a file for the picture
+//   `alignRows(enabled, reason)` the Align submenu (`object_align.mjs`)
+//   `gradientCommands(enabled, reason)` the Shape fill ▸ Gradient submenu
+//                          (`shape_gradient.mjs`)
+//   `outlineStyleCommands(picture, enabled, reason)` Dashes and Arrows
+//                          (`shape_outline_style.mjs`)
+//   `pictureToolCommands(enabled, reason)` the picture-tool rows
+//                          (`picture_tools.mjs`) for the selected picture
 //   `openProperties()`     open the object inspector
 //   `deleteObject()`       delete the selected object
 //   `moveInText()`         Word's F2, "Move to where?" — move an in-line object
 //                          to another place in the text by keyboard
+//   `changeShape(token)`   Change Shape to the `a:prstGeom` preset `token`
+import { SHAPE_GROUPS } from "./shape_catalogue.mjs";
+
 export function buildObjectContextCommands(context, io) {
   // Object edits are untrackable, so they are read-only in Viewing and blocked
   // (untracked) in Suggesting — the same gate `runEdit({ gate:true })` applies.
@@ -161,6 +171,20 @@ export function buildObjectContextCommands(context, io) {
       ],
     });
 
+    // Align — Word's and ONLYOFFICE's Arrange ▸ Align: six alignments, two
+    // distributions and the page / margin / selected-objects target
+    // (`object_align.mjs`, RM-28). Rows and reasons come from the caller, which
+    // asks the engine twice per build, not once per row.
+    if (typeof io.alignRows === "function") {
+      commands.push({
+        id: "object.align",
+        label: io.text("object.align"),
+        group: "arrange",
+        icon: "position",
+        submenu: io.alignRows(mutationEnabled, mutationReason),
+      });
+    }
+
     // Rotate — Word's four rows. A top-level text box models no rotation, and
     // the refusal SAYS so rather than the row silently doing nothing.
     commands.push({
@@ -176,6 +200,29 @@ export function buildObjectContextCommands(context, io) {
         disabledReason: mutationEnabled ? io.text("object.rotate.unsupported") : mutationReason,
         run: () => io.rotate(value),
       })),
+    });
+  }
+
+  // Change Shape — Word's Shape Format ▸ Edit Shape ▸ Change Shape and
+  // ONLYOFFICE's Change shape (`ShapeSettings.js` `btnChangeShape`): the same
+  // gallery Insert ▸ Shapes offers (`shape_catalogue.mjs`), one group per
+  // category, and the engine keeps everything but the outline (RM-30).
+  if (context.kind === "shape" && typeof io.changeShape === "function") {
+    commands.push({
+      id: "object.changeShape",
+      label: io.text("object.changeShape"),
+      group: "arrange",
+      icon: "format",
+      submenu: SHAPE_GROUPS.flatMap((category) =>
+        category.shapes.map((shape) => ({
+          id: `object.changeShape.${shape.token}`,
+          label: io.text(shape.key),
+          group: category.id,
+          enabled: mutationEnabled,
+          disabledReason: mutationReason,
+          run: () => io.changeShape(shape.token),
+        })),
+      ),
     });
   }
 
@@ -266,6 +313,8 @@ export function buildObjectContextCommands(context, io) {
             ...swatch(hex),
             run: () => io.applyShapeFill(hex),
           })),
+          // Word's Shape Fill ▸ Gradient (`shape_gradient.mjs`, RM-30).
+          ...(typeof io.gradientCommands === "function" ? [io.gradientCommands(mutationEnabled, mutationReason)] : []),
         ],
       });
     }
@@ -290,6 +339,10 @@ export function buildObjectContextCommands(context, io) {
             id: `object.outline.${hex}`,
             run: () => io.applyShapeOutline({ color: hex }),
           })),
+          // Word's Dashes and Arrows (`shape_outline_style.mjs`, RM-30).
+          ...(typeof io.outlineStyleCommands === "function"
+            ? io.outlineStyleCommands(picture, mutationEnabled, mutationReason)
+            : []),
         ],
       });
     }
@@ -306,6 +359,13 @@ export function buildObjectContextCommands(context, io) {
       disabledReason: mutationReason,
       run: () => io.enterCrop(),
     });
+  }
+
+  // Crop to Fill, Crop to Fit, Reset crop and Reset size — ONLYOFFICE's Image
+  // settings beside Crop (`picture_tools.mjs`, `docs/109` RM-29). Built by the
+  // caller, which reads the picture once; each row carries its own reason.
+  if (context.canCrop && picture && typeof io.pictureToolCommands === "function") {
+    commands.push(...io.pictureToolCommands(mutationEnabled, mutationReason));
   }
 
   // Change Picture — Word's right-click row, Docs' Replace image. A picture

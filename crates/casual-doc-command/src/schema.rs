@@ -25,7 +25,7 @@ use crate::registry::{COMMANDS, Command, Family, Trackable};
 /// command is a minor bump; changing or removing one is a major bump and
 /// needs an ADR. Published in `commands.json`, the generated TypeScript and
 /// `list_edit_kinds`.
-pub const VOCABULARY_VERSION: &str = "1.4";
+pub const VOCABULARY_VERSION: &str = "1.5";
 
 /// How many commands [`VOCABULARY_VERSION`] names. A test holds it equal to
 /// the registry, so adding a command cannot ship without deciding the version

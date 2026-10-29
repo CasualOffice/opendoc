@@ -55,7 +55,9 @@ export function createCommandSurfaces(ed) {
     // galleries), so wiring `activate` here too would open it on mousedown and
     // immediately close it again.
     { command: "insert.shape", buttons: [ed.insertShapeBtn], requires: "doc", activate: null },
-    { command: "insert.chart", buttons: [ed.insertChartBtn], requires: "doc", activate: () => void ed.insertChartWithData() },
+    // Insert ▸ Chart opens the type picker first, as ONLYOFFICE's button does
+    // (`109` HF-258); each row inserts that type and opens its data.
+    { command: "insert.chart", buttons: [ed.insertChartBtn], requires: "doc", activate: () => ed.chartSurface.openInsertMenu(ed.insertChartBtn, (kind) => void ed.insertChartWithData(kind)) },
     { command: "insert.textbox", buttons: [ed.insertTextBoxBtn], requires: "doc", activate: () => void ed.insertTextBoxObject() },
     { command: "insert.link", buttons: [ed.insertLinkBtn], requires: "range", activate: () => ed.editSelectionLink() },
     { command: "insert.bookmark", buttons: [ed.insertBookmarkBtn, ed.refBookmarkBtn], requires: "doc", activate: () => ed.openBookmarkManager() },

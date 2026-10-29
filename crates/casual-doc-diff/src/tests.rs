@@ -889,6 +889,8 @@ fn a_changed_chart_is_located_and_reported_as_not_characterised() {
                     height_emu: 3_200_400,
                 },
                 prog_id: None,
+                anchor: None,
+                relative_height: None,
             })));
         document.definitions_mut().charts.insert(
             ChartId::new(NodeId::new(900_002).expect("non-zero")),

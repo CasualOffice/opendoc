@@ -480,6 +480,7 @@ const ed = {
   get pageSetup() { return pageSetup; },
   get pageWindow() { return pageWindow; }, set pageWindow(v) { pageWindow = v; },
   get pages() { return pages; },
+  get pdfCommands() { return pdfCommands; }, set pdfCommands(v) { pdfCommands = v; },
   get pagesEl() { return pagesEl; },
   get pagesPanel() { return pagesPanel; },
   get pagesPanelView() { return pagesPanelView; },
@@ -1689,6 +1690,8 @@ let chromeRefreshOutline = false;
 let chromeRefreshA11y = false;
 /** The model-derived link currently represented by the host-owned link chip. */
 let activeLink = null;
+/** The PDF commands (`pdf_commands.mjs`), set by the file-open module. */
+let pdfCommands = null;
 /** Armed run formatting for typing at a collapsed caret (e.g. click Bold with no
  *  selection → next typed characters are bold). `null` when nothing is armed; else
  *  a subset of { bold, italic, underline, strike } → boolean. Cleared whenever the

@@ -125,6 +125,11 @@ enum Segment {
         /// The `wp:docPr` name/title (`docs/109` HF-267); `None` for an OLE
         /// `w:object`, which carries no `wp:docPr`.
         name: Option<ObjectName>,
+        /// The `wp:anchor` of a FLOATING chart or diagram (`docs/109` HF-260);
+        /// `None` in line.
+        anchor: Option<DrawingAnchor>,
+        /// The floating object's `wp:anchor@relativeHeight`.
+        relative_height: Option<u32>,
     },
     Hyperlink {
         target: HyperlinkTarget,
@@ -6572,6 +6577,10 @@ impl BodyParser<'_> {
             && let Some(part) = self.resolve_embedded_part(rid)
         {
             self.embedded_part_names.insert(part.part_name.clone());
+            // A chart in a `wp:anchor` FLOATS, as a picture does: its position,
+            // wrap and z-order are taken here rather than left behind, which
+            // opened every floating Word chart in line (`docs/109` HF-260).
+            let (anchor, relative_height) = self.take_embedded_anchor();
             self.push_segment(Segment::EmbeddedObject {
                 kind: EmbeddedKind::Chart,
                 part,
@@ -6580,6 +6589,8 @@ impl BodyParser<'_> {
                 extent: extent.unwrap_or(ZERO_EXTENT),
                 prog_id: None,
                 name,
+                anchor,
+                relative_height,
             });
             return;
         }
@@ -6601,6 +6612,7 @@ impl BodyParser<'_> {
                     extra_parts.push(extra_part);
                 }
             }
+            let (anchor, relative_height) = self.take_embedded_anchor();
             self.push_segment(Segment::EmbeddedObject {
                 kind: EmbeddedKind::Diagram,
                 part,
@@ -6609,6 +6621,8 @@ impl BodyParser<'_> {
                 extent: extent.unwrap_or(ZERO_EXTENT),
                 prog_id: None,
                 name,
+                anchor,
+                relative_height,
             });
             return;
         }
@@ -6707,7 +6721,21 @@ impl BodyParser<'_> {
             extent: object.extent.unwrap_or(ZERO_EXTENT),
             prog_id,
             name: None,
+            // `w:object` has no DrawingML anchor: an OLE object is in line.
+            anchor: None,
+            relative_height: None,
         });
+    }
+
+    /// The pending `wp:anchor` of the drawing being committed, as the floating
+    /// position and stacking key of an embedded chart or diagram, or `(None,
+    /// None)` for a `wp:inline`. Takes it, so it cannot leak onto a later
+    /// drawing. O(1).
+    fn take_embedded_anchor(&mut self) -> (Option<DrawingAnchor>, Option<u32>) {
+        match self.pending_anchor.take() {
+            Some(pending) => (Some(pending.resolve()), pending.relative_height),
+            None => (None, None),
+        }
     }
 
     /// Resolves a relationship id to an embedded-object part reference through the
@@ -9209,6 +9237,8 @@ impl BodyParser<'_> {
                 extent,
                 prog_id,
                 name,
+                anchor,
+                relative_height,
             } => {
                 let id = self.next_id()?;
                 self.record_object_name(id, name, ObjectName::GENERIC_OBJECT);
@@ -9220,6 +9250,8 @@ impl BodyParser<'_> {
                     preview,
                     extent,
                     prog_id,
+                    anchor,
+                    relative_height,
                 })))
             }
             Segment::Hyperlink {
