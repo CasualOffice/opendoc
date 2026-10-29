@@ -1177,6 +1177,21 @@ pub enum Edit {
         pages: PageKind,
         /// Where across the band.
         side: PageNumberSide,
+        /// Write "Page X of Y" — the number and the page count — rather than
+        /// the number alone.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        of_total: bool,
+        /// With `of_total`: the words before the number, in the document's
+        /// language ("Page " when omitted).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<String>,
+        /// With `of_total`: the words between the number and the count (" of "
+        /// when omitted).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        between: Option<String>,
+        /// With `of_total`: the words after the count (none when omitted).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<String>,
     },
     /// Insert a chart with sample data at an anchor.
     InsertChart {
@@ -1377,6 +1392,15 @@ impl Edit {
             Self::InsertCaption { label, text, .. } => label.len() + text.len(),
             Self::SetAltText { text, .. } => text.as_ref().map_or(0, String::len),
             Self::SetWatermark { text, .. } => text.as_ref().map_or(0, String::len),
+            Self::InsertPageNumber {
+                before,
+                between,
+                after,
+                ..
+            } => [before, between, after]
+                .into_iter()
+                .map(|words| words.as_ref().map_or(0, String::len))
+                .sum(),
             // A picture's bytes are bounded per edit (`objects::MAX_IMAGE_BYTES`),
             // not by the plan's text ceiling; its alt text is text.
             Self::InsertImage { alt_text, .. } => alt_text.as_ref().map_or(0, String::len),
@@ -1425,7 +1449,6 @@ impl Edit {
             | Self::SetDifferentOddEven { .. }
             | Self::LinkToPrevious { .. }
             | Self::RemoveHeaderFooter { .. }
-            | Self::InsertPageNumber { .. }
             | Self::InsertChart { .. }
             | Self::InsertTableOfContents { .. }
             | Self::UpdateTableOfContents { .. }

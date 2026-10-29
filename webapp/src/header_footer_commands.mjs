@@ -46,6 +46,34 @@ export const PAGE_NUMBER_POSITIONS = Object.freeze([
   Object.freeze({ command: "layout.pageNumber.bottomRight", band: "footer", align: "right", labelKey: "pageNumber.bottomRight" }),
 ]);
 
+/** Word's "Page X of Y" (Insert ▸ Page Number ▸ Bottom of Page ▸ Page X of Y),
+ *  centred in the footer. The words come from `pageNumber.ofTotalPattern`, in
+ *  the editor's language: they become DOCUMENT text, and the editor's language
+ *  is the best guess this host has of the document's. */
+export const PAGE_OF_TOTAL = Object.freeze({
+  command: "layout.pageNumber.pageOfTotal",
+  band: "footer",
+  align: "center",
+  labelKey: "pageNumber.pageOfTotal",
+});
+
+/** Splits a "Page {page} of {pages}" pattern into the three runs around the two
+ *  fields. The placeholders may come in either order in the TEXT ("{pages}
+ *  中の {page} ページ" would be legal) but the fields are always PAGE then
+ *  NUMPAGES, so a pattern that puts `{pages}` first, or lacks either, falls back
+ *  to the English shape rather than writing the fields in the wrong order. */
+export function splitPageOfTotal(pattern) {
+  const text = typeof pattern === "string" ? pattern : "";
+  const page = text.indexOf("{page}");
+  const pages = text.indexOf("{pages}");
+  if (page < 0 || pages < 0 || pages < page) return { before: "Page ", between: " of ", after: "" };
+  return {
+    before: text.slice(0, page),
+    between: text.slice(page + "{page}".length, pages),
+    after: text.slice(pages + "{pages}".length),
+  };
+}
+
 /** Link to Previous and Remove, one row per band. */
 export const BAND_COMMANDS = Object.freeze([
   Object.freeze({ command: "layout.header.linkToPrevious", band: "header", action: "link" }),
@@ -58,6 +86,7 @@ export const BAND_COMMANDS = Object.freeze([
 export const HEADER_FOOTER_COMMAND_IDS = Object.freeze([
   ...BAND_COMMANDS.map((row) => row.command),
   ...PAGE_NUMBER_POSITIONS.map((row) => row.command),
+  PAGE_OF_TOTAL.command,
 ]);
 
 /** The engine's `runningLinkState` answer, parsed. `null` when there is no

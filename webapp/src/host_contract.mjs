@@ -422,6 +422,8 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("layout.pageNumber.bottomLeft", "mutate"),
   exact("layout.pageNumber.bottomCenter", "mutate"),
   exact("layout.pageNumber.bottomRight", "mutate"),
+  // Word's "Page X of Y" preset (Bottom of Page ▸ Page X of Y).
+  exact("layout.pageNumber.pageOfTotal", "mutate"),
   exact("insert.footnote", "mutate"),
   exact("insert.endnote", "mutate"),
   exact("insert.lineBreak", "mutate"),

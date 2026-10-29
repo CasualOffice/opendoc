@@ -1890,9 +1890,23 @@ fn apply_edit(
             band,
             pages,
             side,
+            of_total,
+            before,
+            between,
+            after,
         } => {
             refuse_untracked(kind, mode)?;
             sections_of(state, Some(*section))?;
+            // An agent names the words; omitted, they are Word's English ones.
+            let text = if *of_total {
+                casual_doc_command::sections::PageNumberText::OfTotal {
+                    before: before.clone().unwrap_or_else(|| "Page ".to_owned()),
+                    between: between.clone().unwrap_or_else(|| " of ".to_owned()),
+                    after: after.clone().unwrap_or_default(),
+                }
+            } else {
+                casual_doc_command::sections::PageNumberText::Number
+            };
             let ids = &mut state.ids;
             let lowered = casual_doc_command::sections::insert_page_number(
                 &state.document,
@@ -1900,6 +1914,7 @@ fn apply_edit(
                 band_region(*band),
                 page_kind(*pages),
                 number_align(*side),
+                &text,
                 &mut || ids.next_id().ok(),
             )
             .map_err(|message| refusal(&message))?;

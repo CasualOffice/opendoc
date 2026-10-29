@@ -15,6 +15,7 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::{Alignment, BlockNode, HeaderFooterId, HeaderFooterKind, InlineNode};
 
 use crate::{DocxPackage, WasmDocument, open_document, viewer_limits};
+use casual_doc_command::sections::PageNumberText;
 
 const SAMPLE_DOCX: &[u8] = include_bytes!("../../../sample.docx");
 const DOCX: &str = casual_doc_io::formats::DOCX;
@@ -393,7 +394,7 @@ fn a_page_number_in_a_header_with_content_keeps_the_content() {
     );
     assert_eq!(page_fields(&blocks(&d, RunningRegion::Header, header)), 0);
 
-    d.insert_running_page_number_inner("header", page, "center")
+    d.insert_running_page_number_inner("header", page, "center", &PageNumberText::Number)
         .expect("insert");
     let after = blocks(&d, RunningRegion::Header, header);
     assert_eq!(
@@ -429,7 +430,7 @@ fn a_page_number_on_a_page_with_no_band_creates_one() {
         "no first-page footer"
     );
     let result = d
-        .insert_running_page_number_inner("footer", 1, "right")
+        .insert_running_page_number_inner("footer", 1, "right", &PageNumberText::Number)
         .expect("insert");
     let shown = d
         .running_blocks_of(RunningRegion::Footer, 1)
@@ -446,7 +447,7 @@ fn a_page_number_on_a_page_with_no_band_creates_one() {
         "the caret is in the new band"
     );
     assert!(
-        d.insert_running_page_number_inner("footer", 1, "middle")
+        d.insert_running_page_number_inner("footer", 1, "middle", &PageNumberText::Number)
             .is_err(),
         "an unknown alignment is refused"
     );
@@ -478,4 +479,51 @@ fn the_band_label_and_the_link_control_agree_per_variant() {
         serde_json::from_str(&d.running_link_state("header", first)).expect("json");
     assert_eq!(bands["headerLinked"], state["linked"]);
     assert_eq!(state["linked"], true, "no first-page header of its own");
+}
+
+/// Word's "Page X of Y": the host's words around a `PAGE` and a `NUMPAGES`
+/// field, in one paragraph of a footer that already has content, which stays.
+///
+/// Mutation: build `OfTotal` as the number alone in `page_number_inlines` — the
+/// `NUMPAGES` field and the words are missing and the assertions fail.
+#[test]
+fn page_x_of_y_writes_the_hosts_words_around_two_fields() {
+    let mut d = open_document(SAMPLE_DOCX).expect("open");
+    let page = page_in_section(&d, 2);
+    let footer = own(&d, 2, RunningRegion::Footer).expect("section 3's footer");
+    let before = text(&blocks(&d, RunningRegion::Footer, footer));
+    d.insert_running_page_number_inner(
+        "footer",
+        page,
+        "center",
+        &PageNumberText::OfTotal {
+            before: "Seite ".to_owned(),
+            between: " von ".to_owned(),
+            after: String::new(),
+        },
+    )
+    .expect("insert");
+    let after = blocks(&d, RunningRegion::Footer, footer);
+    assert_eq!(
+        &text(&after)[..before.len()],
+        &before[..],
+        "the footer's content stays"
+    );
+    let BlockNode::Paragraph(last) = after.last().expect("a paragraph") else {
+        panic!("the number's paragraph is last in a footer");
+    };
+    let kinds: Vec<String> = last
+        .inlines
+        .iter()
+        .map(|inline| match inline {
+            InlineNode::Run(run) => format!("run:{}", run.text),
+            InlineNode::Field(field) => format!("field:{}", field.instruction),
+            _ => "other".to_owned(),
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        ["run:Seite ", "field:PAGE", "run: von ", "field:NUMPAGES"]
+    );
+    assert_eq!(last.properties.alignment, Some(Alignment::Center));
 }

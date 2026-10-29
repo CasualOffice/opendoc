@@ -479,6 +479,11 @@ export const EN_STRINGS = Object.freeze({
   "pageNumber.bottomCenter": "Page number: bottom center",
   "pageNumber.bottomRight": "Page number: bottom right",
   "menuGroup.pageNumbers": "Page numbers",
+  // Word's "Page X of Y". The PATTERN is document text, split around its two
+  // placeholders (`splitPageOfTotal`): keep `{page}` before `{pages}`.
+  "pageNumber.pageOfTotal": "Page number: Page X of Y",
+  "pageNumber.ofTotalPattern": "Page {page} of {pages}",
+  "pageNumber.atCursor": "Page number at the cursor",
   // The band's own chrome: the marker that opens an absent band, the status
   // line while one is open, the label Word draws on the band ("Header
   // -Section 2-"), and the footer half of the bar's Link to previous title (the

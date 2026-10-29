@@ -12711,6 +12711,18 @@ body[data-shape-draw] .page-wrap * {
   display: none;
 }
 
+/* The body, dimmed while a header or footer is open (docs/174 OL-08). The paper
+   is always white in the raster, whatever the chrome theme, so the veil is white
+   too: it greys the ink under it rather than tinting the sheet. */
+.running-veil {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  pointer-events: none;
+  background: rgb(255 255 255 / 45%);
+}
+
 .running-band-check {
   display: inline-flex;
   align-items: center;

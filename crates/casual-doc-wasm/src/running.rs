@@ -15,6 +15,7 @@
 //! Complexity: every command is O(sections + size of the band it touches); none
 //! walks the body.
 
+use casual_doc_command::sections::PageNumberText;
 use casual_doc_command::sections::{self, PageNumberAlign};
 use casual_doc_edit::{Pos, RunningRegion};
 use casual_doc_model::NodeId;
@@ -30,6 +31,22 @@ const fn kind_token(kind: HeaderFooterKind) -> &'static str {
         HeaderFooterKind::Default => "default",
         HeaderFooterKind::First => "first",
         HeaderFooterKind::Even => "even",
+    }
+}
+
+/// The number alone, or "Page X of Y" when the host passed either word.
+fn page_number_text(
+    before: Option<String>,
+    between: Option<String>,
+    after: Option<String>,
+) -> PageNumberText {
+    if before.is_none() && between.is_none() && after.is_none() {
+        return PageNumberText::Number;
+    }
+    PageNumberText::OfTotal {
+        before: before.unwrap_or_default(),
+        between: between.unwrap_or_default(),
+        after: after.unwrap_or_default(),
     }
 }
 
@@ -130,6 +147,11 @@ impl WasmDocument {
     /// clear it — `casual_doc_command::sections::insert_page_number`). The caret
     /// lands after the number, in the band. One undoable action.
     ///
+    /// `before`, `between` and `after`, when any is given, make it Word's "Page
+    /// X of Y": `before`, the page number, `between`, the page count, `after`.
+    /// They are the host's words in the document's language ("Page " / " of " /
+    /// ""), because they become document text.
+    ///
     /// # Errors
     /// An unknown region or alignment, a band whose edge is a table, or a
     /// refusal from the choke point.
@@ -139,8 +161,12 @@ impl WasmDocument {
         region: &str,
         page: u32,
         align: &str,
+        before: Option<String>,
+        between: Option<String>,
+        after: Option<String>,
     ) -> Result<EditResult, JsValue> {
-        self.insert_running_page_number_inner(region, page, align)
+        let text = page_number_text(before, between, after);
+        self.insert_running_page_number_inner(region, page, align, &text)
             .map_err(to_js)
     }
 }
@@ -246,6 +272,7 @@ impl WasmDocument {
         region: &str,
         page: u32,
         align: &str,
+        text: &PageNumberText,
     ) -> Result<EditResult, String> {
         let region = region_of(region)?;
         let align = PageNumberAlign::parse(align)
@@ -255,10 +282,15 @@ impl WasmDocument {
             .ok_or_else(|| "the document has no section".to_owned())?;
         let kind = self.running_kind_for_page(page, index);
         let ids = &mut self.edit_ids;
-        let lowered =
-            sections::insert_page_number(&self.document, index, region, kind, align, &mut || {
-                ids.next_id().ok()
-            })?;
+        let lowered = sections::insert_page_number(
+            &self.document,
+            index,
+            region,
+            kind,
+            align,
+            text,
+            &mut || ids.next_id().ok(),
+        )?;
         self.apply_action_caret_as(lowered.operations, lowered.caret, HistoryKind::FieldChange)
     }
 }
