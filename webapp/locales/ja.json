@@ -2423,6 +2423,7 @@
   "findings.feature.pdfFloats": "画像と図形を本文の横または背面に配置",
   "findings.feature.pdfVectorsPlaced": "図形として配置した描画",
   "pdfImport.title": "{name} を開いています",
+  "pdfImport.openFailed": "{name} を開けませんでした: {message}",
   "pdfImport.intro": "このデバイス上で、PDF のページを編集可能なフレームとして再構成しています。",
   "pdfImport.reading": "ファイルを読み込んでいます…",
   "pdfImport.progress": "{done} / {total} ページ",

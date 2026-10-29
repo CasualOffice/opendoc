@@ -2453,6 +2453,7 @@
   "findings.feature.pdfFloats": "Obrazy i rysunki umieszczone obok tekstu lub za nim",
   "findings.feature.pdfVectorsPlaced": "Rysunki umieszczone jako kształty",
   "pdfImport.title": "Otwieranie {name}",
+  "pdfImport.openFailed": "Nie można otworzyć pliku {name}: {message}",
   "pdfImport.intro": "Odtwarzanie stron pliku PDF jako edytowalnych ramek na tym urządzeniu.",
   "pdfImport.reading": "Odczytywanie pliku…",
   "pdfImport.progress": "Strona {done} z {total}",

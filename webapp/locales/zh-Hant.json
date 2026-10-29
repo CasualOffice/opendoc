@@ -2423,6 +2423,7 @@
   "findings.feature.pdfFloats": "圖片和繪圖浮動在文字旁邊或後面",
   "findings.feature.pdfVectorsPlaced": "繪圖已作為圖形放置",
   "pdfImport.title": "正在開啟 {name}",
+  "pdfImport.openFailed": "無法開啟 {name}：{message}",
   "pdfImport.intro": "正在此裝置上將 PDF 的頁面重建為可編輯的框架。",
   "pdfImport.reading": "正在讀取檔案…",
   "pdfImport.progress": "第 {done} 頁，共 {total} 頁",

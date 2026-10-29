@@ -2443,6 +2443,7 @@
   "findings.feature.pdfFloats": "Immagini e disegni mobili accanto o dietro al loro testo",
   "findings.feature.pdfVectorsPlaced": "Disegni inseriti come forme",
   "pdfImport.title": "Apertura di {name}",
+  "pdfImport.openFailed": "Impossibile aprire {name}: {message}",
   "pdfImport.intro": "Ricostruzione delle pagine del PDF come cornici modificabili, su questo dispositivo.",
   "pdfImport.reading": "Lettura del file…",
   "pdfImport.progress": "Pagina {done} di {total}",

@@ -2433,6 +2433,7 @@
   "findings.feature.pdfFloats": "चित्र और ड्रॉइंग अपने पाठ के बगल में या पीछे रखे गए",
   "findings.feature.pdfVectorsPlaced": "ड्रॉइंग आकृतियों के रूप में रखी गईं",
   "pdfImport.title": "{name} खोला जा रहा है",
+  "pdfImport.openFailed": "{name} नहीं खोली जा सकी: {message}",
   "pdfImport.intro": "इसी डिवाइस पर PDF के पेज संपादन योग्य फ़्रेम के रूप में फिर से बनाए जा रहे हैं।",
   "pdfImport.reading": "फ़ाइल पढ़ी जा रही है…",
   "pdfImport.progress": "पेज {done} / {total}",

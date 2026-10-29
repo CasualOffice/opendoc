@@ -2433,6 +2433,7 @@
   "findings.feature.pdfFloats": "Afbeeldingen en tekeningen zwevend naast of achter hun tekst",
   "findings.feature.pdfVectorsPlaced": "Tekeningen geplaatst als vormen",
   "pdfImport.title": "{name} openen",
+  "pdfImport.openFailed": "Kan {name} niet openen: {message}",
   "pdfImport.intro": "De pagina's van de pdf worden op dit apparaat opnieuw opgebouwd als bewerkbare kaders.",
   "pdfImport.reading": "Bestand lezen…",
   "pdfImport.progress": "Pagina {done} van {total}",

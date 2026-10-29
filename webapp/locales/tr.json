@@ -2433,6 +2433,7 @@
   "findings.feature.pdfFloats": "Resimler ve çizimler metnin yanına veya arkasına yerleştirildi",
   "findings.feature.pdfVectorsPlaced": "Çizimler şekil olarak yerleştirildi",
   "pdfImport.title": "{name} açılıyor",
+  "pdfImport.openFailed": "{name} açılamadı: {message}",
   "pdfImport.intro": "PDF'nin sayfaları bu cihazda düzenlenebilir çerçeveler olarak yeniden oluşturuluyor.",
   "pdfImport.reading": "Dosya okunuyor…",
   "pdfImport.progress": "Sayfa {done} / {total}",

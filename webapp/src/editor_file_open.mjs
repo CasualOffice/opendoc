@@ -452,7 +452,7 @@ export function createFileOpen(ed) {
         ed.setStatus(`${options.failedStatus(message)}${kept}`, "error");
         return;
       }
-      ed.setStatus(`Could not open ${name}: ${message}${kept}`, "error");
+      ed.setStatus(`${t("pdfImport.openFailed", { name, message })}${kept}`, "error");
     }
   }
 

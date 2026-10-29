@@ -1741,6 +1741,7 @@
   "pdfImport.loadingModule": "Loading the PDF reader…",
   "pdfImport.moduleFailed": "The PDF reader could not be loaded: {reason}",
   "pdfImport.moduleProgress": "{done} of {total} MB",
+  "pdfImport.openFailed": "Could not open {name}: {message}",
   "pdfImport.progress": "Page {done} of {total}",
   "pdfImport.reading": "Reading the file…",
   "pdfImport.title": "Opening {name}",

@@ -722,6 +722,7 @@ export const EN_STRINGS = Object.freeze({
   "findings.feature.pdfVectorsPlaced": "Drawings placed as shapes",
   // Opening a PDF (`pdf_import.mjs`): the progress dialog over the staged import.
   "pdfImport.title": "Opening {name}",
+  "pdfImport.openFailed": "Could not open {name}: {message}",
   "pdfImport.intro": "Rebuilding the PDF's pages as editable frames, on this device.",
   "pdfImport.reading": "Reading the file…",
   "pdfImport.progress": "Page {done} of {total}",

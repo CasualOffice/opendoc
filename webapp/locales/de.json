@@ -2433,6 +2433,7 @@
   "findings.feature.pdfFloats": "Bilder und Zeichnungen neben oder hinter ihrem Text verankert",
   "findings.feature.pdfVectorsPlaced": "Zeichnungen als Formen platziert",
   "pdfImport.title": "{name} wird geöffnet",
+  "pdfImport.openFailed": "{name} konnte nicht geöffnet werden: {message}",
   "pdfImport.intro": "Die Seiten der PDF-Datei werden auf diesem Gerät als bearbeitbare Rahmen neu aufgebaut.",
   "pdfImport.reading": "Datei wird gelesen…",
   "pdfImport.progress": "Seite {done} von {total}",

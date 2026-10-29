@@ -2443,6 +2443,7 @@
   "findings.feature.pdfFloats": "Images et dessins flottants à côté ou derrière leur texte",
   "findings.feature.pdfVectorsPlaced": "Dessins placés sous forme de formes",
   "pdfImport.title": "Ouverture de {name}",
+  "pdfImport.openFailed": "Impossible d’ouvrir {name} : {message}",
   "pdfImport.intro": "Reconstruction des pages du PDF en cadres modifiables, sur cet appareil.",
   "pdfImport.reading": "Lecture du fichier…",
   "pdfImport.progress": "Page {done} sur {total}",

@@ -2453,6 +2453,7 @@
   "findings.feature.pdfFloats": "Зображення та малюнки розміщено поруч із текстом або за ним",
   "findings.feature.pdfVectorsPlaced": "Малюнки розміщено як фігури",
   "pdfImport.title": "Відкриття {name}",
+  "pdfImport.openFailed": "Не вдалося відкрити {name}: {message}",
   "pdfImport.intro": "Сторінки PDF відтворюються як редаговані рамки на цьому пристрої.",
   "pdfImport.reading": "Читання файлу…",
   "pdfImport.progress": "Сторінка {done} з {total}",
