@@ -138,6 +138,37 @@ impl Surface {
     pub fn encode_png(&self) -> Result<Vec<u8>, RenderError> {
         self.pixmap.encode_png().map_err(|_| RenderError::PngEncode)
     }
+
+    /// The surface's width in device pixels.
+    #[must_use]
+    pub fn width(&self) -> u32 {
+        self.pixmap.width()
+    }
+
+    /// The surface's height in device pixels.
+    #[must_use]
+    pub fn height(&self) -> u32 {
+        self.pixmap.height()
+    }
+
+    /// Composites `source` over this surface (source-over) with its top-left
+    /// corner at (`x`, `y`) device pixels. Whatever falls outside this surface
+    /// is clipped, so a negative offset crops `source`'s top or left edge.
+    ///
+    /// The seam that turns rendered pages into a cropped picture: Paste as
+    /// picture lays the clipboard out, renders each page, and stitches the
+    /// pages' inked rows into one surface (`casual-doc-wasm`'s
+    /// `picture_insert`). O(source pixels).
+    pub fn draw_surface(&mut self, source: &Surface, x: i32, y: i32) {
+        self.pixmap.draw_pixmap(
+            x,
+            y,
+            source.pixmap.as_ref(),
+            &PixmapPaint::default(),
+            Transform::identity(),
+            None,
+        );
+    }
 }
 
 /// Renders `list` onto `surface`, applying the device scale `dpi` (device pixels

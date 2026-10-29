@@ -250,7 +250,7 @@ export const APP_MENU_SECTIONS = {
   // that this row is not a member of the band above it.
   edit: [
     band("menuGroup.undo", "edit.undo", "edit.redo"),
-    band("menuGroup.clipboard", "edit.cut", "edit.copy", "edit.paste", "edit.pasteText"),
+    band("menuGroup.clipboard", "edit.cut", "edit.copy", "edit.paste", "edit.pasteText", "edit.pasteImage"),
     band("menuGroup.selection", "edit.selectAll"),
     band("menuGroup.find", "edit.find"),
   ],
@@ -407,7 +407,7 @@ export const APP_MENU_SECTIONS = {
       "layout.break.section.evenPage",
       "layout.break.section.oddPage",
     ),
-    band("menuGroup.illustrations", "insert.image", "insert.shape", "insert.chart"),
+    band("menuGroup.illustrations", "insert.image", "insert.imageFromUrl", "insert.shape", "insert.chart"),
     band("menuGroup.links", "insert.link", "insert.bookmark"),
     band("menuGroup.comments", "review.comment"),
     sub(

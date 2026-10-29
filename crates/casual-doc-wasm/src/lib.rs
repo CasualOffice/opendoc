@@ -237,6 +237,10 @@ mod toc;
 // cell shifts, nesting and text direction (`docs/153` table rows).
 mod table_tools;
 
+// Own line (anti-conflict): Paste as picture, the clipboard laid out and
+// painted by the engine (`docs/153` `text.paste-as-picture`).
+mod picture_insert;
+
 // What each copied paragraph IS (heading, list item, table cell), so the
 // clipboard's HTML keeps structure (`docs/174` TA-12).
 mod clipboard_outline;

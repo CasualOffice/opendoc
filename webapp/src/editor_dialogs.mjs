@@ -194,8 +194,11 @@ export function createDialogs(ed) {
     ed.focusEditorSurface();
   }
 
-  /** Decodes a File/Blob (a picked file or a pasted image) and inserts it. */
-  async function insertImageFromBlob(blob) {
+  /** Decodes a File/Blob (a picked file, a pasted image, a downloaded one) and
+   *  inserts it. `size` (`{ widthPx, heightPx }`, CSS pixels) overrides the
+   *  image's natural size: Paste as picture paints at twice screen resolution
+   *  and is shown at its true size (`paste_picture.mjs`). */
+  async function insertImageFromBlob(blob, size = null) {
     if (!ed.doc) return;
     if (!INSERTABLE_IMAGE_TYPES.has((blob.type || "").toLowerCase())) {
       ed.setStatus("That image format isn’t supported", "error");
@@ -203,7 +206,7 @@ export function createDialogs(ed) {
     }
     try {
       const decoded = await decodeImageBlob(blob);
-      await insertImageAtCaret(decoded.bytes, decoded.widthPx, decoded.heightPx, decoded.mime);
+      await insertImageAtCaret(decoded.bytes, size?.widthPx ?? decoded.widthPx, size?.heightPx ?? decoded.heightPx, decoded.mime);
     } catch (err) {
       console.warn("image decode failed:", err);
       ed.setStatus("Could not read that image", "error");

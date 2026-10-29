@@ -54,6 +54,8 @@ export function createCommandSurfaces(ed) {
     { command: "insert.tableDialog", buttons: [document.getElementById("insertTableDialogBtn")].filter(Boolean), requires: "doc", activate: () => tableTools.openDialog("insertTable") },
     { command: "insert.textToTable", buttons: [document.getElementById("textToTableBtn")].filter(Boolean), requires: "doc", activate: () => tableTools.openDialog("textToTable") },
     { command: "insert.image", buttons: [ed.insertPictureBtn], requires: "doc", activate: () => ed.insertImageFromFile() },
+    // Word's Online Pictures / Docs' Image > By URL, beside the file route.
+    { command: "insert.imageFromUrl", buttons: [document.getElementById("insertPictureUrlBtn")].filter(Boolean), requires: "doc", activate: () => ed.objectInsert.openPictureFromUrl() },
     // Link is the one Insert command that genuinely needs a range: it hyperlinks
     // selected text. A cross-paragraph range still enables the button and is
     // answered by `editSelectionLink`'s "Links must stay within one paragraph",

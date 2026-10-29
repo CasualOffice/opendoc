@@ -13642,3 +13642,9 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
   }
   .ai-preview-actions .dialog-button { min-height: 2.75rem; flex: 1 1 0; }
 }
+
+/* Insert ▸ Picture from URL: the download's progress (`picture_url_dialog.mjs`). */
+.dialog-progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
