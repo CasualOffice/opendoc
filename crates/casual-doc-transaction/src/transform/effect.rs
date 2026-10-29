@@ -352,6 +352,7 @@ pub(super) fn effect_of(change: Change<'_>) -> Result<Effect, &'static str> {
             | Operation::SetSectionWatermark { .. }
             | Operation::SetSectionLineNumbering { .. }
             | Operation::SetSectionPageBorders { .. }
+            | Operation::SetNoteProperties { .. }
             | Operation::SetSectionPageNumbering { .. }
             | Operation::SetSectionVerticalAlignment { .. }
             | Operation::SetEvenAndOddHeaders { .. }

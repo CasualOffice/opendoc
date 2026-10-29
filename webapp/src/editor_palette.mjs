@@ -349,6 +349,7 @@ export function createPalette(ed) {
       ...ed.formattingMarks.commands(),
       ...ed.measurement.commands(),
       ...ed.documentProtection.commands(),
+      ...ed.reviewDisplay.commands(), // Display for review: Simple, All, No markup, Original
       ...ed.accessChrome.commands(),
       { id: "view.zoomIn", label: "Zoom in", group: "View", kw: "", run: () => ed.stepZoom(1) },
       { id: "view.zoomOut", label: "Zoom out", group: "View", kw: "", run: () => ed.stepZoom(-1) },

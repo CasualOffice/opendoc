@@ -1685,44 +1685,39 @@
       "area": "page",
       "title": "Convert footnotes to endnotes",
       "ours": {
-        "absent": [
-          "reference.convertNotes"
-        ]
+        "command": "reference.convertNotes"
       },
       "theirs": {
         "localeKey": "DE.Views.Links.mniConvertNote"
       },
-      "rank": 4
+      "rank": 4,
+      "note": "Convert all footnotes to endnotes, all endnotes to footnotes, or swap, over the whole document or the selection, as one undo step (`casual_doc_command::notes::convert_notes`): each note re-inserted as the other kind at the same place with the same content, its number mark and text style re-kinded. A reference nested inside a hyperlink or a tracked change is left as it is."
     },
     {
       "id": "page.note.goto",
       "area": "page",
       "title": "Go to next or previous note",
       "ours": {
-        "absent": [
-          "reference.goToFootnote"
-        ]
+        "command": "reference.nextFootnote"
       },
       "theirs": {
         "localeKey": "DE.Views.Links.textGotoFootnote"
       },
       "rank": 3,
-      "note": "Reading a document with notes means scrolling for them."
+      "note": "Next and previous footnote and endnote, Word's Next Footnote split button, from the References band's Notes dropdown, a References-menu flyout and the palette (`reference.nextFootnote`, `reference.previousFootnote`, `reference.nextEndnote`, `reference.previousEndnote`); says so at either end."
     },
     {
       "id": "page.note.settings",
       "area": "page",
       "title": "Footnote and endnote settings",
       "ours": {
-        "absent": [
-          "reference.noteSettings"
-        ]
+        "command": "reference.noteSettings"
       },
       "theirs": {
         "localeKey": "DE.Views.Links.mniNoteSettings"
       },
       "rank": 2,
-      "note": "Location, number format, start at and restart each page or section are all unreachable, so imported numbering cannot be changed."
+      "note": "Word's Footnote and Endnote dialog: location, number format, start at, numbering (continuous, each section, each page) and apply to this section or the whole document, one undoable step through `Operation::SetNoteProperties` (`casual-doc-wasm` `notes_settings.rs`). It opens on what the caret's section resolves to through the same section-then-settings layering layout reads, so an imported document's numbering can be changed."
     },
     {
       "id": "page.orientation",
@@ -3416,17 +3411,13 @@
       "area": "review",
       "title": "Display mode: final (changes applied, markup hidden)",
       "ours": {
-        "partial": {
-          "evidence": {
-            "command": "view.showChanges"
-          },
-          "missing": "a named Final mode - turning the markup toggle off is the only way to reach it"
-        }
+        "command": "review.displayMode.noMarkup"
       },
       "theirs": {
         "localeKey": "Common.Views.ReviewChanges.txtFinal"
       },
-      "rank": 3
+      "rank": 3,
+      "note": "No markup: the text as accepted with no revision marks, change bars or comment highlights."
     },
     {
       "id": "review.display-mode-markup",
@@ -3446,30 +3437,26 @@
       "area": "review",
       "title": "Display mode: original (document as if every change were rejected)",
       "ours": {
-        "absent": [
-          "review.displayMode.original"
-        ]
+        "command": "review.displayMode.original"
       },
       "theirs": {
         "localeKey": "Common.Views.ReviewChanges.txtOriginal"
       },
       "rank": 2,
-      "note": "There is no way to preview the pre-review document; our markup toggle only chooses between showing and hiding the redline."
+      "note": "Review ▸ Display for review ▸ Original: a throwaway copy with every tracked change rejected through the engine's one Reject All (`casual-doc-wasm` `review_display.rs`, its restriction lifted first), shown read-only through the version preview's swap; any other display puts the live document back."
     },
     {
       "id": "review.display-mode-simple-markup",
       "area": "review",
       "title": "Display mode: simple markup (change bars only)",
       "ours": {
-        "absent": [
-          "review.displayMode.simpleMarkup"
-        ]
+        "command": "review.displayMode.simpleMarkup"
       },
       "theirs": {
         "localeKey": "Common.Views.ReviewChanges.txtMarkupSimple"
       },
       "rank": 3,
-      "note": "Word's default review view. We always paint full markup or none."
+      "note": "Word's default review view: the text as accepted, a change bar beside each changed line and no inline marks; clicking a bar shows All markup. One of four rows in the Review band's Display for review dropdown, the Review menu flyout and the palette."
     },
     {
       "id": "review.document-properties",
@@ -3627,15 +3614,13 @@
       "area": "review",
       "title": "Protect the document",
       "ours": {
-        "absent": [
-          "review.protectDocument"
-        ]
+        "command": "review.restrictEditing"
       },
       "theirs": {
         "control": "btnProtectDoc"
       },
       "rank": 2,
-      "note": "Not licence-gated for them. The ENGINE now models and enforces document protection and can set it - `setDocumentProtection` with the edit mode, enforcement and formatting lock (ADR-052 for enforcement, ADR-059 for the setter) - and the import arm reads `w:documentProtection`. It is graded a gap anyway because no command id reaches it: `review.protectDocument` is absent from `COMMAND_CONTRACT`, so neither a user nor a host can invoke it. Built is not reachable. A password Word set is kept: the sixteen password attributes are carried verbatim through a save, never verified, and nothing here sets one."
+      "note": "Not licence-gated for them. Theirs is Protection ▸ Protect Document (`btnProtectDoc`, `ProtectDialog.js`): four edit modes and a password. Ours is Review ▸ Protect ▸ Restrict Editing: the same four modes (read only, comments, tracked changes, filling in forms), Word's formatting restriction, Apply, and Stop protection, which asks for the password when one was set. The engine's `protectDocument` writes it and ADR-052 enforces it at the operation."
     },
     {
       "id": "review.protect-form",
@@ -3657,14 +3642,16 @@
       "area": "review",
       "title": "Password on the editing restriction",
       "ours": {
-        "absent": [
-          "review.protectDocument.password"
-        ]
+        "anchor": {
+          "file": "webapp/src/document_protection.mjs",
+          "literal": "checkProtectionPassword"
+        }
       },
       "theirs": {
         "api": "asc_docs_api.asc_setDocumentProtection"
       },
-      "rank": 3
+      "rank": 3,
+      "note": "Word's own verifier (`casual-doc-wasm` `review_protection.rs`): the legacy key fold, then SHA-512 over a 16-byte salt with 100,000 spins, written as Word 2013+ writes it, so Word asks for the same password. Stop protection and any change ask for it first. The SHA-1, SHA-256 and SHA-384 verifiers older Word versions wrote are checked too. A deterrent, not encryption, and the dialog says so."
     },
     {
       "id": "review.redaction",
@@ -3760,12 +3747,7 @@
       "area": "review",
       "title": "Restrict editing to view, comments, forms or tracked changes",
       "ours": {
-        "partial": {
-          "evidence": {
-            "command": "review.restrictEditing"
-          },
-          "missing": "setting a password. A password Word set is carried verbatim through a save and never verified; lifting a passworded restriction here removes it, and the dialog says so before Apply."
-        }
+        "command": "review.restrictEditing"
       },
       "theirs": {
         "localeKey": "DE.Views.ProtectDialog.textReview"

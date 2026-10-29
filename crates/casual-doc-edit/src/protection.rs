@@ -387,6 +387,7 @@ fn refuse_if_formatting_locked(
         | Operation::SetSectionWatermark { .. }
         | Operation::SetSectionLineNumbering { .. }
         | Operation::SetSectionPageBorders { .. }
+        | Operation::SetNoteProperties { .. }
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetEvenAndOddHeaders { .. }
@@ -590,6 +591,7 @@ pub(crate) fn is_comment_only(document: &Document, op: &Operation) -> bool {
         | Operation::SetSectionWatermark { .. }
         | Operation::SetSectionLineNumbering { .. }
         | Operation::SetSectionPageBorders { .. }
+        | Operation::SetNoteProperties { .. }
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetEvenAndOddHeaders { .. }

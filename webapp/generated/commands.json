@@ -1906,6 +1906,14 @@
       "reason": "Page borders are a person's design choice in the Page Borders dialog; no agent command offers them yet (docs/181 §3)."
     },
     {
+      "id": "reference.noteSettings",
+      "reason": "Footnote and endnote options are a person's layout choice in the Footnote and Endnote dialog; no agent command offers them yet (docs/181 §3)."
+    },
+    {
+      "id": "reference.convertNotes",
+      "reason": "Converting footnotes to endnotes is a person's editorial decision; an agent inserts the kind of note it means with insert_note."
+    },
+    {
       "id": "review.mode.editing",
       "reason": "Switches the editor's own editing mode, not the document; an agent's mode is its profile plus the plan's `mode`."
     },
@@ -1934,6 +1942,10 @@
       "reason": "Removing a table of contents, a table of figures and Add text's contents levels are not offered to agents yet; insert_table_of_contents and update_table_of_contents are (docs/181 §3)."
     }
   ],
+<<<<<<< HEAD
   "uiNotExposedCeiling": 99,
+=======
+  "uiNotExposedCeiling": 87,
+>>>>>>> origin/lane/parity-review-notes
   "vocabularyVersion": "1.5"
 }

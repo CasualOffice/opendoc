@@ -95,6 +95,8 @@ import { applyRegions } from "./chrome_regions.mjs";
 import { createFind } from "./editor_find.mjs";
 import { createDrafts } from "./editor_drafts.mjs";
 import { createVersions } from "./editor_versions.mjs";
+import { createReviewDisplay } from "./review_display.mjs";
+import { createNoteCommands } from "./note_commands.mjs";
 import { createSettings } from "./editor_settings.mjs";
 import { createPalette } from "./editor_palette.mjs";
 import { createDialogs } from "./editor_dialogs.mjs";
@@ -434,6 +436,7 @@ const ed = {
   get navigateReview() { return navigateReview; },
   get navigateToAnchor() { return navigateToAnchor; },
   get newBlankDocument() { return newBlankDocument; },
+  get noteCommands() { return noteCommands; },
   get noteDocumentEdited() { return noteDocumentEdited; },
   get noteDraftDirty() { return noteDraftDirty; },
   get nudgeSelectedObject() { return nudgeSelectedObject; },
@@ -596,6 +599,7 @@ const ed = {
   get reviewContextAt() { return reviewContextAt; },
   get reviewDeleteBtn() { return reviewDeleteBtn; },
   get reviewDeleteConfirmId() { return reviewDeleteConfirmId; }, set reviewDeleteConfirmId(v) { reviewDeleteConfirmId = v; },
+  get reviewDisplay() { return reviewDisplay; },
   get reviewFilter() { return reviewFilter; }, set reviewFilter(v) { reviewFilter = v; },
   get reviewFilters() { return reviewFilters; },
   get reviewGrammarCheckBtn() { return reviewGrammarCheckBtn; },
@@ -1379,6 +1383,7 @@ let showingChanges = false;
  *  status is visible and discoverable, not a silent internal flag. */
 function reflectShowingChangesState() {
   document.body.classList.toggle("showing-changes", showingChanges);
+  reviewDisplay.reflect(); // the Display-for-review picker derives its mode from this
 }
 
 /** The single entry point for turning the markup preview on or off. Re-renders
@@ -1490,6 +1495,8 @@ const {
   paragraphRevisionRects, reviewRangeClientRect, revisionRange, scheduleReviewMarginRender,
   setReviewMode, updateReviewControls,
 } = createReviewMargin(ed);
+const reviewDisplay = createReviewDisplay(ed); // Review ▸ Display for review (RM-31)
+const noteCommands = createNoteCommands(ed); // Go to, settings and convert notes (RM-24)
 const linkChip = document.getElementById("linkChip");
 const linkChipKind = document.getElementById("linkChipKind");
 const linkChipTarget = document.getElementById("linkChipTarget");

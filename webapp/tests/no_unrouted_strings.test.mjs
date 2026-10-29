@@ -291,6 +291,12 @@ const CEILINGS = new Map([
   // markup already carries, which is how two spellings of one control start to
   // drift; that is its own piece of work.
   ["src/spacing_menu.mjs", 1],
+  // Display for review (`docs/153` review.display-mode-*): every sentence through
+  // t(), the mode names from the popover markup. Measured with `scanTree`.
+  ["src/review_display.mjs", 0],
+  // Footnotes and endnotes (`docs/153` page.note.*): every sentence through t(),
+  // every label from the menu and dialog markup. Measured with `scanTree`.
+  ["src/note_commands.mjs", 0],
   ["src/table_commands.mjs", 9],
   // The table tools' dialogs and popovers (`docs/153` table rows): routed from
   // the first commit, measured at zero.

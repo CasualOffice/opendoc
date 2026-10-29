@@ -994,6 +994,10 @@
             <div class="rgroup-ctl">
               <button data-i18n-title="panelReferences.insertFootnote.title" data-i18n-label="panelReferences.footnote.label" id="refFootnoteBtn" type="button" class="fmt fmt-big" title="Insert a footnote" aria-label="Footnote" disabled><span class="ms" aria-hidden="true">superscript</span><span data-i18n="refFootnoteBtn.footnote" class="fmt-big-label">Footnote</span></button>
               <button data-i18n-title="panelReferences.insertEndnote.title" data-i18n-label="panelReferences.endnote.label" id="refEndnoteBtn" type="button" class="fmt fmt-big" title="Insert an endnote" aria-label="Endnote" disabled><span class="ms" aria-hidden="true">menu_book</span><span data-i18n="refEndnoteBtn.endnote" class="fmt-big-label">Endnote</span></button>
+              <!-- Go to a note, Note settings, Convert notes (`docs/153`
+                   page.note.*): ONLYOFFICE's Footnote dropdown, one button. The
+                   rows are in `#refNotesMenu`; `note_commands.mjs` runs them. -->
+              <button data-i18n-title="notes.menu.title" data-i18n-label="notes.menu.label" id="refNotesMenuBtn" type="button" class="fmt" title="Go to a note, note settings and converting notes" aria-label="Note options" aria-haspopup="menu" aria-controls="refNotesMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">expand_circle_down</span></button>
             </div>
             <span data-i18n="panelReferences.notes" class="rgroup-label">Notes</span>
           </div>
@@ -1203,6 +1207,11 @@
             <div class="rgroup-ctl">
               <button data-i18n-title="panelReview.trackChanges.title" data-i18n-label="panelReview.trackChanges.label" id="reviewTrackBtn" type="button" class="fmt fmt-big" title="Record your edits as suggestions. The shortcut cycles Editing, Suggesting and Read only (⌘⇧E)" aria-label="Track changes" aria-pressed="false" data-tip-detail disabled><span class="ms" aria-hidden="true">track_changes</span><span data-i18n="reviewTrackBtn.trackChanges" class="fmt-big-label">Track changes</span></button>
               <button data-i18n-title="panelReview.showTrackedChangesDocument.title" data-i18n-label="panelReview.showChanges.label" id="reviewShowChangesBtn" type="button" class="fmt" title="Show tracked changes in the document" aria-label="Show changes" aria-pressed="false" disabled><span class="ms" aria-hidden="true">visibility</span></button>
+              <!-- Display for review (`docs/153` review.display-mode-*): Word's
+                   Tracking-group dropdown of four, ONLYOFFICE's Display mode. The
+                   rows live in `#reviewDisplayMenu`; `review_display.mjs` owns
+                   the trigger's state because no single command is "the" picker. -->
+              <button data-i18n-title="reviewDisplay.tip" data-i18n-label="reviewDisplay.label" id="reviewDisplayBtn" type="button" class="fmt" title="Choose how tracked changes are shown" aria-label="Display for review" aria-haspopup="menu" aria-controls="reviewDisplayMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">preview</span></button>
             </div>
             <span data-i18n="panelReview.tracking" class="rgroup-label">Tracking</span>
           </div>
@@ -2088,6 +2097,21 @@
       <button data-i18n="break.section.oddPage" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.oddPage">Section break (odd page)</button>
     </div>
     <!-- The Layout face's copy of the same roster (HF-203); `breaks.spec.mjs` holds the two equal. -->
+    <div data-i18n-label="notes.menu.label" id="refNotesMenu" class="context-menu" hidden role="menu" aria-label="Note options">
+      <button data-i18n="notes.nextFootnote" type="button" role="menuitem" class="menu-item" data-command="reference.nextFootnote">Next footnote</button>
+      <button data-i18n="notes.previousFootnote" type="button" role="menuitem" class="menu-item" data-command="reference.previousFootnote">Previous footnote</button>
+      <button data-i18n="notes.nextEndnote" type="button" role="menuitem" class="menu-item" data-command="reference.nextEndnote">Next endnote</button>
+      <button data-i18n="notes.previousEndnote" type="button" role="menuitem" class="menu-item" data-command="reference.previousEndnote">Previous endnote</button>
+      <div class="menu-divider"></div>
+      <button data-i18n="notes.settingsCommand" type="button" role="menuitem" class="menu-item" data-command="reference.noteSettings">Note settings…</button>
+      <button data-i18n="notes.convertCommand" type="button" role="menuitem" class="menu-item" data-command="reference.convertNotes">Convert notes…</button>
+    </div>
+    <div data-i18n-label="reviewDisplay.label" id="reviewDisplayMenu" class="context-menu" hidden role="menu" aria-label="Display for review">
+      <button type="button" role="menuitemradio" aria-checked="false" class="menu-item review-display-row" data-display-mode="simple" data-command="review.displayMode.simpleMarkup"><span class="menu-check" aria-hidden="true"></span><span data-i18n="reviewDisplay.simpleMarkup">Simple markup</span></button>
+      <button type="button" role="menuitemradio" aria-checked="false" class="menu-item review-display-row" data-display-mode="all" data-command="review.displayMode.allMarkup"><span class="menu-check" aria-hidden="true"></span><span data-i18n="reviewDisplay.allMarkup">All markup</span></button>
+      <button type="button" role="menuitemradio" aria-checked="false" class="menu-item review-display-row" data-display-mode="none" data-command="review.displayMode.noMarkup"><span class="menu-check" aria-hidden="true"></span><span data-i18n="reviewDisplay.noMarkup">No markup</span></button>
+      <button type="button" role="menuitemradio" aria-checked="false" class="menu-item review-display-row" data-display-mode="original" data-command="review.displayMode.original"><span class="menu-check" aria-hidden="true"></span><span data-i18n="reviewDisplay.original">Original</span></button>
+    </div>
     <div data-i18n-label="panelInsert.breaks.label" id="layoutBreaksMenu" class="context-menu" hidden role="menu" aria-label="Breaks">
       <button data-i18n="break.blankPage" type="button" role="menuitem" class="menu-item" data-command="layout.blankPage">Blank page</button>
       <button data-i18n="break.page" type="button" role="menuitem" class="menu-item" data-command="layout.break.page">Page break</button>
@@ -2724,14 +2748,68 @@
          restriction": Word's Stop Protection has to be reachable from the same
          control rather than from a second button that only exists sometimes.
 
-         NO PASSWORD FIELD, and both references have one. `w:documentProtection`
-         can carry `w:hash`/`w:salt`/`w:cryptSpinCount`; ADR-052 records that none
-         of it is modelled, and that verifying it would advertise a boundary this
-         product does not have — the legacy hash comes off by editing one XML
-         attribute. So the space the password box would have occupied says what the
-         restriction actually is instead. That sentence is the feature, not a
-         disclaimer: "policy, not security" has to be true in what the reader is
-         told. -->
+         THE PASSWORD (`docs/153` `review.protection-password`, ADR-052 as
+         amended 2026-10-30). Both references have one — ONLYOFFICE's
+         `inputPwd`/`repeatPwd`, Word's "Start Enforcing Protection" prompt — and
+         so does this now: a new password and its confirmation when a restriction
+         is installed, and the current password when one this editor can check is
+         already there (Word's Stop Protection asks for it). The verifier is
+         Word's own (`casual-doc-wasm` `review_protection.rs`), so Word asks for
+         the same password. The note under the fields says what it is NOT:
+         encryption. "Policy, not security" stays true in what the reader is told. -->
+    <!-- References ▸ Note settings (`docs/153` page.note.settings): Word's
+         Footnote and Endnote dialog — location, number format, start at,
+         numbering, apply to — over `noteSettings`/`setNoteSettings`. The
+         location and numbering rows a kind cannot take are hidden per kind. -->
+    <div id="noteSettingsDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="noteSettingsTitle">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading"><div><h2 data-i18n="noteSettings.title" id="noteSettingsTitle">Footnotes and endnotes</h2></div></div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="noteSettings.close.label" id="noteSettingsClose" type="button" class="dialog-close" title="Close" aria-label="Close footnotes and endnotes"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <label data-i18n="noteSettings.kind" class="dialog-field">Notes<select id="noteSettingsKind" class="dialog-select"><option data-i18n="noteSettings.kind.footnotes" value="footnote">Footnotes</option><option data-i18n="noteSettings.kind.endnotes" value="endnote">Endnotes</option></select></label>
+          <label data-i18n="noteSettings.location" class="dialog-field">Location<select id="noteSettingsPosition" class="dialog-select"><option data-i18n="noteSettings.position.pageBottom" value="pageBottom">Bottom of page</option><option data-i18n="noteSettings.position.beneathText" value="beneathText">Below text</option><option data-i18n="noteSettings.position.sectionEnd" value="sectionEnd">End of section</option><option data-i18n="noteSettings.position.documentEnd" value="documentEnd">End of document</option></select></label>
+          <label data-i18n="noteSettings.format" class="dialog-field">Number format<select id="noteSettingsFormat" class="dialog-select"><option data-i18n="noteSettings.format.decimal" value="decimal">1, 2, 3, …</option><option data-i18n="noteSettings.format.lowerLetter" value="lowerLetter">a, b, c, …</option><option data-i18n="noteSettings.format.upperLetter" value="upperLetter">A, B, C, …</option><option data-i18n="noteSettings.format.lowerRoman" value="lowerRoman">i, ii, iii, …</option><option data-i18n="noteSettings.format.upperRoman" value="upperRoman">I, II, III, …</option><option data-i18n="noteSettings.format.keep" value="keep" hidden>As in the document</option></select></label>
+          <label data-i18n="noteSettings.start" class="dialog-field">Start at<input id="noteSettingsStart" type="number" min="0" max="32767" step="1" value="1" inputmode="numeric" /></label>
+          <label data-i18n="noteSettings.numbering" class="dialog-field">Numbering<select id="noteSettingsRestart" class="dialog-select"><option data-i18n="noteSettings.restart.continuous" value="continuous">Continuous</option><option data-i18n="noteSettings.restart.eachSection" value="eachSection">Restart each section</option><option data-i18n="noteSettings.restart.eachPage" value="eachPage">Restart each page</option></select></label>
+          <label data-i18n="noteSettings.scope" class="dialog-field">Apply changes to<select id="noteSettingsScope" class="dialog-select"><option data-i18n="noteSettings.scope.section" value="section">This section</option><option data-i18n="noteSettings.scope.document" value="document">Whole document</option></select></label>
+        </div>
+        <footer class="dialog-foot">
+          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="noteSettings.convert" id="noteSettingsConvert" type="button" class="dialog-button">Convert…</button>
+            <button data-i18n="watermarkDialog.cancel" id="noteSettingsCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="watermarkDialog.apply" id="noteSettingsApply" type="button" class="dialog-button dialog-button-primary">Apply</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+    <!-- References ▸ Convert notes (`docs/153` page.note.convert): Word's and
+         ONLYOFFICE's three conversions, the whole document or the selection. -->
+    <div id="convertNotesDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="convertNotesTitle">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading"><div><h2 data-i18n="convertNotes.title" id="convertNotesTitle">Convert notes</h2></div></div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="convertNotes.close.label" id="convertNotesClose" type="button" class="dialog-close" title="Close" aria-label="Close convert notes"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <fieldset class="settings-section" aria-labelledby="convertNotesTitle">
+            <label class="dialog-check"><input type="radio" name="convertNotes" value="footnotesToEndnotes" checked /><span data-i18n="convertNotes.footnotesToEndnotes">Convert all footnotes to endnotes</span></label>
+            <label class="dialog-check"><input type="radio" name="convertNotes" value="endnotesToFootnotes" /><span data-i18n="convertNotes.endnotesToFootnotes">Convert all endnotes to footnotes</span></label>
+            <label class="dialog-check"><input type="radio" name="convertNotes" value="swap" /><span data-i18n="convertNotes.swap">Swap footnotes and endnotes</span></label>
+          </fieldset>
+          <label class="dialog-check"><input id="convertNotesSelection" type="checkbox" /><span data-i18n="convertNotes.selectionOnly">Only the notes in the selection</span></label>
+        </div>
+        <footer class="dialog-foot">
+          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" id="convertNotesCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="convertNotes.apply" id="convertNotesApply" type="button" class="dialog-button dialog-button-primary">Convert</button>
+          </div>
+        </footer>
+      </section>
+    </div>
     <div id="restrictEditingDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="restrictEditingTitle" aria-describedby="restrictEditingDescription">
       <section class="dialog-card dialog-card-compact">
         <header class="dialog-head">
@@ -2779,16 +2857,33 @@
               <span><strong data-i18n="protect.enforce">Apply this restriction now</strong><small data-i18n="protect.enforce.hint">Word's "Start enforcing protection". Left off, the restriction is kept in the file without being applied — a state Word writes, and one this preserves.</small></span>
             </label>
           </div>
-          <p data-i18n="protect.authority" class="settings-note">This is a policy, not a password. Anyone who can open this document can lift the restriction here, exactly as in Word when no password was set. A password set in Word is kept in the file, but it is never asked for or checked here.</p>
-          <!-- Shown only when the file carries a Word password verifier with the
-               restriction (`documentProtection().password`, ADR-052 updated
-               2026-10-09): Word would ask for it, this editor does not, and a
-               change made here removes it — said before Apply, not after. -->
-          <p data-i18n="protect.passwordNote" class="settings-note" id="restrictEditingPassword" hidden>This restriction has a password set in Word. Word asks for it before the restriction can be changed; this editor does not, and changing or stopping the restriction here removes the password.</p>
+          <!-- The CURRENT password: shown only when the restriction carries a
+               verifier this editor can check (`protectionPassword().verifiable`).
+               Changing or stopping the restriction then needs it, as in Word. -->
+          <div class="settings-section" id="restrictEditingCurrentRow" hidden>
+            <label data-i18n="protect.currentPassword" class="dialog-field">Password<input id="restrictEditingCurrentPassword" type="password" maxlength="255" autocomplete="current-password" aria-describedby="restrictEditingCurrentHint restrictEditingPasswordError" /></label>
+            <small data-i18n="protect.currentPassword.hint" class="settings-note" id="restrictEditingCurrentHint">This restriction was set with a password. Enter it to change or stop the restriction.</small>
+          </div>
+          <!-- A NEW password, for the restriction being installed. Optional:
+               empty is Word's unpassworded restriction. -->
+          <div class="settings-section" id="restrictEditingNewRow">
+            <label data-i18n="protect.newPassword" class="dialog-field">New password (optional)<input id="restrictEditingNewPassword" type="password" maxlength="255" autocomplete="new-password" aria-describedby="restrictEditingNewHint restrictEditingPasswordError" /></label>
+            <label data-i18n="protect.confirmPassword" class="dialog-field">Confirm the new password<input id="restrictEditingConfirmPassword" type="password" maxlength="255" autocomplete="new-password" aria-describedby="restrictEditingPasswordError" /></label>
+            <small data-i18n="protect.newPassword.hint" class="settings-note" id="restrictEditingNewHint">Readers must enter it to change or stop the restriction, here and in Word. Leave it empty for no password.</small>
+          </div>
+          <p class="settings-note dialog-error" id="restrictEditingPasswordError" role="alert" hidden></p>
+          <p data-i18n="protect.authorityPassword" class="settings-note">A password is a deterrent, not encryption. It is stored in the file the way Word stores it, and anyone who can edit the file itself can remove it.</p>
+          <!-- Shown only when the file carries a verifier this editor CANNOT check
+               (an algorithm or spin count `review_protection.rs` does not take): a
+               change made here then removes it — said before Apply, not after. -->
+          <p data-i18n="protect.passwordUnverifiable" class="settings-note" id="restrictEditingPassword" hidden>This restriction carries a password this editor cannot check. Changing or stopping the restriction here removes that password.</p>
         </div>
         <footer class="dialog-foot">
           <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
+            <!-- Word's Stop Protection, as its own button while a restriction is
+                 in force; the "No restriction" row above reaches the same state. -->
+            <button data-i18n="protect.stop" id="restrictEditingStop" type="button" class="dialog-button" hidden>Stop protection</button>
             <button data-i18n="watermarkDialog.cancel" id="restrictEditingCancel" type="button" class="dialog-button">Cancel</button>
             <button data-i18n="watermarkDialog.apply" id="restrictEditingApply" type="button" class="dialog-button dialog-button-primary">Apply</button>
           </div>

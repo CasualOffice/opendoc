@@ -109,6 +109,8 @@ export const EN_STRINGS = Object.freeze({
   "menuGroup.navigation": "Navigation",
   "menuGroup.newAndOpen": "New and open",
   "menuGroup.notes": "Notes",
+  // References ▸ Notes ▸ the Next / Previous footnote and endnote flyout.
+  "menuGroup.goToNote": "Go to a note",
   "menuGroup.paragraph": "Paragraph",
   "menuGroup.print": "Print",
   "menuGroup.proofing": "Proofing",
@@ -129,6 +131,8 @@ export const EN_STRINGS = Object.freeze({
   "menuGroup.textColor": "Text color",
   "menuGroup.textWidth": "Text width",
   "menuGroup.tracking": "Tracking",
+  // Review ▸ Display for review, the flyout holding the four review views.
+  "menuGroup.displayForReview": "Display for review",
   "menuGroup.undo": "Undo",
   "menuGroup.zoom": "Zoom",
   // The one sentence white-labelling needs (docs/126 phase 3). A deployment whose
@@ -1908,6 +1912,32 @@ export const EN_STRINGS = Object.freeze({
   // change made here removes (ADR-052, updated 2026-10-09). `{status}` is one of
   // the sentences above.
   "protect.withPasswordRemoved": "{status}. The password set in Word was removed.",
+  // The password (`docs/153` `review.protection-password`, ADR-052 as amended
+  // 2026-10-30): the status after a passworded restriction is installed, and the
+  // three refusals said beside the dialog's fields. `protect.wrongPassword` is
+  // also the routed sentence for the engine's `document.protection-wrong-password`.
+  "protect.appliedWithPassword": "Editing restricted to: {level}, with a password",
+  "protect.passwordMismatch": "The two new passwords don't match",
+  "protect.passwordRequired": "Enter the password to change or stop this restriction",
+  "protect.wrongPassword": "That isn't the password this restriction was set with",
+
+  // Display for review (`review_display.mjs`, `docs/153` review.display-mode-*).
+  // The four mode names and the trigger's tip are markup keys; these are the
+  // Original view's read-only reason (the banner a preview shows), a change
+  // bar's tooltip, and the refusal when a version preview is already up.
+  "reviewDisplay.originalReadOnly": "Original: the document as it was before its tracked changes. Choose another display for review to edit.",
+  "reviewDisplay.changeBar": "Changed here. Click to show all markup",
+  "reviewDisplay.previewOpen": "Close the version preview before showing the original",
+
+  // Footnotes and endnotes (`note_commands.mjs`, `docs/153` page.note.*). The
+  // menu rows and both dialogs are markup keys; these are what the status line
+  // says, and the reason the selection-only box is disabled.
+  "notes.noMoreFootnotes": "There are no more footnotes that way",
+  "notes.noMoreEndnotes": "There are no more endnotes that way",
+  "notes.footnoteSettingsApplied": "Footnote options applied",
+  "notes.endnoteSettingsApplied": "Endnote options applied",
+  "notes.converted": "Notes converted",
+  "notes.convertNeedsSelection": "Select the text whose notes you want to convert first",
 
   // ---- A PARTICIPANT'S GRANT, AND THE ROOM'S REFUSALS ----------------------
   //

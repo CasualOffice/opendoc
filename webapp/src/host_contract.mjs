@@ -511,6 +511,14 @@ export const COMMAND_CONTRACT = Object.freeze([
   // Navigation, not mutation: it moves the caret to the heading a contents entry
   // names and changes nothing. `null` is the same grade `view.zoom.` carries.
   exact("reference.goToHeading", null),
+  // Footnotes and endnotes (`docs/153` page.note.*): going to a note reads and
+  // moves the caret only; the options dialog and Convert change the document.
+  exact("reference.nextFootnote", null),
+  exact("reference.previousFootnote", null),
+  exact("reference.nextEndnote", null),
+  exact("reference.previousEndnote", null),
+  exact("reference.noteSettings", "mutate"),
+  exact("reference.convertNotes", "mutate"),
   exact("reference.updateFields", "mutate"),
   exact("reference.updateCaptionNumbers", "mutate"),
 
@@ -544,6 +552,13 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("review.next", null),
   exact("review.previous", null),
   exact("review.toggle", null),
+  // Display for review (`docs/153` review.display-mode-*): four VIEWS of the
+  // same document. Original shows a throwaway rejected copy read-only, so none
+  // of the four changes document state and none requires anything.
+  exact("review.displayMode.simpleMarkup", null),
+  exact("review.displayMode.allMarkup", null),
+  exact("review.displayMode.noMarkup", null),
+  exact("review.displayMode.original", null),
   // Comparing changes NOTHING. It opens a panel, reads the document out through
   // the export path it already has, parses a second document in a throwaway
   // engine job and lists the differences — `casual-doc-diff`'s facade

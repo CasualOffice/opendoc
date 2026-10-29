@@ -6,6 +6,7 @@ import { createPageBorders } from "./page_borders.mjs";
 import { t } from "./i18n.mjs";
 import { reviewDecisionRefusal } from "./review_authority.mjs";
 import { breakSurfaceRows } from "./break_commands.mjs";
+import { noteSurfaceRows } from "./note_commands.mjs";
 import { objectMenuRows } from "./reference_commands.mjs";
 import { ribbonSurfaceEnabled as surfaceEnabled, ribbonSurfaceReason as surfaceReason } from "./ribbon_surface.mjs";
 import { arrangeSurfaceRows } from "./object_arrange_commands.mjs";
@@ -254,9 +255,16 @@ export function createCommandSurfaces(ed) {
     { command: "reference.updateFields", label: "Update table of contents", kw: "update fields refresh recalculate table of contents toc page numbers rebuild", buttons: () => [ed.refUpdateFieldsBtn], requires: "tocField", run: () => ed.tocCommands.update.open() },
     { command: "reference.updateToc.pageNumbers", label: "Update table of contents: page numbers only", kw: "toc contents update page numbers only repaginate refresh", buttons: () => [], requires: "tocField", run: () => void ed.tocCommands.update.run("pageNumbers") },
     { command: "reference.updateToc.entire", label: "Update table of contents: entire table", kw: "toc contents update entire rebuild regenerate headings refresh", buttons: () => [], requires: "tocField", run: () => void ed.tocCommands.update.run("entire") },
+<<<<<<< HEAD
     // Remove, Table of figures and Add text (`docs/153` RM-25), with their
     // labels read from the catalogue when the palette builds (`toc_commands.mjs`).
     ...tocSurfaceRows(() => ed.tocCommands),
+=======
+    // Go to a note, Note settings, Convert notes (`docs/153` page.note.*): the Notes
+    // group's dropdown, declared in `note_commands.mjs` so its menu and these rows
+    // are one table.
+    ...noteSurfaceRows(ed),
+>>>>>>> origin/lane/parity-review-notes
   ];
 
   /** The object/table right-click rows the References surface declares — see

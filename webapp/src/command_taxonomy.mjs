@@ -459,7 +459,15 @@ export const APP_MENU_SECTIONS = {
       "reference.removeToc",
       "reference.goToHeading",
     ),
-    band("menuGroup.notes", "insert.footnote", "insert.endnote"),
+    band("menuGroup.notes", "insert.footnote", "insert.endnote", "reference.noteSettings", "reference.convertNotes"),
+    // Word's Next Footnote split button: four rows of one gesture, as a flyout.
+    sub(
+      "menuGroup.goToNote",
+      "reference.nextFootnote",
+      "reference.previousFootnote",
+      "reference.nextEndnote",
+      "reference.previousEndnote",
+    ),
     band(
       "menuGroup.captions",
       "reference.caption",
@@ -666,6 +674,15 @@ export const APP_MENU_SECTIONS = {
     ),
     band("menuGroup.comments", "review.comment.resolve", "review.comment.delete"),
     band("menuGroup.tracking", "review.toggle"),
+    // Display for review (`docs/153` review.display-mode-*): Word's Tracking-group
+    // dropdown of four, as a flyout so four rows of one choice cost one row here.
+    sub(
+      "menuGroup.displayForReview",
+      "review.displayMode.simpleMarkup",
+      "review.displayMode.allMarkup",
+      "review.displayMode.noMarkup",
+      "review.displayMode.original",
+    ),
     sub(
       "menuGroup.changes",
       "review.previous",
