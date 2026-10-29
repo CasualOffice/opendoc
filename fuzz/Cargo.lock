@@ -148,6 +148,7 @@ dependencies = [
  "casual-doc-model",
  "casual-doc-ocr",
  "casual-doc-pdf-read",
+ "casual-doc-pdf-wire",
  "hayro",
  "read-fonts 0.40.2",
  "skrifa 0.43.2",
@@ -157,12 +158,17 @@ dependencies = [
 name = "casual-doc-pdf-read"
 version = "0.0.1"
 dependencies = [
+ "casual-doc-pdf-wire",
  "flate2",
  "hayro-interpret",
  "hayro-syntax",
  "kurbo",
  "png",
 ]
+
+[[package]]
+name = "casual-doc-pdf-wire"
+version = "0.0.1"
 
 [[package]]
 name = "casual-doc-rtf"

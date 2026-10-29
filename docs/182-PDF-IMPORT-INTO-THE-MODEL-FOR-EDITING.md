@@ -858,6 +858,94 @@ Options:
 - A restored draft or version of a PDF-origin document does not re-show the summary.
 - Reflow (P3), preserving save (P4), OCR (P5), ML layout (P6).
 
+## 17a. The lazy PDF module: the boundary, the sizes, what is left
+
+Branch `lane/pdf-followup-editor` (stacked on #899). §17.3's option 3, taken with option
+2: the editor's main WebAssembly module links no PDF reader, no importer, no OCR runtime
+and no save planner. They are a second module, `casual-doc-wasm-pdf` (`webapp/pkg-pdf/`),
+fetched the first time a PDF is opened and never for a DOCX.
+
+### 17a.1 The boundary
+
+| | Main module (`casual-doc-wasm`) | PDF module (`casual-doc-wasm-pdf`) |
+| --- | --- | --- |
+| Links | the engine, layout and faces; `casual-doc-io` with `pdf-source` only | hayro (no bundled faces or CMaps), `casual-doc-pdf-read`, `casual-doc-pdf-import` with `paddle`, `casual-doc-ocr`, `casual-doc-pdf-save` |
+| Open | `openPdfImport(package, original)`: checks the original's length and FNV-1a hash, parses the snapshot under the snapshot limits, `session_from_import` | the staged job: `beginPdfImport` / `beginPdfImportWithOcr`, `step`, `cancel`, `finish` → an `ImportPackage` |
+| Convert to flowing document | `openPdfReflow(package)`: a new document, no original retained | `finishReflowed()`: `PdfImport::reflow` as a package with the reflow's findings |
+| Save as PDF, unchanged | the retained original, byte for byte | — |
+| Save as PDF, edited | lays out the overlay and writes the update (`write_incremental_update`) | `planSave(original, baseline, documentJson)`: the digests, the plan, and the hayro half (`read_for_save`), answered as a `SaveAnswer` |
+| Faces | `bundledFace(family, bold, italic)` (Liberation) | asks for them through `setFaceHost` |
+
+Everything that crosses is `casual-doc-pdf-wire` bytes (bounded codec, a trailing byte is
+an error). The baseline is computed by the PDF module at finish, over the document parsed
+back from the package's own JSON, so an untouched session compares equal by construction;
+the main module keeps it opaque beside the original. The planner is its own crate,
+`casual-doc-pdf-save` (model, diff, wire; no parser, no layout), linked by the PDF module
+and, through `casual-doc-io`'s `pdf-import`, by native hosts (`InProcessSavePlanner`), so the
+P4 guards (§19.3) still run through the registry. With no PDF module registered an edited
+save is semantic and says `pdf.export.preserve_fallback.pdf_module_unavailable`.
+
+The PDF module enables PP-OCRv5 (`casual-doc-pdf-import/paddle`); the main module does
+not, and `casual-doc-io/pdf-ocr` stays off in its build.
+
+### 17a.2 The editor
+
+- **Loading** (`pdf_module.mjs`): once per page, streamed with a byte count against
+  `Content-Length`, cancellable through the import dialog's Cancel (an `AbortSignal`); a
+  cancelled or failed load keeps nothing, so the next open tries again. No service worker
+  exists, so the HTTP cache keeps it like any stamped asset.
+- **Recognise text in scanned pages** (`pdf_commands.mjs`, `ocr_models.mjs`). The host
+  names a manifest with `?pdfOcrModels=<url>` (any case, like every host option): each
+  file's URL, size and SHA-256. The editor bundles and fetches nothing before the reader
+  agrees to a dialog that names the size and the origin. Files are verified against the
+  manifest, kept in IndexedDB (`opendoc-ocr-models`, the proofing store's pattern), and a
+  later use asks nothing and downloads nothing. The import runs again with the engine in
+  the PDF module; the engine is kept for the session. With no manifest the summary says
+  the scans' text is missing and why, and the command is disabled with that reason.
+- **Convert to flowing document**: enabled for a PDF-origin session (`pdfOrigin`),
+  disabled with the reason otherwise, opened as a new document named
+  `<name> (flowing).docx` that saves as DOCX by default, and summarised with its own
+  disclosure and the reflow's `pdf.import.*` inferences. It is built from the PDF as it
+  was opened; edits to the fixed-layout pages are not carried, and the disclosure says so.
+- **Surfaces** for both: the PDF summary's actions, the File menu's PDF band (a submenu,
+  so the File menu's top level grows by one row) and the File page, and the palette.
+- **Strings**: 42 new keys and one reworded (`findings.pdf.original`, which said an edited
+  PDF is always regenerated) in `en_strings.mjs` and all 18 catalogues; the seven
+  `pdf.export.*` save findings are catalogued.
+
+### 17a.3 Sizes
+
+Not measured on this branch: the lane could not run `build.sh` (owner rule, 2026-10-29).
+`webapp/tests/wasm_size.test.mjs` holds estimates CI replaces with its first measurement:
+
+| Module | Basis | Ceiling |
+| --- | --- | --- |
+| Main, total | pre-PDF base 75f91629 measured 27,015,500 B, plus ~128 KiB | 27,150,000 |
+| Main, code | ~13,033,000 B at that base, plus ~128 KiB | 13,170,000 |
+| PDF module, total | 6,625,258 B before reflow, the P3 fonts and the planner, plus ~1.2 MB estimated for them and headroom | 8,500,000 |
+
+The main module still carries the save's writing half, the wire codec and the session
+artifact, so it is expected slightly over the pre-PDF base; whether that fits the
+headroom is CI's to say. The same test asserts the main module's glue exports no import
+entry point (`beginPdfImport`, `PdfImportJob`, `PdfOcrEngine`, `planSave`, …) and that its
+binary holds no `hayro` crate path, while the PDF module's does.
+
+### 17a.4 Not built, and what CI must verify
+
+- Nothing here was run locally: the Rust tests (`casual-doc-pdf-save`, the PDF module's,
+  the main module's PDF session tests), `pdf_commands.test.mjs`, the size test and
+  `e2e/pdf-module.spec.mjs` (lazy fetch and reuse, Cancel during the fetch, the exact and
+  incremental saves, OCR consent with fake models and without any, Convert to flowing)
+  are CI's first runs, and their mutation proofs (SKILL §4) are still owed.
+- `Cargo.lock` and `fuzz/Cargo.lock` were edited by hand for the new crate and the wire
+  edges; CI's `--locked` runs check them.
+- No embed-element attribute for the OCR manifest: a host sets it on `editor-src`.
+- CMaps: the dialog fetches predefined CMaps from a host source when given one, but no host option feeds it yet, so a page needing one is refused naming it.
+- Recognise text replaces the fixed-layout session (through the discard prompt) rather
+  than adding a text layer to the open one.
+- A real model has not run in the browser: rten's wasm32 numerics and its speed on a
+  phone are unmeasured (§20.6).
+
 ## 20. P5/P6 built: OCR and optional ML layout (headless)
 
 Branch `lane/pdf-p5-ocr`. Headless only, like §16: the editor (`webapp/**`,
