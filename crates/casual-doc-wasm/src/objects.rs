@@ -2154,18 +2154,47 @@ impl WasmDocument {
             .map(|(width, height)| vec![width as f64, height as f64])
             .unwrap_or_default()
     }
+
+    /// Word's and ONLYOFFICE's Save as Picture (`DocumentHolder.js`
+    /// `textSaveAsPicture`), for a picture: the picture's image file exactly as
+    /// the package holds it — the original bytes, uncropped, at full
+    /// resolution, which is what Word saves — or `undefined` when `node` is not
+    /// a standalone picture or its bytes are not in the package (`docs/109`
+    /// RM-29). Its type is [`picture_media_type`](Self::picture_media_type).
+    ///
+    /// **O(document)** for the walk, plus one copy of the image.
+    #[wasm_bindgen(js_name = pictureBytes)]
+    #[must_use]
+    pub fn picture_bytes(&self, node: &str) -> Option<Vec<u8>> {
+        self.picture_resource(node).map(|(_, bytes)| bytes.to_vec())
+    }
+
+    /// The MIME type of [`picture_bytes`](Self::picture_bytes) (`image/png`,
+    /// `image/jpeg`, …), or `undefined` with it. O(document).
+    #[wasm_bindgen(js_name = pictureMediaType)]
+    #[must_use]
+    pub fn picture_media_type(&self, node: &str) -> Option<String> {
+        self.picture_resource(node)
+            .map(|(media_type, _)| media_type.to_owned())
+    }
 }
 
 impl WasmDocument {
-    /// [`picture_natural_size`](Self::picture_natural_size) as EMU integers,
-    /// for native tests and callers. O(document).
-    pub(crate) fn picture_natural_size_emu(&self, node: &str) -> Option<(i64, i64)> {
-        use casual_doc_command::objects::{pixel_size, pixels_to_emu};
+    /// The media type and bytes of the standalone picture `node`. O(document).
+    fn picture_resource(&self, node: &str) -> Option<(&str, &[u8])> {
         let object = node.parse::<NodeId>().ok()?;
         let media = casual_doc_edit::standalone_picture_media(&self.document, object)?;
         let reference = self.document.definitions().media.get(&media)?;
         let bytes = self.resources.get(&reference.part_name)?;
-        let (width, height) = pixel_size(&reference.media_type, bytes)?;
+        Some((reference.media_type.as_str(), bytes))
+    }
+
+    /// [`picture_natural_size`](Self::picture_natural_size) as EMU integers,
+    /// for native tests and callers. O(document).
+    pub(crate) fn picture_natural_size_emu(&self, node: &str) -> Option<(i64, i64)> {
+        use casual_doc_command::objects::{pixel_size, pixels_to_emu};
+        let (media_type, bytes) = self.picture_resource(node)?;
+        let (width, height) = pixel_size(media_type, bytes)?;
         Some((pixels_to_emu(width), pixels_to_emu(height)))
     }
 

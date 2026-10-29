@@ -1,5 +1,6 @@
 // The picture tools ONLYOFFICE's Image settings panel carries beside Crop:
-// Actual Size, Crop to Fill, Crop to Fit and Reset crop (`docs/109` RM-29).
+// Actual Size, Crop to Fill, Crop to Fit and Reset crop (`docs/109` RM-29) —
+// and Save as Picture, from both competitors' picture right-click menus.
 //
 // Competitive standard first, per the editing rule:
 //
@@ -36,6 +37,17 @@ const MIN_EDGE = -1;
 const MAX_EDGE = 2;
 
 const clampEdge = (value) => Math.min(MAX_EDGE, Math.max(MIN_EDGE, value));
+
+/** The file extension Save as Picture names a download with, per image type
+ *  (the six `insertImage` accepts). */
+const IMAGE_EXTENSIONS = Object.freeze({
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/bmp": "bmp",
+  "image/tiff": "tif",
+  "image/webp": "webp",
+});
 
 /** The natural size of the part of the image `crop` leaves visible, in the
  *  units of `natural`. A crop that leaves no positive span (a corrupt or
@@ -104,7 +116,7 @@ export function isCropped(crop) {
  *
  *  @param {any} doc
  *  @param {string} node
- *  @returns {{natural: [number, number] | null, crop: number[] | null, frame: [number, number] | null}}
+ *  @returns {{natural: [number, number] | null, crop: number[] | null, frame: [number, number] | null, mediaType: string | null}}
  */
 export function readPicture(doc, node) {
   const pair = (value) =>
@@ -118,6 +130,7 @@ export function readPicture(doc, node) {
     natural: pair(doc?.pictureNaturalSize?.(node)),
     crop: crop ? Array.from(crop) : null,
     frame: pair(doc?.objectExtent?.(node)),
+    mediaType: doc?.pictureMediaType?.(node) ?? null,
   };
 }
 
@@ -133,6 +146,7 @@ export function readPicture(doc, node) {
  * @param {(key: string) => string} io.t
  * @param {(thunk: () => unknown, options: object) => unknown} io.runEdit  the gated edit path
  * @param {(text: string) => void} io.announce  the status line (read by screen readers)
+ * @param {(bytes: Uint8Array, mime: string, name: string) => void} [io.download]  hands a file to the reader
  * @returns {object[]}
  */
 export function pictureToolCommands(io) {
@@ -185,6 +199,23 @@ export function pictureToolCommands(io) {
       run: () => {
         if (!isCropped(picture.crop)) return;
         apply(() => io.doc.setImageCrop(node, null), "object.picture.cropReset");
+      },
+    },
+    // Save as Picture (Word; ONLYOFFICE's `textSaveAsPicture`): the picture's
+    // own file, byte for byte. Not review-gated — it reads, it does not edit —
+    // so it works in Viewing too. Only the type is read here; the bytes are
+    // copied out of the engine on the click, never on a menu build.
+    {
+      id: "object.saveAsPicture",
+      label: io.t("object.picture.saveAs"),
+      group: "picture-file",
+      icon: "picture",
+      ...(picture.mediaType ? { enabled: true } : { enabled: false, disabledReason: io.t("object.picture.reason.noFile") }),
+      run: () => {
+        const bytes = picture.mediaType ? io.doc.pictureBytes?.(node) : null;
+        if (!bytes || typeof io.download !== "function") return;
+        const extension = IMAGE_EXTENSIONS[picture.mediaType] ?? "img";
+        io.download(bytes, picture.mediaType, `${io.t("object.picture.fileName")}.${extension}`);
       },
     },
     {

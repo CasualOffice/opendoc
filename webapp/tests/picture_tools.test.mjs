@@ -111,14 +111,42 @@ test("a row that cannot act is disabled WITH the reason, and its run writes noth
   assert.deepEqual(doc.calls, []);
 });
 
-test("the review-mode gate closes every row with the mode's own reason", () => {
+test("the review-mode gate closes every EDITING row with the mode's own reason", () => {
   const { list } = rows(engine({ crop: [0.1, 0.1, 0.1, 0.1] }), {
     mutationEnabled: false,
     mutationReason: "Turn on Editing to change this object",
   });
-  assert.equal(list.length, 4);
-  for (const row of list) {
+  const editing = list.filter((row) => row.id !== "object.saveAsPicture");
+  assert.equal(editing.length, 4);
+  for (const row of editing) {
     assert.equal(row.enabled, false, row.id);
     assert.equal(row.disabledReason, "Turn on Editing to change this object", row.id);
   }
+});
+
+// Save as Picture reads, so Viewing does not close it; it is named for its
+// type; it is disabled with the reason when the file is not in the package.
+// Mutation: gating it on `mutationEnabled` fails the Viewing assertion; copying
+// the bytes at menu build fails the "not read until clicked" assertion.
+test("Save as picture hands over the picture's own file, in Viewing too, and reads the bytes only on the click", () => {
+  const doc = { ...engine(), pictureMediaType: () => "image/jpeg", reads: 0 };
+  doc.pictureBytes = () => {
+    doc.reads += 1;
+    return new Uint8Array([0xff, 0xd8, 0xff]);
+  };
+  const downloads = [];
+  const { byId } = rows(doc, {
+    mutationEnabled: false,
+    mutationReason: "closed",
+    download: (bytes, mime, name) => downloads.push([Array.from(bytes), mime, name]),
+  });
+  const save = byId("object.saveAsPicture");
+  assert.equal(save.enabled, true, "reading is not editing");
+  assert.equal(doc.reads, 0, "the bytes are not copied to build the menu");
+  save.run();
+  assert.deepEqual(downloads, [[[0xff, 0xd8, 0xff], "image/jpeg", "object.picture.fileName.jpg"]]);
+
+  const missing = rows(engine()).byId("object.saveAsPicture");
+  assert.equal(missing.enabled, false);
+  assert.equal(missing.disabledReason, "object.picture.reason.noFile");
 });

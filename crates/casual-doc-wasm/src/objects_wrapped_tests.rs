@@ -486,6 +486,17 @@ fn a_picture_natural_size_comes_from_its_own_header_and_never_from_its_frame() {
         document.picture_natural_size(&member).is_empty(),
         "a group member is not a standalone picture"
     );
+
+    // Save as Picture hands back the image file itself, byte for byte.
+    // Mutation: returning the first picture in the package instead of THIS
+    // picture's media makes the inline logo's bytes equal the field logo's.
+    assert_eq!(document.picture_bytes(&node), Some(png_header(40, 20)));
+    assert_eq!(
+        document.picture_media_type(&node).as_deref(),
+        Some("image/png")
+    );
+    assert_eq!(document.picture_bytes(&inline), Some(vec![1, 2, 3]));
+    assert_eq!(document.picture_bytes(&member), None);
 }
 
 /// RM-28: Arrange ▸ Align over two floating pictures, then to the margin, and

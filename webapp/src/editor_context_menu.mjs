@@ -7,6 +7,7 @@ import { pictureToolCommands } from "./picture_tools.mjs";
 import { createObjectAlign } from "./object_align.mjs";
 import { outlineStyleCommands, readOutlineStyle } from "./shape_outline_style.mjs";
 import { gradientCommands } from "./shape_gradient.mjs";
+import { downloadBytes } from "./save_formats.mjs";
 import { editRefusalMessage } from "./edit_errors.mjs";
 import { formatShortcut } from "./keyboard.mjs";
 import { spellingContextCommands } from "./spell_check.mjs";
@@ -662,6 +663,7 @@ export function createContextMenu(ed) {
       t,
       runEdit: (thunk, options) => ed.runEdit(thunk, options),
       announce: (text) => ed.setStatus(text),
+      download: (bytes, mime, name) => downloadBytes(bytes, mime, name, document),
     }),
     openProperties: () => ed.toggleObjectInspector(true),
     deleteObject: () => ed.deleteSelectedObject(),

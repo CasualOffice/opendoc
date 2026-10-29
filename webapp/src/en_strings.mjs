@@ -1574,6 +1574,9 @@ export const EN_STRINGS = Object.freeze({
   "object.picture.sizeReset": "Picture set to its actual size",
   "object.picture.reason.noNaturalSize": "This picture's original size cannot be read from its file",
   "object.picture.reason.notCropped": "The picture is not cropped",
+  "object.picture.saveAs": "Save as picture",
+  "object.picture.fileName": "Picture",
+  "object.picture.reason.noFile": "This picture's image file is not in the document",
   // Crop mode's arrows move the kept area; with nothing cropped there is nothing
   // to move, and the key says so rather than doing nothing (`docs/104` HF-106).
   "object.crop.nothingToMove": "Crop an edge first — the arrow keys then move the cropped area",
