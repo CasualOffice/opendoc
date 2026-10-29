@@ -683,6 +683,8 @@ export const APP_MENU_SECTIONS = {
       "format.language",
       // HF-051: Word's Review ▸ Proofing ▸ Word Count.
       "tools.wordCount",
+      // HF-064: Word's Review ▸ Accessibility ▸ Check Accessibility.
+      "tools.checkAccessibility",
     ),
     band("menuGroup.comments", "review.comment.resolve", "review.comment.delete"),
     band("menuGroup.tracking", "review.toggle"),

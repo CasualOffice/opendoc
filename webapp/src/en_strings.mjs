@@ -161,6 +161,28 @@ export const EN_STRINGS = Object.freeze({
   "pageBorders.noSection": "This document has no page setup to carry a border.",
   "pageBorders.applied": "Page borders applied",
   "pageBorders.removed": "Page borders removed",
+  // Check accessibility (HF-064): the command, the summary, and each rule's
+  // title and fix, written as Word's checker words them.
+  "a11yCheck.command": "Check accessibility…",
+  "a11yCheck.summary": "Errors: {errors} · Warnings: {warnings}",
+  "a11yCheck.none": "No accessibility issues found.",
+  "a11yCheck.severity.error": "Error",
+  "a11yCheck.severity.warning": "Warning",
+  "a11yCheck.goTo": "Go to",
+  "a11yCheck.goToUnavailable": "That item cannot hold the cursor.",
+  "a11yCheck.where.picture": "Picture {n}",
+  "a11yCheck.where.table": "Table {n}",
+  "a11yCheck.where.levels": "level {from} to level {to}",
+  "a11yCheck.rule.missingAlt": "Missing alternative text",
+  "a11yCheck.fix.missingAlt": "Describe the picture in its properties, so a screen reader can say what it shows.",
+  "a11yCheck.rule.tableHeader": "Missing table header",
+  "a11yCheck.fix.tableHeader": "Mark the first row as a header row in Table properties, so each cell is announced with its column.",
+  "a11yCheck.rule.headingSkip": "Skipped heading level",
+  "a11yCheck.fix.headingSkip": "Use heading levels in order, so the outline reads as a structure.",
+  "a11yCheck.rule.mergedCells": "Merged cells",
+  "a11yCheck.fix.mergedCells": "Merged cells are hard to follow with a screen reader; keep the grid regular where you can.",
+  "a11yCheck.rule.emptyRow": "Blank table row",
+  "a11yCheck.fix.emptyRow": "Remove empty rows used for spacing; a screen reader announces each one.",
   // The Word count command's label on the palette and the Review menu (HF-051).
   "wordCount.command": "Word count…",
   // Reassigned from script on every render, so the markup sweep never sees it.

@@ -1275,6 +1275,8 @@
               <button data-i18n-title="panelReview.proofingLanguages.title" data-i18n-label="panelReview.proofingLanguages.label" id="reviewProofLanguagesBtn" type="button" class="fmt" title="Install proofing for another language" aria-label="Proofing languages" aria-haspopup="dialog"><span class="ms" aria-hidden="true">language</span></button>
               <!-- Word count (HF-051): Word's Review ▸ Proofing ▸ Word Count. -->
               <button data-i18n-title="panelReview.wordCount.title" data-i18n-label="panelReview.wordCount.label" id="reviewWordCountBtn" type="button" class="fmt" title="Count words, characters and paragraphs" aria-label="Word count" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">match_word</span></button>
+              <!-- Check accessibility (HF-064): Word's Review ▸ Accessibility. -->
+              <button data-i18n-title="panelReview.checkAccessibility.title" data-i18n-label="panelReview.checkAccessibility.label" id="reviewA11yCheckBtn" type="button" class="fmt" title="Check the document for accessibility problems" aria-label="Check accessibility" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">accessibility_new</span></button>
             </div>
             <span data-i18n="panelReview.proofing" class="rgroup-label">Proofing</span>
           </div>
@@ -1459,6 +1461,34 @@
          crate manifest) rather than typed here, so it cannot drift. -->
     <!-- Word count (HF-051). Word's dialog: the document's figures, and the
          selection's beside them whenever there is one. `word_count.mjs`. -->
+    <!-- Check accessibility (HF-064). `accessibility_checker.mjs`: the rules,
+         the projection they read, and what is not checked. -->
+    <div id="a11yCheckDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="a11yCheckTitle" aria-describedby="a11yCheckSummary">
+      <section class="dialog-card a11y-check-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="a11yCheckDialog.title" id="a11yCheckTitle">Accessibility check</h2>
+              <p data-i18n="a11yCheckDialog.description">What a screen-reader user will meet in this document, and how to fix it.</p>
+            </div>
+          </div>
+          <button data-i18n-title="a11yCheckDialog.close.title" data-i18n-label="a11yCheckDialog.close.label" id="a11yCheckClose" type="button" class="dialog-close" title="Close" aria-label="Close accessibility check">
+            <span class="ms" aria-hidden="true">close</span>
+          </button>
+        </header>
+        <div class="dialog-body">
+          <p id="a11yCheckSummary" class="a11y-check-summary" role="status"></p>
+          <p data-i18n="a11yCheckDialog.foldNote" id="a11yCheckFoldNote" class="dialog-note" hidden>Collapsed headings are not checked. Expand all to check everything.</p>
+          <ul id="a11yCheckList" class="a11y-check-list"></ul>
+        </div>
+        <footer class="dialog-foot">
+          <div class="dialog-actions">
+            <button data-i18n="a11yCheckDialog.done" id="a11yCheckDone" type="button" class="dialog-button dialog-button-primary">Close</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
     <div id="wordCountDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="wordCountTitle" aria-describedby="wordCountScope">
       <section class="dialog-card word-count-dialog">
         <header class="dialog-head">

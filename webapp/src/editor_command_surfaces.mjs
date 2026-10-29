@@ -2,6 +2,7 @@
 // per command, read by the ribbon, the menus and the palette alike. Moved out
 // of `main.js` unchanged (docs/177); it reaches the rest of the editor only
 // through the context `ed`.
+import { createAccessibilityChecker } from "./accessibility_checker.mjs";
 import { createPageBorders } from "./page_borders.mjs";
 import { t } from "./i18n.mjs";
 import { reviewDecisionRefusal } from "./review_authority.mjs";
@@ -118,6 +119,22 @@ export function createCommandSurfaces(ed) {
     runEdit: (thunk, options) => ed.runEdit(thunk, options),
     setStatus: (text, kind) => ed.setStatus(text, kind),
     fallbackFocus: () => document.getElementById("pageBordersBtn") ?? ed.pagesEl,
+  });
+  // Check accessibility (HF-064). Go to puts the caret at a block that can hold
+  // one; `caretRect` is empty for anything that cannot (a table's own id).
+  const accessibilityChecker = createAccessibilityChecker({
+    getDoc: () => ed.doc,
+    goTo: (node) => {
+      if (!ed.doc || !(ed.doc.caretRect(node, 0)?.length > 0)) return false;
+      ed.selection = { anchor: { node, offset: 0 }, focus: { node, offset: 0 } };
+      ed.drawSelection();
+      ed.scrollCaretIntoView();
+      ed.updateToolbar();
+      ed.focusEditorSurface();
+      return true;
+    },
+    setStatus: (text, kind) => ed.setStatus(text, kind),
+    fallbackFocus: () => document.getElementById("reviewA11yCheckBtn") ?? ed.pagesEl,
   });
   const LAYOUT_SURFACE = [
     // Page setup: one dialog, four fieldsets. Word's four buttons are four routes
@@ -357,6 +374,8 @@ export function createCommandSurfaces(ed) {
     { command: "tools.spellCheck", buttons: () => [ed.reviewSpellCheckBtn], requires: "always", pressed: () => ed.settings.spellCheck !== false, run: () => ed.setSpellCheckEnabled(ed.settings.spellCheck === false) },
     { command: "tools.grammarCheck", buttons: () => [ed.reviewGrammarCheckBtn], requires: "always", pressed: () => ed.settings.grammarCheck !== false, run: () => ed.setGrammarCheckEnabled(ed.settings.grammarCheck === false) },
     { command: "tools.smartQuotes", buttons: () => [ed.reviewSmartQuotesBtn], requires: "always", pressed: () => ed.autoCorrect.enabled("smartQuotes"), run: () => ed.autoCorrect.toggle("smartQuotes") },
+    // Check accessibility (HF-064): reads the document, so it needs one.
+    { command: "tools.checkAccessibility", buttons: () => [document.getElementById("reviewA11yCheckBtn")].filter(Boolean), requires: "doc", reasonKey: "command.needsDocument", run: () => accessibilityChecker.open() },
     // Word count (HF-051): a document fact, so it needs a document and nothing else.
     { command: "tools.wordCount", buttons: () => [document.getElementById("reviewWordCountBtn")].filter(Boolean), requires: "doc", reasonKey: "command.needsDocument", run: () => ed.wordCount.open() },
     { command: "tools.languages", buttons: () => [ed.reviewProofLanguagesBtn], requires: "always", run: () => ed.proofing.openLanguages() },

@@ -420,6 +420,18 @@ export const MODALS = [
     },
   },
   {
+    id: "a11yCheckDialog",
+    name: "Accessibility check",
+    // HF-064. Opened from its Review-band button, which is where focus returns.
+    opener: "#reviewA11yCheckBtn",
+    focus: "#a11yCheckDialog [data-a11y-initial]",
+    async open(page) {
+      await gotoEditor(page);
+      await page.locator('[data-tab="review"]').click();
+      await page.locator("#reviewA11yCheckBtn").click();
+    },
+  },
+  {
     id: "wordCountDialog",
     name: "Word count",
     // HF-051. Word's Review ▸ Proofing ▸ Word Count; the band button is the

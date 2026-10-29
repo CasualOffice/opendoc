@@ -2238,6 +2238,40 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 
 /* Two columns: term and value on one line, the way a properties sheet reads.
    `auto auto` so neither column is wider than the text it holds. */
+/* Accessibility check (HF-064): Word's checker pane, as a list of findings. */
+.a11y-check-dialog {
+  width: min(100%, 60ch);
+}
+
+.a11y-check-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.a11y-check-item {
+  border-inline-start: 3px solid var(--line-strong);
+  padding-inline-start: var(--space-3);
+}
+
+.a11y-check-item p {
+  margin: 0 0 var(--space-1);
+}
+
+.a11y-check-severity {
+  font-size: var(--fs-caption, 12px);
+  font-weight: 600;
+  color: var(--ink-2, var(--ink));
+}
+
+.a11y-check-fix,
+.a11y-check-where {
+  color: var(--ink-2, var(--ink));
+  font-size: var(--fs-caption, 12px);
+}
+
 /* Page borders (HF-193): the four edges read across, as Word's preview buttons
    sit around one page. */
 .page-borders-dialog {

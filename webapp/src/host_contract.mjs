@@ -649,6 +649,8 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("tools.autoCorrectOptions", null),
   // Word count reads the document and changes nothing (HF-051).
   exact("tools.wordCount", null),
+  // The accessibility check reads the document and changes nothing (HF-064).
+  exact("tools.checkAccessibility", null),
   exact("view.outline", null),
   // `view.pages` is a panel toggle and changes no document state, so it requires
   // nothing — the same shape as `view.outline`, which the taxonomy already puts
