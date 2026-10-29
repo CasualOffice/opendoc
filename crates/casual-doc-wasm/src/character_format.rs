@@ -35,6 +35,11 @@ fn parse_character(json: &str) -> Result<CharacterFormatDelta, String> {
     {
         return Err("character border outside the supported range".into());
     }
+    if let Some(Some(tag)) = &delta.language
+        && !crate::language::is_language_tag(tag)
+    {
+        return Err("language is not a BCP 47 tag".into());
+    }
     Ok(delta)
 }
 
@@ -319,10 +324,15 @@ mod tests {
             r#"{"ligatures":"discretionary"}"#,
             r#"{"unknown":true}"#,
             r#"{"border":{"style":"single","spacePoints":32}}"#,
+            r#"{"language":""}"#,
+            r#"{"language":"fr FR"}"#,
+            r#"{"language":"-fr"}"#,
         ] {
             assert!(parse_character(json).is_err(), "{json}");
         }
         assert!(parse_character(&" ".repeat(8193)).is_err());
+        assert!(parse_character(r#"{"language":"fr-FR"}"#).is_ok());
+        assert!(parse_character(r#"{"language":null}"#).is_ok());
         assert!(parse_character(r#"{"characterScalePercent":600,"characterSpacingTwips":-31680,"positionHalfPoints":31680,"kerningHalfPoints":65534}"#).is_ok());
     }
     fn text_document() -> (WasmDocument, Vec<(NodeId, String)>) {

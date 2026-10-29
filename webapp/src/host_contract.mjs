@@ -343,6 +343,8 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("format.character.emboss", "mutate"),
   exact("format.character.imprint", "mutate"),
   exact("format.character.dialog", "mutate"),
+  // Set Language writes `w:lang` on the selection, a character property (RM-42).
+  exact("format.language", "mutate"),
   exact("format.character.advanced", "mutate"),
   exact("format.character.border", "mutate"),
   exact("format.character.emphasis", "mutate"),
@@ -391,6 +393,8 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("insert.textbox", "mutate"),
   exact("insert.symbol", "mutate"),
   exact("insert.emoji", "mutate"),
+  // Ctrl/Cmd+Shift+Space types U+00A0, an insert like any other (RM-19).
+  exact("insert.nonBreakingSpace", "mutate"),
   exact("insert.table", "mutate"),
   // Insert Table by a typed size, and Convert Text to Table (`table_tools.mjs`).
   // Both write: one inserts a table, the other replaces paragraphs with one.
@@ -636,6 +640,11 @@ export const COMMAND_CONTRACT = Object.freeze([
   // The AutoCorrect switches (TA-05/06): preferences, not document state.
   exact("tools.autoFormatLists", null),
   exact("tools.autocorrect", null),
+  // The rest of the AutoCorrect switches and their dialog (RM-19): preferences too.
+  exact("tools.autoCapitalise", null),
+  exact("tools.autoFormatDashes", null),
+  exact("tools.autoFormatHyperlink", null),
+  exact("tools.autoCorrectOptions", null),
   // Word count reads the document and changes nothing (HF-051).
   exact("tools.wordCount", null),
   exact("view.outline", null),

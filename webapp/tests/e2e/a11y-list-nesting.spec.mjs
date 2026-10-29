@@ -30,10 +30,10 @@ test("Tab-demoted items are exposed as nested lists, not siblings", async ({
   await gotoEditor(page);
   await startListInFreshParagraph(page);
 
-  await page.keyboard.type("top");
+  await page.keyboard.type("Top");
   await page.keyboard.press("Enter");
   await page.keyboard.press("Tab");
-  await page.keyboard.type("child");
+  await page.keyboard.type("Child");
   await page.keyboard.press("Enter");
   await page.keyboard.press("Tab");
   await page.keyboard.type("grandchild");
@@ -42,7 +42,7 @@ test("Tab-demoted items are exposed as nested lists, not siblings", async ({
   // conveys depth to a screen reader.
   await expect
     .poll(() => listHtml(page))
-    .toBe("<ul><li>top<ul><li>child<ul><li>grandchild</li></ul></li></ul></li></ul>");
+    .toBe("<ul><li>Top<ul><li>Child<ul><li>grandchild</li></ul></li></ul></li></ul>");
 
   expect(consoleErrors).toEqual([]);
 });
@@ -51,10 +51,10 @@ test("promoting with Shift+Tab closes the nested list again", async ({ page, con
   await gotoEditor(page);
   await startListInFreshParagraph(page);
 
-  await page.keyboard.type("one");
+  await page.keyboard.type("One");
   await page.keyboard.press("Enter");
   await page.keyboard.press("Tab");
-  await page.keyboard.type("nested");
+  await page.keyboard.type("Nested");
   await page.keyboard.press("Enter");
   await page.keyboard.press("Shift+Tab");
   await page.keyboard.type("back");
@@ -62,7 +62,7 @@ test("promoting with Shift+Tab closes the nested list again", async ({ page, con
   // "back" returns to the outer list rather than staying in the inner one.
   await expect
     .poll(() => listHtml(page))
-    .toBe("<ul><li>one<ul><li>nested</li></ul></li><li>back</li></ul>");
+    .toBe("<ul><li>One<ul><li>Nested</li></ul></li><li>back</li></ul>");
 
   expect(consoleErrors).toEqual([]);
 });
@@ -71,13 +71,13 @@ test("a flat list is still exposed flat", async ({ page, consoleErrors }) => {
   await gotoEditor(page);
   await startListInFreshParagraph(page, "#numberedList");
 
-  await page.keyboard.type("first");
+  await page.keyboard.type("First");
   await page.keyboard.press("Enter");
   await page.keyboard.type("second");
 
   // The nesting logic must not invent depth where there is none, and an ordered
   // list is still an <ol>.
-  await expect.poll(() => listHtml(page)).toBe("<ol><li>first</li><li>second</li></ol>");
+  await expect.poll(() => listHtml(page)).toBe("<ol><li>First</li><li>second</li></ol>");
   expect(await page.locator("#a11yDocument ol ol").count()).toBe(0);
 
   expect(consoleErrors).toEqual([]);

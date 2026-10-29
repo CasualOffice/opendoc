@@ -53,7 +53,9 @@ export function createClipboard(ed) {
       ed.setStatus("Multi-paragraph paste cannot be tracked yet; switch to Editing to paste it", "error");
       return;
     }
-    await ed.runEdit(() => ed.doc.insertPlainTextAs(anchor.node, anchor.offset, focus.node, focus.offset, text, actionKind));
+    const landed = await ed.runEdit(() => ed.doc.insertPlainTextAs(anchor.node, anchor.offset, focus.node, focus.offset, text, actionKind));
+    // A pasted lone address becomes a link, as its own undo step (RM-19).
+    if (landed && actionKind === "paste") await ed.autoCorrect.afterPaste(text);
   }
 
   async function commitComposedText(text) {

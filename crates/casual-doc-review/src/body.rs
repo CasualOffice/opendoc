@@ -4195,6 +4195,9 @@ pub fn character_values(props: &RunProperties) -> serde_json::Map<String, serde_
         "emphasis":props.emphasis,"border":props.border,"characterSpacingTwips":props.character_spacing_twips,
         "characterScalePercent":props.character_scale_percent,"positionHalfPoints":props.position_half_points,
         "kerningHalfPoints":props.kerning_half_points,"ligatures":props.ligatures,
+        // The Latin `w:lang` tag: what Set Language writes, and so what a tracked
+        // language change reports (`docs/153` `text.language-of-selection`).
+        "language":props.language.as_ref().and_then(|language| language.value.as_deref()),
     }).as_object().expect("character projection is an object").clone()
 }
 

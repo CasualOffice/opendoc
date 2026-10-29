@@ -170,6 +170,12 @@ export const KEYMAP = [
   // ---- Insert --------------------------------------------------------------
   { chord: "⌘K", command: "insert.link", scope: EDITOR_SCOPE },
   { chord: "⌘⌥D", command: "insert.endnote", scope: EDITOR_SCOPE },
+  // Non-breaking space: Ctrl+Shift+Space in Word and in ONLYOFFICE
+  // (`sdkjs/word/Editor/Shortcuts.js:125`, `NonBreakingSpace`), ⌘⇧Space in Word
+  // for Mac. Measured free in both keymaps: no other row here uses Space with
+  // Shift, and `matchesShortcut` compares Shift exactly, so it cannot collide
+  // with ⌃Space (clear formatting) on standard keyboards (RM-19).
+  { chord: "⌘⇧Space", command: "insert.nonBreakingSpace", scope: EDITOR_SCOPE },
   // Label only, and it cannot be otherwise: `chordCommand` ignores any keystroke
   // with no command modifier, so Shift+Enter never reaches the dispatcher. Enter
   // belongs to the text-input path, which has to decide between a paragraph, a

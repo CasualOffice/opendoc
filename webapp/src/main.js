@@ -198,7 +198,7 @@ const ed = {
   get armFormatPainter() { return armFormatPainter; },
   get armOrApplyRun() { return armOrApplyRun; },
   get arrangeState() { return arrangeState; },
-  get autoCorrect() { return autoCorrect; },
+  get autoCorrect() { return autoCorrect; }, get autoCorrectDialog() { return autoCorrectDialog; }, get languageSelection() { return languageSelection; },
   get autosaveToggle() { return autosaveToggle; },
   get backgroundMeasure() { return backgroundMeasure; }, set backgroundMeasure(v) { backgroundMeasure = v; },
   get bandEl() { return bandEl; },
@@ -2645,7 +2645,7 @@ for (const entry of INSERT_SURFACE) {
   // The ¶ control owns both of its halves and its popover's five checkmarks, so
   // it reflects itself rather than being swept here: its state is the ENGINE's
   // `any`, not a local flag, and nothing else on the band knows how to read it.
-  formattingMarks.reflect(); wordCount.reflect(); // HF-051: the status bar's "x of y words"
+  formattingMarks.reflect(); wordCount.reflect(); languageSelection?.reflect(); // HF-051: "x of y words"; RM-42: the text language
   // Ribbon: undo/redo/view controls need a document; the Table tab is contextual.
   undoBtn.disabled = !doc || !doc.canUndo;
   redoBtn.disabled = !doc || !doc.canRedo;
@@ -2908,7 +2908,7 @@ const {
   commitComposedText, cut, editorTextInputEvent, hidePasteOptions, paste, pasteAsText,
   pasteOptionsShowing, pasteRichRunsJson, pasteText,
 } = createClipboard(ed);
-const { addWordToDictionary, autoCorrect } = createTextInput(ed);
+const { addWordToDictionary, autoCorrect, autoCorrectDialog, languageSelection } = createTextInput(ed);
 createKeyboard(ed);
 const { handleFile } = createFilePick(ed);
 const { clampZoom, computeFitZoom, updateZoomDisplay, zoomMenu } = createZoom(ed);

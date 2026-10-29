@@ -3036,32 +3036,26 @@
       "area": "review",
       "title": "AutoCorrect options dialog",
       "ours": {
-        "partial": {
-          "evidence": {
-            "command": "tools.smartQuotes"
-          },
-          "missing": "every other AutoCorrect rule, and the dialog that holds them"
-        }
+        "command": "tools.autoCorrectOptions"
       },
       "theirs": {
         "control": "btnAutoCorrect"
       },
       "rank": 2,
-      "note": "Theirs covers hyperlinks, hyphens-to-dash, double-space-with-period, first letter of sentences, math AutoCorrect, recognised functions and a replace-as-you-type table."
+      "note": "One dialog holds every switch (smart quotes, dashes, hyperlinks, lists, sentence and cell capitals, replace as you type) and the two per-language lists. Theirs also has math AutoCorrect and recognised functions, which are `docs/109` OO-016's remainder."
     },
     {
       "id": "review.autocorrect-replace-as-you-type",
       "area": "review",
       "title": "Replace text as you type (AutoCorrect table)",
       "ours": {
-        "absent": [
-          "tools.autoCorrect.replace"
-        ]
+        "command": "tools.autocorrect"
       },
       "theirs": {
         "localeKey": "Common.Views.AutoCorrectDialog.textReplaceText"
       },
-      "rank": 3
+      "rank": 3,
+      "note": "A switch in the AutoCorrect options dialog, Settings, the Review menu and the palette; each replacement is its own undo step."
     },
     {
       "id": "review.autocorrect-smart-quotes",
@@ -3599,15 +3593,13 @@
       "area": "review",
       "title": "Set the proofing language for the selection",
       "ours": {
-        "absent": [
-          "review.proofLanguage.selection"
-        ]
+        "command": "format.language"
       },
       "theirs": {
         "control": "btnLanguage"
       },
       "rank": 2,
-      "note": "We honour the document's own w:lang but cannot write it; there is no per-run language control anywhere in the chrome."
+      "note": "Set Language writes `w:lang` on the selection (the word at a caret) as one character-format step, tracked in Suggesting mode; spell check proofs each run in its own language."
     },
     {
       "id": "review.protect-document",
@@ -6003,60 +5995,52 @@
       "area": "text",
       "title": "Capitalise the first letter of a sentence",
       "ours": {
-        "absent": [
-          "tools.autoCapitalise"
-        ]
+        "command": "tools.autoCapitalise"
       },
       "theirs": {
         "localeKey": "Common.Views.AutoCorrectDialog.textFLSentence"
       },
       "rank": 2,
-      "note": "Theirs also covers table cells and keeps a first-letter exceptions list. Ours does not autocapitalise at all."
+      "note": "Both capitalise the first letter of a sentence and, under a separate switch, of a table cell, and keep a per-language first-letter exceptions list with Reset; ours is edited in the AutoCorrect options dialog."
     },
     {
       "id": "text.autocorrect-replace",
       "area": "text",
       "title": "Replace text as you type (AutoCorrect table)",
       "ours": {
-        "absent": [
-          "tools.autoCorrect"
-        ]
+        "command": "tools.autoCorrectOptions"
       },
       "theirs": {
         "control": "btnAutoCorrect"
       },
       "rank": 2,
-      "note": "Their File ▸ Advanced Settings opens a dialog with an editable replace/by table, per-language, plus Reset and Restore. We have no AutoCorrect table — `webapp/src/text_rules.mjs` implements smart quotes and nothing else."
+      "note": "Both open a dialog with an editable replace/with table per language and Reset to default; ours stores only the user's difference from the built-in list, as their exceptions list does."
     },
     {
       "id": "text.autoformat-dashes",
       "area": "text",
       "title": "Turn typed hyphens into dashes",
       "ours": {
-        "absent": [
-          "tools.autoFormatDashes"
-        ]
+        "command": "tools.autoFormatDashes"
       },
       "theirs": {
         "localeKey": "Common.Views.AutoCorrectDialog.textHyphens"
       },
       "rank": 3,
-      "note": "Word and Docs both do this; it is the second most-noticed AutoCorrect after smart quotes."
+      "note": "word--word becomes an em dash; ` -- ` and ` - ` between words become an en dash once the next word is finished, Word's timing."
     },
     {
       "id": "text.autoformat-hyperlink",
       "area": "text",
       "title": "Turn a typed URL into a hyperlink",
       "ours": {
-        "absent": [
-          "tools.autoFormatHyperlink"
-        ]
+        "command": "tools.autoFormatHyperlink"
       },
       "theirs": {
         "localeKey": "Common.Views.AutoCorrectDialog.textHyperlink"
       },
       "rank": 2,
-      "note": "We have `insert.link` but nothing recognises a URL as it is typed, so every pasted address needs the dialog."
+      "note": "A typed URL, www. address or e-mail address becomes a link when the word ends (space or Enter), and a pasted lone address at once; the link is its own undo step and is never applied inside an existing link."
     },
     {
       "id": "text.bold",
@@ -6416,15 +6400,13 @@
       "area": "text",
       "title": "Language of the selected text",
       "ours": {
-        "absent": [
-          "format.language"
-        ]
+        "command": "format.language"
       },
       "theirs": {
         "control": "btnLanguage"
       },
       "rank": 2,
-      "note": "Their status bar carries the selection's language and opens Common.Views.LanguageDialog; the engine call is asc_docs_api.put_TextPrLang. Our model has `w:lang` but `tools.languages` only installs proofing packs — nothing tags a selection, so a mixed-language document cannot be proofed correctly."
+      "note": "The status bar names the selection's language and opens the Set Language dialog, as theirs does; the write is the character patch's `language` field through `FormatText`."
     },
     {
       "id": "text.ligatures",
@@ -6482,15 +6464,13 @@
       "area": "text",
       "title": "Insert a non-breaking space",
       "ours": {
-        "absent": [
-          "insert.nonBreakingSpace"
-        ]
+        "command": "insert.nonBreakingSpace"
       },
       "theirs": {
         "localeKey": "Common.Controllers.Shortcuts.txtDescriptionNonBreakingSpace"
       },
       "rank": 3,
-      "note": "They bind it and list it in the symbol dialog's special characters. We have neither the shortcut nor a picker entry, so keeping \"10 kg\" or \"Fig. 3\" on one line is not expressible."
+      "note": "Ctrl/Cmd+Shift+Space, the Insert menu, the palette, and Symbol ▸ Special characters, as in Word and ONLYOFFICE."
     },
     {
       "id": "text.paste",

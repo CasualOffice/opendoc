@@ -3,14 +3,18 @@
 # The OpenDoc edit vocabulary, version 1.5
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 64 commands in 14 families. 14 can be tracked suggestions, 47 are refused in suggest mode with the published reason, and 3 are not content edits (comments and review decisions). They are the agent-side twins of 108 editor command ids; 99 editor ids that can change a document are not exposed to agents, each with a reason (`commands.json` `uiNotExposed`).
 =======
 64 commands in 14 families. 14 can be tracked suggestions, 47 are refused in suggest mode with the published reason, and 3 are not content edits (comments and review decisions). They are the agent-side twins of 104 editor command ids; 87 editor ids that can change a document are not exposed to agents, each with a reason (`commands.json` `uiNotExposed`).
 >>>>>>> origin/lane/parity-review-notes
+=======
+64 commands in 14 families. 14 can be tracked suggestions, 47 are refused in suggest mode with the published reason, and 3 are not content edits (comments and review decisions). They are the agent-side twins of 105 editor command ids; 86 editor ids that can change a document are not exposed to agents, each with a reason (`commands.json` `uiNotExposed`).
+>>>>>>> origin/lane/parity-autocorrect-language
 
 | `op` | Family | Summary | Trackable | Editor twins |
 | --- | --- | --- | --- | --- |
-| `insert_text` | text | Insert text at an anchor. | yes | `edit.pasteText`, `insert.symbol`, `insert.emoji` |
+| `insert_text` | text | Insert text at an anchor. | yes | `edit.pasteText`, `insert.symbol`, `insert.emoji`, `insert.nonBreakingSpace` |
 | `replace_text` | text | Replace the quoted text with new text. | yes | `edit.replace` |
 | `delete_text` | text | Delete the quoted text. | yes | `edit.cut` |
 | `insert_paragraphs` | paragraph | Insert new paragraphs after an anchor's paragraph. | yes | none (agent-only) |

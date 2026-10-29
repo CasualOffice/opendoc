@@ -5545,6 +5545,24 @@ pub fn run_properties_in_paragraph_range(
         .collect()
 }
 
+/// A run's byte range in the projected paragraph text and its direct
+/// properties, as [`run_property_spans`] lists them.
+pub type RunPropertySpan<'a> = (u32, u32, &'a RunProperties);
+
+/// Every non-empty run of a resolved paragraph as `(start, end, properties)`,
+/// with byte offsets in the same projected text [`run_properties_in_paragraph_range`]
+/// reads. What a per-run question (the language a word is proofed in) needs
+/// that a range query cannot answer: WHERE each run's properties apply.
+/// O(inlines in the paragraph).
+#[must_use]
+pub fn run_property_spans(para: &Paragraph) -> Vec<RunPropertySpan<'_>> {
+    flatten_run_segments(&para.inlines)
+        .into_iter()
+        .filter(|s| s.start < s.end)
+        .map(|s| (s.start, s.end, s.properties))
+        .collect()
+}
+
 /// The common value of `f` across all covered runs, or `None` if any run differs
 /// or leaves it unset.
 fn uniform<T: PartialEq>(

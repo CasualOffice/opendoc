@@ -152,7 +152,7 @@ export function reviewFormattingDescription(changes) {
   const characterLabels = {allCaps:'allCaps',smallCaps:'smallCaps',doubleStrike:'doubleStrike',shadow:'shadow',emboss:'emboss',imprint:'imprint',emphasis:'emphasis',border:'border',characterSpacingTwips:'spacing',characterScalePercent:'scale',positionHalfPoints:'position',kerningHalfPoints:'kerning',ligatures:'ligatures'};
   return (changes ?? []).map((change) => {
     const property = String(change?.property || "");
-    const label = property === "outline" ? t("ui.outline.label") : characterLabels[property] ? t(`fontAdvanced.${characterLabels[property]}`) : labels[property] || property || "Formatting";
+    const label = property === "outline" ? t("ui.outline.label") : property === "language" ? t("language.property") : characterLabels[property] ? t(`fontAdvanced.${characterLabels[property]}`) : labels[property] || property || "Formatting";
     return `${label}: ${reviewFormattingValue(property, change?.before)} → ${reviewFormattingValue(property, change?.after)}`;
   }).join("\n");
 }

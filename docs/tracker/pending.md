@@ -165,10 +165,12 @@ currently assigned. Rows stay in their queue order.
 | 183 | RM-07 | — | Tagged PDF and PDF/A | Open |
 | 185 | FOLD-003 | P2 | A windowed body cannot be folded at all, so folding is withheld on exactly the documents an outline matters most for | Open |
 | 186 | FOLD-005 | P2 | RTF import drops every heading's identity, so the outline panel, folding, the TOC field and Go-to-heading are all empty on an imported `.rtf` | Open |
-| 188 | RM-19 | P2 | Typing aids and special characters: autoCorrect engine, replace table and options dialog; AutoFormat as you type; Spaces, hyphens and shortcut characters; Symbols by code and math shorthand | Open |
+| 193 | RM-24 | P2 | Footnotes and endnotes: note settings, and layout honouring format, restart and position; Convert footnotes to endnotes; Go to next or previous note; Separator customisation | Open |
 | 194 | RM-25 | P2 | Contents, captions and cross-references: contents settings and leader; Contents styles, removal and adding a paragraph; Table of figures; Cross-references and links to headings | Open |
 | 195 | RM-26 | P2 | Tables: structure: insert dialog and nested tables; Split a table; Convert between text and tables; Insert and delete cells with a shift; Select the current cell | Open |
 | 196 | RM-27 | P2 | Tables: look and tools: table style options and built-in gallery; Table fill, width and margins; Borders: presets and the dialog with a preview; Eraser and draw table; Formula picker and recalculation | Open |
+| 200 | RM-31 | P2 | Review: display modes: simple markup, original, final; Decide changes in a selection; resolve all comments; Suggesting table and list structure; table revisions listed and decided; Comments over several paragraphs; highlight drawn by the engine | Open |
+| 201 | RM-32 | P2 | Protection: protect the document from the editor; Set a password (needs the ADR-052 decision); Editable ranges (w:permStart/w:permEnd): model, shade, edit; A tracked-changes restriction forces Suggesting | Open |
 | 202 | RM-33 | P2 | Fields: field catalogue and date formats; Update all fields; Operate dropdown form fields; Cached field results wrap like text; Insert text from a file | Open |
 | 203 | RM-34 | P2 | Content controls and forms: insert and configure a content control; Operate dropdown, combo and date controls; Control chrome and placeholder text; Protect a form | Open |
 | 204 | RM-35 | P2 | Charts: chart type gallery and change type; Edit the data; Chart elements; Remaining chart families and 3-D | Open |
@@ -183,6 +185,5 @@ currently assigned. Rows stay in their queue order.
 | 217 | FOLD-006 | P3 | The in-body fold chevron can only stay live by walking the document, so it paints while the outline panel is open and not before | Open |
 | 219 | RM-40 | P3 | Tables: position and layout: table position dialog and wrapping; Cell noWrap, fitText, hideMark and style-provided row properties in layout; Positioned tables in headers, nested, and split across pages; Art and compound borders painted exactly | Open |
 | 220 | RM-41 | P3 | Compare and versions: compare writes a merged document of tracked changes; Show what changed between two versions; Combine documents | Open |
-| 221 | RM-42 | P3 | Proofing and language: language of a selection and of the document; Personal dictionary management; Word count dialog with a selection count; Grammar breadth | Open |
 | 222 | RM-43 | P3 | View and navigation: ruler, status bar and formatting marks toggles; Regular-expression search; Several pages side by side; dark page; Ruler in the chosen unit; Rebind keyboard shortcuts | Open |
 | 223 | RM-44 | P3 | Print and export: print preview and options; print the selection; RTF writer; PDF/A; EPUB | Open |

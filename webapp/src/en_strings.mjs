@@ -1165,12 +1165,50 @@ export const EN_STRINGS = Object.freeze({
   // sees each shape once.
   "autocorrect.smartQuotes": "Smart quotes",
   "autocorrect.lists": "Automatic lists",
-  "autocorrect.text": "AutoCorrect",
   "autocorrect.command": "{name}: {state}",
   "autocorrect.stateOn": "on",
   "autocorrect.stateOff": "off",
   "autocorrect.statusOn": "{name} on",
   "autocorrect.statusOff": "{name} off",
+  // The rest of Word's switches and the AutoCorrect options dialog (`docs/109`
+  // RM-19; `autocorrect_dialog.mjs`, `autocorrect_table.mjs`).
+  "autocorrect.replace": "Replace text as you type",
+  "autocorrect.capitalise": "Capitalise first letters",
+  "autocorrect.capitaliseCells": "Capitalise table cells",
+  "autocorrect.dashes": "Hyphens to dashes",
+  "autocorrect.hyperlinks": "Automatic hyperlinks",
+  "autocorrect.optionsCommand": "AutoCorrect options…",
+  "autocorrect.entry": "{from} → {to}",
+  "autocorrect.addEntry": "Add",
+  "autocorrect.replaceEntry": "Replace",
+  "autocorrect.entryRefused": "That entry cannot be stored: it must be one line of at most 255 characters.",
+  "autocorrect.entryAdded": "“{from}” will be replaced with “{to}”",
+  "autocorrect.entryDeleted": "“{from}” is no longer replaced",
+  "autocorrect.exceptionAdded": "No capital letter after “{word}”",
+  "autocorrect.exceptionDeleted": "“{word}” is no longer an exception",
+  "autocorrect.listsReset": "The lists for {language} are back to their defaults",
+  "autocorrect.languageShown": "Showing the lists for {language}",
+
+  // The language of the selected text (`docs/109` RM-42; `language_selection.mjs`).
+  "language.command": "Set language…",
+  "language.none": "No language set (the default, {language})",
+  "language.withSpelling": "{language} — spelling checked",
+  "language.checked": "Text in {language} is checked for spelling.",
+  "language.notChecked": "There is no spelling dictionary for {language} yet, so text in it is not checked.",
+  "language.applied": "Language set to {language}",
+  "language.cleared": "Language cleared; the default, {language}, applies",
+  "language.mixed": "Mixed languages",
+  "language.statusTip": "Text language: {language}. Click to change it.",
+  "language.property": "Language",
+
+  // Non-breaking space and the Symbol dialog's special characters (RM-19).
+  "insert.nonBreakingSpace": "Non-breaking space",
+  "glyph.special": "Special characters",
+  "glyph.nonBreakingSpace": "No-break space",
+  "glyph.narrowNonBreakingSpace": "Narrow no-break space",
+  "glyph.enSpace": "En space",
+  "glyph.emSpace": "Em space",
+  "glyph.thinSpace": "Thin space",
 
   // ── Version history (docs/139, docs/140, ADR-038/ADR-039) ──────────────────
   //

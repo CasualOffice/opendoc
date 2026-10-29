@@ -347,6 +347,46 @@ test("the document's own w:lang wins over the host default", async () => {
   assert.ok(engine.asked.languageAt.length > 0, "asked once per paragraph, not per word");
 });
 
+// RM-42: a paragraph that MIXES languages is proofed per language. The engine's
+// range answer for it is "" (no shared tag), so before `languageSpans` every
+// word in it was checked against the default list, and a phrase the user had
+// just marked French was still underlined as bad English.
+test("a word marked in another language is proofed in it; the rest of its paragraph stays English", async () => {
+  // "This word qzxaa is wrong": "This word " is bytes 0..10, "qzxaa" 10..15.
+  const spansFor = (tagged) => (node) =>
+    JSON.stringify(
+      node === "p1b"
+        ? [
+          { start: 0, end: tagged[0], language: "" },
+          { start: tagged[0], end: tagged[1], language: "fr-FR" },
+          { start: tagged[1], end: 24, language: "" },
+        ]
+        : [{ start: 0, end: 38, language: "" }],
+    );
+
+  // The unknown word itself marked French: no French list ships, so it is not
+  // flagged, the user is told which language went unchecked, and page 2's
+  // English typo is still found.
+  const french = fakeEngine(2);
+  french.doc.languageSpans = spansFor([10, 15]);
+  const h = harness(french);
+  await settle(h);
+  assert.deepEqual(h.flags(), ["qzxbb"]);
+  assert.ok(h.statuses.includes("No spelling dictionary for fr-FR"), JSON.stringify(h.statuses));
+
+  // Another word of the SAME paragraph marked French: the English part of the
+  // paragraph is still checked in English, at the right offsets.
+  const other = fakeEngine(2);
+  other.doc.languageSpans = spansFor([0, 4]);
+  const g = harness(other);
+  await settle(g);
+  assert.deepEqual(g.flags(), ["qzxaa", "qzxbb"]);
+  assert.deepEqual(
+    g.checker.findings("p1b").map((f) => [f.word, f.start, f.end, f.locale]),
+    [["qzxaa", 10, 15, "en-US"]],
+  );
+});
+
 test("turning it off clears every marker and stops the scan", async () => {
   const engine = fakeEngine();
   let on = true;

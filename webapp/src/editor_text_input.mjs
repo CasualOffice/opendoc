@@ -1,8 +1,10 @@
 // Text entry that is not a keystroke: soft keyboards and dictation (docs/105
 // UX-001), and AutoCorrect as you type. Moved out of `main.js` unchanged
 // (docs/177); it reaches the rest of the editor only through the context `ed`.
-import { t } from "./i18n.mjs";
+import { activeLocale, t } from "./i18n.mjs";
 import { createAutoCorrect } from "./autocorrect.mjs";
+import { createAutoCorrectDialog } from "./autocorrect_dialog.mjs";
+import { createLanguageSelection } from "./language_selection.mjs";
 import { readPref, writePref } from "./prefs.mjs";
 import { smartQuoteForTyped } from "./text_rules.mjs";
 import { orderedSelectionEnds } from "./caret_navigation.mjs";
@@ -48,6 +50,12 @@ export function createTextInput(ed) {
         });
       }
       await ed.pasteText(data, "typing");
+      // A soft keyboard types the space that ends a word here too, so the same
+      // AutoCorrect decision runs after it (the family, not the case: a phone
+      // must not get "teh" where a desktop gets "the"). A pasted lone address
+      // is linked, as its own undo step.
+      if (type === "insertText") await autoCorrect.afterTyped([...data].at(-1));
+      else if (type === "insertFromPaste") await autoCorrect.afterPaste(data);
       return;
     }
     if (type === "insertLineBreak" || type === "insertParagraph") {
@@ -100,11 +108,24 @@ export function createTextInput(ed) {
     getDoc: () => ed.doc,
     getSelection: () => ed.selection,
     editing: () => ed.reviewMode === "editing",
-    runEdit: (thunk) => ed.runEdit(thunk),
+    runEdit: (thunk, options) => ed.runEdit(thunk, options),
     setStatus: (text) => ed.setStatus(text),
     reflect: () => ed.updateToolbar(),
-    toggles: Object.fromEntries([["smartQuotes", "smartQuotesToggle"], ["lists", "autoFormatListsToggle"], ["autocorrect", "autocorrectToggle"]].map(([key, id]) => [key, document.getElementById(id)])),
+    defaultLanguage: () => ed.settings?.spellLanguage || "en-US",
+    // Each switch's checkboxes: the AutoCorrect dialog's (`data-autocorrect-switch`)
+    // and, for the first three, the Settings panel's. They reflect each other.
+    toggles: Object.fromEntries(
+      ["smartQuotes", "lists", "autocorrect", "capitalise", "capitaliseCells", "dashes", "hyperlinks"].map((key) => [
+        key,
+        [
+          document.getElementById({ smartQuotes: "smartQuotesToggle", lists: "autoFormatListsToggle", autocorrect: "autocorrectToggle" }[key]),
+          ...document.querySelectorAll(`[data-autocorrect-switch="${key}"]`),
+        ].filter(Boolean),
+      ]),
+    ),
   });
+  const autoCorrectDialog = createAutoCorrectDialog(ed, autoCorrect, { locale: activeLocale });
+  const languageSelection = createLanguageSelection(ed, { locale: activeLocale });
 
   /** Adds a word and SAYS whether it was stored. A personal dictionary that
    *  silently failed to persist is indistinguishable from one that worked until
@@ -119,5 +140,5 @@ export function createTextInput(ed) {
     );
   }
 
-  return { addWordToDictionary, autoCorrect };
+  return { addWordToDictionary, autoCorrect, autoCorrectDialog, languageSelection };
 }

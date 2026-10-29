@@ -174,7 +174,12 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::Yes,
         example: r#"{"op":"insert_text","at":{"node":"1:2","exact":"days","side":"after"},"text":" (calendar)"}"#,
-        ui_commands: &["edit.pasteText", "insert.symbol", "insert.emoji"],
+        ui_commands: &[
+            "edit.pasteText",
+            "insert.symbol",
+            "insert.emoji",
+            "insert.nonBreakingSpace",
+        ],
     },
     Command {
         id: "replace_text",
@@ -1004,6 +1009,7 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
     ("format.character.position", UI_CHARACTER),
     ("format.character.kerning", UI_CHARACTER),
     ("format.character.ligatures", UI_CHARACTER),
+    ("format.language", UI_CHARACTER),
     ("format.painter", UI_PAINTER),
     ("format.case.upper", UI_CASE),
     ("format.case.lower", UI_CASE),
@@ -1086,6 +1092,7 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
 ///
 /// 84 -> 85 with `layout.pageBorders` (`109` HF-193), recorded in `docs/181` §3.
 <<<<<<< HEAD
+<<<<<<< HEAD
 /// 85 -> 96 with the eleven table-tool ids (`109` RM-26, RM-27), and
 /// 96 -> 99 with `reference.removeToc`, `reference.tableOfFigures` and
 /// `reference.addText.` (`109` RM-25), both recorded in `docs/181` §3.
@@ -1095,3 +1102,7 @@ pub const UI_NOT_EXPOSED_CEILING: usize = 99;
 /// RM-24), recorded in `docs/181` §3.
 pub const UI_NOT_EXPOSED_CEILING: usize = 87;
 >>>>>>> origin/lane/parity-review-notes
+=======
+/// 85 -> 86 with `format.language` (`109` RM-42), recorded in `docs/181` §3.
+pub const UI_NOT_EXPOSED_CEILING: usize = 86;
+>>>>>>> origin/lane/parity-autocorrect-language

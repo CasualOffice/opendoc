@@ -81,6 +81,8 @@ export const GRAMMAR_MARKER_CLASS = "grammar-error";
  *  repository fell into once. `tests/source_bytes.test.mjs` now fails the build
  *  if one reappears anywhere under `webapp/src`. */
 const KEY_SEP = "\u0000";
+/** One encoder for the per-character byte walk in `languageParts`. */
+const UTF8_ENCODER = new TextEncoder();
 
 /** How long after the last edit the window is re-checked. */
 export const SPELL_QUIESCE_MS = 400;
@@ -528,10 +530,58 @@ export function createSpellChecker(io) {
     return next.revision;
   }
 
-  /** The key the coordinator would compute for `node` right now, or `null` when
-   *  it is not in the current scan. This is what a reply is checked against. */
-  function expectedKey(node) {
-    return scanned.find((row) => row.node === node)?.key ?? null;
+  /** The key the coordinator would compute for `part` right now, or `null` when
+   *  it is not in the current scan. This is what a reply is checked against.
+   *  A part is a paragraph, or one language's share of a paragraph that mixes
+   *  languages (`languageParts`). */
+  function expectedKey(part) {
+    return scanned.find((row) => row.part === part)?.key ?? null;
+  }
+
+  /**
+   * The paragraph as the checker sees it: one part per language its text is in
+   * (`docs/109` RM-42, `docs/146` §8's per-run row).
+   *
+   * `language` is the paragraph's shared `w:lang` from `proofWindow`, `""` when
+   * it declares none or mixes several. Only then is `languageSpans` asked —
+   * once per such paragraph, O(its runs) — and only a paragraph that really
+   * mixes languages is split: into one copy per language in which every
+   * character outside that language's spans is a space. A space keeps the
+   * UTF-16 length, so a finding's offsets are offsets into the REAL text and
+   * every later step (byte mapping, painting, Ignore once) is unchanged; and a
+   * space is a word boundary, so no word straddles two languages' copies.
+   *
+   * Before this, a phrase tagged French inside an English paragraph was
+   * checked against the English list, which is the thing Set Language exists
+   * to stop.
+   */
+  function languageParts(doc, node, text, language) {
+    if (language) return [{ part: node, tag: language, checkText: text }];
+    let spans = [];
+    try {
+      spans = JSON.parse(doc.languageSpans?.(node) ?? "[]");
+    } catch {
+      spans = [];
+    }
+    const tags = [...new Set(spans.map((span) => String(span.language ?? "")))];
+    if (tags.length <= 1) return [{ part: node, tag: tags[0] ?? "", checkText: text }];
+    // The span each character falls in, walked once by UTF-8 byte offset.
+    // `owner[i]` is the language of UTF-16 unit `i`.
+    const owner = [];
+    let byte = 0;
+    let spanIndex = 0;
+    for (const ch of text) {
+      while (spanIndex < spans.length - 1 && byte >= spans[spanIndex].end) spanIndex += 1;
+      const tag = String(spans[spanIndex]?.language ?? "");
+      for (let unit = 0; unit < ch.length; unit += 1) owner.push(tag);
+      byte += UTF8_ENCODER.encode(ch).length;
+    }
+    const units = text.split("");
+    return tags.map((tag) => ({
+      part: `${node}${KEY_SEP}${tag}`,
+      tag,
+      checkText: units.map((unit, i) => (owner[i] === tag ? unit : " ")).join(""),
+    }));
   }
 
   // ---- The scan -------------------------------------------------------------
@@ -570,52 +620,57 @@ export function createSpellChecker(io) {
     // paragraph the edit changed (or one new to the window) is.
     for (const { node, text = "", language = "" } of windowRows(doc, pages)) {
       if (typeof node !== "string") continue;
-      const tag = language || io.defaultLanguage?.() || DEFAULT_SPELL_LANGUAGE;
-      const locale = dictionaryForLanguage(tag);
-      if (!locale) {
-        // No word list exists for this language at all. Grammar is English-only
-        // too, so there is nothing either pass can say about this paragraph —
-        // but the user must be told WHICH language, or an unchecked document is
-        // indistinguishable from a correct one.
-        missing = tag;
-        continue;
-      }
-      // Spelling runs only when its assets are actually usable. Grammar is
-      // decided from the text alone, so it runs regardless — which is the whole
-      // of the decoupling: a grammar mark never waits on, and is never withheld
-      // by, a word list it does not consult.
-      const spellingUsable =
-        spelling && assets.get(locale) === "ready" && glossaryState === "ready";
-      if (spelling && requestDictionary(locale) === "unavailable") failed = locale;
-      if (!spellingUsable && !grammar) continue;
+      for (const { part, tag: partTag, checkText } of languageParts(doc, node, text, language)) {
+        const tag = partTag || io.defaultLanguage?.() || DEFAULT_SPELL_LANGUAGE;
+        const locale = dictionaryForLanguage(tag);
+        if (!locale) {
+          // No word list exists for this language at all. Grammar is English-only
+          // too, so there is nothing either pass can say about this paragraph —
+          // but the user must be told WHICH language, or an unchecked document is
+          // indistinguishable from a correct one.
+          missing = tag;
+          continue;
+        }
+        // Spelling runs only when its assets are actually usable. Grammar is
+        // decided from the text alone, so it runs regardless — which is the whole
+        // of the decoupling: a grammar mark never waits on, and is never withheld
+        // by, a word list it does not consult.
+        const spellingUsable =
+          spelling && assets.get(locale) === "ready" && glossaryState === "ready";
+        if (spelling && requestDictionary(locale) === "unavailable") failed = locale;
+        if (!spellingUsable && !grammar) continue;
 
-      const revision = revisionFor(node, text);
-      const key = proofCacheKey({
-        documentId,
-        paragraphId: node,
-        paragraphRevision: revision,
-        locale,
-        packVersion: packVersionNow(),
-        settingsRevision: settingsRevisionFor(spelling, grammar),
-        // Increment C's document terminology profile. Constant until it exists;
-        // in the key now so that adding it later invalidates rather than serves
-        // stale answers (`docs/146` §4, ADR-042).
-        profileRevision: 0,
-      });
-      const row = { node, text, language: locale, key, misspellings: cache.get(key, text) };
-      if (!row.misspellings) {
-        row.misspellings = [];
-        ask.push({
-          paragraphId: node,
+        const revision = revisionFor(part, checkText);
+        const key = proofCacheKey({
+          documentId,
+          paragraphId: part,
           paragraphRevision: revision,
           locale,
-          text,
-          key,
-          spelling: spellingUsable,
+          packVersion: packVersionNow(),
+          settingsRevision: settingsRevisionFor(spelling, grammar),
+          // Increment C's document terminology profile. Constant until it exists;
+          // in the key now so that adding it later invalidates rather than serves
+          // stale answers (`docs/146` §4, ADR-042).
+          profileRevision: 0,
         });
+        // `text` is the paragraph's real text (offsets, painting, Ignore once);
+        // `checkText` is what the worker reads, the same text masked to this
+        // part's language when the paragraph mixes languages.
+        const row = { node, part, text, checkText, language: locale, key, misspellings: cache.get(key, checkText) };
+        if (!row.misspellings) {
+          row.misspellings = [];
+          ask.push({
+            paragraphId: part,
+            paragraphRevision: revision,
+            locale,
+            text: checkText,
+            key,
+            spelling: spellingUsable,
+          });
+        }
+        if (caret?.node === node) row.caretOffset = caret.offset;
+        next.push(row);
       }
-      if (caret?.node === node) row.caretOffset = caret.offset;
-      next.push(row);
     }
 
     const before = markerSignature(scanned);
@@ -695,7 +750,7 @@ export function createSpellChecker(io) {
       // STALENESS. The reply describes a past state by construction; this is
       // the one question that decides whether that past is still the present.
       if (!isFreshResult(result, { expectedKey })) continue;
-      const row = scanned.find((candidate) => candidate.node === result.paragraphId);
+      const row = scanned.find((candidate) => candidate.part === result.paragraphId);
       if (!row) continue;
       // The ONE place UTF-16 becomes UTF-8. Findings are JS string indices
       // everywhere else in this feature (`docs/146` §5).
@@ -706,7 +761,7 @@ export function createSpellChecker(io) {
         byteStart: byte(finding.start),
         byteEnd: byte(finding.end),
       }));
-      cache.set(row.key, row.text, row.misspellings);
+      cache.set(row.key, row.checkText, row.misspellings);
       changed = true;
     }
     // The scan runs on a timer and the reply lands later still — always AFTER
@@ -851,26 +906,28 @@ export function createSpellChecker(io) {
    *  the `kind` field says which of the two it is. */
   function misspellingAt(anchor) {
     if (!anchor?.node) return null;
-    const paragraph = scanned.find((candidate) => candidate.node === anchor.node);
-    if (!paragraph) return null;
     const offset = Number(anchor.offset) || 0;
-    for (const entry of paragraph.misspellings) {
-      if (offset < entry.byteStart || offset > entry.byteEnd) continue;
-      if (dismissed(entry, paragraph)) continue;
-      return {
-        kind: entry.kind,
-        ruleId: entry.ruleId,
-        message: entry.message,
-        replacements: entry.replacements ?? [],
-        suggestionsComplete: entry.suggestionsComplete !== false,
-        node: paragraph.node,
-        word: entry.word,
-        start: entry.byteStart,
-        end: entry.byteEnd,
-        language: paragraph.language,
-        paragraphText: paragraph.text,
-        index: entry.start,
-      };
+    // Every part of the paragraph: one per language it mixes (`languageParts`).
+    for (const paragraph of scanned) {
+      if (paragraph.node !== anchor.node) continue;
+      for (const entry of paragraph.misspellings) {
+        if (offset < entry.byteStart || offset > entry.byteEnd) continue;
+        if (dismissed(entry, paragraph)) continue;
+        return {
+          kind: entry.kind,
+          ruleId: entry.ruleId,
+          message: entry.message,
+          replacements: entry.replacements ?? [],
+          suggestionsComplete: entry.suggestionsComplete !== false,
+          node: paragraph.node,
+          word: entry.word,
+          start: entry.byteStart,
+          end: entry.byteEnd,
+          language: paragraph.language,
+          paragraphText: paragraph.text,
+          index: entry.start,
+        };
+      }
     }
     return null;
   }
@@ -962,7 +1019,7 @@ export function createSpellChecker(io) {
      *  that is not in here was not checked, and saying so is not the same as
      *  saying there is nothing wrong with it. */
     scannedNodes() {
-      return scanned.map((row) => row.node);
+      return [...new Set(scanned.map((row) => row.node))];
     },
 
     /** The findings for one paragraph, or for the whole window when `node` is

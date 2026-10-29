@@ -214,6 +214,14 @@ later is one registry entry. The editor commands `reference.noteSettings` and
 85 → 87): the first for the same reason, the second because converting a note's kind is an
 editorial decision and an agent already inserts the kind it means with `insert_note`.
 
+**Raised once more (2026-10-30):** `UI_NOT_EXPOSED_CEILING` 85 → 86 with the editor command
+`format.language`, Set Language on the selection (`109` RM-42). It adds no `Operation`: the
+language is one more field of the character patch inside `FormatText`, so `NOT_EXPOSED_CEILING`
+does not move. It is listed with `UI_CHARACTER` because `set_text_format` does not carry the
+character patch yet; when the formatting unification (§4.2 step 2) gives it that field, the
+entry leaves and the ceiling returns to 85. `insert.nonBreakingSpace`, the other editor command
+this change adds, needs no entry: inserting U+00A0 is `insert_text`, which now names it.
+
 **What "a feature inherits MCP" therefore means, concretely.** A developer adding, say,
 footnote insertion writes `InsertFootnote: Command` with its `lower()` (moved out of
 `lib.rs:4658`), adds one line to `commands!`, and points the editor's method at it. With no

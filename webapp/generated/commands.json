@@ -25,7 +25,8 @@
       "uiCommands": [
         "edit.pasteText",
         "insert.symbol",
-        "insert.emoji"
+        "insert.emoji",
+        "insert.nonBreakingSpace"
       ]
     },
     {
@@ -1642,6 +1643,10 @@
       "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
     },
     {
+      "id": "format.language",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
       "id": "format.painter",
       "reason": "Format painter copies the caret's formatting, a gesture with no document-addressed equivalent; an agent sets formatting with set_text_format."
     },
@@ -1943,9 +1948,13 @@
     }
   ],
 <<<<<<< HEAD
+<<<<<<< HEAD
   "uiNotExposedCeiling": 99,
 =======
   "uiNotExposedCeiling": 87,
 >>>>>>> origin/lane/parity-review-notes
+=======
+  "uiNotExposedCeiling": 86,
+>>>>>>> origin/lane/parity-autocorrect-language
   "vocabularyVersion": "1.5"
 }
