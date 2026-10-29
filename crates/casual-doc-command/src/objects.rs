@@ -26,6 +26,7 @@ use casual_doc_model::v1::{
     LockFlags, MAX_EMU, MediaId, MediaReference, ObjectLocks, Rgba, ShapeStroke, WrapMode,
     contained_inlines,
 };
+use casual_doc_model::v1::{DashStyle, LineEnd};
 
 fn next(ids: MintId<'_>) -> Result<NodeId, String> {
     ids().ok_or_else(|| "id space exhausted".to_owned())
@@ -521,6 +522,40 @@ pub fn set_shape_outline(
         None => None,
     };
     vec![Operation::SetShapeStroke { shape, stroke }]
+}
+
+/// Word's Shape Outline ▸ Dashes and ▸ Arrows (ONLYOFFICE's shape settings
+/// line type and begin/end arrow styles): rewrites the dash pattern and/or the
+/// two line ends of a shape's outline (or a picture's border), INHERITING the
+/// colour and the weight. Each argument is `None` to keep what the outline has,
+/// or `Some(value)` to set it, where `Some(None)` clears it (a solid line, no
+/// arrowhead). An unoutlined shape is given Word's black 0.75 pt line first, so
+/// choosing a dash is never a no-op (`docs/109` RM-30).
+///
+/// O(document) to read the current outline.
+#[must_use]
+pub fn set_shape_outline_style(
+    document: &Document,
+    shape: NodeId,
+    dash: Option<Option<DashStyle>>,
+    head_end: Option<Option<LineEnd>>,
+    tail_end: Option<Option<LineEnd>>,
+) -> Vec<Operation> {
+    let current = match find_shape(document, shape) {
+        Some(found) => found.stroke,
+        None => casual_doc_edit::picture_border(document, shape).flatten(),
+    };
+    let base = stroke_base(current, None);
+    let stroke = ShapeStroke {
+        dash: dash.unwrap_or(base.dash),
+        head_end: head_end.unwrap_or(base.head_end),
+        tail_end: tail_end.unwrap_or(base.tail_end),
+        ..base
+    };
+    vec![Operation::SetShapeStroke {
+        shape,
+        stroke: Some(stroke),
+    }]
 }
 
 #[cfg(test)]

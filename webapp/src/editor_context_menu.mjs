@@ -5,6 +5,7 @@
 import { buildObjectContextCommands } from "./object_context_menu.mjs";
 import { pictureToolCommands } from "./picture_tools.mjs";
 import { createObjectAlign } from "./object_align.mjs";
+import { outlineStyleCommands, readOutlineStyle } from "./shape_outline_style.mjs";
 import { editRefusalMessage } from "./edit_errors.mjs";
 import { formatShortcut } from "./keyboard.mjs";
 import { spellingContextCommands } from "./spell_check.mjs";
@@ -569,6 +570,20 @@ export function createContextMenu(ed) {
   const objectContextMenuHost = {
     reviewMode: () => ed.reviewMode,
     alignRows: (mutationEnabled, mutationReason) => objectAlign.rows(mutationEnabled, mutationReason),
+    outlineStyleCommands: (picture, mutationEnabled, mutationReason) => {
+      const node = ed.objectSelection?.node;
+      return outlineStyleCommands({
+        style: node ? readOutlineStyle(ed.doc.shapeFormat?.(node)) : null,
+        picture,
+        mutationEnabled,
+        mutationReason,
+        t,
+        apply: (dash, head, tail) => {
+          if (!node) return;
+          void ed.runEdit(() => ed.doc.setShapeOutlineStyle(node, dash, head, tail), { gate: true }).then(() => ed.reflectShapeSwatches());
+        },
+      });
+    },
     readOnlyReason: () => ed.readOnlyReason,
     wrapModes: () => WRAP_CHOICES.map((choice) => [choice.value, t(choice.key)]),
     positionPresets: () => POSITION_PRESETS.map((preset) => [preset.id, t(preset.key), preset]),

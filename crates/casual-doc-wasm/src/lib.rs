@@ -120,6 +120,7 @@ use casual_doc_model::v1::{CROP_FULL, CropRect};
 use casual_doc_model::v1::NoteId;
 use casual_doc_model::v1::NoteKind;
 use casual_doc_model::v1::PageVerticalAlignment;
+use casual_doc_model::v1::{DashStyle, LineEnd, LineEndKind};
 use casual_doc_model::v1::{DocumentProtection, DocumentProtectionEdit};
 use casual_doc_model::v1::{
     DropCapFrame, DropCapMode, FrameHorizontalAlignment, FrameHorizontalAnchor,
@@ -4577,6 +4578,9 @@ impl WasmDocument {
                     outline: border.map(|stroke| hex_of(stroke.color)),
                     #[allow(clippy::cast_precision_loss)] // EMU widths are far below 2^53
                     outline_width_emu: border.map(|stroke| stroke.width_emu as f64),
+                    outline_dash: border.map(dash_token),
+                    head_end: border.map(|stroke| line_end_token(stroke.head_end)),
+                    tail_end: border.map(|stroke| line_end_token(stroke.tail_end)),
                 }),
             );
         };
@@ -4585,6 +4589,9 @@ impl WasmDocument {
             outline: shape.stroke.map(|stroke| hex_of(stroke.color)),
             #[allow(clippy::cast_precision_loss)] // EMU widths are far below 2^53
             outline_width_emu: shape.stroke.map(|stroke| stroke.width_emu as f64),
+            outline_dash: shape.stroke.map(dash_token),
+            head_end: shape.stroke.map(|stroke| line_end_token(stroke.head_end)),
+            tail_end: shape.stroke.map(|stroke| line_end_token(stroke.tail_end)),
         }))
     }
 
@@ -4637,6 +4644,82 @@ impl WasmDocument {
             HistoryKind::Formatting,
         )
         .map_err(to_js)
+    }
+
+    /// Word's Shape Outline ▸ Dashes and ▸ Arrows, and ONLYOFFICE's line type and
+    /// begin / end arrow styles: sets the dash pattern and the two line ends of
+    /// a shape's outline or a picture's border, as one undoable action that keeps
+    /// the colour and the weight (`docs/109` RM-30).
+    ///
+    /// `dash` is a `DashStyle` token (`dot`, `dash`, `largeDash`, `dashDot`,
+    /// `largeDashDot`, `largeDashDotDot`, `systemDash`, `systemDot`, …) or
+    /// `solid` to clear the pattern; `head_end` / `tail_end` are a
+    /// `LineEndKind` token (`triangle`, `stealth`, `diamond`, `oval`, `arrow`)
+    /// or `none`. An omitted argument keeps what the outline has.
+    ///
+    /// # Errors
+    ///
+    /// An unknown token, or a `shape` that is not a shape or a picture.
+    #[wasm_bindgen(js_name = setShapeOutlineStyle)]
+    pub fn set_shape_outline_style(
+        &mut self,
+        shape: &str,
+        dash: Option<String>,
+        head_end: Option<String>,
+        tail_end: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        self.set_shape_outline_style_inner(
+            shape,
+            dash.as_deref(),
+            head_end.as_deref(),
+            tail_end.as_deref(),
+        )
+        .map_err(to_js)
+    }
+
+    /// [`set_shape_outline_style`](Self::set_shape_outline_style) with a plain
+    /// error, so its refusals are reachable from a native test.
+    pub(crate) fn set_shape_outline_style_inner(
+        &mut self,
+        shape: &str,
+        dash: Option<&str>,
+        head_end: Option<&str>,
+        tail_end: Option<&str>,
+    ) -> Result<EditResult, String> {
+        let node = NodeId::from_str(shape).map_err(|_| "invalid node id".to_owned())?;
+        if find_shape(&self.document, node).is_none()
+            && casual_doc_edit::picture_border(&self.document, node).is_none()
+        {
+            return Err(SHAPE_OUTLINE_NOT_A_SHAPE.to_owned());
+        }
+        let dash = match dash {
+            None => None,
+            Some("solid") => Some(None),
+            Some(token) => Some(Some(outline_token::<DashStyle>(token)?)),
+        };
+        let end = |token: Option<&str>| -> Result<Option<Option<LineEnd>>, String> {
+            Ok(match token {
+                None => None,
+                Some("none") => Some(None),
+                Some(token) => Some(Some(LineEnd {
+                    kind: outline_token::<LineEndKind>(token)?,
+                    width: None,
+                    length: None,
+                })),
+            })
+        };
+        let head_end = end(head_end)?;
+        let tail_end = end(tail_end)?;
+        self.apply_action_as(
+            casual_doc_command::objects::set_shape_outline_style(
+                &self.document,
+                node,
+                dash,
+                head_end,
+                tail_end,
+            ),
+            HistoryKind::Formatting,
+        )
     }
 
     /// Whether the first page of the section owning `page` uses its own
@@ -22734,6 +22817,32 @@ pub struct ShapeFormat {
     /// back to `setShapeOutline`, which is exactly what the host does with it.
     #[wasm_bindgen(js_name = outlineWidthEmu)]
     pub outline_width_emu: Option<f64>,
+    /// The outline's dash token (`solid` when unpatterned), when it has an
+    /// outline — what Shape Outline ▸ Dashes checks (`docs/109` RM-30).
+    #[wasm_bindgen(js_name = outlineDash)]
+    pub outline_dash: Option<String>,
+    /// The start line end's token (`none` when bare), when it has an outline.
+    #[wasm_bindgen(js_name = headEnd)]
+    pub head_end: Option<String>,
+    /// The end line end's token (`none` when bare), when it has an outline.
+    #[wasm_bindgen(js_name = tailEnd)]
+    pub tail_end: Option<String>,
+}
+
+/// A stroke's dash as the token `setShapeOutlineStyle` takes. O(1).
+fn dash_token(stroke: ShapeStroke) -> String {
+    stroke
+        .dash
+        .and_then(|dash| serde_json::to_value(dash).ok())
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "solid".to_owned())
+}
+
+/// A line end as the token `setShapeOutlineStyle` takes. O(1).
+fn line_end_token(end: Option<LineEnd>) -> String {
+    end.and_then(|end| serde_json::to_value(end.kind).ok())
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "none".to_owned())
 }
 
 /// `#rrggbb` for a shape colour, dropping alpha (the picker applies opaque).
@@ -22783,6 +22892,19 @@ fn running_region(region: &str) -> Option<RunningRegion> {
 
 /// A shape colour from the host: `#rrggbb`, opaque. Shapes carry [`Rgba`] rather
 /// than the run-level [`RgbColor`], so this lifts the shared hex parser.
+/// `setShapeOutlineStyle`'s refusal for a node that carries no outline.
+const SHAPE_OUTLINE_NOT_A_SHAPE: &str = refused!(
+    "shape.outline-not-a-shape",
+    "Only a shape or a picture has an outline to style."
+);
+
+/// A model token (`DashStyle`, `LineEndKind`) from the host, through the
+/// type's own serde names so the two vocabularies cannot drift. O(token).
+fn outline_token<T: serde::de::DeserializeOwned>(token: &str) -> Result<T, String> {
+    serde_json::from_value(serde_json::Value::String(token.to_owned()))
+        .map_err(|_| format!("unknown outline style {token:?}"))
+}
+
 fn shape_rgba(hex: &str) -> Result<Rgba, JsValue> {
     let rgb =
         parse_hex_color(hex).ok_or_else(|| JsValue::from_str(&format!("invalid color: {hex}")))?;
@@ -36334,6 +36456,76 @@ mod tests {
         assert_eq!(after.color.g, 0xff);
         assert_eq!(after.dash, Some(DashStyle::Dash), "the dash must survive");
         assert_eq!(after.width_emu, 12_700, "the width is inherited too");
+    }
+
+    /// RM-30: Shape Outline ▸ Dashes and ▸ Arrows set the pattern and the line
+    /// ends and keep the colour and the weight; an unoutlined shape gets Word's
+    /// 0.75 pt black line so the choice is visible; `solid` and `none` clear;
+    /// one undo restores the outline.
+    ///
+    /// Mutation: building the stroke from `stroke_base(None, None)` instead of
+    /// the current outline loses the colour, and the colour assertion fails.
+    #[test]
+    fn dashes_and_arrows_restyle_an_outline_and_keep_its_colour() {
+        let red = ShapeStroke {
+            color: Rgba {
+                r: 0xcc,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            width_emu: 25_400,
+            dash: None,
+            head_end: None,
+            tail_end: None,
+        };
+        let mut d = wasm_document(document_with_shape(Some(red)));
+        let id = NodeId::from_parts(9, 4).unwrap();
+        let shape = id.to_string();
+        let stroke = |d: &WasmDocument| find_shape(&d.document, id).and_then(|s| s.stroke);
+
+        d.set_shape_outline_style_inner(&shape, Some("largeDashDot"), None, Some("triangle"))
+            .expect("dash the outline and give it an end arrow");
+        let after = stroke(&d).expect("still outlined");
+        assert_eq!(after.dash, Some(DashStyle::LargeDashDot));
+        assert_eq!(
+            after.tail_end.map(|end| end.kind),
+            Some(LineEndKind::Triangle)
+        );
+        assert_eq!(after.head_end, None, "the start was not asked about");
+        assert_eq!(
+            (after.color.r, after.width_emu),
+            (0xcc, 25_400),
+            "colour and weight kept"
+        );
+
+        d.set_shape_outline_style_inner(&shape, Some("solid"), Some("stealth"), Some("none"))
+            .expect("solid, with a start arrow only");
+        let after = stroke(&d).expect("still outlined");
+        assert_eq!(after.dash, None, "solid clears the pattern");
+        assert_eq!(
+            after.head_end.map(|end| end.kind),
+            Some(LineEndKind::Stealth)
+        );
+        assert_eq!(after.tail_end, None, "none clears the end");
+
+        d.undo().expect("undo");
+        assert_eq!(
+            stroke(&d).and_then(|s| s.dash),
+            Some(DashStyle::LargeDashDot)
+        );
+
+        assert!(
+            d.set_shape_outline_style_inner(&shape, Some("wavy"), None, None)
+                .is_err(),
+            "an unknown token is refused, not ignored"
+        );
+
+        let mut bare = wasm_document(document_with_shape(None));
+        bare.set_shape_outline_style_inner(&shape, Some("dot"), None, None)
+            .expect("dot an unoutlined shape");
+        let given = stroke(&bare).expect("the dash gives it an outline");
+        assert_eq!((given.dash, given.width_emu), (Some(DashStyle::Dot), 9_525));
     }
 
     /// Word's Weight submenu never asks for a colour: choosing one on a shape

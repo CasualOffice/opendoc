@@ -47,6 +47,8 @@
 //   `enterCrop()`          enter crop mode on a picture
 //   `changePicture()`      Word's Change Picture: pick a file for the picture
 //   `alignRows(enabled, reason)` the Align submenu (`object_align.mjs`)
+//   `outlineStyleCommands(picture, enabled, reason)` Dashes and Arrows
+//                          (`shape_outline_style.mjs`)
 //   `pictureToolCommands(enabled, reason)` the picture-tool rows
 //                          (`picture_tools.mjs`) for the selected picture
 //   `openProperties()`     open the object inspector
@@ -307,6 +309,10 @@ export function buildObjectContextCommands(context, io) {
             id: `object.outline.${hex}`,
             run: () => io.applyShapeOutline({ color: hex }),
           })),
+          // Word's Dashes and Arrows (`shape_outline_style.mjs`, RM-30).
+          ...(typeof io.outlineStyleCommands === "function"
+            ? io.outlineStyleCommands(picture, mutationEnabled, mutationReason)
+            : []),
         ],
       });
     }
