@@ -86,7 +86,10 @@ test("typed underline can be armed at a caret and typed as one undoable action",
   expect(consoleErrors).toEqual([]);
 });
 
-test("Suggesting mode rejects typed underline authoring instead of flattening it", async ({
+// HF-255. Suggesting mode used to refuse an underline style or colour with "not
+// tracked yet". The tracked-format delta carries both, so the change is now a
+// SUGGESTION: it shows, and rejecting it puts the run back.
+test("Suggesting mode records an underline style as a suggestion, and Reject undoes it", async ({
   page,
   consoleErrors,
 }) => {
@@ -99,7 +102,17 @@ test("Suggesting mode rejects typed underline authoring instead of flattening it
 
   const menu = await openUnderlineMenu(page);
   await menu.locator('[data-underline-style="thick"]').click();
-  await expect(page.locator("#status")).toContainText("not tracked yet");
+  await expect(page.locator("#status")).not.toContainText("not tracked yet");
+  await expect(page.locator("#underline")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#underline")).toHaveAttribute("data-underline-style", "thick");
+
+  // It is a tracked change, not a silent direct edit: rejecting every change
+  // returns the selection to what it was.
+  await page.locator('[data-tab="review"]').click();
+  await page.locator("#reviewRejectAllBtn").click();
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+  await selectForward(page, 4);
   await expect(page.locator("#underline")).toHaveAttribute("aria-pressed", before);
   expect(consoleErrors).toEqual([]);
 });

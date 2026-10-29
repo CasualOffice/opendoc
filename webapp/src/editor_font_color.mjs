@@ -131,29 +131,39 @@ export function createFontColor(ed) {
   const highlightPopover = registerPopover(ed.highlightCaret, ed.highlightMenu, () => renderColorMenu("highlight"));
   const underlinePopover = registerPopover(ed.underlineMenuBtn, ed.underlineMenu, renderUnderlineMenu);
 
-  function underlineEditBlockedByReview() {
-    if (ed.reviewMode !== "suggesting") return false;
-    ed.setStatus(
-      "Underline style and color are not tracked yet; switch to Editing to apply them",
-      "error",
+  // HF-255. Suggesting mode used to refuse an underline style or colour with
+  // "not tracked yet"; the tracked-format delta carries both, so a range now
+  // records a suggestion (`suggestUnderline`) and a caret arms the format, which
+  // `typeArmedCharacter` types as a tracked insert. Word tracks both as a
+  // formatting change; so does this.
+  function applyUnderlineRange(style, color, direct) {
+    if (ed.reviewMode !== "suggesting") return direct();
+    return ed.runToolbarEdit(
+      (a, b, c, d) => ed.doc.suggestUnderline(a, b, c, d, style, color, new Date().toISOString()),
+      { allowInSuggesting: true },
     );
-    return true;
+  }
+
+  function armOrApplyUnderline(patch, style, color, direct) {
+    if (ed.hasRange()) return applyUnderlineRange(style, color, direct);
+    if (ed.selection) {
+      ed.pendingFormat = { ...(ed.pendingFormat || {}), ...patch };
+      ed.updateToolbar();
+    }
   }
 
   function applyUnderlineStyle(style) {
-    if (underlineEditBlockedByReview()) return;
     const patch = style === "none"
       ? { underline: false, underlineStyle: "single", underlineColor: "" }
       : { underline: true, underlineStyle: style };
-    ed.armOrApplyRun(patch, () =>
+    armOrApplyUnderline(patch, style, undefined, () =>
       ed.runToolbarEdit((a, b, c, d) => ed.doc.setUnderlineStyle(a, b, c, d, style)),
     );
   }
 
   function applyUnderlineColor(color) {
-    if (underlineEditBlockedByReview()) return;
     const patch = color ? { underline: true, underlineColor: color } : { underlineColor: "" };
-    ed.armOrApplyRun(patch, () =>
+    armOrApplyUnderline(patch, undefined, color, () =>
       ed.runToolbarEdit((a, b, c, d) => ed.doc.setUnderlineColor(a, b, c, d, color)),
     );
   }
