@@ -470,6 +470,8 @@ fn document_with_chart() -> Document {
             height_emu: 685_800,
         },
         prog_id: None,
+        anchor: None,
+        relative_height: None,
     }));
     let body = vec![BlockNode::Paragraph(Paragraph {
         id: node(2),

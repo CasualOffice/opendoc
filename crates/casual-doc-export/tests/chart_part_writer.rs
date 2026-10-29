@@ -74,6 +74,8 @@ fn chart_object(object: NodeId) -> EmbeddedObject {
             height_emu: 2_743_200,
         },
         prog_id: None,
+        anchor: None,
+        relative_height: None,
     }
 }
 

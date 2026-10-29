@@ -4,7 +4,9 @@ import {
   DEFAULT_CHART_KIND,
   chartInsertFailure,
   insertChartAtCaret,
+  insertChartTypeCommands,
 } from "../src/chart_insert.mjs";
+import { CHART_TYPE_GROUPS } from "../src/chart_commands.mjs";
 
 // The whole insert PATH, refusals included — which is the point of injecting
 // `main.js`'s state rather than reaching for it. `insertChart` existed in the
@@ -79,4 +81,25 @@ test("a failure with no message still says something", () => {
   assert.equal(chartInsertFailure(new Error("")), "Could not insert the chart.");
   assert.equal(chartInsertFailure(undefined), "Could not insert the chart.");
   assert.equal(chartInsertFailure("boom"), "boom");
+});
+
+// HF-258: the Insert ▸ Chart type picker. Mutation: dropping the `kind` default
+// parameter's use (inserting DEFAULT_CHART_KIND whatever was picked) fails the
+// first test; building the picker from a hand list that omits a family fails
+// the second.
+test("a picked type reaches the engine as that type, not as the default", async () => {
+  const h = harness();
+  await insertChartAtCaret({ ...h.deps, kind: "pie" });
+  assert.deepEqual(h.calls.insert, [["n1", 3, "pie"]]);
+});
+
+test("the insert picker offers every type the Change-type menu offers, grouped by family, and each row inserts its own type", () => {
+  const picked = [];
+  const rows = insertChartTypeCommands((key) => `<${key}>`, (kind) => picked.push(kind));
+  const expected = CHART_TYPE_GROUPS.flatMap((group) => group.kinds);
+  assert.deepEqual(rows.map((row) => row.id), expected.map((kind) => `insert.chart.${kind}`));
+  assert.ok(rows.every((row) => row.enabled && row.label.startsWith("<chart.kind.")), "every row is labelled from the catalogue");
+  assert.equal(new Set(rows.map((row) => row.group)).size, CHART_TYPE_GROUPS.length, "one menu group per family");
+  for (const row of rows) row.run();
+  assert.deepEqual(picked, expected);
 });

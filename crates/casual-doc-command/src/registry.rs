@@ -813,7 +813,7 @@ pub const COMMANDS: &[Command] = &[
         emits: &["InsertInlineObject", "SetChartDefinition"],
         trackable: Trackable::No(INLINE_NOT_TRACKABLE),
         example: r#"{"op":"insert_chart","at":{"node":"1:2","side":"after"},"kind":"column"}"#,
-        ui_commands: &["insert.chart"],
+        ui_commands: &["insert.chart", "insert.chart."],
     },
     Command {
         id: "insert_table_of_contents",

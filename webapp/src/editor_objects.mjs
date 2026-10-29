@@ -277,8 +277,9 @@ export function createObjects(ed) {
     selectTab: (name) => ed.selectRibbonTab(name),
     t,
   });
-  /** Insert ▸ Chart, as ONLYOFFICE and Word do it: the chart lands SELECTED with its data open. */
-  const insertChartWithData = () => chartSurface.insertAndOpen(() => insertChartAtCaret({ doc: ed.doc, caret: ed.selection?.focus, blocked: ed.blockMutationInViewing, suggesting: () => ed.reviewMode === "suggesting", status: ed.setStatus, apply: ed.applyEditResult }), (chart) => selectObject(chart.node, chart.kind, null, chart.anchored, chart));
+  /** Insert ▸ Chart, as ONLYOFFICE and Word do it: the chart lands SELECTED with its data open.
+   *  `kind` is the picker's family token; anything else (a click event) is Word's default. */
+  const insertChartWithData = (kind) => chartSurface.insertAndOpen(() => insertChartAtCaret({ doc: ed.doc, caret: ed.selection?.focus, blocked: ed.blockMutationInViewing, suggesting: () => ed.reviewMode === "suggesting", status: ed.setStatus, apply: ed.applyEditResult, kind: typeof kind === "string" ? kind : undefined }), (chart) => selectObject(chart.node, chart.kind, null, chart.anchored, chart));
   const positionObjectContextBar = () => objectBar.reposition();
 
   /** Every arrange fact about the selected object, gathered in ONE pass per

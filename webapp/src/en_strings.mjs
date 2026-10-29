@@ -327,6 +327,7 @@ export const EN_STRINGS = Object.freeze({
   "list.reason.nothingToContinue": "There is no earlier numbered list to continue",
   "insert.reason.linkNeedsText": "Select text to add a link",
   "insert.chart": "Chart",
+  "insert.chartOfType": "Insert chart: {type}",
   // A disabled control has one channel — its title — and it must say what to
   // DO, not repeat what the control would have done. This one used to borrow
   // the margin button's own label, which describes the action rather than the
@@ -1522,6 +1523,33 @@ export const EN_STRINGS = Object.freeze({
   "shape.drawHint": "Drag on the page to draw the shape · click for the default size · Esc to cancel",
   "shape.drawCancelled": "Drawing cancelled",
   "shape.added": "{shape} added",
+  // Shape Outline ▸ Dashes and ▸ Arrows (`shape_outline_style.mjs`, RM-30): Word's names.
+  "shape.dashes": "Dashes",
+  "shape.dash.solid": "Solid",
+  "shape.dash.roundDot": "Round dot",
+  "shape.dash.squareDot": "Square dot",
+  "shape.dash.dash": "Dash",
+  "shape.dash.dashDot": "Dash dot",
+  "shape.dash.longDash": "Long dash",
+  "shape.dash.longDashDot": "Long dash dot",
+  "shape.dash.longDashDotDot": "Long dash dot dot",
+  "shape.arrows": "Arrows",
+  "shape.arrows.none": "No arrows",
+  "shape.arrows.end": "Arrow at end",
+  "shape.arrows.start": "Arrow at start",
+  "shape.arrows.both": "Arrows at both ends",
+  "shape.arrows.openEnd": "Open arrow at end",
+  "shape.arrows.stealthEnd": "Stealth arrow at end",
+  "shape.arrows.diamondEnd": "Diamond at end",
+  "shape.arrows.ovalEnd": "Round end",
+  // Shape Fill ▸ Gradient (`shape_gradient.mjs`, RM-30): Word's directions.
+  "shape.gradient": "Gradient",
+  "shape.gradient.linearDown": "Linear down",
+  "shape.gradient.linearUp": "Linear up",
+  "shape.gradient.linearRight": "Linear right",
+  "shape.gradient.linearLeft": "Linear left",
+  "shape.gradient.linearDiagonal": "Linear diagonal",
+  "shape.gradient.fromCenter": "From center",
   // Wrap. “In line” is the mode an inserted picture STARTS in, so it leads the
   // row — Google Docs puts it first for the same reason.
   "object.wrap.inline": "In line",
@@ -1549,6 +1577,23 @@ export const EN_STRINGS = Object.freeze({
   // Stacking. One engine op behind four commands, because “forward” and “to
   // front” are different intentions even when a document has two objects.
   "object.arrange": "Arrange",
+  // Arrange ▸ Align (`object_align.mjs`, RM-28): Word's and ONLYOFFICE's rows.
+  "object.align": "Align",
+  "object.align.left": "Align left",
+  "object.align.center": "Align center",
+  "object.align.right": "Align right",
+  "object.align.top": "Align top",
+  "object.align.middle": "Align middle",
+  "object.align.bottom": "Align bottom",
+  "object.align.distributeHorizontally": "Distribute horizontally",
+  "object.align.distributeVertically": "Distribute vertically",
+  "object.align.toPage": "Align to page",
+  "object.align.toMargin": "Align to margin",
+  "object.align.toSelected": "Align selected objects",
+  "object.align.aligned": "Objects aligned",
+  "object.align.distributed": "Objects distributed",
+  "object.align.reason.selectMore": "Hold {modifier} and click another object to align them to each other",
+  "object.align.reason.selectThree": "Hold {modifier} and click to select three or more objects to distribute them",
   "object.z.front": "Bring to front",
   "object.z.forward": "Bring forward",
   "object.z.backward": "Send backward",
@@ -1583,6 +1628,9 @@ export const EN_STRINGS = Object.freeze({
   // menu row is the second surface, because a gesture nobody told you about is
   // not reachable.
   "object.addText": "Add text",
+  // Change Shape (RM-30): Word's Edit Shape ▸ Change Shape.
+  "object.changeShape": "Change shape",
+  "object.changeShape.done": "Shape changed",
   "object.addText.notAShape": "Only a shape can hold text this way",
   // Word's Change Picture (`docs/109` HF-252). The status line says what was
   // KEPT, and asks for the one check a person must make: alt text written for
@@ -1609,6 +1657,21 @@ export const EN_STRINGS = Object.freeze({
   // Word's Picture Border: a picture's outline, under Word's name for it (HF-254).
   "object.pictureBorder": "Picture border",
   "object.pictureBorder.short": "Border",
+  // The picture tools beside Crop (`picture_tools.mjs`, RM-29): ONLYOFFICE's
+  // Crop ▸ Fill / Fit, Reset crop and Actual Size.
+  "object.picture.cropFill": "Crop to fill",
+  "object.picture.cropFit": "Crop to fit",
+  "object.picture.resetCrop": "Reset crop",
+  "object.picture.resetSize": "Reset to actual size",
+  "object.picture.cropFilled": "Picture cropped to fill its frame",
+  "object.picture.cropFitted": "Whole picture fitted inside its frame",
+  "object.picture.cropReset": "Crop removed",
+  "object.picture.sizeReset": "Picture set to its actual size",
+  "object.picture.reason.noNaturalSize": "This picture's original size cannot be read from its file",
+  "object.picture.reason.notCropped": "The picture is not cropped",
+  "object.picture.saveAs": "Save as picture",
+  "object.picture.fileName": "Picture",
+  "object.picture.reason.noFile": "This picture's image file is not in the document",
   // Crop mode's arrows move the kept area; with nothing cropped there is nothing
   // to move, and the key says so rather than doing nothing (`docs/104` HF-106).
   "object.crop.nothingToMove": "Crop an edge first — the arrow keys then move the cropped area",

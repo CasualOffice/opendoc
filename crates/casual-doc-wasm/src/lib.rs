@@ -120,6 +120,7 @@ use casual_doc_model::v1::{CROP_FULL, CropRect};
 use casual_doc_model::v1::NoteId;
 use casual_doc_model::v1::NoteKind;
 use casual_doc_model::v1::PageVerticalAlignment;
+use casual_doc_model::v1::{DashStyle, LineEnd, LineEndKind};
 use casual_doc_model::v1::{DocumentProtection, DocumentProtectionEdit};
 use casual_doc_model::v1::{
     DropCapFrame, DropCapMode, FrameHorizontalAlignment, FrameHorizontalAnchor,
@@ -164,6 +165,10 @@ mod window;
 // the same reason as `references`: one feature, one document walk per command,
 // and this file is already 40k lines and is owned by other lanes.
 mod objects;
+
+// Arrange ▸ Align and Distribute over floating objects (`docs/109` RM-28): one
+// command, emitted as `SetAnchor`s in one action.
+mod object_align;
 
 // Moving an in-line object to a new place in the text (`docs/109` UX-OB-02).
 // Its own module for the reason `objects` gives, and because the whole feature
@@ -4573,6 +4578,9 @@ impl WasmDocument {
                     outline: border.map(|stroke| hex_of(stroke.color)),
                     #[allow(clippy::cast_precision_loss)] // EMU widths are far below 2^53
                     outline_width_emu: border.map(|stroke| stroke.width_emu as f64),
+                    outline_dash: border.map(dash_token),
+                    head_end: border.map(|stroke| line_end_token(stroke.head_end)),
+                    tail_end: border.map(|stroke| line_end_token(stroke.tail_end)),
                 }),
             );
         };
@@ -4581,6 +4589,9 @@ impl WasmDocument {
             outline: shape.stroke.map(|stroke| hex_of(stroke.color)),
             #[allow(clippy::cast_precision_loss)] // EMU widths are far below 2^53
             outline_width_emu: shape.stroke.map(|stroke| stroke.width_emu as f64),
+            outline_dash: shape.stroke.map(dash_token),
+            head_end: shape.stroke.map(|stroke| line_end_token(stroke.head_end)),
+            tail_end: shape.stroke.map(|stroke| line_end_token(stroke.tail_end)),
         }))
     }
 
@@ -4602,6 +4613,61 @@ impl WasmDocument {
             HistoryKind::Formatting,
         )
         .map_err(to_js)
+    }
+
+    /// Word's Shape Fill ▸ Gradient: fills a shape with a two-stop gradient from
+    /// `from` to `to` (`#rrggbb`), linear along `angle_degrees` clockwise from
+    /// the positive x-axis, or radial from the centre when it is omitted — one
+    /// undoable action (`docs/109` RM-30).
+    ///
+    /// # Errors
+    ///
+    /// A malformed colour, or a `shape` that is not a shape (a picture has no
+    /// fill to set).
+    #[wasm_bindgen(js_name = setShapeGradient)]
+    pub fn set_shape_gradient(
+        &mut self,
+        shape: &str,
+        from: &str,
+        to: &str,
+        angle_degrees: Option<f64>,
+    ) -> Result<EditResult, JsValue> {
+        self.set_shape_gradient_inner(shape, from, to, angle_degrees)
+            .map_err(to_js)
+    }
+
+    /// [`set_shape_gradient`](Self::set_shape_gradient) with a plain error, for
+    /// native tests.
+    pub(crate) fn set_shape_gradient_inner(
+        &mut self,
+        shape: &str,
+        from: &str,
+        to: &str,
+        angle_degrees: Option<f64>,
+    ) -> Result<EditResult, String> {
+        let node = NodeId::from_str(shape).map_err(|_| "invalid node id".to_owned())?;
+        if find_shape(&self.document, node).is_none() {
+            return Err(SHAPE_FILL_NOT_A_SHAPE.to_owned());
+        }
+        let colour = |hex: &str| {
+            parse_hex_color(hex)
+                .map(|rgb| Rgba {
+                    r: rgb.r,
+                    g: rgb.g,
+                    b: rgb.b,
+                    a: 255,
+                })
+                .ok_or_else(|| format!("invalid color: {hex}"))
+        };
+        self.apply_action_as(
+            casual_doc_command::objects::set_shape_gradient(
+                node,
+                colour(from)?,
+                colour(to)?,
+                angle_degrees,
+            ),
+            HistoryKind::Formatting,
+        )
     }
 
     /// Word's Shape Outline: sets a shape's outline colour and width (EMU), or
@@ -4633,6 +4699,82 @@ impl WasmDocument {
             HistoryKind::Formatting,
         )
         .map_err(to_js)
+    }
+
+    /// Word's Shape Outline ▸ Dashes and ▸ Arrows, and ONLYOFFICE's line type and
+    /// begin / end arrow styles: sets the dash pattern and the two line ends of
+    /// a shape's outline or a picture's border, as one undoable action that keeps
+    /// the colour and the weight (`docs/109` RM-30).
+    ///
+    /// `dash` is a `DashStyle` token (`dot`, `dash`, `largeDash`, `dashDot`,
+    /// `largeDashDot`, `largeDashDotDot`, `systemDash`, `systemDot`, …) or
+    /// `solid` to clear the pattern; `head_end` / `tail_end` are a
+    /// `LineEndKind` token (`triangle`, `stealth`, `diamond`, `oval`, `arrow`)
+    /// or `none`. An omitted argument keeps what the outline has.
+    ///
+    /// # Errors
+    ///
+    /// An unknown token, or a `shape` that is not a shape or a picture.
+    #[wasm_bindgen(js_name = setShapeOutlineStyle)]
+    pub fn set_shape_outline_style(
+        &mut self,
+        shape: &str,
+        dash: Option<String>,
+        head_end: Option<String>,
+        tail_end: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        self.set_shape_outline_style_inner(
+            shape,
+            dash.as_deref(),
+            head_end.as_deref(),
+            tail_end.as_deref(),
+        )
+        .map_err(to_js)
+    }
+
+    /// [`set_shape_outline_style`](Self::set_shape_outline_style) with a plain
+    /// error, so its refusals are reachable from a native test.
+    pub(crate) fn set_shape_outline_style_inner(
+        &mut self,
+        shape: &str,
+        dash: Option<&str>,
+        head_end: Option<&str>,
+        tail_end: Option<&str>,
+    ) -> Result<EditResult, String> {
+        let node = NodeId::from_str(shape).map_err(|_| "invalid node id".to_owned())?;
+        if find_shape(&self.document, node).is_none()
+            && casual_doc_edit::picture_border(&self.document, node).is_none()
+        {
+            return Err(SHAPE_OUTLINE_NOT_A_SHAPE.to_owned());
+        }
+        let dash = match dash {
+            None => None,
+            Some("solid") => Some(None),
+            Some(token) => Some(Some(outline_token::<DashStyle>(token)?)),
+        };
+        let end = |token: Option<&str>| -> Result<Option<Option<LineEnd>>, String> {
+            Ok(match token {
+                None => None,
+                Some("none") => Some(None),
+                Some(token) => Some(Some(LineEnd {
+                    kind: outline_token::<LineEndKind>(token)?,
+                    width: None,
+                    length: None,
+                })),
+            })
+        };
+        let head_end = end(head_end)?;
+        let tail_end = end(tail_end)?;
+        self.apply_action_as(
+            casual_doc_command::objects::set_shape_outline_style(
+                &self.document,
+                node,
+                dash,
+                head_end,
+                tail_end,
+            ),
+            HistoryKind::Formatting,
+        )
     }
 
     /// Whether the first page of the section owning `page` uses its own
@@ -22730,6 +22872,32 @@ pub struct ShapeFormat {
     /// back to `setShapeOutline`, which is exactly what the host does with it.
     #[wasm_bindgen(js_name = outlineWidthEmu)]
     pub outline_width_emu: Option<f64>,
+    /// The outline's dash token (`solid` when unpatterned), when it has an
+    /// outline — what Shape Outline ▸ Dashes checks (`docs/109` RM-30).
+    #[wasm_bindgen(js_name = outlineDash)]
+    pub outline_dash: Option<String>,
+    /// The start line end's token (`none` when bare), when it has an outline.
+    #[wasm_bindgen(js_name = headEnd)]
+    pub head_end: Option<String>,
+    /// The end line end's token (`none` when bare), when it has an outline.
+    #[wasm_bindgen(js_name = tailEnd)]
+    pub tail_end: Option<String>,
+}
+
+/// A stroke's dash as the token `setShapeOutlineStyle` takes. O(1).
+fn dash_token(stroke: ShapeStroke) -> String {
+    stroke
+        .dash
+        .and_then(|dash| serde_json::to_value(dash).ok())
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "solid".to_owned())
+}
+
+/// A line end as the token `setShapeOutlineStyle` takes. O(1).
+fn line_end_token(end: Option<LineEnd>) -> String {
+    end.and_then(|end| serde_json::to_value(end.kind).ok())
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "none".to_owned())
 }
 
 /// `#rrggbb` for a shape colour, dropping alpha (the picker applies opaque).
@@ -22779,6 +22947,25 @@ fn running_region(region: &str) -> Option<RunningRegion> {
 
 /// A shape colour from the host: `#rrggbb`, opaque. Shapes carry [`Rgba`] rather
 /// than the run-level [`RgbColor`], so this lifts the shared hex parser.
+/// `setShapeOutlineStyle`'s refusal for a node that carries no outline.
+const SHAPE_OUTLINE_NOT_A_SHAPE: &str = refused!(
+    "shape.outline-not-a-shape",
+    "Only a shape or a picture has an outline to style."
+);
+
+/// `setShapeGradient`'s refusal for a node that has no fill to set.
+const SHAPE_FILL_NOT_A_SHAPE: &str = refused!(
+    "shape.fill-not-a-shape",
+    "Only a shape has a fill. A picture's look is its image."
+);
+
+/// A model token (`DashStyle`, `LineEndKind`) from the host, through the
+/// type's own serde names so the two vocabularies cannot drift. O(token).
+fn outline_token<T: serde::de::DeserializeOwned>(token: &str) -> Result<T, String> {
+    serde_json::from_value(serde_json::Value::String(token.to_owned()))
+        .map_err(|_| format!("unknown outline style {token:?}"))
+}
+
 fn shape_rgba(hex: &str) -> Result<Rgba, JsValue> {
     let rgb =
         parse_hex_color(hex).ok_or_else(|| JsValue::from_str(&format!("invalid color: {hex}")))?;
@@ -36332,6 +36519,205 @@ mod tests {
         assert_eq!(after.width_emu, 12_700, "the width is inherited too");
     }
 
+    /// RM-30: Shape Outline ▸ Dashes and ▸ Arrows set the pattern and the line
+    /// ends and keep the colour and the weight; an unoutlined shape gets Word's
+    /// 0.75 pt black line so the choice is visible; `solid` and `none` clear;
+    /// one undo restores the outline.
+    ///
+    /// Mutation: building the stroke from `stroke_base(None, None)` instead of
+    /// the current outline loses the colour, and the colour assertion fails.
+    #[test]
+    fn dashes_and_arrows_restyle_an_outline_and_keep_its_colour() {
+        let red = ShapeStroke {
+            color: Rgba {
+                r: 0xcc,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            width_emu: 25_400,
+            dash: None,
+            head_end: None,
+            tail_end: None,
+        };
+        let mut d = wasm_document(document_with_shape(Some(red)));
+        let id = NodeId::from_parts(9, 4).unwrap();
+        let shape = id.to_string();
+        let stroke = |d: &WasmDocument| find_shape(&d.document, id).and_then(|s| s.stroke);
+
+        d.set_shape_outline_style_inner(&shape, Some("largeDashDot"), None, Some("triangle"))
+            .expect("dash the outline and give it an end arrow");
+        let after = stroke(&d).expect("still outlined");
+        assert_eq!(after.dash, Some(DashStyle::LargeDashDot));
+        assert_eq!(
+            after.tail_end.map(|end| end.kind),
+            Some(LineEndKind::Triangle)
+        );
+        assert_eq!(after.head_end, None, "the start was not asked about");
+        assert_eq!(
+            (after.color.r, after.width_emu),
+            (0xcc, 25_400),
+            "colour and weight kept"
+        );
+
+        d.set_shape_outline_style_inner(&shape, Some("solid"), Some("stealth"), Some("none"))
+            .expect("solid, with a start arrow only");
+        let after = stroke(&d).expect("still outlined");
+        assert_eq!(after.dash, None, "solid clears the pattern");
+        assert_eq!(
+            after.head_end.map(|end| end.kind),
+            Some(LineEndKind::Stealth)
+        );
+        assert_eq!(after.tail_end, None, "none clears the end");
+
+        d.undo().expect("undo");
+        assert_eq!(
+            stroke(&d).and_then(|s| s.dash),
+            Some(DashStyle::LargeDashDot)
+        );
+
+        assert!(
+            d.set_shape_outline_style_inner(&shape, Some("wavy"), None, None)
+                .is_err(),
+            "an unknown token is refused, not ignored"
+        );
+
+        let mut bare = wasm_document(document_with_shape(None));
+        bare.set_shape_outline_style_inner(&shape, Some("dot"), None, None)
+            .expect("dot an unoutlined shape");
+        let given = stroke(&bare).expect("the dash gives it an outline");
+        assert_eq!((given.dash, given.width_emu), (Some(DashStyle::Dot), 9_525));
+    }
+
+    /// RM-30: Shape Fill ▸ Gradient writes a two-stop `a:gradFill`, linear at
+    /// the asked angle (normalised into 0..360) or radial, and one undo puts the
+    /// old fill back.
+    ///
+    /// Mutation: writing the angle in degrees rather than 60000ths makes the
+    /// first `Linear` assertion fail; dropping the normalisation fails the -90
+    /// case.
+    #[test]
+    fn a_gradient_fill_has_two_stops_and_its_angle() {
+        use casual_doc_model::v1::{GradientKind, GradientStop};
+        let mut d = wasm_document(document_with_shape(None));
+        let id = NodeId::from_parts(9, 4).unwrap();
+        let shape = id.to_string();
+        let fill = |d: &WasmDocument| find_shape(&d.document, id).and_then(|s| s.fill.clone());
+        let before = fill(&d);
+
+        d.set_shape_gradient_inner(&shape, "#3355c4", "#ffffff", Some(90.0))
+            .expect("a linear gradient, top to bottom");
+        let Some(Fill::Gradient { stops, kind }) = fill(&d) else {
+            panic!("a gradient fill, got {:?}", fill(&d));
+        };
+        assert_eq!(kind, GradientKind::Linear { angle: 5_400_000 });
+        assert_eq!(
+            stops,
+            vec![
+                GradientStop {
+                    position: 0,
+                    color: Rgba {
+                        r: 0x33,
+                        g: 0x55,
+                        b: 0xc4,
+                        a: 255
+                    },
+                },
+                GradientStop {
+                    position: 100_000,
+                    color: Rgba {
+                        r: 0xff,
+                        g: 0xff,
+                        b: 0xff,
+                        a: 255
+                    },
+                },
+            ]
+        );
+
+        d.set_shape_gradient_inner(&shape, "#000000", "#ffffff", Some(-90.0))
+            .expect("up");
+        assert!(matches!(
+            fill(&d),
+            Some(Fill::Gradient {
+                kind: GradientKind::Linear { angle: 16_200_000 },
+                ..
+            })
+        ));
+        d.set_shape_gradient_inner(&shape, "#000000", "#ffffff", None)
+            .expect("from the centre");
+        assert!(matches!(
+            fill(&d),
+            Some(Fill::Gradient {
+                kind: GradientKind::Radial,
+                ..
+            })
+        ));
+
+        d.undo().expect("undo");
+        d.undo().expect("undo");
+        d.undo().expect("undo");
+        assert_eq!(fill(&d), before, "three undos restore the shape's own fill");
+        assert!(
+            d.set_shape_gradient_inner(&shape, "blue", "#ffffff", None)
+                .is_err()
+        );
+    }
+
+    /// RM-30: Change Shape swaps the outline and keeps the shape: its outline
+    /// stroke, its size, its id. One undo puts the rectangle back; an unknown
+    /// token and a node that is not a shape are refused with their codes.
+    ///
+    /// Mutation: rebuilding the shape from `insertShape`'s defaults (accent
+    /// fill and outline) instead of rewriting the geometry in place fails the
+    /// stroke assertion.
+    #[test]
+    fn change_shape_swaps_the_outline_and_keeps_the_formatting() {
+        use casual_doc_model::v1::ShapeGeometry;
+        let red = ShapeStroke {
+            color: Rgba {
+                r: 0xcc,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            width_emu: 25_400,
+            dash: None,
+            head_end: None,
+            tail_end: None,
+        };
+        let mut d = wasm_document(document_with_shape(Some(red)));
+        let id = NodeId::from_parts(9, 4).unwrap();
+        let shape = id.to_string();
+        let ellipse = ShapeGeometry::from_preset_token("ellipse").expect("a modeled preset");
+
+        d.change_shape_inner(&shape, "ellipse")
+            .expect("change to an ellipse");
+        let after = find_shape(&d.document, id).expect("the same shape, by id");
+        assert_eq!(after.geometry, ellipse);
+        assert_eq!(after.stroke, Some(red), "the outline is kept");
+        assert_eq!(after.extent.width_emu, 914_400, "the size is kept");
+
+        d.undo().expect("undo");
+        assert_eq!(
+            find_shape(&d.document, id).map(|s| s.geometry),
+            Some(ShapeGeometry::Rectangle)
+        );
+
+        let unknown = d
+            .change_shape_inner(&shape, "squiggle")
+            .expect_err("not a preset");
+        assert!(unknown.contains("object.change-shape-unknown"), "{unknown}");
+        let paragraph = NodeId::from_parts(9, 2).unwrap().to_string();
+        let not_a_shape = d
+            .change_shape_inner(&paragraph, "ellipse")
+            .expect_err("a paragraph has no outline shape");
+        assert!(
+            not_a_shape.contains("object.change-shape-not-a-shape"),
+            "{not_a_shape}"
+        );
+    }
+
     /// Word's Weight submenu never asks for a colour: choosing one on a shape
     /// with no outline gives it the default outline rather than doing nothing.
     #[test]
@@ -41683,6 +42069,8 @@ mod tests {
                 preview: None,
                 extent,
                 prog_id: None,
+                anchor: None,
+                relative_height: None,
             })),
             InlineNode::Field(Box::new(Field {
                 id: id(),
@@ -43086,6 +43474,8 @@ mod tests {
                     height_emu: 914_400,
                 },
                 prog_id: None,
+                anchor: None,
+                relative_height: None,
             })),
             InlineNode::Sdt(Box::new(InlineSdt {
                 id: id(),
@@ -44018,6 +44408,8 @@ mod tests {
                         height_emu: 914_400,
                     },
                     prog_id: None,
+                    anchor: None,
+                    relative_height: None,
                 }))],
             })],
             definitions,
@@ -44112,6 +44504,8 @@ mod tests {
                             height_emu: 914_400,
                         },
                         prog_id: None,
+                        anchor: None,
+                        relative_height: None,
                     })),
                     InlineNode::NoteReference(NoteReference {
                         id: id(),

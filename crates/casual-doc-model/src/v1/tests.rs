@@ -6015,6 +6015,8 @@ fn embedded_object_paragraph(
                 height_emu: 3_200_400,
             },
             prog_id: None,
+            anchor: None,
+            relative_height: None,
         }))],
     })
 }

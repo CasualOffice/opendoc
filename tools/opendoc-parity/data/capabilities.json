@@ -52,31 +52,32 @@
       "area": "object",
       "title": "Align selected objects to each other",
       "ours": {
-        "absent": [
-          "layout.arrange.alignLeft"
-        ]
+        "anchor": {
+          "file": "crates/casual-doc-wasm/src/object_align.rs",
+          "literal": "\"selected\" => Self::Selected"
+        }
       },
       "theirs": {
         "control": "mniAlignObjects"
       },
       "rank": 2,
-      "note": "Their Align dropdown offers the six alignments plus an align-to-each-other mode; we have no align command at all."
+      "note": "Arrange ▸ Align on the object's right-click menu and the palette: six alignments over a Ctrl/⌘+click selection, written as page offsets from where layout placed the objects, every anchor in one undoable action (docs/109 RM-28)."
     },
     {
       "id": "object.align-to-page-margin",
       "area": "object",
       "title": "Align to page or to margin",
       "ours": {
-        "absent": [
-          "layout.arrange.alignToPage",
-          "layout.arrange.alignToMargin"
-        ]
+        "anchor": {
+          "file": "crates/casual-doc-wasm/src/object_align.rs",
+          "literal": "Target::Margin"
+        }
       },
       "theirs": {
         "control": "mniAlignToPage"
       },
       "rank": 3,
-      "note": "mniAlignToMargin is their second mode. Our position gallery lands an object at a margin cell but there is no align-target switch."
+      "note": "The Align submenu's page / margin / selected-objects target, Word's default rule; to the page or margin it writes Word's alignment token (relativeFrom margin, wp:align), so the object stays aligned when the margins change (docs/109 RM-28)."
     },
     {
       "id": "object.alt-text",
@@ -104,15 +105,16 @@
       "area": "object",
       "title": "Change a shape to a different geometry",
       "ours": {
-        "absent": [
-          "shape.changeType"
-        ]
+        "anchor": {
+          "file": "webapp/src/object_context_menu.mjs",
+          "literal": "object.changeShape"
+        }
       },
       "theirs": {
         "control": "btnEditChangeShape"
       },
       "rank": 4,
-      "note": "The preset token is set at insert and cannot be swapped afterwards on our side."
+      "note": "Change shape over the Insert ▸ Shapes gallery rewrites the preset in place, keeping size, fill, outline and text, in one undoable action (docs/109 RM-30)."
     },
     {
       "id": "object.chart-3d",
@@ -134,30 +136,32 @@
       "area": "object",
       "title": "Edit a chart's data",
       "ours": {
-        "absent": [
-          "chart.editData"
-        ]
+        "anchor": {
+          "file": "webapp/editor.html",
+          "literal": "id=\"chartEditDataBtn\""
+        }
       },
       "theirs": {
         "control": "btnEditData"
       },
       "rank": 2,
-      "note": "Their Edit data opens an embedded spreadsheet editor over the chart's cached data."
+      "note": "The Chart tab's Edit data opens the chart's own data grid over its cached values, which survive a save (#811). Re-graded 2026-10-30: the row had gone on calling it a gap."
     },
     {
       "id": "object.chart-elements",
       "area": "object",
       "title": "Chart elements — title, legend, labels, gridlines",
       "ours": {
-        "absent": [
-          "chart.elements"
-        ]
+        "anchor": {
+          "file": "webapp/editor.html",
+          "literal": "id=\"chartElementsBtn\""
+        }
       },
       "theirs": {
         "control": "btnChartElements"
       },
       "rank": 2,
-      "note": "Their Chart tab drives title, legend position, data labels and both axes."
+      "note": "The Chart tab's Elements menu drives title, legend, data labels, axes and gridlines through the one chart command tree. Re-graded 2026-10-30: the row had gone on calling it a gap."
     },
     {
       "id": "object.chart-render",
@@ -185,16 +189,16 @@
       "area": "object",
       "title": "Change chart type and style",
       "ours": {
-        "absent": [
-          "chart.type",
-          "chart.style"
-        ]
+        "anchor": {
+          "file": "webapp/editor.html",
+          "literal": "id=\"chartTypeBtn\""
+        }
       },
       "theirs": {
         "control": "btnChartType"
       },
       "rank": 2,
-      "note": "cmbChartStyle is the style half."
+      "note": "The Chart tab's Change type (seventeen types by family) and its style gallery of the theme's palettes, on the right-click menu and the palette too. Re-graded 2026-10-30: the row had gone on calling it a gap."
     },
     {
       "id": "object.crop",
@@ -217,32 +221,42 @@
       "area": "object",
       "title": "Crop to Fit and Crop to Fill",
       "ours": {
-        "absent": [
-          "image.cropFit",
-          "image.cropFill"
-        ]
+        "partial": {
+          "evidence": {
+            "anchor": {
+              "file": "webapp/src/picture_tools.mjs",
+              "literal": "object.cropFill"
+            }
+          },
+          "missing": "crop to shape"
+        }
       },
       "theirs": {
         "api": "asc_docs_api.asc_cropFit"
       },
       "rank": 4,
-      "note": "Their crop menu offers the two automatic fits, and a crop-to-shape mode, beside the manual grips; our crop is manual only."
+      "note": "Crop to fill and Crop to fit apply at once as one undoable crop from the picture's own proportions, read from its file header (docs/109 RM-29)."
     },
     {
       "id": "object.distribute",
       "area": "object",
       "title": "Distribute objects horizontally or vertically",
       "ours": {
-        "absent": [
-          "layout.arrange.distributeHorizontal",
-          "layout.arrange.distributeVertical"
-        ]
+        "partial": {
+          "evidence": {
+            "anchor": {
+              "file": "crates/casual-doc-wasm/src/object_align.rs",
+              "literal": "\"distributeHorizontally\" => Self::DistributeHorizontally"
+            }
+          },
+          "missing": "distributing two objects across the page or the margin"
+        }
       },
       "theirs": {
         "control": "mniDistribHor"
       },
       "rank": 3,
-      "note": "We distribute table rows and columns but nothing distributes drawings."
+      "note": "Distribute horizontally and vertically among three or more selected objects, the outermost kept and the gaps equalised, in one undoable action (docs/109 RM-28)."
     },
     {
       "id": "object.draw-shape-drag",
@@ -378,18 +392,13 @@
       "area": "object",
       "title": "Insert a chart",
       "ours": {
-        "partial": {
-          "evidence": {
-            "command": "insert.chart"
-          },
-          "missing": "a chart type gallery, and any editing of the chart's data, title, series or legend"
-        }
+        "command": "insert.chart"
       },
       "theirs": {
         "control": "btnInsertChart"
       },
       "rank": 1,
-      "note": "Insert ▸ Chart and the command palette both create Word's own default, a clustered column chart, and the engine writes a real `word/charts/chartN.xml` part for the six typed families. What is missing is every choice AFTER the insert: there is no type picker, and nothing edits the data — their btnInsertChart opens straight into a data grid. The row was graded as a flat gap until `insert.chart` landed; the guard caught the UNDERSTATEMENT, which is the half of §9 rule 6 that is easy to forget."
+      "note": "Insert ▸ Chart opens the chart-type picker their btnInsertChart menu carries, all seventeen types grouped by family, then the chart's data (docs/109 HF-258); the palette has one row per type."
     },
     {
       "id": "object.insert-image-file",
@@ -527,15 +536,16 @@
       "area": "object",
       "title": "Restore a picture to its original size",
       "ours": {
-        "absent": [
-          "image.originalSize"
-        ]
+        "anchor": {
+          "file": "webapp/src/picture_tools.mjs",
+          "literal": "object.resetSize"
+        }
       },
       "theirs": {
         "control": "btnOriginalSize"
       },
       "rank": 3,
-      "note": "The image's natural pixel size is read at insert time but is not kept anywhere a later command could restore it from."
+      "note": "Reset to actual size sizes the picture to its file's own pixels at 96 DPI (what the crop leaves visible), read from the image header rather than stored at insert (docs/109 RM-29)."
     },
     {
       "id": "object.picture-border",
@@ -613,30 +623,32 @@
       "area": "object",
       "title": "Replace a picture's bytes in place",
       "ours": {
-        "absent": [
-          "image.replace"
-        ]
+        "anchor": {
+          "file": "crates/casual-doc-wasm/src/objects.rs",
+          "literal": "js_name = replacePicture"
+        }
       },
       "theirs": {
         "api": "asc_docs_api.ChangeImageFromFile"
       },
       "rank": 3,
-      "note": "We can delete and re-insert, which loses the object's size, wrap and position. The engine has no replace-bytes op."
+      "note": "Change picture keeps the object (position, wrap, alt text, border) and swaps the image, fitted in the old frame, on the picture's chip, its right-click menu and the palette (docs/109 HF-252, closed 2026-10-09). Re-graded 2026-10-30: the row had gone on calling it a gap."
     },
     {
       "id": "object.reset-crop",
       "area": "object",
       "title": "Reset crop",
       "ours": {
-        "absent": [
-          "image.resetCrop"
-        ]
+        "anchor": {
+          "file": "webapp/src/picture_tools.mjs",
+          "literal": "object.resetCrop"
+        }
       },
       "theirs": {
         "control": "btnResetCrop"
       },
       "rank": 3,
-      "note": "Committing a crop session with every inset back at zero does clear the crop, but there is no one-gesture reset from a cropped picture."
+      "note": "Reset crop on a cropped picture's right-click menu and the palette, disabled with the reason when the picture is not cropped (docs/109 RM-29)."
     },
     {
       "id": "object.resize-aspect-lock",
@@ -688,15 +700,21 @@
       "area": "object",
       "title": "Save a drawing as a picture file",
       "ours": {
-        "absent": [
-          "image.saveAsPicture"
-        ]
+        "partial": {
+          "evidence": {
+            "anchor": {
+              "file": "webapp/src/picture_tools.mjs",
+              "literal": "object.saveAsPicture"
+            }
+          },
+          "missing": "a shape, chart or group rasterised to a file"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.DocumentHolder.textSaveAsPicture"
       },
       "rank": 4,
-      "note": "Their right-click menu exports the selected drawing; we have no object-level export."
+      "note": "Save as picture hands a picture's own image file over byte for byte, live in Viewing (docs/109 RM-29)."
     },
     {
       "id": "object.screenshot",
@@ -736,18 +754,18 @@
         "partial": {
           "evidence": {
             "anchor": {
-              "file": "webapp/src/fidelity.js",
-              "literal": "head/tail arrowheads"
+              "file": "webapp/src/shape_outline_style.mjs",
+              "literal": "object.outline.arrows"
             }
           },
-          "missing": "any control that chooses an arrowhead style or size"
+          "missing": "an arrowhead size, and a per-end style picker beyond Word's gallery"
         }
       },
       "theirs": {
         "control": "btnBeginStyle"
       },
       "rank": 4,
-      "note": "Arrowheads are typed, painted and round-trip; the editor never writes one."
+      "note": "Shape outline ▸ Arrows offers Word's eight start/end pairs through setShapeOutlineStyle, keeping colour and weight (docs/109 RM-30)."
     },
     {
       "id": "object.shape-fill-gradient",
@@ -757,18 +775,18 @@
         "partial": {
           "evidence": {
             "anchor": {
-              "file": "webapp/src/fidelity.js",
-              "literal": "multi-stop gradient"
+              "file": "webapp/src/shape_gradient.mjs",
+              "literal": "object.fill.gradient"
             }
           },
-          "missing": "any control that authors or edits a gradient"
+          "missing": "the dark variation and a gradient stop editor"
         }
       },
       "theirs": {
         "control": "cmbGradType"
       },
       "rank": 4,
-      "note": "Multi-stop linear gradients are typed, painted and round-trip; an imported gradient survives an edit session but cannot be created or changed."
+      "note": "Shape fill ▸ Gradient writes a two-stop gradient from the shape's colour in six of Word's directions through setShapeGradient (docs/109 RM-30)."
     },
     {
       "id": "object.shape-fill-solid",
@@ -820,14 +838,14 @@
               "literal": "applyShapeOutline"
             }
           },
-          "missing": "dash style, cap and join type"
+          "missing": "cap and join type"
         }
       },
       "theirs": {
         "control": "cmbBorderType"
       },
       "rank": 3,
-      "note": "We set colour and weight and deliberately inherit the rest so a locally rebuilt stroke cannot discard an authored dash pattern."
+      "note": "Colour and weight, and Shape outline ▸ Dashes (Word's eight patterns) through setShapeOutlineStyle, inheriting the rest so a restyle never discards an authored line end (docs/109 RM-30)."
     },
     {
       "id": "object.shape-shadow",

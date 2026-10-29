@@ -26,6 +26,8 @@ use casual_doc_model::v1::{
     LockFlags, MAX_EMU, MediaId, MediaReference, ObjectLocks, Rgba, ShapeStroke, WrapMode,
     contained_inlines,
 };
+use casual_doc_model::v1::{DashStyle, LineEnd};
+use casual_doc_model::v1::{GradientKind, GradientStop};
 
 fn next(ids: MintId<'_>) -> Result<NodeId, String> {
     ids().ok_or_else(|| "id space exhausted".to_owned())
@@ -470,6 +472,45 @@ pub fn set_shape_fill(shape: NodeId, color: Option<Rgba>) -> Vec<Operation> {
     }]
 }
 
+/// Word's Shape Fill ▸ Gradient and ONLYOFFICE's gradient fill: a two-stop
+/// gradient from `from` (position 0) to `to` (100%), linear along
+/// `angle_degrees` clockwise from the positive x-axis (`a:lin@ang`), or radial
+/// from the centre when `angle_degrees` is `None` (`a:path`). It replaces the
+/// fill through the existing `SetShapeFill`, so undo restores the old fill
+/// exactly (`docs/109` RM-30). O(1).
+#[must_use]
+pub fn set_shape_gradient(
+    shape: NodeId,
+    from: Rgba,
+    to: Rgba,
+    angle_degrees: Option<f64>,
+) -> Vec<Operation> {
+    let kind = match angle_degrees {
+        // Normalised into 0..360 so a host's -90 and 270 write the same file.
+        #[allow(clippy::cast_possible_truncation)] // 0..360 * 60000 fits in i32
+        Some(degrees) if degrees.is_finite() => GradientKind::Linear {
+            angle: (degrees.rem_euclid(360.0) * 60_000.0).round() as i32,
+        },
+        _ => GradientKind::Radial,
+    };
+    vec![Operation::SetShapeFill {
+        shape,
+        fill: Some(Fill::Gradient {
+            stops: vec![
+                GradientStop {
+                    position: 0,
+                    color: from,
+                },
+                GradientStop {
+                    position: 100_000,
+                    color: to,
+                },
+            ],
+            kind,
+        }),
+    }]
+}
+
 /// The stroke a colour or weight change starts from: the shape's own (its
 /// dash and line ends survive), else Word's black 0.75 pt hairline, with the
 /// weight replaced when one is given (clamped to 0..=`MAX_EMU`). O(1).
@@ -521,6 +562,40 @@ pub fn set_shape_outline(
         None => None,
     };
     vec![Operation::SetShapeStroke { shape, stroke }]
+}
+
+/// Word's Shape Outline ▸ Dashes and ▸ Arrows (ONLYOFFICE's shape settings
+/// line type and begin/end arrow styles): rewrites the dash pattern and/or the
+/// two line ends of a shape's outline (or a picture's border), INHERITING the
+/// colour and the weight. Each argument is `None` to keep what the outline has,
+/// or `Some(value)` to set it, where `Some(None)` clears it (a solid line, no
+/// arrowhead). An unoutlined shape is given Word's black 0.75 pt line first, so
+/// choosing a dash is never a no-op (`docs/109` RM-30).
+///
+/// O(document) to read the current outline.
+#[must_use]
+pub fn set_shape_outline_style(
+    document: &Document,
+    shape: NodeId,
+    dash: Option<Option<DashStyle>>,
+    head_end: Option<Option<LineEnd>>,
+    tail_end: Option<Option<LineEnd>>,
+) -> Vec<Operation> {
+    let current = match find_shape(document, shape) {
+        Some(found) => found.stroke,
+        None => casual_doc_edit::picture_border(document, shape).flatten(),
+    };
+    let base = stroke_base(current, None);
+    let stroke = ShapeStroke {
+        dash: dash.unwrap_or(base.dash),
+        head_end: head_end.unwrap_or(base.head_end),
+        tail_end: tail_end.unwrap_or(base.tail_end),
+        ..base
+    };
+    vec![Operation::SetShapeStroke {
+        shape,
+        stroke: Some(stroke),
+    }]
 }
 
 #[cfg(test)]

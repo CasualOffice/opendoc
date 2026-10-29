@@ -29,6 +29,8 @@ async function chartWithSettings(page) {
   await gotoEditor(page);
   await page.locator("#tabInsert").click();
   await page.locator("#insertChartBtn").click();
+  // Insert ▸ Chart opens the type picker first (HF-258); Word's default type.
+  await page.getByRole("menuitem", { name: /^Clustered column$/ }).click();
   await expect(dialog(page)).toBeVisible();
   await dialog(page).getByRole("button", { name: "Done" }).click();
   await page.locator("#tabChart").click();

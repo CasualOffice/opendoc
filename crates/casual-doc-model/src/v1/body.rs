@@ -1585,8 +1585,13 @@ pub enum EmbeddedKind {
 /// `word/embeddings/*`) are opaque XML/binary the semantic model does not parse;
 /// they are byte-preserved by the side-table (P1F-2). This node re-links the
 /// regenerated body to those parts so they round-trip as an *editable reference*
-/// rather than surviving as orphaned bytes. Anchored/floating positioning is not
-/// modeled (P1F-28); the object is treated as inline.
+/// rather than surviving as orphaned bytes.
+///
+/// A chart or diagram may FLOAT (`wp:anchor`) exactly as a picture does: then
+/// [`anchor`](Self::anchor) carries its position, wrap and z-order and layout
+/// places it on the float layer instead of in the run flow (`docs/109`
+/// HF-260). An OLE object (`w:object`) has no DrawingML anchor and is always
+/// in line.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EmbeddedObject {
@@ -1612,6 +1617,15 @@ pub struct EmbeddedObject {
     /// bytes). `None` for charts and diagrams.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prog_id: Option<String>,
+    /// The floating anchor (`wp:anchor`): position, wrap and z-order, when the
+    /// object floats. `None` is an in-line object (`wp:inline`, `w:object`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<DrawingAnchor>,
+    /// The stacking key (`wp:anchor@relativeHeight`) of a floating object, as
+    /// [`AnchoredDrawing::relative_height`] carries it. Meaningless, and `None`,
+    /// for an in-line one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relative_height: Option<u32>,
 }
 
 /// Properties of an aggregated external content chunk (`w:altChunkPr`).
