@@ -7,6 +7,7 @@ import { createPageBorders } from "./page_borders.mjs";
 import { t } from "./i18n.mjs";
 import { reviewDecisionRefusal } from "./review_authority.mjs";
 import { breakSurfaceRows } from "./break_commands.mjs";
+import { contentControlSurfaceRows } from "./content_controls.mjs";
 import { noteSurfaceRows } from "./note_commands.mjs";
 import { objectMenuRows } from "./reference_commands.mjs";
 import { ribbonSurfaceEnabled as surfaceEnabled, ribbonSurfaceReason as surfaceReason } from "./ribbon_surface.mjs";
@@ -124,9 +125,11 @@ export function createCommandSurfaces(ed) {
   // one; `caretRect` is empty for anything that cannot (a table's own id).
   const accessibilityChecker = createAccessibilityChecker({
     getDoc: () => ed.doc,
-    goTo: (node) => {
-      if (!ed.doc || !(ed.doc.caretRect(node, 0)?.length > 0)) return false;
-      ed.selection = { anchor: { node, offset: 0 }, focus: { node, offset: 0 } };
+    goTo: (block, offset = 0) => {
+      // A table or a block control holds no caret of its own: its first paragraph does.
+      const node = ed.doc?.firstParagraphIn?.(block) ?? block;
+      if (!ed.doc || !(ed.doc.caretRect(node, offset)?.length > 0)) return false;
+      ed.selection = { anchor: { node, offset }, focus: { node, offset } };
       ed.drawSelection();
       ed.scrollCaretIntoView();
       ed.updateToolbar();
@@ -185,6 +188,14 @@ export function createCommandSurfaces(ed) {
     { command: "layout.arrange.wrap", label: "Wrap text around object", kw: "wrap text square tight through behind front object image shape arrange", buttons: () => [ed.layoutWrapBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-inspector-wrap-select]") },
     { command: "layout.arrange.position", label: "Object position and size", kw: "position size move object image shape arrange exact geometry", buttons: () => [ed.layoutPositionBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-prop=left]") },
     ...breakSurfaceRows(BREAK_IO),
+    // Content controls (`109` RM-34): the Insert band's Controls dropdown, one row
+    // per kind plus Properties, Remove and Choose a value, which need a control at
+    // the caret. `group` puts their palette rows under Insert.
+    ...contentControlSurfaceRows(() => ed.contentControls),
+    // Protect form and Form roles (`docs/153` review.protect-form, shell.form-roles):
+    // rows at the foot of the same dropdown, in the Review menu and the palette.
+    { command: "review.protectForm", group: "Review", get label() { return t("forms.protectCommand"); }, kw: "protect form filling in forms lock fields only restrict editing", buttons: () => [], requires: "doc", run: () => void ed.formRoles.protectForm() },
+    { command: "forms.roles", group: "Review", get label() { return t("formRoles.command"); }, kw: "form roles who fills fields assign role fill as view form as manager employee", buttons: () => [], requires: "doc", run: () => ed.formRoles.open() },
     // Link to Previous, Remove and the six page-number positions (HF-192, RM-23):
     // palette and Insert-menu rows from `editor_header_footer.mjs`, whose band
     // bar is their in-place face.
@@ -300,6 +311,8 @@ export function createCommandSurfaces(ed) {
       tocFields: ed.tocCommands.fields.count,
       onTocEntry:
         entry.requires === "tocEntry" && !!ed.selection && !!ed.tocEntryTargetAt(ed.selection.focus.node),
+      // O(the caret paragraph's inlines), cached per revision and caret.
+      inControl: entry.requires === "control" && !!ed.contentControls.atCaret(),
     };
   }
 

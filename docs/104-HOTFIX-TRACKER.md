@@ -242,7 +242,7 @@ Still waiting on an owner decision, not on engineering:
 | HF-061 | A zero-height table row paints its text across the rest of the page | render | S | Internal audit | Won't fix |
 | HF-062 | Split cell dialog cannot be dismissed by keyboard, and closing it kills typing | editor-ux | S | Internal audit | Fixed |
 | HF-063 | Cmd+F inside a modal steals focus out of the dialog and opens Find behind it | editor-ux | S | Internal audit | Fixed |
-| HF-064 | No accessibility checker — opendoc makes the editor accessible but never audits the document being written | a11y | M | Sibling gap (docs (ProseMirror)) | Open |
+| HF-064 | No accessibility checker — opendoc makes the editor accessible but never audits the document being written | a11y | M | Sibling gap (docs (ProseMirror)) | Fixed (`lane/round3-controls-forms-a11y`; docs/tracker/completed.md) |
 | HF-065 | Re-opening the same file does nothing, and file read errors are completely silent | editor-ux | S | Internal audit | Open |
 | HF-066 | Pasted hyperlinks are stored with no scheme filter and re-exported | security | S | Internal audit | Partly fixed |
 | HF-067 | The menu bar has no visible focus indicator — keyboard navigation is blind | a11y | S | Internal audit | Fixed |

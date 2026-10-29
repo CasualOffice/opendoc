@@ -1932,6 +1932,30 @@
       "reason": "Protection and tracking settings are a person's decision, never an agent's."
     },
     {
+      "id": "review.protectForm",
+      "reason": "Protection and tracking settings are a person's decision, never an agent's."
+    },
+    {
+      "id": "forms.roles",
+      "reason": "Protection and tracking settings are a person's decision, never an agent's."
+    },
+    {
+      "id": "controls.insert.",
+      "reason": "Content controls are authored, configured and filled through the editor's content-control methods (casual-doc-wasm content_controls.rs); no agent command offers them yet (docs/181 §3)."
+    },
+    {
+      "id": "controls.properties",
+      "reason": "Content controls are authored, configured and filled through the editor's content-control methods (casual-doc-wasm content_controls.rs); no agent command offers them yet (docs/181 §3)."
+    },
+    {
+      "id": "controls.remove",
+      "reason": "Content controls are authored, configured and filled through the editor's content-control methods (casual-doc-wasm content_controls.rs); no agent command offers them yet (docs/181 §3)."
+    },
+    {
+      "id": "controls.fill",
+      "reason": "Content controls are authored, configured and filled through the editor's content-control methods (casual-doc-wasm content_controls.rs); no agent command offers them yet (docs/181 §3)."
+    },
+    {
       "id": "review.comment.delete",
       "reason": "No command deletes a comment yet; an agent resolves a thread with resolve_comment."
     },
@@ -1948,6 +1972,6 @@
       "reason": "Removing a table of contents, a table of figures and Add text's contents levels are not offered to agents yet; insert_table_of_contents and update_table_of_contents are (docs/181 §3)."
     }
   ],
-  "uiNotExposedCeiling": 102,
+  "uiNotExposedCeiling": 108,
   "vocabularyVersion": "1.5"
 }

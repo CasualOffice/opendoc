@@ -222,6 +222,16 @@ character patch yet; when the formatting unification (§4.2 step 2) gives it tha
 entry leaves and the ceiling returns to 85. `insert.nonBreakingSpace`, the other editor command
 this change adds, needs no entry: inserting U+00A0 is `insert_text`, which now names it.
 
+**Raised again, deliberately (2026-10-30, `lane/round3-controls-forms-a11y`):**
+`UI_NOT_EXPOSED_CEILING` 102 → 108 with content controls and forms (`109` RM-34). Six editor
+ids: the `controls.insert.` family (Word's seven Developer ▸ Controls kinds), `controls.properties`,
+`controls.remove` and `controls.fill`, listed with `UI_CONTENT_CONTROLS` until an agent command
+lowers to the content-control methods (`casual-doc-wasm` `content_controls.rs`, which build
+`SetInlines` / `DeleteBlocks` + `InsertBlocks` and add no `Operation`, so `NOT_EXPOSED_CEILING`
+does not move); and `review.protectForm` and `forms.roles`, listed with `UI_PROTECTION` because
+protecting a form and deciding who fills which field are a person's policy decisions, the
+standing `review.restrictEditing` already has.
+
 **What "a feature inherits MCP" therefore means, concretely.** A developer adding, say,
 footnote insertion writes `InsertFootnote: Command` with its `lower()` (moved out of
 `lib.rs:4658`), adds one line to `commands!`, and points the editor's method at it. With no

@@ -108,6 +108,9 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     "insertDropCapBtn",
     // Date last in Word's Text group (Quick Parts ▸ Field, Drop Cap, Date & Time).
     "insertDateBtn",
+    // Controls (`109` RM-34): Word's Developer ▸ Controls as ONE dropdown, which is
+    // ONLYOFFICE's Insert ▸ Content Controls (`btnContentControls`).
+    "insertControlsBtn",
     "insertHeaderBtn",
     "insertFooterBtn",
     // Page Number is the third control in Word's Insert ▸ Header & Footer group.
@@ -144,6 +147,7 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     // Word's own Insert-tab group, in Word's own position: straight after Links.
     "Comments",
     "Text",
+    "Controls",
     "Header & footer",
     "Symbols",
   ]);
@@ -163,6 +167,7 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     ["#insertFieldBtn", "Insert field"],
     ["#insertDropCapBtn", "Drop cap"],
     ["#insertDateBtn", "Date"],
+    ["#insertControlsBtn", "Content controls"],
     ["#insertHeaderBtn", "Edit header"],
     ["#insertFooterBtn", "Edit footer"],
     ["#insertPageNumberBtn", "Page number"],

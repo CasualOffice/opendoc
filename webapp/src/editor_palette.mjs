@@ -383,7 +383,7 @@ export function createPalette(ed) {
       ...ed.LAYOUT_SURFACE.filter((entry) => entry.label).map((entry) => ({
         id: entry.command,
         label: entry.label,
-        group: "Layout",
+        group: entry.group ?? "Layout",
         kw: entry.kw,
         enabled: ed.ribbonSurfaceEnabled(entry),
         disabledReason: ed.ribbonSurfaceReason(entry),

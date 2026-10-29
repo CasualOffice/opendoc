@@ -16,10 +16,19 @@
 // with it. Its parallel `nodes` array names the body block each finding came
 // from, which is what Go to moves the caret to.
 //
-// NOT CHECKED, and said rather than implied: hyperlink text ("click here") and
-// colour contrast, because the projection carries neither; and blocks inside a
-// collapsed heading, which the projection omits by design (ADR-049) — the
-// dialog says so when the document has a fold.
+// CONTRAST is the one rule the projection cannot answer, because a screen
+// reader is handed no colours. The engine grades it instead
+// (`accessibilityContrastFindings`, `crates/casual-doc-wasm/src/
+// accessibility_check.rs`): WCAG 2.1 §1.4.3's 4.5:1, or 3:1 for large text,
+// against the highlight, shading, cell fill or page colour actually behind each
+// run. Word files it as a warning ("Hard-to-read text contrast"), and so does
+// this.
+//
+// NOT CHECKED, and said rather than implied: hyperlink text ("click here"),
+// which the projection does not carry; theme and automatic text colours, and
+// text outside the body, which the contrast rule does not grade (that module's
+// comment says why); and blocks inside a collapsed heading, which the projection
+// omits by design (ADR-049) — the dialog says so when the document has a fold.
 //
 // COST: one O(document) projection walk per check, on request only, never per
 // keystroke.
@@ -107,6 +116,31 @@ export function checkAccessibility(blocks, nodes = []) {
     .map(({ finding }) => finding);
 }
 
+/**
+ * The engine's contrast findings as checker findings: Word's "Hard-to-read
+ * text contrast", a warning. Pure. O(findings).
+ *
+ * @param {ReadonlyArray<{node: string, offset: number, text: string, ratio: number}>} rows
+ */
+export function contrastFindings(rows) {
+  return (rows ?? []).map((row) => ({
+    severity: "warning",
+    rule: "lowContrast",
+    node: row.node ?? null,
+    offset: Number(row.offset) || 0,
+    where: { text: String(row.text ?? ""), ratio: Number(row.ratio) || 0 },
+  }));
+}
+
+/** Findings from both sources, errors first, each source in document order. */
+export function mergeFindings(...lists) {
+  return lists
+    .flat()
+    .map((finding, order) => ({ finding, order }))
+    .sort((a, b) => SEVERITY[a.finding.severity] - SEVERITY[b.finding.severity] || a.order - b.order)
+    .map(({ finding }) => finding);
+}
+
 /** The sentence naming where a finding is. */
 function whereText(finding) {
   const w = finding.where;
@@ -116,6 +150,7 @@ function whereText(finding) {
     return w.caption ? `${label} — ${w.caption}` : label;
   }
   if (w.heading != null) return `“${w.heading}”`;
+  if (w.ratio != null) return t("a11yCheck.where.contrast", { text: w.text, ratio: w.ratio.toFixed(2) });
   return "";
 }
 
@@ -132,6 +167,8 @@ function ruleText(rule) {
       return [t("a11yCheck.rule.mergedCells"), t("a11yCheck.fix.mergedCells")];
     case "emptyRow":
       return [t("a11yCheck.rule.emptyRow"), t("a11yCheck.fix.emptyRow")];
+    case "lowContrast":
+      return [t("a11yCheck.rule.lowContrast"), t("a11yCheck.fix.lowContrast")];
     default:
       return [rule, ""];
   }
@@ -142,8 +179,9 @@ function ruleText(rule) {
  *
  * @param {object} io
  * @param {() => object|null} io.getDoc
- * @param {(node: string) => boolean} io.goTo puts the caret at the start of a
- *        body block; false when the block is not a paragraph it can hold
+ * @param {(node: string, offset?: number) => boolean} io.goTo puts the caret in
+ *        a body block — a table's or a block control's first paragraph — and
+ *        answers false when there is nowhere it can go
  * @param {(text: string, kind?: string) => void} io.setStatus
  * @param {() => Element|null} io.fallbackFocus
  * @returns {{open: () => void, run: () => Array<object>|null}}
@@ -155,6 +193,13 @@ export function createAccessibilityChecker(io) {
   const summary = el("a11yCheckSummary");
   const foldNote = el("a11yCheckFoldNote");
   if (!dialog || !list) return { open() {}, run: () => null };
+  // The band button opens a dialog, so it takes focus before the shared surface
+  // handler runs (see page_borders.mjs): otherwise Escape returns to the editor.
+  el("reviewA11yCheckBtn")?.addEventListener(
+    "click",
+    (event) => event.currentTarget.focus({ preventScroll: true }),
+    { capture: true },
+  );
   const modal = registerModal(dialog, {
     initialFocus: () => dialog.querySelector("[data-a11y-initial]"),
     fallbackFocus: io.fallbackFocus,
@@ -168,7 +213,13 @@ export function createAccessibilityChecker(io) {
     if (!doc) return null;
     const head = JSON.parse(doc.accessibilityTreeWindow(0, 0));
     const all = JSON.parse(doc.accessibilityTreeWindow(0, Math.max(0, Number(head.total) || 0)));
-    return checkAccessibility(all.blocks ?? [], all.nodes ?? []);
+    let contrast = [];
+    try {
+      contrast = JSON.parse(doc.accessibilityContrastFindings?.() ?? "[]");
+    } catch {
+      contrast = [];
+    }
+    return mergeFindings(checkAccessibility(all.blocks ?? [], all.nodes ?? []), contrastFindings(contrast));
   }
 
   function render(findings) {
@@ -200,16 +251,16 @@ export function createAccessibilityChecker(io) {
       how.className = "a11y-check-fix";
       how.textContent = fix;
       item.append(head, where, how);
-      // A table's owner is the table, which holds no caret of its own, so a
-      // table finding names the table rather than offering a dead Go to.
-      if (finding.node && finding.where.table == null) {
+      // Every finding with a place has a Go to; a table's goes to its first
+      // cell, which is where Word's checker puts the selection too.
+      if (finding.node) {
         const go = document.createElement("button");
         go.type = "button";
         go.className = "dialog-button";
         go.textContent = t("a11yCheck.goTo");
-        go.setAttribute("aria-label", `${t("a11yCheck.goTo")}: ${title}, ${where.textContent}`);
+        go.setAttribute("aria-label", t("a11yCheck.goToNamed", { name: `${title}, ${where.textContent}` }));
         go.addEventListener("click", () => {
-          if (io.goTo(finding.node)) modal.close("goTo");
+          if (io.goTo(finding.node, finding.offset ?? 0)) modal.close("goTo");
           else io.setStatus(t("a11yCheck.goToUnavailable"), "error");
         });
         item.append(go);

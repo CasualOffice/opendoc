@@ -427,6 +427,16 @@ export function createContextMenu(ed) {
         run: () => ed.editSelectionLink(),
       });
     }
+    // A content control under the caret: Word's right-click Properties and
+    // Remove Content Control, and the chooser (`content_controls.mjs`).
+    const control = ed.contentControls.atCaret();
+    if (control) {
+      annotate.push(
+        { id: "controls.fill", label: t("controls.fillCommand"), group: "annotate", enabled: !context.suggesting, disabledReason: t("controls.notInSuggesting"), run: () => ed.contentControls.openFill() },
+        { id: "controls.properties", label: t("controls.propertiesCommand"), group: "annotate", enabled: !context.suggesting, disabledReason: t("controls.notInSuggesting"), run: () => ed.contentControls.openProperties() },
+        { id: "controls.remove", label: t("controls.removeCommand"), group: "annotate", enabled: !context.suggesting, disabledReason: t("controls.notInSuggesting"), run: () => void ed.contentControls.remove() },
+      );
+    }
     if (context.comment) {
       annotate.push({
         id: "comment.open",

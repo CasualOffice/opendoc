@@ -1193,15 +1193,13 @@
       "area": "page",
       "title": "Content controls / structured document tags",
       "ours": {
-        "absent": [
-          "insert.contentControl"
-        ]
+        "family": "controls.insert."
       },
       "theirs": {
         "control": "btnContentControls"
       },
       "rank": 3,
-      "note": "We import and export w:sdt and refuse breaks inside one, but nothing can insert or configure a control."
+      "note": "Insert ▸ Controls inserts Word's seven kinds (rich text, plain text, picture, check box, combo box, drop-down list, date picker) around the selection or with Word's placeholder; Properties sets title, tag, colour, placeholder, list entries, date format and both locks; Remove keeps the content (content_controls.rs, RM-34)."
     },
     {
       "id": "page.crossReference",
@@ -3019,9 +3017,7 @@
       "area": "review",
       "title": "Accessibility checker",
       "ours": {
-        "absent": [
-          "tools.accessibilityCheck"
-        ]
+        "command": "tools.checkAccessibility"
       },
       "theirs": {
         "absent": {
@@ -3029,7 +3025,7 @@
         }
       },
       "rank": 3,
-      "note": "Neither editor reports missing alt text, poor contrast or unstructured headings. Word and Docs both do."
+      "note": "Missing alt text, tables without a header row, skipped heading levels, merged cells, blank table rows and low-contrast text (WCAG 4.5:1 / 3:1), each with Go to. Theme and automatic text colours, link text and text outside the body are not graded yet. ONLYOFFICE has no checker."
     },
     {
       "id": "review.autocorrect-options",
@@ -3619,15 +3615,13 @@
       "area": "review",
       "title": "Protect a form so only fields can be filled",
       "ours": {
-        "absent": [
-          "review.protectForm"
-        ]
+        "command": "review.protectForm"
       },
       "theirs": {
         "control": "btnProtectForm"
       },
       "rank": 4,
-      "note": "We render and fill form controls (docs/120) but cannot lock the rest of the document around them."
+      "note": "Protect form installs w:documentProtection w:edit=\"forms\", the same restriction Restrict Editing writes; the engine then lets only content controls and legacy form fields take input, and a content-locked control refuses even then."
     },
     {
       "id": "review.protection-password",
@@ -3982,21 +3976,13 @@
       "area": "shell",
       "title": "Insert and configure a content control",
       "ours": {
-        "partial": {
-          "evidence": {
-            "anchor": {
-              "file": "crates/casual-doc-edit/src/containers.rs",
-              "literal": "Sdt"
-            }
-          },
-          "missing": "any command to insert or configure one — content controls import, lay out, export and can be edited inside, but cannot be created"
-        }
+        "command": "controls.properties"
       },
       "theirs": {
         "control": "btnForm"
       },
       "rank": 3,
-      "note": "The model and the editor already treat w:sdt as a first-class container; what is missing is the authoring surface."
+      "note": "The authoring surface over the first-class w:sdt model: insert, configure, lock and remove, with the locks enforced at the engine's choke point."
     },
     {
       "id": "shell.customize-shortcuts",
@@ -4349,9 +4335,7 @@
       "area": "shell",
       "title": "Text, combo, drop-down, checkbox, radio, date, image and complex fields",
       "ours": {
-        "absent": [
-          "insert.formField"
-        ]
+        "command": "controls.fill"
       },
       "theirs": {
         "gated": {
@@ -4362,22 +4346,20 @@
         }
       },
       "rank": 3,
-      "note": "Main.js:1760 requires canLicense to fill forms at all, so an unlicensed session cannot even complete one. We render a document's existing checkboxes and announce them (a11y_mirror.mjs, docs/120) but insert none."
+      "note": "A drop-down, combo box or date picker opens its chooser from a click or Alt+Down, a picture control a file chooser, and typing over a placeholder replaces it; check boxes tick from a click or Space. No licence gate (theirs needs canLicense to fill at all)."
     },
     {
       "id": "shell.form-roles",
       "area": "shell",
       "title": "Assign form fields to roles",
       "ours": {
-        "absent": [
-          "forms.roles"
-        ]
+        "command": "forms.roles"
       },
       "theirs": {
         "control": "btnViewFormRoles"
       },
       "rank": 4,
-      "note": "Their roles manager decides who fills which field; it is the half of their forms story that is genuinely product rather than format."
+      "note": "Roles, their colours, each control's role and 'fill as' a role, enforced at the choke point under forms protection. OOXML has no place for a role, so they live in a sidecar keyed by w:id (form_roles.rs, ADR-030 I4) and do NOT travel inside the .docx."
     },
     {
       "id": "shell.formatting-marks",

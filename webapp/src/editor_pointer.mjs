@@ -385,6 +385,12 @@ export function createPointer(ed) {
       event.preventDefault();
       return;
     }
+    // A press in a drop-down, date or picture content control opens its chooser,
+    // as in Word: those are chosen, not typed (`content_controls.mjs`).
+    if (event.button === 0 && !event.shiftKey && ed.contentControls.pressAt(anchor)) {
+      event.preventDefault();
+      return;
+    }
     ed.pendingFormat = null; // a click moves the caret → disarm typing format
     ed.verticalGoal.clear(); // …and puts the caret in a column of its own choosing
     // …but a click INSIDE the accent fill of the row/column/table you just selected

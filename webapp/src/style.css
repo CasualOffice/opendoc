@@ -2272,6 +2272,64 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
   font-size: var(--fs-caption, 12px);
 }
 
+/* Content controls and form roles (`109` RM-34). The lists are the parts that
+   grow, so they scroll inside the card rather than pushing it past 720px. */
+.control-props-dialog,
+.form-roles-dialog {
+  width: min(100%, 56ch);
+}
+
+.control-fill-dialog {
+  width: min(100%, 40ch);
+}
+
+.control-item-list,
+.form-role-list,
+.form-role-fields,
+.control-fill-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+  max-block-size: 12rem;
+  overflow-y: auto;
+}
+
+.control-item-row,
+.form-role-row,
+.form-role-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.control-item-row input,
+.form-role-row .form-role-name {
+  flex: 1 1 0;
+  min-inline-size: 0;
+}
+
+.form-role-field span {
+  flex: 1 1 auto;
+}
+
+.control-fill-option {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.control-fill-option[aria-selected="true"] {
+  background: var(--accent-soft, var(--line));
+  font-weight: 600;
+}
+
+.control-fill-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 /* Page borders (HF-193): the four edges read across, as Word's preview buttons
    sit around one page. */
 .page-borders-dialog {
