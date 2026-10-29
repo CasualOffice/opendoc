@@ -99,9 +99,9 @@
 //!   and break marks while the pilcrow and space dot follow the run colour — so
 //!   their tab arrows vanish on a dark page. One rule here: every mark takes the
 //!   line's own ink unless the host overrides it.
-//! - **An empty centred paragraph's pilcrow sits at the leading edge**, not at
-//!   the centre where Word puts it. The line has no runs to measure a centre
-//!   from.
+//! - **An empty centred paragraph's pilcrow sits at the centre**, where Word
+//!   puts it: the flow leaves a zero-glyph anchor run at an aligned empty
+//!   line's origin (HF-121), and `content_end` measures from it.
 
 use casual_doc_model::v1::DashStyle;
 
@@ -497,8 +497,8 @@ impl LineInk {
 /// The x of the right edge of a line's painted content, relative to the
 /// paragraph's content origin — where a paragraph mark or a return arrow goes.
 ///
-/// Zero for a line with no runs, which puts an empty paragraph's pilcrow at the
-/// leading edge (module header records the divergence for a centred one).
+/// Zero for a line with no runs (an empty start-aligned paragraph); an aligned
+/// empty paragraph carries a zero-glyph anchor run, so this is its origin.
 ///
 /// O(runs + glyphs) on this line.
 fn content_end(line: &Line) -> Twip {

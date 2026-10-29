@@ -70,13 +70,13 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | P1 | 33 | 2 |
 | P2 | 52 | 15 |
 | P3 | 22 | 12 |
-| Behavioural audit — 2026-09-04 | 18 | 3 |
+| Behavioural audit — 2026-09-04 | 18 | 2 |
 | Layout-space audit — 2026-09-09 | 14 | 0 |
 | Command-surface gaps found by the chrome prototypes — 2026-09-10 | 5 | 0 |
 | Ribbon keyboard reachability — 2026-09-10 | 2 | 0 |
 | Paragraph-level revision mapping — 2026-09-17 | 4 | 0 |
 | Large-document admission — 2026-09-18 | 1 | 0 |
-| **Total** | **158** | **32** |
+| **Total** | **158** | **31** |
 
 "Still open" counts any status *beginning* `Open`, `Partly fixed`, or `In progress` —
 the prefix matters, because real statuses qualify themselves (`Open (owner decision)`,
@@ -96,7 +96,7 @@ by re-reading the code they cite: **HF-016**, **HF-022** and **HF-034**.)
 
 ### Progress
 
-**32 of 158 rows remain open. Every P0 is closed.** HF-030 closed with #559. (Re-derive these counts, do not edit them by hand.)
+**31 of 158 rows remain open. Every P0 is closed.** HF-030 closed with #559. (Re-derive these counts, do not edit them by hand.)
 
 **Staleness sweep, 2026-09-20.** Every P1 row of this tracker and of `105` was re-read
 against the code it cites, because `109` is now the only queue and a stale `Open` there is
@@ -310,7 +310,7 @@ reproduction and the responsible `file:line` already identified.
 | HF-118 | No object command appears in the command palette, and Object properties exists on the floating bar and nowhere else | webapp | P2 | Fixed (#516) |
 | HF-119 | Resizing an object shows no live dimensions | webapp | P3 | Fixed (#516) |
 | HF-120 | The caret's height is the whole line box (`ascent + descent + leading`), so it grows with line spacing: 18.39px at single, 36.80px at double, on the same text | layout | P2 | Fixed (#517) |
-| HF-121 | An empty CENTERED or right-aligned paragraph parks the caret at the left margin while the text lands elsewhere (75.6px vs ~355px on a Letter body). Not repairable in the hit-test: an empty line carries no runs, so the aligned origin never reaches the galley — the shaper must emit a zero-glyph run at the aligned origin, or `Line` must carry its resolved start | layout | P2 | Open |
+| HF-121 | An empty CENTERED or right-aligned paragraph parks the caret at the left margin while the text lands elsewhere (75.6px vs ~355px on a Letter body). Not repairable in the hit-test: an empty line carries no runs, so the aligned origin never reaches the galley — the shaper must emit a zero-glyph run at the aligned origin, or `Line` must carry its resolved start | layout | P2 | Fixed (`lane/parity-pipeline`; docs/tracker/completed.md) |
 | HF-122 | On a mixed-size line the caret takes the tallest run's height everywhere: 42.92px inside a 12pt run sharing a line with 28pt text, vs 18.39px on a uniform line. Needs per-run vertical metrics on `GlyphRun` | layout | P2 | Fixed (#524) |
 | HF-123 | Clicking past the last word of a soft-wrapped line, or pressing Home/End there, teleports the caret to another visual line. `caret_start_line` has no affinity: an offset that both ends line N and starts line N+1 always resolves to N+1. Measured with NO tracked change present (caret y 279.3 -> 316.1 on End), which rules out the painted-vs-editing layout cause and makes this purely an affinity defect | layout | P2 | Open |
 | HF-124 | Shift+Enter is a paragraph break everywhere — in a list it makes a second bullet, in a heading it drops into body text. The engine has no line-break operation at all, though the model and layout already support `BreakKind::Line` | rust-core | P1 | Fixed (#518) |

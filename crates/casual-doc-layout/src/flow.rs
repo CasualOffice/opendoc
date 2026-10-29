@@ -8455,18 +8455,33 @@ fn ensure_nonempty_paragraph(
     }
     let mark = props.mark_run.as_deref().cloned().unwrap_or_default();
     let styled = styled_run(" ", &mark, ctx);
-    let probe = shaper.shape_paragraph(
-        &[styled],
-        line_constraints(
-            props,
-            width,
-            ctx.line_spacing_reduction,
-            active_line_grid_pitch(props, ctx),
-        ),
-        range,
+    let constraints = line_constraints(
+        props,
+        width,
+        ctx.line_spacing_reduction,
+        active_line_grid_pitch(props, ctx),
     );
+    let probe = shaper.shape_paragraph(&[styled], constraints, range);
     if let Some(mut line) = probe.lines.into_iter().next() {
+        // HF-121: an empty centred or right-aligned paragraph keeps ONE run, with
+        // no glyphs, at the aligned origin, so the caret slot (`hittest`) and the
+        // pilcrow (`formatting_marks::content_end`) sit where the first typed
+        // character will, as in Word. It carries the mark's own font and size, so
+        // the caret's height is unchanged. A start-aligned line keeps no run at
+        // all, so its galley is byte-identical to before.
+        let anchor = empty_line_origin(&constraints).and_then(|x| {
+            line.runs
+                .iter()
+                .find(|run| !run.is_marker)
+                .cloned()
+                .map(|mut run| {
+                    run.glyphs.clear();
+                    run.origin.x = x;
+                    run
+                })
+        });
         line.runs.clear();
+        line.runs.extend(anchor);
         line.images.clear();
         line.fields.clear();
         line.text_boxes.clear();
@@ -8475,6 +8490,22 @@ fn ensure_nonempty_paragraph(
         line.range = range;
         line.line_break = LineBreak::ParagraphEnd;
         layout.lines.push(line);
+    }
+}
+
+/// Where an EMPTY line of a paragraph shaped under `constraints` starts, relative
+/// to the content box's leading edge, or `None` when that is the leading edge
+/// itself: the middle of the line for `Center`, its far edge for `End` (and for
+/// `Start`/`Justify` in a right-to-left paragraph, whose start is the right).
+/// O(1).
+fn empty_line_origin(constraints: &LineConstraints) -> Option<Twip> {
+    let width = constraints.max_width.raw().max(0);
+    match (constraints.alignment, constraints.rtl) {
+        (TextAlignment::Center, _) => Some(Twip(width / 2)),
+        (TextAlignment::End, false) | (TextAlignment::Start | TextAlignment::Justify, true) => {
+            Some(Twip(width))
+        }
+        _ => None,
     }
 }
 

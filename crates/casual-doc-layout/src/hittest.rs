@@ -2039,18 +2039,14 @@ fn stops_for(line: &Line, left: Twip) -> Vec<CaretStop> {
     if stops.is_empty() {
         // An empty line (e.g. an empty paragraph) still has one caret slot.
         //
-        // KNOWN DEFECT, not fixed here: `left` is the content box's leading edge,
-        // so it discards the alignment the paragraph actually has. Press Enter
-        // after a centered title and the caret parks at the left margin while the
-        // text you type appears in the middle of the page — measured at 75.6px
-        // versus glyphs landing near 355px on a Letter body.
-        //
-        // It cannot be repaired from here: an empty line carries no runs, so the
-        // aligned origin the shaper resolved is not present in the galley at all
-        // (an earlier attempt to read `runs.first().origin.x` was a silent no-op
-        // for exactly that reason). The fix belongs in the shaper — either emit a
-        // zero-glyph run at the aligned origin for an empty line, or carry the
-        // line's resolved start on `Line` — and is tracked as such.
+        // Its x is the ALIGNED origin, not the content box's leading edge (HF-121).
+        // An empty paragraph's line carries no glyphs, so the alignment the
+        // paragraph has used to be lost here: Enter after a centred title parked
+        // the caret at the left margin while the next keystroke landed in the
+        // middle of the page (75.6px against ~355px on a Letter body). The flow
+        // now leaves a zero-glyph anchor run at the shaped origin of an empty
+        // centred, right-aligned (or RTL start-aligned) line
+        // (`flow::ensure_nonempty_paragraph`), and the slot sits on it.
         //
         // The offset is the range's LOWER BOUND, not `range.start` literally.
         // A paragraph whose only inline is a drawing is given the inverted range
@@ -2063,11 +2059,21 @@ fn stops_for(line: &Line, left: Twip) -> Vec<CaretStop> {
         // caret offset that no paragraph can hold is not something this function
         // may hand out in the meantime.
         stops.push(CaretStop {
-            x: left,
+            x: empty_line_x(line, left),
             offset: line.range.start.offset.min(line.range.end.offset),
         });
     }
     stops
+}
+
+/// The x of an empty line's one caret slot: `left` plus the origin of the
+/// zero-glyph anchor run an aligned empty paragraph carries (HF-121), else
+/// `left` itself. O(runs) on this line.
+fn empty_line_x(line: &Line, left: Twip) -> Twip {
+    line.runs
+        .iter()
+        .find(|run| !run.is_marker && run.glyphs.is_empty())
+        .map_or(left, |run| left + run.origin.x)
 }
 
 /// The shaped run that owns `offset` on `line`, or `None` when the line has no
