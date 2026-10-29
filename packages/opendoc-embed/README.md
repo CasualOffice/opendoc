@@ -233,10 +233,14 @@ the capability event's meaning.
 Stated plainly rather than left to be discovered:
 
 - **No way to hand it your document.** `editor-src` takes the editor's own
-  query parameters; there is no host-supplied document URL or byte array yet.
-- **No real-time collaboration.** There is no collaboration adapter, relay,
-  remote-presence surface, or multiplayer support claim. Docs 143–144 are an
-  experimental architecture and phased checklist only.
+  query parameters. The only document it loads from a URL is a collaboration
+  room's shared snapshot (`?room=` together with `?document=`, `docs/169`);
+  there is no host-supplied DOCX URL or byte array.
+- **Collaboration is experimental and has no attribute.** Co-editing (OT through
+  the optional `opendoc-relay`, remote cursors, room roles) is reached through
+  the editor's own `?room=` query on `editor-src`, not through the element.
+  Relay TLS, authentication and a published relay image are not there yet
+  (`docs/162` §5).
 - **White-labelling is build-time, not a runtime remote theme service.** The host
   may compose supported chrome regions and build theme/brand assets; runtime
   arbitrary CSS injection is deliberately not a contract.

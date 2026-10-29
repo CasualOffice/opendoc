@@ -2754,7 +2754,7 @@
   "site.index.collabLede": "Co-editing is operational transformation over the engine's own transactions, so a\n              remote edit runs through the same commands, checks and undo as a local one. The\n              relay is optional and yours to host; one person editing alone needs none of it.",
   "site.index.collabNote": "Host authentication and storage are integration work, and labels name participants by number.",
   "site.index.collabRecovery": "A refused edit never silently replaces your work: recovery keeps a copy",
-  "site.index.collabRoadmap": "Shipped behind an optional relay: presence, Share links, safe recovery and a convergence fuzz. Host integration and named participants are still to come.",
+  "site.index.collabRoadmap": "Shipped behind an optional relay: presence, Share links, safe recovery, host-attested participants and a shared version history. Relay TLS, authentication and a published relay image are still to come.",
   "site.index.collabShare": "Share links through your host, as invitations rather than grants",
   "site.index.collabTitle": "Write together, on the same transactions.",
   "site.index.collabYourTab": "Your tab",

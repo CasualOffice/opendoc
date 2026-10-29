@@ -184,7 +184,7 @@ Still waiting on an owner decision, not on engineering:
 | HF-012 | Numbering, note, comment and bookmark ids are exported as 20-digit numbers Word cannot accept | import-export | M | Internal audit | Fixed |
 | HF-013 | Rich paste in Suggesting mode scrambles or drops text containing any non-ASCII character | webapp-js | S | Internal audit | Fixed |
 | HF-014 | Rendering hangs forever on dashed/dot-dash underline with a font reporting zero underline thickness | render | S | Internal audit | Fixed |
-| HF-051 | No Word Count dialog and no selection-scoped counts — the code flags this hole itself | word-count | M | Sibling gap (docs (ProseMirror)) | Fixed (`lane/parity-pipeline`; docs/tracker/completed.md) |
+| HF-051 | No Word Count dialog and no selection-scoped counts — the code flags this hole itself | word-count | M | Sibling gap (docs (ProseMirror)) | Fixed (#912; docs/tracker/completed.md) |
 | HF-015 | A six-byte non-ASCII color string panics the WASM module and poisons the session | wasm | S | Internal audit | Fixed |
 | HF-016 | There is no "New blank document" — the only way to get a document is to open someone else's file | file | M | Sibling gap (docs (ProseMirror)) | Fixed (#542) |
 | HF-017 | Table column count is unbounded on one side and collapses to 1 twip on the other | layout | M | Internal audit | Fixed |
@@ -234,7 +234,7 @@ Still waiting on an owner decision, not on engineering:
 | HF-097 | Tools and Help scroll out of the menu bar behind a hidden scrollbar | responsive | M | Internal audit | Fixed — the two menus that scrolled off the end do not exist any more. Settings and the Help rows are File-surface items (ONLYOFFICE's File page holds both) and the two proofing switches are Review rows and a Review band group (Word's Review ▸ Proofing), so the bar is seven names and no longer clips at 460px. The fade affordance stays and its guard moved to 360px, where the bar does still clip. See `122-ONE-AXIS-NAVIGATION-DESIGN.md` §4.3. |
 | HF-053 | Toolbar formatting state is wrong for a caret in a header, footer or note — so Bold toggles the wrong way | rust-core | S | Internal audit | Fixed |
 | HF-054 | Pasting from Word or a web page inserts a blank paragraph before the content | import-export | S | Internal audit | Fixed |
-| HF-055 | Smart quotes insert the wrong glyph after any non-ASCII character | webapp-js | S | Internal audit | Fixed (`lane/parity-pipeline`; docs/tracker/completed.md) |
+| HF-055 | Smart quotes insert the wrong glyph after any non-ASCII character | webapp-js | S | Internal audit | Fixed (#912; docs/tracker/completed.md) |
 | HF-056 | Images cannot be rotated or flipped — a sideways phone photo has to be fixed outside the editor | images | L | Sibling gap (docs (ProseMirror)) | Fixed (`ux/objects-v2`; see `109`) |
 | HF-057 | Object properties panel shows stale geometry and Apply reverts a drag-resize | editor-ux | M | Internal audit | Fixed (`ux/objects-v2`; see `109`) |
 | HF-058 | The object action bar stays frozen on screen while the object scrolls away | layout | S | Internal audit | Fixed (`ux/objects-v2`; see `109`) |
