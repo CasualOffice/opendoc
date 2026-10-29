@@ -53,14 +53,19 @@ async function footerInk(page, index) {
     const top = canvas.height - band;
     const data = canvas.getContext("2d").getImageData(0, top, canvas.width, band).data;
     let ink = 0;
+    let right = 0;
     let moment = 0;
     for (let p = 0; p < data.length; p += 4) {
       if ((data[p] + data[p + 1] + data[p + 2]) / 3 < 160) {
         ink += 1;
-        moment += (p / 4) % canvas.width;
+        const x = (p / 4) % canvas.width;
+        moment += x;
+        if (x > canvas.width * 0.6) right += 1;
       }
     }
-    return { ink, signature: `${ink}:${moment}` };
+    // `right` is the ink in the band's right two-fifths, where a right-aligned
+    // page number lands; `ink - right` is everything else.
+    return { ink, right, signature: `${ink}:${moment}` };
   }, index);
 }
 
@@ -170,8 +175,13 @@ test("a page-number position from the palette adds the number to every page of t
   await page.keyboard.press("Escape");
   await expect(page.locator("#pages")).not.toHaveAttribute("data-running-edit", "footer");
 
-  // More ink than before: the number joined the footer, it did not replace it.
-  await expect.poll(async () => (await footerInk(page, FIRST_PAGE)).ink).toBeGreaterThan(before.ink);
+  // The number joined the footer, it did not replace it: ink appears at the
+  // right where there was none, and the footer's own text is still there. Raw
+  // pixel totals are not compared: the existing line moves up to make room, and a
+  // sub-pixel shift changes how many anti-aliased pixels pass the threshold.
+  await expect.poll(async () => (await footerInk(page, FIRST_PAGE)).right).toBeGreaterThan(before.right);
+  const after = await footerInk(page, FIRST_PAGE);
+  expect(after.ink - after.right).toBeGreaterThan((before.ink - before.right) * 0.75);
   // The second section owns its footer, so it did not change.
   expect((await footerInk(page, SECOND_SECTION_PAGE)).signature).toBe(otherSection);
 

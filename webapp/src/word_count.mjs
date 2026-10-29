@@ -136,6 +136,13 @@ export function createWordCount(io) {
   const done = document.getElementById("wordCountDone");
   const statsEl = document.getElementById("stats");
   const statWords = document.getElementById("statWords");
+  // The band button opens a dialog, so it takes focus before the shared surface
+  // handler runs (see page_borders.mjs): otherwise Escape returns to the editor.
+  document.getElementById("reviewWordCountBtn")?.addEventListener(
+    "click",
+    (event) => event.currentTarget.focus({ preventScroll: true }),
+    { capture: true },
+  );
   const modal = dialog
     ? registerModal(dialog, {
       initialFocus: () => done,
