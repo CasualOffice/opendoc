@@ -26,6 +26,7 @@ members = [
     "crates/casual-doc-selection",
     "crates/casual-doc-transaction",
     "crates/opendoc-viewer",
+    "crates/opendoc",
     "crates/casual-doc-wasm",
     "crates/casual-doc-wasm-pdf",
     "server",
@@ -74,6 +75,7 @@ casual-doc-sdk = { path = "crates/casual-doc-sdk", version = "=0.0.1" }
 casual-doc-selection = { path = "crates/casual-doc-selection", version = "=0.0.1" }
 casual-doc-transaction = { path = "crates/casual-doc-transaction", version = "=0.0.1" }
 opendoc-viewer = { path = "crates/opendoc-viewer", version = "=0.0.1" }
+opendoc = { path = "crates/opendoc", version = "=0.0.1" }
 casual-doc-wasm = { path = "crates/casual-doc-wasm", version = "=0.0.1" }
 casual-doc-wasm-pdf = { path = "crates/casual-doc-wasm-pdf", version = "=0.0.1" }
 schemars = { version = "1.2.3", default-features = false, features = ["derive", "std"] }
