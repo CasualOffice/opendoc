@@ -2678,11 +2678,21 @@
   "findings.pdf.ocrPending": "Pagine il cui testo è solo un’immagine: {count}. Il loro testo non è ancora nel documento.",
   "findings.pdf.ocrApplied": "Il testo delle pagine scansionate è stato riconosciuto su questo dispositivo ({provider}). Confrontalo con la pagina prima di farvi affidamento.",
   "menuGroup.pdf": "PDF",
+  "menuGroup.displayForReview": "Visualizzazione per revisione",
   "findings.feature.pdfIncrementalUpdate": "Pagine modificate, aggiunte al PDF originale come aggiornamento",
   "findings.feature.pdfPageCarriedOver": "Pagine conservate esattamente come nel PDF originale",
   "findings.feature.pdfEarlierRevision": "Testo sostituito, ancora recuperabile dalla versione precedente del PDF",
   "findings.feature.pdfSignatureEarlier": "Firme, che coprono solo la versione precedente del PDF",
   "findings.feature.pdfCertificationBroken": "La certificazione del PDF, che la modifica invalida",
   "findings.feature.pdfOriginalWrittenBack": "Il PDF originale, riscritto senza modifiche",
-  "findings.feature.pdfPreserveFallback": "Modifiche che non è stato possibile aggiungere al PDF originale, perciò il PDF è stato rigenerato"
+  "findings.feature.pdfPreserveFallback": "Modifiche che non è stato possibile aggiungere al PDF originale, perciò il PDF è stato rigenerato",
+  "reviewDisplay.simpleMarkup": "Revisioni semplici",
+  "reviewDisplay.allMarkup": "Tutte le revisioni",
+  "reviewDisplay.noMarkup": "Nessuna revisione",
+  "reviewDisplay.original": "Originale",
+  "reviewDisplay.tip": "Scegli come mostrare le revisioni",
+  "reviewDisplay.label": "Visualizzazione per revisione",
+  "reviewDisplay.originalReadOnly": "Originale: il documento com'era prima delle revisioni. Scegli un'altra visualizzazione per revisione per modificare.",
+  "reviewDisplay.changeBar": "Modificato qui. Fai clic per mostrare tutte le revisioni",
+  "reviewDisplay.previewOpen": "Chiudi l'anteprima della versione prima di mostrare l'originale"
 }

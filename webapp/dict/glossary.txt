@@ -402,6 +402,7 @@ filesystem
 findable
 fitText
 flattener
+flyout
 fmt
 focusable
 fontTable

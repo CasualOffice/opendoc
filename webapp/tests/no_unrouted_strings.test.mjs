@@ -291,6 +291,9 @@ const CEILINGS = new Map([
   // markup already carries, which is how two spellings of one control start to
   // drift; that is its own piece of work.
   ["src/spacing_menu.mjs", 1],
+  // Display for review (`docs/153` review.display-mode-*): every sentence through
+  // t(), the mode names from the popover markup. Measured with `scanTree`.
+  ["src/review_display.mjs", 0],
   ["src/table_commands.mjs", 9],
   // The object right-click menu's nine row labels ("Wrap text", "Alt text…",
   // "Shape fill", "No fill", "Shape outline", "No outline", "Crop image",

@@ -645,6 +645,15 @@ export const APP_MENU_SECTIONS = {
     ),
     band("menuGroup.comments", "review.comment.resolve", "review.comment.delete"),
     band("menuGroup.tracking", "review.toggle"),
+    // Display for review (`docs/153` review.display-mode-*): Word's Tracking-group
+    // dropdown of four, as a flyout so four rows of one choice cost one row here.
+    sub(
+      "menuGroup.displayForReview",
+      "review.displayMode.simpleMarkup",
+      "review.displayMode.allMarkup",
+      "review.displayMode.noMarkup",
+      "review.displayMode.original",
+    ),
     sub(
       "menuGroup.changes",
       "review.previous",

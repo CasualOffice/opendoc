@@ -3418,17 +3418,13 @@
       "area": "review",
       "title": "Display mode: final (changes applied, markup hidden)",
       "ours": {
-        "partial": {
-          "evidence": {
-            "command": "view.showChanges"
-          },
-          "missing": "a named Final mode - turning the markup toggle off is the only way to reach it"
-        }
+        "command": "review.displayMode.noMarkup"
       },
       "theirs": {
         "localeKey": "Common.Views.ReviewChanges.txtFinal"
       },
-      "rank": 3
+      "rank": 3,
+      "note": "No markup: the text as accepted with no revision marks, change bars or comment highlights."
     },
     {
       "id": "review.display-mode-markup",
@@ -3448,30 +3444,26 @@
       "area": "review",
       "title": "Display mode: original (document as if every change were rejected)",
       "ours": {
-        "absent": [
-          "review.displayMode.original"
-        ]
+        "command": "review.displayMode.original"
       },
       "theirs": {
         "localeKey": "Common.Views.ReviewChanges.txtOriginal"
       },
       "rank": 2,
-      "note": "There is no way to preview the pre-review document; our markup toggle only chooses between showing and hiding the redline."
+      "note": "Review ▸ Display for review ▸ Original: a throwaway copy with every tracked change rejected through the engine's one Reject All (`casual-doc-wasm` `review_display.rs`, its restriction lifted first), shown read-only through the version preview's swap; any other display puts the live document back."
     },
     {
       "id": "review.display-mode-simple-markup",
       "area": "review",
       "title": "Display mode: simple markup (change bars only)",
       "ours": {
-        "absent": [
-          "review.displayMode.simpleMarkup"
-        ]
+        "command": "review.displayMode.simpleMarkup"
       },
       "theirs": {
         "localeKey": "Common.Views.ReviewChanges.txtMarkupSimple"
       },
       "rank": 3,
-      "note": "Word's default review view. We always paint full markup or none."
+      "note": "Word's default review view: the text as accepted, a change bar beside each changed line and no inline marks; clicking a bar shows All markup. One of four rows in the Review band's Display for review dropdown, the Review menu flyout and the palette."
     },
     {
       "id": "review.document-properties",

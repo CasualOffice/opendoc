@@ -2656,11 +2656,21 @@
   "findings.pdf.ocrPending": "文字仅为图片的页面：{count}。其文字尚未进入文档。",
   "findings.pdf.ocrApplied": "扫描页的文字已在此设备上识别（{provider}）。依赖之前请与页面核对。",
   "menuGroup.pdf": "PDF",
+  "menuGroup.displayForReview": "审阅显示",
   "findings.feature.pdfIncrementalUpdate": "已编辑的页面，作为更新添加到原始 PDF",
   "findings.feature.pdfPageCarriedOver": "与原始 PDF 完全相同而保留的页面",
   "findings.feature.pdfEarlierRevision": "被替换的文字，仍可从 PDF 的早期版本中恢复",
   "findings.feature.pdfSignatureEarlier": "仅覆盖 PDF 早期版本的签名",
   "findings.feature.pdfCertificationBroken": "因编辑而失效的 PDF 认证",
   "findings.feature.pdfOriginalWrittenBack": "原始 PDF，原样写回",
-  "findings.feature.pdfPreserveFallback": "无法添加到原始 PDF 的编辑，因此重新生成了 PDF"
+  "findings.feature.pdfPreserveFallback": "无法添加到原始 PDF 的编辑，因此重新生成了 PDF",
+  "reviewDisplay.simpleMarkup": "简单标记",
+  "reviewDisplay.allMarkup": "所有标记",
+  "reviewDisplay.noMarkup": "无标记",
+  "reviewDisplay.original": "原始版本",
+  "reviewDisplay.tip": "选择修订的显示方式",
+  "reviewDisplay.label": "审阅显示",
+  "reviewDisplay.originalReadOnly": "原始版本:文档在修订之前的样子。要编辑,请选择其他审阅显示方式。",
+  "reviewDisplay.changeBar": "此处有修改。单击以显示所有标记",
+  "reviewDisplay.previewOpen": "显示原始版本前请先关闭版本预览"
 }

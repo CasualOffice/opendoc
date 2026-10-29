@@ -2656,11 +2656,21 @@
   "findings.pdf.ocrPending": "文字僅為圖片的頁面：{count}。其文字尚未進入文件。",
   "findings.pdf.ocrApplied": "掃描頁的文字已在此裝置上辨識（{provider}）。依賴之前請與頁面核對。",
   "menuGroup.pdf": "PDF",
+  "menuGroup.displayForReview": "審閱顯示",
   "findings.feature.pdfIncrementalUpdate": "已編輯的頁面，作為更新加入原始 PDF",
   "findings.feature.pdfPageCarriedOver": "與原始 PDF 完全相同而保留的頁面",
   "findings.feature.pdfEarlierRevision": "被取代的文字，仍可從 PDF 的較早版本復原",
   "findings.feature.pdfSignatureEarlier": "僅涵蓋 PDF 較早版本的簽章",
   "findings.feature.pdfCertificationBroken": "因編輯而失效的 PDF 認證",
   "findings.feature.pdfOriginalWrittenBack": "原始 PDF，原樣寫回",
-  "findings.feature.pdfPreserveFallback": "無法加入原始 PDF 的編輯，因此重新產生了 PDF"
+  "findings.feature.pdfPreserveFallback": "無法加入原始 PDF 的編輯，因此重新產生了 PDF",
+  "reviewDisplay.simpleMarkup": "簡單標記",
+  "reviewDisplay.allMarkup": "所有標記",
+  "reviewDisplay.noMarkup": "無標記",
+  "reviewDisplay.original": "原始版本",
+  "reviewDisplay.tip": "選擇修訂的顯示方式",
+  "reviewDisplay.label": "審閱顯示",
+  "reviewDisplay.originalReadOnly": "原始版本:文件在修訂之前的樣子。要編輯,請選擇其他審閱顯示方式。",
+  "reviewDisplay.changeBar": "此處有修改。按一下以顯示所有標記",
+  "reviewDisplay.previewOpen": "顯示原始版本前請先關閉版本預覽"
 }

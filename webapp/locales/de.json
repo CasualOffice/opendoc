@@ -2667,11 +2667,21 @@
   "findings.pdf.ocrPending": "Seiten, deren Text nur ein Bild ist: {count}. Ihr Text ist noch nicht im Dokument.",
   "findings.pdf.ocrApplied": "Der Text der gescannten Seiten wurde auf diesem Gerät erkannt ({provider}). Vergleichen Sie ihn mit der Seite, bevor Sie sich darauf verlassen.",
   "menuGroup.pdf": "PDF",
+  "menuGroup.displayForReview": "Anzeige für Überarbeitung",
   "findings.feature.pdfIncrementalUpdate": "Bearbeitete Seiten, dem ursprünglichen PDF als Aktualisierung hinzugefügt",
   "findings.feature.pdfPageCarriedOver": "Seiten, die genau wie im ursprünglichen PDF erhalten bleiben",
   "findings.feature.pdfEarlierRevision": "Ersetzter Text, der aus der früheren Version des PDFs weiterhin wiederherstellbar ist",
   "findings.feature.pdfSignatureEarlier": "Signaturen, die nur die frühere Version des PDFs abdecken",
   "findings.feature.pdfCertificationBroken": "Die Zertifizierung des PDFs, die durch die Bearbeitung ungültig wird",
   "findings.feature.pdfOriginalWrittenBack": "Das ursprüngliche PDF, unverändert zurückgeschrieben",
-  "findings.feature.pdfPreserveFallback": "Änderungen, die dem ursprünglichen PDF nicht hinzugefügt werden konnten, weshalb das PDF neu erzeugt wurde"
+  "findings.feature.pdfPreserveFallback": "Änderungen, die dem ursprünglichen PDF nicht hinzugefügt werden konnten, weshalb das PDF neu erzeugt wurde",
+  "reviewDisplay.simpleMarkup": "Einfaches Markup",
+  "reviewDisplay.allMarkup": "Markup: alle",
+  "reviewDisplay.noMarkup": "Kein Markup",
+  "reviewDisplay.original": "Original",
+  "reviewDisplay.tip": "Wählen, wie nachverfolgte Änderungen angezeigt werden",
+  "reviewDisplay.label": "Anzeige für Überarbeitung",
+  "reviewDisplay.originalReadOnly": "Original: das Dokument, wie es vor seinen nachverfolgten Änderungen war. Wählen Sie zum Bearbeiten eine andere Anzeige für Überarbeitung.",
+  "reviewDisplay.changeBar": "Hier geändert. Klicken, um alle Markups anzuzeigen",
+  "reviewDisplay.previewOpen": "Schließen Sie die Versionsvorschau, bevor Sie das Original anzeigen"
 }

@@ -129,7 +129,7 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-provenance -->
 | Side | Source | Inventory |
 | --- | --- | --- |
-| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 230 exact commands, 12 families |
+| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 234 exact commands, 12 families |
 | ONLYOFFICE | snapshot of 163 files, taken 2026-09-30 | 578 controls, 3529 locale keys, 2122 engine API methods, 114 boot flags (14 licence-gated, 3 desktop-only) |
 | Matrix | `tools/opendoc-parity/data/capabilities.json` | 422 graded rows |
 <!-- @end parity-provenance -->
@@ -139,11 +139,11 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-tally -->
 | Verdict | Rows | What it means |
 | --- | --- | --- |
-| Parity | 216 | both products ship it, and both anchors resolve |
+| Parity | 219 | both products ship it, and both anchors resolve |
 | Ours, ungated | 27 | we ship it in the editor itself; theirs is behind a licence result the document server issues, the desktop shell, or the integrator's own config |
 | Ours only | 25 | we ship it and their tree has no such surface |
-| Partial | 68 | we ship part of it; the row says what is missing |
-| Gap | 61 | their standalone browser session ships it and we do not |
+| Partial | 67 | we ship part of it; the row says what is missing |
+| Gap | 59 | their standalone browser session ships it and we do not |
 | Theirs, gated | 13 | theirs needs a licence result, the desktop shell or the integrator, and we lack it too |
 | Neither | 12 | neither product ships it, and the row records the search that established that |
 | **Total graded** | **422** | every row below |
@@ -160,7 +160,6 @@ least two surfaces (`SKILL` §10).
 | Rank | Capability | Id | Theirs | Note |
 | --- | --- | --- | --- | --- |
 | 2 | Footnote and endnote settings | `page.note.settings` | `DE.Views.Links.mniNoteSettings` | Location, number format, start at and restart each page or section are all unreachable, so imported numbering cannot be changed. |
-| 2 | Display mode: original (document as if every change were rejected) | `review.display-mode-original` | `Common.Views.ReviewChanges.txtOriginal` | There is no way to preview the pre-review document; our markup toggle only chooses between showing and hiding the redline. |
 | 2 | Set the proofing language for the selection | `review.proofing-language-selection` | `btnLanguage` | We honour the document's own w:lang but cannot write it; there is no per-run language control anywhere in the chrome. |
 | 2 | Banded rows and columns, header / total / first / last | `table.banded-rows-columns` | `DE.Views.TableSettings.textBanded` | The six w:tblLook conditional-formatting toggles. Our model carries TableLook and round-trips it, but no wasm setter or control writes it, so an applied table style cannot be tuned. |
 | 2 | Capitalise the first letter of a sentence | `text.autocapitalise` | `Common.Views.AutoCorrectDialog.textFLSentence` | Theirs also covers table cells and keeps a first-letter exceptions list. Ours does not autocapitalise at all. |
@@ -178,7 +177,6 @@ least two surfaces (`SKILL` §10).
 | 3 | Table of contents settings (page numbers, alignment, links) | `page.toc.settings` | `DE.Views.TableOfContentsSettings.strShowPages` | Show page numbers, right-align them, hyperlink the entries and build from styles rather than outline levels are all fixed for us. |
 | 3 | Table of contents style gallery | `page.toc.styles` | `DE.Views.TableOfContentsSettings.textStyles` | Their dialog offers Simple, Standard, Modern, Classic and the rest; ours generates one shape. |
 | 3 | Replace text as you type (AutoCorrect table) | `review.autocorrect-replace-as-you-type` | `Common.Views.AutoCorrectDialog.textReplaceText` | — |
-| 3 | Display mode: simple markup (change bars only) | `review.display-mode-simple-markup` | `Common.Views.ReviewChanges.txtMarkupSimple` | Word's default review view. We always paint full markup or none. |
 | 3 | Manage or clear the personal dictionary | `review.personal-dictionary-manage` | `asc_docs_api.asc_spellCheckClearDictionary` | Words can be added on both sides, but only theirs can be cleared; ours has no list and no removal. |
 | 3 | Dark document (invert the page, not just the chrome) | `shell.dark-document` | `btnDarkDocument` | We have a dark interface theme but the page itself stays white. Reading a long document at night is the case this covers. |
 | 3 | Search with a regular expression | `shell.find-regex` | `Common.Views.SearchPanel.textMatchUsingRegExp` | Our scan is literal with case and whole-word options only (main.js scanAllMatches). |
@@ -575,10 +573,10 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Resolve all comments, or all of mine | Theirs, gated | none (`review.comment.resolveAll` undeclared) | `asc_docs_api.asc_ResolveAllComments` behind `canComments` | Their btnCommentResolve is a split button with All / My / Current; ours resolves one thread at a time. |
 | Compare two documents | Partial | `webapp/src/compare_documents.mjs` · `runComparison` — missing: the merged THIRD DOCUMENT. Theirs, and Word's, write the differences into a new document as real tracked changes that can be accepted and rejected; `casual-doc-diff` returns a typed sidecar, so ours is a change LIST in a side panel - Google Docs' answer - and the panel says so before a file is picked rather than leaving a reader to discover it. Turning a sidecar into a merged document is a construction with its own questions (who authors a change, what happens to a move) and is not started. | `btnCompare` behind `canReview` | The engine half was never the gap: `crates/casual-doc-diff` plus `beginVersionDiff` / `step` / `cancel` / `blocksProjected` in `crates/casual-doc-wasm/src/diff.rs` were complete and `webapp/` called none of them, while the version panel disabled Show changes saying the structural diff was not built. `review.compare` now reaches it from the Review band, the Review menu and the left rail, and the version panel's Show changes compares a stored checkpoint with the open document - Word's route and Google Docs' route over one engine call. It runs in slices on the main thread with real progress and a Cancel, because there is no Worker in this tree yet and `diff.rs` says why. Guarded on the EFFECT and on the DIRECTION: a paragraph only this document has must be reported as an addition, which a count cannot check and a swapped comparison would get exactly wrong. |
 | Digital signature | Theirs, gated | none (`review.signature` undeclared) | `btnSignature` behind `isSignatureSupport` | Theirs is desktop-only: isSignatureSupport is set from the desktop shell, so their browser client cannot sign either. |
-| Display mode: final (changes applied, markup hidden) | Partial | `view.showChanges` — missing: a named Final mode - turning the markup toggle off is the only way to reach it | `Common.Views.ReviewChanges.txtFinal` | — |
+| Display mode: final (changes applied, markup hidden) | Parity | `review.displayMode.noMarkup` | `Common.Views.ReviewChanges.txtFinal` | No markup: the text as accepted with no revision marks, change bars or comment highlights. |
 | Display mode: markup (show changes inline) | Parity | `view.showChanges` | `Common.Views.ReviewChanges.txtMarkup` | Theirs is a four-way picker on btnReviewView; ours is a two-state toggle. |
-| Display mode: original (document as if every change were rejected) | Gap | none (`review.displayMode.original` undeclared) | `Common.Views.ReviewChanges.txtOriginal` | There is no way to preview the pre-review document; our markup toggle only chooses between showing and hiding the redline. |
-| Display mode: simple markup (change bars only) | Gap | none (`review.displayMode.simpleMarkup` undeclared) | `Common.Views.ReviewChanges.txtMarkupSimple` | Word's default review view. We always paint full markup or none. |
+| Display mode: original (document as if every change were rejected) | Parity | `review.displayMode.original` | `Common.Views.ReviewChanges.txtOriginal` | Review ▸ Display for review ▸ Original: a throwaway copy with every tracked change rejected through the engine's one Reject All (`casual-doc-wasm` `review_display.rs`, its restriction lifted first), shown read-only through the version preview's swap; any other display puts the live document back. |
+| Display mode: simple markup (change bars only) | Parity | `review.displayMode.simpleMarkup` | `Common.Views.ReviewChanges.txtMarkupSimple` | Word's default review view: the text as accepted, a change bar beside each changed line and no inline marks; clicking a bar shows All markup. One of four rows in the Review band's Display for review dropdown, the Review menu flyout and the palette. |
 | Document info and properties panel | Parity | `file.properties` | `btnDocInfo` | Ours edits the core properties through the one undoable edit path and requires no grant to read. |
 | Show changes by a chosen reviewer or change type | Neither | none (`review.showBy.reviewer`, `review.showBy.type` undeclared) | none (searched `grep for ByAuthors / showChangesBy / reviewerFilter across web-apps returns nothing; asc_GetTrackRevisionsReportByAuthors exists in sdkjs but has no web-apps caller, so it is a plugin/report API and not a UI filter`) | Neither editor lets a reviewer narrow the markup to one author. Word does, so this is a shared gap against the category standard rather than a parity gap. |
 | Grammar check | Ours only | `tools.grammarCheck` | none (searched `case-insensitive grep for grammar across both reference trees (web-apps and sdkjs) matches no file: no rule set, no switch, no locale key`) | A capability they do not have at all. Ours is a separate switch from spelling, as in Word. |

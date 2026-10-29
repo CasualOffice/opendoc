@@ -2689,11 +2689,21 @@
   "findings.pdf.ocrPending": "Страницы, текст которых — только изображение: {count}. Их текста пока нет в документе.",
   "findings.pdf.ocrApplied": "Текст отсканированных страниц распознан на этом устройстве ({provider}). Сверьте его со страницей, прежде чем на него полагаться.",
   "menuGroup.pdf": "PDF",
+  "menuGroup.displayForReview": "Отображение для проверки",
   "findings.feature.pdfIncrementalUpdate": "Изменённые страницы, добавленные в исходный PDF как обновление",
   "findings.feature.pdfPageCarriedOver": "Страницы, сохранённые точно такими, как в исходном PDF",
   "findings.feature.pdfEarlierRevision": "Заменённый текст, который всё ещё можно восстановить из предыдущей версии PDF",
   "findings.feature.pdfSignatureEarlier": "Подписи, которые распространяются только на предыдущую версию PDF",
   "findings.feature.pdfCertificationBroken": "Сертификация PDF, которую правка делает недействительной",
   "findings.feature.pdfOriginalWrittenBack": "Исходный PDF, записанный обратно без изменений",
-  "findings.feature.pdfPreserveFallback": "Правки, которые не удалось добавить в исходный PDF, поэтому PDF был создан заново"
+  "findings.feature.pdfPreserveFallback": "Правки, которые не удалось добавить в исходный PDF, поэтому PDF был создан заново",
+  "reviewDisplay.simpleMarkup": "Простая разметка",
+  "reviewDisplay.allMarkup": "Исправления",
+  "reviewDisplay.noMarkup": "Без исправлений",
+  "reviewDisplay.original": "Исходный документ",
+  "reviewDisplay.tip": "Выбрать, как показывать исправления",
+  "reviewDisplay.label": "Отображение для проверки",
+  "reviewDisplay.originalReadOnly": "Исходный документ: документ до исправлений. Чтобы редактировать, выберите другое отображение для проверки.",
+  "reviewDisplay.changeBar": "Здесь есть изменения. Щёлкните, чтобы показать исправления",
+  "reviewDisplay.previewOpen": "Закройте предварительный просмотр версии, прежде чем показывать исходный документ"
 }

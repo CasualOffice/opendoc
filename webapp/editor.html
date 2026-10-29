@@ -1179,6 +1179,11 @@
             <div class="rgroup-ctl">
               <button data-i18n-title="panelReview.trackChanges.title" data-i18n-label="panelReview.trackChanges.label" id="reviewTrackBtn" type="button" class="fmt fmt-big" title="Record your edits as suggestions. The shortcut cycles Editing, Suggesting and Read only (⌘⇧E)" aria-label="Track changes" aria-pressed="false" data-tip-detail disabled><span class="ms" aria-hidden="true">track_changes</span><span data-i18n="reviewTrackBtn.trackChanges" class="fmt-big-label">Track changes</span></button>
               <button data-i18n-title="panelReview.showTrackedChangesDocument.title" data-i18n-label="panelReview.showChanges.label" id="reviewShowChangesBtn" type="button" class="fmt" title="Show tracked changes in the document" aria-label="Show changes" aria-pressed="false" disabled><span class="ms" aria-hidden="true">visibility</span></button>
+              <!-- Display for review (`docs/153` review.display-mode-*): Word's
+                   Tracking-group dropdown of four, ONLYOFFICE's Display mode. The
+                   rows live in `#reviewDisplayMenu`; `review_display.mjs` owns
+                   the trigger's state because no single command is "the" picker. -->
+              <button data-i18n-title="reviewDisplay.tip" data-i18n-label="reviewDisplay.label" id="reviewDisplayBtn" type="button" class="fmt" title="Choose how tracked changes are shown" aria-label="Display for review" aria-haspopup="menu" aria-controls="reviewDisplayMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">preview</span></button>
             </div>
             <span data-i18n="panelReview.tracking" class="rgroup-label">Tracking</span>
           </div>
@@ -2061,6 +2066,12 @@
       <button data-i18n="break.section.oddPage" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.oddPage">Section break (odd page)</button>
     </div>
     <!-- The Layout face's copy of the same roster (HF-203); `breaks.spec.mjs` holds the two equal. -->
+    <div data-i18n-label="reviewDisplay.label" id="reviewDisplayMenu" class="context-menu" hidden role="menu" aria-label="Display for review">
+      <button type="button" role="menuitemradio" aria-checked="false" class="menu-item review-display-row" data-display-mode="simple" data-command="review.displayMode.simpleMarkup"><span class="menu-check" aria-hidden="true"></span><span data-i18n="reviewDisplay.simpleMarkup">Simple markup</span></button>
+      <button type="button" role="menuitemradio" aria-checked="false" class="menu-item review-display-row" data-display-mode="all" data-command="review.displayMode.allMarkup"><span class="menu-check" aria-hidden="true"></span><span data-i18n="reviewDisplay.allMarkup">All markup</span></button>
+      <button type="button" role="menuitemradio" aria-checked="false" class="menu-item review-display-row" data-display-mode="none" data-command="review.displayMode.noMarkup"><span class="menu-check" aria-hidden="true"></span><span data-i18n="reviewDisplay.noMarkup">No markup</span></button>
+      <button type="button" role="menuitemradio" aria-checked="false" class="menu-item review-display-row" data-display-mode="original" data-command="review.displayMode.original"><span class="menu-check" aria-hidden="true"></span><span data-i18n="reviewDisplay.original">Original</span></button>
+    </div>
     <div data-i18n-label="panelInsert.breaks.label" id="layoutBreaksMenu" class="context-menu" hidden role="menu" aria-label="Breaks">
       <button data-i18n="break.blankPage" type="button" role="menuitem" class="menu-item" data-command="layout.blankPage">Blank page</button>
       <button data-i18n="break.page" type="button" role="menuitem" class="menu-item" data-command="layout.break.page">Page break</button>

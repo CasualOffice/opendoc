@@ -2667,11 +2667,21 @@
   "findings.pdf.ocrPending": "Pagina’s waarvan de tekst alleen een afbeelding is: {count}. Hun tekst staat nog niet in het document.",
   "findings.pdf.ocrApplied": "De tekst van de gescande pagina’s is op dit apparaat herkend ({provider}). Vergelijk die met de pagina voordat u erop vertrouwt.",
   "menuGroup.pdf": "PDF",
+  "menuGroup.displayForReview": "Weergave voor revisie",
   "findings.feature.pdfIncrementalUpdate": "Bewerkte pagina’s, als update toegevoegd aan de oorspronkelijke pdf",
   "findings.feature.pdfPageCarriedOver": "Pagina’s die precies zo zijn behouden als in de oorspronkelijke pdf",
   "findings.feature.pdfEarlierRevision": "Vervangen tekst, nog te herstellen uit de eerdere versie van de pdf",
   "findings.feature.pdfSignatureEarlier": "Handtekeningen, die alleen de eerdere versie van de pdf dekken",
   "findings.feature.pdfCertificationBroken": "De certificering van de pdf, die door de bewerking ongeldig wordt",
   "findings.feature.pdfOriginalWrittenBack": "De oorspronkelijke pdf, ongewijzigd teruggeschreven",
-  "findings.feature.pdfPreserveFallback": "Bewerkingen die niet aan de oorspronkelijke pdf konden worden toegevoegd, waardoor de pdf opnieuw is gemaakt"
+  "findings.feature.pdfPreserveFallback": "Bewerkingen die niet aan de oorspronkelijke pdf konden worden toegevoegd, waardoor de pdf opnieuw is gemaakt",
+  "reviewDisplay.simpleMarkup": "Eenvoudige markeringen",
+  "reviewDisplay.allMarkup": "Alle markeringen",
+  "reviewDisplay.noMarkup": "Geen markeringen",
+  "reviewDisplay.original": "Origineel",
+  "reviewDisplay.tip": "Kiezen hoe bijgehouden wijzigingen worden weergegeven",
+  "reviewDisplay.label": "Weergave voor revisie",
+  "reviewDisplay.originalReadOnly": "Origineel: het document zoals het was vóór de bijgehouden wijzigingen. Kies een andere weergave voor revisie om te bewerken.",
+  "reviewDisplay.changeBar": "Hier gewijzigd. Klik om alle markeringen te tonen",
+  "reviewDisplay.previewOpen": "Sluit het versievoorbeeld voordat u het origineel toont"
 }

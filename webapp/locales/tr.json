@@ -2667,11 +2667,21 @@
   "findings.pdf.ocrPending": "Metni yalnızca resim olan sayfalar: {count}. Metinleri henüz belgede yok.",
   "findings.pdf.ocrApplied": "Taranmış sayfaların metni bu cihazda tanındı ({provider}). Güvenmeden önce sayfayla karşılaştırın.",
   "menuGroup.pdf": "PDF",
+  "menuGroup.displayForReview": "İnceleme için görüntüle",
   "findings.feature.pdfIncrementalUpdate": "Düzenlenen sayfalar, özgün PDF'ye güncelleme olarak eklendi",
   "findings.feature.pdfPageCarriedOver": "Özgün PDF'deki gibi aynen korunan sayfalar",
   "findings.feature.pdfEarlierRevision": "Değiştirilen metin, PDF'nin önceki sürümünden hâlâ kurtarılabilir",
   "findings.feature.pdfSignatureEarlier": "Yalnızca PDF'nin önceki sürümünü kapsayan imzalar",
   "findings.feature.pdfCertificationBroken": "Düzenlemenin geçersiz kıldığı PDF sertifikası",
   "findings.feature.pdfOriginalWrittenBack": "Değiştirilmeden geri yazılan özgün PDF",
-  "findings.feature.pdfPreserveFallback": "Özgün PDF'ye eklenemeyen düzenlemeler; bu nedenle PDF yeniden oluşturuldu"
+  "findings.feature.pdfPreserveFallback": "Özgün PDF'ye eklenemeyen düzenlemeler; bu nedenle PDF yeniden oluşturuldu",
+  "reviewDisplay.simpleMarkup": "Basit işaretleme",
+  "reviewDisplay.allMarkup": "Tüm işaretlemeler",
+  "reviewDisplay.noMarkup": "İşaretleme yok",
+  "reviewDisplay.original": "Özgün",
+  "reviewDisplay.tip": "İzlenen değişikliklerin nasıl gösterileceğini seçin",
+  "reviewDisplay.label": "İnceleme için görüntüle",
+  "reviewDisplay.originalReadOnly": "Özgün: belgenin izlenen değişikliklerden önceki hâli. Düzenlemek için başka bir inceleme görünümü seçin.",
+  "reviewDisplay.changeBar": "Burada değişti. Tüm işaretlemeleri göstermek için tıklayın",
+  "reviewDisplay.previewOpen": "Özgün hâli göstermeden önce sürüm önizlemesini kapatın"
 }

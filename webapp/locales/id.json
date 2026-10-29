@@ -2656,11 +2656,21 @@
   "findings.pdf.ocrPending": "Halaman yang teksnya hanya berupa gambar: {count}. Teksnya belum ada di dokumen.",
   "findings.pdf.ocrApplied": "Teks halaman hasil pindai dikenali di perangkat ini ({provider}). Bandingkan dengan halamannya sebelum Anda mengandalkannya.",
   "menuGroup.pdf": "PDF",
+  "menuGroup.displayForReview": "Tampilan untuk peninjauan",
   "findings.feature.pdfIncrementalUpdate": "Halaman yang disunting, ditambahkan ke PDF asli sebagai pembaruan",
   "findings.feature.pdfPageCarriedOver": "Halaman yang dipertahankan persis seperti di PDF asli",
   "findings.feature.pdfEarlierRevision": "Teks yang diganti, masih dapat dipulihkan dari versi PDF sebelumnya",
   "findings.feature.pdfSignatureEarlier": "Tanda tangan, yang hanya mencakup versi PDF sebelumnya",
   "findings.feature.pdfCertificationBroken": "Sertifikasi PDF, yang menjadi tidak sah karena suntingan",
   "findings.feature.pdfOriginalWrittenBack": "PDF asli, ditulis kembali tanpa perubahan",
-  "findings.feature.pdfPreserveFallback": "Suntingan yang tidak dapat ditambahkan ke PDF asli, sehingga PDF dibuat ulang"
+  "findings.feature.pdfPreserveFallback": "Suntingan yang tidak dapat ditambahkan ke PDF asli, sehingga PDF dibuat ulang",
+  "reviewDisplay.simpleMarkup": "Markah sederhana",
+  "reviewDisplay.allMarkup": "Semua markah",
+  "reviewDisplay.noMarkup": "Tanpa markah",
+  "reviewDisplay.original": "Asli",
+  "reviewDisplay.tip": "Pilih cara perubahan terlacak ditampilkan",
+  "reviewDisplay.label": "Tampilan untuk peninjauan",
+  "reviewDisplay.originalReadOnly": "Asli: dokumen seperti sebelum perubahan terlacaknya. Pilih tampilan peninjauan lain untuk mengedit.",
+  "reviewDisplay.changeBar": "Diubah di sini. Klik untuk menampilkan semua markah",
+  "reviewDisplay.previewOpen": "Tutup pratinjau versi sebelum menampilkan dokumen asli"
 }

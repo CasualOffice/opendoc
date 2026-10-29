@@ -2689,11 +2689,21 @@
   "findings.pdf.ocrPending": "Сторінки, текст яких — лише зображення: {count}. Їхнього тексту ще немає в документі.",
   "findings.pdf.ocrApplied": "Текст відсканованих сторінок розпізнано на цьому пристрої ({provider}). Звірте його зі сторінкою, перш ніж на нього покладатися.",
   "menuGroup.pdf": "PDF",
+  "menuGroup.displayForReview": "Відображення для рецензування",
   "findings.feature.pdfIncrementalUpdate": "Змінені сторінки, додані до вихідного PDF як оновлення",
   "findings.feature.pdfPageCarriedOver": "Сторінки, збережені точно такими, як у вихідному PDF",
   "findings.feature.pdfEarlierRevision": "Замінений текст, який досі можна відновити з попередньої версії PDF",
   "findings.feature.pdfSignatureEarlier": "Підписи, що поширюються лише на попередню версію PDF",
   "findings.feature.pdfCertificationBroken": "Сертифікація PDF, яку зміна робить недійсною",
   "findings.feature.pdfOriginalWrittenBack": "Вихідний PDF, записаний назад без змін",
-  "findings.feature.pdfPreserveFallback": "Зміни, які не вдалося додати до вихідного PDF, тож PDF створено заново"
+  "findings.feature.pdfPreserveFallback": "Зміни, які не вдалося додати до вихідного PDF, тож PDF створено заново",
+  "reviewDisplay.simpleMarkup": "Проста розмітка",
+  "reviewDisplay.allMarkup": "Уся розмітка",
+  "reviewDisplay.noMarkup": "Без розмітки",
+  "reviewDisplay.original": "Оригінал",
+  "reviewDisplay.tip": "Виберіть, як показувати відстежувані зміни",
+  "reviewDisplay.label": "Відображення для рецензування",
+  "reviewDisplay.originalReadOnly": "Оригінал: документ до відстежуваних змін. Щоб редагувати, виберіть інше відображення для рецензування.",
+  "reviewDisplay.changeBar": "Тут є зміни. Клацніть, щоб показати всю розмітку",
+  "reviewDisplay.previewOpen": "Закрийте попередній перегляд версії, перш ніж показувати оригінал"
 }

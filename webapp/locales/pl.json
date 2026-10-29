@@ -2689,11 +2689,21 @@
   "findings.pdf.ocrPending": "Strony, których tekst jest tylko obrazem: {count}. Ich tekstu nie ma jeszcze w dokumencie.",
   "findings.pdf.ocrApplied": "Tekst zeskanowanych stron został rozpoznany na tym urządzeniu ({provider}). Porównaj go ze stroną, zanim na nim polegasz.",
   "menuGroup.pdf": "PDF",
+  "menuGroup.displayForReview": "Wyświetlanie do recenzji",
   "findings.feature.pdfIncrementalUpdate": "Edytowane strony, dodane do oryginalnego pliku PDF jako aktualizacja",
   "findings.feature.pdfPageCarriedOver": "Strony zachowane dokładnie tak jak w oryginalnym pliku PDF",
   "findings.feature.pdfEarlierRevision": "Zastąpiony tekst, nadal możliwy do odzyskania z wcześniejszej wersji pliku PDF",
   "findings.feature.pdfSignatureEarlier": "Podpisy, które obejmują tylko wcześniejszą wersję pliku PDF",
   "findings.feature.pdfCertificationBroken": "Certyfikacja pliku PDF, którą edycja unieważnia",
   "findings.feature.pdfOriginalWrittenBack": "Oryginalny plik PDF, zapisany ponownie bez zmian",
-  "findings.feature.pdfPreserveFallback": "Zmiany, których nie udało się dodać do oryginalnego pliku PDF, więc plik PDF został wygenerowany ponownie"
+  "findings.feature.pdfPreserveFallback": "Zmiany, których nie udało się dodać do oryginalnego pliku PDF, więc plik PDF został wygenerowany ponownie",
+  "reviewDisplay.simpleMarkup": "Proste znaczniki",
+  "reviewDisplay.allMarkup": "Wszystkie znaczniki",
+  "reviewDisplay.noMarkup": "Bez znaczników",
+  "reviewDisplay.original": "Oryginał",
+  "reviewDisplay.tip": "Wybierz sposób pokazywania śledzonych zmian",
+  "reviewDisplay.label": "Wyświetlanie do recenzji",
+  "reviewDisplay.originalReadOnly": "Oryginał: dokument sprzed śledzonych zmian. Aby edytować, wybierz inny sposób wyświetlania do recenzji.",
+  "reviewDisplay.changeBar": "Zmieniono tutaj. Kliknij, aby pokazać wszystkie znaczniki",
+  "reviewDisplay.previewOpen": "Zamknij podgląd wersji przed pokazaniem oryginału"
 }

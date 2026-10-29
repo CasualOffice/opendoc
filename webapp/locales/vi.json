@@ -2656,11 +2656,21 @@
   "findings.pdf.ocrPending": "Số trang có văn bản chỉ là hình ảnh: {count}. Văn bản của chúng chưa có trong tài liệu.",
   "findings.pdf.ocrApplied": "Văn bản của các trang quét đã được nhận dạng trên thiết bị này ({provider}). Hãy đối chiếu với trang trước khi dựa vào.",
   "menuGroup.pdf": "PDF",
+  "menuGroup.displayForReview": "Hiển thị để xem xét",
   "findings.feature.pdfIncrementalUpdate": "Các trang đã chỉnh sửa, được thêm vào PDF gốc dưới dạng bản cập nhật",
   "findings.feature.pdfPageCarriedOver": "Các trang được giữ nguyên như trong PDF gốc",
   "findings.feature.pdfEarlierRevision": "Văn bản đã thay thế, vẫn có thể khôi phục từ phiên bản trước của PDF",
   "findings.feature.pdfSignatureEarlier": "Chữ ký, chỉ áp dụng cho phiên bản trước của PDF",
   "findings.feature.pdfCertificationBroken": "Chứng nhận của PDF, bị vô hiệu do chỉnh sửa",
   "findings.feature.pdfOriginalWrittenBack": "PDF gốc, được ghi lại nguyên vẹn",
-  "findings.feature.pdfPreserveFallback": "Các chỉnh sửa không thể thêm vào PDF gốc, nên PDF đã được tạo lại"
+  "findings.feature.pdfPreserveFallback": "Các chỉnh sửa không thể thêm vào PDF gốc, nên PDF đã được tạo lại",
+  "reviewDisplay.simpleMarkup": "Đánh dấu đơn giản",
+  "reviewDisplay.allMarkup": "Tất cả đánh dấu",
+  "reviewDisplay.noMarkup": "Không đánh dấu",
+  "reviewDisplay.original": "Bản gốc",
+  "reviewDisplay.tip": "Chọn cách hiển thị các thay đổi được theo dõi",
+  "reviewDisplay.label": "Hiển thị để xem xét",
+  "reviewDisplay.originalReadOnly": "Bản gốc: tài liệu như trước các thay đổi được theo dõi. Chọn cách hiển thị khác để chỉnh sửa.",
+  "reviewDisplay.changeBar": "Đã thay đổi ở đây. Bấm để hiển thị tất cả đánh dấu",
+  "reviewDisplay.previewOpen": "Đóng bản xem trước phiên bản trước khi hiển thị bản gốc"
 }

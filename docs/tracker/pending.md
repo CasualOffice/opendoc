@@ -170,7 +170,6 @@ currently assigned. Rows stay in their queue order.
 | 194 | RM-25 | P2 | Contents, captions and cross-references: contents settings and leader; Contents styles, removal and adding a paragraph; Table of figures; Cross-references and links to headings | Open |
 | 195 | RM-26 | P2 | Tables: structure: insert dialog and nested tables; Split a table; Convert between text and tables; Insert and delete cells with a shift; Select the current cell | Open |
 | 196 | RM-27 | P2 | Tables: look and tools: table style options and built-in gallery; Table fill, width and margins; Borders: presets and the dialog with a preview; Eraser and draw table; Formula picker and recalculation | Open |
-| 200 | RM-31 | P2 | Review: display modes: simple markup, original, final; Decide changes in a selection; resolve all comments; Suggesting table and list structure; table revisions listed and decided; Comments over several paragraphs; highlight drawn by the engine | Open |
 | 202 | RM-33 | P2 | Fields: field catalogue and date formats; Update all fields; Operate dropdown form fields; Cached field results wrap like text; Insert text from a file | Open |
 | 203 | RM-34 | P2 | Content controls and forms: insert and configure a content control; Operate dropdown, combo and date controls; Control chrome and placeholder text; Protect a form | Open |
 | 204 | RM-35 | P2 | Charts: chart type gallery and change type; Edit the data; Chart elements; Remaining chart families and 3-D | Open |

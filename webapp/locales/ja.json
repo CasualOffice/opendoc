@@ -2656,11 +2656,21 @@
   "findings.pdf.ocrPending": "文字が画像だけのページ: {count}。その文字はまだ文書に含まれていません。",
   "findings.pdf.ocrApplied": "スキャンページの文字をこのデバイスで認識しました ({provider})。使う前にページと照合してください。",
   "menuGroup.pdf": "PDF",
+  "menuGroup.displayForReview": "変更内容の表示",
   "findings.feature.pdfIncrementalUpdate": "編集したページ (元の PDF に更新として追加)",
   "findings.feature.pdfPageCarriedOver": "元の PDF のまま保持したページ",
   "findings.feature.pdfEarlierRevision": "置き換えたテキスト (PDF の以前の版から今も復元可能)",
   "findings.feature.pdfSignatureEarlier": "署名 (PDF の以前の版のみが対象)",
   "findings.feature.pdfCertificationBroken": "PDF の証明 (編集により無効)",
   "findings.feature.pdfOriginalWrittenBack": "元の PDF (変更せずに書き戻し)",
-  "findings.feature.pdfPreserveFallback": "元の PDF に追加できなかった編集 (そのため PDF を再生成)"
+  "findings.feature.pdfPreserveFallback": "元の PDF に追加できなかった編集 (そのため PDF を再生成)",
+  "reviewDisplay.simpleMarkup": "シンプルな変更履歴",
+  "reviewDisplay.allMarkup": "すべての変更履歴",
+  "reviewDisplay.noMarkup": "変更履歴なし",
+  "reviewDisplay.original": "初版",
+  "reviewDisplay.tip": "変更履歴の表示方法を選択します",
+  "reviewDisplay.label": "変更内容の表示",
+  "reviewDisplay.originalReadOnly": "初版: 変更履歴が記録される前の文書です。編集するには、別の表示を選択してください。",
+  "reviewDisplay.changeBar": "ここが変更されています。クリックするとすべての変更履歴を表示します",
+  "reviewDisplay.previewOpen": "初版を表示する前にバージョンのプレビューを閉じてください"
 }

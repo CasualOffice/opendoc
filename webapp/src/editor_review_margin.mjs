@@ -92,6 +92,7 @@ export function createReviewMargin(ed) {
       withheldReason: t("capability.embedded"),
       participant: ed.SESSION.modeAuthority,
     });
+    ed.reviewDisplay.reflect(); // enabled with a document, and the mode it derives
     if (!ed.doc) return;
     let count = 0;
     try { count = (JSON.parse(ed.doc.listRevisions()) ?? []).length; } catch { count = 0; }

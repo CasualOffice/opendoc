@@ -129,6 +129,8 @@ export const EN_STRINGS = Object.freeze({
   "menuGroup.textColor": "Text color",
   "menuGroup.textWidth": "Text width",
   "menuGroup.tracking": "Tracking",
+  // Review ▸ Display for review, the flyout holding the four review views.
+  "menuGroup.displayForReview": "Display for review",
   "menuGroup.undo": "Undo",
   "menuGroup.zoom": "Zoom",
   // The one sentence white-labelling needs (docs/126 phase 3). A deployment whose
@@ -1848,6 +1850,14 @@ export const EN_STRINGS = Object.freeze({
   "protect.passwordMismatch": "The two new passwords don't match",
   "protect.passwordRequired": "Enter the password to change or stop this restriction",
   "protect.wrongPassword": "That isn't the password this restriction was set with",
+
+  // Display for review (`review_display.mjs`, `docs/153` review.display-mode-*).
+  // The four mode names and the trigger's tip are markup keys; these are the
+  // Original view's read-only reason (the banner a preview shows), a change
+  // bar's tooltip, and the refusal when a version preview is already up.
+  "reviewDisplay.originalReadOnly": "Original: the document as it was before its tracked changes. Choose another display for review to edit.",
+  "reviewDisplay.changeBar": "Changed here. Click to show all markup",
+  "reviewDisplay.previewOpen": "Close the version preview before showing the original",
 
   // ---- A PARTICIPANT'S GRANT, AND THE ROOM'S REFUSALS ----------------------
   //

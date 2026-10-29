@@ -2678,11 +2678,21 @@
   "findings.pdf.ocrPending": "Páginas cujo texto é apenas uma imagem: {count}. O texto delas ainda não está no documento.",
   "findings.pdf.ocrApplied": "O texto das páginas digitalizadas foi reconhecido neste dispositivo ({provider}). Compare-o com a página antes de confiar nele.",
   "menuGroup.pdf": "PDF",
+  "menuGroup.displayForReview": "Exibir para revisão",
   "findings.feature.pdfIncrementalUpdate": "Páginas editadas, adicionadas ao PDF original como uma atualização",
   "findings.feature.pdfPageCarriedOver": "Páginas mantidas exatamente como no PDF original",
   "findings.feature.pdfEarlierRevision": "Texto substituído, ainda recuperável da versão anterior do PDF",
   "findings.feature.pdfSignatureEarlier": "Assinaturas, que cobrem apenas a versão anterior do PDF",
   "findings.feature.pdfCertificationBroken": "A certificação do PDF, que a edição invalida",
   "findings.feature.pdfOriginalWrittenBack": "O PDF original, regravado sem alterações",
-  "findings.feature.pdfPreserveFallback": "Edições que não puderam ser adicionadas ao PDF original, por isso o PDF foi gerado novamente"
+  "findings.feature.pdfPreserveFallback": "Edições que não puderam ser adicionadas ao PDF original, por isso o PDF foi gerado novamente",
+  "reviewDisplay.simpleMarkup": "Marcação simples",
+  "reviewDisplay.allMarkup": "Toda a marcação",
+  "reviewDisplay.noMarkup": "Sem marcação",
+  "reviewDisplay.original": "Original",
+  "reviewDisplay.tip": "Escolha como as alterações controladas são mostradas",
+  "reviewDisplay.label": "Exibir para revisão",
+  "reviewDisplay.originalReadOnly": "Original: o documento como era antes das alterações controladas. Escolha outra exibição para revisão para editar.",
+  "reviewDisplay.changeBar": "Alterado aqui. Clique para mostrar toda a marcação",
+  "reviewDisplay.previewOpen": "Feche a visualização da versão antes de mostrar o original"
 }

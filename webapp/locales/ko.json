@@ -2656,11 +2656,21 @@
   "findings.pdf.ocrPending": "텍스트가 그림으로만 된 페이지: {count}. 이 텍스트는 아직 문서에 없습니다.",
   "findings.pdf.ocrApplied": "스캔 페이지의 텍스트를 이 기기에서 인식했습니다({provider}). 사용하기 전에 페이지와 대조하세요.",
   "menuGroup.pdf": "PDF",
+  "menuGroup.displayForReview": "검토용 표시",
   "findings.feature.pdfIncrementalUpdate": "편집한 페이지(원본 PDF에 업데이트로 추가됨)",
   "findings.feature.pdfPageCarriedOver": "원본 PDF 그대로 유지된 페이지",
   "findings.feature.pdfEarlierRevision": "바뀐 텍스트(PDF의 이전 버전에서 여전히 복구 가능)",
   "findings.feature.pdfSignatureEarlier": "PDF의 이전 버전에만 적용되는 서명",
   "findings.feature.pdfCertificationBroken": "편집으로 무효가 되는 PDF 인증",
   "findings.feature.pdfOriginalWrittenBack": "변경 없이 다시 기록된 원본 PDF",
-  "findings.feature.pdfPreserveFallback": "원본 PDF에 추가할 수 없어 PDF를 다시 생성하게 된 편집"
+  "findings.feature.pdfPreserveFallback": "원본 PDF에 추가할 수 없어 PDF를 다시 생성하게 된 편집",
+  "reviewDisplay.simpleMarkup": "간단한 태그",
+  "reviewDisplay.allMarkup": "모든 태그",
+  "reviewDisplay.noMarkup": "태그 없음",
+  "reviewDisplay.original": "원본",
+  "reviewDisplay.tip": "변경 내용 추적을 표시하는 방법 선택",
+  "reviewDisplay.label": "검토용 표시",
+  "reviewDisplay.originalReadOnly": "원본: 변경 내용이 추적되기 전의 문서입니다. 편집하려면 다른 검토용 표시를 선택하세요.",
+  "reviewDisplay.changeBar": "여기가 변경되었습니다. 모든 태그를 표시하려면 클릭하세요",
+  "reviewDisplay.previewOpen": "원본을 표시하기 전에 버전 미리 보기를 닫으세요"
 }

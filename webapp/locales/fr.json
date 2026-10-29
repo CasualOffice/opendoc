@@ -2678,11 +2678,21 @@
   "findings.pdf.ocrPending": "Pages dont le texte n’est qu’une image : {count}. Leur texte n’est pas encore dans le document.",
   "findings.pdf.ocrApplied": "Le texte des pages numérisées a été reconnu sur cet appareil ({provider}). Comparez-le à la page avant de vous y fier.",
   "menuGroup.pdf": "PDF",
+  "menuGroup.displayForReview": "Affichage pour la révision",
   "findings.feature.pdfIncrementalUpdate": "Pages modifiées, ajoutées au PDF d’origine sous forme de mise à jour",
   "findings.feature.pdfPageCarriedOver": "Pages conservées exactement comme dans le PDF d’origine",
   "findings.feature.pdfEarlierRevision": "Texte remplacé, encore récupérable dans la version antérieure du PDF",
   "findings.feature.pdfSignatureEarlier": "Signatures, qui ne couvrent que la version antérieure du PDF",
   "findings.feature.pdfCertificationBroken": "La certification du PDF, que la modification invalide",
   "findings.feature.pdfOriginalWrittenBack": "Le PDF d’origine, réécrit sans modification",
-  "findings.feature.pdfPreserveFallback": "Modifications qui n’ont pas pu être ajoutées au PDF d’origine, si bien que le PDF a été régénéré"
+  "findings.feature.pdfPreserveFallback": "Modifications qui n’ont pas pu être ajoutées au PDF d’origine, si bien que le PDF a été régénéré",
+  "reviewDisplay.simpleMarkup": "Marques simples",
+  "reviewDisplay.allMarkup": "Toutes les marques",
+  "reviewDisplay.noMarkup": "Aucune marque",
+  "reviewDisplay.original": "Original",
+  "reviewDisplay.tip": "Choisir comment les modifications suivies sont affichées",
+  "reviewDisplay.label": "Affichage pour la révision",
+  "reviewDisplay.originalReadOnly": "Original : le document tel qu'il était avant ses modifications suivies. Choisissez un autre affichage pour la révision pour modifier.",
+  "reviewDisplay.changeBar": "Modifié ici. Cliquez pour afficher toutes les marques",
+  "reviewDisplay.previewOpen": "Fermez l'aperçu de la version avant d'afficher l'original"
 }

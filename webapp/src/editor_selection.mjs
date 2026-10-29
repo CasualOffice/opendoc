@@ -252,7 +252,12 @@ export function createSelection(ed) {
     if (!ed.doc) return;
     ed.reviewColumnStartMemo = new Map();
     const summary = ed.readReviewData(ed.doc);
-    for (const comment of summary.comments ?? []) {
+    // Display for review (`review_display.mjs`): All markup paints the revision
+    // markers below; Simple markup paints a change bar per changed line instead;
+    // No markup paints neither, and no comment highlight either.
+    const overlay = ed.reviewDisplay.overlay();
+    if (overlay.changeBars) ed.reviewDisplay.paintChangeBars(summary.revisions ?? []);
+    for (const comment of overlay.commentMarkers ? summary.comments ?? [] : []) {
       const explicitlyOpen = ed.activeReviewItemId === `comment:${comment.id}`;
       if ((comment.resolved && !explicitlyOpen) || !comment.anchor?.node) continue;
       const { node, start, end } = comment.anchor;
@@ -268,7 +273,7 @@ export function createSelection(ed) {
         }
       }
     }
-    for (const revision of summary.revisions ?? []) {
+    for (const revision of overlay.revisionMarkers ? summary.revisions ?? [] : []) {
       const range = ed.revisionRange(revision);
       if (!range) continue;
       const paragraphLevel = revision.kind === "paragraph_format"

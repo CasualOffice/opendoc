@@ -542,6 +542,13 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("review.next", null),
   exact("review.previous", null),
   exact("review.toggle", null),
+  // Display for review (`docs/153` review.display-mode-*): four VIEWS of the
+  // same document. Original shows a throwaway rejected copy read-only, so none
+  // of the four changes document state and none requires anything.
+  exact("review.displayMode.simpleMarkup", null),
+  exact("review.displayMode.allMarkup", null),
+  exact("review.displayMode.noMarkup", null),
+  exact("review.displayMode.original", null),
   // Comparing changes NOTHING. It opens a panel, reads the document out through
   // the export path it already has, parses a second document in a throwaway
   // engine job and lists the differences — `casual-doc-diff`'s facade

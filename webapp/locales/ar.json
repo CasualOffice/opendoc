@@ -2711,11 +2711,21 @@
   "findings.pdf.ocrPending": "صفحات نصها مجرد صورة: {count}. نصها ليس في المستند بعد.",
   "findings.pdf.ocrApplied": "تم التعرّف على نص الصفحات الممسوحة ضوئيًا على هذا الجهاز ({provider}). قارنه بالصفحة قبل الاعتماد عليه.",
   "menuGroup.pdf": "PDF",
+  "menuGroup.displayForReview": "العرض للمراجعة",
   "findings.feature.pdfIncrementalUpdate": "صفحات معدّلة، أُضيفت إلى ملف PDF الأصلي كتحديث",
   "findings.feature.pdfPageCarriedOver": "صفحات احتُفظ بها تمامًا كما في ملف PDF الأصلي",
   "findings.feature.pdfEarlierRevision": "نص مستبدل، لا يزال قابلاً للاسترداد من الإصدار السابق لملف PDF",
   "findings.feature.pdfSignatureEarlier": "توقيعات لا تشمل إلا الإصدار السابق لملف PDF",
   "findings.feature.pdfCertificationBroken": "شهادة ملف PDF، التي يُبطلها التعديل",
   "findings.feature.pdfOriginalWrittenBack": "ملف PDF الأصلي، أُعيدت كتابته دون تغيير",
-  "findings.feature.pdfPreserveFallback": "تعديلات تعذّرت إضافتها إلى ملف PDF الأصلي، لذا أُعيد إنشاء ملف PDF"
+  "findings.feature.pdfPreserveFallback": "تعديلات تعذّرت إضافتها إلى ملف PDF الأصلي، لذا أُعيد إنشاء ملف PDF",
+  "reviewDisplay.simpleMarkup": "علامات بسيطة",
+  "reviewDisplay.allMarkup": "كل العلامات",
+  "reviewDisplay.noMarkup": "بلا علامات",
+  "reviewDisplay.original": "الأصل",
+  "reviewDisplay.tip": "اختر كيفية عرض التغييرات المتعقَّبة",
+  "reviewDisplay.label": "العرض للمراجعة",
+  "reviewDisplay.originalReadOnly": "الأصل: المستند كما كان قبل تغييراته المتعقَّبة. اختر عرضًا آخر للمراجعة للتحرير.",
+  "reviewDisplay.changeBar": "تغيّر هنا. انقر لإظهار كل العلامات",
+  "reviewDisplay.previewOpen": "أغلق معاينة الإصدار قبل إظهار الأصل"
 }

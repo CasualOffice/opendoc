@@ -257,6 +257,9 @@ mod quantity;
 // The password on the editing restriction: Word's verifier, written and checked
 // (`docs/153` `review.protection-password`, ADR-052 as amended).
 mod review_protection;
+// Review ▸ Display for review ▸ Original: a throwaway copy with every change rejected
+// (`docs/153` `review.display-mode-original`).
+mod review_display;
 
 // The shared session (`docs/152`, ADR-063). Its own module because the socket is the
 // browser's and the session is the engine's: nothing here opens a connection, and nothing in
