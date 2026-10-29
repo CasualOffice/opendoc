@@ -32,6 +32,10 @@ export interface OpenOptions {
   fontProvider?: FontProvider | null;
   /** Where the `.wasm` is, when the default next to the glue is not it. */
   wasm?: WasmSource;
+  /** The file's name. With an engine built with the `formats` feature it
+   *  selects Markdown (`.md`) or HTML (`.html`), whose bytes carry no
+   *  evidence of their own; it never overrides a format the bytes prove. */
+  name?: string;
 }
 
 export interface PageSize {

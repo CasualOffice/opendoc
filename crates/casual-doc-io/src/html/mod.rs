@@ -65,6 +65,7 @@
 
 mod css;
 mod drawing;
+mod import;
 mod tabs;
 mod writer;
 
@@ -74,6 +75,11 @@ use crate::{
     AdapterError, CompatibilityEntry, CompatibilityReport, ExportArtifact, ExportMode,
     ExportRequest, FeatureLocation, FormatDescriptor, FormatExporter, FormatId, FormatProfile,
     ModelOutcome, RetentionOutcome, formats,
+};
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use crate::{
+    FormatImporter, ImportArtifact, ImportRequest, ProbeRequest, ProbeResult, RecoveryReport,
+    SourceEnvelope,
 };
 
 /// The media type registered for HTML, and the one the artifact carries.
@@ -93,6 +99,12 @@ pub struct HtmlLimits {
     pub max_embedded_bytes: usize,
     /// Maximum block-nesting depth followed before the walk refuses.
     pub max_nesting_depth: usize,
+    /// Maximum bytes of HTML source an import reads.
+    pub max_input_bytes: usize,
+    /// Maximum depth of open elements an import follows before it refuses.
+    /// Deeper than the export walk's: a web page nests `div`s far past the
+    /// structure a document has.
+    pub max_input_nesting_depth: usize,
 }
 
 impl HtmlLimits {
@@ -102,6 +114,10 @@ impl HtmlLimits {
     pub const HARD_MAX_EMBEDDED_BYTES: usize = 64 * 1024 * 1024;
     /// Hard maximum nesting depth.
     pub const HARD_MAX_NESTING_DEPTH: usize = 256;
+    /// Hard maximum source bytes.
+    pub const HARD_MAX_INPUT_BYTES: usize = 256 * 1024 * 1024;
+    /// Hard maximum open-element depth on import.
+    pub const HARD_MAX_INPUT_NESTING_DEPTH: usize = 4096;
 
     fn validate(self) -> Result<(), AdapterError> {
         for (name, value, ceiling) in [
@@ -120,6 +136,16 @@ impl HtmlLimits {
                 self.max_nesting_depth,
                 Self::HARD_MAX_NESTING_DEPTH,
             ),
+            (
+                "html_input_bytes",
+                self.max_input_bytes,
+                Self::HARD_MAX_INPUT_BYTES,
+            ),
+            (
+                "html_input_nesting_depth",
+                self.max_input_nesting_depth,
+                Self::HARD_MAX_INPUT_NESTING_DEPTH,
+            ),
         ] {
             if value > ceiling {
                 return Err(AdapterError::new(format!(
@@ -137,6 +163,8 @@ impl Default for HtmlLimits {
             max_output_bytes: 64 * 1024 * 1024,
             max_embedded_bytes: 8 * 1024 * 1024,
             max_nesting_depth: 32,
+            max_input_bytes: 16 * 1024 * 1024,
+            max_input_nesting_depth: 512,
         }
     }
 }
@@ -158,9 +186,10 @@ impl HtmlAdapter {
                 display_name: "Web Page".to_owned(),
                 mime_types: vec![HTML_MIME.to_owned()],
                 extensions: vec!["html".to_owned(), "htm".to_owned()],
-                // Export only, for the same reason Markdown is: reading HTML
-                // needs a parser and a sanitiser, and only the writer exists.
-                can_import: false,
+                // Both ways since `shell.import-html`: `import` is a bounded
+                // tokenizer over the paste path's mapping, sanitised by
+                // construction (nothing runs, nothing is fetched).
+                can_import: true,
                 can_export: true,
                 exact_if_unchanged: false,
                 preserve_when_safe: false,
@@ -173,6 +202,94 @@ impl HtmlAdapter {
 impl Default for HtmlAdapter {
     fn default() -> Self {
         Self::new(HtmlLimits::default())
+    }
+}
+
+/// What an HTML import keeps about its source: nothing (never handed back
+/// byte for byte).
+#[derive(Debug)]
+struct HtmlSourceState;
+
+impl HtmlAdapter {
+    /// The source text: UTF-8 (BOM stripped), or, for a file that is not,
+    /// Windows-1252 as a browser falls back to, reported.
+    fn source<'a>(
+        &self,
+        bytes: &'a [u8],
+    ) -> Result<(std::borrow::Cow<'a, str>, bool), AdapterError> {
+        enforce("html_input_bytes", bytes.len(), self.limits.max_input_bytes)?;
+        let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
+        match std::str::from_utf8(bytes) {
+            Ok(text) => Ok((std::borrow::Cow::Borrowed(text), false)),
+            Err(_) => Ok((
+                std::borrow::Cow::Owned(bytes.iter().map(|&byte| windows_1252(byte)).collect()),
+                true,
+            )),
+        }
+    }
+}
+
+/// One Windows-1252 byte as a character: Latin-1, with 0x80-0x9F as the
+/// punctuation Windows puts there (the bytes a browser decodes them as).
+fn windows_1252(byte: u8) -> char {
+    const HIGH: [char; 32] = [
+        '\u{20ac}', '\u{fffd}', '\u{201a}', '\u{192}', '\u{201e}', '\u{2026}', '\u{2020}',
+        '\u{2021}', '\u{2c6}', '\u{2030}', '\u{160}', '\u{2039}', '\u{152}', '\u{fffd}', '\u{17d}',
+        '\u{fffd}', '\u{fffd}', '\u{2018}', '\u{2019}', '\u{201c}', '\u{201d}', '\u{2022}',
+        '\u{2013}', '\u{2014}', '\u{2dc}', '\u{2122}', '\u{161}', '\u{203a}', '\u{153}',
+        '\u{fffd}', '\u{17e}', '\u{178}',
+    ];
+    match byte {
+        0x80..=0x9f => HIGH[usize::from(byte - 0x80)],
+        _ => char::from(byte),
+    }
+}
+
+impl FormatImporter for HtmlAdapter {
+    fn descriptor(&self) -> &FormatDescriptor {
+        &self.descriptor
+    }
+
+    /// Name-only, as Markdown's is ([`ProbeResult::name_only`]): a page and
+    /// a text file that mentions `<html>` are both text, so only a `.html` /
+    /// `.htm` name or `text/html` selects this importer.
+    fn probe(&self, request: ProbeRequest<'_>) -> ProbeResult {
+        if self.limits.validate().is_ok() && request.bytes.len() <= self.limits.max_input_bytes {
+            ProbeResult::name_only("html.text")
+        } else {
+            ProbeResult::no_match("html.over-limit")
+        }
+    }
+
+    fn import(&self, request: ImportRequest<'_>) -> Result<ImportArtifact, AdapterError> {
+        self.limits.validate()?;
+        let (text, fallback) = self.source(request.bytes)?;
+        let (document, resources, mut findings) = import::import_html(
+            &text,
+            self.limits,
+            crate::flow_builder::namespace_of(request.bytes),
+        )?;
+        if fallback {
+            findings.record(
+                "html.import.decoded_as_windows_1252",
+                ModelOutcome::Degraded,
+            );
+        }
+        Ok(ImportArtifact {
+            document,
+            resources,
+            source: SourceEnvelope::new(
+                self.descriptor.id.clone(),
+                env!("CARGO_PKG_VERSION").to_owned(),
+                HtmlSourceState,
+            ),
+            report: findings.finish(),
+            recovery: RecoveryReport::default(),
+            format: FormatProfile {
+                format: self.descriptor.id.clone(),
+                version: Some("html5".to_owned()),
+            },
+        })
     }
 }
 
@@ -189,8 +306,8 @@ impl FormatExporter for HtmlAdapter {
             .map_err(|error| AdapterError::new(format!("normalized model: {error}")))?;
         if request.mode == ExportMode::ExactIfUnchanged {
             return Err(AdapterError::new(
-                "html has no importer, so there are no retained source bytes to return \
-                 exactly; ask for the semantic mode",
+                "html round-trips through the model, not byte for byte, so there are no \
+                 retained source bytes to return exactly; ask for the semantic mode",
             ));
         }
 

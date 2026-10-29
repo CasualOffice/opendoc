@@ -131,7 +131,7 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 | --- | --- | --- |
 | OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 252 exact commands, 13 families |
 | ONLYOFFICE | snapshot of 163 files, taken 2026-09-30 | 578 controls, 3529 locale keys, 2122 engine API methods, 114 boot flags (14 licence-gated, 3 desktop-only) |
-| Matrix | `tools/opendoc-parity/data/capabilities.json` | 422 graded rows |
+| Matrix | `tools/opendoc-parity/data/capabilities.json` | 424 graded rows |
 <!-- @end parity-provenance -->
 
 ## The tally
@@ -140,13 +140,13 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 | Verdict | Rows | What it means |
 | --- | --- | --- |
 | Parity | 246 | both products ship it, and both anchors resolve |
-| Ours, ungated | 27 | we ship it in the editor itself; theirs is behind a licence result the document server issues, the desktop shell, or the integrator's own config |
+| Ours, ungated | 29 | we ship it in the editor itself; theirs is behind a licence result the document server issues, the desktop shell, or the integrator's own config |
 | Ours only | 25 | we ship it and their tree has no such surface |
 | Partial | 66 | we ship part of it; the row says what is missing |
 | Gap | 33 | their standalone browser session ships it and we do not |
 | Theirs, gated | 13 | theirs needs a licence result, the desktop shell or the integrator, and we lack it too |
 | Neither | 12 | neither product ships it, and the row records the search that established that |
-| **Total graded** | **422** | every row below |
+| **Total graded** | **424** | every row below |
 <!-- @end parity-tally -->
 
 ## Open gaps, ranked by what a document user hits
@@ -582,7 +582,7 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Word count dialog, including a count for the selection | Parity | `tools.wordCount` | `DE.Views.FileMenuPanels.DocumentInfo.txtStatistics` | Theirs is the document-info statistics block and the status-bar Word count menu, both for the document only (Statusbar.js:325-343). Ours is Word's dialog with a Selection column, from the Review band, the Review menu, the palette, Cmd/Ctrl+Shift+G and the status bar. |
 | Word and character count in the status bar | Parity | `webapp/src/status_counts.mjs` · `countLabels` | `DE.Views.Statusbar.txtWordCount` | Ours carries words, characters with and without spaces, and paragraphs, and keeps the figures shed at narrow widths on the region's tooltip. |
 
-### Files, view, navigation and the shell (70 rows)
+### Files, view, navigation and the shell (72 rows)
 
 | Capability | Verdict | Ours | Theirs | Note |
 | --- | --- | --- | --- | --- |
@@ -617,6 +617,8 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Show non-printing characters | Partial | `crates/casual-doc-layout/src/formatting_marks.rs` · `FormattingMarks` — missing: the toggle in the chrome, and three of the marks | `DE.Views.Toolbar.mniHiddenChars` | The engine paints the pilcrow, the tab arrow, the space dot, the return arrow at a hard break and the rule at a page or column break, as a paint-only layer appended after a page's content: `crates/casual-doc-layout/tests/geometry_snapshot.rs` composes every fixture with every mark on and holds the geometry golden byte-identical, so a mark provably moves nothing and cannot export. `casual-doc-wasm` now rasterizes through `compose_page_with`, so the chrome reaches it in one call: `doc.setFormattingMarks('{"all":true}')` is the ¶ button, the five individual keys plus `color` are Word's *Display* pane, and `doc.formattingMarks` reads the state back. It is a **repaint** — the setter bumps the view epoch, issues no `Operation`, moves no page boundary and leaves the galley cache intact, which `turning_formatting_marks_on_repaints_and_never_repaginates` holds and which went red on making the setter repaginate (400 cached shaped paragraphs and 209,488 bytes thrown away). Not drawn: the end-of-cell mark, the section-break rule (a section end is not visible from one page), and a separate mark for a no-break space. |
 | Go to a page number | Partial | `webapp/src/pages_panel.mjs` · `PAGES_PANEL_WINDOW` — missing: a page-number field; you must find the thumbnail, which for a far-away page means scrolling the pane | `DE.Views.Statusbar.goToPageText` | Theirs types a number into the status bar's page indicator. Ours can only be navigated by picking a thumbnail. |
 | Command the editor from the host page and hear what it did | Parity | `webapp/src/host_contract.mjs` · `COMMAND_CONTRACT` | `asc_docs_api.openDocument` | Theirs is the asc_docs_api surface plus a postMessage event list, hand-maintained on both sides. Ours builds both transports from one schema, so a command that exists in-process and not across the frame is a build failure. |
+| Open an HTML file as a document | Ours, ungated | `crates/casual-doc-io/src/html/import.rs` · `const RAW_TEXT` | `DE.Views.FileMenu.btnFileOpenCaption` behind `isDesktopApp` | Theirs converts HTML on the document server (x2t) when a host hands one over; Open itself is desktop-only (FileMenu.js:511). Ours is a bounded tokenizer in the engine over the paste path's mapping (clipboard.mjs htmlToStructured), so a .html opens offline, in the editor, MCP open_document, the viewer and the SDK; scripts and styles are skipped unparsed and nothing is fetched. |
+| Open a Markdown file as a document | Ours, ungated | `crates/casual-doc-io/src/markdown_import.rs` · `Options::ENABLE_TABLES` | `DE.Views.FileMenu.btnFileOpenCaption` behind `isDesktopApp` | Their Markdown is the MD row of the Download-as grid (FileMenuPanels.js:63, c_oAscFileType.MD in sdkjs/common/commonDefines.js:497) and a server-side conversion on open. Ours reads CommonMark + GFM (pulldown-cmark, MIT) in the engine: headings, real lists with levels, task boxes as checkbox controls, tables with header row and alignment, code, quotes, rules, links, data: pictures and footnotes; raw HTML and remote pictures are reported, never run or fetched. MD -> model -> MD -> model is a tested fixed point. |
 | Change the interface language from inside the editor | Ours only | `webapp/src/locales.mjs` · `endonym` | none (searched `no interface-language control exists in the client: the DE.Views.FileMenuPanels.Settings.* locale keys cover theme, unit, zoom, font rendering, macros and screen reader and carry no language key; the UI language comes from editorConfig.lang at boot`) | Ours ships nineteen locales with an in-product picker in the status bar and in Settings, each named by its endonym so a reader can escape a language they cannot read. Theirs takes the language from editorConfig.lang at boot; there is no interface-language control in the client (no such key under DE.Views.FileMenuPanels.Settings). |
 | Interface theme | Parity | `view.settings` | `btnInterfaceTheme` | Ours is System / Light / Dark plus an accent colour, in Settings; theirs is a theme list on the View tab. docs/149 grades the host-side default for this separately. |
 | Operate the editor from the keyboard alone | Parity | `webapp/src/keymap.mjs` · `APP_SCOPE` | `DE.Views.FileMenuPanels.Settings.strKeyboardShortcuts` | Ours routes every chord through one keymap that the shortcut reference is generated from, so a binding and its printed label cannot disagree. |

@@ -14,6 +14,12 @@ use crate::{
 pub enum ProbeConfidence {
     /// The input does not match this format.
     NoMatch,
+    /// The bytes are acceptable to this format but carry no evidence of it of
+    /// their own: only a filename or MIME hint (or an explicit selection) can
+    /// select it. Markdown and HTML are both "any UTF-8 text" to a probe, and
+    /// guessing between them and plain text from content would open a `.txt`
+    /// that happens to start with `#` as a heading.
+    NameOnly,
     /// The input has non-authoritative evidence for this format.
     Possible,
     /// The input contains authoritative format evidence.
@@ -35,6 +41,15 @@ impl ProbeResult {
     pub const fn no_match(evidence: &'static str) -> Self {
         Self {
             confidence: ProbeConfidence::NoMatch,
+            evidence,
+        }
+    }
+
+    /// Creates a name-only result: see [`ProbeConfidence::NameOnly`].
+    #[must_use]
+    pub const fn name_only(evidence: &'static str) -> Self {
+        Self {
+            confidence: ProbeConfidence::NameOnly,
             evidence,
         }
     }
@@ -220,6 +235,27 @@ impl FormatRegistry {
                 matches.push((id, registered, probe.confidence));
             }
         }
+        // A name-only format is selected only when the hint names it and no
+        // format found authoritative evidence. A hint never overrides a
+        // definite probe: a `.md` that is really a DOCX opens as the DOCX.
+        let definite = matches
+            .iter()
+            .any(|(_, _, confidence)| *confidence == ProbeConfidence::Definite);
+        if !definite {
+            let hinted: Vec<_> = matches
+                .iter()
+                .filter(|(_, registered, confidence)| {
+                    *confidence == ProbeConfidence::NameOnly
+                        && registered.descriptor.as_ref().is_some_and(|descriptor| {
+                            descriptor.matches_hint(request.file_name_hint, request.mime_hint)
+                        })
+                })
+                .collect();
+            if hinted.len() == 1 {
+                return Ok(hinted[0].0.clone());
+            }
+        }
+        matches.retain(|(_, _, confidence)| *confidence != ProbeConfidence::NameOnly);
         let Some(highest) = matches.iter().map(|(_, _, confidence)| *confidence).max() else {
             return Err(IoError::UnsupportedFormat { requested: None });
         };
@@ -432,6 +468,51 @@ mod tests {
             IoError::UnsupportedFormat {
                 requested: Some(unknown)
             }
+        );
+    }
+
+    #[test]
+    fn a_name_only_format_needs_its_name_and_never_beats_evidence() {
+        let mut registry = FormatRegistry::new();
+        register_probe(
+            &mut registry,
+            "text.format",
+            "txt",
+            ProbeResult::possible("t"),
+        );
+        register_probe(
+            &mut registry,
+            "md.format",
+            "md",
+            ProbeResult::name_only("m"),
+        );
+        let detect = |registry: &FormatRegistry, name: Option<&str>| {
+            registry
+                .detect(DetectionRequest {
+                    bytes: b"# x",
+                    selection: FormatSelection::Auto,
+                    file_name_hint: name,
+                    mime_hint: None,
+                })
+                .unwrap()
+        };
+        assert_eq!(detect(&registry, Some("a.md")).as_str(), "md.format");
+        assert_eq!(detect(&registry, Some("a.txt")).as_str(), "text.format");
+        assert_eq!(
+            detect(&registry, None).as_str(),
+            "text.format",
+            "without its name a name-only format is never chosen"
+        );
+        register_probe(
+            &mut registry,
+            "zip.format",
+            "zip",
+            ProbeResult::definite("z"),
+        );
+        assert_eq!(
+            detect(&registry, Some("a.md")).as_str(),
+            "zip.format",
+            "a name never overrides authoritative evidence"
         );
     }
 

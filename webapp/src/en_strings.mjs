@@ -890,9 +890,9 @@ export const EN_STRINGS = Object.freeze({
   "findings.feature.pdfOriginalWrittenBack": "The original PDF, written back unchanged",
   "findings.feature.pdfPreserveFallback": "Edits that could not be added to the original PDF, so the PDF was regenerated",
   // The open path's status lines (`editor_file_open.mjs`, `editor_file_pick.mjs`).
-  "fileOpen.ready": "Ready — open a .docx, .odt, .rtf, .pdf, .json or .txt",
+  "fileOpen.ready": "Ready — open a .docx, .odt, .rtf, .pdf, .md, .html, .json or .txt",
   "fileOpen.opening": "Opening {name}…",
-  "filePick.unsupported": "Please choose a .docx, .odt, .rtf, .pdf, .json or .txt file",
+  "filePick.unsupported": "Please choose a .docx, .odt, .rtf, .pdf, .md, .html, .json or .txt file",
   "findings.close": "Close",
   "findings.closeLabel": "Close compatibility findings",
   // What each finding IS, in words a reader shares (`109` FID-AT-05,

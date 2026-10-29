@@ -4270,6 +4270,48 @@
       "note": "Their TXT row is FileMenuPanels.js:65."
     },
     {
+      "id": "shell.import-html",
+      "area": "shell",
+      "title": "Open an HTML file as a document",
+      "ours": {
+        "anchor": {
+          "file": "crates/casual-doc-io/src/html/import.rs",
+          "literal": "const RAW_TEXT"
+        }
+      },
+      "theirs": {
+        "gated": {
+          "evidence": {
+            "localeKey": "DE.Views.FileMenu.btnFileOpenCaption"
+          },
+          "option": "isDesktopApp"
+        }
+      },
+      "rank": 3,
+      "note": "Theirs converts HTML on the document server (x2t) when a host hands one over; Open itself is desktop-only (FileMenu.js:511). Ours is a bounded tokenizer in the engine over the paste path's mapping (clipboard.mjs htmlToStructured), so a .html opens offline, in the editor, MCP open_document, the viewer and the SDK; scripts and styles are skipped unparsed and nothing is fetched."
+    },
+    {
+      "id": "shell.import-markdown",
+      "area": "shell",
+      "title": "Open a Markdown file as a document",
+      "ours": {
+        "anchor": {
+          "file": "crates/casual-doc-io/src/markdown_import.rs",
+          "literal": "Options::ENABLE_TABLES"
+        }
+      },
+      "theirs": {
+        "gated": {
+          "evidence": {
+            "localeKey": "DE.Views.FileMenu.btnFileOpenCaption"
+          },
+          "option": "isDesktopApp"
+        }
+      },
+      "rank": 3,
+      "note": "Their Markdown is the MD row of the Download-as grid (FileMenuPanels.js:63, c_oAscFileType.MD in sdkjs/common/commonDefines.js:497) and a server-side conversion on open. Ours reads CommonMark + GFM (pulldown-cmark, MIT) in the engine: headings, real lists with levels, task boxes as checkbox controls, tables with header row and alignment, code, quotes, rules, links, data: pictures and footnotes; raw HTML and remote pictures are reported, never run or fetched. MD -> model -> MD -> model is a tested fixed point."
+    },
+    {
       "id": "shell.find",
       "area": "shell",
       "title": "Find text",
