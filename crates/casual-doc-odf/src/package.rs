@@ -9,9 +9,13 @@ use casual_doc_model::v1::{
 };
 
 use crate::master_page::{HeaderFooterInline, HeaderFooterRegion, MasterPageContent};
+// Page regions through the body's pipeline (HF-210), on their own line per the
+// parallel-lane import rule.
+use casual_doc_model::v1::{Style, StyleId};
 use casual_doc_package::{
     BoundedPackage, CancellationToken, PackageEntry, PackageLimits, PartCompression,
 };
+use std::collections::BTreeMap;
 
 use crate::manifest::{Manifest, enforce, parse_manifest};
 use crate::{ManifestEntry, OdfError, OdfImportLimits, OdtImport};
@@ -395,12 +399,36 @@ impl<'a> OdtPackage<'a> {
             // matching footers. Every node id is drawn from `ids` so header/footer
             // block content stays globally unique against the body.
             let regions = [
-                (master.default_header, HeaderFooterKind::Default, true),
-                (master.even_header, HeaderFooterKind::Even, true),
-                (master.default_footer, HeaderFooterKind::Default, false),
-                (master.even_footer, HeaderFooterKind::Even, false),
+                (
+                    master.default_header,
+                    HeaderFooterKind::Default,
+                    true,
+                    b"header".as_slice(),
+                ),
+                (
+                    master.even_header,
+                    HeaderFooterKind::Even,
+                    true,
+                    b"header-left".as_slice(),
+                ),
+                (
+                    master.default_footer,
+                    HeaderFooterKind::Default,
+                    false,
+                    b"footer".as_slice(),
+                ),
+                (
+                    master.even_footer,
+                    HeaderFooterKind::Even,
+                    false,
+                    b"footer-left".as_slice(),
+                ),
             ];
-            for (region, kind, is_header) in regions {
+            // Findings of the regions the body's pipeline imported, and whether
+            // any region had to fall back to the bounded reader.
+            let mut region_entries: Vec<crate::CompatibilityEntry> = Vec::new();
+            let mut fell_back = false;
+            for (region, kind, is_header, salt) in regions {
                 let Some(region) = region else {
                     continue;
                 };
@@ -415,7 +443,52 @@ impl<'a> OdtPackage<'a> {
                 }
                 let reference =
                     HeaderFooterId::new(ids.next_id().map_err(|_| OdfError::InvalidModel)?);
-                let blocks = build_header_footer_blocks(&region, &mut ids)?;
+                // The region through the BODY's own pipeline (HF-210), so its
+                // formatting, tables, pictures, hyperlinks and fields arrive as
+                // the body's would. The bounded plain-text reader is the
+                // fallback for a region that pipeline cannot read, and says so;
+                // a limit, a cancellation or active content still fails closed.
+                let lifted = match (styles.as_deref(), region.source) {
+                    (Some(styles_bytes), Some(range)) => match lift_region(
+                        styles_bytes,
+                        range,
+                        salt,
+                        self.version,
+                        limits,
+                        cancellation,
+                    ) {
+                        Ok(lifted) => Some(lifted),
+                        Err(
+                            error @ (OdfError::LimitExceeded { .. }
+                            | OdfError::Cancelled
+                            | OdfError::ActiveContent
+                            | OdfError::EncryptedDocument),
+                        ) => return Err(error),
+                        Err(_) => {
+                            fell_back = true;
+                            None
+                        }
+                    },
+                    _ => None,
+                };
+                let blocks = match lifted {
+                    Some(lifted) => {
+                        let mut blocks = lifted.document.body().to_vec();
+                        merge_region_definitions(
+                            &mut imported.document,
+                            &lifted.document,
+                            &mut blocks,
+                        );
+                        region_entries.extend(lifted.report.entries);
+                        blocks
+                    }
+                    None => {
+                        if region.source.is_some() {
+                            fell_back = true;
+                        }
+                        build_header_footer_blocks(&region, &mut ids)?
+                    }
+                };
                 if is_header {
                     header_defs.push((reference, HeaderFooter { blocks }));
                     header_refs.push(HeaderFooterRef { kind, reference });
@@ -483,7 +556,49 @@ impl<'a> OdtPackage<'a> {
                 });
             }
 
-            let mut findings = master.findings;
+            // The bounded reader's inline findings (run formatting, hyperlink
+            // targets, unsupported content) describe what IT dropped; a region
+            // the body's pipeline imported reports for itself. They stand only
+            // when some region fell back to that reader.
+            let mut findings: Vec<_> = master
+                .findings
+                .into_iter()
+                .filter(|(feature, ..)| {
+                    fell_back
+                        || matches!(
+                            feature.as_str(),
+                            "odf.master-page.first-page-region"
+                                | "odf.master-page.multiple"
+                                | "odf.master-page.duplicate-region"
+                        )
+                })
+                .collect();
+            if fell_back {
+                findings.push((
+                    "odf.master-page.bounded-fallback".to_owned(),
+                    crate::ModelOutcome::Degraded,
+                    crate::RetentionOutcome::NotRetained,
+                ));
+            }
+            // Each region re-reads `styles.xml`, so a style finding the body
+            // already reported comes back once per region; a finding is added
+            // only when the report does not already carry it.
+            for entry in region_entries {
+                let known = imported.report.entries.iter().any(|existing| {
+                    existing.feature == entry.feature
+                        && existing.model_outcome == entry.model_outcome
+                        && existing.retention_outcome == entry.retention_outcome
+                });
+                if !known {
+                    imported.report.entries.push(entry);
+                }
+            }
+            imported.report.entries.sort_by(|a, b| {
+                a.feature
+                    .cmp(&b.feature)
+                    .then(a.model_outcome.cmp(&b.model_outcome))
+                    .then(a.retention_outcome.cmp(&b.retention_outcome))
+            });
             if geometry_clamped {
                 findings.push((
                     "odf.page-layout.out-of-range".to_owned(),
@@ -676,6 +791,160 @@ impl<'a> OdtPackage<'a> {
                 .insert(name, RetainedPart { media_type, bytes });
         }
         Ok(retained)
+    }
+}
+
+/// Imports one master-page region through the body's pipeline: its children
+/// (`range` in `styles`) wrapped in a synthetic `content.xml` that declares the
+/// styles part's own namespaces, so every prefix the region uses resolves, and
+/// read with `styles.xml` as the style source. O(region + styles part).
+fn lift_region(
+    styles: &[u8],
+    range: (usize, usize),
+    salt: &[u8],
+    version: crate::OdfVersion,
+    limits: OdfImportLimits,
+    cancellation: &CancellationToken,
+) -> Result<OdtImport, OdfError> {
+    let children = styles
+        .get(range.0..range.1)
+        .ok_or(OdfError::MalformedContent)?;
+    let namespaces = root_namespace_declarations(styles)?;
+    let mut synthetic = Vec::with_capacity(children.len() + namespaces.len() + 160);
+    synthetic.extend_from_slice(b"<office:document-content");
+    synthetic.extend_from_slice(namespaces.as_bytes());
+    synthetic.extend_from_slice(b" office:version=\"");
+    synthetic.extend_from_slice(version.as_str().as_bytes());
+    synthetic.extend_from_slice(b"\"><office:body><office:text>");
+    synthetic.extend_from_slice(children);
+    synthetic.extend_from_slice(b"</office:text></office:body></office:document-content>");
+    crate::content::import_region_flow(&synthetic, styles, version, limits, cancellation, salt)
+}
+
+/// The `xmlns` declarations on `styles.xml`'s root element, each as
+/// ` xmlns:p="uri"`, verbatim. O(root element).
+fn root_namespace_declarations(styles: &[u8]) -> Result<String, OdfError> {
+    let mut reader = quick_xml::Reader::from_reader(styles);
+    let mut buffer = Vec::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|_| OdfError::MalformedContent)?
+        {
+            quick_xml::events::Event::Start(start) | quick_xml::events::Event::Empty(start) => {
+                let mut out = String::new();
+                for attribute in start.attributes() {
+                    let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+                    let key = attribute.key.as_ref();
+                    if key == b"xmlns" || key.starts_with(b"xmlns:") {
+                        out.push(' ');
+                        out.push_str(
+                            core::str::from_utf8(key).map_err(|_| OdfError::MalformedContent)?,
+                        );
+                        out.push_str("=\"");
+                        out.push_str(
+                            core::str::from_utf8(attribute.value.as_ref())
+                                .map_err(|_| OdfError::MalformedContent)?,
+                        );
+                        out.push('"');
+                    }
+                }
+                return Ok(out);
+            }
+            quick_xml::events::Event::Eof => return Err(OdfError::MalformedContent),
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
+/// Moves a region document's definitions into the package's document: pictures,
+/// styles, lists, bookmarks, comments, field ranges and charts are keyed by ids
+/// minted in the region's own namespace, so they cannot collide. A style equal
+/// to one the document already defines (every header of a LibreOffice file uses
+/// the one "Header" style) is NOT duplicated: the region's references to it are
+/// pointed at the existing one. O(region definitions × styles + region blocks).
+fn merge_region_definitions(target: &mut Document, region: &Document, blocks: &mut [BlockNode]) {
+    let source = region.definitions();
+    let existing: Vec<(StyleId, Style)> = target
+        .definitions()
+        .styles
+        .iter()
+        .map(|(id, style)| (*id, style.clone()))
+        .collect();
+    let mut remap: BTreeMap<StyleId, StyleId> = BTreeMap::new();
+    let definitions = target.definitions_mut();
+    for (id, style) in source.styles.iter() {
+        if let Some((same, _)) = existing.iter().find(|(_, known)| known == style) {
+            remap.insert(*id, *same);
+        } else {
+            definitions.styles.insert(*id, style.clone());
+        }
+    }
+    for (id, value) in source.media.iter() {
+        definitions.media.insert(*id, value.clone());
+    }
+    for (id, value) in source.abstract_numbering.iter() {
+        definitions.abstract_numbering.insert(*id, value.clone());
+    }
+    for (id, value) in source.numbering.iter() {
+        definitions.numbering.insert(*id, value.clone());
+    }
+    for (id, value) in source.bookmarks.iter() {
+        definitions.bookmarks.insert(*id, value.clone());
+    }
+    for (id, value) in source.comments.iter() {
+        definitions.comments.insert(*id, value.clone());
+    }
+    for (id, value) in source.field_ranges.iter() {
+        definitions.field_ranges.insert(*id, value.clone());
+    }
+    for (id, value) in source.charts.iter() {
+        definitions.charts.insert(*id, value.clone());
+    }
+    if !remap.is_empty() {
+        remap_style_refs(blocks, &remap);
+    }
+}
+
+/// Points every paragraph and run style reference in `blocks` through `remap`.
+/// O(blocks).
+fn remap_style_refs(blocks: &mut [BlockNode], remap: &BTreeMap<StyleId, StyleId>) {
+    fn inlines(nodes: &mut [InlineNode], remap: &BTreeMap<StyleId, StyleId>) {
+        for node in nodes {
+            match node {
+                InlineNode::Run(run) => {
+                    if let Some(to) = run.properties.style_ref.and_then(|from| remap.get(&from)) {
+                        run.properties.make_mut().style_ref = Some(*to);
+                    }
+                }
+                InlineNode::Hyperlink(link) => inlines(&mut link.inlines, remap),
+                _ => {}
+            }
+        }
+    }
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(to) = paragraph
+                    .properties
+                    .style_ref
+                    .and_then(|from| remap.get(&from))
+                {
+                    paragraph.properties.make_mut().style_ref = Some(*to);
+                }
+                inlines(&mut paragraph.inlines, remap);
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        remap_style_refs(&mut cell.blocks, remap);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => remap_style_refs(&mut sdt.blocks, remap),
+            BlockNode::AltChunk(_) => {}
+        }
     }
 }
 
