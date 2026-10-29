@@ -26,47 +26,10 @@ use casual_doc_command::table_tools::{
 };
 use casual_doc_edit::{Pos, find_table, locate_cell, locate_table_cell, locate_table_row, refused};
 use casual_doc_model::NodeId;
-use casual_doc_model::v1::{BlockNode, Document, Paragraph, Table};
+use casual_doc_model::v1::{Document, Paragraph, Table};
 use wasm_bindgen::prelude::*;
 
 use crate::{EditResult, HistoryKind, WasmDocument, to_js};
-
-/// The blocks of `container` (`None` = the body, else a table cell or content
-/// control), searching the body. O(document).
-fn container_blocks(document: &Document, container: Option<NodeId>) -> Option<&[BlockNode]> {
-    fn walk(blocks: &[BlockNode], id: NodeId) -> Option<&[BlockNode]> {
-        for block in blocks {
-            match block {
-                BlockNode::Table(table) => {
-                    for row in &table.rows {
-                        for cell in &row.cells {
-                            if cell.id == id {
-                                return Some(cell.blocks.as_slice());
-                            }
-                            if let Some(found) = walk(&cell.blocks, id) {
-                                return Some(found);
-                            }
-                        }
-                    }
-                }
-                BlockNode::Sdt(sdt) => {
-                    if sdt.id == id {
-                        return Some(sdt.blocks.as_slice());
-                    }
-                    if let Some(found) = walk(&sdt.blocks, id) {
-                        return Some(found);
-                    }
-                }
-                BlockNode::Paragraph(_) | BlockNode::AltChunk(_) => {}
-            }
-        }
-        None
-    }
-    match container {
-        None => Some(document.body()),
-        Some(id) => walk(document.body(), id),
-    }
-}
 
 /// The table holding paragraph `node`, with the row and cell index of the
 /// paragraph's cell. O(document).
@@ -114,21 +77,19 @@ impl WasmDocument {
         c.page_size.width.raw() - c.margin_start.raw() - c.margin_end.raw()
     }
 
-    /// The width a table made in `container` should span: the page's content
-    /// width in the body, the cell's own content width in a cell. O(document).
+    /// The width a table made in `container` should span (shared with
+    /// agents: `table_tools::content_width_in`). O(document).
     fn content_width_in(&self, container: Option<NodeId>, paragraph: NodeId) -> i32 {
-        if container.is_some()
-            && let Ok((table, row, cell)) = table_at(&self.document, paragraph)
-            && let Some(width) = table_tools::cell_content_width(&table, row, cell)
-        {
-            return width;
-        }
-        self.page_content_width()
+        table_tools::content_width_in(
+            &self.document,
+            container,
+            paragraph,
+            self.page_content_width(),
+        )
     }
 
-    /// The paragraphs `from..=to`, which must be consecutive paragraphs of one
-    /// container, with that container and the first one's index.
-    /// O(document) to resolve, then O(paragraphs).
+    /// The paragraphs `from..=to` (`""` = `from` alone), through the lowering
+    /// agents use too (`table_tools::paragraph_run`).
     fn paragraph_run(
         &self,
         from: &str,
@@ -147,32 +108,7 @@ impl WasmDocument {
         } else {
             NodeId::from_str(to).map_err(|_| outside())?
         };
-        let locate = casual_doc_command::references::locate_block;
-        let (container, a) = locate(&self.document, from).ok_or_else(outside)?;
-        let (other, b) = locate(&self.document, to).ok_or_else(outside)?;
-        if container != other {
-            return Err(refused!(
-                "table.convert-span",
-                "Select paragraphs that sit together, outside any table, to convert them."
-            )
-            .to_owned());
-        }
-        let (first, last) = (a.min(b), a.max(b));
-        let blocks = container_blocks(&self.document, container).ok_or_else(outside)?;
-        let mut paragraphs = Vec::with_capacity(last - first + 1);
-        for block in blocks.get(first..=last).ok_or_else(outside)? {
-            match block {
-                BlockNode::Paragraph(paragraph) => paragraphs.push(paragraph.clone()),
-                BlockNode::Table(_) | BlockNode::Sdt(_) | BlockNode::AltChunk(_) => {
-                    return Err(refused!(
-                        "table.convert-span",
-                        "Select paragraphs that sit together, outside any table, to convert them."
-                    )
-                    .to_owned());
-                }
-            }
-        }
-        Ok((container, first, paragraphs))
+        table_tools::paragraph_run(&self.document, from, to)
     }
 }
 
@@ -508,7 +444,7 @@ mod tests {
     use super::*;
     use crate::node_plain_text;
     use crate::tests::wasm_document;
-    use casual_doc_model::v1::TextDirection;
+    use casual_doc_model::v1::{BlockNode, TextDirection};
 
     /// A document from body markup, imported so the tables are real ones.
     fn document(body: &str) -> WasmDocument {

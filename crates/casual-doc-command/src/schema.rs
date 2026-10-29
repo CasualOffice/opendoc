@@ -26,13 +26,14 @@ use crate::registry::{COMMANDS, Command, Family, Trackable};
 /// needs an ADR. Published in `commands.json`, the generated TypeScript and
 /// `list_edit_kinds`. An OPTIONAL field added to a command is a minor bump too:
 /// every plan the previous version accepted still parses and means the same
-/// (1.5: `insert_page_number`'s `of_total`, `before`, `between`, `after`).
-pub const VOCABULARY_VERSION: &str = "1.5";
+/// (1.5: `insert_page_number`'s `of_total`, `before`, `between`, `after`;
+/// 1.6: the six table tools and three contents commands, `docs/181` §3).
+pub const VOCABULARY_VERSION: &str = "1.6";
 
 /// How many commands [`VOCABULARY_VERSION`] names. A test holds it equal to
 /// the registry, so adding a command cannot ship without deciding the version
 /// bump that goes with it.
-pub const VOCABULARY_COMMANDS: usize = 64;
+pub const VOCABULARY_COMMANDS: usize = 73;
 
 /// The schema of one edit: a `oneOf` over every command, each carrying its
 /// `op` constant, with shared definitions inlined so the result is

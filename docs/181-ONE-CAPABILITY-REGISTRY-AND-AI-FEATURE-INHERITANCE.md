@@ -222,6 +222,22 @@ character patch yet; when the formatting unification (§4.2 step 2) gives it tha
 entry leaves and the ceiling returns to 85. `insert.nonBreakingSpace`, the other editor command
 this change adds, needs no entry: inserting U+00A0 is `insert_text`, which now names it.
 
+**Lowered (2026-10-30, round 3 tables and objects):** `UI_NOT_EXPOSED_CEILING` 102 → **88**.
+The fourteen table and contents ids the two lanes above listed now each have an agent twin over
+the editor's own lowering, so the editor and an agent cannot disagree about what the gesture
+writes: `table_set_style_options` (the six `table.look.*`, one `SetTableProperties` however
+many options are set, `table_tools::set_look_options`), `table_split` (`table.splitTable`),
+`table_insert_cells` and `table_delete_cells` (`table.insertCells`, `table.deleteCells`, the
+same merged-table refusal), `table_to_text` (`table.convertToText`), `text_to_table`
+(`insert.textToTable`, through `table_tools::paragraph_run` and `content_width_in`, which the
+editor's binding now calls too), `remove_table_of_contents` (`reference.removeToc`),
+`insert_table_of_figures` (`reference.tableOfFigures`, `references::insert_table_of_figures`,
+which refuses inside an existing table instead of replacing it, as `insert_table_of_contents`
+does) and `set_contents_level` (the `reference.addText.` family, level 0 being "do not show").
+Two operations became agent-reached with them, so `coverage::NOT_EXPOSED_CEILING` falls
+18 → **16**: `SetTableProperties` and `RemoveFieldRange`. The vocabulary is **1.6** (nine
+commands added, none changed; 73 in all).
+
 **What "a feature inherits MCP" therefore means, concretely.** A developer adding, say,
 footnote insertion writes `InsertFootnote: Command` with its `lower()` (moved out of
 `lib.rs:4658`), adds one line to `commands!`, and points the editor's method at it. With no

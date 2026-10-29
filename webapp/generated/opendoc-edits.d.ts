@@ -3,7 +3,7 @@
 // Regenerate: cargo run -p casual-doc-command --bin opendoc-command-gen
 
 /** The edit vocabulary version (docs/181 §4.1): a minor bump adds commands; a major bump changes or removes one. */
-export declare const VOCABULARY_VERSION: "1.5";
+export declare const VOCABULARY_VERSION: "1.6";
 
 /**
  * Insert text at an anchor.
@@ -668,6 +668,186 @@ export interface TableSetCellFormatEdit {
   } | null;
   /** Vertical alignment of the text. */
   vertical_alignment?: "top" | "center" | "bottom" | null;
+}
+
+/**
+ * Turn table style options on or off: header row, first column, total row, last column, banded rows, banded columns.
+ *
+ * Family `tables`; trackable: no. Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"table_set_style_options","table":"1:9","header_row":true,"banded_rows":false}
+ */
+export interface TableSetStyleOptionsEdit {
+  op: "table_set_style_options";
+  /** Alternate column shading. */
+  banded_columns?: boolean | null;
+  /** Alternate row shading. */
+  banded_rows?: boolean | null;
+  /** The style's first-column formatting. */
+  first_column?: boolean | null;
+  /** The style's header-row formatting. */
+  header_row?: boolean | null;
+  /** The style's last-column formatting. */
+  last_column?: boolean | null;
+  /** The table id. */
+  table: string;
+  /** The style's total-row formatting. */
+  total_row?: boolean | null;
+}
+
+/**
+ * Split a body table so a row starts a second table, with an empty paragraph between; at row 0 the paragraph goes above the table.
+ *
+ * Family `tables`; trackable: no. Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"table_split","table":"1:9","row":1}
+ */
+export interface TableSplitEdit {
+  op: "table_split";
+  /** The 0-based row that starts the second table. */
+  row: number;
+  /** The table id (a table in the document body). */
+  table: string;
+}
+
+/**
+ * Insert empty cells at a cell or rectangle, shifting the cells there right or down (refused in a table with merged cells).
+ *
+ * Family `tables`; trackable: no. Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"table_insert_cells","table":"1:9","from":{"row":0,"column":1},"shift":"right"}
+ */
+export interface TableInsertCellsEdit {
+  op: "table_insert_cells";
+  /** The cell, or one corner of the rectangle. */
+  from: {
+    /** 0-based cell in that row. */
+    column: number;
+    /** 0-based row. */
+    row: number;
+  };
+  /** Which way the cells already there move. */
+  shift: "right" | "down";
+  /** The table id. */
+  table: string;
+  /** The opposite corner; omitted for one cell. */
+  to?: {
+    /** 0-based cell in that row. */
+    column: number;
+    /** 0-based row. */
+    row: number;
+  } | null;
+}
+
+/**
+ * Delete a cell or rectangle of cells, closing the gap left or up (refused in a table with merged cells).
+ *
+ * Family `tables`; trackable: no. Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"table_delete_cells","table":"1:9","from":{"row":1,"column":0},"to":{"row":1,"column":1},"shift":"up"}
+ */
+export interface TableDeleteCellsEdit {
+  op: "table_delete_cells";
+  /** The cell, or one corner of the rectangle. */
+  from: {
+    /** 0-based cell in that row. */
+    column: number;
+    /** 0-based row. */
+    row: number;
+  };
+  /** Which way the remaining cells move. */
+  shift: "left" | "up";
+  /** The table id. */
+  table: string;
+  /** The opposite corner; omitted for one cell. */
+  to?: {
+    /** 0-based cell in that row. */
+    column: number;
+    /** 0-based row. */
+    row: number;
+  } | null;
+}
+
+/**
+ * Convert a body table to text: one paragraph per row with its cells joined by a separator, or every cell's paragraphs in order.
+ *
+ * Family `tables`; trackable: no. Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"table_to_text","table":"1:9","separator":"tab"}
+ */
+export interface TableToTextEdit {
+  op: "table_to_text";
+  /** The character, when `separator` is `other`. */
+  character?: string | null;
+  /** Convert tables nested in its cells too; kept as tables when false. */
+  nested?: boolean;
+  /** What joins the cells. */
+  separator: "paragraph" | "tab" | "comma" | "semicolon" | "other";
+  /** The table id (a table in the document body). */
+  table: string;
+}
+
+/**
+ * Convert consecutive paragraphs into a table, cutting each paragraph into cells at a separator (tab, comma, semicolon, a character) or one cell per paragraph.
+ *
+ * Family `tables`; trackable: no. Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"text_to_table","from":{"node":"1:2"},"separator":"comma"}
+ */
+export interface TextToTableEdit {
+  op: "text_to_table";
+  /** How the columns are sized; `fixed` when omitted. */
+  autofit?: "fixed" | "contents" | "window";
+  /** The character, when `separator` is `other`. */
+  character?: string | null;
+  /** Columns, 1 to 63; omitted for what the text needs, and never fewer. */
+  columns?: number | null;
+  /** The first paragraph. */
+  from: {
+    /** The quoted text, matched inside `node` only. */
+    exact?: string | null;
+    /** A paragraph id returned by `get_outline`, `read_blocks` or `search`. */
+    node: string;
+    /** 1-based occurrence of `exact` among the matches that remain. */
+    occurrence?: number | null;
+    /** Offsets for programs only; never computed by a model. */
+    pos?: {
+      /** End, exclusive. */
+      end: number;
+      /** Start, UTF-8 bytes into the node's text. */
+      start: number;
+    } | null;
+    /** Text immediately before `exact`, to disambiguate. */
+    prefix?: string | null;
+    /** For an insertion point: before or after the target. */
+    side?: "before" | "after" | null;
+    /** Text immediately after `exact`, to disambiguate. */
+    suffix?: string | null;
+  };
+  /** Where each paragraph is cut into cells. */
+  separator: "paragraph" | "tab" | "comma" | "semicolon" | "other";
+  /** The last paragraph, in the same container; omitted for one. */
+  to?: {
+    /** The quoted text, matched inside `node` only. */
+    exact?: string | null;
+    /** A paragraph id returned by `get_outline`, `read_blocks` or `search`. */
+    node: string;
+    /** 1-based occurrence of `exact` among the matches that remain. */
+    occurrence?: number | null;
+    /** Offsets for programs only; never computed by a model. */
+    pos?: {
+      /** End, exclusive. */
+      end: number;
+      /** Start, UTF-8 bytes into the node's text. */
+      start: number;
+    } | null;
+    /** Text immediately before `exact`, to disambiguate. */
+    prefix?: string | null;
+    /** For an insertion point: before or after the target. */
+    side?: "before" | "after" | null;
+    /** Text immediately after `exact`, to disambiguate. */
+    suffix?: string | null;
+  } | null;
 }
 
 /**
@@ -1610,6 +1790,83 @@ export interface UpdateTableOfContentsEdit {
 }
 
 /**
+ * Remove a table of contents or table of figures: its field and every entry paragraph.
+ *
+ * Family `references`; trackable: no. Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"remove_table_of_contents"}
+ */
+export interface RemoveTableOfContentsEdit {
+  op: "remove_table_of_contents";
+  /**
+   * The table's field id, as `read_blocks` lists it; omitted, the
+   * document's only one.
+   */
+  field?: string | null;
+}
+
+/**
+ * Insert a table of figures (every caption of a label, with its page) before a body paragraph.
+ *
+ * Family `references`; trackable: no. Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"insert_table_of_figures","before":{"node":"1:2"},"label":"Figure"}
+ */
+export interface InsertTableOfFiguresEdit {
+  op: "insert_table_of_figures";
+  /** The body paragraph the table goes before (its id). */
+  before: {
+    /** The quoted text, matched inside `node` only. */
+    exact?: string | null;
+    /** A paragraph id returned by `get_outline`, `read_blocks` or `search`. */
+    node: string;
+    /** 1-based occurrence of `exact` among the matches that remain. */
+    occurrence?: number | null;
+    /** Offsets for programs only; never computed by a model. */
+    pos?: {
+      /** End, exclusive. */
+      end: number;
+      /** Start, UTF-8 bytes into the node's text. */
+      start: number;
+    } | null;
+    /** Text immediately before `exact`, to disambiguate. */
+    prefix?: string | null;
+    /** For an insertion point: before or after the target. */
+    side?: "before" | "after" | null;
+    /** Text immediately after `exact`, to disambiguate. */
+    suffix?: string | null;
+  };
+  /**
+   * Keep "Figure 3" in front of each entry's caption text; true when
+   * omitted.
+   */
+  include_label?: boolean | null;
+  /**
+   * The caption label listed: `Figure`, `Table`, `Equation` or a label
+   * the document uses.
+   */
+  label: string;
+}
+
+/**
+ * List body paragraphs in the table of contents at a level (1 to 9), or keep them out of it (0), without restyling them.
+ *
+ * Family `references`; trackable: no. Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"set_contents_level","paragraphs":["1:2"],"level":2}
+ */
+export interface SetContentsLevelEdit {
+  op: "set_contents_level";
+  /**
+   * 1 to 9 lists them at that level; 0 is "do not show in table of
+   * contents".
+   */
+  level: number;
+  /** The body paragraph ids. */
+  paragraphs: string[];
+}
+
+/**
  * Insert a numbered caption (Figure, Table, Equation or the document's own label) above or below a table, picture or paragraph.
  *
  * Family `references`; trackable: no. Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.
@@ -1790,6 +2047,12 @@ export type EditOp =
   | "table_split_cell"
   | "table_delete"
   | "table_set_cell_format"
+  | "table_set_style_options"
+  | "table_split"
+  | "table_insert_cells"
+  | "table_delete_cells"
+  | "table_to_text"
+  | "text_to_table"
   | "set_list"
   | "change_list_level"
   | "restart_numbering"
@@ -1826,6 +2089,9 @@ export type EditOp =
   | "insert_chart"
   | "insert_table_of_contents"
   | "update_table_of_contents"
+  | "remove_table_of_contents"
+  | "insert_table_of_figures"
+  | "set_contents_level"
   | "insert_caption"
   | "update_caption_numbers"
   | "insert_cross_reference"
@@ -1857,6 +2123,12 @@ export type Edit =
   | TableSplitCellEdit
   | TableDeleteEdit
   | TableSetCellFormatEdit
+  | TableSetStyleOptionsEdit
+  | TableSplitEdit
+  | TableInsertCellsEdit
+  | TableDeleteCellsEdit
+  | TableToTextEdit
+  | TextToTableEdit
   | SetListEdit
   | ChangeListLevelEdit
   | RestartNumberingEdit
@@ -1893,6 +2165,9 @@ export type Edit =
   | InsertChartEdit
   | InsertTableOfContentsEdit
   | UpdateTableOfContentsEdit
+  | RemoveTableOfContentsEdit
+  | InsertTableOfFiguresEdit
+  | SetContentsLevelEdit
   | InsertCaptionEdit
   | UpdateCaptionNumbersEdit
   | InsertCrossReferenceEdit
@@ -1908,7 +2183,7 @@ export interface EditsByFamily {
   text: InsertTextEdit | ReplaceTextEdit | DeleteTextEdit | SetTextFormatEdit | ClearFormattingEdit;
   paragraph: InsertParagraphsEdit | RewriteBlockEdit | SetAlignmentEdit | SetLineSpacingEdit | SetParagraphSpacingEdit | SetIndentEdit;
   styles: ApplyParagraphStyleEdit;
-  tables: SetCellTextEdit | TableInsertRowEdit | TableDeleteRowEdit | InsertTableEdit | TableInsertColumnEdit | TableDeleteColumnEdit | TableMergeCellsEdit | TableSplitCellEdit | TableDeleteEdit | TableSetCellFormatEdit;
+  tables: SetCellTextEdit | TableInsertRowEdit | TableDeleteRowEdit | InsertTableEdit | TableInsertColumnEdit | TableDeleteColumnEdit | TableMergeCellsEdit | TableSplitCellEdit | TableDeleteEdit | TableSetCellFormatEdit | TableSetStyleOptionsEdit | TableSplitEdit | TableInsertCellsEdit | TableDeleteCellsEdit | TableToTextEdit | TextToTableEdit;
   lists: SetListEdit | ChangeListLevelEdit | RestartNumberingEdit | ContinueNumberingEdit;
   links: SetHyperlinkEdit | RemoveHyperlinkEdit | CreateBookmarkEdit | RenameBookmarkEdit | DeleteBookmarkEdit;
   fields: InsertFieldEdit;
@@ -1917,6 +2192,6 @@ export interface EditsByFamily {
   sections: InsertBreakEdit | InsertSectionBreakEdit | SetPageSetupEdit | SetLineNumberingEdit | SetPageNumberingEdit | SetWatermarkEdit;
   headers_footers: InsertHeaderEdit | InsertFooterEdit | SetDifferentFirstPageEdit | SetDifferentOddEvenEdit | LinkToPreviousEdit | RemoveHeaderFooterEdit | InsertPageNumberEdit;
   charts: InsertChartEdit;
-  references: InsertTableOfContentsEdit | UpdateTableOfContentsEdit | InsertCaptionEdit | UpdateCaptionNumbersEdit | InsertCrossReferenceEdit;
+  references: InsertTableOfContentsEdit | UpdateTableOfContentsEdit | RemoveTableOfContentsEdit | InsertTableOfFiguresEdit | SetContentsLevelEdit | InsertCaptionEdit | UpdateCaptionNumbersEdit | InsertCrossReferenceEdit;
   review: CommentEdit | ResolveCommentEdit | ReviewEdit;
 }

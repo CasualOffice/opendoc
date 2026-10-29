@@ -1,5 +1,5 @@
 {
-  "description": "One edit of the `references` family of the OpenDoc edit vocabulary 1.5.",
+  "description": "One edit of the `references` family of the OpenDoc edit vocabulary 1.6.",
   "oneOf": [
     {
       "additionalProperties": false,
@@ -153,6 +153,179 @@
       "required": [
         "op",
         "mode"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Remove a table of contents or table of figures: its field and every\nentry paragraph.",
+      "properties": {
+        "field": {
+          "description": "The table's field id, as `read_blocks` lists it; omitted, the\ndocument's only one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "remove_table_of_contents",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Insert a table of figures before a body paragraph: one entry per\ncaption of a label, with the page it is on.",
+      "properties": {
+        "before": {
+          "additionalProperties": false,
+          "description": "The body paragraph the table goes before (its id).",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        },
+        "include_label": {
+          "description": "Keep \"Figure 3\" in front of each entry's caption text; true when\nomitted.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "label": {
+          "description": "The caption label listed: `Figure`, `Table`, `Equation` or a label\nthe document uses.",
+          "type": "string"
+        },
+        "op": {
+          "const": "insert_table_of_figures",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "before",
+        "label"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "List paragraphs in the table of contents at a level, or keep them out\nof it, without restyling them (their outline level).",
+      "properties": {
+        "level": {
+          "description": "1 to 9 lists them at that level; 0 is \"do not show in table of\ncontents\".",
+          "format": "uint8",
+          "maximum": 9,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "set_contents_level",
+          "type": "string"
+        },
+        "paragraphs": {
+          "description": "The body paragraph ids.",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 500,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "op",
+        "paragraphs",
+        "level"
       ],
       "type": "object"
     },

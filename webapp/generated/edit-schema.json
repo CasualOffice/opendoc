@@ -2030,6 +2030,598 @@
     },
     {
       "additionalProperties": false,
+      "description": "Turn table style options on or off: which parts of the table style\n(header row, first column, total row, last column, banding) apply.",
+      "properties": {
+        "banded_columns": {
+          "description": "Alternate column shading.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "banded_rows": {
+          "description": "Alternate row shading.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "first_column": {
+          "description": "The style's first-column formatting.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "header_row": {
+          "description": "The style's header-row formatting.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "last_column": {
+          "description": "The style's last-column formatting.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "table_set_style_options",
+          "type": "string"
+        },
+        "table": {
+          "description": "The table id.",
+          "type": "string"
+        },
+        "total_row": {
+          "description": "The style's total-row formatting.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "table"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Split a table so a row starts a second table, with an empty paragraph\nbetween; at row 0 the paragraph goes above the table instead.",
+      "properties": {
+        "op": {
+          "const": "table_split",
+          "type": "string"
+        },
+        "row": {
+          "description": "The 0-based row that starts the second table.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "table": {
+          "description": "The table id (a table in the document body).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "table",
+        "row"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Insert empty cells at one cell or a rectangle, shifting the cells\nalready there right or down.",
+      "properties": {
+        "from": {
+          "additionalProperties": false,
+          "description": "The cell, or one corner of the rectangle.",
+          "properties": {
+            "column": {
+              "description": "0-based cell in that row.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "row": {
+              "description": "0-based row.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "row",
+            "column"
+          ],
+          "type": "object"
+        },
+        "op": {
+          "const": "table_insert_cells",
+          "type": "string"
+        },
+        "shift": {
+          "description": "Which way the cells already there move.",
+          "oneOf": [
+            {
+              "const": "right",
+              "description": "Push the row's later cells right.",
+              "type": "string"
+            },
+            {
+              "const": "down",
+              "description": "Push the cells below down.",
+              "type": "string"
+            }
+          ]
+        },
+        "table": {
+          "description": "The table id.",
+          "type": "string"
+        },
+        "to": {
+          "additionalProperties": false,
+          "description": "The opposite corner; omitted for one cell.",
+          "properties": {
+            "column": {
+              "description": "0-based cell in that row.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "row": {
+              "description": "0-based row.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "row",
+            "column"
+          ],
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "table",
+        "from",
+        "shift"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Delete one cell or a rectangle, closing the gap left or up.",
+      "properties": {
+        "from": {
+          "additionalProperties": false,
+          "description": "The cell, or one corner of the rectangle.",
+          "properties": {
+            "column": {
+              "description": "0-based cell in that row.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "row": {
+              "description": "0-based row.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "row",
+            "column"
+          ],
+          "type": "object"
+        },
+        "op": {
+          "const": "table_delete_cells",
+          "type": "string"
+        },
+        "shift": {
+          "description": "Which way the remaining cells move.",
+          "oneOf": [
+            {
+              "const": "left",
+              "description": "Close the row up to the left.",
+              "type": "string"
+            },
+            {
+              "const": "up",
+              "description": "Move the cells below up.",
+              "type": "string"
+            }
+          ]
+        },
+        "table": {
+          "description": "The table id.",
+          "type": "string"
+        },
+        "to": {
+          "additionalProperties": false,
+          "description": "The opposite corner; omitted for one cell.",
+          "properties": {
+            "column": {
+              "description": "0-based cell in that row.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "row": {
+              "description": "0-based row.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "row",
+            "column"
+          ],
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "table",
+        "from",
+        "shift"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Convert a table to text, each row a paragraph with its cells joined by\na separator (or, for `paragraph`, each cell's paragraphs in order).",
+      "properties": {
+        "character": {
+          "description": "The character, when `separator` is `other`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nested": {
+          "default": false,
+          "description": "Convert tables nested in its cells too; kept as tables when false.",
+          "type": "boolean"
+        },
+        "op": {
+          "const": "table_to_text",
+          "type": "string"
+        },
+        "separator": {
+          "description": "What joins the cells.",
+          "oneOf": [
+            {
+              "const": "paragraph",
+              "description": "A paragraph mark: each paragraph is a cell, each cell's paragraphs stay\nparagraphs.",
+              "type": "string"
+            },
+            {
+              "const": "tab",
+              "description": "A tab.",
+              "type": "string"
+            },
+            {
+              "const": "comma",
+              "description": "A comma.",
+              "type": "string"
+            },
+            {
+              "const": "semicolon",
+              "description": "A semicolon.",
+              "type": "string"
+            },
+            {
+              "const": "other",
+              "description": "The single character given in `character`.",
+              "type": "string"
+            }
+          ]
+        },
+        "table": {
+          "description": "The table id (a table in the document body).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "table",
+        "separator"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Convert consecutive paragraphs into a table, cutting each paragraph\ninto cells at a separator.",
+      "properties": {
+        "autofit": {
+          "default": "fixed",
+          "description": "How the columns are sized; `fixed` when omitted.",
+          "oneOf": [
+            {
+              "const": "fixed",
+              "description": "Equal fixed columns across the content width (the default, Word's).",
+              "type": "string"
+            },
+            {
+              "const": "contents",
+              "description": "Columns sized by their contents.",
+              "type": "string"
+            },
+            {
+              "const": "window",
+              "description": "The table spans the window: 100% wide.",
+              "type": "string"
+            }
+          ]
+        },
+        "character": {
+          "description": "The character, when `separator` is `other`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "columns": {
+          "description": "Columns, 1 to 63; omitted for what the text needs, and never fewer.",
+          "format": "uint32",
+          "maximum": 63,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "from": {
+          "additionalProperties": false,
+          "description": "The first paragraph.",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        },
+        "op": {
+          "const": "text_to_table",
+          "type": "string"
+        },
+        "separator": {
+          "description": "Where each paragraph is cut into cells.",
+          "oneOf": [
+            {
+              "const": "paragraph",
+              "description": "A paragraph mark: each paragraph is a cell, each cell's paragraphs stay\nparagraphs.",
+              "type": "string"
+            },
+            {
+              "const": "tab",
+              "description": "A tab.",
+              "type": "string"
+            },
+            {
+              "const": "comma",
+              "description": "A comma.",
+              "type": "string"
+            },
+            {
+              "const": "semicolon",
+              "description": "A semicolon.",
+              "type": "string"
+            },
+            {
+              "const": "other",
+              "description": "The single character given in `character`.",
+              "type": "string"
+            }
+          ]
+        },
+        "to": {
+          "additionalProperties": false,
+          "description": "The last paragraph, in the same container; omitted for one.",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "from",
+        "separator"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
       "description": "Put a paragraph in a bulleted or numbered list, or take it out.",
       "properties": {
         "kind": {
@@ -4950,6 +5542,179 @@
       "required": [
         "op",
         "mode"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Remove a table of contents or table of figures: its field and every\nentry paragraph.",
+      "properties": {
+        "field": {
+          "description": "The table's field id, as `read_blocks` lists it; omitted, the\ndocument's only one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "remove_table_of_contents",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Insert a table of figures before a body paragraph: one entry per\ncaption of a label, with the page it is on.",
+      "properties": {
+        "before": {
+          "additionalProperties": false,
+          "description": "The body paragraph the table goes before (its id).",
+          "properties": {
+            "exact": {
+              "description": "The quoted text, matched inside `node` only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "node": {
+              "description": "A paragraph id returned by `get_outline`, `read_blocks` or `search`.",
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "1-based occurrence of `exact` among the matches that remain.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pos": {
+              "additionalProperties": false,
+              "description": "Offsets for programs only; never computed by a model.",
+              "properties": {
+                "end": {
+                  "description": "End, exclusive.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "Start, UTF-8 bytes into the node's text.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "Text immediately before `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "description": "Which side of the target an insertion goes.",
+                  "oneOf": [
+                    {
+                      "const": "before",
+                      "description": "Before the quote (or at the paragraph's start).",
+                      "type": "string"
+                    },
+                    {
+                      "const": "after",
+                      "description": "After the quote (or at the paragraph's end). The default.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For an insertion point: before or after the target."
+            },
+            "suffix": {
+              "description": "Text immediately after `exact`, to disambiguate.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "type": "object"
+        },
+        "include_label": {
+          "description": "Keep \"Figure 3\" in front of each entry's caption text; true when\nomitted.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "label": {
+          "description": "The caption label listed: `Figure`, `Table`, `Equation` or a label\nthe document uses.",
+          "type": "string"
+        },
+        "op": {
+          "const": "insert_table_of_figures",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "before",
+        "label"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "List paragraphs in the table of contents at a level, or keep them out\nof it, without restyling them (their outline level).",
+      "properties": {
+        "level": {
+          "description": "1 to 9 lists them at that level; 0 is \"do not show in table of\ncontents\".",
+          "format": "uint8",
+          "maximum": 9,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "set_contents_level",
+          "type": "string"
+        },
+        "paragraphs": {
+          "description": "The body paragraph ids.",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 500,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "op",
+        "paragraphs",
+        "level"
       ],
       "type": "object"
     },
