@@ -464,7 +464,10 @@ const SRC = new URL("../src/", import.meta.url);
 // 2975 -> 2978 with the PDF commands (`docs/182` §17a): the file-open and palette
 // modules reach `ed.pdfCommands`, which costs a binding with its comment and one
 // context line. MEASURED with `wc -l`.
-const MAIN_JS_LINE_CEILING = 2978;
+// 2978 -> 2981 with the header/footer band's commands (`109` HF-192, #910):
+// three domain modules reach `ed.headerFooterBand`, which costs a binding with
+// its comment and one context line. MEASURED with `wc -l`.
+const MAIN_JS_LINE_CEILING = 2981;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

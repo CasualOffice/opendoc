@@ -304,8 +304,8 @@ not claim those gains. See docs/170 for the transaction, rendering and UX design
 
 | Task | Closes in docs/153 |
 | --- | --- |
-| Link to previous and remove a band | `page.header.linkToPrevious`, `page.header.remove` |
-| Page number positions | `page.pageNumber.position` |
+| Link to previous and remove a band | — |
+| Page number positions | — |
 | Go to a page | `page.goToPage`, `shell.go-to-page` |
 | Outline: promote, demote, add heading | `page.navigation.editHeadings` |
 | Fold in the header/footer audit findings (lane ux/header-footer) | — |
@@ -372,7 +372,7 @@ not claim those gains. See docs/170 for the transaction, rendering and UX design
 
 | Task | Closes in docs/153 |
 | --- | --- |
-| Align and distribute | `object.align-objects`, `object.align-to-page-margin`, `object.distribute` |
+| Align and distribute | `object.distribute` |
 | Commands on a multi-selection | `object.multi-select` |
 | Position relative to, distance, move with text, overlap | `object.position-relative-to`, `object.advanced-layout-options` |
 | Wrap boundary editing and snapping | `object.edit-wrap-boundary`, `object.snap-guides` |
@@ -385,8 +385,8 @@ not claim those gains. See docs/170 for the transaction, rendering and UX design
 
 | Task | Closes in docs/153 |
 | --- | --- |
-| Replace a picture and restore its size | `object.replace-image`, `object.original-size` |
-| Crop: reset, fit, fill | `object.reset-crop`, `object.crop-fit-fill` |
+| Replace a picture and restore its size | — |
+| Crop: reset, fit, fill | `object.crop-fit-fill` |
 | Insert from a URL or host storage | `object.insert-image-url`, `object.insert-image-storage` |
 | Border, effects, transparency and alt-text title | `object.picture-border`, `object.alt-text` |
 | Save as picture, paste as picture | `object.save-as-picture`, `text.paste-as-picture`, `text.paste-special` |
@@ -402,7 +402,7 @@ not claim those gains. See docs/170 for the transaction, rendering and UX design
 | Fills: solid, gradient, texture, pattern, picture | `object.shape-fill-solid`, `object.shape-fill-gradient`, `object.shape-fill-texture-pattern` |
 | Outline dash, cap, join and arrowheads | `object.shape-outline`, `object.shape-arrowheads` |
 | Shape shadow | `object.shape-shadow` |
-| Change shape and the full gallery | `object.change-shape-type`, `object.insert-shape` |
+| Change shape and the full gallery | `object.insert-shape` |
 | Edit points, adjust handles, merge shapes | `object.edit-points`, `object.merge-shapes` |
 
 ### 16. Review (RM-31)
@@ -466,9 +466,9 @@ not claim those gains. See docs/170 for the transaction, rendering and UX design
 
 | Task | Closes in docs/153 |
 | --- | --- |
-| Chart type gallery and change type | `object.insert-chart`, `object.chart-type-style` |
-| Edit the data | `object.chart-edit-data` |
-| Chart elements | `object.chart-elements` |
+| Chart type gallery and change type | — |
+| Edit the data | — |
+| Chart elements | — |
 | Remaining chart families and 3-D | `object.chart-render`, `object.chart-3d` |
 
 ### 21. Hyphenation (RM-36)
@@ -558,7 +558,7 @@ not claim those gains. See docs/170 for the transaction, rendering and UX design
 | --- | --- |
 | Language of a selection and of the document | `text.language-of-selection`, `review.proofing-language-selection`, `shell.document-language`, `review.proofing-language-document` |
 | Personal dictionary management | `review.personal-dictionary-manage` |
-| Word count dialog with a selection count | `review.word-count-dialog`, `shell.word-count-dialog` |
+| Word count dialog with a selection count | — |
 | Grammar breadth (HF-035 remainder) | — |
 
 ### 28. View and navigation (RM-43)

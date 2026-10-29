@@ -185,7 +185,9 @@ Q11"; "equations need the math offset space unified, `134`").
 HF-193 added `Operation::SetSectionPageBorders` (#912). Page borders are a person's design
 choice made in the Page Borders dialog, the same standing as the document-wide settings
 already excluded; `casual_doc_command::sections::set_page_borders` exists, so offering it to
-agents later is one registry entry and lowers the ceiling back to 16.
+agents later is one registry entry and lowers the ceiling back to 16. The editor command
+`layout.pageBorders` is listed in `registry::UI_NOT_EXPOSED` for the same reason
+(`UI_NOT_EXPOSED_CEILING` 84 → 85).
 
 **What "a feature inherits MCP" therefore means, concretely.** A developer adding, say,
 footnote insertion writes `InsertFootnote: Command` with its `lower()` (moved out of
