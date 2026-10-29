@@ -102,10 +102,15 @@ async function serveFakeModels(page) {
   const entry = (name) => ({ url: name, sha256: sha(files[name]), bytes: files[name].length });
   const manifest = { name: "fake", detection: entry("det.onnx"), packs: [{ name: "latin", model: entry("rec.onnx"), dictionary: entry("dict.txt") }] };
   const fetched = { count: 0 };
-  await page.route("**/ocr-test/manifest.json", (route) =>
-    route.fulfill({ contentType: "application/json", body: JSON.stringify(manifest) }),
+  // Matched on the PATH, never by a glob over the whole URL: the editor's own
+  // address carries `?pdfOcrModels=/ocr-test/manifest.json`, and a `**/...`
+  // glob matched the page navigation itself and answered it with the
+  // manifest, so the editor never booted (the quarantine of c418f74c).
+  await page.route(
+    (url) => url.pathname === "/ocr-test/manifest.json",
+    (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify(manifest) }),
   );
-  await page.route("**/ocr-test/*.{onnx,txt}", (route) => {
+  await page.route((url) => /^\/ocr-test\/[^/]+\.(onnx|txt)$/.test(url.pathname), (route) => {
     fetched.count += 1;
     const name = new URL(route.request().url()).pathname.split("/").pop();
     return route.fulfill({ contentType: "application/octet-stream", body: files[name] });
@@ -219,9 +224,7 @@ test.describe("the lazily loaded PDF module", () => {
     await expect(convert).toHaveAttribute("title", "This PDF is already open as a flowing document.");
   });
 
-  // Quarantined, owned by the PDF lane: with `?pdfOcrModels=` the editor never reaches
-  // an idle status in CI, so gotoEditor times out before the test starts.
-  test.fixme("with a host's models, recognition asks first, naming the size, then downloads, verifies and keeps them", async ({
+  test("with a host's models, recognition asks first, naming the size, then downloads, verifies and keeps them", async ({
     page,
   }) => {
     const fetched = await serveFakeModels(page);
