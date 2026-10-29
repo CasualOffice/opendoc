@@ -46,6 +46,8 @@
 //   `applyShapeOutline(o)`
 //   `enterCrop()`          enter crop mode on a picture
 //   `changePicture()`      Word's Change Picture: pick a file for the picture
+//   `pictureToolCommands(enabled, reason)` the picture-tool rows
+//                          (`picture_tools.mjs`) for the selected picture
 //   `openProperties()`     open the object inspector
 //   `deleteObject()`       delete the selected object
 //   `moveInText()`         Word's F2, "Move to where?" — move an in-line object
@@ -306,6 +308,13 @@ export function buildObjectContextCommands(context, io) {
       disabledReason: mutationReason,
       run: () => io.enterCrop(),
     });
+  }
+
+  // Crop to Fill, Crop to Fit, Reset crop and Reset size — ONLYOFFICE's Image
+  // settings beside Crop (`picture_tools.mjs`, `docs/109` RM-29). Built by the
+  // caller, which reads the picture once; each row carries its own reason.
+  if (context.canCrop && picture && typeof io.pictureToolCommands === "function") {
+    commands.push(...io.pictureToolCommands(mutationEnabled, mutationReason));
   }
 
   // Change Picture — Word's right-click row, Docs' Replace image. A picture

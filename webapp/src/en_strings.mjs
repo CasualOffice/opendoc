@@ -1515,6 +1515,18 @@ export const EN_STRINGS = Object.freeze({
   // Word's Picture Border: a picture's outline, under Word's name for it (HF-254).
   "object.pictureBorder": "Picture border",
   "object.pictureBorder.short": "Border",
+  // The picture tools beside Crop (`picture_tools.mjs`, RM-29): ONLYOFFICE's
+  // Crop ▸ Fill / Fit, Reset crop and Actual Size.
+  "object.picture.cropFill": "Crop to fill",
+  "object.picture.cropFit": "Crop to fit",
+  "object.picture.resetCrop": "Reset crop",
+  "object.picture.resetSize": "Reset to actual size",
+  "object.picture.cropFilled": "Picture cropped to fill its frame",
+  "object.picture.cropFitted": "Whole picture fitted inside its frame",
+  "object.picture.cropReset": "Crop removed",
+  "object.picture.sizeReset": "Picture set to its actual size",
+  "object.picture.reason.noNaturalSize": "This picture's original size cannot be read from its file",
+  "object.picture.reason.notCropped": "The picture is not cropped",
   // Crop mode's arrows move the kept area; with nothing cropped there is nothing
   // to move, and the key says so rather than doing nothing (`docs/104` HF-106).
   "object.crop.nothingToMove": "Crop an edge first — the arrow keys then move the cropped area",

@@ -4361,6 +4361,51 @@ pub fn picture_border(document: &Document, object: NodeId) -> Option<Option<Shap
         .find_map(|blocks| in_blocks(blocks, object))
 }
 
+/// The media entry of the picture `object` when it is a picture of its OWN — an
+/// in-line or a floating drawing on any surface, inside any inline container —
+/// and `None` otherwise, a member of a shape group included.
+///
+/// A group member is excluded on purpose: its size is in the group's child
+/// coordinate space, so "its natural size" is not a size the extent setters
+/// accept for it. This is the read face Reset size and Crop to fit / fill stand
+/// on (`docs/109` RM-29).
+///
+/// **O(document)**, one walk over every surface.
+#[must_use]
+pub fn standalone_picture_media(document: &Document, object: NodeId) -> Option<MediaId> {
+    fn in_blocks(blocks: &[BlockNode], object: NodeId) -> Option<MediaId> {
+        blocks.iter().find_map(|block| match block {
+            BlockNode::Paragraph(paragraph) => in_inlines(&paragraph.inlines, object),
+            BlockNode::Table(table) => table.rows.iter().find_map(|row| {
+                row.cells
+                    .iter()
+                    .find_map(|cell| in_blocks(&cell.blocks, object))
+            }),
+            BlockNode::Sdt(sdt) => in_blocks(&sdt.blocks, object),
+            BlockNode::AltChunk(_) => None,
+        })
+    }
+    fn in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<MediaId> {
+        inlines.iter().find_map(|inline| match inline {
+            InlineNode::Drawing(drawing) if drawing.id == object => Some(drawing.media),
+            InlineNode::AnchoredDrawing(drawing) if drawing.id == object => Some(drawing.media),
+            _ => match inline_descent(inline) {
+                InlineDescent::Inlines(nested) => in_inlines(nested, object),
+                InlineDescent::Blocks(blocks) => in_blocks(blocks, object),
+                // A group member is not standalone (see the doc comment), but a
+                // picture in a text box INSIDE a group is.
+                InlineDescent::Group(children) => {
+                    find_in_group_block_stories(children, &mut |blocks| in_blocks(blocks, object))
+                }
+                InlineDescent::Leaf => None,
+            },
+        })
+    }
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| in_blocks(blocks, object))
+}
+
 /// Returns authored text-box body properties from any document surface.
 #[must_use]
 pub fn text_box_body_properties(

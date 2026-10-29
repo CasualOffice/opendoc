@@ -432,6 +432,62 @@ fn change_picture_reaches_an_inline_picture_and_refuses_what_it_cannot_use() {
     assert!(not_a_picture.starts_with("refused: "), "{not_a_picture}");
 }
 
+/// A PNG whose header states `width` x `height` pixels: the signature, then
+/// the IHDR chunk's length, type and the two big-endian sizes. Nothing after
+/// that is read by `pixel_size`, and the engine carries no image codec.
+fn png_header(width: u32, height: u32) -> Vec<u8> {
+    let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+    bytes.extend_from_slice(&13u32.to_be_bytes());
+    bytes.extend_from_slice(b"IHDR");
+    bytes.extend_from_slice(&width.to_be_bytes());
+    bytes.extend_from_slice(&height.to_be_bytes());
+    bytes.extend_from_slice(&[8, 6, 0, 0, 0]);
+    bytes
+}
+
+/// RM-29: a picture's natural size is read from ITS OWN bytes, wherever the
+/// picture sits, at 96 DPI — the read Reset size and Crop to fit / fill stand
+/// on. A member of a group answers nothing (its size is in group coordinates),
+/// and so does a picture whose format states no size.
+///
+/// Mutation: answering the picture's current extent instead of reading the
+/// header makes the first assertion fail (the frame is 1 x 2 inches, the image
+/// 40 x 20 px); dropping the group exclusion makes the third fail.
+#[test]
+fn a_picture_natural_size_comes_from_its_own_header_and_never_from_its_frame() {
+    let mut document = wrapped();
+    let node = picture_named(&document, "Field logo").to_string();
+    document
+        .replace_picture_inner(
+            &node,
+            png_header(40, 20),
+            914_400.0,
+            1_828_800.0,
+            "image/png",
+        )
+        .expect("give the picture a 40 x 20 px image in a 1 x 2 in frame");
+    assert_eq!(
+        document.picture_natural_size(&node),
+        vec![40.0 * 9_525.0, 20.0 * 9_525.0],
+        "the header's pixels at 96 DPI, not the frame"
+    );
+
+    let inline = picture_named(&document, "Inline logo").to_string();
+    document
+        .replace_picture_inner(&inline, vec![1, 2, 3], 914_400.0, 914_400.0, "image/png")
+        .expect("an image with no readable header");
+    assert!(
+        document.picture_natural_size(&inline).is_empty(),
+        "no header, no size: the host disables Reset size with a reason"
+    );
+
+    let member = picture_named(&document, "Partner A").to_string();
+    assert!(
+        document.picture_natural_size(&member).is_empty(),
+        "a group member is not a standalone picture"
+    );
+}
+
 /// The media id a picture node currently shows, wherever it is nested.
 fn media_of(document: &WasmDocument, node: &str) -> casual_doc_model::v1::MediaId {
     fn in_children(children: &[GroupChild], id: NodeId) -> Option<casual_doc_model::v1::MediaId> {

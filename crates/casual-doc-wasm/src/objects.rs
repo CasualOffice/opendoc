@@ -2062,6 +2062,44 @@ impl WasmDocument {
             .map_err(to_js)
     }
 
+    /// The natural size of the picture `node`'s WHOLE source image, as
+    /// `[widthEmu, heightEmu]` at 96 DPI (9525 EMU per pixel, the rate
+    /// `insertImage` places a picture at), or an empty vector when the size is
+    /// not known: `node` is not a standalone picture (a group member's size is in
+    /// group coordinates), its bytes are not in the package, or the format
+    /// states no size in its header (TIFF, WebP need a decoder this engine does
+    /// not carry).
+    ///
+    /// The read face of Reset size (ONLYOFFICE's Actual Size, `ImageSettings.js`
+    /// `setOriginalSize` over `asc_getCropOriginalImageSize`) and of Crop to Fit
+    /// and Crop to Fill (`asc_cropFit` / `asc_cropFill`), which need the source's
+    /// proportions (`docs/109` RM-29). The size is read from the image header on
+    /// each call rather than stored at insert, so it is right for an imported
+    /// picture as well as for one inserted here.
+    ///
+    /// **O(document)** for the one walk that finds the picture, plus O(header).
+    #[wasm_bindgen(js_name = pictureNaturalSize)]
+    #[must_use]
+    pub fn picture_natural_size(&self, node: &str) -> Vec<f64> {
+        self.picture_natural_size_emu(node)
+            .map(|(width, height)| vec![width as f64, height as f64])
+            .unwrap_or_default()
+    }
+}
+
+impl WasmDocument {
+    /// [`picture_natural_size`](Self::picture_natural_size) as EMU integers,
+    /// for native tests and callers. O(document).
+    pub(crate) fn picture_natural_size_emu(&self, node: &str) -> Option<(i64, i64)> {
+        use casual_doc_command::objects::{pixel_size, pixels_to_emu};
+        let object = node.parse::<NodeId>().ok()?;
+        let media = casual_doc_edit::standalone_picture_media(&self.document, object)?;
+        let reference = self.document.definitions().media.get(&media)?;
+        let bytes = self.resources.get(&reference.part_name)?;
+        let (width, height) = pixel_size(&reference.media_type, bytes)?;
+        Some((pixels_to_emu(width), pixels_to_emu(height)))
+    }
+
     /// [`replace_picture`](Self::replace_picture) with a plain error, so it is
     /// reachable from a native test.
     pub(crate) fn replace_picture_inner(

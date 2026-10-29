@@ -191,6 +191,50 @@ test.describe("Word's Picture Format controls", () => {
     await expect.poll(() => objectState(page)).toMatchObject({ outline: "none" });
     expect(consoleErrors).toEqual([]);
   });
+
+  // RM-29: ONLYOFFICE's Crop ▸ Fill / Fit, Reset crop and Actual Size, on the
+  // right-click menu and — through its flattening — the palette. Mutation:
+  // `pictureToolCommands` reading `objectExtent` as the natural size makes Reset
+  // size a no-op, and the width check below fails.
+  test("Reset size sets a picture to the size its file states, undoably, beside Crop to fill and fit (RM-29)", async ({ page, consoleErrors }) => {
+    const at = await openWrapped(page);
+    const point = at(FIELD_LOGO);
+    await page.mouse.click(point.x, point.y);
+    // A 40 x 20 px image (0.42 x 0.21 in), far smaller than its 1.5 x 0.75 in frame.
+    const png = await page.evaluate(async () => {
+      const canvas = new OffscreenCanvas(40, 20);
+      canvas.getContext("2d").fillRect(0, 0, 40, 20);
+      const blob = await canvas.convertToBlob({ type: "image/png" });
+      return [...new Uint8Array(await blob.arrayBuffer())];
+    });
+    await page.mouse.click(point.x, point.y, { button: "right" });
+    const chooser = page.waitForEvent("filechooser");
+    await page.locator('.editor-context-menu [data-command-id="object.changePicture"]').click();
+    await (await chooser).setFiles({ name: "wide.png", mimeType: "image/png", buffer: Buffer.from(png) });
+    await expect(page.locator("#status")).toContainText("Picture changed");
+    const fitted = await outlineBox(page);
+
+    const menu = page.locator(".editor-context-menu");
+    await page.mouse.click(fitted.x + fitted.width / 2, fitted.y + fitted.height / 2, { button: "right" });
+    const resetCrop = menu.locator('[data-command-id="object.resetCrop"]');
+    await expect(resetCrop, "an uncropped picture has nothing to reset").toBeDisabled();
+    await menu.locator('[data-command-id="object.resetSize"]').click();
+    await expect(page.locator("#status")).toContainText("actual size");
+    const actual = await outlineBox(page);
+    expect(Math.abs(actual.height * 2 - actual.width), "at its own 2:1 proportions").toBeLessThan(2);
+    expect(Math.abs(actual.width - fitted.width), "and no longer the fitted frame").toBeGreaterThan(2);
+
+    await page.keyboard.press(`${MOD}+z`);
+    await expect.poll(async () => Math.round((await outlineBox(page)).width)).toBe(Math.round(fitted.width));
+
+    // Crop to fill and to fit are offered on the same menu, enabled, beside the
+    // manual crop (their geometry is `picture_tools.test.mjs`'s).
+    await page.mouse.click(fitted.x + fitted.width / 2, fitted.y + fitted.height / 2, { button: "right" });
+    await expect(menu.locator('[data-command-id="object.cropFill"]')).toBeEnabled();
+    await expect(menu.locator('[data-command-id="object.cropFit"]')).toBeEnabled();
+    await page.keyboard.press("Escape");
+    expect(consoleErrors).toEqual([]);
+  });
 });
 
 /** The painted colour at a client point, read from the page's own canvas. */

@@ -3,6 +3,7 @@
 // `main.js` unchanged (docs/177); it reaches the rest of the editor only
 // through the context `ed`.
 import { buildObjectContextCommands } from "./object_context_menu.mjs";
+import { pictureToolCommands } from "./picture_tools.mjs";
 import { spellingContextCommands } from "./spell_check.mjs";
 import { shortcutForCommand } from "./keymap.mjs";
 import { POSITION_PRESETS, ROTATE_CHOICES, WRAP_CHOICES, Z_ORDER_CHOICES, activeWrapChoice, positionAvailability, wrapAvailability } from "./object_arrange.mjs";
@@ -599,6 +600,15 @@ export function createContextMenu(ed) {
     applyShapeOutline: ed.applyShapeOutline,
     enterCrop: () => ed.enterCropMode(),
     changePicture: () => ed.pictureReplace.choose(),
+    pictureToolCommands: (mutationEnabled, mutationReason) => pictureToolCommands({
+      doc: ed.doc,
+      node: ed.objectSelection?.node,
+      mutationEnabled,
+      mutationReason,
+      t,
+      runEdit: (thunk, options) => ed.runEdit(thunk, options),
+      announce: (text) => ed.setStatus(text),
+    }),
     openProperties: () => ed.toggleObjectInspector(true),
     deleteObject: () => ed.deleteSelectedObject(),
     moveInText: () => ed.keyboardObjectMove.begin(false),
