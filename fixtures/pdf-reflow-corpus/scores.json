@@ -1,0 +1,83 @@
+{
+ "about": "Before = the flowing default as first built (the engine at ba47bdc6); after = this lane's fixes. The loop is sample.docx printed by our own PDF writer and opened as a flowing document, scored per family against the DOCX's own model (1 = the source). LibreOffice was not available on the measuring machine, so the loop has one producer.",
+ "loop_sample_docx": {
+  "before": {
+   "columns": 0.0,
+   "formatting": 1.0,
+   "frames": 1.0,
+   "grid_tables": 0.0,
+   "header_footer": 0.599,
+   "headings": 0.473,
+   "lists": 0.982,
+   "notes": 1.0,
+   "page": 0.851,
+   "paragraphs": 0.133,
+   "pictures": 1.0,
+   "special": 0.42,
+   "tables": 0.0,
+   "text": 0.573
+  },
+  "after": {
+   "columns": 1.0,
+   "formatting": 0.852,
+   "frames": 1.0,
+   "grid_tables": 0.792,
+   "header_footer": 0.941,
+   "headings": 1.0,
+   "lists": 0.983,
+   "notes": 1.0,
+   "page": 0.967,
+   "paragraphs": 0.873,
+   "pictures": 1.0,
+   "special": 0.371,
+   "tables": 0.792,
+   "text": 0.957
+  }
+ },
+ "corpus": {
+  "before": {
+   "files": 64,
+   "opened": 61,
+   "with_text_boxes": 1,
+   "with_replacement_character": 0,
+   "with_private_use": 3,
+   "with_tables": 58,
+   "with_headings": 42,
+   "with_lists": 50,
+   "with_header_or_footer": 38,
+   "with_columns": 57,
+   "paragraphs": 180823,
+   "short_paragraph_share": 0.641,
+   "mean_words_per_paragraph": 13.96,
+   "tables": 1798,
+   "flowing_failed": 1,
+   "refused": [
+    "application.pdf import failed: PDF import: limit max_stream_decoded_bytes exceeded: 33596491 > 33554432",
+    "application.pdf import failed: PDF import: limit max_stream_decoded_bytes exceeded: 33611433 > 33554432",
+    "application.pdf import failed: PDF import: limit max_stream_decoded_bytes exceeded: 33615954 > 33554432"
+   ]
+  },
+  "after": {
+   "files": 64,
+   "opened": 61,
+   "with_text_boxes": 0,
+   "with_replacement_character": 0,
+   "with_private_use": 3,
+   "with_tables": 57,
+   "with_headings": 43,
+   "with_lists": 51,
+   "with_header_or_footer": 39,
+   "with_columns": 47,
+   "paragraphs": 78111,
+   "short_paragraph_share": 0.328,
+   "mean_words_per_paragraph": 23.75,
+   "tables": 1902,
+   "flowing_failed": 0,
+   "refused": [
+    "application.pdf import failed: PDF import: limit max_stream_decoded_bytes exceeded: 33596491 > 33554432",
+    "application.pdf import failed: PDF import: limit max_stream_decoded_bytes exceeded: 33611433 > 33554432",
+    "application.pdf import failed: PDF import: limit max_stream_decoded_bytes exceeded: 33615954 > 33554432"
+   ]
+  }
+ }
+}

@@ -725,3 +725,188 @@ fn a_cid_keyed_cff_is_wrapped_from_the_glyphs_the_page_drew() {
     assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
     assert_eq!(outcome.faces, 1);
 }
+
+// --- Special characters (`docs/182` §18.8) ----------------------------------
+
+/// Every run's text in the body, tables and frames included, in order.
+fn all_text(document: &Document) -> String {
+    fn blocks(list: &[BlockNode], out: &mut String) {
+        for block in list {
+            match block {
+                BlockNode::Paragraph(p) => {
+                    for inline in &p.inlines {
+                        match inline {
+                            InlineNode::Run(run) => out.push_str(&run.text),
+                            InlineNode::Break(_) => out.push('\n'),
+                            InlineNode::TextBox(frame) => blocks(&frame.blocks, out),
+                            InlineNode::Hyperlink(h) => {
+                                for inline in &h.inlines {
+                                    if let InlineNode::Run(run) = inline {
+                                        out.push_str(&run.text);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    out.push('\n');
+                }
+                BlockNode::Table(table) => {
+                    for row in &table.rows {
+                        for cell in &row.cells {
+                            blocks(&cell.blocks, out);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut out = String::new();
+    blocks(document.body(), &mut out);
+    out
+}
+
+/// A `ToUnicode` CMap mapping one-byte codes to UTF-16 hex strings.
+fn to_unicode(pairs: &[(u8, &str)]) -> Vec<u8> {
+    let mut body = String::from(
+        "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n/CMapName /Synth def\n/CMapType 2 def\n1 begincodespacerange\n<00> <FF>\nendcodespacerange\n",
+    );
+    body.push_str(&format!("{} beginbfchar\n", pairs.len()));
+    for (code, utf16) in pairs {
+        body.push_str(&format!("<{code:02X}> <{utf16}>\n"));
+    }
+    body.push_str("endbfchar\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
+    body.into_bytes()
+}
+
+/// One page drawn with fonts whose `ToUnicode` says what producers write:
+/// Word's private-use Symbol bullet, a ligature, a replacement character, a
+/// combining acute in its own glyph, a soft hyphen at a line end and a
+/// no-break space.
+fn special_characters_pdf() -> Vec<u8> {
+    use crate::synth::{Page, Pdf, document_in};
+    let mut pdf = Pdf::default();
+    let symbol = pdf.stream("", &to_unicode(&[(0xB7, "F0B7")]));
+    let text = pdf.stream(
+        "",
+        &to_unicode(&[(0x61, "FB01"), (0x62, "FFFD"), (0x63, "0301")]),
+    );
+    let spaces = pdf.stream("", &to_unicode(&[(0xAD, "00AD"), (0xA0, "00A0")]));
+    let fonts = format!(
+        "/Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >> /S1 << /Type /Font /Subtype /Type1 /BaseFont /Symbol /ToUnicode {symbol} 0 R >> /T1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding /ToUnicode {text} 0 R >> /T2 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding /ToUnicode {spaces} 0 R >> >>"
+    );
+    // "• fix olé" (the `b` has no Unicode), then "infor-" / "mation", then
+    // "10 kg" with a no-break space, all at 12 pt. In `T1` the codes `a`,
+    // `b` and `c` are the ligature, the replacement and the acute.
+    let content = "BT /S1 12 Tf 72 700 Td (\\267) Tj ET\n\
+        BT /T1 12 Tf 90 700 Td (ax olec b) Tj ET\n\
+        BT /T2 12 Tf 72 660 Td 14 TL (infor\\255) Tj T* (mation follows here) Tj ET\n\
+        BT /T2 12 Tf 72 600 Td (10\\240kg) Tj ET\n";
+    document_in(&mut pdf, &[Page::new(content)], &fonts, "", |_| {
+        String::new()
+    })
+}
+
+/// The reader made the text fit for editing, and each family is reported.
+/// Mutations, each driven red: return the text unchanged from
+/// `unicode::normalize` (the bullet reads U+F0B7, the ligature U+FB01);
+/// keep U+FFFD in `group.rs` (`\u{fffd}` is in the text); skip
+/// `compose_run` (the acute stays a combining mark after `e`).
+#[test]
+fn special_characters_are_made_fit_for_editing_in_both_layouts() {
+    let imported = import_pdf(special_characters_pdf(), PdfReadLimits::default()).unwrap();
+    let fixed = all_text(&imported.document);
+    let flowing = imported.flowing().unwrap();
+    let flowing_text = all_text(&flowing.document);
+    for (layout, text) in [("fixed", &fixed), ("flowing", &flowing_text)] {
+        assert!(text.contains('\u{2022}'), "{layout}: the bullet: {text:?}");
+        assert!(
+            text.contains("fix"),
+            "{layout}: the ligature's letters: {text:?}"
+        );
+        assert!(text.contains("ol\u{e9}"), "{layout}: composed: {text:?}");
+        assert!(
+            text.contains("10\u{a0}kg"),
+            "{layout}: the no-break space: {text:?}"
+        );
+        for bad in ['\u{fffd}', '\u{f0b7}', '\u{fb01}', '\u{301}'] {
+            assert!(!text.contains(bad), "{layout}: {bad:?} in {text:?}");
+        }
+    }
+    // A soft hyphen the PDF drew stays visible on the fixed page and joins
+    // the word in the flowing document.
+    assert!(fixed.contains("infor-"), "{fixed:?}");
+    assert!(!fixed.contains('\u{ad}'), "{fixed:?}");
+    assert!(flowing_text.contains("information"), "{flowing_text:?}");
+    for (report, layout) in [(&imported.report, "fixed"), (&flowing.report, "flowing")] {
+        for feature in [
+            report::SYMBOL_FONT_MAPPED,
+            report::LIGATURE_DECOMPOSED,
+            report::MARKS_COMPOSED,
+            report::NATIVE_TEXT_INVALID,
+        ] {
+            assert!(
+                report.has(feature),
+                "{layout}: {feature}: {:?}",
+                report.findings
+            );
+        }
+    }
+    assert!(flowing.report.has(report::LAYOUT_INFERRED));
+    assert!(flowing.report.has(report::EXACT_SAVE_FIXED_LAYOUT_ONLY));
+}
+
+/// A font whose `ToUnicode` flattens its curly apostrophe to `'`: the glyph's
+/// name in the embedded program (`quoteright`) restores it. Mutation: return
+/// 0 from `QuoteNames::correct` without changing anything and the text reads
+/// `H'e`.
+#[test]
+fn a_straight_quote_the_glyph_names_curly_is_imported_curly() {
+    use crate::fonts::test_support::{bare_cff, glyphs};
+    use crate::synth::{Page, Pdf, document_in};
+    let chars = "H\u{2019}e";
+    let advances = glyphs(chars);
+    let width = |c: char| {
+        advances
+            .iter()
+            .find(|g| g.1 == Some(c))
+            .map_or(0, |g| i64::from(g.2))
+    };
+    // WinAnsi: 0x48 H, 0x65 e, 0x92 quoteright.
+    let widths: Vec<String> = (32u32..=0x92)
+        .map(|code| match code {
+            0x48 => width('H'),
+            0x65 => width('e'),
+            0x92 => width('\u{2019}'),
+            _ => 0,
+        })
+        .map(|w| w.to_string())
+        .collect();
+    let mut pdf = Pdf::default();
+    let cff = pdf.stream("/Subtype /Type1C", &bare_cff(chars));
+    let map = pdf.stream("", &to_unicode(&[(0x92, "0027")]));
+    let descriptor = pdf.add(format!(
+        "<< /Type /FontDescriptor /FontName /SynthQuote /Flags 34 /FontBBox [-200 -250 1200 950] /ItalicAngle 0 /Ascent 900 /Descent -250 /CapHeight 650 /StemV 80 /FontFile3 {cff} 0 R >>"
+    ));
+    let font = pdf.add(format!(
+        "<< /Type /Font /Subtype /Type1 /BaseFont /SynthQuote /FirstChar 32 /LastChar 146 /Widths [{}] /Encoding /WinAnsiEncoding /FontDescriptor {descriptor} 0 R /ToUnicode {map} 0 R >>",
+        widths.join(" ")
+    ));
+    let fonts = format!("/Font << /Q1 {font} 0 R >>");
+    let bytes = document_in(
+        &mut pdf,
+        &[Page::new("BT /Q1 24 Tf 72 700 Td (H\\222e) Tj ET\n")],
+        &fonts,
+        "",
+        |_| String::new(),
+    );
+    let imported = import_pdf(bytes, PdfReadLimits::default()).unwrap();
+    let text = all_text(&imported.document);
+    assert!(text.contains("H\u{2019}e"), "{text:?}");
+    assert!(
+        imported.report.has(report::QUOTE_FROM_GLYPH_NAME),
+        "{:?}",
+        imported.report.findings
+    );
+}

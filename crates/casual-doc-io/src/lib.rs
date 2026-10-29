@@ -86,10 +86,15 @@ pub use pdf_import::{
     PdfImportAdapter, PdfStagedImport, builtin_registry_with_pdf_import, enable_pdf_import,
     enable_pdf_import_with_ocr, pdf_ocr_summary,
 };
+// Own lines: how a PDF opens, flowing by default (`docs/182` §4).
+#[cfg(feature = "pdf-import")]
+pub use pdf_import::enable_pdf_import_with_layout;
 #[cfg(feature = "pdf-source")]
 pub use pdf_source::import_pdf_reflow_package;
 #[cfg(feature = "pdf-source")]
 pub use pdf_source::pdf_ocr_record;
+#[cfg(feature = "pdf-source")]
+pub use pdf_source::{PdfLayout, pdf_layout};
 #[cfg(feature = "pdf-source")]
 pub use pdf_source::{
     PdfSavePlanner, export_pdf_session, import_pdf_package, pdf_retained_original,

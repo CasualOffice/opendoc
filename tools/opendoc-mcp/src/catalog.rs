@@ -113,8 +113,13 @@ pub fn tools() -> Vec<Tool> {
             read_only: true,
             destructive: false,
             idempotent: true,
-            description: "Open a .docx, .dotx, .odt, .rtf, .txt or .json file inside the allowed directories. Returns a handle every other tool takes, the revision, a digest, the page count and what the import could not carry.",
-            input: || object(json!({ "path": { "type": "string" } }), &["path"]),
+            description: "Open a .docx, .dotx, .odt, .rtf, .txt, .json or .pdf file inside the allowed directories. A PDF opens as a flowing document (paragraphs, headings, lists, tables, header and footer, footnotes, reconstructed from the page layout, listed in importSummary); pass layout \"fixed\" to keep its exact page layout in positioned frames instead. Returns a handle every other tool takes, the revision, a digest, the page count and what the import could not carry.",
+            input: || {
+                object(
+                    json!({ "path": { "type": "string" }, "layout": { "enum": ["flowing", "fixed"] } }),
+                    &["path"],
+                )
+            },
         },
         Tool {
             name: "close_document",
@@ -133,7 +138,7 @@ pub fn tools() -> Vec<Tool> {
             read_only: true,
             destructive: false,
             idempotent: false,
-            description: "For a document opened from a PDF: a NEW handle to its reflow, with paragraphs, headings, lists, tables and columns inferred from the pages instead of fixed page frames. Reads the PDF as it opened, not later edits; the PDF's handle is unchanged. Returns the new handle, revision, digest, page count and what the reflow inferred or lost.",
+            description: "For a PDF opened with layout \"fixed\": a NEW handle to its reflow, with paragraphs, headings, lists, tables and columns inferred from the pages instead of fixed page frames. Reads the PDF as it opened, not later edits; the PDF's handle is unchanged. Returns the new handle, revision, digest, page count and what the reflow inferred or lost.",
             input: || object(json!({ "document": doc() }), &["document"]),
         },
         Tool {

@@ -1,11 +1,15 @@
-// The two commands a PDF-origin document offers (`docs/182` §17a, §18, §20):
+// The three commands a PDF-origin document offers (`docs/182` §4, §17a, §18,
+// §20):
 //
-//   * "Convert to flowing document" (`file.pdf.convertToFlowing`). Word opens
-//     a PDF as flowing text from the start; Acrobat's "Export PDF" writes a
-//     new .docx and leaves the PDF alone. This is Acrobat's shape: the
-//     fixed-layout session is the default (`docs/182` §4.1) and conversion is
-//     an explicit command that builds a NEW document from the PDF as it was
-//     opened (`PdfImport::reflow`), never an edit of the open one.
+//   * "Keep exact page layout" (`file.pdf.keepExactLayout`). A PDF opens as a
+//     flowing document, as Word's PDF Reflow and Google Docs open one
+//     (`docs/182` §4.2); this opens the same PDF again with every page as it
+//     is drawn, in positioned frames (`docs/182` §4.1), the only layout whose
+//     save goes back into the original. Offered on a flowing PDF session.
+//   * "Convert to flowing document" (`file.pdf.convertToFlowing`): the other
+//     direction, from a session opened with its exact layout. It builds a NEW
+//     document from the PDF as it was opened (`PdfImport::reflow`), never an
+//     edit of the open one, and that document keeps no PDF.
 //   * "Recognise text in scanned pages" (`file.pdf.recogniseText`). Acrobat
 //     calls it "Recognize Text", Google Drive does it silently on upload; here
 //     it is explicit because the recognition models are downloaded, and a
@@ -18,9 +22,10 @@
 //
 // Surfaces (SKILL §10, at least two): the command registry (palette, the File
 // menu's PDF band, the File page) and the PDF summary dialog's actions
-// (`compat_findings.mjs`). Neither command is ever removed: for a document
-// that is not a PDF, or a PDF with nothing to recognise, it is DISABLED WITH
-// THE REASON.
+// (`compat_findings.mjs`); the first open also offers "Keep exact page
+// layout" in its own progress dialog (`pdf_import.mjs`). No command is ever
+// removed: for a document that is not a PDF, a PDF already in that layout, or
+// a PDF with nothing to recognise, it is DISABLED WITH THE REASON.
 //
 // The models: the host names a manifest (`?pdfOcrModels=`, `ocr_models.mjs`);
 // the editor bundles none and fetches none before the reader agrees to a
@@ -29,6 +34,7 @@
 // nothing. The loaded engine is kept for the session and reused by every
 // later recognition and by Convert to flowing document.
 import { t, n } from "./i18n.mjs";
+import { hostParams } from "./capabilities.mjs";
 import {
   fetchOcrManifest,
   modelsStored,
@@ -40,6 +46,18 @@ import {
 
 export const CONVERT_COMMAND = "file.pdf.convertToFlowing";
 export const RECOGNISE_COMMAND = "file.pdf.recogniseText";
+export const KEEP_LAYOUT_COMMAND = "file.pdf.keepExactLayout";
+
+/** The layout the host opens PDFs in (`?pdfLayout=`, matched in any case
+ *  like every host option, `capabilities.mjs`'s `hostParams`): `"fixed"`
+ *  when it asks to keep the exact page layout, else `"flowing"`. Pure. */
+export function hostPdfLayout(search) {
+  try {
+    return String(hostParams(search ?? "").get("pdflayout") ?? "").toLowerCase() === "fixed" ? "fixed" : "flowing";
+  } catch {
+    return "flowing";
+  }
+}
 
 /** The DOCX format id a converted document saves as by default. */
 const DOCX = "org.openxmlformats.wordprocessingml.document";
@@ -69,9 +87,18 @@ export function recogniseRefusal({ pdfOrigin, ocr, manifestUrl }) {
   return "";
 }
 
-/** Why "Convert to flowing document" cannot run now, or "". */
-export function convertRefusal({ pdfOrigin }) {
-  return pdfOrigin ? "" : "pdfReflow.notPdf";
+/** Why "Convert to flowing document" cannot run now, or "": it converts a
+ *  PDF opened with its exact layout; a flowing PDF already is one. */
+export function convertRefusal({ pdfOrigin, pdfLayout }) {
+  if (!pdfOrigin) return "pdfReflow.notPdf";
+  return pdfLayout === "flowing" ? "pdfReflow.alreadyFlowing" : "";
+}
+
+/** Why "Keep exact page layout" cannot run now, or "": it reopens a flowing
+ *  PDF session with every page as drawn. */
+export function keepLayoutRefusal({ pdfOrigin, pdfLayout }) {
+  if (!pdfOrigin) return "pdfFixed.notPdf";
+  return pdfLayout === "fixed" ? "pdfFixed.already" : "";
 }
 
 /** `report.pdf` → `report (flowing).docx`. */
@@ -96,6 +123,7 @@ export function createPdfCommands(ed, io) {
 
   const state = () => ({
     pdfOrigin: Boolean(ed.doc?.pdfOrigin),
+    pdfLayout: String(ed.doc?.pdfLayout ?? ""),
     ocr: ocrSummaryOf(ed.doc),
     manifestUrl: ocrManifestUrl(search()),
   });
@@ -159,10 +187,31 @@ export function createPdfCommands(ed, io) {
       });
       if (!agreed) return;
     }
+    // Read again in the layout the session has: a flowing PDF stays flowing.
+    const layout = state().pdfLayout === "fixed" ? "fixed" : "flowing";
     await io.openBytes(original, name, undefined, undefined, {
       origin: "pdf",
       cancelledStatus: t("pdfOcr.cancelled"),
-      prepare: () => io.pdfImport.run(original, name, { prepareOcr: enginePreparer(url, manifest, store) }),
+      prepare: () => io.pdfImport.run(original, name, { prepareOcr: enginePreparer(url, manifest, store), layout }),
+    });
+  }
+
+  /** Opens the session's PDF again with every page as it is drawn. */
+  async function keepExactLayout() {
+    const refusal = keepLayoutRefusal(state());
+    if (refusal) {
+      ed.setStatus(t(refusal), "error");
+      return;
+    }
+    const original = ed.doc.pdfOriginal();
+    const name = ed.currentName;
+    const engine = ocrSummaryOf(ed.doc)?.provider && loaded ? loaded.engine : null;
+    if (!(await ed.confirmDiscardIfEdited())) return;
+    await io.openBytes(original, name, undefined, undefined, {
+      origin: "pdf",
+      cancelledStatus: t("pdfFixed.cancelled", { name }),
+      failedStatus: (reason) => t("pdfFixed.failed", { name, reason }),
+      prepare: () => io.pdfImport.run(original, name, { mode: "fixed", ocr: engine }),
     });
   }
 
@@ -192,6 +241,7 @@ export function createPdfCommands(ed, io) {
   return {
     recogniseText,
     convertToFlowing,
+    keepExactLayout,
     /** The summary dialog's actions: the same two commands, as buttons. */
     summaryActions() {
       return this.commands().map((command) => ({
@@ -207,7 +257,17 @@ export function createPdfCommands(ed, io) {
       const now = state();
       const ocrRefusal = recogniseRefusal(now);
       const reflowRefusal = convertRefusal(now);
+      const keepRefusal = keepLayoutRefusal(now);
       return [
+        {
+          id: KEEP_LAYOUT_COMMAND,
+          label: t("pdfFixed.command"),
+          group: "File",
+          kw: "keep exact page layout fixed frames original pages pdf as drawn positioned",
+          enabled: !keepRefusal,
+          disabledReason: t(keepRefusal || "pdfFixed.notPdf"),
+          run: () => void keepExactLayout(),
+        },
         {
           id: RECOGNISE_COMMAND,
           label: t("pdfOcr.command"),

@@ -1,6 +1,19 @@
 // Opening a PDF: the progress dialog over the engine's staged import
 // (`docs/182` §6, P2).
 //
+// A PDF opens as a FLOWING document (`docs/182` §4), the way Word's PDF
+// Reflow and Google Docs open one: the page layout is evidence, and what
+// opens is an ordinary document of paragraphs, headings, lists, tables,
+// header and footer and footnotes, with no text boxes and no positioned
+// frames (the PDF module's `finishReflowed`, opened by the main module's
+// `openPdfReflow` with the original kept so the PDF can be opened again).
+// "Keep exact page layout" is the explicit choice: a checkbox in this dialog
+// (read when the pages are done, so it can be ticked while they are read),
+// the host's `?pdfLayout=fixed`, and the `file.pdf.keepExactLayout` command
+// (`pdf_commands.mjs`). Fixed layout is the job's `finish`, opened by
+// `openPdfImport`: every page as drawn, the only layout whose save goes back
+// into the original.
+//
 // Word converts a PDF behind a modal "Word will now convert your PDF" notice
 // and a progress bar; Acrobat opens the file and then rebuilds each page's
 // text as you edit it. Both keep the user out of the document while the
@@ -43,6 +56,7 @@
 // only the phases (reading, laying out, cancelling), so a reader is not handed
 // a number per slice.
 import { openPdfImport, openPdfReflow } from "../pkg/casual_doc_wasm.js";
+import { hostPdfLayout } from "./pdf_commands.mjs";
 import { loadPdfModule, pdfModuleLoaded } from "./pdf_module.mjs";
 import { registerModal } from "./modal.mjs";
 import { n, t } from "./i18n.mjs";
@@ -81,7 +95,16 @@ function buildDialog(view) {
   const count = make("p", { id: `${ID}Count`, className: "pdf-import-count" });
   const phase = make("p", { id: `${ID}Phase`, className: "pdf-import-phase" });
   phase.setAttribute("aria-live", "polite");
-  body.append(bar, count, phase);
+  // "Keep exact page layout": a native checkbox, so it is keyboard and
+  // screen-reader operable as it is, described by its hint.
+  const layout = make("div", { className: "pdf-import-layout" });
+  const keep = make("input", { id: `${ID}KeepLayout`, type: "checkbox" });
+  keep.setAttribute("aria-describedby", `${ID}KeepLayoutHint`);
+  const keepLabel = make("label", { id: `${ID}KeepLayoutLabel` });
+  keepLabel.htmlFor = keep.id;
+  const keepHint = make("p", { id: `${ID}KeepLayoutHint`, className: "pdf-import-phase" });
+  layout.append(keep, keepLabel, keepHint);
+  body.append(bar, count, phase, layout);
   const foot = make("footer", { className: "dialog-foot" });
   const actions = make("div", { className: "dialog-actions" });
   const cancel = make("button", { id: `${ID}Cancel`, type: "button", className: "dialog-button" });
@@ -90,7 +113,21 @@ function buildDialog(view) {
   card.append(head, body, foot);
   overlay.append(card);
   view.body.append(overlay);
-  return { overlay, close, bar, fill, count, phase, cancel, title: words.firstChild, description: words.lastChild };
+  return {
+    overlay,
+    close,
+    bar,
+    fill,
+    count,
+    phase,
+    cancel,
+    layout,
+    keep,
+    keepLabel,
+    keepHint,
+    title: words.firstChild,
+    description: words.lastChild,
+  };
 }
 
 /** Megabytes, one decimal, for the module bar. */
@@ -98,7 +135,8 @@ const mb = (bytes) => n(Math.round(bytes / 100_000) / 10);
 
 /** The words of each mode: the title, the intro and Cancel's name. */
 const MODES = Object.freeze({
-  import: Object.freeze({ title: "pdfImport.title", intro: "pdfImport.intro", cancelLabel: "pdfImport.cancelLabel" }),
+  import: Object.freeze({ title: "pdfImport.title", intro: "pdfImport.introFlowing", cancelLabel: "pdfImport.cancelLabel" }),
+  fixed: Object.freeze({ title: "pdfFixed.title", intro: "pdfImport.intro", cancelLabel: "pdfImport.cancelLabel" }),
   reflow: Object.freeze({ title: "pdfReflow.title", intro: "pdfReflow.intro", cancelLabel: "pdfReflow.cancelLabel" }),
   ocr: Object.freeze({ title: "pdfOcr.title", intro: "pdfOcr.intro", cancelLabel: "pdfOcr.cancelLabel" }),
 });
@@ -130,6 +168,8 @@ async function provideCMaps(module, names, source, signal) {
  * @param {(pkg: Uint8Array) => object} [io.openReflow] the main module's
  *   `openPdfReflow`.
  * @param {() => string|null} [io.cmapSource] the host's CMap base URL, or null.
+ * @param {() => "flowing"|"fixed"} [io.layout] the host's default layout
+ *   (`hostPdfLayout` of the page's query).
  */
 export function createPdfImport(io = {}) {
   const view = io.view ?? globalThis.document;
@@ -138,6 +178,7 @@ export function createPdfImport(io = {}) {
   const openImport = io.open ?? openPdfImport;
   const openReflow = io.openReflow ?? openPdfReflow;
   const cmapSource = io.cmapSource ?? (() => null);
+  const hostLayout = io.layout ?? (() => hostPdfLayout(scope.location?.search ?? ""));
   const parts = buildDialog(view);
   /** The import in flight, or null. One at a time: the dialog is modal. */
   let active = null;
@@ -175,8 +216,16 @@ export function createPdfImport(io = {}) {
     }
   }
 
-  function renderOpen(name, mode) {
+  function renderOpen(name, mode, layout) {
     const words = MODES[mode] ?? MODES.import;
+    // The choice is offered where it is still open: a first open, and a
+    // recognition run (which opens the PDF again in whichever layout).
+    const choosing = mode === "import" || mode === "ocr";
+    parts.layout.hidden = !choosing;
+    parts.keep.checked = layout === "fixed";
+    parts.keep.disabled = !choosing;
+    parts.keepLabel.textContent = t("pdfImport.keepLayout");
+    parts.keepHint.textContent = t("pdfImport.keepLayoutHint");
     parts.overlay.dataset.mode = mode;
     parts.title.textContent = t(words.title, { name });
     parts.description.textContent = t(words.intro);
@@ -242,13 +291,17 @@ export function createPdfImport(io = {}) {
       if (result.status === "cancelled") return null;
       parts.phase.textContent = t("pdfImport.finishing");
       parts.cancel.disabled = true;
+      // The layout is decided now, when the pages are read: the reader may
+      // have ticked "Keep exact page layout" while they were.
+      const layout = layoutOf(mode);
+      parts.keep.disabled = true;
       await painted();
       if (active.cancelRequested) return null;
       clock.mark?.(FINISH_MARK);
       try {
-        const pkg = mode === "reflow" ? job.finishReflowed() : job.finish();
+        const pkg = layout === "flowing" ? job.finishReflowed() : job.finish();
         const ocr = job.ocrSummaryJson ? JSON.parse(job.ocrSummaryJson) : null;
-        return { pkg, ocr };
+        return { pkg, ocr, layout };
       } catch (error) {
         // A page needed predefined CMaps nobody had: fetch them and import
         // once more, if the host has a source and they are new.
@@ -273,9 +326,13 @@ export function createPdfImport(io = {}) {
    * @param {(module: object, ui: object) => Promise<object>} [options.prepareOcr]
    *   obtains and loads the engine after the module, behind this dialog: `ui`
    *   is `{ progress(received, total), phase(text), signal, painted() }`.
-   * @param {"import"|"reflow"|"ocr"} [options.mode] what the dialog says and
-   *   how the job finishes: `reflow` opens the converted document instead.
-   * @returns {Promise<{doc: object, ocr: object|null} | {cancelled: true}>}
+   * @param {"import"|"fixed"|"reflow"|"ocr"} [options.mode] what the dialog
+   *   says and how the job finishes: `import` and `ocr` in the layout the
+   *   dialog's checkbox ends on, `fixed` in the exact page layout, `reflow`
+   *   as a new flowing document that keeps no PDF.
+   * @param {"flowing"|"fixed"} [options.layout] where the checkbox starts
+   *   (default: the host's `?pdfLayout=`, else flowing).
+   * @returns {Promise<{doc: object, ocr: object|null, layout: string} | {cancelled: true}>}
    *   the new document, not yet adopted by the editor, and what OCR did; or a
    *   cancellation, with nothing changed.
    * @throws the engine's refusal or a failed page, as an `Error`.
@@ -284,7 +341,7 @@ export function createPdfImport(io = {}) {
     if (active) throw new Error(t("pdfImport.busy"));
     active = { cancelRequested: false, abort: new AbortController() };
     const mode = options.mode ?? (options.prepareOcr ? "ocr" : "import");
-    renderOpen(name, mode);
+    renderOpen(name, mode, options.layout ?? hostLayout());
     modal.open();
     try {
       await painted();
@@ -328,12 +385,27 @@ export function createPdfImport(io = {}) {
         imported = await importOnce(module, bytes, engine, mode);
       }
       if (!imported) return { cancelled: true };
-      const doc = mode === "reflow" ? openReflow(imported.pkg) : openImport(imported.pkg, bytes);
-      return { doc, ocr: imported.ocr, engine };
+      // A flowing document keeps the PDF it was rebuilt from, so it can be
+      // opened again in its exact layout or with OCR; a conversion from an
+      // open fixed-layout PDF is a new document and keeps none.
+      const doc =
+        imported.layout === "fixed"
+          ? openImport(imported.pkg, bytes)
+          : openReflow(imported.pkg, mode === "reflow" ? undefined : bytes);
+      return { doc, ocr: imported.ocr, engine, layout: imported.layout };
     } finally {
       active = null;
       if (modal.isOpen) modal.close("done");
     }
+  }
+
+  /** The layout `mode` finishes in: a conversion is flowing, a reopen with
+   *  the exact layout is fixed, and an open (or a recognition run) is what
+   *  the checkbox says. */
+  function layoutOf(mode) {
+    if (mode === "reflow") return "flowing";
+    if (mode === "fixed") return "fixed";
+    return parts.keep.checked ? "fixed" : "flowing";
   }
 
   parts.cancel.addEventListener("click", requestCancel);

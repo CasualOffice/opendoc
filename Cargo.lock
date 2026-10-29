@@ -2032,6 +2032,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "opendoc-reflow-score"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-io",
+ "casual-doc-model",
+ "casual-doc-pdf-import",
+ "serde_json",
+]
+
+[[package]]
 name = "opendoc-relay"
 version = "0.0.1"
 dependencies = [

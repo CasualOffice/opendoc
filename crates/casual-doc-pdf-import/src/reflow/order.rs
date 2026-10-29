@@ -45,6 +45,11 @@ pub const MIN_GUTTER: f64 = 6.0;
 pub const COLUMN_COVERAGE: f64 = 0.5;
 /// Column widths may differ by this factor and still be one column region.
 pub const COLUMN_WIDTH_RATIO: f64 = 1.35;
+/// A text column is at least this wide (points): narrower "columns" are a
+/// table's cells or a tab-aligned list, not a page set in columns (found by
+/// `tools/opendoc-reflow-score`: two rows of a borderless table made a
+/// three-column section).
+pub const MIN_COLUMN_WIDTH: f64 = 72.0;
 /// Recursion depth before the remainder is sorted geometrically.
 pub const MAX_DEPTH: usize = 48;
 
@@ -203,16 +208,45 @@ fn reinsert(
 }
 
 impl Cutter<'_> {
+    /// Top to bottom by visual line, then left to right: boxes sharing half
+    /// the smaller one's height are one line (a raised citation mark, a
+    /// larger initial, pieces of a line written as separate objects), read
+    /// in x order, so a superscript is not read before the text it follows.
+    /// O(n log n).
     fn geometric(&mut self, mut ids: Vec<usize>, region: Option<usize>) -> Vec<usize> {
         let rects = self.rects;
         ids.sort_by(|&a, &b| {
             let (ra, rb) = (rects[a], rects[b]);
             ra.y0.total_cmp(&rb.y0).then(ra.x0.total_cmp(&rb.x0))
         });
-        for &id in &ids {
+        let mut out: Vec<usize> = Vec::with_capacity(ids.len());
+        let mut row: Vec<usize> = Vec::new();
+        let mut band = (f64::INFINITY, f64::NEG_INFINITY);
+        let flush = |row: &mut Vec<usize>, out: &mut Vec<usize>| {
+            row.sort_by(|&a, &b| rects[a].x0.total_cmp(&rects[b].x0).then(a.cmp(&b)));
+            out.append(row);
+        };
+        for id in ids {
+            let r = rects[id];
+            let shared = band.1.min(r.y1) - band.0.max(r.y0);
+            let smaller = (band.1 - band.0).min(r.height()).max(0.1);
+            if row.is_empty() || shared >= 0.5 * smaller {
+                band = (band.0.min(r.y0), band.1.max(r.y1));
+                if row.is_empty() {
+                    band = (r.y0, r.y1);
+                }
+                row.push(id);
+            } else {
+                flush(&mut row, &mut out);
+                band = (r.y0, r.y1);
+                row.push(id);
+            }
+        }
+        flush(&mut row, &mut out);
+        for &id in &out {
             self.region[id] = region;
         }
-        ids
+        out
     }
 
     fn cut(&mut self, ids: Vec<usize>, depth: usize, region: Option<usize>) -> Vec<usize> {
@@ -286,7 +320,7 @@ impl Cutter<'_> {
                     .iter()
                     .fold((f64::INFINITY, 0.0_f64), |(a, b), w| (a.min(*w), b.max(*w)));
                 let mut child_region = region;
-                if region.is_none() && min > 0.0 && max / min <= COLUMN_WIDTH_RATIO {
+                if region.is_none() && min >= MIN_COLUMN_WIDTH && max / min <= COLUMN_WIDTH_RATIO {
                     let gutter =
                         vertical.iter().map(|g| g.1 - g.0).sum::<f64>() / vertical.len() as f64;
                     self.regions.push(ColumnRegion {

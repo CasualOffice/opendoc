@@ -523,6 +523,7 @@ fn to_unicode_cmap(
         let mut lowest: BTreeMap<u16, u32> = BTreeMap::new();
         for (code, glyph) in font.charmap().mappings() {
             if let Ok(id) = u16::try_from(glyph.to_u32())
+                && id != 0
                 && kept.contains(&id)
             {
                 lowest.entry(id).or_insert(code);
@@ -535,7 +536,12 @@ fn to_unicode_cmap(
         }
     }
     for (glyph, text) in clusters.into_iter().flatten() {
-        if !kept.contains(glyph) || text.is_empty() {
+        // `.notdef` is what every character the face lacks is drawn with, so
+        // no one reading of it is the text: naming it after one of them made
+        // every Indic, CJK and Arabic character the bundled faces cannot draw
+        // copy as the same Arabic letter (found by the reflow ground truth,
+        // `tools/opendoc-reflow-score`). Left unnamed, it is reported.
+        if *glyph == 0 || !kept.contains(glyph) || text.is_empty() {
             continue;
         }
         if text.chars().count() > 1 || !mapping.contains_key(glyph) {
@@ -660,6 +666,20 @@ mod tests {
         let (cmap, unmapped) = to_unicode_cmap(bytes, 0, &kept, &kept, Some(&clusters));
         assert_eq!(unmapped, 0);
         assert!(cmap.contains(&format!("<{orphan:04X}> <00F8>")), "{cmap}");
+    }
+
+    /// `.notdef` draws every character the face lacks, so it is never named:
+    /// a cluster offering one of them (here an Arabic letter, the CJK and
+    /// Indic text of the reflow ground truth all collapsed onto it) is not
+    /// its text. Mutation: drop the `*glyph == 0` skip and the map reads
+    /// `<0000> <0627>`.
+    #[test]
+    fn notdef_is_never_named_after_one_of_the_characters_it_stood_in_for() {
+        let bytes = fonts::face_bytes(FontId(0));
+        let kept: BTreeSet<u16> = [0].into_iter().collect();
+        let clusters: BTreeMap<u16, String> = [(0, "\u{0627}".to_owned())].into_iter().collect();
+        let (cmap, _) = to_unicode_cmap(bytes, 0, &kept, &kept, Some(&clusters));
+        assert!(!cmap.contains("<0000> <0627>"), "{cmap}");
     }
 
     #[test]

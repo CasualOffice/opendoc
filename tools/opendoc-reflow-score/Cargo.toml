@@ -1,0 +1,23 @@
+[package]
+name = "opendoc-reflow-score"
+description = "PDF reflow ground truth (docs/182 §18.10): DOCX -> PDF -> flowing import -> structural diff against the DOCX's own model, and a corpus sweep of PDFs"
+version.workspace = true
+edition.workspace = true
+# hayro (through casual-doc-pdf-import) declares rust-version 1.92.
+rust-version = "1.92"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+# The registry: DOCX import, the PDF writer, and PDF import (flowing, the
+# default open, `docs/182` §4).
+casual-doc-io = { workspace = true, features = ["pdf-import"] }
+casual-doc-model.workspace = true
+# For the reason a reflow failed, when the corpus sweep meets one.
+casual-doc-pdf-import.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

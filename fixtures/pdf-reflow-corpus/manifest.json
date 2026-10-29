@@ -1,0 +1,581 @@
+{
+ "about": "The PDF reflow corpus (docs/182 \u00a718.10): every file the sweep measured, where it came from, its licence and its SHA-256. Downloaded files live outside the repository; only those marked committed are here, all US federal works (public domain). Regenerate the measurement with tools/opendoc-reflow-score corpus <dir> <out.json>.",
+ "files": [
+  {
+   "name": "irs-fw4.pdf",
+   "url": "https://www.irs.gov/pub/irs-pdf/fw4.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "form",
+   "sha256": "92444d8856ce55d9e25dca8b6d1420634fc68b11e1ab1f760916ea29ddd312b2",
+   "bytes": 208845,
+   "committed": false
+  },
+  {
+   "name": "irs-f1040.pdf",
+   "url": "https://www.irs.gov/pub/irs-pdf/f1040.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "form",
+   "sha256": "3d31c226df0d189ced80e039d01cf0f8820c1019681a0f0ca6264de277b7e982",
+   "bytes": 220237,
+   "committed": false
+  },
+  {
+   "name": "irs-fw9.pdf",
+   "url": "https://www.irs.gov/pub/irs-pdf/fw9.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "form",
+   "sha256": "2d420cbb4123dcf1fb82595b2359cfbb5d81f00b9df9d359fcc7af361d093f53",
+   "bytes": 140815,
+   "committed": true
+  },
+  {
+   "name": "irs-f1099msc.pdf",
+   "url": "https://www.irs.gov/pub/irs-pdf/f1099msc.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "form",
+   "sha256": "38051fe1cdce8fac5183a7e7b182b1a0de590dcfec3e4f66a156eba3f98943fa",
+   "bytes": 561788,
+   "committed": false
+  },
+  {
+   "name": "irs-p15.pdf",
+   "url": "https://www.irs.gov/pub/irs-pdf/p15.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "government publication, multi-column, tables",
+   "sha256": "b46c3622439d8521e3a0faca4cd5b5ece3451b526f65f06a5e38d5c9f804c88b",
+   "bytes": 1713916,
+   "committed": false
+  },
+  {
+   "name": "irs-i1040gi.pdf",
+   "url": "https://www.irs.gov/pub/irs-pdf/i1040gi.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "instructions, multi-column",
+   "sha256": "482e9c487c608f1bbeaceef35bc3c0933e8b35443cfff447e4279d590468364a",
+   "bytes": 4434643,
+   "committed": false
+  },
+  {
+   "name": "irs-p501.pdf",
+   "url": "https://www.irs.gov/pub/irs-pdf/p501.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "government publication, tables",
+   "sha256": "288b62a4917f3bc3df0bade7a22c23a8ae648ba9eb5086df5b8b50e881148ff6",
+   "bytes": 1553735,
+   "committed": false
+  },
+  {
+   "name": "irs-p17.pdf",
+   "url": "https://www.irs.gov/pub/irs-pdf/p17.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "book-length publication",
+   "sha256": "2d2381d62c7c77ed4b64b83ac23c28ed85b7c8304eb580c09bd9fd660be0840b",
+   "bytes": 3088632,
+   "committed": false
+  },
+  {
+   "name": "nist-sp800-63-3.pdf",
+   "url": "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-63-3.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "standard (Word)",
+   "sha256": "915bb812cb705918461e642e84141c6ca2adc2ca0106e1d88f3884c61f07110a",
+   "bytes": 1599268,
+   "committed": false
+  },
+  {
+   "name": "nist-cswp29.pdf",
+   "url": "https://nvlpubs.nist.gov/nistpubs/CSWP/NIST.CSWP.29.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "framework, tables",
+   "sha256": "3c31f46fee98cac0c4323453e5109291a213b4de7fef8c058af9bf67f717433c",
+   "bytes": 1518858,
+   "committed": false
+  },
+  {
+   "name": "nist-ir8105.pdf",
+   "url": "https://nvlpubs.nist.gov/nistpubs/ir/2016/NIST.IR.8105.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "report",
+   "sha256": "da3c1c6915e4043131a901d487c7a06de3b88d2e05ffe8a083e800f4e752559a",
+   "bytes": 199673,
+   "committed": true
+  },
+  {
+   "name": "nist-sp800-53r5.pdf",
+   "url": "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-53r5.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "long standard, tables",
+   "sha256": "fc63bcd61715d0181dd8e85998b1e6201ae3515fc6626102101cab1841e11ec6",
+   "bytes": 6073678,
+   "committed": false
+  },
+  {
+   "name": "scotus-21-476.pdf",
+   "url": "https://www.supremecourt.gov/opinions/22pdf/21-476_c185.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "legal opinion",
+   "sha256": "eb177a0fbe75459e489530e9bc75b5aad8e1e45ffb515a3b06ff0573fb3a9676",
+   "bytes": 356301,
+   "committed": false
+  },
+  {
+   "name": "scotus-22-451.pdf",
+   "url": "https://www.supremecourt.gov/opinions/23pdf/22-451_7m58.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "legal opinion",
+   "sha256": "12f5ea075004886774c25e7831ea1608fd0f831f0113e83bb0e85811c0a4bb6e",
+   "bytes": 637387,
+   "committed": false
+  },
+  {
+   "name": "faa-phak-ch1.pdf",
+   "url": "https://www.faa.gov/sites/faa.gov/files/regulations_policies/handbooks_manuals/aviation/phak/03_phak_ch1.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "manual, pictures",
+   "sha256": "469b6e83b90e6b9e4aa0d6ba431c725e18643bb3ae7a32e96633f932a9eb70b3",
+   "bytes": 23031100,
+   "committed": false
+  },
+  {
+   "name": "faa-phak-ch2.pdf",
+   "url": "https://www.faa.gov/sites/faa.gov/files/regulations_policies/handbooks_manuals/aviation/phak/04_phak_ch2.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "manual, pictures, two-column",
+   "sha256": "3ba88fcb9d0d7fae81df25e4c4b23500d154b6acc83bfbf8c1d570a913a761cd",
+   "bytes": 18930937,
+   "committed": false
+  },
+  {
+   "name": "uscode-title1.pdf",
+   "url": "https://www.govinfo.gov/content/pkg/USCODE-2022-title1/pdf/USCODE-2022-title1.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "legal code",
+   "sha256": "b70a4f6f9d707790dfb70a88cb6ee6c3daeb2a39cd90402105735e5d40458bd2",
+   "bytes": 200192,
+   "committed": true
+  },
+  {
+   "name": "nasa-sp-2007-6105.pdf",
+   "url": "https://www.nasa.gov/wp-content/uploads/2018/09/nasa_systems_engineering_handbook_0.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "handbook, book",
+   "sha256": "8eeb4887a4dc57a23049da7dd2ed556833cf98e214b240468d987873164ff688",
+   "bytes": 3773440,
+   "committed": false
+  },
+  {
+   "name": "usgs-fs-2023.pdf",
+   "url": "https://pubs.usgs.gov/fs/2023/3001/fs20233001.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "fact sheet, multi-column, InDesign",
+   "sha256": "fda1ead553b6c6a623003e751106d13e606642081ab79a0fbdb28d136cac8690",
+   "bytes": 1878164,
+   "committed": false
+  },
+  {
+   "name": "usgs-cir-1490.pdf",
+   "url": "https://pubs.usgs.gov/circ/1490/cir1490.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "report, InDesign",
+   "sha256": "5dd348dd961ec887b84ca99f02588076a009a3f0eba9fbe817e4457524047998",
+   "bytes": 6044169,
+   "committed": false
+  },
+  {
+   "name": "ed-fafsa.pdf",
+   "url": "https://studentaid.gov/sites/default/files/2024-25-fafsa.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "form",
+   "sha256": "464b18ff26fa7ab7a37d72d4a3c1c148232de5f17588ee148ea1c5e298bf2b86",
+   "bytes": 1244236,
+   "committed": false
+  },
+  {
+   "name": "wikipedia-en-35.pdf",
+   "url": "https://en.wikipedia.org/api/rest_v1/page/pdf/Portable_Document_Format",
+   "licence": "CC BY-SA 4.0 (Wikipedia, rendered by its PDF service)",
+   "kind": "article, Latin",
+   "sha256": "dbedd29d3a062cd5a6d36bc31930afe530aa6fbff8b6d53df9b68d87f564bebc",
+   "bytes": 1145883,
+   "committed": false
+  },
+  {
+   "name": "wikipedia-en-36.pdf",
+   "url": "https://en.wikipedia.org/api/rest_v1/page/pdf/Typography",
+   "licence": "CC BY-SA 4.0 (Wikipedia, rendered by its PDF service)",
+   "kind": "article, pictures",
+   "sha256": "b2deb763b1a12b4f6595991d2ef9e9bbf656a83c9ced168405ca449c83f7ff3e",
+   "bytes": 1010959,
+   "committed": false
+  },
+  {
+   "name": "wikipedia-en-37.pdf",
+   "url": "https://en.wikipedia.org/api/rest_v1/page/pdf/Periodic_table",
+   "licence": "CC BY-SA 4.0 (Wikipedia, rendered by its PDF service)",
+   "kind": "article, tables",
+   "sha256": "9d1ccd8ee383a8d1f1f24cbf3b18e74e7794fb0f2c27b0aeb5405acd9a666181",
+   "bytes": 6111126,
+   "committed": false
+  },
+  {
+   "name": "wikipedia-ja-38.pdf",
+   "url": "https://ja.wikipedia.org/api/rest_v1/page/pdf/%E6%97%A5%E6%9C%AC%E8%AA%9E",
+   "licence": "CC BY-SA 4.0 (Wikipedia, rendered by its PDF service)",
+   "kind": "article, Japanese",
+   "sha256": "0b40308f0c095743e530b5f4b0cbe5ad564737579923751447734a445458ae5e",
+   "bytes": 7154962,
+   "committed": false
+  },
+  {
+   "name": "wikipedia-zh-39.pdf",
+   "url": "https://zh.wikipedia.org/api/rest_v1/page/pdf/%E6%B1%89%E5%AD%97",
+   "licence": "CC BY-SA 4.0 (Wikipedia, rendered by its PDF service)",
+   "kind": "article, Chinese",
+   "sha256": "0755cb11eb7ec58a281be1253e207ad4f45c26a3f6b405cca09bf3b687a10f86",
+   "bytes": 4462459,
+   "committed": false
+  },
+  {
+   "name": "wikipedia-ko-40.pdf",
+   "url": "https://ko.wikipedia.org/api/rest_v1/page/pdf/%ED%95%9C%EA%B8%80",
+   "licence": "CC BY-SA 4.0 (Wikipedia, rendered by its PDF service)",
+   "kind": "article, Korean",
+   "sha256": "4f4e264eaab7ae9be2d162ff2a1f56e6e9f763b350f938e9ddfe91f10dd1fa4b",
+   "bytes": 2747587,
+   "committed": false
+  },
+  {
+   "name": "wikipedia-ar-41.pdf",
+   "url": "https://ar.wikipedia.org/api/rest_v1/page/pdf/%D8%A7%D9%84%D9%84%D8%BA%D8%A9_%D8%A7%D9%84%D8%B9%D8%B1%D8%A8%D9%8A%D8%A9",
+   "licence": "CC BY-SA 4.0 (Wikipedia, rendered by its PDF service)",
+   "kind": "article, Arabic RTL",
+   "sha256": "3a058f8111534137d357b24ec804eb4fb1041a0641754d10e2b12c7a3f94717b",
+   "bytes": 2742477,
+   "committed": false
+  },
+  {
+   "name": "wikipedia-he-42.pdf",
+   "url": "https://he.wikipedia.org/api/rest_v1/page/pdf/%D7%A2%D7%91%D7%A8%D7%99%D7%AA",
+   "licence": "CC BY-SA 4.0 (Wikipedia, rendered by its PDF service)",
+   "kind": "article, Hebrew RTL",
+   "sha256": "4d55bed9042da1dd075bec2e0fb4fd48d17e22c56b49c7ba37efcf425b2bdbae",
+   "bytes": 1211463,
+   "committed": false
+  },
+  {
+   "name": "wikipedia-hi-43.pdf",
+   "url": "https://hi.wikipedia.org/api/rest_v1/page/pdf/%E0%A4%B9%E0%A4%BF%E0%A4%A8%E0%A5%8D%E0%A4%A6%E0%A5%80",
+   "licence": "CC BY-SA 4.0 (Wikipedia, rendered by its PDF service)",
+   "kind": "article, Devanagari",
+   "sha256": "72e0a784588e61bc0b54a794464098202c3aa85bfd9c8b891b2dcf512171142c",
+   "bytes": 1776560,
+   "committed": false
+  },
+  {
+   "name": "wikipedia-ru-44.pdf",
+   "url": "https://ru.wikipedia.org/api/rest_v1/page/pdf/%D0%A0%D1%83%D1%81%D1%81%D0%BA%D0%B8%D0%B9_%D1%8F%D0%B7%D1%8B%D0%BA",
+   "licence": "CC BY-SA 4.0 (Wikipedia, rendered by its PDF service)",
+   "kind": "article, Cyrillic",
+   "sha256": "9f83f895a8cc8e11a881fe976bb6cb41a335ceac34936dc253349ad49cadf708",
+   "bytes": 5333729,
+   "committed": false
+  },
+  {
+   "name": "wikipedia-de-45.pdf",
+   "url": "https://de.wikipedia.org/api/rest_v1/page/pdf/Deutschland",
+   "licence": "CC BY-SA 4.0 (Wikipedia, rendered by its PDF service)",
+   "kind": "article, German",
+   "sha256": "97fffbf448b6ddb1bd9e513920ec4402bfa2c0377a29c2ce97c922cc6bd4f5a2",
+   "bytes": 9350165,
+   "committed": false
+  },
+  {
+   "name": "wikipedia-el-46.pdf",
+   "url": "https://el.wikipedia.org/api/rest_v1/page/pdf/%CE%95%CE%BB%CE%BB%CE%B7%CE%BD%CE%B9%CE%BA%CE%AE_%CE%B3%CE%BB%CF%8E%CF%83%CF%83%CE%B1",
+   "licence": "CC BY-SA 4.0 (Wikipedia, rendered by its PDF service)",
+   "kind": "article, Greek",
+   "sha256": "0d4b20389cce2eb389bc1a7d3bfc5788bd132b6c3402ce48a6766c2b01dd2d98",
+   "bytes": 1554269,
+   "committed": false
+  },
+  {
+   "name": "arxiv-2201.11903.pdf",
+   "url": "https://arxiv.org/pdf/2201.11903",
+   "licence": "CC BY 4.0 (arXiv licence, checked on the abstract page)",
+   "kind": "LaTeX paper",
+   "sha256": "7d9f878c23b460e4566aa4ec9201b1abfb3b8faefb2b1356e411cb90fef72a12",
+   "bytes": 891773,
+   "committed": false
+  },
+  {
+   "name": "arxiv-2302.13971.pdf",
+   "url": "https://arxiv.org/pdf/2302.13971",
+   "licence": "CC BY 4.0 (arXiv licence, checked on the abstract page)",
+   "kind": "LaTeX paper",
+   "sha256": "2e663675ae36ad12adb2f5a05281bac2747ecf8d23d92bedd9f937a89fee7136",
+   "bytes": 726566,
+   "committed": false
+  },
+  {
+   "name": "arxiv-2305.18290.pdf",
+   "url": "https://arxiv.org/pdf/2305.18290",
+   "licence": "CC BY 4.0 (arXiv licence, checked on the abstract page)",
+   "kind": "LaTeX paper",
+   "sha256": "92cb3a2b71362acda98a789b03d88688fd33cf5fcf13f81d2b1de30ee7d3b67a",
+   "bytes": 1299212,
+   "committed": false
+  },
+  {
+   "name": "arxiv-2309.16609.pdf",
+   "url": "https://arxiv.org/pdf/2309.16609",
+   "licence": "CC BY 4.0 (arXiv licence, checked on the abstract page)",
+   "kind": "LaTeX paper",
+   "sha256": "5d4a9c3f6da9e9fa18a444bc3a663271dcf5ada36cc4c5dfe607a041619be798",
+   "bytes": 1994623,
+   "committed": false
+  },
+  {
+   "name": "arxiv-2210.11416.pdf",
+   "url": "https://arxiv.org/pdf/2210.11416",
+   "licence": "CC BY 4.0 (arXiv licence, checked on the abstract page)",
+   "kind": "LaTeX paper",
+   "sha256": "771f758c1b711c2a63ca2439e80ab90751351d721632897a058c0205ba9e2a22",
+   "bytes": 1557309,
+   "committed": false
+  },
+  {
+   "name": "arxiv-2310.06825.pdf",
+   "url": "https://arxiv.org/pdf/2310.06825",
+   "licence": "CC BY 4.0 (arXiv licence, checked on the abstract page)",
+   "kind": "LaTeX paper, short",
+   "sha256": "dfbac4e7035344b305c947481f2e7e8a02f7a24a563917eb6e47f6591d14c5ae",
+   "bytes": 3749788,
+   "committed": false
+  },
+  {
+   "name": "arxiv-2401.04088.pdf",
+   "url": "https://arxiv.org/pdf/2401.04088",
+   "licence": "CC BY 4.0 (arXiv licence, checked on the abstract page)",
+   "kind": "LaTeX paper",
+   "sha256": "f8bbf0e9d979b7a8ce7be65119266545a229a85b57e077d8bd048e458bb642da",
+   "bytes": 2475990,
+   "committed": false
+  },
+  {
+   "name": "arxiv-2404.14219.pdf",
+   "url": "https://arxiv.org/pdf/2404.14219",
+   "licence": "CC BY 4.0 (arXiv licence, checked on the abstract page)",
+   "kind": "LaTeX paper",
+   "sha256": "16c0bec322ce5c3bf0876d21ab406881dd3e3f07b21d98a1e827fe6336c72cba",
+   "bytes": 3908493,
+   "committed": false
+  },
+  {
+   "name": "acl-2023.acl-long.1.pdf",
+   "url": "https://aclanthology.org/2023.acl-long.1.pdf",
+   "licence": "CC BY 4.0 (ACL Anthology)",
+   "kind": "LaTeX paper, two-column",
+   "sha256": "47bb72521ad1fa454acc5156b857d2c2c18d01d842fc957e49e2212d8a45e2a1",
+   "bytes": 4602729,
+   "committed": false
+  },
+  {
+   "name": "acl-2023.acl-long.2.pdf",
+   "url": "https://aclanthology.org/2023.acl-long.2.pdf",
+   "licence": "CC BY 4.0 (ACL Anthology)",
+   "kind": "LaTeX paper, two-column",
+   "sha256": "9d3448ed1ffad8fca5ca84d552681480daff17f900ef273cfab9d3683a098209",
+   "bytes": 469829,
+   "committed": false
+  },
+  {
+   "name": "acl-2023.emnlp-main.1.pdf",
+   "url": "https://aclanthology.org/2023.emnlp-main.1.pdf",
+   "licence": "CC BY 4.0 (ACL Anthology)",
+   "kind": "LaTeX paper, two-column",
+   "sha256": "332e6b5164695cf15e036714f4f64d38764e30499a8b285e199a79b32e8d7e0c",
+   "bytes": 791368,
+   "committed": false
+  },
+  {
+   "name": "acl-2022.acl-long.1.pdf",
+   "url": "https://aclanthology.org/2022.acl-long.1.pdf",
+   "licence": "CC BY 4.0 (ACL Anthology)",
+   "kind": "LaTeX paper, two-column",
+   "sha256": "51f6de7008965f7bd95bdefaa55cc48ca5e90e34a2b50405f921f03f319d2a6d",
+   "bytes": 1692369,
+   "committed": false
+  },
+  {
+   "name": "acl-2021.acl-long.1.pdf",
+   "url": "https://aclanthology.org/2021.acl-long.1.pdf",
+   "licence": "CC BY 4.0 (ACL Anthology)",
+   "kind": "LaTeX paper, two-column",
+   "sha256": "27cc690f382f46f70601a7453f705503ffa8664737d24bbfb99be7e84c4681bf",
+   "bytes": 528252,
+   "committed": false
+  },
+  {
+   "name": "acl-2023.acl-short.1.pdf",
+   "url": "https://aclanthology.org/2023.acl-short.1.pdf",
+   "licence": "CC BY 4.0 (ACL Anthology)",
+   "kind": "LaTeX paper, two-column",
+   "sha256": "d120fe1f74df2a8bf961925de0cc843c55f6bef8df5cabe12deed92b1ce6a39f",
+   "bytes": 441616,
+   "committed": false
+  },
+  {
+   "name": "irs-f941.pdf",
+   "url": "https://www.irs.gov/pub/irs-pdf/f941.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "form",
+   "sha256": "38a3d8cf7a455101d52543c8c48e66202bc25c189ead878627e35c797c88e2ad",
+   "bytes": 841648,
+   "committed": false
+  },
+  {
+   "name": "irs-f1040s.pdf",
+   "url": "https://www.irs.gov/pub/irs-pdf/f1040s1.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "form",
+   "sha256": "8dafec719f6a4716c259a2bdaca546d9bb9e262d1eabef885fe116a7327458fa",
+   "bytes": 99940,
+   "committed": false
+  },
+  {
+   "name": "irs-fss4.pdf",
+   "url": "https://www.irs.gov/pub/irs-pdf/fss4.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "form",
+   "sha256": "23d295529950b05979596cf58d559db6c433a4ec852407b1820265c117cb3ca2",
+   "bytes": 122921,
+   "committed": false
+  },
+  {
+   "name": "irs-p970.pdf",
+   "url": "https://www.irs.gov/pub/irs-pdf/p970.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "publication, tables",
+   "sha256": "167f3d6df0d9370a3980b25b7a2e7b479ab7f336cce763d1f0c1c4962b18285e",
+   "bytes": 1935425,
+   "committed": false
+  },
+  {
+   "name": "irs-p463.pdf",
+   "url": "https://www.irs.gov/pub/irs-pdf/p463.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "publication, tables",
+   "sha256": "ddc3bb15e437bd65c37da2036debdae78c1a0bf5a080b19d5301c81f5ec5ae5d",
+   "bytes": 1851538,
+   "committed": false
+  },
+  {
+   "name": "irs-p334.pdf",
+   "url": "https://www.irs.gov/pub/irs-pdf/p334.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "publication",
+   "sha256": "722639ba7bfd6f5348234b58d21e1afd8cb0c04895138bd5c4539142dde6c60a",
+   "bytes": 2714784,
+   "committed": false
+  },
+  {
+   "name": "irs-i941.pdf",
+   "url": "https://www.irs.gov/pub/irs-pdf/i941.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "instructions, two-column",
+   "sha256": "f4a13d6cab661428e1109f83df14400f80e33accd984b4fde47feb5f68068e77",
+   "bytes": 284629,
+   "committed": false
+  },
+  {
+   "name": "nist-sp800-207.pdf",
+   "url": "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-207.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "standard",
+   "sha256": "0290d6ece24874287316f4bf430fef770aa4ec08a2227c8f2c1e5b2ff975e03d",
+   "bytes": 966908,
+   "committed": false
+  },
+  {
+   "name": "nist-ai100-1.pdf",
+   "url": "https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.100-1.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "framework, designed (InDesign)",
+   "sha256": "7576edb531d9848825814ee88e28b1795d3a84b435b4b797d3670eafdc4a89f1",
+   "bytes": 1946127,
+   "committed": false
+  },
+  {
+   "name": "nist-hb44.pdf",
+   "url": "https://nvlpubs.nist.gov/nistpubs/hb/2024/NIST.HB.44-2024.pdf",
+   "licence": "public domain (US federal work, 17 U.S.C. 105)",
+   "kind": "handbook, tables",
+   "sha256": "419b1501115086972ddfcb9accdc49dca0b8a27c3af8aa5d648b21d30229e34d",
+   "bytes": 77578129,
+   "committed": false
+  },
+  {
+   "name": "wikipedia-en-72.pdf",
+   "url": "https://en.wikipedia.org/api/rest_v1/page/pdf/Table_(information)",
+   "licence": "CC BY-SA 4.0 (Wikipedia, rendered by its PDF service)",
+   "kind": "article, tables",
+   "sha256": "e1d135c7db6982a8e668cc5ecba9e9c9c212e01f31e78c7b327e0be938461f87",
+   "bytes": 611213,
+   "committed": false
+  },
+  {
+   "name": "wikipedia-fr-73.pdf",
+   "url": "https://fr.wikipedia.org/api/rest_v1/page/pdf/France",
+   "licence": "CC BY-SA 4.0 (Wikipedia, rendered by its PDF service)",
+   "kind": "article, French",
+   "sha256": "04277d17f798120dfb988f2ef5010a0e0a00c58f2bec2a88fe6b10fc973e166e",
+   "bytes": 13873255,
+   "committed": false
+  },
+  {
+   "name": "wikipedia-th-74.pdf",
+   "url": "https://th.wikipedia.org/api/rest_v1/page/pdf/%E0%B8%A0%E0%B8%B2%E0%B8%A9%E0%B8%B2%E0%B9%84%E0%B8%97%E0%B8%A2",
+   "licence": "CC BY-SA 4.0 (Wikipedia, rendered by its PDF service)",
+   "kind": "article, Thai",
+   "sha256": "acb89ca19331ee5d996c395eecd88b97b083b70db6e8e15165f9290ba3f42934",
+   "bytes": 1674633,
+   "committed": false
+  },
+  {
+   "name": "wikipedia-fa-75.pdf",
+   "url": "https://fa.wikipedia.org/api/rest_v1/page/pdf/%D8%B2%D8%A8%D8%A7%D9%86_%D9%81%D8%A7%D8%B1%D8%B3%DB%8C",
+   "licence": "CC BY-SA 4.0 (Wikipedia, rendered by its PDF service)",
+   "kind": "article, Persian RTL",
+   "sha256": "31788bdcd0f6138dcf19c3e87b10ee012df5bbec9ff8baadf18942f0323704fb",
+   "bytes": 4874382,
+   "committed": false
+  },
+  {
+   "name": "acl-2023.findings-acl.1.pdf",
+   "url": "https://aclanthology.org/2023.findings-acl.1.pdf",
+   "licence": "CC BY 4.0 (ACL Anthology)",
+   "kind": "LaTeX paper, two-column",
+   "sha256": "39f6dd91b151c1421f9e21940ee2be9fc3fccc6fb37a1bca263fc23e339b59da",
+   "bytes": 7426502,
+   "committed": false
+  },
+  {
+   "name": "acl-2022.naacl-main.1.pdf",
+   "url": "https://aclanthology.org/2022.naacl-main.1.pdf",
+   "licence": "CC BY 4.0 (ACL Anthology)",
+   "kind": "LaTeX paper, two-column",
+   "sha256": "bd9315e39c5dd8a988ba7308cc0536679bf82ba8e61e500559db1e1e71c1aab4",
+   "bytes": 129687,
+   "committed": false
+  },
+  {
+   "name": "acl-2020.acl-main.1.pdf",
+   "url": "https://aclanthology.org/2020.acl-main.1.pdf",
+   "licence": "CC BY 4.0 (ACL Anthology)",
+   "kind": "LaTeX paper, two-column",
+   "sha256": "bd2680310de89488ca086aa8378ed095ecf5e4b56588812f62b11667de66d70e",
+   "bytes": 177051,
+   "committed": false
+  }
+ ]
+}

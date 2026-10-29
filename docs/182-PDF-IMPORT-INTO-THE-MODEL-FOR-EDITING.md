@@ -1,7 +1,15 @@
-# 182 — PDF into the model, for editing: fixed-layout frames first, reflow on demand
+# 182 — PDF into the model, for editing: a flowing document by default, the exact layout on request
+
+**Changed 2026-10-30 (owner):** "Everything is text boxes on PDF loading; that's not
+acceptable. Even tables are small text boxes. And no handling of special characters." and
+"like how Google Docs does it: reconstruct the document from the PDF layout and convert it
+into DOCX." A PDF now **opens as a flowing document** (§4.2, §18.9): the page layout is
+evidence, and what opens is a DOCX-shaped document with no text boxes and no positioned
+frames. Fixed layout (§4.1) is the explicit choice "Keep exact page layout". This reverses
+Q1's "fixed layout by default" (2026-10-29); the rest of Q1 stands.
 
 **Status:** Built in PR #899 (2026-10-29): P0 measurement, P1 fixed-layout import, P2 the editor, P3 reflow with fonts, links and annotations, P4 the byte-preserving save, P5/P6 OCR (PaddleOCR PP-OCRv5 on `rten`) and heron layout, and the model and engine gaps (§16-§20). Follow-ups, not in #899: the lazily loaded PDF wasm module (the editor ships PDF in its main module for now, ceilings raised by owner decision), and wiring OCR models into the SDK, MCP, viewer and editor (OCR is built but reports `ocr_unavailable` until a host supplies models). Scope changed by owner decision 2026-10-29 (SKILL §1).
-which the owner confirmed on 2026-10-29 (Q1: fixed layout by default, hayro, encrypted refused, semantic save first).
+which the owner confirmed on 2026-10-29 (Q1: fixed layout by default — reversed 2026-10-30, flowing by default — hayro, encrypted refused, semantic save first).
 **Decides:** ADR-076 (proposed; supersedes the proposed ADR-034). **Row:** `docs/109` RM-49.
 **Refines:** `131` (keeps its invariants PDFR-I1..I9, its OCR policy §11 and its finding
 families §16.1; replaces its native-evidence provider, its default output shape and its
@@ -121,7 +129,16 @@ useful as a **test oracle** (text-extraction cross-check in CI), never as a runt
 
 ## 4. The two outputs
 
-### 4.1 Fixed layout (the default on open)
+Since 2026-10-30 a PDF opens in **§4.2's flowing document**, on every entry: the editor's
+File ▸ Open (`webapp/src/pdf_import.mjs`), `casual-doc-io`'s `PdfImportAdapter` and every
+registry built with `enable_pdf_import*`, the Viewer SDK (`ViewerOptions::pdf_layout`),
+`casual-doc-ai`'s `Session::open` and MCP `open_document`. Fixed layout (§4.1) is the
+explicit choice "Keep exact page layout": a checkbox in the editor's progress dialog, the
+host's `?pdfLayout=fixed`, the `file.pdf.keepExactLayout` command (File ▸ PDF, the palette
+and the summary's actions), `PdfLayout::Fixed` on the adapter, viewer and session, and MCP
+`open_document`'s `layout: "fixed"`. §18.9 is what was built.
+
+### 4.1 Fixed layout ("Keep exact page layout")
 
 Every PDF page becomes:
 
@@ -141,7 +158,7 @@ Every PDF page becomes:
 Edits rewrap within the frame. Linking frames so text flows between them (Foxit) is
 **not** in the first release; it is Q4.
 
-### 4.2 Reflow (an explicit command: "Convert to flowing document")
+### 4.2 Flowing (the default on open; also "Convert to flowing document")
 
 From the same evidence, kept in the sidecar for the session:
 
@@ -154,10 +171,14 @@ From the same evidence, kept in the sidecar for the session:
 - superscript markers matched to bottom-of-page blocks → footnotes;
 - column bands → `SectionColumns`.
 
-It produces a **new** document (like Word's PDF Reflow) and the fixed-layout session stays
-open; reflow is not an undoable transform of the frames, because no edit history can
-survive a change of document shape. Offered automatically when the PDF is tagged or every
-page is single-column prose. Every inference is reported (PDFR-I4).
+Opened by default, it is the document (Word's PDF Reflow, Google Docs' "Open with"): its
+import report is the whole import's (what reading the pages found, then what the
+reconstruction inferred), headed by `pdf.import.layout_inferred` (the "may not be detected"
+statement Google Docs makes) and `pdf.import.exact_save_fixed_layout_only`. It saves as
+DOCX by default; saved as PDF it is a new file (§7). From a session opened in fixed layout,
+"Convert to flowing document" still produces it as a **new** document and leaves that
+session open; reflow is not an undoable transform of the frames, because no edit history
+can survive a change of document shape. Every inference is reported (PDFR-I4).
 
 ## 5. Reconstruction
 
@@ -227,6 +248,7 @@ the session until `finish` succeeds; Cancel leaves the open document untouched.
 | PDF, edited | **Semantic**: the existing writer renders the model (`98`). Correct, but every page is regenerated | P2 |
 | PDF, edited, **preserving** | **Incremental update**: pages whose section is unchanged are carried over as their original objects; an edited page keeps its non-text content stream operators and resources, drops the operators of edited frames (ranges recorded in `PdfSourceState`), and draws the new frame text with our writer's text layer; appended as an incremental update. Signatures on unchanged revisions stay verifiable as *earlier revisions* | P4 |
 | DOCX / ODT | Semantic (MF-I5): frames become text boxes, which Word opens and edits | P2 |
+| Any, **flowing** document (the default open, §4.2) | DOCX by default (the artifact's format profile is DOCX). PDF is the semantic writer, always: a flowing document is a new document, so the exact and byte-preserving saves above are **fixed layout's only**, and a PDF save says so (`pdf.export.preserve_fallback.flowing_layout`) | 2026-10-30 |
 
 The writer may move to **krilla** (Apache/MIT; CFF/TTF subsetting, tagged PDF, PDF/A,
 PDF/UA) for P4 and RM-07; that is ADR-031's question to reopen (Q6), not a prerequisite.
@@ -300,7 +322,7 @@ licence with revenue thresholds; 2.5 weights tagged AGPL); Marker/Surya weights
 - **Q1. Scope.** Confirm PDF becomes an importable, editable format (fixed layout + reflow),
   and that SKILL §1's "PDF editing" exclusion is narrowed to forms, signatures, annotations
   and scripts.
-- **Q2. Default on open.** Fixed layout (Acrobat/ONLYOFFICE), with reflow offered for tagged
+- **Q2. Default on open.** *Answered 2026-10-30: flowing by default (§4, §18.9).* Fixed layout (Acrobat/ONLYOFFICE), with reflow offered for tagged
   or single-column prose — or ask the user each time?
 - **Q3. Native provider.** hayro first with PDFium as fallback (this document), or `131`'s
   PDF.js?
@@ -1429,3 +1451,225 @@ option ignored: `reflowed: paragraphs, not frames`); `casual-doc-ai`
 the fixed-layout document instead of the reflow: `TextBox` found); `opendoc-mcp` conformance
 `a_read_only_agent_converts_a_pdf_into_a_new_flowing_document` and the tool list (the
 tool not registered: the list differs, `convert_pdf_to_flowing refused`).
+
+### 18.9 A PDF opens as a flowing document; tables and special characters (2026-10-30)
+
+The owner's report (§0 note) named three families. What each does now:
+
+**1. The default open is the flowing document (§4).** `PdfImport::flowing` is
+`PdfImport::reflow`'s document with the whole import's report (`flowing_report`: the
+reading half of the fixed report, minus its frame-only rows, then the reconstruction's,
+then `layout_inferred` and `exact_save_fixed_layout_only`). `casual-doc-io` gains
+`PdfLayout` (`Flowing` by default, `Fixed`), `PdfImportAdapter::with_layout`,
+`enable_pdf_import_with_layout` and `pdf_layout(source)`. A flowing artifact's format
+profile is DOCX (what it saves as), its envelope stays the PDF's and keeps the original
+only so the host can open it again; `export_pdf_session` never writes that original back.
+Should the reconstruction fail validation, the PDF opens in fixed layout, reported
+`pdf.import.flowing_unavailable`. The editor's main module opens the PDF module's
+`finishReflowed` package with `openPdfReflow(package, original)` (`pdfLayout` getter), the
+viewer has `ViewerOptions::with_pdf_layout` (`with_pdf_reflow` kept), the session has
+`Session::open_pdf` and `pdf_layout`, and MCP `open_document` takes `layout` and returns
+`pdfLayout`. `convert_pdf_to_flowing` on a flowing session is `already-flowing`. In fixed
+layout tables remain frames by design: the frame is what keeps the page exact.
+
+**2. Tables reflow as real tables (`reflow/record.rs`, `reflow/tables.rs`).**
+
+- A filled path is a rule when **every subpath** is a thin axis-aligned rectangle
+  (`record::rectangles`), so one path of many `re` (LibreOffice, Excel, report writers)
+  rules a grid, as each border's own `re f` (Word, and our writer: each cell draws its
+  four borders, a shared border twice a fraction of a point apart) already did.
+- Rules keep their colour; the table takes their shared colour and most common thickness
+  as its borders (`w:sz` floor 2, so hairlines stay hairlines).
+- Flat filled rectangles under a cell (at least 90% of it, last painted wins, white clears)
+  are its shading (`tables::shade`), and the vector art they were is not placed
+  (`tables::is_shading`).
+- A line the grid split at a column border, inside a cell spanning that border, is one
+  line again (`tables::rejoin`); a cell's wrapped lines were already one paragraph.
+- A table that is the last element of its page followed by a table that is the first of
+  the next, with the same columns and left edge (3 pt), is one table; a first row the
+  next page repeats becomes a repeating header row (`w:tblHeader`), reported
+  `pdf.import.table_continued`.
+
+**3. Special characters (`casual-doc-pdf-read` `unicode`, `casual-doc-pdf-import` `quotes`).**
+
+- Ligatures U+FB00–FB06 become their letters (`ligature_decomposed`).
+- Symbol, Wingdings and Zapf Dingbats: the private-use mirror (U+F020–F0FF) or, where the
+  font has no letters, the code itself, maps through the font's encoding (Adobe Symbol in
+  full; Word's bullet library, arrows and boxes for Wingdings; checks, crosses and bullets
+  for Zapf Dingbats); such runs are drawn with a text face (`symbol_font_mapped`). A code
+  no table knows has no Unicode.
+- Combining marks in their own glyph, and spacing accents drawn over a letter (TeX), are
+  composed to NFC where Unicode has the letter (`compose_table.rs`, generated from the UCD
+  by `crates/casual-doc-pdf-read/tools/compose_table.py`; `marks_composed`).
+- A curly quote a wrong `ToUnicode` flattened to `'` `"` `` ` `` is restored from the
+  glyph's name in the embedded program (sfnt `post`/CFF charset; `quote_from_glyph_name`).
+- U+00AD drawn at a line end: a visible hyphen in fixed layout, a join in reflow (U+2010
+  joins too). U+00A0 is kept.
+- No Unicode at all (none, U+FFFD, controls, a byte-order mark, an unknown symbol code):
+  the glyph's text is empty, reported `native_text_invalid` and read by OCR when a provider
+  is present. U+FFFD never reaches the document.
+
+**Guards** (each mutation in its commit message): `casual-doc-pdf-read` `unicode` unit
+tests (one per family); `casual-doc-pdf-import`
+`special_characters_are_made_fit_for_editing_in_both_layouts`,
+`a_straight_quote_the_glyph_names_curly_is_imported_curly`,
+`tables_ruled_with_filled_rectangles_reflow_as_real_tables`,
+`a_table_cut_by_a_page_break_is_one_table_with_a_repeating_header`,
+`the_writer_corpus_table_with_merges_reflows_as_a_real_table`; `casual-doc-io`
+`a_pdf_opens_as_a_flowing_document_by_default`,
+`a_flowing_document_never_saves_back_into_the_original`; the viewer's, the session's,
+MCP's and the main module's default-open tests; `pdf_commands.test.mjs`; the e2e
+`a PDF opens as a flowing document by default, and Keep exact page layout reopens its pages`.
+
+**Not built, and why.** Full NFC (canonical reordering of several marks, Hangul) needs the
+UCD's normalization tables, which are not in the dependency tree; the composition covers
+one base plus marks in order. Wingdings 2/3, Webdings and other pictograph fonts take the
+unmapped path rather than a guessed character. Tables in fixed layout stay frames. A
+`Title` style is not inferred separately from Heading 1. Nothing here was run locally
+(owner rule): CI is the test run.
+
+### 18.10 The reflow, measured: a ground truth and a corpus (2026-10-30)
+
+The owner (2026-10-30): "the reflow needs a lot of work … it needs a corpus and fine-tuning
+on a lot of PDFs … convert our sample.docx into PDF, try to load that, find all the issues
+and fix them." So the reflow is now measured, not judged by eye.
+
+**The instrument.** `tools/opendoc-reflow-score`:
+
+- `loop <source.docx> <out-dir> [label=file.pdf …] [--soffice]` imports the DOCX (its own
+  model is the answer), prints it to PDF with our writer (and with LibreOffice when
+  `--soffice` is given and installed), opens every PDF the way every host does (flowing), and
+  scores it per family against the source, from 0 to 1.
+  - The families: text (edit distance over all text), paragraphs (aligned pairs with
+    similarity ≥ 0.9, over the larger count), headings and lists (F1 × level agreement on the
+    aligned pairs), tables and grid tables (aligned in order by text; shape and cell text),
+    pictures, header and footer, notes, columns, page (size and margins), formatting
+    (bold, italic and size on the aligned pairs), special characters (recall of every
+    non-ASCII character) and frames (no text boxes).
+  - A one-cell table is scored as its paragraphs: it is a shaded box, and every flowing
+    reading of its PDF (Word's, Google Docs', ours) makes it paragraphs.
+- `corpus <dir> <out.json>` opens every PDF under a directory and records, per file: opened
+  or why not, milliseconds, the findings, the structure counts, and the sanity checks a
+  flowing document must pass (no text boxes, no U+FFFD, tables, headings, the reason a
+  reflow failed).
+- `dump <file.pdf>` prints the flowing document's paragraphs and tables, for reading one
+  failure.
+
+**The corpus.** 64 PDFs, all licensed for this use; the manifest (URL, licence, kind,
+SHA-256) and the aggregates are in `fixtures/pdf-reflow-corpus/`:
+
+- US federal works (public domain, 17 U.S.C. 105): IRS forms, instructions and
+  publications, NIST standards and reports, Supreme Court opinions, the US Code, FAA
+  handbook chapters, USGS reports (InDesign), a NASA handbook, FAFSA.
+- Wikipedia's PDF rendering (CC BY-SA 4.0; Chromium) in English, Japanese, Chinese,
+  Korean, Arabic, Hebrew, Persian, Hindi, Thai, Russian, Greek, German and French.
+- LaTeX papers under CC BY 4.0: arXiv (licence checked on each abstract page) and the
+  ACL Anthology (two-column).
+
+Only three public-domain files are committed (`irs-fw9.pdf`, `nist-ir8105.pdf`,
+`uscode-title1.pdf`); the rest stay outside the repository. Not in it, because no source
+with a clear licence was found in this session: slides, scans, invoices, résumés, Excel
+exports and Google Docs exports. Ten more federal sources refused automated download
+(BLS, SEC, CBO, GAO, OSHA, CDC, FEMA, NRC).
+
+**`sample.docx` through our own writer, per family** (`scores.json`; LibreOffice was not
+installed on the measuring machine, so there is one producer):
+
+| Family | Before | After |
+| --- | --- | --- |
+| text | 0.573 | 0.957 |
+| paragraphs | 0.133 | 0.873 |
+| headings | 0.473 | 1.000 |
+| lists | 0.982 | 0.983 |
+| tables (grid tables) | 0.000 | 0.792 |
+| header and footer | 0.599 | 0.941 |
+| columns | 0.000 | 1.000 |
+| page (size, margins) | 0.851 | 0.967 |
+| formatting (bold, italic, size on the matched paragraphs) | 1.000 over 57 of 121 | 0.852 over 110 of 121 (sizes disagree on 49) |
+| special characters | 0.420 | 0.371 |
+| pictures, notes, frames | 1.000 | 1.000 |
+
+The special-character score fell because the writer no longer names `.notdef` after an
+Arabic letter (below): the CJK, Indic and Arabic text the bundled faces cannot draw is now
+reported missing instead of copied as `ا`. Raising that score is the writer's font fallback,
+not the reflow's.
+
+**The corpus, before and after** (61 of 64 open):
+
+| Measure | Before | After |
+| --- | --- | --- |
+| Paragraphs | 180,823 | 78,111 |
+| Share of paragraphs of three words or fewer | 0.641 | 0.328 |
+| Mean words per paragraph | 13.96 | 23.75 |
+| Files with a heading | 42 | 43 |
+| Files with a list | 50 | 51 |
+| Files with a header or footer | 38 | 39 |
+| Files whose flowing document failed validation (opened in fixed layout) | 1 | 0 |
+| Files with U+FFFD in the text | 0 | 0 |
+| Files with a multi-column section | 57 | 47 |
+
+**What each finding was, and the fix.**
+
+- Writer, `casual-doc-pdf` `cluster.rs`: every space of a document whose footer read "1 of
+  14" copied as " 14". The model text and the shaped text diverge at a field, and the
+  cluster offset landed in other characters. A glyph is now named only after text it could
+  draw (a whitespace glyph after whitespace, any other glyph after no whitespace).
+- Writer, `font.rs`: `.notdef` was named after one of the characters it stood in for (U+0627,
+  U+2610), so every character the faces lack copied as that one. `.notdef` is never named.
+- Tables, `whitespace_candidates`: a borderless table whose rows are farther apart than a
+  paragraph's leading (Word's and LibreOffice's) is one block per cell, so no row linked to
+  another. Consecutive aligned rows whose columns agree are now linked (`columns_agree`:
+  equal cell counts interleave, fewer cells start, end or centre on a column).
+- Tables, `whitespace_table`: one column per element gave a nine-row, three-column table 27
+  columns. Columns are now clustered from cell extents, narrowest first, and wider cells span.
+- Tables: cells of an aligned row must be 0.6 em apart. Pieces of one line written as
+  separate text objects (Chromium) abut, and they had made a table on every Wikipedia page.
+- Tables: a borderless table cut by a page break joins when its columns overlap the
+  previous page's, or when it repeats the header row, and a drawing between them does not
+  separate them. Fills under a whitespace table's cells are their shading too.
+- Paragraphs, `emit::column`: one document-wide right edge (set by a landscape page) made
+  every portrait line look short, so nothing joined across blocks. Each page now has its own
+  text edges.
+- Paragraphs, `text::continues`: a line is wrapped when the next line's first word would not
+  have fitted on it (a line breaker's test, for ragged-right text). A line directly under
+  another joins it even if it starts uppercase, inset (text in a shaded box) or hanging (a
+  list item, a hanging indent). A first-line indent starts a paragraph only after a line that
+  could end one.
+- Paragraphs: a monospaced line that stops short of the column is a line of code and stays a
+  paragraph of its own; monospaced prose that fills the column joins.
+- Paragraphs, `text::same_line`: the rest of the same visual line (Chromium writes every
+  link, citation and styled run as its own marked-content sequence) continues the paragraph,
+  with a space only where the line has a gap. Superscripts are on the line, and
+  `order::geometric` reads boxes that share a line left to right.
+- Headings, `text::sheet`: a level needs two paragraphs (a letterhead or a subtitle used once
+  is not a level), levels are dense (no Heading 4 under a Heading 2), and the largest key, at
+  least 1.6 times Normal and used at most twice, is the `Title` style.
+- Headings, `casual-doc-pdf-read` `admit.rs`: bold is read from the names producers give it
+  (`-Medi` for URW's Nimbus, `Demi`, `Semibold`, `Bd`, `CMBX`). Every LaTeX paper's headings
+  had read as body text.
+- Columns, `order.rs`: a column is at least an inch wide. Two rows of a borderless table had
+  made a three-column section.
+- Furniture: a repeated band is keyed by its distance from its own edge of the page, so a
+  landscape page's footer is the portrait pages' footer.
+- Validation: indents and table widths are clamped into the model's domain. One out-of-domain
+  value had failed a whole flowing document, which then opened in fixed layout.
+
+Every fix has a regression test in `reflow/tests.rs`, `casual-doc-pdf-read`'s `tests.rs` or
+`casual-doc-pdf`'s `font.rs` and `cluster.rs`, each with the mutation it was written against.
+
+**Still weak, ranked by what the corpus shows.**
+
+1. Heading levels on documents whose headings differ only in weight and size by less than
+   15 per cent. Wikipedia's section heads read as bold body text.
+2. Multi-column detection still fires on 47 of 61 files, against about a dozen genuinely
+   multi-column documents (the ACL and Federal Register layouts). The column cut accepts
+   sub-regions too readily.
+3. A line that ends in a colon is treated as the end of a paragraph, and in prose it often
+   is not.
+4. Forms (IRS) reflow as many short paragraphs and small tables; a form has no flowing
+   reading, and Google Docs does no better.
+5. Three LaTeX papers exceed the 32 MiB per-stream decode limit (one large figure each) and
+   are refused whole; skipping the picture instead is a security-limit decision for the owner.
+6. Time: `irs-p17.pdf` (300 pages) takes 19 to 26 s on the measuring machine, which was busy
+   with other jobs; the reflow's doubling guards hold, but the absolute figure needs a quiet
+   machine.
