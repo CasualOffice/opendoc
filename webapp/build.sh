@@ -227,6 +227,13 @@ cargo run --quiet --locked -p casual-doc-command --bin opendoc-command-gen -- --
 # deployment cannot drift into unreadable text by editing `src/brand.css` by hand.
 node "$here/tools/build-brand.mjs" --check
 
+# The capability statements in the public READMEs and in docs/18's format table
+# (webapp/tools/build-readme.mjs): the feature list from docs/153, the formats
+# from casual-doc-io's descriptors, the agent surface from the MCP catalogue and
+# the edit vocabulary. `--check` fails when a committed region is not what the
+# code produces, so a shipped feature reaches the README or CI is red.
+node "$here/tools/build-readme.mjs" --check
+
 "$here/build-site.py"
 "$here/build-site.py" --check
 
