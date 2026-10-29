@@ -62,8 +62,16 @@ pub struct Rect {
 }
 
 impl Rect {
-    fn width(&self) -> f64 {
+    /// Width.
+    #[must_use]
+    pub fn width(&self) -> f64 {
         self.x1 - self.x0
+    }
+
+    /// Height.
+    #[must_use]
+    pub fn height(&self) -> f64 {
+        self.y1 - self.y0
     }
 }
 

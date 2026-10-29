@@ -2420,6 +2420,8 @@
   "findings.feature.pdfFootnoteMarkers": "Tanda catatan kaki dinomori ulang",
   "findings.feature.pdfJustification": "Rata kiri-kanan disimpulkan dari lebar baris",
   "findings.feature.pdfPageBreaks": "Pemisah halaman disimpulkan dari akhir halaman",
+  "findings.feature.pdfFloats": "Gambar dan bagan mengambang di samping atau di belakang teksnya",
+  "findings.feature.pdfVectorsPlaced": "Gambar vektor ditempatkan sebagai bentuk",
   "pdfImport.title": "Membuka {name}",
   "pdfImport.intro": "Membangun ulang halaman PDF sebagai bingkai yang dapat diedit, di perangkat ini.",
   "pdfImport.reading": "Membaca file…",

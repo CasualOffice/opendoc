@@ -2420,6 +2420,8 @@
   "findings.feature.pdfFootnoteMarkers": "番号を振り直した脚注記号",
   "findings.feature.pdfJustification": "行幅から推定した両端揃え",
   "findings.feature.pdfPageBreaks": "ページの終わりから推定した改ページ",
+  "findings.feature.pdfFloats": "画像と図形を本文の横または背面に配置",
+  "findings.feature.pdfVectorsPlaced": "図形として配置した描画",
   "pdfImport.title": "{name} を開いています",
   "pdfImport.intro": "このデバイス上で、PDF のページを編集可能なフレームとして再構成しています。",
   "pdfImport.reading": "ファイルを読み込んでいます…",

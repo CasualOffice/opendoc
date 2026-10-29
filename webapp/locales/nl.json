@@ -2430,6 +2430,8 @@
   "findings.feature.pdfFootnoteMarkers": "Voetnootmarkeringen opnieuw genummerd",
   "findings.feature.pdfJustification": "Uitgevulde tekst afgeleid uit regelbreedtes",
   "findings.feature.pdfPageBreaks": "Pagina-einden afgeleid uit waar pagina's eindigen",
+  "findings.feature.pdfFloats": "Afbeeldingen en tekeningen zwevend naast of achter hun tekst",
+  "findings.feature.pdfVectorsPlaced": "Tekeningen geplaatst als vormen",
   "pdfImport.title": "{name} openen",
   "pdfImport.intro": "De pagina's van de pdf worden op dit apparaat opnieuw opgebouwd als bewerkbare kaders.",
   "pdfImport.reading": "Bestand lezen…",

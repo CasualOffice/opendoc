@@ -66,7 +66,7 @@ const FRAME_SLACK_POINTS: f64 = 2.0;
 /// Rotation (degrees) below which text counts as upright.
 const UPRIGHT_DEGREES: f64 = 0.5;
 
-fn emu(points: f64) -> i64 {
+pub(crate) fn emu(points: f64) -> i64 {
     (points * EMU_PER_PT).round() as i64
 }
 
@@ -1312,144 +1312,32 @@ impl Builder {
         page: usize,
         inlines: &mut Vec<InlineNode>,
     ) -> Result<(), PdfImportError> {
-        let mut children = Vec::new();
-        let (mut x0, mut y0, mut x1, mut y1) = (
-            f64::INFINITY,
-            f64::INFINITY,
-            f64::NEG_INFINITY,
-            f64::NEG_INFINITY,
+        let built = vector_children(paths, &mut || self.id())?;
+        self.findings.record(
+            report::CLIP_IGNORED,
+            Outcome::Degraded,
+            built.clipped,
+            Some(page),
         );
-        for path in paths {
-            if path.clipped {
-                self.findings
-                    .record(report::CLIP_IGNORED, Outcome::Degraded, 1, Some(page));
-            }
-            let chunks = split(&path.commands);
-            if chunks.len() > 1 {
-                self.findings
-                    .record(report::VECTOR_SPLIT, Outcome::Degraded, 1, Some(page));
-            }
-            for commands in chunks {
-                let b = path_bounds(&commands);
-                x0 = x0.min(b.0);
-                y0 = y0.min(b.1);
-                x1 = x1.max(b.2);
-                y1 = y1.max(b.3);
-                children.push(GroupChild::Shape(self.shape(path, &commands, b)?));
-            }
-        }
-        if children.is_empty() {
+        self.findings.record(
+            report::VECTOR_SPLIT,
+            Outcome::Degraded,
+            built.split,
+            Some(page),
+        );
+        let Some(bounds) = built.bounds else {
             return Ok(());
-        }
-        let width = (x1 - x0).max(1.0);
-        let height = (y1 - y0).max(1.0);
-        let offset = PointEmu {
-            x_emu: emu(x0),
-            y_emu: emu(y0),
-        };
-        let extent = Extent {
-            width_emu: emu(width),
-            height_emu: emu(height),
         };
         let z = self.next_z();
-        inlines.push(InlineNode::Group(Box::new(WordprocessingGroup {
-            id: self.id()?,
-            anchor: Some(page_anchor(x0, y0)),
-            relative_height: Some(z),
-            extent,
-            // The anchor places a top-level group; its own `a:off` is relative
-            // to that (Word writes 0,0), and the child space starts at the
-            // group's page origin so children keep page-EMU coordinates.
-            transform: GroupTransform {
-                offset: PointEmu { x_emu: 0, y_emu: 0 },
-                extent,
-                child_offset: offset,
-                child_extent: extent,
-                flip_h: false,
-                flip_v: false,
-                rotation: None,
-            },
-            hyperlink: None,
-            children,
-        })));
+        let id = self.id()?;
+        inlines.push(InlineNode::Group(Box::new(vector_group(
+            id,
+            built.children,
+            bounds,
+            page_anchor(bounds.0, bounds.1),
+            z,
+        ))));
         Ok(())
-    }
-
-    fn shape(
-        &mut self,
-        path: &PathEvidence,
-        commands: &[PathCommand],
-        bounds: (f64, f64, f64, f64),
-    ) -> Result<GroupShape, PdfImportError> {
-        let (bx, by) = (bounds.0, bounds.1);
-        let point = |p: casual_doc_pdf_read::Point| GeometryPoint {
-            x: GeometryValue::Literal(emu(p.x - bx)),
-            y: GeometryValue::Literal(emu(p.y - by)),
-        };
-        let mut out = Vec::with_capacity(commands.len());
-        for command in commands {
-            out.push(match *command {
-                PathCommand::MoveTo(p) => ShapePathCommand::MoveTo { point: point(p) },
-                PathCommand::LineTo(p) => ShapePathCommand::LineTo { point: point(p) },
-                PathCommand::QuadTo(c, p) => ShapePathCommand::QuadBezTo {
-                    control: point(c),
-                    point: point(p),
-                },
-                PathCommand::CubicTo(c1, c2, p) => ShapePathCommand::CubicBezTo {
-                    control1: point(c1),
-                    control2: point(c2),
-                    point: point(p),
-                },
-                PathCommand::Close => ShapePathCommand::Close,
-            });
-        }
-        let filled = path.fill.is_some();
-        let mut shape_path = ShapePath::new(out);
-        shape_path.fill = if filled {
-            PathFill::Norm
-        } else {
-            PathFill::None
-        };
-        shape_path.stroke = path.stroke.is_some();
-        let fill = path.fill.map(|color| {
-            // A pattern fill (`Some(None)`) is flattened to mid grey, reported
-            // by the reader's pattern count.
-            Fill::Solid(rgba(color.unwrap_or([128, 128, 128, 255])))
-        });
-        let stroke = path.stroke.as_ref().map(|stroke| ShapeStroke {
-            color: rgba(stroke.color.unwrap_or([128, 128, 128, 255])),
-            width_emu: emu(stroke.width).max(0),
-            dash: stroke.dashed.then_some(DashStyle::Dash),
-            head_end: None,
-            tail_end: None,
-        });
-        Ok(GroupShape {
-            id: self.id()?,
-            offset: PointEmu {
-                x_emu: emu(bounds.0),
-                y_emu: emu(bounds.1),
-            },
-            extent: Extent {
-                width_emu: emu(bounds.2 - bounds.0).max(0),
-                height_emu: emu(bounds.3 - bounds.1).max(0),
-            },
-            geometry: ShapeGeometry::Other,
-            preset: None,
-            adjustments: Vec::new(),
-            path: Some(CustomGeometry::from_paths(vec![shape_path]).with_fill_rule(
-                if path.even_odd {
-                    FillRule::EvenOdd
-                } else {
-                    FillRule::NonZero
-                },
-            )),
-            fill,
-            stroke,
-            flip_h: false,
-            flip_v: false,
-            rotation: None,
-            hyperlink: None,
-        })
     }
 
     /// Finishes the document. O(document) for the model's validation.
@@ -1540,6 +1428,183 @@ fn place_bookmark(
             anchor.inlines.insert(0, end);
             anchor.inlines.insert(0, start);
         }
+    }
+}
+
+/// The shapes of a run of paths (`fixed::build`'s vector art, and reflow's),
+/// in page-EMU child space, with what drawing them cost.
+#[derive(Debug)]
+pub(crate) struct VectorChildren {
+    /// One shape per path, or per chunk of a path over the model's command
+    /// bound, in paint order.
+    pub(crate) children: Vec<GroupChild>,
+    /// The union of the shapes' bounds `(x0, y0, x1, y1)` in points; `None`
+    /// when there are no shapes.
+    pub(crate) bounds: Option<(f64, f64, f64, f64)>,
+    /// Paths an active clip cut into (painted unclipped: `clip_ignored`).
+    pub(crate) clipped: u32,
+    /// Paths split into several shapes (`vector_split`).
+    pub(crate) split: u32,
+}
+
+/// The shapes of `paths`, each taking its id from `id` in paint order.
+/// O(path commands).
+pub(crate) fn vector_children(
+    paths: &[&PathEvidence],
+    id: &mut dyn FnMut() -> Result<NodeId, PdfImportError>,
+) -> Result<VectorChildren, PdfImportError> {
+    let mut out = VectorChildren {
+        children: Vec::new(),
+        bounds: None,
+        clipped: 0,
+        split: 0,
+    };
+    let (mut x0, mut y0, mut x1, mut y1) = (
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    );
+    for path in paths {
+        if path.clipped {
+            out.clipped += 1;
+        }
+        let chunks = split(&path.commands);
+        if chunks.len() > 1 {
+            out.split += 1;
+        }
+        for commands in chunks {
+            let b = path_bounds(&commands);
+            x0 = x0.min(b.0);
+            y0 = y0.min(b.1);
+            x1 = x1.max(b.2);
+            y1 = y1.max(b.3);
+            let shape_id = id()?;
+            out.children
+                .push(GroupChild::Shape(shape(path, &commands, b, shape_id)));
+        }
+    }
+    if !out.children.is_empty() {
+        out.bounds = Some((x0, y0, x1, y1));
+    }
+    Ok(out)
+}
+
+/// A top-level group of `children` (page-EMU child space) at `bounds`,
+/// placed by `anchor`. The anchor places the group; its own `a:off` is
+/// relative to that (Word writes 0,0), and the child space starts at the
+/// group's page origin so children keep page-EMU coordinates. O(1).
+pub(crate) fn vector_group(
+    id: NodeId,
+    children: Vec<GroupChild>,
+    bounds: (f64, f64, f64, f64),
+    anchor: DrawingAnchor,
+    z: u32,
+) -> WordprocessingGroup {
+    let width = (bounds.2 - bounds.0).max(1.0);
+    let height = (bounds.3 - bounds.1).max(1.0);
+    let offset = PointEmu {
+        x_emu: emu(bounds.0),
+        y_emu: emu(bounds.1),
+    };
+    let extent = Extent {
+        width_emu: emu(width),
+        height_emu: emu(height),
+    };
+    WordprocessingGroup {
+        id,
+        anchor: Some(anchor),
+        relative_height: Some(z),
+        extent,
+        transform: GroupTransform {
+            offset: PointEmu { x_emu: 0, y_emu: 0 },
+            extent,
+            child_offset: offset,
+            child_extent: extent,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        },
+        hyperlink: None,
+        children,
+    }
+}
+
+/// One path chunk as a custom-geometry shape at `bounds`. O(commands).
+fn shape(
+    path: &PathEvidence,
+    commands: &[PathCommand],
+    bounds: (f64, f64, f64, f64),
+    id: NodeId,
+) -> GroupShape {
+    let (bx, by) = (bounds.0, bounds.1);
+    let point = |p: casual_doc_pdf_read::Point| GeometryPoint {
+        x: GeometryValue::Literal(emu(p.x - bx)),
+        y: GeometryValue::Literal(emu(p.y - by)),
+    };
+    let mut out = Vec::with_capacity(commands.len());
+    for command in commands {
+        out.push(match *command {
+            PathCommand::MoveTo(p) => ShapePathCommand::MoveTo { point: point(p) },
+            PathCommand::LineTo(p) => ShapePathCommand::LineTo { point: point(p) },
+            PathCommand::QuadTo(c, p) => ShapePathCommand::QuadBezTo {
+                control: point(c),
+                point: point(p),
+            },
+            PathCommand::CubicTo(c1, c2, p) => ShapePathCommand::CubicBezTo {
+                control1: point(c1),
+                control2: point(c2),
+                point: point(p),
+            },
+            PathCommand::Close => ShapePathCommand::Close,
+        });
+    }
+    let filled = path.fill.is_some();
+    let mut shape_path = ShapePath::new(out);
+    shape_path.fill = if filled {
+        PathFill::Norm
+    } else {
+        PathFill::None
+    };
+    shape_path.stroke = path.stroke.is_some();
+    let fill = path.fill.map(|color| {
+        // A pattern fill (`Some(None)`) is flattened to mid grey, reported
+        // by the reader's pattern count.
+        Fill::Solid(rgba(color.unwrap_or([128, 128, 128, 255])))
+    });
+    let stroke = path.stroke.as_ref().map(|stroke| ShapeStroke {
+        color: rgba(stroke.color.unwrap_or([128, 128, 128, 255])),
+        width_emu: emu(stroke.width).max(0),
+        dash: stroke.dashed.then_some(DashStyle::Dash),
+        head_end: None,
+        tail_end: None,
+    });
+    GroupShape {
+        id,
+        offset: PointEmu {
+            x_emu: emu(bounds.0),
+            y_emu: emu(bounds.1),
+        },
+        extent: Extent {
+            width_emu: emu(bounds.2 - bounds.0).max(0),
+            height_emu: emu(bounds.3 - bounds.1).max(0),
+        },
+        geometry: ShapeGeometry::Other,
+        preset: None,
+        adjustments: Vec::new(),
+        path: Some(
+            CustomGeometry::from_paths(vec![shape_path]).with_fill_rule(if path.even_odd {
+                FillRule::EvenOdd
+            } else {
+                FillRule::NonZero
+            }),
+        ),
+        fill,
+        stroke,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+        hyperlink: None,
     }
 }
 

@@ -127,6 +127,16 @@ pub fn tools() -> Vec<Tool> {
             input: || object(json!({ "document": doc() }), &["document"]),
         },
         Tool {
+            name: "convert_pdf_to_flowing",
+            title: "Convert a PDF to a flowing document",
+            profile: Read,
+            read_only: true,
+            destructive: false,
+            idempotent: false,
+            description: "For a document opened from a PDF: a NEW handle to its reflow, with paragraphs, headings, lists, tables and columns inferred from the pages instead of fixed page frames. Reads the PDF as it opened, not later edits; the PDF's handle is unchanged. Returns the new handle, revision, digest, page count and what the reflow inferred or lost.",
+            input: || object(json!({ "document": doc() }), &["document"]),
+        },
+        Tool {
             name: "get_outline",
             title: "Outline",
             profile: Read,

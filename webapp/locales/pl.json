@@ -2450,6 +2450,8 @@
   "findings.feature.pdfFootnoteMarkers": "Znaczniki przypisów ponumerowane od nowa",
   "findings.feature.pdfJustification": "Wyjustowany tekst wywnioskowany z szerokości wierszy",
   "findings.feature.pdfPageBreaks": "Podziały stron wywnioskowane z końców stron",
+  "findings.feature.pdfFloats": "Obrazy i rysunki umieszczone obok tekstu lub za nim",
+  "findings.feature.pdfVectorsPlaced": "Rysunki umieszczone jako kształty",
   "pdfImport.title": "Otwieranie {name}",
   "pdfImport.intro": "Odtwarzanie stron pliku PDF jako edytowalnych ramek na tym urządzeniu.",
   "pdfImport.reading": "Odczytywanie pliku…",

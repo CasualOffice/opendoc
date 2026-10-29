@@ -1120,11 +1120,9 @@ correctness; the two-run equality test is the evidence.
 
 ### 20.6 Not built, and why
 
-- **Host wiring.** `casual-doc-io`'s `PdfImportAdapter`, `opendoc-mcp`, the viewer and
-  the editor (`webapp/**`, `casual-doc-wasm`) still call `ImportJob::begin`, so they
-  report `ocr_unavailable` and never run OCR. Each needs a way for the host to supply
-  model bytes (a path setting headless; Cache Storage/OPFS plus a download prompt that
-  shows the size, `131` §12.3, in the browser). Not this lane's files.
+- **Host wiring:** built for io, the viewer, AI sessions and `opendoc-mcp` (§20a). The
+  editor (`webapp/**`, `casual-doc-wasm`) still supplies no models: in the browser that
+  needs Cache Storage/OPFS plus a download prompt that shows the size (`131` §12.3).
 - **No CJK fixture is committed** (rendering one needs a system font); CJK recognition
   is the one-off measurement in §20.1. Optical CJK frames are drawn with the builder's
   default face, so they inherit FONT-01/02/03 (G-5).
@@ -1139,11 +1137,59 @@ correctness; the two-run equality test is the evidence.
 - **The time budget in the browser** needs the host's `Interrupt` over
   `performance.now()`; `Deadline` is native-only.
 
+## 20a. The host's OCR, wired (io, viewer, AI sessions, MCP)
+
+§20.6 left every surface on the no-model path. Branch `lane/pdf-ocr-wiring` wired the
+host's models through; `lane/pdf-followup-core` added the missing guard and the mutation
+statements. **OCR providers are opt-in** (`3577605c`): `casual-doc-pdf-import`'s
+default features are empty, `casual-doc-io` and `casual-doc-ai` have `pdf-ocr`
+(`pdf-layout` implies it), and `opendoc-mcp` enables both; the editor's wasm build links
+no OCR.
+
+- **Engine.** `OcrOptions::from_models(&OcrModels)` builds PP-OCRv5 (with the text-line
+  orientation classifier when present) and, with `layout-heron`, the heron layout
+  provider. `OcrModels` is built from bytes or, natively, from a directory laid out as
+  `crates/casual-doc-ocr/fetch-test-models.sh` writes it (`paddle/det.onnx`,
+  `paddle/<pack>.onnx` with `paddle/<pack>.dict.txt`, optional
+  `paddle/textline_ori.onnx`, `heron.onnx`); a file resolving outside the directory is
+  refused, and errors name files relative to the directory with `/` on every platform.
+- **Rotated boxes, deskew, orientation, scan covers** (`30ecfa21`): each detected line is
+  fitted along its own angle and read turned; an upside-down line is read the right way
+  up with the orientation model; each optical line read from a picture gets a fill in
+  the paper's colour directly above the picture (`ScanBehindText::Cover`, reported
+  `ocr_scan_covered`; reflow does not place these covers, §18.6).
+- **`casual-doc-io`:** `PdfImportAdapter::with_ocr`, `enable_pdf_import_with_ocr`; the
+  import's `OcrSummary` (provider manifest, SHA-256 of every model) is kept in the source
+  envelope and read with `pdf_ocr_summary`.
+- **`opendoc-viewer`:** `ViewerOptions::with_pdf_ocr`.
+- **`casual-doc-ai`:** `Session::open_with_pdf_ocr`, `Session::pdf_ocr_summary`.
+- **`opendoc-mcp`:** `--ocr-models DIR` (`docs/178` §15). Outside every `--root` it stops
+  the server at launch (exit 2); missing or unloadable, it is said on stderr and OCR
+  stays off, so a scan reports `ocr_unavailable`. Nothing is fetched. `open_document`
+  returns an `ocr` object: provider, models by role and hash, counts, never text.
+
+Guards, model-free (a scripted fake provider; CI needs no network). Their mutations
+are stated for CI to confirm (no local test runs, owner rule):
+
+| Guard | Mutation | Expected red |
+| --- | --- | --- |
+| `casual-doc-io` `a_host_with_ocr_reads_a_scan_and_the_import_records_what_read_it` | `enable_pdf_import_with_ocr` registers `PdfImportAdapter::new` (drops `ocr`) | `the scan's text is in the document` |
+| `opendoc-viewer` `a_scan_opens_with_its_text_when_the_host_supplies_ocr` | `import` passes `PdfOcrOptions::default()` whatever `pdf_ocr` holds | `text.contains("Scanned")` |
+| `casual-doc-ai` `a_session_opened_with_the_hosts_ocr_reads_a_scan` (new) | `open_with_pdf_ocr` opens through `session_registry()` | `body(&read).contains("Scanned")` |
+| `opendoc-mcp` unit `a_server_with_ocr_opens_a_scan_with_its_text_and_says_what_read_it` | `open_document` always calls `Session::open` | `ocr_unavailable` in the summary |
+| `opendoc-mcp` conformance `ocr_models_must_be_inside_the_roots_and_missing_ones_report_ocr_unavailable` | drop the `roots.contains` check in `load_ocr` | exit status left `Some(0)` right `Some(2)` |
+
+Model-gated (`OPENDOC_PADDLE_MODELS`): `a_model_directory_builds_the_providers_and_the_import_records_their_identity`.
+
 ## 18. P3 built: reflow, wrapped CFF and Type1 programs, links and annotations
 
-Branch `lane/pdf-p3-reflow` (from `502ff112`). Headless: the engine, its API and its
-guards. No editor or MCP surface is wired (that is the P2 lane's and the session
-layer's, and the decision below says where it goes).
+Branch `lane/pdf-p3-reflow` (from `502ff112`), continued on `lane/pdf-p3-reflow`
+after its first commit (glyph ids and CID-keyed CFF, reply threads, FreeText, tagged
+tables and lists, continued footnotes, note symbols, header variants, page breaks,
+justification) and on `lane/pdf-followup-core` (floating pictures, vector art, the
+headless reach of §18.7). Headless: the engine, its API, its guards and the session
+layer. The editor's File menu command is the P2 lane's (`webapp/**`,
+`casual-doc-wasm`) and is not built (§18.5).
 
 ### 18.1 Reflow: "Convert to flowing document" (§4.2, §5.3)
 
@@ -1171,8 +1217,16 @@ second parse.
 | Styles: every character votes for its (family, size, bold, italic); the winner is Normal; a larger (×1.15) or bolder key whose paragraphs are ≥ 80% short (≤ 3 lines, ≤ 200 characters, not prose-ending) is a heading level, ranked by size then weight. A tagged `H1`–`H6` (through the `RoleMap`) decides outright, and font clusters never classify a tagged paragraph | `reflow/text.rs` | clustering (§2) | `style_inferred`, `heading_inferred` |
 | Lists: a marker set an indent tab from its text is put back on its line first (pdfminer splits it off); runs of bullet/enumerator paragraphs of one kind with a hanging indent (a continuation aligned with the text, or two items whose markers and text starts align), numbers consecutive per level; levels by marker position; one abstract definition per run with the geometry's indent and hanging | `reflow/mod.rs`, `reflow/emit.rs` | — | `list_inferred` |
 | Columns: a vertical cut whose parts are tall and of similar width is a column region; a change of column count starts a continuous section with `SectionColumns` | `reflow/order.rs`, `reflow/emit.rs` | — | `columns_inferred` |
+| Tagged tables: the consecutive elements under one `Table` element become one table, rows by `TR`, cells by `TD`/`TH` in structure order, column edges from each column's leftmost cell, a short row's last cell spanning the rest; whitespace candidates whose cells a tagged `Table` owns are left to the tree | `reflow/mod.rs` | ISO 32000-1 §14.8.4.3.4 | `table_inferred` |
+| Tagged lists: an `LI`'s depth is the number of `L` elements on its lineage, and its run is its outermost `L`, so nesting follows the tree, not the marker's x | `reflow/emit.rs` | — | `list_inferred` |
+| Footnotes across pages: a note whose text stops mid-sentence continues in the topmost marker-less block of the next page's note area | `reflow/notes.rs` | — | `footnote_inferred` |
+| Note markers kept: markers that are a number sequence or `*` `†` `‡` `§` (continuous, or restarting each page) become the section's footnote numbering (`chicago` for symbols, the PDF's start); anything else is renumbered | `reflow/emit.rs` | — | `footnote_marker_renumbered` (the renumbered case) |
+| Header variants: a band text repeated on odd or even pages only becomes the default or even part (`evenAndOddHeaders`), and a first page with three or more pages after it that lacks the repeat becomes a title page (`titlePg`, an empty first part) | `reflow/mod.rs` | — | `header_footer_inferred` |
+| Page breaks: a page whose content stopped above 75% of the body's height ends in a break, kept as `pageBreakBefore` on the next page's first new paragraph | `reflow/emit.rs` | — | `page_break_inferred` |
+| Justification: at least three lines, every line but the last ending within a point of the same right edge, that edge within 5% of the column's right, and the last line shorter by two ems | `reflow/emit.rs` | — | `justification_inferred` |
+| Pictures and vector art (§18.6): each maximal run of non-rule paths is one shape group; vector art under half a text element floats behind it, a graphic beside text (at most 0.6 of the text width, sharing half the shorter height, within 36 pt) floats square-wrapped on that text's paragraph, and everything else keeps its own line; fills masking the picture painted just before them are not placed | `reflow/record.rs`, `reflow/mod.rs`, `reflow/emit.rs` | — | `float_inferred`, `vector_placed`; masks `vector_omitted` |
 
-Also reported: `vector_omitted` (vector art that is not a rule), `text_rotated`
+Also reported: `vector_omitted` (fills that only mask a picture, §18.6), `text_rotated`
 (rotated runs are reflowed upright where they start, never dropped),
 `tag_structure_ignored` (a truncated tree, or a tagged file no page could be
 ordered by), and the link and note families of §18.3.
@@ -1184,7 +1238,7 @@ document from the import's source state, which an open session does not carry on
 the document is saved as DOCX, and no `Operation` replaces a document (ADR-030 I2).
 It is a session-level operation beside `open_document`, so it belongs in the session
 layer (`opendoc-mcp`'s tools, the Native SDK, the editor's File menu), each calling
-`PdfImport::reflow()`. None of those is this lane's.
+`PdfImport::reflow()` or, from an open session, `casual_doc_io::pdf_reflow` (§18.7).
 
 ### 18.2 Fonts: bare CFF and Type1 made OpenType (§5.4, closing §16.4)
 
@@ -1204,6 +1258,12 @@ enabled, no new crate or version):
   registered only if that `cmap` covers every character drawn **and** its advances
   agree (5%, at most 10% of characters off) with where the PDF placed them, so a
   glyph name that lies cannot draw the wrong letter silently.
+- **CID-keyed CFF** (`CIDFontType0C`) is wrapped too (`fonts::wrap_cid_cff`): it has no
+  glyph names, so its `cmap` is built from the glyphs the page drew with it, each
+  character mapped to the glyph id it was drawn with (`GlyphEvidence::glyph`, hayro's
+  `glyph_id()`, added to the reader's evidence for this). The text on the page shapes
+  with the producer's outlines; a character the page never drew falls back to a
+  substitute. A glyph id the program does not hold refuses the wrap.
 - **A reader gap found on the way:** hayro hands the device no program for a simple
   `/Type1` font (`OutlineFont::font_data` is `None` for `Type1`), so the common
   bare-CFF case never reached the importer; P1's `BareCff` was only ever a CID-keyed
@@ -1227,6 +1287,12 @@ bounded). `device.rs` and `evidence.rs` are untouched.
   blocked one, or one over no text is `link_unresolved`.
 - A `Text` or `FreeText` note becomes a comment with its author, date and text,
   anchored on the nearest frame (fixed) or line (reflow): `comment_inferred`.
+- A reply (`/IRT`) threads onto the note it answers (`parent_para_id`, Word's
+  `commentsExtended`), in both outputs; a reply with no rectangle of its own anchors
+  where its root does.
+- A `FreeText` note's visible text is drawn in fixed layout as a frame at its
+  rectangle in its `/DA` size and colour (the appearance stream is not page content),
+  and its comment anchors on that frame.
 - Every other annotation is `annotation_omitted`; popups count with their note.
   Admission's blanket `annotation_omitted` for links and notes is gone: each page now
   reports what it did not import.
@@ -1263,6 +1329,30 @@ Type1 program.
 | `table_work_doubles_when_the_rows_double` | every rule against every rule; separately, every line searches every grid | `tables: ratio 3.67 (2247 -> 8247)`; `ratio 3.20 (1047 -> 3347)` |
 | `marker_and_paragraph_work_doubles_when_the_items_double` | each marker scans every earlier line | `paragraphs: ratio 3.94 (23249 -> 91499)` |
 | `annots` `pdf_dates_become_iso_8601_with_their_offset`, `text_strings_decode_utf16_and_pdfdoc` | (written red: a non-digit after the year parsed as a date; `\r` dropped before it became `\n`) | left `Some("2026-01-01T00:00:00Z")` right `None`; left `"ab"` right `"a\nb"` |
+| `a_cid_keyed_cff_is_wrapped_from_the_glyphs_the_page_drew` | the device records no glyph id | left `[]` right `[OpenTypeCff]` (`font_substituted` 1) |
+| `replies_thread_onto_their_note_and_free_text_is_drawn` | replies not threaded, in fixed layout; separately, in reflow | `fixed: the reply threads onto the note` left `None` right `Some("00000001")`; the same for `reflow:` |
+| same | FreeText not drawn | `the FreeText's text is a frame on the page` (no such frame) |
+| `tagged_tables_and_nested_lists_follow_the_structure_tree` (two rows, too few for the whitespace detector; the nested item at its parent's x) | tagged tables not built | no table: `index out of bounds: the len is 0 but the index is 0` in `cell_texts` |
+| same | tagged list depth ignored | left `("Nested item", 0, Some(Decimal))` right `("Nested item", 1, Some(LowerLetter))` |
+| `a_footnote_continues_onto_the_next_page_and_symbol_markers_are_kept` | no continuation onto the next page | left `[…, "The second note runs on and", …]` right `[…, "The second note runs on and continues here on page two.", …]` |
+| same | markers always renumbered | `number_format` left `None` right `Some(Other("chicago"))` |
+| `first_page_and_even_odd_headers_become_their_own_parts` (a title page without a head; heads alternating left and right) | no odd-page variant | headers left `[(Even, "Even running head")]` right `[(Default, "Odd running head"), (Even, …), (First, "")]` |
+| same | no title page | headers left `[(Default, …), (Even, …)]` right `[…, (First, "")]` |
+
+**Not mutation-proven locally, for CI to confirm (owner rule 2026-10-29: no local test
+runs; each mutation below is stated in its commit):**
+
+| Guard (`reflow/tests.rs` unless noted) | Mutation | Expected red |
+| --- | --- | --- |
+| `only_lines_ending_together_at_the_column_edge_are_justified` | `emit::justified` returns `lines.len() > 1` | `ragged` |
+| `a_page_that_ends_early_keeps_its_break_and_justified_text_stays_justified` (rewritten: the earlier version stayed green under that mutation) | the same | `find("A ragged paragraph")` left `Some(Justify)`; `justified.len()` 3 |
+| `a_picture_beside_text_floats_on_it_and_a_column_wide_one_stays_inline` | `placement` always `None` | `with_floats.len()` left 0 right 1 |
+| same | `FLOAT_MAX_WIDTH` 1.0 | the column-wide picture floats: inline count left 0 right 1 |
+| `vector_art_becomes_shape_groups_behind_its_text_or_on_its_own_line` | the graphics pass skips `page.vectors` | the panel has no float; `shapes` left 0 right 2 |
+| same | the behind test dropped (vector art treated like a picture) | the panel left `[]` right `[(None, true)]` |
+| `a_fill_masking_the_picture_under_it_is_not_placed` | `SourceVector::masks` always false | a float appears; `vector_omitted` left `None` right `Some(1)` |
+| `the_loss_report_names_every_construct_reflow_could_not_keep` | vector art not placed | `vector_placed` left `None` right `Some(1)` |
+| `graphic_placement_work_doubles_when_the_pages_double` | candidates rebuilt per graphic from every element pushed so far | ratio about 4 |
 
 **Defects the guards found in the code, not mutations:** the first ruled-table pass
 scanned every line of the page per grid and every rule per cell border
@@ -1275,22 +1365,67 @@ their binary searches had only implied.
 
 ### 18.5 Not built, and why
 
-- **CID-keyed CFF** (`CIDFontType0C`) stays substituted: its code-to-glyph mapping
-  is the PDF's CMap, and `GlyphEvidence` carries no glyph id. Wrapping it needs a
-  glyph id per glyph in the evidence (`device.rs`/`evidence.rs`, the other lane's):
-  **requested field: `GlyphEvidence::glyph: Option<u32>`** (hayro's `glyph_id()`).
 - **Type1 hints** are dropped in conversion (outlines exact; hinted small-size
   rasterisation differs). A Type1 matrix other than `[0.001 0 0 0.001 0 0]`, or a
   program whose names miss the AGL, stays substituted.
-- **Reflow, not yet:** tables from tagged `Table`/`TR`/`TD` roles (tables come from
-  geometry; the roles order them); list nesting from `L`/`LI` (markers are still
-  parsed); footnotes continued across pages; note symbols kept (`*`, `†` are
-  renumbered); first-page and even/odd header variants; page breaks; justification
-  (start, centre and end are inferred); floating pictures (pictures are inline in
-  reading order); vector art; XY-Cut++'s label priorities (no layout model, P6);
-  `reading_order_ambiguous` is not emitted.
-- **Annotations, not yet:** reply threads (`/IRT`) are separate comments, not
-  threaded; a `FreeText` note's visible text is not drawn in fixed layout (it is
-  the comment's text); links over rotated text.
-- **Reach:** no editor command, MCP tool or SDK call invokes `reflow()` (§18.1);
-  `docs/109` is not edited by this lane.
+- **Reflow, not yet:** XY-Cut++'s label priorities (the P6 layout regions are
+  evidence only); `reading_order_ambiguous` is not emitted; tight wrap polygons
+  (floats wrap square); vector art under a table's text (table cells are not text
+  elements, so that art keeps its own line); a picture's crop (a reflowed picture is
+  its placed, clipped extent); graphic placement is O(graphics × text elements) per
+  page (linear in pages; no interval index).
+- **Annotations, not yet:** links over rotated text.
+- **Reach:** the editor's File → "Convert to flowing document" (`webapp/**`,
+  `casual-doc-wasm`: the P2 lane's files). The Native SDK has no binding beyond the
+  Rust calls of §18.7.
+
+### 18.6 Floating pictures and vector art
+
+Reflow placed every picture inline in reading order and dropped every path that was
+not a table rule. Both are now placed from the page's geometry, Word's model:
+
+- **What is kept.** `record.rs` keeps each maximal run of consecutive non-rule paths
+  as a `SourceVector` (the grouping fixed layout draws as one group; glyphs or a
+  picture end a run). A run of fills painted straight after a picture and lying inside
+  it is a mask (OCR's scan covers, §20a, and redaction-style boxes): it hides the
+  picture in fixed layout, and in a flowing document the picture no longer sits under
+  text, so it is not placed (`vector_omitted`).
+- **Where it goes** (`reflow::placement`, O(text elements on the page) per graphic):
+  vector art under at least half of a text element's area floats **behind** the
+  topmost such element (`wrapNone`, `behindDoc`: shading, a panel). A graphic at most
+  0.6 of the page's text width, with text beside it (sharing half the shorter one's
+  height, within 36 pt of its side), floats **beside** the topmost such text
+  (`wrapSquare`, Word's 0.125 in side distance), unless text above or below it is no
+  wider than 1.25 times the graphic: then it fills its own column and keeps its line,
+  as Word's inline picture does. Everything else keeps **its own line**: a picture
+  inline as before, vector art a group anchored top-and-bottom on its own paragraph.
+- **How it is anchored.** Floats leave the element list before XY-Cut++, so a picture
+  beside text cannot invent a column cut. Each is anchored on the first paragraph its
+  text starts, horizontally from the column's left and vertically from the
+  paragraph's first line (both as on the page), and a floated paragraph drops the
+  indent that only measured the float. A float whose text continued a paragraph begun
+  on an earlier page sits at that paragraph's start.
+- **The shapes** are the fixed build's: `fixed.rs`'s shape building became the free
+  functions `vector_children` and `vector_group`, which both outputs call; fixed layout
+  takes its ids in the same order, so its documents are unchanged. `clip_ignored` and
+  `vector_split` are reported by reflow too.
+
+### 18.7 Reach: "Convert to flowing document" headless
+
+| Surface | Call | Notes |
+| --- | --- | --- |
+| `casual-doc-pdf-import` | `PdfImport::reflow()`; `reflow::build_for_import(state, resources, namespace)` | The second gives the same document from the state alone (same ids) |
+| `casual-doc-io` | `pdf_reflow(&SourceEnvelope, &DocumentResources) -> Option<Result<ImportArtifact, AdapterError>>` | The PDF adapter's envelope now keeps the reflow source (O(glyphs + path commands) for the session's life). The result's envelope retains no original bytes and does not convert again; `None` for anything that is not a PDF import |
+| `opendoc-viewer` | `ViewerOptions::with_pdf_reflow(true)` | Opens a PDF reflowed; no effect on other formats |
+| `casual-doc-ai` | `Session::convert_pdf_to_flowing() -> Session` | A **new** session named `<name> (flowing)`, whose import report is the reflow's; reads the PDF as it opened, not this session's edits; `not-a-pdf` otherwise |
+| `opendoc-mcp` | tool `convert_pdf_to_flowing` (profile `read`, read-only, not idempotent) | Returns a new handle with `convertedFrom`; the PDF's handle stays open |
+
+Guards (CI to confirm; mutations in the commit): `casual-doc-io`
+`an_open_pdf_converts_to_a_new_flowing_document_from_its_envelope` (`reflow: None` in
+`artifact`: `a PDF import keeps its reflow source`; a namespace other than the import's: the documents
+differ); `opendoc-viewer` `the_reflow_option_opens_a_pdf_as_a_flowing_document` (the
+option ignored: `reflowed: paragraphs, not frames`); `casual-doc-ai`
+`converting_a_pdf_session_opens_a_new_flowing_session` (the new session built from
+the fixed-layout document instead of the reflow: `TextBox` found); `opendoc-mcp` conformance
+`a_read_only_agent_converts_a_pdf_into_a_new_flowing_document` and the tool list (the
+tool not registered: the list differs, `convert_pdf_to_flowing refused`).

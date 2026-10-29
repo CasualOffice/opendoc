@@ -54,6 +54,12 @@ pub(crate) struct PdfSourceState {
     /// from the PDF module's package carries only [`PdfSourceState::ocr`].
     #[cfg(feature = "pdf-import")]
     pub(crate) ocr_detail: Option<casual_doc_pdf_import::OcrSummary>,
+    /// What reflow reads, and the import's id namespace, when the import ran
+    /// in process (`crate::pdf_reflow`); `None` in a reflowed document's own
+    /// envelope and in a session opened from the PDF module's package (that
+    /// module reflows itself). O(glyphs + path commands) for the session.
+    #[cfg(feature = "pdf-import")]
+    pub(crate) reflow: Option<(casual_doc_pdf_import::PdfSourceState, u64)>,
 }
 
 /// Everything a PDF-origin session's artifact is built from.
@@ -66,6 +72,8 @@ pub(crate) struct SessionParts<'a> {
     pub(crate) ocr: OcrSummary,
     #[cfg(feature = "pdf-import")]
     pub(crate) ocr_detail: Option<casual_doc_pdf_import::OcrSummary>,
+    #[cfg(feature = "pdf-import")]
+    pub(crate) reflow: Option<(casual_doc_pdf_import::PdfSourceState, u64)>,
 }
 
 fn pdf_format() -> FormatId {
@@ -94,6 +102,8 @@ pub fn pdf_session_artifact(
         ocr: OcrSummary::default(),
         #[cfg(feature = "pdf-import")]
         ocr_detail: None,
+        #[cfg(feature = "pdf-import")]
+        reflow: None,
     })
 }
 
@@ -108,6 +118,8 @@ pub(crate) fn session_artifact(parts: SessionParts<'_>) -> ImportArtifact {
         ocr,
         #[cfg(feature = "pdf-import")]
         ocr_detail,
+        #[cfg(feature = "pdf-import")]
+        reflow,
     } = parts;
     let mut report = CompatibilityReport {
         entries: findings
@@ -152,6 +164,8 @@ pub(crate) fn session_artifact(parts: SessionParts<'_>) -> ImportArtifact {
                 ocr,
                 #[cfg(feature = "pdf-import")]
                 ocr_detail,
+                #[cfg(feature = "pdf-import")]
+                reflow,
             },
         ),
         report,
@@ -199,6 +213,8 @@ pub fn import_pdf_package(
         ocr: package.ocr,
         #[cfg(feature = "pdf-import")]
         ocr_detail: None,
+        #[cfg(feature = "pdf-import")]
+        reflow: None,
     }))
 }
 
@@ -231,6 +247,8 @@ pub fn import_pdf_reflow_package(
         ocr: package.ocr,
         #[cfg(feature = "pdf-import")]
         ocr_detail: None,
+        #[cfg(feature = "pdf-import")]
+        reflow: None,
     }))
 }
 

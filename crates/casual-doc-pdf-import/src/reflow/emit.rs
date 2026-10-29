@@ -22,17 +22,61 @@ use casual_doc_model::v1::{
     WidthType,
 };
 use casual_doc_model::v1::{BorderEdge, NoteNumberRestart, NoteProperties, TableBorders};
+// Own line: floating pictures and vector art.
+use casual_doc_model::v1::{
+    AnchorHorizontal, AnchorVertical, AnchoredDrawing, DrawingAnchor, HorizontalAnchor,
+    HorizontalPosition, VerticalAnchor, VerticalPosition, WrapDistances, WrapMode,
+};
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_pdf_read::{LinkTarget, RenderMode};
 
 use super::tables::ITable;
 use super::text::{self, FontKey, Marker, StyleSheet};
 use super::{EKind, Flow, ILine, PChar, PdfSourceState, ReflowWork, Reflowed, Variant};
+use super::{Float, FloatWrap, Graphic, SourceImage, SourceVector};
 use crate::PdfImportError;
 use crate::report::{self, Findings, PdfModelOutcome as Outcome};
 
 fn twips(points: f64) -> i32 {
     (points * 20.0).round() as i32
+}
+
+/// Word's default distance between a square-wrapped float and the text
+/// beside it (`distL`/`distR`, 0.125 in).
+const FLOAT_SIDE_GAP: f64 = 9.0;
+
+/// A float's anchor: `dx` from its column's left, `dy` from its paragraph's
+/// top. `None` is vector art on its own line (`wp:wrapTopAndBottom`). O(1).
+fn float_anchor(dx: f64, dy: f64, wrap: Option<FloatWrap>) -> DrawingAnchor {
+    let emu = crate::fixed::emu;
+    DrawingAnchor {
+        horizontal: AnchorHorizontal {
+            relative_from: HorizontalAnchor::Column,
+            position: HorizontalPosition::Offset(emu(dx)),
+        },
+        vertical: AnchorVertical {
+            relative_from: VerticalAnchor::Paragraph,
+            position: VerticalPosition::Offset(emu(dy)),
+        },
+        wrap: match wrap {
+            Some(FloatWrap::Beside) => WrapMode::Square,
+            Some(FloatWrap::Behind) => WrapMode::None,
+            None => WrapMode::TopAndBottom,
+        },
+        wrap_text: None,
+        wrap_distances: if wrap == Some(FloatWrap::Beside) {
+            WrapDistances {
+                top_emu: 0,
+                bottom_emu: 0,
+                start_emu: emu(FLOAT_SIDE_GAP),
+                end_emu: emu(FLOAT_SIDE_GAP),
+            }
+        } else {
+            WrapDistances::default()
+        },
+        wrap_polygon: None,
+        behind_doc: wrap == Some(FloatWrap::Behind),
+    }
 }
 
 /// One paragraph before emission.
@@ -41,6 +85,8 @@ struct IPara {
     chars: Vec<PChar>,
     lines: usize,
     page: usize,
+    /// The first line's top (floats are placed from it).
+    top: f64,
     first_bottom: f64,
     first_x0: f64,
     rest_x0: Option<f64>,
@@ -64,6 +110,8 @@ struct IPara {
     /// elements deep it is.
     list_root: Option<u32>,
     list_depth: u8,
+    /// Pictures and vector art floated on this paragraph.
+    floats: Vec<Float>,
 }
 
 // Transient (one per paragraph, dropped at emission), so the size of the
@@ -72,14 +120,19 @@ struct IPara {
 enum Item {
     Para(IPara),
     Table(ITable, Option<usize>),
-    Image(super::SourceImage, Option<usize>),
+    Image(SourceImage, Option<usize>),
+    /// Vector art on its own line.
+    Vector(SourceVector, Option<usize>),
+    /// Floats whose text produced no paragraph of its own (a tagged table's
+    /// cells): carried by an empty paragraph.
+    Floats(Vec<Float>, Option<usize>),
 }
 
 impl Item {
     fn region(&self) -> Option<usize> {
         match self {
             Self::Para(p) => p.region,
-            Self::Table(_, r) | Self::Image(_, r) => *r,
+            Self::Table(_, r) | Self::Image(_, r) | Self::Vector(_, r) | Self::Floats(_, r) => *r,
         }
     }
 }
@@ -97,6 +150,11 @@ struct Emitter<'a> {
     bookmarks: BTreeMap<usize, (BookmarkId, String)>,
     comments: Vec<Option<(CommentId, super::IComment)>>,
     notes: Vec<Option<NoteId>>,
+    /// The last float's stacking key (paint order).
+    z: u32,
+    /// Vector paths a clip cut into, and paths split over the command bound.
+    vector_clipped: u32,
+    vector_split: u32,
 }
 
 impl Emitter<'_> {
@@ -104,6 +162,93 @@ impl Emitter<'_> {
         self.ids
             .next_id()
             .map_err(|error| PdfImportError::Model(error.to_string()))
+    }
+
+    /// A media entry for a picture's part (the part is the fixed build's,
+    /// referenced, not copied). O(log media).
+    fn media(&mut self, image: &SourceImage) -> Result<MediaId, PdfImportError> {
+        let media = MediaId::new(self.id()?);
+        let reference = MediaReference {
+            relationship_id: image.media.relationship_id.clone(),
+            media_type: image.media.media_type.clone(),
+            part_name: image.media.part_name.clone(),
+        };
+        self.definitions.media.insert(media, reference);
+        Ok(media)
+    }
+
+    /// Vector art as one anchored shape group (the fixed build's shapes).
+    /// O(path commands).
+    fn group(
+        &mut self,
+        vector: &SourceVector,
+        anchor: DrawingAnchor,
+    ) -> Result<Option<InlineNode>, PdfImportError> {
+        let paths: Vec<&casual_doc_pdf_read::PathEvidence> = vector.paths.iter().collect();
+        let built = crate::fixed::vector_children(&paths, &mut || self.id())?;
+        self.vector_clipped += built.clipped;
+        self.vector_split += built.split;
+        let Some(bounds) = built.bounds else {
+            return Ok(None);
+        };
+        self.z += 1;
+        let id = self.id()?;
+        Ok(Some(InlineNode::Group(Box::new(
+            crate::fixed::vector_group(id, built.children, bounds, anchor, self.z),
+        ))))
+    }
+
+    /// The floats of a paragraph whose first line's top is `top`, in the
+    /// column starting at `left`, on `page`. A float from another page (its
+    /// text continued a paragraph begun earlier) sits at the paragraph's
+    /// start. O(floats + path commands).
+    fn floats(
+        &mut self,
+        floats: &[Float],
+        page: usize,
+        top: f64,
+        left: f64,
+    ) -> Result<Vec<InlineNode>, PdfImportError> {
+        let mut out = Vec::with_capacity(floats.len());
+        for float in floats {
+            let b = float.graphic.bounds();
+            let (dx, dy) = if float.page == page {
+                (b.x0 - left, b.y0 - top)
+            } else {
+                (0.0, 0.0)
+            };
+            let anchor = float_anchor(dx, dy, Some(float.wrap));
+            match &float.graphic {
+                Graphic::Image(image) => {
+                    let media = self.media(image)?;
+                    self.z += 1;
+                    out.push(InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+                        id: self.id()?,
+                        media,
+                        extent: Extent {
+                            width_emu: crate::fixed::emu(b.width()).max(1),
+                            height_emu: crate::fixed::emu(b.height()).max(1),
+                        },
+                        anchor,
+                        descr: None,
+                        relative_height: Some(self.z),
+                        crop: None,
+                        opacity: None,
+                        hyperlink: None,
+                        border: None,
+                        flip_h: false,
+                        flip_v: false,
+                        rotation: None,
+                    })));
+                }
+                Graphic::Vector(vector) => {
+                    if let Some(group) = self.group(vector, anchor)? {
+                        out.push(group);
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
     fn style_key(&self, para: &IPara) -> Option<FontKey> {
@@ -321,6 +466,11 @@ impl Emitter<'_> {
             } else if para.justified {
                 properties.alignment = Some(Alignment::Justify);
             }
+            // Text beside a float starts where the float's wrap lets it, not
+            // at an indent that only measured the float's width.
+            if para.floats.iter().any(|f| f.wrap == FloatWrap::Beside) {
+                properties.indentation = None;
+            }
         }
         if para.page_break {
             properties.page_break_before = Some(true);
@@ -343,6 +493,8 @@ impl Emitter<'_> {
                 }));
             }
         }
+        let floats = self.floats(&para.floats, para.page, para.top, para.column_left)?;
+        inlines.extend(floats);
         inlines.extend(self.inlines(&chars[start..], style_key.as_ref())?);
         Ok(Paragraph {
             id: self.id()?,
@@ -521,6 +673,24 @@ fn key_run(key: &FontKey) -> RunProperties {
     }
 }
 
+/// The column holding `x` in `region` (the body when there is none):
+/// `(left, right)`. O(1).
+fn column(flow: &Flow, region: Option<usize>, x: f64, page_width: f64) -> (f64, f64) {
+    match region.and_then(|r| flow.regions.get(r)) {
+        Some(region) => {
+            let c = region.columns;
+            let step = c.width + c.gutter;
+            let k = ((x - c.left + c.gutter / 2.0) / step).floor().max(0.0);
+            let left = c.left + k * step;
+            (left, left + c.width)
+        }
+        None => (
+            flow.body.0,
+            flow.body.2.max(flow.body.0 + 1.0).min(page_width),
+        ),
+    }
+}
+
 /// A paragraph's bounds, alignment and column from its lines.
 fn shape(
     lines: &[&ILine],
@@ -536,21 +706,7 @@ fn shape(
             .fold(f64::INFINITY, f64::min)
     });
     let right = lines.iter().map(|l| l.x1).fold(f64::NEG_INFINITY, f64::max);
-    let (column_left, column_right) = match region.and_then(|r| flow.regions.get(r)) {
-        Some(region) => {
-            let c = region.columns;
-            let step = c.width + c.gutter;
-            let k = ((first_x0 - c.left + c.gutter / 2.0) / step)
-                .floor()
-                .max(0.0);
-            let left = c.left + k * step;
-            (left, left + c.width)
-        }
-        None => (
-            flow.body.0,
-            flow.body.2.max(flow.body.0 + 1.0).min(page_width),
-        ),
-    };
+    let (column_left, column_right) = column(flow, region, first_x0, page_width);
     let width = column_right - column_left;
     let centre = (column_left + column_right) / 2.0;
     let indented = first_x0 > column_left + 0.05 * width;
@@ -579,7 +735,7 @@ pub const PAGE_BREAK_FILL: f64 = 0.75;
 /// Justified: at least three lines, every line but the last ending at the
 /// same right edge (within a point) at the column's right, and the last line
 /// shorter. Ragged-right text does not end every line within a point. O(lines).
-fn justified(lines: &[&ILine], column_left: f64, column_right: f64) -> bool {
+pub(super) fn justified(lines: &[&ILine], column_left: f64, column_right: f64) -> bool {
     if lines.len() < 3 {
         return false;
     }
@@ -632,6 +788,8 @@ pub(crate) fn emit(
                 };
                 let segments = text::segment(lines, left, right, key);
                 work.paragraphs += lines.len() as u64;
+                // Its floats go on the first paragraph it starts.
+                let mut floats = element.floats.clone();
                 for (n, segment) in segments.iter().enumerate() {
                     let refs: Vec<&ILine> = segment.lines.iter().map(|&i| &lines[i]).collect();
                     // Continue the previous paragraph: the same structure
@@ -684,6 +842,7 @@ pub(crate) fn emit(
                         chars,
                         lines: refs.len(),
                         page: element.page,
+                        top: refs[0].top,
                         first_bottom: refs[0].bottom,
                         first_x0,
                         rest_x0,
@@ -707,12 +866,26 @@ pub(crate) fn emit(
                             element.lineage.iter().filter(|n| n.role == "L").count(),
                         )
                         .unwrap_or(u8::MAX),
+                        floats: std::mem::take(&mut floats),
                         ..IPara::default()
                     }));
                 }
+                // Every line continued the paragraph before: it carries them.
+                if !floats.is_empty() {
+                    match items.last_mut() {
+                        Some(Item::Para(prev)) => prev.floats.append(&mut floats),
+                        _ => items.push(Item::Floats(floats, element.region)),
+                    }
+                }
             }
-            EKind::Table(table) => items.push(Item::Table(table.clone(), element.region)),
+            EKind::Table(table) => {
+                if !element.floats.is_empty() {
+                    items.push(Item::Floats(element.floats.clone(), element.region));
+                }
+                items.push(Item::Table(table.clone(), element.region));
+            }
             EKind::Image(image) => items.push(Item::Image(image.clone(), element.region)),
+            EKind::Vector(vector) => items.push(Item::Vector(vector.clone(), element.region)),
         }
     }
     findings.record(
@@ -762,6 +935,9 @@ pub(crate) fn emit(
         bookmarks: BTreeMap::new(),
         comments: Vec::new(),
         notes: Vec::new(),
+        z: 0,
+        vector_clipped: 0,
+        vector_split: 0,
     };
 
     // Lists, then headings for what is not a list.
@@ -1083,14 +1259,36 @@ pub(crate) fn emit(
                 let table = emitter.table(t)?;
                 body.push(BlockNode::Table(Box::new(table)));
             }
+            Item::Vector(vector, region) => {
+                let (left, _) = column(&flow, *region, vector.bounds.x0, page_w);
+                let anchor = float_anchor(vector.bounds.x0 - left, 0.0, None);
+                let inlines = emitter.group(vector, anchor)?.into_iter().collect();
+                body.push(BlockNode::Paragraph(Paragraph {
+                    id: emitter.id()?,
+                    properties: ParagraphProperties::default().into(),
+                    inlines,
+                }));
+            }
+            Item::Floats(floats, region) => {
+                let (page, top, x0) = floats
+                    .iter()
+                    .map(|f| {
+                        let b = f.graphic.bounds();
+                        (f.page, b.y0, b.x0)
+                    })
+                    .fold((usize::MAX, f64::INFINITY, f64::INFINITY), |a, b| {
+                        (a.0.min(b.0), a.1.min(b.1), a.2.min(b.2))
+                    });
+                let (left, _) = column(&flow, *region, x0, page_w);
+                let inlines = emitter.floats(floats, page, top, left)?;
+                body.push(BlockNode::Paragraph(Paragraph {
+                    id: emitter.id()?,
+                    properties: ParagraphProperties::default().into(),
+                    inlines,
+                }));
+            }
             Item::Image(image, _) => {
-                let media = MediaId::new(emitter.id()?);
-                let reference = MediaReference {
-                    relationship_id: image.media.relationship_id.clone(),
-                    media_type: image.media.media_type.clone(),
-                    part_name: image.media.part_name.clone(),
-                };
-                emitter.definitions.media.insert(media, reference);
+                let media = emitter.media(image)?;
                 let b = image.bounds;
                 let drawing = Drawing {
                     id: emitter.id()?,
@@ -1120,6 +1318,18 @@ pub(crate) fn emit(
         report::COLUMNS_INFERRED,
         Outcome::Mapped,
         column_sections,
+        None,
+    );
+    findings.record(
+        report::CLIP_IGNORED,
+        Outcome::Degraded,
+        emitter.vector_clipped,
+        None,
+    );
+    findings.record(
+        report::VECTOR_SPLIT,
+        Outcome::Degraded,
+        emitter.vector_split,
         None,
     );
     let last = section(&mut emitter, current_shape, sections.is_empty())?;

@@ -95,4 +95,7 @@ pub use pdf_source::{
     PdfSavePlanner, export_pdf_session, import_pdf_package, pdf_retained_original,
     pdf_session_artifact,
 };
+// Own line: "Convert to flowing document" from a PDF import (`docs/182` §18).
+#[cfg(feature = "pdf-import")]
+pub use pdf_import::pdf_reflow;
 pub use text::{PlainTextAdapter, PlainTextLimits};

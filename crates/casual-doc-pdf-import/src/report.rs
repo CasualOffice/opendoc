@@ -107,6 +107,7 @@ pub const FEATURES: &[&str] = &[
     COMMENT_INFERRED,
     DEHYPHENATION_INFERRED,
     ENCRYPTED_UNSUPPORTED,
+    FLOAT_INFERRED,
     FONT_EMBEDDED,
     FONT_SUBSTITUTED,
     FOOTNOTE_INFERRED,
@@ -144,6 +145,7 @@ pub const FEATURES: &[&str] = &[
     TRANSPARENCY_FLATTENED,
     TYPE3_GLYPHS_SUBSTITUTED,
     VECTOR_OMITTED,
+    VECTOR_PLACED,
     VECTOR_SPLIT,
 ];
 
@@ -268,9 +270,18 @@ pub const TABLE_INFERRED: &str = "pdf.import.table_inferred";
 /// Reflow: whitespace-aligned columns scored below the table threshold and
 /// were kept as paragraphs.
 pub const TABLE_TOPOLOGY_DEGRADED: &str = "pdf.import.table_topology_degraded";
-/// Reflow: vector art that is not a table rule is not placed in a flowing
-/// document.
+/// Reflow: vector art that only masks the picture painted directly under it
+/// (fills inside that picture: OCR's scan covers, redaction-style boxes) is
+/// not placed; the picture is.
 pub const VECTOR_OMITTED: &str = "pdf.import.vector_omitted";
+/// Reflow: vector art (a run of paths that are not table rules) placed as a
+/// shape group: floating beside or behind its text, or on its own line.
+/// Mapped: the shapes are the PDF's; their place in the flow is inferred.
+pub const VECTOR_PLACED: &str = "pdf.import.vector_placed";
+/// Reflow: a picture beside text, or vector art under it, floats anchored on
+/// that text's paragraph (square wrap beside, behind the text under). The
+/// anchor and the wrap are inferred from the page's geometry.
+pub const FLOAT_INFERRED: &str = "pdf.import.float_inferred";
 /// Reflow: footnote markers that are neither a number sequence nor the
 /// `*` `†` `‡` `§` sequence (continuous or restarting each page) are
 /// renumbered by the model's footnote numbering.

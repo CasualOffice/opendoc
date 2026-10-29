@@ -2430,6 +2430,8 @@
   "findings.feature.pdfFootnoteMarkers": "Yeniden numaralandırılan dipnot işaretleri",
   "findings.feature.pdfJustification": "Satır genişliklerinden çıkarılan iki yana yaslama",
   "findings.feature.pdfPageBreaks": "Sayfa sonlarından çıkarılan sayfa sonları",
+  "findings.feature.pdfFloats": "Resimler ve çizimler metnin yanına veya arkasına yerleştirildi",
+  "findings.feature.pdfVectorsPlaced": "Çizimler şekil olarak yerleştirildi",
   "pdfImport.title": "{name} açılıyor",
   "pdfImport.intro": "PDF'nin sayfaları bu cihazda düzenlenebilir çerçeveler olarak yeniden oluşturuluyor.",
   "pdfImport.reading": "Dosya okunuyor…",
