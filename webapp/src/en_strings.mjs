@@ -1131,6 +1131,18 @@ export const EN_STRINGS = Object.freeze({
   "autocorrect.statusOn": "{name} on",
   "autocorrect.statusOff": "{name} off",
 
+  // The language of the selected text (`docs/109` RM-42; `language_selection.mjs`).
+  "language.command": "Set language…",
+  "language.none": "No language set (the default, {language})",
+  "language.withSpelling": "{language} — spelling checked",
+  "language.checked": "Text in {language} is checked for spelling.",
+  "language.notChecked": "There is no spelling dictionary for {language} yet, so text in it is not checked.",
+  "language.applied": "Language set to {language}",
+  "language.cleared": "Language cleared; the default, {language}, applies",
+  "language.mixed": "Mixed languages",
+  "language.statusTip": "Text language: {language}. Click to change it.",
+  "language.property": "Language",
+
   // ── Version history (docs/139, docs/140, ADR-038/ADR-039) ──────────────────
   //
   // `version_history.mjs` returns status CODES and no English at all, because a

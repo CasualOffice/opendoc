@@ -129,7 +129,7 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-provenance -->
 | Side | Source | Inventory |
 | --- | --- | --- |
-| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 230 exact commands, 12 families |
+| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 231 exact commands, 12 families |
 | ONLYOFFICE | snapshot of 163 files, taken 2026-09-30 | 578 controls, 3529 locale keys, 2122 engine API methods, 114 boot flags (14 licence-gated, 3 desktop-only) |
 | Matrix | `tools/opendoc-parity/data/capabilities.json` | 422 graded rows |
 <!-- @end parity-provenance -->
@@ -139,11 +139,11 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-tally -->
 | Verdict | Rows | What it means |
 | --- | --- | --- |
-| Parity | 213 | both products ship it, and both anchors resolve |
+| Parity | 215 | both products ship it, and both anchors resolve |
 | Ours, ungated | 27 | we ship it in the editor itself; theirs is behind a licence result the document server issues, the desktop shell, or the integrator's own config |
 | Ours only | 25 | we ship it and their tree has no such surface |
 | Partial | 69 | we ship part of it; the row says what is missing |
-| Gap | 63 | their standalone browser session ships it and we do not |
+| Gap | 61 | their standalone browser session ships it and we do not |
 | Theirs, gated | 13 | theirs needs a licence result, the desktop shell or the integrator, and we lack it too |
 | Neither | 12 | neither product ships it, and the row records the search that established that |
 | **Total graded** | **422** | every row below |
@@ -161,13 +161,11 @@ least two surfaces (`SKILL` §10).
 | --- | --- | --- | --- | --- |
 | 2 | Footnote and endnote settings | `page.note.settings` | `DE.Views.Links.mniNoteSettings` | Location, number format, start at and restart each page or section are all unreachable, so imported numbering cannot be changed. |
 | 2 | Display mode: original (document as if every change were rejected) | `review.display-mode-original` | `Common.Views.ReviewChanges.txtOriginal` | There is no way to preview the pre-review document; our markup toggle only chooses between showing and hiding the redline. |
-| 2 | Set the proofing language for the selection | `review.proofing-language-selection` | `btnLanguage` | We honour the document's own w:lang but cannot write it; there is no per-run language control anywhere in the chrome. |
 | 2 | Protect the document | `review.protect-document` | `btnProtectDoc` | Not licence-gated for them. The ENGINE now models and enforces document protection and can set it - `setDocumentProtection` with the edit mode, enforcement and formatting lock (ADR-052 for enforcement, ADR-059 for the setter) - and the import arm reads `w:documentProtection`. It is graded a gap anyway because no command id reaches it: `review.protectDocument` is absent from `COMMAND_CONTRACT`, so neither a user nor a host can invoke it. Built is not reachable. A password Word set is kept: the sixteen password attributes are carried verbatim through a save, never verified, and nothing here sets one. |
 | 2 | Banded rows and columns, header / total / first / last | `table.banded-rows-columns` | `DE.Views.TableSettings.textBanded` | The six w:tblLook conditional-formatting toggles. Our model carries TableLook and round-trips it, but no wasm setter or control writes it, so an applied table style cannot be tuned. |
 | 2 | Capitalise the first letter of a sentence | `text.autocapitalise` | `Common.Views.AutoCorrectDialog.textFLSentence` | Theirs also covers table cells and keeps a first-letter exceptions list. Ours does not autocapitalise at all. |
 | 2 | Replace text as you type (AutoCorrect table) | `text.autocorrect-replace` | `btnAutoCorrect` | Their File ▸ Advanced Settings opens a dialog with an editable replace/by table, per-language, plus Reset and Restore. We have no AutoCorrect table — `webapp/src/text_rules.mjs` implements smart quotes and nothing else. |
 | 2 | Turn a typed URL into a hyperlink | `text.autoformat-hyperlink` | `Common.Views.AutoCorrectDialog.textHyperlink` | We have `insert.link` but nothing recognises a URL as it is typed, so every pasted address needs the dialog. |
-| 2 | Language of the selected text | `text.language-of-selection` | `btnLanguage` | Their status bar carries the selection's language and opens Common.Views.LanguageDialog; the engine call is asc_docs_api.put_TextPrLang. Our model has `w:lang` but `tools.languages` only installs proofing packs — nothing tags a selection, so a mixed-language document cannot be proofed correctly. |
 | 3 | Insert a picture from a URL | `object.insert-image-url` | `asc_docs_api.AddImageUrlAction` | They ship a URL dialog beside the file picker; we have only the file, clipboard and drop routes. |
 | 3 | Insert SmartArt | `object.insert-smartart` | `btnInsertSmartArt` | Their Insert button renders live previews per layout group; we model a diagram only as a preserved reference. |
 | 3 | Content controls / structured document tags | `page.contentControls` | `btnContentControls` | We import and export w:sdt and refuse breaks inside one, but nothing can insert or configure a control. |
@@ -262,7 +260,7 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Insert symbol | Parity | `insert.symbol` | `btnInsertSymbol` | — |
 | Italic | Parity | `format.italic` | `btnItalic` | — |
 | Font kerning threshold | Partial | `crates/casual-doc-model/src/v1/properties.rs` · `kerning_half_points` — missing: no command sets `w:kern` | none (searched `grep -riE 'kerning' over web-apps/apps/documenteditor and sdkjs/word — no hits; the surface snapshot has no control, locale key or API method matching /kern/`) | Neither product exposes Word's kerning threshold. We carry the property through the round trip. |
-| Language of the selected text | Gap | none (`format.language` undeclared) | `btnLanguage` | Their status bar carries the selection's language and opens Common.Views.LanguageDialog; the engine call is asc_docs_api.put_TextPrLang. Our model has `w:lang` but `tools.languages` only installs proofing packs — nothing tags a selection, so a mixed-language document cannot be proofed correctly. |
+| Language of the selected text | Parity | `format.language` | `btnLanguage` | The status bar names the selection's language and opens the Set Language dialog, as theirs does; the write is the character patch's `language` field through `FormatText`. |
 | OpenType ligature control | Gap | none (`format.ligatures` undeclared) | `cmbLigatures` | Their Advanced ▸ Font tab has a combo for standard, contextual, discretionary and historical ligatures. We have no ligature property in the model at all — shaping decides. |
 | Math AutoCorrect (\alpha to the glyph) | Gap | none (`tools.mathAutoCorrect` undeclared) | `Common.Views.AutoCorrectDialog.textMathCorrect` | Their AutoCorrect dialog has a math tab with an editable recognised-function and symbol table. |
 | Insert a non-breaking or soft hyphen | Partial | `crates/casual-doc-import/src/body.rs` · `NoBreakHyphen` — missing: no command or shortcut inserts one — `w:noBreakHyphen` and `w:softHyphen` are imported, laid out and exported only | `Common.Controllers.Shortcuts.txtDescriptionNonBreakingHyphen` | They bind both the non-breaking hyphen and the soft hyphen. Ours survive a round trip but cannot be typed. |
@@ -589,7 +587,7 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Manage or clear the personal dictionary | Gap | none (`tools.personalDictionary` undeclared) | `asc_docs_api.asc_spellCheckClearDictionary` | Words can be added on both sides, but only theirs can be cleared; ours has no list and no removal. |
 | Set the document's proofing language | Partial | `webapp/src/capabilities.mjs` · `proofLanguage` — missing: it is a host preference and a stored setting only, with no in-app picker | `Common.Views.ReviewChanges.txtDocLang` | A reader who opens a French document in our editor cannot tell it so. |
 | Install and remove proofing language packs | Ours only | `tools.languages` | none (searched `sdkjs/common/spell/spell.js resolves a fixed dictionariesPath served by the deployment; no install, progress, size or removal control exists anywhere in web-apps`) | Ours is Word's Options-Language table: a row per language with state, size and one action. Theirs ships whatever the server operator deployed. |
-| Set the proofing language for the selection | Gap | none (`review.proofLanguage.selection` undeclared) | `btnLanguage` | We honour the document's own w:lang but cannot write it; there is no per-run language control anywhere in the chrome. |
+| Set the proofing language for the selection | Parity | `format.language` | `btnLanguage` | Set Language writes `w:lang` on the selection (the word at a caret) as one character-format step, tracked in Suggesting mode; spell check proofs each run in its own language. |
 | Protect the document | Gap | none (`review.protectDocument` undeclared) | `btnProtectDoc` | Not licence-gated for them. The ENGINE now models and enforces document protection and can set it - `setDocumentProtection` with the edit mode, enforcement and formatting lock (ADR-052 for enforcement, ADR-059 for the setter) - and the import arm reads `w:documentProtection`. It is graded a gap anyway because no command id reaches it: `review.protectDocument` is absent from `COMMAND_CONTRACT`, so neither a user nor a host can invoke it. Built is not reachable. A password Word set is kept: the sixteen password attributes are carried verbatim through a save, never verified, and nothing here sets one. |
 | Protect a form so only fields can be filled | Gap | none (`review.protectForm` undeclared) | `btnProtectForm` | We render and fill form controls (docs/120) but cannot lock the rest of the document around them. |
 | Password on the editing restriction | Gap | none (`review.protectDocument.password` undeclared) | `asc_docs_api.asc_setDocumentProtection` | — |

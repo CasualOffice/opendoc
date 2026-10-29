@@ -395,6 +395,8 @@ export function createPalette(ed) {
       { id: "tools.smartQuotes", label: ed.autoCorrect.label("smartQuotes"), group: "Tools", kw: "smart curly typographic quotes apostrophe straight autocorrect", noDoc: true, run: () => ed.autoCorrect.toggle("smartQuotes") },
       { id: "tools.autoFormatLists", label: ed.autoCorrect.label("lists"), group: "Tools", kw: "automatic lists bullet numbered autoformat as you type 1. dash asterisk", noDoc: true, run: () => ed.autoCorrect.toggle("lists") },
       { id: "tools.autocorrect", label: ed.autoCorrect.label("autocorrect"), group: "Tools", kw: "autocorrect correct typos dash em en copyright trademark registered capitalise capitalize sentence", noDoc: true, run: () => ed.autoCorrect.toggle("autocorrect") },
+      // RM-42: Word's Review ▸ Language ▸ Set Proofing Language.
+      { id: "format.language", label: t("language.command"), group: "Format", kw: "language proofing spelling set language selection text french german w:lang", enabled: !!ed.doc && !!ed.selection && ed.reviewMode !== "viewing", disabledReason: t("paragraph.caretRequired"), run: () => ed.languageSelection.open() },
       // Reads as a switch, the shape `tools.smartQuotes` already uses, so the menu
       // row and the palette row both say which state it is in rather than being an
       // action with an unknown effect. Never disabled: off has to be reversible

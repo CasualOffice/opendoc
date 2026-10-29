@@ -3614,15 +3614,13 @@
       "area": "review",
       "title": "Set the proofing language for the selection",
       "ours": {
-        "absent": [
-          "review.proofLanguage.selection"
-        ]
+        "command": "format.language"
       },
       "theirs": {
         "control": "btnLanguage"
       },
       "rank": 2,
-      "note": "We honour the document's own w:lang but cannot write it; there is no per-run language control anywhere in the chrome."
+      "note": "Set Language writes `w:lang` on the selection (the word at a caret) as one character-format step, tracked in Suggesting mode; spell check proofs each run in its own language."
     },
     {
       "id": "review.protect-document",
@@ -6438,15 +6436,13 @@
       "area": "text",
       "title": "Language of the selected text",
       "ours": {
-        "absent": [
-          "format.language"
-        ]
+        "command": "format.language"
       },
       "theirs": {
         "control": "btnLanguage"
       },
       "rank": 2,
-      "note": "Their status bar carries the selection's language and opens Common.Views.LanguageDialog; the engine call is asc_docs_api.put_TextPrLang. Our model has `w:lang` but `tools.languages` only installs proofing packs — nothing tags a selection, so a mixed-language document cannot be proofed correctly."
+      "note": "The status bar names the selection's language and opens the Set Language dialog, as theirs does; the write is the character patch's `language` field through `FormatText`."
     },
     {
       "id": "text.ligatures",

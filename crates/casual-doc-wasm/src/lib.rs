@@ -46871,3 +46871,5 @@ mod batch5_paragraph_tests {
 }
 
 mod character_format;
+// Set Language and per-run language spans (`docs/109` RM-42).
+mod language;

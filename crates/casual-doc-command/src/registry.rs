@@ -992,6 +992,7 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
     ("format.character.position", UI_CHARACTER),
     ("format.character.kerning", UI_CHARACTER),
     ("format.character.ligatures", UI_CHARACTER),
+    ("format.language", UI_CHARACTER),
     ("format.painter", UI_PAINTER),
     ("format.case.upper", UI_CASE),
     ("format.case.lower", UI_CASE),
@@ -1057,4 +1058,5 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
 /// names an id; raising it needs an ADR line (`docs/181` §3).
 ///
 /// 84 -> 85 with `layout.pageBorders` (`109` HF-193), recorded in `docs/181` §3.
-pub const UI_NOT_EXPOSED_CEILING: usize = 85;
+/// 85 -> 86 with `format.language` (`109` RM-42), recorded in `docs/181` §3.
+pub const UI_NOT_EXPOSED_CEILING: usize = 86;

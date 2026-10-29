@@ -1635,6 +1635,10 @@
       "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
     },
     {
+      "id": "format.language",
+      "reason": "Character formatting beyond set_text_format's fields arrives with the formatting unification (docs/181 §4.2 step 2)."
+    },
+    {
       "id": "format.painter",
       "reason": "Format painter copies the caret's formatting, a gesture with no document-addressed equivalent; an agent sets formatting with set_text_format."
     },
@@ -1871,6 +1875,6 @@
       "reason": "No command deletes a comment yet; an agent resolves a thread with resolve_comment."
     }
   ],
-  "uiNotExposedCeiling": 85,
+  "uiNotExposedCeiling": 86,
   "vocabularyVersion": "1.5"
 }

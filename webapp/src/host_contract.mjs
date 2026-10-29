@@ -342,6 +342,8 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("format.character.emboss", "mutate"),
   exact("format.character.imprint", "mutate"),
   exact("format.character.dialog", "mutate"),
+  // Set Language writes `w:lang` on the selection, a character property (RM-42).
+  exact("format.language", "mutate"),
   exact("format.character.advanced", "mutate"),
   exact("format.character.border", "mutate"),
   exact("format.character.emphasis", "mutate"),

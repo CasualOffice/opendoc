@@ -1,8 +1,9 @@
 // Text entry that is not a keystroke: soft keyboards and dictation (docs/105
 // UX-001), and AutoCorrect as you type. Moved out of `main.js` unchanged
 // (docs/177); it reaches the rest of the editor only through the context `ed`.
-import { t } from "./i18n.mjs";
+import { activeLocale, t } from "./i18n.mjs";
 import { createAutoCorrect } from "./autocorrect.mjs";
+import { createLanguageSelection } from "./language_selection.mjs";
 import { readPref, writePref } from "./prefs.mjs";
 import { smartQuoteForTyped } from "./text_rules.mjs";
 import { orderedSelectionEnds } from "./caret_navigation.mjs";
@@ -105,6 +106,7 @@ export function createTextInput(ed) {
     reflect: () => ed.updateToolbar(),
     toggles: Object.fromEntries([["smartQuotes", "smartQuotesToggle"], ["lists", "autoFormatListsToggle"], ["autocorrect", "autocorrectToggle"]].map(([key, id]) => [key, document.getElementById(id)])),
   });
+  const languageSelection = createLanguageSelection(ed, { locale: activeLocale });
 
   /** Adds a word and SAYS whether it was stored. A personal dictionary that
    *  silently failed to persist is indistinguishable from one that worked until
@@ -119,5 +121,5 @@ export function createTextInput(ed) {
     );
   }
 
-  return { addWordToDictionary, autoCorrect };
+  return { addWordToDictionary, autoCorrect, languageSelection };
 }

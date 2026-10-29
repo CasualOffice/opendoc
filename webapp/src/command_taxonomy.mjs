@@ -640,6 +640,8 @@ export const APP_MENU_SECTIONS = {
       "tools.autoFormatLists",
       "tools.autocorrect",
       "tools.languages",
+      // RM-42: Word's Review ▸ Language ▸ Set Proofing Language.
+      "format.language",
       // HF-051: Word's Review ▸ Proofing ▸ Word Count.
       "tools.wordCount",
     ),

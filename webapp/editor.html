@@ -1410,6 +1410,34 @@
         </footer>
       </section>
     </div>
+    <!-- Set Language (RM-42; `language_selection.mjs`): Word's Set Proofing
+         Language and ONLYOFFICE's LanguageDialog, a searchable list applied to
+         the selection, the word at the caret, or what is typed next. -->
+    <div id="textLanguageDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="textLanguageTitle" aria-describedby="textLanguageDescription">
+      <section class="dialog-card dialog-card-compact text-language-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="textLanguageDialog.title" id="textLanguageTitle">Language</h2>
+              <p data-i18n="textLanguageDialog.description" id="textLanguageDescription">Mark the selected text as written in:</p>
+            </div>
+          </div>
+          <button data-text-language-dismiss data-i18n-title="textLanguageDialog.close.title" data-i18n-label="textLanguageDialog.close.label" id="textLanguageClose" type="button" class="dialog-close" title="Close" aria-label="Close language"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <form id="textLanguageForm" class="dialog-body text-language-body">
+          <label data-i18n="textLanguageDialog.search" for="textLanguageSearch">Search languages</label>
+          <input id="textLanguageSearch" type="search" autocomplete="off" spellcheck="false" aria-controls="textLanguageList" />
+          <select data-i18n-label="textLanguageDialog.list.label" id="textLanguageList" class="dialog-listbox" size="10" aria-label="Languages" aria-describedby="textLanguageNote"></select>
+          <p id="textLanguageNote" class="dialog-field-note" role="status" aria-live="polite"></p>
+        </form>
+        <footer class="dialog-foot">
+          <div class="dialog-actions">
+            <button data-text-language-dismiss data-i18n="textLanguageDialog.cancel" id="textLanguageCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="textLanguageDialog.apply" id="textLanguageApply" type="submit" form="textLanguageForm" class="dialog-button dialog-button-primary">OK</button>
+          </div>
+        </footer>
+      </section>
+    </div>
     <div id="aboutDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="aboutTitle" aria-describedby="aboutDescription">
       <section class="dialog-card about-dialog">
         <header class="dialog-head">
@@ -3750,6 +3778,12 @@
              not an event to interrupt them with. -->
         <span data-i18n-title="access.badge.tip" id="accessBadge" class="access-badge" role="status" title="What you can do with this document, and where that was decided"><span class="ms" aria-hidden="true">shield_person</span><span id="accessBadgeLevel" class="access-badge-level"></span><span id="accessBadgeSource" class="access-badge-source"></span></span>
         <span data-i18n="ui.page11" id="statPages" class="stat-pages" data-status-priority="1" hidden>Page 1 of 1</span>
+        <!-- The language of the TEXT at the caret (RM-42), Word's status-bar
+             item: it names the selection's `w:lang` and a click opens Set
+             Language. Not the control beside it, which is the language of the
+             INTERFACE. Shown once a document is open; `language_selection.mjs`
+             writes its name and its tooltip. -->
+        <button data-i18n-title="textLanguageStatus.title" data-i18n-label="textLanguageStatus.label" id="textLanguageStatus" type="button" class="text-language-status" data-status-priority="3" title="Text language — click to change" aria-label="Text language — click to change" aria-haspopup="dialog" hidden><span class="ms" aria-hidden="true">translate</span><span id="textLanguageStatusLabel" class="text-language-status-label"></span></button>
         <!-- Language, in the status bar. Word and Google Docs both put the
              document's language here, at the bottom right, because it is
              status rather than a command — and a person who cannot read the

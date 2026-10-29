@@ -186,6 +186,5 @@ currently assigned. Rows stay in their queue order.
 | 217 | FOLD-006 | P3 | The in-body fold chevron can only stay live by walking the document, so it paints while the outline panel is open and not before | Open |
 | 219 | RM-40 | P3 | Tables: position and layout: table position dialog and wrapping; Cell noWrap, fitText, hideMark and style-provided row properties in layout; Positioned tables in headers, nested, and split across pages; Art and compound borders painted exactly | Open |
 | 220 | RM-41 | P3 | Compare and versions: compare writes a merged document of tracked changes; Show what changed between two versions; Combine documents | Open |
-| 221 | RM-42 | P3 | Proofing and language: language of a selection and of the document; Personal dictionary management; Word count dialog with a selection count; Grammar breadth | Open |
 | 222 | RM-43 | P3 | View and navigation: ruler, status bar and formatting marks toggles; Regular-expression search; Several pages side by side; dark page; Ruler in the chosen unit; Rebind keyboard shortcuts | Open |
 | 223 | RM-44 | P3 | Print and export: print preview and options; print the selection; RTF writer; PDF/A; EPUB | Open |
