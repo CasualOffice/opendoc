@@ -119,11 +119,14 @@ const WASM = fileURLToPath(new URL("../pkg/casual_doc_wasm_bg.wasm", import.meta
 // ceilings at the measured size plus the usual ~128 KiB headroom; the follow-up is a
 // lazily loaded PDF module that returns the main module to the old ceilings
 // (27,010,000 / 13,035,000), which this comment then retires.
-const MAX_TOTAL_BYTES = 29_960_000;
+// Re-measured by CI with reflow (P3) and the OCR plumbing merged: 32,437,447 B
+// total, 17,222,892 B code. Ceilings at that plus ~128 KiB, under the same ship-now
+// decision; the lazy PDF module returns the main module to the pre-PDF size.
+const MAX_TOTAL_BYTES = 32_570_000;
 /** What the browser then compiles. Measured: 10,594,266 B (#805); 11,585,101 B
  *  after §19; 12,349,976 B with HF-360, whose opt-level-3 build is 14,144,617 B,
  *  so a dropped `z` still lands far outside this. */
-const MAX_CODE_BYTES = 14_870_000;
+const MAX_CODE_BYTES = 17_355_000;
 /** The engine is actually in here: a stub or a truncated file must not pass. */
 const MIN_CODE_BYTES = 3_000_000;
 
