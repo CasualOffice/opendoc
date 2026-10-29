@@ -1685,44 +1685,39 @@
       "area": "page",
       "title": "Convert footnotes to endnotes",
       "ours": {
-        "absent": [
-          "reference.convertNotes"
-        ]
+        "command": "reference.convertNotes"
       },
       "theirs": {
         "localeKey": "DE.Views.Links.mniConvertNote"
       },
-      "rank": 4
+      "rank": 4,
+      "note": "Convert all footnotes to endnotes, all endnotes to footnotes, or swap, over the whole document or the selection, as one undo step (`casual_doc_command::notes::convert_notes`): each note re-inserted as the other kind at the same place with the same content, its number mark and text style re-kinded. A reference nested inside a hyperlink or a tracked change is left as it is."
     },
     {
       "id": "page.note.goto",
       "area": "page",
       "title": "Go to next or previous note",
       "ours": {
-        "absent": [
-          "reference.goToFootnote"
-        ]
+        "command": "reference.nextFootnote"
       },
       "theirs": {
         "localeKey": "DE.Views.Links.textGotoFootnote"
       },
       "rank": 3,
-      "note": "Reading a document with notes means scrolling for them."
+      "note": "Next and previous footnote and endnote, Word's Next Footnote split button, from the References band's Notes dropdown, a References-menu flyout and the palette (`reference.nextFootnote`, `reference.previousFootnote`, `reference.nextEndnote`, `reference.previousEndnote`); says so at either end."
     },
     {
       "id": "page.note.settings",
       "area": "page",
       "title": "Footnote and endnote settings",
       "ours": {
-        "absent": [
-          "reference.noteSettings"
-        ]
+        "command": "reference.noteSettings"
       },
       "theirs": {
         "localeKey": "DE.Views.Links.mniNoteSettings"
       },
       "rank": 2,
-      "note": "Location, number format, start at and restart each page or section are all unreachable, so imported numbering cannot be changed."
+      "note": "Word's Footnote and Endnote dialog: location, number format, start at, numbering (continuous, each section, each page) and apply to this section or the whole document, one undoable step through `Operation::SetNoteProperties` (`casual-doc-wasm` `notes_settings.rs`). It opens on what the caret's section resolves to through the same section-then-settings layering layout reads, so an imported document's numbering can be changed."
     },
     {
       "id": "page.orientation",

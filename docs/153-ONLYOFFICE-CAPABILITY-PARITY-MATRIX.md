@@ -129,7 +129,7 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-provenance -->
 | Side | Source | Inventory |
 | --- | --- | --- |
-| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 234 exact commands, 12 families |
+| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 240 exact commands, 12 families |
 | ONLYOFFICE | snapshot of 163 files, taken 2026-09-30 | 578 controls, 3529 locale keys, 2122 engine API methods, 114 boot flags (14 licence-gated, 3 desktop-only) |
 | Matrix | `tools/opendoc-parity/data/capabilities.json` | 422 graded rows |
 <!-- @end parity-provenance -->
@@ -139,11 +139,11 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-tally -->
 | Verdict | Rows | What it means |
 | --- | --- | --- |
-| Parity | 219 | both products ship it, and both anchors resolve |
+| Parity | 222 | both products ship it, and both anchors resolve |
 | Ours, ungated | 27 | we ship it in the editor itself; theirs is behind a licence result the document server issues, the desktop shell, or the integrator's own config |
 | Ours only | 25 | we ship it and their tree has no such surface |
 | Partial | 67 | we ship part of it; the row says what is missing |
-| Gap | 59 | their standalone browser session ships it and we do not |
+| Gap | 56 | their standalone browser session ships it and we do not |
 | Theirs, gated | 13 | theirs needs a licence result, the desktop shell or the integrator, and we lack it too |
 | Neither | 12 | neither product ships it, and the row records the search that established that |
 | **Total graded** | **422** | every row below |
@@ -159,7 +159,6 @@ least two surfaces (`SKILL` §10).
 <!-- @generated parity-gaps -->
 | Rank | Capability | Id | Theirs | Note |
 | --- | --- | --- | --- | --- |
-| 2 | Footnote and endnote settings | `page.note.settings` | `DE.Views.Links.mniNoteSettings` | Location, number format, start at and restart each page or section are all unreachable, so imported numbering cannot be changed. |
 | 2 | Set the proofing language for the selection | `review.proofing-language-selection` | `btnLanguage` | We honour the document's own w:lang but cannot write it; there is no per-run language control anywhere in the chrome. |
 | 2 | Banded rows and columns, header / total / first / last | `table.banded-rows-columns` | `DE.Views.TableSettings.textBanded` | The six w:tblLook conditional-formatting toggles. Our model carries TableLook and round-trips it, but no wasm setter or control writes it, so an applied table style cannot be tuned. |
 | 2 | Capitalise the first letter of a sentence | `text.autocapitalise` | `Common.Views.AutoCorrectDialog.textFLSentence` | Theirs also covers table cells and keeps a first-letter exceptions list. Ours does not autocapitalise at all. |
@@ -170,7 +169,6 @@ least two surfaces (`SKILL` §10).
 | 3 | Insert SmartArt | `object.insert-smartart` | `btnInsertSmartArt` | Their Insert button renders live previews per layout group; we model a diagram only as a preserved reference. |
 | 3 | Content controls / structured document tags | `page.contentControls` | `btnContentControls` | We import and export w:sdt and refuse breaks inside one, but nothing can insert or configure a control. |
 | 3 | Hyphenation | `page.hyphenation` | `btnHyphenation` | The model carries w:autoHyphenation and w:hyphenationZone; no control reads or writes them. |
-| 3 | Go to next or previous note | `page.note.goto` | `DE.Views.Links.textGotoFootnote` | Reading a document with notes means scrolling for them. |
 | 3 | Table of figures | `page.tableOfFigures` | `btnTableFigures` | We have captions but nothing that collects them into a table. |
 | 3 | Tab leader for contents entries | `page.toc.leader` | `DE.Views.TableOfContentsSettings.textLeader` | — |
 | 3 | Remove table of contents | `page.toc.remove` | `DE.Views.Links.textContentsRemove` | The field can be inserted and updated but not deleted as a unit. |
@@ -198,7 +196,6 @@ least two surfaces (`SKILL` §10).
 | 4 | Insert a picture from host storage | `object.insert-image-storage` | `DE.Views.Toolbar.mniFromStorage` | Their From Storage row appears only when the integrator answers the insert-image request, so it is an integration point rather than a licence gate. docs/149 grades the same thing as editorConfig.fileChoiceUrl. |
 | 4 | Shape shadow | `object.shape-shadow` | `btnShadowShape` | They have a shadow toggle plus an adjust dialog for angle, distance, size and transparency. |
 | 4 | TextArt / WordArt | `object.textart` | `btnInsertTextArt` | They insert TextArt and give it a settings panel with transform, gradient fill and stroke. |
-| 4 | Convert footnotes to endnotes | `page.note.convert` | `DE.Views.Links.mniConvertNote` | — |
 | 4 | Insert text from file | `page.textFromFile` | `btnTextFromFile` | We can open a document but not merge one into the caret's position. |
 | 4 | Add paragraph to table of contents | `page.toc.addText` | `DE.Views.Links.capBtnAddText` | Their Add text marks the current paragraph at a chosen contents level without restyling it as a heading. |
 | 4 | Protect a form so only fields can be filled | `review.protect-form` | `btnProtectForm` | We render and fill form controls (docs/120) but cannot lock the rest of the document around them. |
@@ -516,9 +513,9 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Margin presets (Normal, Narrow, Moderate, Wide) | Parity | `webapp/src/page_presets.mjs` · `MARGIN_PRESETS` | `DE.Views.Toolbar.textMarginsNormal` | Normal, Narrow, Moderate and Wide presets fill the existing transactional geometry dialog. |
 | Promote, demote and add headings from the outline | Partial | `view.outline` — missing: promote, demote, new heading and select-section from the panel | `DE.Views.Navigation.txtPromote` | Ours navigates only; theirs restructures the document from the panel. |
 | Navigation pane / outline | Parity | `view.outline` | `btnNavigation` | A heading tree that follows the caret. |
-| Convert footnotes to endnotes | Gap | none (`reference.convertNotes` undeclared) | `DE.Views.Links.mniConvertNote` | — |
-| Go to next or previous note | Gap | none (`reference.goToFootnote` undeclared) | `DE.Views.Links.textGotoFootnote` | Reading a document with notes means scrolling for them. |
-| Footnote and endnote settings | Gap | none (`reference.noteSettings` undeclared) | `DE.Views.Links.mniNoteSettings` | Location, number format, start at and restart each page or section are all unreachable, so imported numbering cannot be changed. |
+| Convert footnotes to endnotes | Parity | `reference.convertNotes` | `DE.Views.Links.mniConvertNote` | Convert all footnotes to endnotes, all endnotes to footnotes, or swap, over the whole document or the selection, as one undo step (`casual_doc_command::notes::convert_notes`): each note re-inserted as the other kind at the same place with the same content, its number mark and text style re-kinded. A reference nested inside a hyperlink or a tracked change is left as it is. |
+| Go to next or previous note | Parity | `reference.nextFootnote` | `DE.Views.Links.textGotoFootnote` | Next and previous footnote and endnote, Word's Next Footnote split button, from the References band's Notes dropdown, a References-menu flyout and the palette (`reference.nextFootnote`, `reference.previousFootnote`, `reference.nextEndnote`, `reference.previousEndnote`); says so at either end. |
+| Footnote and endnote settings | Parity | `reference.noteSettings` | `DE.Views.Links.mniNoteSettings` | Word's Footnote and Endnote dialog: location, number format, start at, numbering (continuous, each section, each page) and apply to this section or the whole document, one undoable step through `Operation::SetNoteProperties` (`casual-doc-wasm` `notes_settings.rs`). It opens on what the caret's section resolves to through the same section-then-settings layering layout reads, so an imported document's numbering can be changed. |
 | Page orientation | Parity | `layout.orientation` | `btnPageOrient` | — |
 | Page number format | Parity | `layout.headerFooterSettings` | `DE.Views.PageNumberingDlg.textNumberFormat` | Five ST_NumberFormat tokens; their sixth (- 1 -) is deliberately out because the layout cannot render it. |
 | Insert page number | Parity | family `insert.field.` | `DE.Views.Toolbar.textInsertPageNumber` | insert.field.page puts a PAGE field at the caret and has its own Insert-band button; insert.field.numpages is the page-count field. |

@@ -502,6 +502,14 @@ export const COMMAND_CONTRACT = Object.freeze([
   // Navigation, not mutation: it moves the caret to the heading a contents entry
   // names and changes nothing. `null` is the same grade `view.zoom.` carries.
   exact("reference.goToHeading", null),
+  // Footnotes and endnotes (`docs/153` page.note.*): going to a note reads and
+  // moves the caret only; the options dialog and Convert change the document.
+  exact("reference.nextFootnote", null),
+  exact("reference.previousFootnote", null),
+  exact("reference.nextEndnote", null),
+  exact("reference.previousEndnote", null),
+  exact("reference.noteSettings", "mutate"),
+  exact("reference.convertNotes", "mutate"),
   exact("reference.updateFields", "mutate"),
   exact("reference.updateCaptionNumbers", "mutate"),
 

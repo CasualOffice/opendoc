@@ -984,6 +984,10 @@
             <div class="rgroup-ctl">
               <button data-i18n-title="panelReferences.insertFootnote.title" data-i18n-label="panelReferences.footnote.label" id="refFootnoteBtn" type="button" class="fmt fmt-big" title="Insert a footnote" aria-label="Footnote" disabled><span class="ms" aria-hidden="true">superscript</span><span data-i18n="refFootnoteBtn.footnote" class="fmt-big-label">Footnote</span></button>
               <button data-i18n-title="panelReferences.insertEndnote.title" data-i18n-label="panelReferences.endnote.label" id="refEndnoteBtn" type="button" class="fmt fmt-big" title="Insert an endnote" aria-label="Endnote" disabled><span class="ms" aria-hidden="true">menu_book</span><span data-i18n="refEndnoteBtn.endnote" class="fmt-big-label">Endnote</span></button>
+              <!-- Go to a note, Note settings, Convert notes (`docs/153`
+                   page.note.*): ONLYOFFICE's Footnote dropdown, one button. The
+                   rows are in `#refNotesMenu`; `note_commands.mjs` runs them. -->
+              <button data-i18n-title="notes.menu.title" data-i18n-label="notes.menu.label" id="refNotesMenuBtn" type="button" class="fmt" title="Go to a note, note settings and converting notes" aria-label="Note options" aria-haspopup="menu" aria-controls="refNotesMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">expand_circle_down</span></button>
             </div>
             <span data-i18n="panelReferences.notes" class="rgroup-label">Notes</span>
           </div>
@@ -2066,6 +2070,15 @@
       <button data-i18n="break.section.oddPage" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.oddPage">Section break (odd page)</button>
     </div>
     <!-- The Layout face's copy of the same roster (HF-203); `breaks.spec.mjs` holds the two equal. -->
+    <div data-i18n-label="notes.menu.label" id="refNotesMenu" class="context-menu" hidden role="menu" aria-label="Note options">
+      <button data-i18n="notes.nextFootnote" type="button" role="menuitem" class="menu-item" data-command="reference.nextFootnote">Next footnote</button>
+      <button data-i18n="notes.previousFootnote" type="button" role="menuitem" class="menu-item" data-command="reference.previousFootnote">Previous footnote</button>
+      <button data-i18n="notes.nextEndnote" type="button" role="menuitem" class="menu-item" data-command="reference.nextEndnote">Next endnote</button>
+      <button data-i18n="notes.previousEndnote" type="button" role="menuitem" class="menu-item" data-command="reference.previousEndnote">Previous endnote</button>
+      <div class="menu-divider"></div>
+      <button data-i18n="notes.settingsCommand" type="button" role="menuitem" class="menu-item" data-command="reference.noteSettings">Note settings…</button>
+      <button data-i18n="notes.convertCommand" type="button" role="menuitem" class="menu-item" data-command="reference.convertNotes">Convert notes…</button>
+    </div>
     <div data-i18n-label="reviewDisplay.label" id="reviewDisplayMenu" class="context-menu" hidden role="menu" aria-label="Display for review">
       <button type="button" role="menuitemradio" aria-checked="false" class="menu-item review-display-row" data-display-mode="simple" data-command="review.displayMode.simpleMarkup"><span class="menu-check" aria-hidden="true"></span><span data-i18n="reviewDisplay.simpleMarkup">Simple markup</span></button>
       <button type="button" role="menuitemradio" aria-checked="false" class="menu-item review-display-row" data-display-mode="all" data-command="review.displayMode.allMarkup"><span class="menu-check" aria-hidden="true"></span><span data-i18n="reviewDisplay.allMarkup">All markup</span></button>
@@ -2552,6 +2565,59 @@
          Word's own (`casual-doc-wasm` `review_protection.rs`), so Word asks for
          the same password. The note under the fields says what it is NOT:
          encryption. "Policy, not security" stays true in what the reader is told. -->
+    <!-- References ▸ Note settings (`docs/153` page.note.settings): Word's
+         Footnote and Endnote dialog — location, number format, start at,
+         numbering, apply to — over `noteSettings`/`setNoteSettings`. The
+         location and numbering rows a kind cannot take are hidden per kind. -->
+    <div id="noteSettingsDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="noteSettingsTitle">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading"><div><h2 data-i18n="noteSettings.title" id="noteSettingsTitle">Footnotes and endnotes</h2></div></div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="noteSettings.close.label" id="noteSettingsClose" type="button" class="dialog-close" title="Close" aria-label="Close footnotes and endnotes"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <label data-i18n="noteSettings.kind" class="dialog-field">Notes<select id="noteSettingsKind" class="dialog-select"><option data-i18n="noteSettings.kind.footnotes" value="footnote">Footnotes</option><option data-i18n="noteSettings.kind.endnotes" value="endnote">Endnotes</option></select></label>
+          <label data-i18n="noteSettings.location" class="dialog-field">Location<select id="noteSettingsPosition" class="dialog-select"><option data-i18n="noteSettings.position.pageBottom" value="pageBottom">Bottom of page</option><option data-i18n="noteSettings.position.beneathText" value="beneathText">Below text</option><option data-i18n="noteSettings.position.sectionEnd" value="sectionEnd">End of section</option><option data-i18n="noteSettings.position.documentEnd" value="documentEnd">End of document</option></select></label>
+          <label data-i18n="noteSettings.format" class="dialog-field">Number format<select id="noteSettingsFormat" class="dialog-select"><option data-i18n="noteSettings.format.decimal" value="decimal">1, 2, 3, …</option><option data-i18n="noteSettings.format.lowerLetter" value="lowerLetter">a, b, c, …</option><option data-i18n="noteSettings.format.upperLetter" value="upperLetter">A, B, C, …</option><option data-i18n="noteSettings.format.lowerRoman" value="lowerRoman">i, ii, iii, …</option><option data-i18n="noteSettings.format.upperRoman" value="upperRoman">I, II, III, …</option><option data-i18n="noteSettings.format.keep" value="keep" hidden>As in the document</option></select></label>
+          <label data-i18n="noteSettings.start" class="dialog-field">Start at<input id="noteSettingsStart" type="number" min="0" max="32767" step="1" value="1" inputmode="numeric" /></label>
+          <label data-i18n="noteSettings.numbering" class="dialog-field">Numbering<select id="noteSettingsRestart" class="dialog-select"><option data-i18n="noteSettings.restart.continuous" value="continuous">Continuous</option><option data-i18n="noteSettings.restart.eachSection" value="eachSection">Restart each section</option><option data-i18n="noteSettings.restart.eachPage" value="eachPage">Restart each page</option></select></label>
+          <label data-i18n="noteSettings.scope" class="dialog-field">Apply changes to<select id="noteSettingsScope" class="dialog-select"><option data-i18n="noteSettings.scope.section" value="section">This section</option><option data-i18n="noteSettings.scope.document" value="document">Whole document</option></select></label>
+        </div>
+        <footer class="dialog-foot">
+          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="noteSettings.convert" id="noteSettingsConvert" type="button" class="dialog-button">Convert…</button>
+            <button data-i18n="watermarkDialog.cancel" id="noteSettingsCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="watermarkDialog.apply" id="noteSettingsApply" type="button" class="dialog-button dialog-button-primary">Apply</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+    <!-- References ▸ Convert notes (`docs/153` page.note.convert): Word's and
+         ONLYOFFICE's three conversions, the whole document or the selection. -->
+    <div id="convertNotesDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="convertNotesTitle">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading"><div><h2 data-i18n="convertNotes.title" id="convertNotesTitle">Convert notes</h2></div></div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="convertNotes.close.label" id="convertNotesClose" type="button" class="dialog-close" title="Close" aria-label="Close convert notes"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <fieldset class="settings-section" aria-labelledby="convertNotesTitle">
+            <label class="dialog-check"><input type="radio" name="convertNotes" value="footnotesToEndnotes" checked /><span data-i18n="convertNotes.footnotesToEndnotes">Convert all footnotes to endnotes</span></label>
+            <label class="dialog-check"><input type="radio" name="convertNotes" value="endnotesToFootnotes" /><span data-i18n="convertNotes.endnotesToFootnotes">Convert all endnotes to footnotes</span></label>
+            <label class="dialog-check"><input type="radio" name="convertNotes" value="swap" /><span data-i18n="convertNotes.swap">Swap footnotes and endnotes</span></label>
+          </fieldset>
+          <label class="dialog-check"><input id="convertNotesSelection" type="checkbox" /><span data-i18n="convertNotes.selectionOnly">Only the notes in the selection</span></label>
+        </div>
+        <footer class="dialog-foot">
+          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" id="convertNotesCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="convertNotes.apply" id="convertNotesApply" type="button" class="dialog-button dialog-button-primary">Convert</button>
+          </div>
+        </footer>
+      </section>
+    </div>
     <div id="restrictEditingDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="restrictEditingTitle" aria-describedby="restrictEditingDescription">
       <section class="dialog-card dialog-card-compact">
         <header class="dialog-head">

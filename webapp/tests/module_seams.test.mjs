@@ -471,7 +471,10 @@ const SRC = new URL("../src/", import.meta.url);
 // the picker is its own module (`review_display.mjs`); `main.js` pays its import,
 // its construction, its context getter and the one line that tells it the markup
 // layout changed. MEASURED with `wc -l`.
-const MAIN_JS_LINE_CEILING = 2985;
+// 2985 -> 2988 with the note commands (`docs/153` page.note.*, RM-24): the menu
+// and both dialogs are `note_commands.mjs`; `main.js` pays its import, its
+// construction and its context getter. MEASURED with `wc -l`.
+const MAIN_JS_LINE_CEILING = 2988;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

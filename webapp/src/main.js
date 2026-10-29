@@ -96,6 +96,7 @@ import { createFind } from "./editor_find.mjs";
 import { createDrafts } from "./editor_drafts.mjs";
 import { createVersions } from "./editor_versions.mjs";
 import { createReviewDisplay } from "./review_display.mjs";
+import { createNoteCommands } from "./note_commands.mjs";
 import { createSettings } from "./editor_settings.mjs";
 import { createPalette } from "./editor_palette.mjs";
 import { createDialogs } from "./editor_dialogs.mjs";
@@ -435,6 +436,7 @@ const ed = {
   get navigateReview() { return navigateReview; },
   get navigateToAnchor() { return navigateToAnchor; },
   get newBlankDocument() { return newBlankDocument; },
+  get noteCommands() { return noteCommands; },
   get noteDocumentEdited() { return noteDocumentEdited; },
   get noteDraftDirty() { return noteDraftDirty; },
   get nudgeSelectedObject() { return nudgeSelectedObject; },
@@ -2949,6 +2951,7 @@ function saveSettings() {
 
 const { showVersionPreview, versionHistory } = createVersions(ed);
 const reviewDisplay = createReviewDisplay(ed); // Review ▸ Display for review (RM-31)
+const noteCommands = createNoteCommands(ed); // Go to, settings and convert notes (RM-24)
 /** The live document and the chrome state a preview borrowed, or null. */
 let versionPreviewHome = null;
 /** Set while a restore is activating, so the open path does not ALSO record an

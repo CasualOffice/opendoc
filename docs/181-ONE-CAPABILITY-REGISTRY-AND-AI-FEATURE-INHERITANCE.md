@@ -189,6 +189,16 @@ agents later is one registry entry and lowers the ceiling back to 16. The editor
 `layout.pageBorders` is listed in `registry::UI_NOT_EXPOSED` for the same reason
 (`UI_NOT_EXPOSED_CEILING` 84 → 85).
 
+**Raised again, deliberately (2026-10-30):** `coverage::NOT_EXPOSED_CEILING` 17 → 18 when
+RM-24 added `Operation::SetNoteProperties` (`docs/153` `page.note.settings`). Footnote and
+endnote options — location, number format, start at, restart — are a person's layout choice
+made in the Footnote and Endnote dialog, the same standing as page borders;
+`casual_doc_command::notes::set_note_properties` is the lowering, so offering it to agents
+later is one registry entry. The editor commands `reference.noteSettings` and
+`reference.convertNotes` are listed in `registry::UI_NOT_EXPOSED` (`UI_NOT_EXPOSED_CEILING`
+85 → 87): the first for the same reason, the second because converting a note's kind is an
+editorial decision and an agent already inserts the kind it means with `insert_note`.
+
 **What "a feature inherits MCP" therefore means, concretely.** A developer adding, say,
 footnote insertion writes `InsertFootnote: Command` with its `lower()` (moved out of
 `lib.rs:4658`), adds one line to `commands!`, and points the editor's method at it. With no

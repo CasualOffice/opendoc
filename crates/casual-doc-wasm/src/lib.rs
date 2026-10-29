@@ -260,6 +260,9 @@ mod review_protection;
 // Review ▸ Display for review ▸ Original: a throwaway copy with every change rejected
 // (`docs/153` `review.display-mode-original`).
 mod review_display;
+// Footnotes and endnotes: the options dialog, next/previous note, convert
+// (`docs/153` `page.note.settings`, `page.note.goto`, `page.note.convert`).
+mod notes_settings;
 
 // The shared session (`docs/152`, ADR-063). Its own module because the socket is the
 // browser's and the session is the engine's: nothing here opens a connection, and nothing in
@@ -1009,6 +1012,7 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::SetSectionGeometry { .. }
         | Operation::SetSectionLineNumbering { .. }
         | Operation::SetSectionPageBorders { .. }
+        | Operation::SetNoteProperties { .. }
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetSectionWatermark { .. } => HistoryKind::PageSetup,
@@ -24436,6 +24440,7 @@ fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document)
         // user's place in a document they only asked to re-align.
         Operation::SetSectionLineNumbering { .. }
         | Operation::SetSectionPageBorders { .. }
+        | Operation::SetNoteProperties { .. }
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetSectionWatermark { .. } => Pos::new(doc_id, 0),

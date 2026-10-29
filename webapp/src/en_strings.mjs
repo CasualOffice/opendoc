@@ -109,6 +109,8 @@ export const EN_STRINGS = Object.freeze({
   "menuGroup.navigation": "Navigation",
   "menuGroup.newAndOpen": "New and open",
   "menuGroup.notes": "Notes",
+  // References ▸ Notes ▸ the Next / Previous footnote and endnote flyout.
+  "menuGroup.goToNote": "Go to a note",
   "menuGroup.paragraph": "Paragraph",
   "menuGroup.print": "Print",
   "menuGroup.proofing": "Proofing",
@@ -1858,6 +1860,16 @@ export const EN_STRINGS = Object.freeze({
   "reviewDisplay.originalReadOnly": "Original: the document as it was before its tracked changes. Choose another display for review to edit.",
   "reviewDisplay.changeBar": "Changed here. Click to show all markup",
   "reviewDisplay.previewOpen": "Close the version preview before showing the original",
+
+  // Footnotes and endnotes (`note_commands.mjs`, `docs/153` page.note.*). The
+  // menu rows and both dialogs are markup keys; these are what the status line
+  // says, and the reason the selection-only box is disabled.
+  "notes.noMoreFootnotes": "There are no more footnotes that way",
+  "notes.noMoreEndnotes": "There are no more endnotes that way",
+  "notes.footnoteSettingsApplied": "Footnote options applied",
+  "notes.endnoteSettingsApplied": "Endnote options applied",
+  "notes.converted": "Notes converted",
+  "notes.convertNeedsSelection": "Select the text whose notes you want to convert first",
 
   // ---- A PARTICIPANT'S GRANT, AND THE ROOM'S REFUSALS ----------------------
   //

@@ -294,6 +294,9 @@ const CEILINGS = new Map([
   // Display for review (`docs/153` review.display-mode-*): every sentence through
   // t(), the mode names from the popover markup. Measured with `scanTree`.
   ["src/review_display.mjs", 0],
+  // Footnotes and endnotes (`docs/153` page.note.*): every sentence through t(),
+  // every label from the menu and dialog markup. Measured with `scanTree`.
+  ["src/note_commands.mjs", 0],
   ["src/table_commands.mjs", 9],
   // The object right-click menu's nine row labels ("Wrap text", "Alt text…",
   // "Shape fill", "No fill", "Shape outline", "No outline", "Crop image",

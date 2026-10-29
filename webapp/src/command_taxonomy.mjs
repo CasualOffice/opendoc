@@ -457,7 +457,15 @@ export const APP_MENU_SECTIONS = {
       "reference.updateFields",
       "reference.goToHeading",
     ),
-    band("menuGroup.notes", "insert.footnote", "insert.endnote"),
+    band("menuGroup.notes", "insert.footnote", "insert.endnote", "reference.noteSettings", "reference.convertNotes"),
+    // Word's Next Footnote split button: four rows of one gesture, as a flyout.
+    sub(
+      "menuGroup.goToNote",
+      "reference.nextFootnote",
+      "reference.previousFootnote",
+      "reference.nextEndnote",
+      "reference.previousEndnote",
+    ),
     band(
       "menuGroup.captions",
       "reference.caption",

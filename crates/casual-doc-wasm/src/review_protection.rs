@@ -692,7 +692,7 @@ mod tests {
                 false,
                 None,
                 Some("hunter2"),
-                Some(&salt),
+                Some(&salt[..]),
             )
             .expect("protects");
         assert_eq!(
