@@ -112,7 +112,7 @@ mod tests {
     }
 
     fn revision(n: u64, kind: RevisionKind, text: &str) -> InlineNode {
-        InlineNode::Revision(Revision {
+        InlineNode::Revision(Box::new(Revision {
             id: id(n),
             kind,
             author: Some("Reviewer".to_owned()),
@@ -120,7 +120,7 @@ mod tests {
             revision_id: Some(n.to_string()),
             editor_group: None,
             inlines: vec![run(n + 1, text)],
-        })
+        }))
     }
 
     /// "Keep [+added] [-removed]" with a tracked-changes restriction, as a DOCX.

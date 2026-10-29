@@ -593,9 +593,10 @@ mod tests {
         let password = b"password";
         let mut high = INITIAL_CODE[password.len() - 1];
         for (index, byte) in password.iter().enumerate() {
-            for bit in 0..7 {
+            let row = &ENCRYPTION_MATRIX[15 - password.len() + index];
+            for (bit, value) in row.iter().enumerate().take(7) {
                 if byte & (1 << bit) != 0 {
-                    high ^= ENCRYPTION_MATRIX[15 - password.len() + index][bit];
+                    high ^= value;
                 }
             }
         }

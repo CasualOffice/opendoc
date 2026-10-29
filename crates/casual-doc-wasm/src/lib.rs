@@ -40208,12 +40208,12 @@ mod tests {
     // which is the reported "change the header on page 3 and pages 5+ never
     // change" (docs/104 T-01, the body-vs-surface class).
 
-    fn sections_id(id: u64) -> NodeId {
+    pub(crate) fn sections_id(id: u64) -> NodeId {
         NodeId::from_parts(7, id).expect("fixture node id")
     }
 
     /// A section boundary with the given paper, margins and running-content refs.
-    fn sections_boundary(
+    pub(crate) fn sections_boundary(
         id: u64,
         size: (i32, i32),
         vertical_margin: i32,

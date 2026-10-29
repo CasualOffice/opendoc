@@ -517,7 +517,12 @@ fn page_x_of_y_writes_the_hosts_words_around_two_fields() {
         .iter()
         .map(|inline| match inline {
             InlineNode::Run(run) => format!("run:{}", run.text),
-            InlineNode::Field(field) => format!("field:{}", field.instruction),
+            // The field's name only: Word writes `PAGE \* MERGEFORMAT`, and the
+            // switch is formatting, not which field it is.
+            InlineNode::Field(field) => format!(
+                "field:{}",
+                field.instruction.split_whitespace().next().unwrap_or("")
+            ),
             _ => "other".to_owned(),
         })
         .collect();

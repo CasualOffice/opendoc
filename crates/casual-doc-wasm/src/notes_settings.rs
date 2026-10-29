@@ -480,7 +480,23 @@ mod tests {
     /// "Alpha[f] Beta[e] Gamma[f]", saved and reopened, so the test runs on an
     /// IMPORTED document as the dialog must.
     fn imported() -> crate::WasmDocument {
+        imported_with(false)
+    }
+
+    /// [`imported`], optionally with one body section, so "this section" has
+    /// something to name (a document with no page setup has no section).
+    fn imported_with(section: bool) -> crate::WasmDocument {
         let mut definitions = Definitions::default();
+        if section {
+            definitions.sections.push(crate::tests::sections_boundary(
+                970,
+                (12_240, 15_840),
+                1_440,
+                Vec::new(),
+                Vec::new(),
+                false,
+            ));
+        }
         definitions
             .footnotes
             .insert(NoteId::new(id(50)), note(500, "first"));
@@ -540,7 +556,9 @@ mod tests {
     /// "default untouched" assertion goes red.
     #[test]
     fn note_options_apply_to_an_imported_document_as_one_step() {
-        let mut document = imported();
+        // With a section: a section-scoped write to a document with none falls
+        // back to the default by design, so the fixture must carry one.
+        let mut document = imported_with(true);
         let node = first_paragraph(&document);
         let before: serde_json::Value =
             serde_json::from_str(&document.note_settings_inner("footnote", &node).unwrap())
