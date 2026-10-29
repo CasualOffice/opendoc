@@ -646,8 +646,11 @@ fn unsupported_header_content_is_reported_not_dropped_silently() {
         .unwrap();
     imported.document.validate().unwrap();
 
-    // The span text survives, but its formatting and the first-page region are
-    // explicit findings.
+    // The span text survives, and the first-page region is an explicit finding.
+    // The region now goes through the body's pipeline (HF-210), so a span whose
+    // style the package defines is formatted (see
+    // `a_header_imports_formatting_tables_links_and_pictures_through_the_body_pipeline`);
+    // this one names a style nobody defined, so it stays plain.
     let header = &imported.document.definitions().sections[0].headers[0];
     let header = imported
         .document
@@ -664,13 +667,6 @@ fn unsupported_header_content_is_reported_not_dropped_silently() {
     assert_eq!(run.text, "Title");
     assert!(run.properties.bold.is_none());
 
-    assert!(
-        imported
-            .report
-            .entries
-            .iter()
-            .any(|entry| entry.feature == "odf.master-page.run-formatting")
-    );
     assert!(
         imported
             .report
@@ -784,6 +780,97 @@ fn a_footer_page_number_round_trips_through_styles_xml() {
     assert_eq!(reopened.document, imported.document, "semantic fixed point");
     let again = crate::write_odt(&reopened.document, crate::OdfExportLimits::default()).unwrap();
     assert_eq!(again.bytes, first.bytes, "byte fixed point");
+}
+
+/// HF-210: a header region is imported through the BODY's pipeline, so what a
+/// LibreOffice header holds — formatted text, a table, a hyperlink with its
+/// target, a picture — arrives as the body's would. The bounded plain-text
+/// reader kept the words of the first only and dropped the rest.
+///
+/// Mutation: make `lift_region` return an error (forcing the bounded fallback)
+/// — the run loses its bold, the table and the picture are gone, the link has
+/// no target, and `odf.master-page.bounded-fallback` appears; every assertion
+/// below goes red.
+#[test]
+fn a_header_imports_formatting_tables_links_and_pictures_through_the_body_pipeline() {
+    let styles = br#"<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" office:version="1.4"><office:automatic-styles><style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="21cm" fo:page-height="29.7cm" fo:margin-top="2cm" fo:margin-bottom="2cm" fo:margin-left="2cm" fo:margin-right="2cm" style:print-orientation="portrait"/></style:page-layout><style:style style:name="MT1" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style></office:automatic-styles><office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1"><style:header><text:p><text:span text:style-name="MT1">Acme</text:span> <text:a xlink:type="simple" xlink:href="https://example.org/">site</text:a><draw:frame svg:width="2cm" svg:height="1cm"><draw:image xlink:href="Pictures/logo.png"/></draw:frame></text:p><table:table><table:table-column/><table:table-row><table:table-cell><text:p>cell</text:p></table:table-cell></table:table-row></table:table></style:header></style:master-page></office:master-styles></office:document-styles>"#
+    .to_vec();
+    let bytes = package_with_styles(styles);
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    imported.document.validate().unwrap();
+    assert!(
+        !imported
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.master-page.bounded-fallback"),
+        "the region went through the body's pipeline: {:?}",
+        imported.report.entries
+    );
+    let reference = imported.document.definitions().sections[0].headers[0].reference;
+    let header = imported
+        .document
+        .definitions()
+        .headers
+        .get(&reference)
+        .expect("header");
+    let BlockNode::Paragraph(paragraph) = &header.blocks[0] else {
+        panic!("the header starts with a paragraph")
+    };
+    let bold = paragraph.inlines.iter().any(|inline| {
+        matches!(inline, InlineNode::Run(run) if run.text == "Acme" && run.properties.bold == Some(true))
+    });
+    assert!(bold, "the span's style is applied: {:?}", paragraph.inlines);
+    let link = paragraph.inlines.iter().any(|inline| {
+        matches!(inline, InlineNode::Hyperlink(link)
+            if format!("{:?}", link.target).contains("https://example.org/"))
+    });
+    assert!(
+        link,
+        "the hyperlink keeps its target: {:?}",
+        paragraph.inlines
+    );
+    let picture = paragraph
+        .inlines
+        .iter()
+        .any(|inline| matches!(inline, InlineNode::Drawing(_)));
+    assert!(picture, "the logo is a drawing: {:?}", paragraph.inlines);
+    assert!(
+        imported
+            .document
+            .definitions()
+            .media
+            .iter()
+            .any(|(_, media)| media.part_name == "Pictures/logo.png"),
+        "and its picture is registered in the document's media"
+    );
+    assert!(
+        header
+            .blocks
+            .iter()
+            .any(|block| matches!(block, BlockNode::Table(_))),
+        "the table is a table"
+    );
+}
+
+/// Two regions with IDENTICAL content mint distinct ids — the region name is
+/// folded into each one's id namespace. Mutation: pass the same salt for every
+/// region in `package.rs` — validation then fails on the duplicate node ids.
+#[test]
+fn identical_header_and_even_header_do_not_collide() {
+    let styles = styles_with_master(
+        r#"<office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1"><style:header><text:p>Draft</text:p></style:header><style:header-left><text:p>Draft</text:p></style:header-left></style:master-page></office:master-styles>"#,
+    );
+    let bytes = package_with_styles(styles);
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    imported.document.validate().unwrap();
+    assert_eq!(imported.document.definitions().headers.len(), 2);
 }
 
 /// Extracts the `<office:master-styles>` … `</office:master-styles>` block of a

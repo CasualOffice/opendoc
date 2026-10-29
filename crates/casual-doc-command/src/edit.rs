@@ -136,6 +136,30 @@ pub enum CellAlignment {
     Bottom,
 }
 
+/// Which way a cell's text runs (`w:textDirection`).
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CellTextDirection {
+    /// Left to right, the default.
+    Horizontal,
+    /// Rotated 90 degrees clockwise: read top to bottom.
+    RotateDown,
+    /// Rotated 90 degrees counter-clockwise: read bottom to top.
+    RotateUp,
+}
+
+impl CellTextDirection {
+    /// The name `table_tools::text_direction_named` reads.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Horizontal => "horizontal",
+            Self::RotateDown => "rotate_down",
+            Self::RotateUp => "rotate_up",
+        }
+    }
+}
+
 /// Horizontal paragraph alignment.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -816,6 +840,10 @@ pub enum Edit {
         /// Vertical alignment of the text.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         vertical_alignment: Option<CellAlignment>,
+        /// Which way the text runs: horizontal, rotated down (read top to
+        /// bottom) or rotated up (read bottom to top).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text_direction: Option<CellTextDirection>,
     },
     /// Put a paragraph in a bulleted or numbered list, or take it out.
     SetList {
@@ -1149,6 +1177,21 @@ pub enum Edit {
         pages: PageKind,
         /// Where across the band.
         side: PageNumberSide,
+        /// Write "Page X of Y" — the number and the page count — rather than
+        /// the number alone.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        of_total: bool,
+        /// With `of_total`: the words before the number, in the document's
+        /// language ("Page " when omitted).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<String>,
+        /// With `of_total`: the words between the number and the count (" of "
+        /// when omitted).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        between: Option<String>,
+        /// With `of_total`: the words after the count (none when omitted).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<String>,
     },
     /// Insert a chart with sample data at an anchor.
     InsertChart {
@@ -1349,6 +1392,15 @@ impl Edit {
             Self::InsertCaption { label, text, .. } => label.len() + text.len(),
             Self::SetAltText { text, .. } => text.as_ref().map_or(0, String::len),
             Self::SetWatermark { text, .. } => text.as_ref().map_or(0, String::len),
+            Self::InsertPageNumber {
+                before,
+                between,
+                after,
+                ..
+            } => [before, between, after]
+                .into_iter()
+                .map(|words| words.as_ref().map_or(0, String::len))
+                .sum(),
             // A picture's bytes are bounded per edit (`objects::MAX_IMAGE_BYTES`),
             // not by the plan's text ceiling; its alt text is text.
             Self::InsertImage { alt_text, .. } => alt_text.as_ref().map_or(0, String::len),
@@ -1397,7 +1449,6 @@ impl Edit {
             | Self::SetDifferentOddEven { .. }
             | Self::LinkToPrevious { .. }
             | Self::RemoveHeaderFooter { .. }
-            | Self::InsertPageNumber { .. }
             | Self::InsertChart { .. }
             | Self::InsertTableOfContents { .. }
             | Self::UpdateTableOfContents { .. }

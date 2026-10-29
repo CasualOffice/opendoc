@@ -163,6 +163,9 @@ test("the shared select treatment covers every <select> in editor.html", () => {
   const uncovered = [];
   for (const tag of selectTags(html)) {
     const classes = attr(tag, "class").split(/\s+/).filter(Boolean);
+    // A LISTBOX (`size` > 1) is not a dropdown: the shared treatment draws a
+    // dropdown arrow, so a listbox carries its own `.dialog-listbox` instead.
+    if (Number(attr(tag, "size")) > 1 && classes.includes("dialog-listbox")) continue;
     if (!classes.some((name) => classNames.includes(name))) {
       uncovered.push(attr(tag, "id") || tag.trim());
     }

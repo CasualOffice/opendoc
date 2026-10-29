@@ -6732,10 +6732,21 @@ impl BodyParser<'_> {
     /// None)` for a `wp:inline`. Takes it, so it cannot leak onto a later
     /// drawing. O(1).
     fn take_embedded_anchor(&mut self) -> (Option<DrawingAnchor>, Option<u32>) {
-        match self.pending_anchor.take() {
-            Some(pending) => (Some(pending.resolve()), pending.relative_height),
-            None => (None, None),
+        // An embedded object (chart, diagram) carries no alt text in the model, so
+        // the drawing's `wp:docPr@descr` is reported rather than dropped in
+        // silence, in line or floating.
+        let inline_descr = self.pending_inline_descr.take();
+        let (result, descr) = match self.pending_anchor.take() {
+            Some(pending) => {
+                let descr = pending.descr.clone();
+                ((Some(pending.resolve()), pending.relative_height), descr)
+            }
+            None => ((None, None), inline_descr),
+        };
+        if descr.is_some_and(|text| !text.is_empty()) {
+            self.reporter.report_attribute(b"docPr", b"descr");
         }
+        result
     }
 
     /// Resolves a relationship id to an embedded-object part reference through the

@@ -227,6 +227,15 @@ pub struct PageNotes {
     pub undecodable_images: u32,
     /// Interpreter warnings (unsupported font kinds, decode failures).
     pub warnings: u32,
+    /// Ligature glyphs (U+FB00–FB06) decomposed into their letters
+    /// ([`crate::unicode`]).
+    pub ligatures_decomposed: u32,
+    /// Symbol-font codes (Symbol, Wingdings, Zapf Dingbats) mapped to the
+    /// characters they draw ([`crate::unicode`]).
+    pub symbols_mapped: u32,
+    /// Combining marks and spacing accents joined to their letter
+    /// ([`crate::unicode::compose_run`]).
+    pub marks_composed: u32,
 }
 
 /// One page's evidence.

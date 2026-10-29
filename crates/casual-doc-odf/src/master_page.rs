@@ -1,5 +1,12 @@
 //! Bounded import of ODT master-page header/footer content into schema-v1.
 //!
+//! Since HF-210 this walk has two jobs. It LOCATES each region (its byte range,
+//! `HeaderFooterRegion::source`), which `package.rs` hands to the body's own
+//! pipeline (`content::import_region_flow`), so a header's formatting, tables,
+//! pictures and links arrive as the body's would; and it is the bounded FALLBACK
+//! for a region that pipeline cannot read, reported as
+//! `odf.master-page.bounded-fallback`. Its limits still apply to every region.
+//!
 //! This is the styles.xml companion to [`crate::page_style`]. It scans the first
 //! `style:master-page` and lifts its `style:header`/`style:footer` regions (and
 //! the `-left` even-page variants) into a plain-text paragraph draft that
@@ -58,6 +65,11 @@ pub(crate) struct HeaderFooterParagraph {
 pub(crate) struct HeaderFooterRegion {
     /// The region's paragraphs in document order.
     pub paragraphs: Vec<HeaderFooterParagraph>,
+    /// The byte range of the region's CHILDREN in `styles.xml` — everything
+    /// between `<style:header …>` and `</style:header>` — so `package.rs` can
+    /// hand the region to the body's own pipeline (`docs/109` HF-210). `None`
+    /// for a self-closing region, which has no children.
+    pub source: Option<(usize, usize)>,
 }
 
 /// The bounded master-page content lifted from styles.xml.
@@ -122,6 +134,8 @@ struct State {
     skip_depth: Option<usize>,
     region_slot: Option<RegionSlot>,
     region_depth: usize,
+    /// Where the open region's children begin in the input.
+    region_start: usize,
     region: HeaderFooterRegion,
     para_open: bool,
     para_depth: usize,
@@ -155,6 +169,7 @@ pub(crate) fn parse_master_page(
         skip_depth: None,
         region_slot: None,
         region_depth: 0,
+        region_start: 0,
         region: HeaderFooterRegion::default(),
         para_open: false,
         para_depth: 0,
@@ -175,8 +190,14 @@ pub(crate) fn parse_master_page(
                     .checked_add(1)
                     .ok_or(OdfError::MalformedContent)?;
                 count_element(&mut state, &start, element_depth, limits)?;
+                let region_was_open = state.region_slot.is_some();
                 open_element(&mut state, &start, element_depth, false, limits)?;
                 state.depth = element_depth;
+                if !region_was_open && state.region_slot.is_some() {
+                    // Just past `<style:header …>`: the region's children start here.
+                    state.region_start = usize::try_from(reader.buffer_position())
+                        .map_err(|_| OdfError::MalformedContent)?;
+                }
             }
             Event::Empty(start) => {
                 let element_depth = state
@@ -212,7 +233,26 @@ pub(crate) fn parse_master_page(
                     append_text(&mut state, &value, limits)?;
                 }
             }
-            Event::End(_) => close_element(&mut state, limits)?,
+            Event::End(_) => {
+                if state.skip_depth.is_none()
+                    && state.region_slot.is_some()
+                    && !state.para_open
+                    && state.depth == state.region_depth
+                {
+                    // Just past `</style:header>`: the children end where that tag
+                    // begins, which is the last `<` before here.
+                    let end = usize::try_from(reader.buffer_position())
+                        .map_err(|_| OdfError::MalformedContent)?;
+                    let tag = bytes
+                        .get(..end)
+                        .and_then(|before| before.iter().rposition(|byte| *byte == b'<'))
+                        .ok_or(OdfError::MalformedContent)?;
+                    if tag >= state.region_start {
+                        state.region.source = Some((state.region_start, tag));
+                    }
+                }
+                close_element(&mut state, limits)?;
+            }
             // Markup that carries no header/footer content. Listed rather than
             // left to a wildcard, so the next event kind quick-xml adds is a
             // compile error here instead of a fifth silent `_ => {}` (HF-191,

@@ -107,6 +107,7 @@ pub const fn tier(operation: &Operation) -> Tier {
         | Operation::SetSectionWatermark { .. }
         | Operation::SetSectionLineNumbering { .. }
         | Operation::SetSectionPageBorders { .. }
+        | Operation::SetNoteProperties { .. }
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetEvenAndOddHeaders { .. }
@@ -183,6 +184,7 @@ pub const fn variant_name(operation: &Operation) -> &'static str {
         Operation::SetSectionWatermark { .. } => "SetSectionWatermark",
         Operation::SetSectionLineNumbering { .. } => "SetSectionLineNumbering",
         Operation::SetSectionPageBorders { .. } => "SetSectionPageBorders",
+        Operation::SetNoteProperties { .. } => "SetNoteProperties",
         Operation::SetSectionPageNumbering { .. } => "SetSectionPageNumbering",
         Operation::SetSectionVerticalAlignment { .. } => "SetSectionVerticalAlignment",
         Operation::SetEvenAndOddHeaders { .. } => "SetEvenAndOddHeaders",
@@ -339,6 +341,7 @@ pub(super) fn coordinates(operation: &Operation) -> Coordinates {
         | Operation::SetSectionWatermark { .. }
         | Operation::SetSectionLineNumbering { .. }
         | Operation::SetSectionPageBorders { .. }
+        | Operation::SetNoteProperties { .. }
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetEvenAndOddHeaders { .. }

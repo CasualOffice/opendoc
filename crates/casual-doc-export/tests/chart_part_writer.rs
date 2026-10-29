@@ -408,6 +408,79 @@ fn every_modeled_chart_family_writes_a_part_that_reads_back_as_the_same_chart() 
     }
 }
 
+/// HF-260: a FLOATING chart keeps its anchor through the package — position,
+/// wrap, distances, z-order — and reopens floating rather than in line.
+///
+/// Mutation: writing every embedded object as `wp:inline` (the writer before
+/// this change) reopens it with `anchor: None`, and the first assertion fails;
+/// dropping `take_embedded_anchor` from the importer's chart arm does the same.
+#[test]
+fn a_floating_chart_keeps_its_anchor_through_a_save() {
+    use casual_doc_model::v1::{
+        AnchorHorizontal, AnchorVertical, DrawingAnchor, HorizontalAnchor, HorizontalPosition,
+        VerticalAlign, VerticalAnchor, VerticalPosition, WrapDistances, WrapMode, WrapSide,
+    };
+    // `wrapText` is as Word writes it: a square wrap always carries the side
+    // selector (CT_WrapSquare requires it), so the writer emits `bothSides` for
+    // an unset one and the reopened anchor would read it back as set.
+    let anchor = DrawingAnchor {
+        horizontal: AnchorHorizontal {
+            relative_from: HorizontalAnchor::Margin,
+            position: HorizontalPosition::Offset(914_400),
+        },
+        vertical: AnchorVertical {
+            relative_from: VerticalAnchor::Paragraph,
+            position: VerticalPosition::Align(VerticalAlign::Top),
+        },
+        wrap: WrapMode::Square,
+        wrap_text: Some(WrapSide::BothSides),
+        wrap_distances: WrapDistances {
+            top_emu: 0,
+            bottom_emu: 0,
+            start_emu: 114_300,
+            end_emu: 114_300,
+        },
+        behind_doc: false,
+        wrap_polygon: None,
+    };
+    let before = projection(
+        id(3),
+        ChartGroupKind::Pie {
+            first_slice_angle: 0,
+        },
+    );
+    let object = before.object;
+    let mut definitions = Definitions::default();
+    definitions.charts.insert(ChartId::new(id(4)), before);
+    let mut floating = chart_object(object);
+    floating.anchor = Some(anchor.clone());
+    floating.relative_height = Some(251_658_240);
+    let document = Document::new(
+        id(1),
+        vec![BlockNode::Paragraph(Paragraph {
+            id: id(2),
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![InlineNode::EmbeddedObject(Box::new(floating))],
+        })],
+        definitions,
+    )
+    .expect("a floating chart is a valid document");
+
+    let reopened = reopened_object(&round_trip(&document));
+    assert_eq!(
+        reopened.anchor,
+        Some(anchor),
+        "the chart reopens floating, where it was"
+    );
+    assert_eq!(
+        reopened.relative_height,
+        Some(251_658_240),
+        "with its z-order key"
+    );
+    assert_eq!(reopened.kind, EmbeddedKind::Chart);
+    assert_eq!(reopened.extent.width_emu, 4_572_000, "and its size");
+}
+
 /// The three package-level facts the projection cannot see.
 #[test]
 fn the_generated_chart_part_is_in_the_package_declared_and_referenced_once() {

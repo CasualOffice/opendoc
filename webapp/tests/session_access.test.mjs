@@ -90,6 +90,10 @@ test("every refusal code the engine can send has a sentence in every locale", ()
   const access = source("crates", "casual-doc-edit", "src", "access.rs");
   const protection = source("crates", "casual-doc-edit", "src", "protection.rs");
   const wasm = source("crates", "casual-doc-wasm", "src", "lib.rs");
+  // The protection password's refusal is minted in its own module (`docs/153`
+  // `review.protection-password`), and a code minted there reaches a reader the
+  // same way, so it is read too.
+  const reviewProtection = source("crates", "casual-doc-wasm", "src", "review_protection.rs");
   const register = source("docs", "20-ERROR-CODE-REGISTRY.md");
 
   // No trailing hyphen: `protection.rs`'s own test asserts the family PREFIX
@@ -115,7 +119,7 @@ test("every refusal code the engine can send has a sentence in every locale", ()
   // dropped would be less useful than the English it replaced.
   const QUOTES_ITS_OWN_VALUE = "document.protection-unknown-level";
   const documentCodes = new Set(
-    [...minted(protection, "document"), ...minted(wasm, "document")].filter(
+    [...minted(protection, "document"), ...minted(wasm, "document"), ...minted(reviewProtection, "document")].filter(
       (code) => code.startsWith("document.protect") && code !== QUOTES_ITS_OWN_VALUE,
     ),
   );

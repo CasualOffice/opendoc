@@ -54,6 +54,8 @@ use crate::block::BlockBorderSpace;
 use crate::chart;
 // Own line (anti-conflict): the per-viewer fold filter (ADR-049).
 use crate::fold::{BlockVisibility, FoldSet};
+// Own line (anti-conflict): rotated table-cell text (`table.cell-text-direction`).
+use crate::block::{CellRotation, CellTurn};
 // Own line (anti-conflict): the chart box's layout-level carriers.
 use crate::block::{
     BlockBorders, BlockFragment, BorderPattern, BoxMetrics, BreakControl, CellBorderReserve,
@@ -2320,6 +2322,7 @@ fn flow_table<S: GalleySink + ?Sized>(
     let props = ctx.cascade.resolve_table_properties(&table.properties);
     let indent = props.indent_twips.unwrap_or(0);
     let available = (width.raw() - indent).max(1);
+    let rotated = rotated_cell_thickness(table, &merge_roles, &style_layers, shaper, ctx);
     let widths = solve_table_columns(
         table,
         &props,
@@ -2328,6 +2331,7 @@ fn flow_table<S: GalleySink + ?Sized>(
         ctx,
         &merge_roles,
         &style_layers,
+        &rotated,
     );
 
     // Logical grid edges are independent of physical alignment. `w:bidiVisual`
@@ -2344,6 +2348,9 @@ fn flow_table<S: GalleySink + ?Sized>(
     let edge = |col: usize| Twip(edges[col.min(edges.len() - 1)]);
 
     let mut rows = Vec::with_capacity(table.rows.len());
+    // The list counters as each turned cell was entered, so its re-flow at the
+    // row's real height numbers its paragraphs exactly as its first flow did.
+    let mut turned_entries: Vec<TurnedEntry> = Vec::new();
     for (row_index, row) in table.rows.iter().enumerate() {
         let row_spacing = effective_cell_spacing(&props, row);
         let row_origin = table_row_origin(
@@ -2443,26 +2450,41 @@ fn flow_table<S: GalleySink + ?Sized>(
                 .max(1),
             );
             let merge_role = merge_roles[row_index][index];
-            // Replace, rather than inherit, the enclosing cell's table layer.
-            // This also clears an outer style when a nested table is unstyled.
-            let outer_table_style = std::mem::replace(
-                &mut ctx.table_style,
-                table
-                    .properties
-                    .style_ref
-                    .is_some()
-                    .then(|| style_layer.clone()),
-            );
-            let (blocks, cell_float_floor) = if matches!(merge_role, VerticalMergeRole::Continue) {
+            let continuation = matches!(merge_role, VerticalMergeRole::Continue);
+            // A turned cell (`w:textDirection` tbRl/btLr) is flowed upright at
+            // its NATURAL line length first — the length its content asks the
+            // row for — and re-flowed at the row's real content height once
+            // that is resolved, below (`relayout_rotated_cells`).
+            let rotation = match cell_turn(&cell.properties) {
+                Some(turn) if !continuation => Some(CellRotation {
+                    turn,
+                    length: rotated_natural_length(table, cell, style_layer, shaper, ctx),
+                }),
+                _ => None,
+            };
+            if rotation.is_some() {
+                turned_entries.push(TurnedEntry {
+                    row: row_index,
+                    cell: index,
+                    numbering: ctx.numbering.clone(),
+                });
+            }
+            let (blocks, cell_float_floor) = if continuation {
                 (Vec::new(), Twip::ZERO)
             } else {
-                let outer_table_depth = ctx.table_depth;
-                ctx.table_depth = ctx.table_depth.saturating_add(1);
-                let flowed = flow_blocks(&cell.blocks, shaper, inner_width, ctx);
-                ctx.table_depth = outer_table_depth;
-                flowed
+                let measure = rotation.map_or(inner_width, |rotation| rotation.length);
+                let (blocks, floor) =
+                    flow_cell_content(table, cell, style_layer, shaper, measure, ctx);
+                // A float's clearance is measured down the upright content,
+                // which for a turned cell runs ACROSS the row, so it asks the
+                // row for nothing.
+                let floor = if rotation.is_some() {
+                    Twip::ZERO
+                } else {
+                    floor
+                };
+                (blocks, floor)
             };
-            ctx.table_style = outer_table_style;
             cell_floors.push(cell_float_floor);
             cells.push(CellFragment {
                 id: cell.id,
@@ -2482,6 +2504,7 @@ fn flow_table<S: GalleySink + ?Sized>(
                 borders,
                 table_borders,
                 shading,
+                rotation,
             });
             col += span;
         }
@@ -2510,11 +2533,15 @@ fn flow_table<S: GalleySink + ?Sized>(
         for cell in &mut cells {
             clamp_vertical_cell_spacing(&mut cell.cell_spacing, height);
         }
+        // Word never breaks a turned cell across pages (its lines run along the
+        // row, so there is no line boundary to break at); ONLYOFFICE keeps it
+        // whole too (`TableRecalculate.js:3303`, "the cell must not break").
+        let has_rotated = cells.iter().any(|cell| cell.rotation.is_some());
         rows.push(FlowedTableRow {
             id: row.id,
             cells,
             height,
-            can_split: !row.properties.cant_split,
+            can_split: !row.properties.cant_split && !has_rotated,
             header: row.properties.header,
             clip,
             exact: row_has_exact_height(&row.properties),
@@ -2523,6 +2550,7 @@ fn flow_table<S: GalleySink + ?Sized>(
     }
 
     resolve_vertical_merge_geometry(&merge_roles, &mut rows);
+    relayout_rotated_cells(table, &style_layers, &mut rows, turned_entries, shaper, ctx);
     for row in rows {
         galley.push(BlockFragment::TableRow {
             id: row.id,
@@ -2535,6 +2563,205 @@ fn flow_table<S: GalleySink + ?Sized>(
             clip: row.clip,
         });
     }
+}
+
+/// The turn a cell's `w:textDirection` asks for, or `None` for horizontal
+/// text (`lrTb`, or no direction). O(1).
+fn cell_turn(properties: &casual_doc_model::v1::TableCellProperties) -> Option<CellTurn> {
+    match properties.text_direction {
+        Some(TextDirection::TbRl) => Some(CellTurn::Down),
+        Some(TextDirection::BtLr) => Some(CellTurn::Up),
+        Some(TextDirection::LrTb) | None => None,
+    }
+}
+
+/// The longest line a turned cell may ask its row for, in twips: nine inches,
+/// the body height of a US Letter page with one-inch margins.
+///
+/// A fixed bound and not the page's own body height, deliberately: flow does
+/// not know which page a row lands on, and a bound that depended on it would
+/// make one row's layout depend on pagination. Content longer than this wraps
+/// at it, which is what Word does at the page height.
+const ROTATED_CELL_MAX_LENGTH: i32 = 12_960;
+
+/// A twip of slack on top of a turned cell's measured natural length, so the
+/// re-flow at exactly that length cannot wrap its longest line on rounding.
+const ROTATED_CELL_LENGTH_SLACK: i32 = 20;
+
+/// The line length a turned cell asks its row for: its content's unwrapped
+/// width (the same intrinsic measure the column solver reads), bounded by
+/// [`ROTATED_CELL_MAX_LENGTH`].
+///
+/// # The rule, and where it differs from ONLYOFFICE
+///
+/// Word sizes an `auto` or `atLeast` row to its turned text: the text does not
+/// wrap against the column, the row grows until the longest line fits. That is
+/// what this answers, and the row's own rule then applies to it as to any
+/// other content (`atLeast` raises it to the floor, `exact` fixes it and
+/// clips). ONLYOFFICE instead lets a vertical cell contribute NOTHING to the
+/// row and wraps it against whatever height the other cells produced
+/// (`sdkjs/word/Editor/Table/TableRecalculate.js:2830-2834` sets the cell
+/// aside, `:3270-3320` flows it afterwards at `Y_content_end - Y_content_start`)
+/// — which is why their setter raises an `auto` row to an `atLeast` floor when
+/// text is turned (`word/Editor/Table/TableCell.js:1643-1665`). We follow
+/// Word.
+///
+/// O(cell content): one intrinsic measure of the cell's blocks.
+fn rotated_natural_length(
+    table: &Table,
+    cell: &casual_doc_model::v1::TableCell,
+    style_layer: &TableStyleLayer,
+    shaper: &dyn LineShaper,
+    ctx: &FlowCtx,
+) -> Twip {
+    let table_style = table.properties.style_ref.is_some().then_some(style_layer);
+    let (_, natural) = block_intrinsic(&cell.blocks, shaper, ctx, table_style);
+    Twip(
+        natural
+            .saturating_add(ROTATED_CELL_LENGTH_SLACK)
+            .clamp(1, ROTATED_CELL_MAX_LENGTH),
+    )
+}
+
+/// Flows one cell's blocks at `width`, under the cell's own table-style layer
+/// and one table level deeper: the single path every cell's content takes,
+/// horizontal or turned (the uniform-flow rule). Returns the fragments and the
+/// cell's square-wrap float floor.
+///
+/// O(cell content).
+fn flow_cell_content(
+    table: &Table,
+    cell: &casual_doc_model::v1::TableCell,
+    style_layer: &TableStyleLayer,
+    shaper: &dyn LineShaper,
+    width: Twip,
+    ctx: &mut FlowCtx,
+) -> (Vec<BlockFragment>, Twip) {
+    // Replace, rather than inherit, the enclosing cell's table layer.
+    // This also clears an outer style when a nested table is unstyled.
+    let outer_table_style = std::mem::replace(
+        &mut ctx.table_style,
+        table
+            .properties
+            .style_ref
+            .is_some()
+            .then(|| style_layer.clone()),
+    );
+    let outer_table_depth = ctx.table_depth;
+    ctx.table_depth = ctx.table_depth.saturating_add(1);
+    let flowed = flow_blocks(&cell.blocks, shaper, width, ctx);
+    ctx.table_depth = outer_table_depth;
+    ctx.table_style = outer_table_style;
+    flowed
+}
+
+/// Re-flows every turned cell at the content height its row (or vertical
+/// merge) actually resolved to, so its lines wrap at the length they are
+/// painted along. A cell whose natural length already equals that height is
+/// left as it is.
+///
+/// O(turned cells' content); a table with no turned cell pays one scan of its
+/// row fragments and nothing else.
+fn relayout_rotated_cells(
+    table: &Table,
+    style_layers: &[Vec<TableStyleLayer>],
+    rows: &mut [FlowedTableRow],
+    entries: Vec<TurnedEntry>,
+    shaper: &dyn LineShaper,
+    ctx: &mut FlowCtx,
+) {
+    for entry in entries {
+        let Some(row) = rows.get_mut(entry.row) else {
+            continue;
+        };
+        let row_height = row.height;
+        let Some(fragment) = row.cells.get_mut(entry.cell) else {
+            continue;
+        };
+        let Some(rotation) = fragment.rotation else {
+            continue;
+        };
+        let along = fragment.box_height(row_height).raw()
+            - fragment.border_reserve.top.raw()
+            - fragment.margins.top.raw()
+            - fragment.margins.bottom.raw()
+            - fragment.border_reserve.bottom.raw();
+        let length = Twip(along.max(1));
+        if length == rotation.length {
+            continue;
+        }
+        let (Some(cell), Some(layer)) = (
+            table.rows[entry.row].cells.get(entry.cell),
+            style_layers[entry.row].get(entry.cell),
+        ) else {
+            continue;
+        };
+        // Re-flow from the counters the first flow started from, then put back
+        // the counters every later cell has already advanced: the same list
+        // items are consumed in the same order at any width, so the state after
+        // is the one the first flow left.
+        let after = std::mem::replace(&mut ctx.numbering, entry.numbering);
+        let (blocks, _) = flow_cell_content(table, cell, layer, shaper, length, ctx);
+        ctx.numbering = after;
+        fragment.blocks = blocks;
+        fragment.rotation = Some(CellRotation { length, ..rotation });
+    }
+}
+
+/// A turned cell awaiting its re-flow, with the list counters as it was
+/// entered (see [`relayout_rotated_cells`]).
+struct TurnedEntry {
+    row: usize,
+    cell: usize,
+    numbering: NumberingState,
+}
+
+/// The column demand of every turned cell: the thickness of its content —
+/// its stacked lines — when laid out at its natural length. `[row][cell]`,
+/// `None` for an upright cell; an EMPTY vector for a table with no turned
+/// cell, which then pays one scan of its cells' properties and nothing else.
+///
+/// A turned cell's lines run along the row, so it is their thickness, not
+/// their length, that the column must hold — what Word sizes an autofit column
+/// to. The measuring flow runs on a throwaway list-counter state, so it
+/// perturbs no real numbering.
+///
+/// O(turned cells' content).
+fn rotated_cell_thickness(
+    table: &Table,
+    merge_roles: &[Vec<VerticalMergeRole>],
+    style_layers: &[Vec<TableStyleLayer>],
+    shaper: &dyn LineShaper,
+    ctx: &mut FlowCtx,
+) -> Vec<Vec<Option<i32>>> {
+    let any = table.rows.iter().any(|row| {
+        row.cells
+            .iter()
+            .any(|cell| cell_turn(&cell.properties).is_some())
+    });
+    if !any {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity(table.rows.len());
+    for (row_index, row) in table.rows.iter().enumerate() {
+        let mut demands = Vec::with_capacity(row.cells.len());
+        for (index, cell) in row.cells.iter().enumerate() {
+            let continuation = matches!(merge_roles[row_index][index], VerticalMergeRole::Continue);
+            if continuation || cell_turn(&cell.properties).is_none() {
+                demands.push(None);
+                continue;
+            }
+            let layer = &style_layers[row_index][index];
+            let length = rotated_natural_length(table, cell, layer, shaper, ctx);
+            let real = std::mem::take(&mut ctx.numbering);
+            let (blocks, _) = flow_cell_content(table, cell, layer, shaper, length, ctx);
+            ctx.numbering = real;
+            let thickness: i32 = blocks.iter().map(|block| block.height().raw()).sum();
+            demands.push(Some(thickness.max(1)));
+        }
+        out.push(demands);
+    }
+    out
 }
 
 /// Resolves a row's logical `w:jc` to its physical grid origin. A row-direct
@@ -3240,7 +3467,9 @@ fn cell_no_wrap_applies(properties: &casual_doc_model::v1::TableCellProperties) 
 }
 
 /// content min/preferred widths with the shaper and distributing `w:gridSpan`
-/// cells across the columns they cover.
+/// cells across the columns they cover. `rotated` carries each turned cell's
+/// column demand (`rotated_cell_thickness`).
+#[allow(clippy::too_many_arguments)]
 fn solve_table_columns(
     table: &Table,
     props: &TableProperties,
@@ -3249,6 +3478,7 @@ fn solve_table_columns(
     ctx: &FlowCtx,
     merge_roles: &[Vec<VerticalMergeRole>],
     style_layers: &[Vec<TableStyleLayer>],
+    rotated: &[Vec<Option<i32>>],
 ) -> Vec<Twip> {
     let ncols = table_column_count(table);
 
@@ -3273,7 +3503,19 @@ fn solve_table_columns(
                     .style_ref
                     .is_some()
                     .then_some(&style_layers[row_index][cell_index]);
-                let (cmin, cmax) = block_intrinsic(&cell.blocks, shaper, ctx, table_style);
+                // A turned cell's lines run along the ROW, so their length is a
+                // demand on the row height (`rotated_natural_length`), not on
+                // the column: it asks the column for its lines' thickness
+                // (`rotated_cell_thickness`).
+                let turned = rotated
+                    .get(row_index)
+                    .and_then(|row| row.get(cell_index))
+                    .copied()
+                    .flatten();
+                let (cmin, cmax) = match turned {
+                    Some(thickness) => (thickness, thickness),
+                    None => block_intrinsic(&cell.blocks, shaper, ctx, table_style),
+                };
                 let cell_pref = cell
                     .properties
                     .width
@@ -4110,6 +4352,17 @@ fn collect_items_with_measure<'a>(
                     out.push(item);
                 }
             }
+            // A FLOATING chart or diagram is placed by the float pass
+            // (`anchor::place_floats`); in the run it contributes only the text
+            // exclusion its wrap asks for, exactly as a floating picture does
+            // (`docs/109` HF-260).
+            InlineNode::EmbeddedObject(object) if object.anchor.is_some() => {
+                if intrinsic.is_none()
+                    && let Some(anchor) = &object.anchor
+                {
+                    out.extend(float_flow_items(anchor, &object.extent, width));
+                }
+            }
             InlineNode::EmbeddedObject(object) => {
                 embedded_object_items(object, out, shaper, ctx);
             }
@@ -4413,6 +4666,67 @@ fn chart_item<'a>(
         primitives,
         model_len: embedded_object_label(object).len() as u32,
     })
+}
+
+/// The paint primitives of a FLOATING chart (`docs/109` HF-260), box-local,
+/// composed exactly as an in-line chart's are by [`chart_item`] — the same
+/// projection, theme palette and label shaping — so a chart looks the same
+/// whether it floats or sits on a line. `None` when the chart has no drawable
+/// projection, which the float pass then paints as an empty frame rather than
+/// inventing content.
+///
+/// The float pass has no galley context of its own, so this builds the one
+/// [`flow_running_blocks`] builds for running content. Complexity: O(points in
+/// the chart) plus building the chart index once, O(charts in the document).
+pub(crate) fn floating_chart_primitives(
+    document: &Document,
+    object: &EmbeddedObject,
+    shaper: &dyn LineShaper,
+) -> Option<Vec<ChartPrimitive>> {
+    if object.kind != EmbeddedKind::Chart {
+        return None;
+    }
+    let resolver = FontResolver::new();
+    let mut report = FontResolutionReport::new();
+    let palette = document
+        .definitions()
+        .color_scheme
+        .as_ref()
+        .map(resolve_palette);
+    let declared_fonts = DeclaredFamilies::from_font_table(&document.definitions().font_table);
+    let notes = NoteFlow::default();
+    let mut ctx = FlowCtx {
+        fit: MeasureFit::Bleed,
+        review_view: ReviewView::Editing,
+        resolver: &resolver,
+        scheme: document.definitions().font_scheme.as_ref(),
+        declared_fonts: &declared_fonts,
+        report: &mut report,
+        default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
+        media: &document.definitions().media,
+        palette: palette.as_ref(),
+        cascade: StyleCascade::new(document.definitions()),
+        para_style: None,
+        table_style: None,
+        sections: &[],
+        definitions: document.definitions(),
+        numbering: NumberingState::new(),
+        folds: &FoldSet::EMPTY,
+        suppress_above_level: None,
+        resume_snapshot: None,
+        text_scale: 100_000,
+        line_spacing_reduction: 0,
+        line_grid: None,
+        table_depth: 0,
+        paragraph_float_exclusions: None,
+        note_label: notes.label,
+        note_labels: notes.labels,
+        chart_index: ChartIndex::default(),
+    };
+    match chart_item(object, shaper, &mut ctx)? {
+        FlowItem::Chart { primitives, .. } => Some(primitives),
+        _ => None,
+    }
 }
 
 /// The run properties one chart label is shaped with, from its resolved
@@ -4792,6 +5106,11 @@ fn paragraph_wrap_carries(
             InlineNode::TextBox(text_box) => match (&text_box.anchor, &text_box.extent) {
                 (Some(anchor), Some(extent)) => wrap_carries(anchor, *extent, content_width),
                 _ => Vec::new(),
+            },
+            // A floating chart or diagram carries as a picture does (HF-260).
+            InlineNode::EmbeddedObject(object) => match &object.anchor {
+                Some(anchor) => wrap_carries(anchor, object.extent, content_width),
+                None => Vec::new(),
             },
             InlineNode::Group(group) => match &group.anchor {
                 Some(anchor) => wrap_carries(anchor, group.extent, content_width),
@@ -8039,6 +8358,9 @@ fn carries_flow_relative_float(inlines: &[InlineNode]) -> bool {
     inlines.iter().any(|inline| match inline {
         InlineNode::AnchoredDrawing(drawing) => flow_relative_overlay(&drawing.anchor),
         InlineNode::Group(group) => group.anchor.as_ref().is_some_and(flow_relative_overlay),
+        InlineNode::EmbeddedObject(object) => {
+            object.anchor.as_ref().is_some_and(flow_relative_overlay)
+        }
         _ => false,
     })
 }
@@ -8455,18 +8777,33 @@ fn ensure_nonempty_paragraph(
     }
     let mark = props.mark_run.as_deref().cloned().unwrap_or_default();
     let styled = styled_run(" ", &mark, ctx);
-    let probe = shaper.shape_paragraph(
-        &[styled],
-        line_constraints(
-            props,
-            width,
-            ctx.line_spacing_reduction,
-            active_line_grid_pitch(props, ctx),
-        ),
-        range,
+    let constraints = line_constraints(
+        props,
+        width,
+        ctx.line_spacing_reduction,
+        active_line_grid_pitch(props, ctx),
     );
+    let probe = shaper.shape_paragraph(&[styled], constraints, range);
     if let Some(mut line) = probe.lines.into_iter().next() {
+        // HF-121: an empty centred or right-aligned paragraph keeps ONE run, with
+        // no glyphs, at the aligned origin, so the caret slot (`hittest`) and the
+        // pilcrow (`formatting_marks::content_end`) sit where the first typed
+        // character will, as in Word. It carries the mark's own font and size, so
+        // the caret's height is unchanged. A start-aligned line keeps no run at
+        // all, so its galley is byte-identical to before.
+        let anchor = empty_line_origin(&constraints).and_then(|x| {
+            line.runs
+                .iter()
+                .find(|run| !run.is_marker)
+                .cloned()
+                .map(|mut run| {
+                    run.glyphs.clear();
+                    run.origin.x = x;
+                    run
+                })
+        });
         line.runs.clear();
+        line.runs.extend(anchor);
         line.images.clear();
         line.fields.clear();
         line.text_boxes.clear();
@@ -8475,6 +8812,22 @@ fn ensure_nonempty_paragraph(
         line.range = range;
         line.line_break = LineBreak::ParagraphEnd;
         layout.lines.push(line);
+    }
+}
+
+/// Where an EMPTY line of a paragraph shaped under `constraints` starts, relative
+/// to the content box's leading edge, or `None` when that is the leading edge
+/// itself: the middle of the line for `Center`, its far edge for `End` (and for
+/// `Start`/`Justify` in a right-to-left paragraph, whose start is the right).
+/// O(1).
+fn empty_line_origin(constraints: &LineConstraints) -> Option<Twip> {
+    let width = constraints.max_width.raw().max(0);
+    match (constraints.alignment, constraints.rtl) {
+        (TextAlignment::Center, _) => Some(Twip(width / 2)),
+        (TextAlignment::End, false) | (TextAlignment::Start | TextAlignment::Justify, true) => {
+            Some(Twip(width))
+        }
+        _ => None,
     }
 }
 
@@ -11892,6 +12245,62 @@ mod tests {
         );
     }
 
+    /// HF-260: a FLOATING chart leaves the run flow (it contributes only its
+    /// wrap's exclusion) and the float pass composes the same primitives an
+    /// in-line one paints. Mutation: dropping the `anchor.is_some()` arm in
+    /// `collect_items` flows it as an in-line chart box, and the first
+    /// assertion fails; returning `None` from `floating_chart_primitives`
+    /// fails the second.
+    #[test]
+    fn a_floating_chart_leaves_the_line_and_paints_on_the_float_layer() {
+        use casual_doc_model::v1::{
+            AnchorHorizontal, AnchorVertical, DrawingAnchor, HorizontalPosition, VerticalPosition,
+            WrapDistances,
+        };
+        let (definitions, mut inlines) = chart_document(Some(bar_chart(&["1", "2", "3", "4"])));
+        let InlineNode::EmbeddedObject(object) = &mut inlines[0] else {
+            unreachable!("the fixture is one chart object");
+        };
+        object.anchor = Some(DrawingAnchor {
+            horizontal: AnchorHorizontal {
+                relative_from: HorizontalAnchor::Margin,
+                position: HorizontalPosition::Offset(0),
+            },
+            vertical: AnchorVertical {
+                relative_from: VerticalAnchor::Paragraph,
+                position: VerticalPosition::Offset(0),
+            },
+            wrap: WrapMode::Square,
+            wrap_text: None,
+            wrap_distances: WrapDistances::default(),
+            behind_doc: false,
+            wrap_polygon: None,
+        });
+        let items = collected_items(&definitions, &inlines);
+        assert!(
+            !items
+                .iter()
+                .any(|item| matches!(item, FlowItem::Chart { .. })),
+            "a floating chart is not a box on the line, got {items:?}"
+        );
+        let InlineNode::EmbeddedObject(object) = &inlines[0] else {
+            unreachable!("the fixture is one chart object");
+        };
+        let document = Document::new(
+            NodeId::from_parts(900, 1).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: NodeId::from_parts(900, 2).unwrap(),
+                properties: ParagraphProperties::default().into(),
+                inlines: inlines.clone(),
+            })],
+            definitions,
+        )
+        .expect("a floating chart document is valid");
+        let primitives = floating_chart_primitives(&document, object, &ParleyShaper::new())
+            .expect("the float pass composes the chart");
+        assert!(primitives.len() > 4, "real geometry, as in line");
+    }
+
     #[test]
     fn a_chart_with_no_projection_still_paints_its_placeholder() {
         // `docs/155` 6.2: a chart we did not project keeps the labelled placeholder
@@ -13314,15 +13723,27 @@ mod tests {
 
         // Rotated text wraps against the row height, not the column width, so
         // `noWrap` says nothing about the column (ONLYOFFICE skips the branch).
+        // The comparison is with the SAME turned cell without `noWrap`: a turned
+        // cell's text length is not a column demand at all
+        // (`rotated_natural_length`), so it is not the horizontal control's width.
         for direction in [TextDirection::TbRl, TextDirection::BtLr] {
+            let (turned, _) = first_cell_width_and_lines(no_wrap_table(TableCellProperties {
+                text_direction: Some(direction),
+                ..TableCellProperties::default()
+            }));
             let (width, _) = first_cell_width_and_lines(no_wrap_table(TableCellProperties {
                 no_wrap: true,
                 text_direction: Some(direction),
                 ..TableCellProperties::default()
             }));
             assert_eq!(
-                width, narrow,
+                width, turned,
                 "{direction:?} is rotated, so noWrap must not widen the column"
+            );
+            assert!(
+                turned < narrow,
+                "{direction:?}: turned text runs along the row, so it no longer asks its \
+                 column for its length ({turned:?} vs the horizontal {narrow:?})"
             );
         }
 
@@ -16610,6 +17031,7 @@ mod tests {
             end: Twip(108),
         };
         let make = |valign: CellVAlign| CellFragment {
+            rotation: None,
             id: NodeId::from_parts(9, 1).unwrap(),
             grid_span: 1,
             x: Twip::ZERO,

@@ -9140,12 +9140,12 @@ fn write_embedded_object(
         ObjectName::GENERIC_OBJECT,
     );
     match &object.kind {
-        EmbeddedKind::Chart => write_graphic_object(w, &object.extent, label, CHART_URI, |w| {
+        EmbeddedKind::Chart => write_graphic_object(w, object, label, CHART_URI, |w| {
             let mut chart = start("c:chart");
             chart.push_attribute(("r:id", object.part.relationship_id.as_str()));
             w.write_event(Event::Empty(chart)).map_err(pkg)
         }),
-        EmbeddedKind::Diagram => write_graphic_object(w, &object.extent, label, DIAGRAM_URI, |w| {
+        EmbeddedKind::Diagram => write_graphic_object(w, object, label, DIAGRAM_URI, |w| {
             let mut rel_ids = start("dgm:relIds");
             for part in std::iter::once(&object.part).chain(object.extra_parts.iter()) {
                 if let Some(attr) = diagram_rel_attr(&part.relationship_type) {
@@ -9158,7 +9158,7 @@ fn write_embedded_object(
         // An unrecognized `a:graphicData` payload: emit the wrapper with its uri.
         // The referencing relationship is still emitted so the part stays
         // reachable (the importer does not produce this variant).
-        EmbeddedKind::Other(uri) => write_graphic_object(w, &object.extent, label, uri, |_| Ok(())),
+        EmbeddedKind::Other(uri) => write_graphic_object(w, object, label, uri, |_| Ok(())),
     }
 }
 
@@ -9173,27 +9173,69 @@ fn diagram_rel_attr(relationship_type: &str) -> Option<&'static str> {
     }
 }
 
-/// Emits the `w:drawing`/`wp:inline`/`a:graphic`/`a:graphicData` frame around a
-/// caller-written graphic reference (`body` writes the `c:chart`/`dgm:relIds`).
+/// Emits the `w:drawing` frame around a caller-written graphic reference
+/// (`body` writes the `c:chart`/`dgm:relIds`): a `wp:inline` for an in-line
+/// object, or — for a FLOATING chart or diagram (`docs/109` HF-260) — a
+/// `wp:anchor` carrying its position, wrap, distances and z-order exactly as
+/// [`write_anchored_drawing`] writes a floating picture's, so it round-trips
+/// through the importer's `wp:anchor` path.
 fn write_graphic_object(
     w: &mut Writer<Cursor<Vec<u8>>>,
-    extent: &Extent,
+    object: &EmbeddedObject,
     label: ObjectLabel<'_>,
     uri: &str,
     body: impl FnOnce(&mut Writer<Cursor<Vec<u8>>>) -> Result<(), ExportError>,
 ) -> Result<(), ExportError> {
+    let extent = &object.extent;
     w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
     w.write_event(Event::Start(start("w:drawing")))
         .map_err(pkg)?;
-    let mut inline = start("wp:inline");
-    for name in ["distT", "distB", "distL", "distR"] {
-        inline.push_attribute((name, "0"));
-    }
-    w.write_event(Event::Start(inline)).map_err(pkg)?;
-    let mut ext = start("wp:extent");
-    ext.push_attribute(("cx", extent.width_emu.to_string().as_str()));
-    ext.push_attribute(("cy", extent.height_emu.to_string().as_str()));
-    w.write_event(Event::Empty(ext)).map_err(pkg)?;
+    let frame_tag = if let Some(anchor) = &object.anchor {
+        let mut el = start("wp:anchor");
+        let dist_t = anchor.wrap_distances.top_emu.to_string();
+        let dist_b = anchor.wrap_distances.bottom_emu.to_string();
+        let dist_l = anchor.wrap_distances.start_emu.to_string();
+        let dist_r = anchor.wrap_distances.end_emu.to_string();
+        el.push_attribute(("distT", dist_t.as_str()));
+        el.push_attribute(("distB", dist_b.as_str()));
+        el.push_attribute(("distL", dist_l.as_str()));
+        el.push_attribute(("distR", dist_r.as_str()));
+        el.push_attribute(("simplePos", "0"));
+        push_relative_height(&mut el, object.relative_height);
+        el.push_attribute(("behindDoc", if anchor.behind_doc { "1" } else { "0" }));
+        el.push_attribute(("locked", "0"));
+        el.push_attribute(("layoutInCell", "1"));
+        el.push_attribute(("allowOverlap", "1"));
+        w.write_event(Event::Start(el)).map_err(pkg)?;
+        let mut simple_pos = start("wp:simplePos");
+        simple_pos.push_attribute(("x", "0"));
+        simple_pos.push_attribute(("y", "0"));
+        w.write_event(Event::Empty(simple_pos)).map_err(pkg)?;
+        write_position_h(w, &anchor.horizontal)?;
+        write_position_v(w, &anchor.vertical)?;
+        let mut ext = start("wp:extent");
+        ext.push_attribute(("cx", extent.width_emu.to_string().as_str()));
+        ext.push_attribute(("cy", extent.height_emu.to_string().as_str()));
+        w.write_event(Event::Empty(ext)).map_err(pkg)?;
+        write_wrap(
+            w,
+            anchor.wrap,
+            anchor.wrap_text,
+            anchor.wrap_polygon.as_deref(),
+        )?;
+        "wp:anchor"
+    } else {
+        let mut inline = start("wp:inline");
+        for name in ["distT", "distB", "distL", "distR"] {
+            inline.push_attribute((name, "0"));
+        }
+        w.write_event(Event::Start(inline)).map_err(pkg)?;
+        let mut ext = start("wp:extent");
+        ext.push_attribute(("cx", extent.width_emu.to_string().as_str()));
+        ext.push_attribute(("cy", extent.height_emu.to_string().as_str()));
+        w.write_event(Event::Empty(ext)).map_err(pkg)?;
+        "wp:inline"
+    };
     let mut doc_pr = start("wp:docPr");
     label.push_doc_pr_id(&mut doc_pr);
     label.push_name(&mut doc_pr);
@@ -9210,7 +9252,7 @@ fn write_graphic_object(
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("a:graphic")))
         .map_err(pkg)?;
-    w.write_event(Event::End(BytesEnd::new("wp:inline")))
+    w.write_event(Event::End(BytesEnd::new(frame_tag)))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:drawing")))
         .map_err(pkg)?;

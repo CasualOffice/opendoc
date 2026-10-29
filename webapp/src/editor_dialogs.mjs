@@ -403,6 +403,7 @@ export function createDialogs(ed) {
     registerModal, getDoc: () => ed.doc, status: ed.setStatus, fallbackFocus: () => ed.pagesEl,
     mutationBlocked: () => ed.blockMutationInViewing() || ed.blockUntrackedInSuggesting(),
     caretNode: () => ed.selection?.focus.node ?? "",
+    selection: () => ed.selection ?? null,
     applyEdit: (run) => ed.runEdit(run, { gate: true }),
     changed: () => ed.updateToolbar(),
   });
@@ -428,7 +429,10 @@ export function createDialogs(ed) {
     // Defensive only: an open document always has an insertion point, so the
     // glyph lands at the caret, or at the start of the body if none was placed.
     if (!ed.doc || !glyph || !ed.selection) return;
-    await ed.pasteText(glyph, "paste");
+    // A whitespace glyph (the no-break space and its kin in Special characters)
+    // goes in as typed: the paste path normalises whitespace and drops a lone
+    // space character, which is exactly what this glyph exists not to be.
+    await ed.pasteText(glyph, /^\s$/u.test(glyph) ? "typing" : "paste");
   }
 
   /** Builds a categorized glyph picker (symbol or emoji) over an existing dialog

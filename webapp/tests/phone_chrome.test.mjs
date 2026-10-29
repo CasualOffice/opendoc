@@ -47,8 +47,10 @@ test("the stylesheet's phone rung is the same width the script uses", () => {
   const css = read("style.css");
   assert.match(
     css,
-    new RegExp(`@media \\(max-width: ${PHONE_MAX_WIDTH}px\\)`),
-    `style.css must carry a @media (max-width: ${PHONE_MAX_WIDTH}px) rung, ` +
+    // In em, like every breakpoint in the sheet (HF-413): 620px is 38.75em at
+    // the default 16px, and `mediaWidth` is how the script writes the same query.
+    new RegExp(`@media \\(max-width: ${PHONE_MAX_WIDTH / 16}em\\)`),
+    `style.css must carry a @media (max-width: ${PHONE_MAX_WIDTH / 16}em) rung, ` +
       "or the class and the query change shape at different widths",
   );
   // And the class the script sets must actually be styled, or `phone-mode` is
@@ -77,9 +79,12 @@ test("the touch-target floor the module publishes is the one the phone rung appl
   ]) {
     const at = rung.indexOf(selector);
     assert.ok(at >= 0, `${selector} is styled at the phone rung`);
-    const declared = rung.slice(at, at + 220).match(/min-(?:height|width): (\d+)px/);
+    // The chrome is in rem (HF-413), so the floor is read at the default 16px
+    // root, which is the root a coarse pointer never goes below.
+    const declared = rung.slice(at, at + 220).match(/min-(?:height|width): ([\d.]+)(px|rem)/);
+    const px = declared ? Number(declared[1]) * (declared[2] === "rem" ? 16 : 1) : 0;
     assert.ok(
-      declared && Number(declared[1]) >= MIN_TOUCH_TARGET_PX,
+      declared && px >= MIN_TOUCH_TARGET_PX,
       `${selector} must carry at least the ${MIN_TOUCH_TARGET_PX}px floor (found ${declared?.[0] ?? "none"})`,
     );
   }
@@ -208,7 +213,9 @@ function fakeView(width, { visual = null } = {}) {
       removeEventListener: () => {},
     },
     matchMedia: (query) => {
-      const limit = Number(query.match(/(\d+)px/)[1]);
+      // The script queries in em (HF-413); the fake answers at the default 16px.
+      const [, value, unit] = query.match(/([\d.]+)(px|em)/);
+      const limit = Number(value) * (unit === "em" ? 16 : 1);
       return {
         matches: width <= limit,
         addEventListener: (_type, fn) => listeners.set(limit, fn),

@@ -55,6 +55,15 @@ test.describe("the ribbon width budget", () => {
     await gotoEditor(page);
     await page.locator('[data-tab="home"]').click();
 
+    // The chrome is rem on a fluid root (docs/109 HF-413), and the curve is
+    // flat at 16px across 1280-1440 so that THIS measurement is the one the
+    // budget was set at. A curve that moved the root here would change what
+    // the band measures without changing the band — fail on the cause.
+    const rootPx = await page.evaluate(() =>
+      parseFloat(getComputedStyle(document.documentElement).fontSize),
+    );
+    expect(rootPx, "the chrome's root at the 1280px budget width").toBe(16);
+
     const before = await bandFits(page);
     expect(
       before.fits,

@@ -195,6 +195,9 @@ mkdir -p "$here/assets"
 cp "$repo/fixtures/corpus/real-producer-rich.docx" "$here/demo.docx"
 cp "$repo/sample.docx" "$here/sample.docx"
 cp "$repo/docs/assets/editor.jpg" "$here/assets/editor.jpg"
+# The home hero's poster: a real capture of the editor (editor.html?demo=1 at
+# 1440x900, 2x), not a drawn mock-up.
+cp "$repo/docs/assets/site-editor.webp" "$here/assets/site-editor.webp"
 
 # --- Static multi-page site -----------------------------------------------
 # Inline the shared header/footer partials into every *.page.html template and
@@ -226,6 +229,13 @@ cargo run --quiet --locked -p casual-doc-command --bin opendoc-command-gen -- --
 # defect (docs/99 §9.2). It also re-validates the palette on every build, so a
 # deployment cannot drift into unreadable text by editing `src/brand.css` by hand.
 node "$here/tools/build-brand.mjs" --check
+
+# The capability statements in the public READMEs and in docs/18's format table
+# (webapp/tools/build-readme.mjs): the feature list from docs/153, the formats
+# from casual-doc-io's descriptors, the agent surface from the MCP catalogue and
+# the edit vocabulary. `--check` fails when a committed region is not what the
+# code produces, so a shipped feature reaches the README or CI is red.
+node "$here/tools/build-readme.mjs" --check
 
 "$here/build-site.py"
 "$here/build-site.py" --check

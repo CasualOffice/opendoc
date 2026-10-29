@@ -155,6 +155,7 @@ fn cell_of(id: u64, blocks: Vec<BlockFragment>) -> CellFragment {
     // margin edges into one vertical total, and with zero margins a tier that
     // lost them would still cut rows in the same place.
     CellFragment {
+        rotation: None,
         id: node(id),
         grid_span: 1,
         x: Twip::ZERO,

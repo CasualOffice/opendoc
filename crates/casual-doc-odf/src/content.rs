@@ -3539,6 +3539,54 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
     limits: OdfImportLimits,
     cancellation: &CancellationToken,
 ) -> Result<OdtImport, OdfError> {
+    import_text_flow(
+        bytes,
+        styles_bytes,
+        expected_version,
+        limits,
+        cancellation,
+        None,
+    )
+}
+
+/// Imports a header or footer region through the BODY's pipeline (`docs/109`
+/// HF-210): `bytes` is a synthetic `content.xml` whose `office:text` holds the
+/// region's own children, and `styles_bytes` is the package's `styles.xml`, so
+/// the region's automatic and named styles resolve exactly as the body's do.
+/// Paragraph and run formatting, tables, pictures, hyperlinks, fields and
+/// bookmarks all arrive as they would in the body — one pipeline for every
+/// block container, not a reduced one for page regions.
+///
+/// `salt` names the region. It is folded into the id namespace, so two regions
+/// with identical content (a default and an even header both reading "Draft")
+/// still mint distinct node ids, and none collide with the body's.
+pub(crate) fn import_region_flow(
+    bytes: &[u8],
+    styles_bytes: &[u8],
+    expected_version: OdfVersion,
+    limits: OdfImportLimits,
+    cancellation: &CancellationToken,
+    salt: &[u8],
+) -> Result<OdtImport, OdfError> {
+    import_text_flow(
+        bytes,
+        Some(styles_bytes),
+        expected_version,
+        limits,
+        cancellation,
+        Some(salt),
+    )
+}
+
+/// The one text-flow importer behind the body and the page regions.
+fn import_text_flow(
+    bytes: &[u8],
+    styles_bytes: Option<&[u8]>,
+    expected_version: OdfVersion,
+    limits: OdfImportLimits,
+    cancellation: &CancellationToken,
+    salt: Option<&[u8]>,
+) -> Result<OdtImport, OdfError> {
     limits.validate()?;
     enforce("odf_content_bytes", bytes.len(), limits.max_content_bytes)?;
     if let Some(styles_bytes) = styles_bytes {
@@ -4904,6 +4952,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
         &named_styles,
         &named_paragraph_styles,
         &style_catalog.defaults,
+        salt,
         &mut reporter,
     )?;
     Ok(OdtImport {
@@ -9933,10 +9982,17 @@ fn build_document(
     named_styles: &BTreeMap<String, RunProperties>,
     named_paragraph_styles: &BTreeMap<String, ParagraphProperties>,
     defaults: &DefaultStyles,
+    salt: Option<&[u8]>,
     reporter: &mut Reporter,
 ) -> Result<Document, OdfError> {
     let mut namespace = 0xcbf2_9ce4_8422_2325_u64;
     hash_bytes(&mut namespace, version.as_str().as_bytes());
+    // A page region's own namespace (`import_region_flow`); the body passes none,
+    // so its ids are byte-for-byte what they were before regions shared this.
+    if let Some(salt) = salt {
+        hash_bytes(&mut namespace, b"region");
+        hash_bytes(&mut namespace, salt);
+    }
     for paragraph in paragraphs {
         hash_bytes(&mut namespace, b"p");
         hash_bytes(

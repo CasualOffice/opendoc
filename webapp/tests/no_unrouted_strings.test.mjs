@@ -271,7 +271,7 @@ const CEILINGS = new Map([
   // Measured 2026-10-30: three "<n> pt" width labels (a number and a unit symbol)
   // and three dialog title KEYS the scanner reads as prose.
   ["src/page_borders.mjs", 3],
-  ["src/pdf_import.mjs", 3],
+  ["src/pdf_import.mjs", 4],
   ["src/editor_edit_pipeline.mjs", 1],
   ["src/editor_palette_ui.mjs", 1],
   ["src/editor_link_dialog.mjs", 2],
@@ -291,7 +291,16 @@ const CEILINGS = new Map([
   // markup already carries, which is how two spellings of one control start to
   // drift; that is its own piece of work.
   ["src/spacing_menu.mjs", 1],
+  // Display for review (`docs/153` review.display-mode-*): every sentence through
+  // t(), the mode names from the popover markup. Measured with `scanTree`.
+  ["src/review_display.mjs", 0],
+  // Footnotes and endnotes (`docs/153` page.note.*): every sentence through t(),
+  // every label from the menu and dialog markup. Measured with `scanTree`.
+  ["src/note_commands.mjs", 0],
   ["src/table_commands.mjs", 9],
+  // The table tools' dialogs and popovers (`docs/153` table rows): routed from
+  // the first commit, measured at zero.
+  ["src/table_tools.mjs", 0],
   // The object right-click menu's nine row labels ("Wrap text", "Alt text…",
   // "Shape fill", "No fill", "Shape outline", "No outline", "Crop image",
   // "Properties…", "Delete"). They were nine of `main.js`'s 342 and moved here

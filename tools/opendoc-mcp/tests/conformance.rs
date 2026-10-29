@@ -974,8 +974,12 @@ fn an_agent_opens_a_pdf_reads_it_and_suggests_into_a_frame() {
     .expect("fixture");
     let root = arg(&base.join("root"));
     let mut client = Client::start(&["--root", &root, "--profile", "suggest"]);
-    let opened = client.ok("open_document", json!({ "path": "prose.pdf" }));
+    let opened = client.ok(
+        "open_document",
+        json!({ "path": "prose.pdf", "layout": "fixed" }),
+    );
     assert_eq!(opened["format"], "application.pdf", "{opened}");
+    assert_eq!(opened["pdfLayout"], "fixed", "{opened}");
     assert_eq!(opened["pageCount"], 2, "{opened}");
     let doc = opened["document"].clone();
 
@@ -1025,7 +1029,11 @@ fn a_read_only_agent_converts_a_pdf_into_a_new_flowing_document() {
         tool_names(&mut client).contains(&"convert_pdf_to_flowing".to_owned()),
         "offered under read"
     );
-    let pdf = client.ok("open_document", json!({ "path": "prose.pdf" }))["document"].clone();
+    let pdf = client.ok(
+        "open_document",
+        json!({ "path": "prose.pdf", "layout": "fixed" }),
+    )["document"]
+        .clone();
     let flowing = client.ok("convert_pdf_to_flowing", json!({ "document": pdf }));
     let new = flowing["document"].clone();
     assert!(new.is_string() && new != pdf, "a new handle: {flowing}");
@@ -1053,6 +1061,54 @@ fn a_read_only_agent_converts_a_pdf_into_a_new_flowing_document() {
         client.refused("convert_pdf_to_flowing", json!({ "document": new }))["code"],
         "not-a-pdf",
         "a conversion does not convert again"
+    );
+}
+
+/// `docs/182` §4: `open_document` opens a PDF as a flowing document by
+/// default, the way Word and Google Docs do: its prose is body text, the
+/// summary says the layout was inferred, and it does not convert again. An
+/// unknown `layout` is refused. Mutation: default `PdfLayout` to `Fixed` and
+/// `pdfLayout` reads `fixed`.
+#[test]
+fn a_pdf_opens_as_a_flowing_document_by_default() {
+    let base = sandbox("pdf-default");
+    std::fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/pdf/synthetic-prose.pdf"
+        ),
+        base.join("root/prose.pdf"),
+    )
+    .expect("fixture");
+    let root = arg(&base.join("root"));
+    let mut client = Client::start(&["--root", &root]);
+    let opened = client.ok("open_document", json!({ "path": "prose.pdf" }));
+    assert_eq!(opened["pdfLayout"], "flowing", "{opened}");
+    assert!(
+        opened["importSummary"]
+            .to_string()
+            .contains("pdf.import.layout_inferred"),
+        "the summary says the layout was inferred: {opened}"
+    );
+    let doc = opened["document"].clone();
+    let hits = client.ok(
+        "search",
+        json!({ "document": doc, "query": "lazy dog", "surface": "body" }),
+    );
+    assert!(
+        hits["hits"][0]["node"].is_string(),
+        "the prose is body text: {hits}"
+    );
+    assert_eq!(
+        client.refused("convert_pdf_to_flowing", json!({ "document": doc }))["code"],
+        "already-flowing"
+    );
+    assert_eq!(
+        client.refused(
+            "open_document",
+            json!({ "path": "prose.pdf", "layout": "sideways" })
+        )["code"],
+        "invalid-argument"
     );
 }
 

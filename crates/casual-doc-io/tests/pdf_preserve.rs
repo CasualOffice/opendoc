@@ -9,6 +9,8 @@ use casual_doc_io::{
     CompatibilityReport, DocumentResources, ExportArtifact, ExportMode, ExportRequest,
     FormatExporter, FormatImporter, ImportArtifact, ImportRequest, PdfImportAdapter,
 };
+// Own line: the byte-preserving save is fixed layout's (`docs/182` §4, §7).
+use casual_doc_io::PdfLayout;
 use casual_doc_model::v1::{BlockNode, Document, InlineNode, TextBox};
 use casual_doc_pdf_read::revision::{PdfRevision, revision_tail};
 use casual_doc_pdf_read::{PaintEvidence, PdfReadLimits, PdfSource};
@@ -16,8 +18,10 @@ use casual_doc_pdf_read::{PaintEvidence, PdfReadLimits, PdfSource};
 const PROSE: &[u8] = include_bytes!("../../../fixtures/pdf/synthetic-prose.pdf");
 const IMAGES: &[u8] = include_bytes!("../../../fixtures/pdf/synthetic-images.pdf");
 
+/// A fixed-layout import ("Keep exact page layout"): the only layout whose
+/// save goes back into the original.
 fn import(bytes: &[u8]) -> (PdfImportAdapter, ImportArtifact) {
-    let adapter = PdfImportAdapter::default();
+    let adapter = PdfImportAdapter::default().with_layout(PdfLayout::Fixed);
     let artifact = adapter
         .import(ImportRequest {
             bytes,
@@ -565,6 +569,7 @@ fn what_cannot_be_preserved_falls_back_to_the_semantic_writer_and_says_why() {
 
     // Without a retained original there is nothing to preserve.
     let plain = PdfImportAdapter::default()
+        .with_layout(PdfLayout::Fixed)
         .import(ImportRequest {
             bytes: PROSE,
             retain_source: false,
@@ -721,4 +726,56 @@ fn an_operator_that_also_paints_a_kept_frame_or_moves_one_is_not_removed() {
         fallbacks_after_editing(&positioned, "Left"),
         Vec::<String>::new()
     );
+}
+
+/// The default open is a flowing document: a new document, so its PDF is the
+/// semantic writer's and never the original with an update, edited or not,
+/// and the report says why (`pdf.export.preserve_fallback.flowing_layout`).
+/// Mutation: drop the flowing check in `export_pdf_session` and the
+/// unchanged save returns the original bytes (`left == right` fails).
+#[test]
+fn a_flowing_document_never_saves_back_into_the_original() {
+    let adapter = PdfImportAdapter::default();
+    assert_eq!(
+        adapter.layout(),
+        PdfLayout::Flowing,
+        "flowing is the default"
+    );
+    let artifact = adapter
+        .import(ImportRequest {
+            bytes: PROSE,
+            retain_source: true,
+        })
+        .expect("import");
+    assert_eq!(
+        casual_doc_io::pdf_layout(&artifact.source),
+        Some(PdfLayout::Flowing)
+    );
+    // Kept for opening the PDF again, never for writing it back.
+    assert_eq!(adapter.retained_source_bytes(&artifact.source), Some(PROSE));
+    assert_eq!(
+        artifact.format.format.as_str(),
+        casual_doc_io::formats::DOCX
+    );
+    for (mode, unchanged) in [
+        (ExportMode::ExactIfUnchanged, true),
+        (ExportMode::PreserveWhenSafe, false),
+    ] {
+        let saved = adapter
+            .export(ExportRequest {
+                document: &artifact.document,
+                resources: &artifact.resources,
+                source: Some(&artifact.source),
+                source_unchanged: unchanged,
+                mode,
+            })
+            .expect("export");
+        assert_ne!(saved.bytes, PROSE, "{mode:?}");
+        assert!(!saved.bytes.starts_with(PROSE), "{mode:?}: not an update");
+        assert_eq!(
+            fallbacks(&saved.report),
+            ["pdf.export.preserve_fallback.flowing_layout"],
+            "{mode:?}"
+        );
+    }
 }

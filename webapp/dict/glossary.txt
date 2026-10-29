@@ -31,6 +31,7 @@ CFF
 CJK
 CKEditor
 CLI
+CMaps
 COEP
 COLLAB
 COLR
@@ -123,6 +124,7 @@ Linebender
 Liveblocks
 MAX
 MCP
+MERGEFIELD
 MFIO
 MIT
 MPL
@@ -133,6 +135,7 @@ MiB
 Microsoft
 MinerU
 Myers
+NOTEREF
 NUL
 NUMPAGES
 Namespace
@@ -207,6 +210,7 @@ SHA
 SIL
 SVG
 SaaS
+ScreenTip
 Sdt
 ShareDB
 SharePoint
@@ -214,12 +218,14 @@ SharedArrayBuffer
 Skia
 SmartArt
 Streamable
+Strikethrough
 TBL
 TCP
 TLS
 TOC
 TXT
 Tauri
+TeX
 Tesseract
 TrueType
 Twip
@@ -280,7 +286,6 @@ alt
 altChunk
 app
 args
-arity
 arrowing
 ary
 ascii
@@ -312,7 +317,9 @@ blitted
 bolds
 bool
 booleans
+borderless
 breakpoint
+btLr
 buildable
 bypassable
 callout
@@ -354,7 +361,6 @@ decrypt
 dedupe
 deduplication
 del
-deployer
 deps
 desync
 desynchronized
@@ -402,6 +408,7 @@ filesystem
 findable
 fitText
 flattener
+flyout
 fmt
 focusable
 fontTable
@@ -500,7 +507,6 @@ nav
 ness
 newline
 newtype
-nginx
 nonmodal
 npm
 nspell
@@ -567,6 +573,7 @@ redline
 reflow
 reflowed
 reflows
+relativeFrom
 relayout
 rels
 renderable
@@ -617,12 +624,10 @@ strikethrough
 struct
 structs
 stylesheet
-subcommand
 submenu
 subpath
 subpaths
 subsequence
-subsetted
 subsetter
 subsetting
 substitutable
@@ -634,6 +639,7 @@ svg
 swappable
 tabindex
 tarball
+tbRl
 tblLook
 tblpPr
 teardown

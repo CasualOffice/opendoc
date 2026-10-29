@@ -102,10 +102,15 @@ async function serveFakeModels(page) {
   const entry = (name) => ({ url: name, sha256: sha(files[name]), bytes: files[name].length });
   const manifest = { name: "fake", detection: entry("det.onnx"), packs: [{ name: "latin", model: entry("rec.onnx"), dictionary: entry("dict.txt") }] };
   const fetched = { count: 0 };
-  await page.route("**/ocr-test/manifest.json", (route) =>
-    route.fulfill({ contentType: "application/json", body: JSON.stringify(manifest) }),
+  // Matched on the PATH, never by a glob over the whole URL: the editor's own
+  // address carries `?pdfOcrModels=/ocr-test/manifest.json`, and a `**/...`
+  // glob matched the page navigation itself and answered it with the
+  // manifest, so the editor never booted (the quarantine of c418f74c).
+  await page.route(
+    (url) => url.pathname === "/ocr-test/manifest.json",
+    (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify(manifest) }),
   );
-  await page.route("**/ocr-test/*.{onnx,txt}", (route) => {
+  await page.route((url) => /^\/ocr-test\/[^/]+\.(onnx|txt)$/.test(url.pathname), (route) => {
     fetched.count += 1;
     const name = new URL(route.request().url()).pathname.split("/").pop();
     return route.fulfill({ contentType: "application/octet-stream", body: files[name] });
@@ -174,7 +179,8 @@ test.describe("the lazily loaded PDF module", () => {
     page,
     consoleErrors,
   }) => {
-    await gotoEditor(page);
+    // Only the exact page layout saves back into the original (`docs/182` §4).
+    await gotoEditor(page, "&pdfLayout=fixed");
     await page.locator("#file").setInputFiles(PDF_FIXTURE);
     await expect.poll(() => page.locator("#docTitle").inputValue(), { timeout: 60_000 }).toBe("synthetic-prose.pdf");
     await closeFindings(page);
@@ -210,13 +216,15 @@ test.describe("the lazily loaded PDF module", () => {
     const action = findings(page).locator('[data-action="file.pdf.recogniseText"]');
     await expect(action).toBeDisabled();
     await expect(action).toHaveAttribute("title", /no recognition models/);
-    // The other command is live for a PDF.
-    await expect(findings(page).locator('[data-action="file.pdf.convertToFlowing"]')).toBeEnabled();
+    // A PDF opens flowing: keeping its exact layout is live, converting is
+    // not (it already is a flowing document), said with the reason.
+    await expect(findings(page).locator('[data-action="file.pdf.keepExactLayout"]')).toBeEnabled();
+    const convert = findings(page).locator('[data-action="file.pdf.convertToFlowing"]');
+    await expect(convert).toBeDisabled();
+    await expect(convert).toHaveAttribute("title", "This PDF is already open as a flowing document.");
   });
 
-  // Quarantined, owned by the PDF lane: with `?pdfOcrModels=` the editor never reaches
-  // an idle status in CI, so gotoEditor times out before the test starts.
-  test.fixme("with a host's models, recognition asks first, naming the size, then downloads, verifies and keeps them", async ({
+  test("with a host's models, recognition asks first, naming the size, then downloads, verifies and keeps them", async ({
     page,
   }) => {
     const fetched = await serveFakeModels(page);
@@ -261,7 +269,8 @@ test.describe("the lazily loaded PDF module", () => {
       const row = await menuCommandRow(page, "file", "file.pdf.convertToFlowing");
       return row;
     };
-    await gotoEditor(page);
+    // Conversion starts from a PDF opened with its exact page layout.
+    await gotoEditor(page, "&pdfLayout=fixed");
     // A DOCX: the row is there, disabled with the reason (SKILL §10).
     let row = await convertRow();
     await expect(row).toBeDisabled();

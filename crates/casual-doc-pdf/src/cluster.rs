@@ -146,8 +146,12 @@ impl ClusterText {
             let (Some(text), Some(offsets)) = (texts.get(&node), boundaries.get(&node)) else {
                 return;
             };
-            for (cluster, glyph) in solitary_clusters(run) {
-                if let Some(slice) = cluster_slice(text, offsets, cluster) {
+            for ((cluster, glyph), whitespace) in
+                solitary_clusters(run).zip(solitary_whitespace(run))
+            {
+                if let Some(slice) = cluster_slice(text, offsets, cluster)
+                    && plausible(slice, whitespace)
+                {
                     out.offer(run.font, glyph, slice);
                 }
             }
@@ -228,6 +232,40 @@ fn solitary_clusters(run: &GlyphRun) -> impl Iterator<Item = (u32, u16)> + '_ {
         .filter_map(|(_, glyph)| u16::try_from(glyph.id).ok().map(|id| (glyph.cluster, id)))
 }
 
+/// [`solitary_clusters`]' glyphs' whitespace flags, in the same order.
+fn solitary_whitespace(run: &GlyphRun) -> impl Iterator<Item = bool> + '_ {
+    run.glyphs
+        .iter()
+        .enumerate()
+        .filter(|(index, glyph)| {
+            let before = index
+                .checked_sub(1)
+                .and_then(|before| run.glyphs.get(before));
+            let after = run.glyphs.get(index + 1);
+            before.is_none_or(|other| other.cluster != glyph.cluster)
+                && after.is_none_or(|other| other.cluster != glyph.cluster)
+        })
+        .filter(|(_, glyph)| u16::try_from(glyph.id).is_ok())
+        .map(|(_, glyph)| glyph.is_whitespace)
+}
+
+/// Whether `slice` can be what ONE glyph drew: a whitespace glyph draws only
+/// whitespace, and any other glyph draws no whitespace at all (a ligature is
+/// letters; no face has a glyph for "space, one, four"). The model text and
+/// the shaped text diverge where a field's display differs from the model's
+/// (a header's `PAGE of NUMPAGES` is laid out once per page), and there a
+/// cluster offset lands in other characters: such a reading is refused and
+/// the glyph keeps its character-map entry. Found by the reflow ground truth
+/// (`tools/opendoc-reflow-score`, `docs/182` §18.10): every space of a
+/// document whose footer read "1 of 14" copied as " 14".
+fn plausible(slice: &str, whitespace: bool) -> bool {
+    if whitespace {
+        slice.chars().all(char::is_whitespace)
+    } else {
+        !slice.chars().any(char::is_whitespace)
+    }
+}
+
 /// The substring `cluster` covers: from its own offset to the next distinct
 /// cluster offset in the same node, or to the end of the node's text for the last
 /// one.
@@ -255,6 +293,21 @@ fn cluster_slice<'a>(text: &'a str, offsets: &BTreeSet<u32>, cluster: u32) -> Op
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A space glyph names only whitespace and a letter glyph no whitespace:
+    /// the model's text and the shaped text diverge at a field (a footer's
+    /// "1 of 14" laid out once per page), and there a cluster offset lands in
+    /// other characters. Mutation: make `plausible` answer `true` and the
+    /// space glyph of the reflow ground truth is named " 14".
+    #[test]
+    fn a_glyph_is_only_named_after_text_it_could_have_drawn() {
+        assert!(plausible(" ", true));
+        assert!(plausible("\u{a0}", true));
+        assert!(!plausible(" 14", true));
+        assert!(plausible("fi", false));
+        assert!(!plausible("f i", false));
+        assert!(!plausible(" ", false));
+    }
     use casual_doc_layout::text::Decoration;
     use casual_doc_layout::text::Glyph;
     use casual_doc_layout::units::Point;

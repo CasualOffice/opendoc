@@ -2,7 +2,8 @@
 //! the same calls a host makes for a DOCX, with no PDF-specific code.
 #![cfg(feature = "pdf-import")]
 
-use opendoc_viewer::ViewerDocument;
+use casual_doc_io::PdfLayout;
+use opendoc_viewer::{ViewerDocument, ViewerOptions};
 
 fn fixture(name: &str) -> Vec<u8> {
     std::fs::read(
@@ -15,7 +16,9 @@ fn fixture(name: &str) -> Vec<u8> {
 
 #[test]
 fn a_pdf_opens_paginates_renders_and_exports() {
-    let document = ViewerDocument::open(&fixture("synthetic-prose.pdf")).expect("opens");
+    let options = ViewerOptions::default().with_pdf_layout(PdfLayout::Fixed);
+    let document =
+        ViewerDocument::open_with(&fixture("synthetic-prose.pdf"), &options).expect("opens");
     assert_eq!(document.page_count(), 2, "one page per PDF page");
     assert_eq!(document.page_size_twips(0), Some((612 * 20, 792 * 20)));
     let text = document.plain_text();
@@ -149,16 +152,28 @@ fn a_scan_opens_with_its_text_when_the_host_supplies_ocr() {
     assert!(text.contains("Scanned"), "{text}");
 }
 
+/// `docs/182` §4: a PDF opens as a flowing document by default; "Keep exact
+/// page layout" is the option. Mutation: default `PdfLayout` to `Fixed` and
+/// the default open holds frames.
 #[test]
-fn the_reflow_option_opens_a_pdf_as_a_flowing_document() {
+fn a_pdf_opens_as_a_flowing_document_unless_the_host_keeps_its_layout() {
     let bytes = fixture("synthetic-prose.pdf");
-    let fixed = ViewerDocument::open(&bytes).expect("opens");
     let frames =
         |document: &ViewerDocument| format!("{:?}", document.document().body()).contains("TextBox");
-    assert!(frames(&fixed), "the default is the fixed layout's frames");
-    let options = opendoc_viewer::ViewerOptions::default().with_pdf_reflow(true);
+    let flowing = ViewerDocument::open(&bytes).expect("opens");
+    assert!(!frames(&flowing), "the default is a flowing document");
+    let kept = ViewerOptions::default().with_pdf_layout(PdfLayout::Fixed);
+    let fixed = ViewerDocument::open_with(&bytes, &kept).expect("opens");
+    assert!(frames(&fixed), "exact page layout: frames");
+    assert_eq!(fixed.page_count(), 2, "one page per PDF page");
+    // The older switch says the same thing.
+    let options = ViewerOptions::default().with_pdf_reflow(true);
     let flowing = ViewerDocument::open_with(&bytes, &options).expect("opens");
     assert!(!frames(&flowing), "reflowed: paragraphs, not frames");
+    assert!(frames(
+        &ViewerDocument::open_with(&bytes, &ViewerOptions::default().with_pdf_reflow(false))
+            .expect("opens")
+    ));
     let text = flowing.plain_text();
     assert!(text.contains("quick brown fox"), "{text}");
     assert!(flowing.page_count() >= 1);

@@ -241,6 +241,15 @@ pub enum AnchorContent {
         /// The flowed rows, stacked from the anchor rectangle's origin.
         rows: Vec<BlockFragment>,
     },
+    /// A FLOATING chart (`wp:anchor` around `c:chart`, `docs/109` HF-260): the
+    /// same box-local primitives an in-line chart paints
+    /// ([`crate::text::InlineChart`]), placed at the anchor rectangle and
+    /// clipped to it. Empty when the chart has no drawable projection, so the
+    /// frame is still placed, hit-tested and selectable.
+    Chart {
+        /// The chart's paint primitives, relative to the rectangle's origin.
+        primitives: Vec<crate::text::ChartPrimitive>,
+    },
 }
 
 /// A full turn in `a:xfrm@rot` units (60000ths of a degree).
@@ -357,6 +366,51 @@ impl TextOrientation {
         };
         let clamp = |v: i64| Twip(i32::try_from(v.div_euclid(2)).unwrap_or(i32::MAX));
         Point::new(clamp(ux + cx), clamp(uy + cy))
+    }
+
+    /// Maps a point in the content box's upright space onto the page: the
+    /// forward of [`to_content`](Self::to_content), exact at quarter turns. Any
+    /// other angle is answered as the nearest quarter turn — the only callers
+    /// are turned table cells, which turn by quarters only. O(1).
+    #[must_use]
+    pub fn to_page(&self, frame: Rect, point: Point) -> Point {
+        let cx = i64::from(frame.origin.x.raw()) * 2 + i64::from(frame.size.width.raw());
+        let cy = i64::from(frame.origin.y.raw()) * 2 + i64::from(frame.size.height.raw());
+        let ux = i64::from(point.x.raw()) * 2 - cx;
+        let uy = i64::from(point.y.raw()) * 2 - cy;
+        let quarter = ((i64::from(self.rotation) + i64::from(QUARTER_TURN) / 2)
+            / i64::from(QUARTER_TURN))
+        .rem_euclid(4);
+        // A clockwise turn in y-down space.
+        let (dx, dy) = match quarter {
+            0 => (ux, uy),
+            1 => (-uy, ux),
+            2 => (-ux, -uy),
+            _ => (uy, -ux),
+        };
+        let clamp = |v: i64| Twip(i32::try_from(v.div_euclid(2)).unwrap_or(i32::MAX));
+        Point::new(clamp(dx + cx), clamp(dy + cy))
+    }
+
+    /// [`to_page`](Self::to_page) for a rectangle: its two corners mapped and
+    /// re-normalised, so a zero-width caret in upright space comes back as a
+    /// zero-height bar across the turned line. O(1).
+    #[must_use]
+    pub fn rect_to_page(&self, frame: Rect, rect: Rect) -> Rect {
+        let a = self.to_page(frame, rect.origin);
+        let b = self.to_page(
+            frame,
+            Point::new(
+                rect.origin.x + rect.size.width,
+                rect.origin.y + rect.size.height,
+            ),
+        );
+        let (left, right) = (a.x.raw().min(b.x.raw()), a.x.raw().max(b.x.raw()));
+        let (top, bottom) = (a.y.raw().min(b.y.raw()), a.y.raw().max(b.y.raw()));
+        Rect::new(
+            Point::new(Twip(left), Twip(top)),
+            Size::new(Twip(right - left), Twip(bottom - top)),
+        )
     }
 }
 

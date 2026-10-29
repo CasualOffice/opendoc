@@ -171,6 +171,11 @@ mod objects;
 // command, emitted as `SetAnchor`s in one action.
 mod object_align;
 
+// A floating Word chart opened, placed, re-wrapped and saved (`docs/109` HF-260).
+#[cfg(test)]
+#[path = "floating_chart_tests.rs"]
+mod floating_chart_tests;
+
 // Moving an in-line object to a new place in the text (`docs/109` UX-OB-02).
 // Its own module for the reason `objects` gives, and because the whole feature
 // is one command composed from two existing operations.
@@ -228,6 +233,10 @@ mod references;
 // command — and because its complexity contract needs stating in one place.
 mod toc;
 
+// Own line (anti-conflict): table style options, text and tables, split,
+// cell shifts, nesting and text direction (`docs/153` table rows).
+mod table_tools;
+
 // What each copied paragraph IS (heading, list item, table cell), so the
 // clipboard's HTML keeps structure (`docs/174` TA-12).
 mod clipboard_outline;
@@ -253,6 +262,16 @@ mod compare_view;
 // nothing in it hangs off `WasmDocument` and nothing in this file needs to know
 // it exists.
 mod quantity;
+
+// The password on the editing restriction: Word's verifier, written and checked
+// (`docs/153` `review.protection-password`, ADR-052 as amended).
+mod review_protection;
+// Review ▸ Display for review ▸ Original: a throwaway copy with every change rejected
+// (`docs/153` `review.display-mode-original`).
+mod review_display;
+// Footnotes and endnotes: the options dialog, next/previous note, convert
+// (`docs/153` `page.note.settings`, `page.note.goto`, `page.note.convert`).
+mod notes_settings;
 
 // The shared session (`docs/152`, ADR-063). Its own module because the socket is the
 // browser's and the session is the engine's: nothing here opens a connection, and nothing in
@@ -1002,6 +1021,7 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::SetSectionGeometry { .. }
         | Operation::SetSectionLineNumbering { .. }
         | Operation::SetSectionPageBorders { .. }
+        | Operation::SetNoteProperties { .. }
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetSectionWatermark { .. } => HistoryKind::PageSetup,
@@ -1264,6 +1284,7 @@ impl WasmDocument {
             .map_err(|error| format!("export {format}: {error}"))?
         } else {
             let registry = builtin_registry_with_limits(viewer_limits(), viewer_text_limits());
+
             // The host's opt-in `people.xml` entry (`docs/175` §6.2) on the editor's own Save
             // too, not only on `exportDocx`: one rule, both paths. A save that adds one is a
             // changed document, so it is never the source bytes copied through.
@@ -1280,6 +1301,12 @@ impl WasmDocument {
                 let copy = person
                     .clone()
                     .map(|person| save_identity::with_person(document, person));
+                // A PDF-origin session saved as anything but PDF has no
+                // envelope that writer could use: a flowing PDF opens as a
+                // DOCX-shaped document (`docs/182` §4), and offering the DOCX
+                // writer the PDF's envelope would only report a source it
+                // cannot read.
+                let source = source.filter(|source| source.format().as_str() != formats::PDF);
                 registry.export(
                     &format,
                     ExportRequest {
@@ -7638,9 +7665,14 @@ impl WasmDocument {
             .map_or(-1, |reference| i32::from(reference.level))
     }
 
-    /// Inserts a fresh `rows`×`cols` table into the body right after the caret's
-    /// top-level block, with equal columns spanning the content width and a thin
+    /// Inserts a fresh `rows`×`cols` table right after the caret's paragraph,
+    /// with equal columns spanning the width available there and a thin
     /// single-line grid so it is visible. The caret lands in the first cell.
+    ///
+    /// From a paragraph directly in a table cell the table is NESTED in that
+    /// cell, sized to the cell, as Word and ONLYOFFICE nest it (`docs/153`
+    /// `table.nested`); from anywhere else it goes after the caret's top-level
+    /// body block, as it always has (`table_tools::table_insertion_point`).
     #[wasm_bindgen(js_name = insertTable)]
     pub fn insert_table(
         &mut self,
@@ -7648,22 +7680,32 @@ impl WasmDocument {
         rows: u32,
         cols: u32,
     ) -> Result<EditResult, JsValue> {
-        let nid = node_id(node)?;
-        let c = &self.default_config;
-        let content_width = c.page_size.width.raw() - c.margin_start.raw() - c.margin_end.raw();
-        let index = casual_doc_command::table::body_index_after(&self.document, nid);
+        self.insert_table_inner(node, rows, cols).map_err(to_js)
+    }
+
+    /// See [`WasmDocument::insert_table`].
+    pub(crate) fn insert_table_inner(
+        &mut self,
+        node: &str,
+        rows: u32,
+        cols: u32,
+    ) -> Result<EditResult, String> {
+        let nid = node_id_msg(node)?;
+        let (container, index, content_width) = self.table_insertion_point(nid);
         let ids = &mut self.edit_ids;
         // The one lowering an agent's `insert_table` uses too (`docs/181` §4.2).
-        let edit =
-            casual_doc_command::table::insert_table(index, rows, cols, content_width, &mut || {
-                ids.next_id().ok()
-            })
-            .map_err(to_js)?;
+        let edit = casual_doc_command::table::insert_table_in(
+            container,
+            index,
+            rows,
+            cols,
+            content_width,
+            &mut || ids.next_id().ok(),
+        )?;
         let caret = edit
             .caret
             .map_or_else(|| Pos::new(nid, 0), |p| Pos::new(p, 0));
         self.apply_action_caret(edit.operations, caret)
-            .map_err(to_js)
     }
 
     /// Sets the table's horizontal alignment on the page: `"left"`/`"center"`/
@@ -16436,6 +16478,10 @@ impl WasmDocument {
                     // object box. Named explicitly rather than swept up by a
                     // wildcard, which would silently absorb a future variant.
                     AnchorContent::Table { .. } => continue,
+                    // A floating chart (`docs/109` HF-260) is the same object an
+                    // in-line one is, so it reports the same kind and the chart
+                    // surfaces (Chart tab, data, settings) open on it.
+                    AnchorContent::Chart { .. } => "chart",
                 };
                 if let Some(reference) = group_ref {
                     let frame = object_resize_handles(self.document.body(), reference.root);
@@ -21619,6 +21665,14 @@ fn placed_paragraphs(
             BlockFragment::TableRow { cells, .. } => {
                 let row_height = fragment.height();
                 for cell in cells {
+                    // A cell with turned text (`w:textDirection` tbRl/btLr) is
+                    // painted in a rotated frame, so its upright stacking here
+                    // would put an object box where nothing is drawn. Its
+                    // objects get no box rather than a wrong one; selecting
+                    // them goes through the caret and the object menu.
+                    if cell.rotation.is_some() {
+                        continue;
+                    }
                     let cell_left = left + cell.x + cell.margins.start;
                     let box_top = top + cell.cell_spacing.top;
                     let mut block_top =
@@ -24429,6 +24483,7 @@ fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document)
         // user's place in a document they only asked to re-align.
         Operation::SetSectionLineNumbering { .. }
         | Operation::SetSectionPageBorders { .. }
+        | Operation::SetNoteProperties { .. }
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetSectionWatermark { .. } => Pos::new(doc_id, 0),
@@ -36123,6 +36178,53 @@ mod tests {
         assert_eq!(d.document, unchanged);
     }
 
+    /// HF-121: the caret on an EMPTY centred or right-aligned paragraph sits where
+    /// the first typed character lands, not at the left margin. Mutation: drop the
+    /// anchor run in `flow::ensure_nonempty_paragraph` (`line.runs.extend(anchor)`)
+    /// and the centred caret reads the left text's x, so the first assertion fails.
+    #[test]
+    fn an_empty_aligned_paragraph_puts_the_caret_where_typing_will_land() {
+        let mut d = open_document(b"Text\n\n\nMore").expect("open plain text");
+        let ids: Vec<String> = d
+            .ordered_paragraphs()
+            .iter()
+            .map(|(id, _)| id.to_string())
+            .collect();
+        assert_eq!(ids.len(), 4, "two empty paragraphs between two lines");
+        d.set_alignment(&ids[1], 0, &ids[1], 0, "center")
+            .expect("centre");
+        d.set_alignment(&ids[2], 0, &ids[2], 0, "right")
+            .expect("right-align");
+        let x = |d: &WasmDocument, node: &str| d.caret_rect(node, 0)[1];
+        let left = x(&d, &ids[0]);
+        let centred = x(&d, &ids[1]);
+        let right = x(&d, &ids[2]);
+        assert!(
+            centred > left + 2_000,
+            "the centred caret ({centred}) is near the middle, not at the margin ({left})"
+        );
+        assert!(
+            right > centred + 2_000,
+            "the right-aligned caret ({right}) is at the far edge"
+        );
+        // Typing lands where the caret was: one centred character starts within
+        // half its own width of the empty-line caret.
+        d.insert_text(&ids[1], 0, "M".to_owned()).expect("type");
+        let typed = x(&d, &ids[1]);
+        assert!(
+            (typed - centred).abs() <= 200,
+            "the typed character starts at {typed}, the caret was at {centred}"
+        );
+        // A start-aligned empty paragraph is unchanged: its caret is the margin.
+        let plain = open_document(b"Text\n\nMore").expect("open plain text");
+        let plain_ids: Vec<String> = plain
+            .ordered_paragraphs()
+            .iter()
+            .map(|(id, _)| id.to_string())
+            .collect();
+        assert_eq!(x(&plain, &plain_ids[1]), x(&plain, &plain_ids[0]));
+    }
+
     #[test]
     fn restarting_numbered_list_carries_contiguous_items() {
         let mut d = open_document(RICH_DOCX).expect("open corpus docx");
@@ -40106,12 +40208,12 @@ mod tests {
     // which is the reported "change the header on page 3 and pages 5+ never
     // change" (docs/104 T-01, the body-vs-surface class).
 
-    fn sections_id(id: u64) -> NodeId {
+    pub(crate) fn sections_id(id: u64) -> NodeId {
         NodeId::from_parts(7, id).expect("fixture node id")
     }
 
     /// A section boundary with the given paper, margins and running-content refs.
-    fn sections_boundary(
+    pub(crate) fn sections_boundary(
         id: u64,
         size: (i32, i32),
         vertical_margin: i32,
@@ -46871,3 +46973,7 @@ mod batch5_paragraph_tests {
 }
 
 mod character_format;
+// Set Language and per-run language spans (`docs/109` RM-42).
+mod language;
+// AutoCorrect's one engine query, whether a range is already linked (`docs/109` RM-19).
+mod autocorrect;

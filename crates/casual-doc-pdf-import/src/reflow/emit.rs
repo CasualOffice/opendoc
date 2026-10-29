@@ -22,6 +22,8 @@ use casual_doc_model::v1::{
     WidthType,
 };
 use casual_doc_model::v1::{BorderEdge, NoteNumberRestart, NoteProperties, TableBorders};
+// Own line: cell shading from the PDF's filled rectangles.
+use casual_doc_model::v1::Shading;
 // Own line: floating pictures and vector art.
 use casual_doc_model::v1::{
     AnchorHorizontal, AnchorVertical, AnchoredDrawing, DrawingAnchor, HorizontalAnchor,
@@ -144,6 +146,9 @@ struct Emitter<'a> {
     styles: Vec<(StyleId, Style)>,
     heading_styles: Vec<StyleId>,
     heading_keys: Vec<FontKey>,
+    /// The Title style (heading level 0) and its key, when used.
+    title_style: Option<StyleId>,
+    title_key: Option<FontKey>,
     normal: Option<StyleId>,
     definitions: Definitions,
     links: Vec<super::ILink>,
@@ -253,6 +258,7 @@ impl Emitter<'_> {
 
     fn style_key(&self, para: &IPara) -> Option<FontKey> {
         match para.heading {
+            Some(0) => self.title_key.clone(),
             Some(level) => self.heading_keys.get(usize::from(level) - 1).cloned(),
             None => self.sheet.body.clone(),
         }
@@ -439,6 +445,7 @@ impl Emitter<'_> {
         let style_key = self.style_key(para);
         let mut properties = ParagraphProperties {
             style_ref: match para.heading {
+                Some(0) => self.title_style,
                 Some(level) => self.heading_styles.get(usize::from(level) - 1).copied(),
                 None => None,
             },
@@ -451,10 +458,10 @@ impl Emitter<'_> {
             let first = para.rest_x0.map(|rest| para.first_x0 - rest);
             if start > 6.0 || first.is_some_and(|f| f.abs() > 1.0) {
                 properties.indentation = Some(Indentation {
-                    start_twips: (start > 6.0).then(|| twips(start)),
+                    start_twips: (start > 6.0).then(|| indent_twips(start)),
                     end_twips: None,
-                    first_line_twips: first.filter(|f| *f > 1.0).map(twips),
-                    hanging_twips: first.filter(|f| *f < -1.0).map(|f| twips(-f)),
+                    first_line_twips: first.filter(|f| *f > 1.0).map(indent_twips),
+                    hanging_twips: first.filter(|f| *f < -1.0).map(|f| indent_twips(-f)),
                 });
             }
             if para.centred {
@@ -505,15 +512,17 @@ impl Emitter<'_> {
 
     fn table(&mut self, table: &ITable) -> Result<Table, PdfImportError> {
         let mut rows = Vec::with_capacity(table.rows.len());
+        // The rules' own thickness and colour (Word's floor is a quarter
+        // point, `w:sz` 2), so a hairline grid stays a hairline.
         let border = BorderEdge {
             style: "single".to_owned(),
-            size_eighth_points: Some(4),
-            color: None,
+            size_eighth_points: Some(((table.border_width * 8.0).round() as u32).clamp(2, 96)),
+            color: table.border_color.map(|[r, g, b]| RgbColor { r, g, b }),
             theme_color: None,
             space_points: None,
         };
         let body = self.sheet.body.clone();
-        for row in &table.rows {
+        for (r, row) in table.rows.iter().enumerate() {
             let mut cells = Vec::with_capacity(row.len());
             for cell in row {
                 let mut blocks = Vec::new();
@@ -551,9 +560,13 @@ impl Emitter<'_> {
                             }
                         }),
                         width: Some(TableWidth {
-                            value: twips(cell.x1 - cell.x0),
+                            value: cell_width(cell.x1 - cell.x0),
                             width_type: WidthType::Dxa,
                         }),
+                        shading: Shading {
+                            fill: cell.shading.map(|[r, g, b]| RgbColor { r, g, b }),
+                            ..Shading::default()
+                        },
                         ..TableCellProperties::default()
                     },
                     blocks,
@@ -561,7 +574,10 @@ impl Emitter<'_> {
             }
             rows.push(TableRow {
                 id: self.id()?,
-                properties: TableRowProperties::default(),
+                properties: TableRowProperties {
+                    header: r < table.header_rows,
+                    ..TableRowProperties::default()
+                },
                 cells,
             });
         }
@@ -583,7 +599,9 @@ impl Emitter<'_> {
                 .columns
                 .iter()
                 .map(|w| GridColumn {
-                    width_twips: Some(twips(*w).max(1)),
+                    // Inside the model's domain: a whitespace table's
+                    // measured columns can be negative or page-wide.
+                    width_twips: Some(grid_width(*w)),
                 })
                 .collect(),
             grid_change: None,
@@ -594,6 +612,28 @@ impl Emitter<'_> {
             rows,
         })
     }
+}
+
+/// A table grid column's width in twips, inside the model's domain: a
+/// whitespace table's measured column can come out negative (text that
+/// overhangs the next column) or page-wide, and one such table made a whole
+/// flowing document fail validation (found by the corpus sweep).
+pub(super) fn grid_width(points: f64) -> i32 {
+    twips(points).clamp(1, 31_680)
+}
+
+/// A table cell's preferred width in twips, inside the model's domain.
+pub(super) fn cell_width(points: f64) -> i32 {
+    twips(points).clamp(0, 31_680)
+}
+
+/// An indent in twips, inside the model's domain (22 inches either way).
+/// A PDF can place text anywhere on a page larger than that (a poster, a
+/// figure page drawn at a large scale), and one such paragraph made the
+/// whole flowing document fail validation (`arxiv-2210.11416`, found by the
+/// corpus sweep, `docs/182` §18.10).
+pub(super) fn indent_twips(points: f64) -> i32 {
+    twips(points).clamp(-31_680, 31_680)
 }
 
 fn level(
@@ -615,10 +655,10 @@ fn level(
         is_lgl: false,
         paragraph_properties: Some(ParagraphProperties {
             indentation: Some(Indentation {
-                start_twips: Some(twips(indent).max(0)),
+                start_twips: Some(indent_twips(indent).max(0)),
                 end_twips: None,
                 first_line_twips: None,
-                hanging_twips: Some(twips(hanging).max(0)),
+                hanging_twips: Some(indent_twips(hanging).max(0)),
             }),
             ..ParagraphProperties::default()
         }),
@@ -675,7 +715,20 @@ fn key_run(key: &FontKey) -> RunProperties {
 
 /// The column holding `x` in `region` (the body when there is none):
 /// `(left, right)`. O(1).
-fn column(flow: &Flow, region: Option<usize>, x: f64, page_width: f64) -> (f64, f64) {
+fn column(
+    flow: &Flow,
+    region: Option<usize>,
+    page: Option<usize>,
+    x: f64,
+    page_width: f64,
+) -> (f64, f64) {
+    if region.is_none()
+        && let Some(&(left, right)) = page.and_then(|p| flow.page_body.get(p))
+        && left.is_finite()
+        && right > left
+    {
+        return (left, right);
+    }
     match region.and_then(|r| flow.regions.get(r)) {
         Some(region) => {
             let c = region.columns;
@@ -706,7 +759,8 @@ fn shape(
             .fold(f64::INFINITY, f64::min)
     });
     let right = lines.iter().map(|l| l.x1).fold(f64::NEG_INFINITY, f64::max);
-    let (column_left, column_right) = column(flow, region, first_x0, page_width);
+    let page = lines.first().map(|l| l.page);
+    let (column_left, column_right) = column(flow, region, page, first_x0, page_width);
     let width = column_right - column_left;
     let centre = (column_left + column_right) / 2.0;
     let indented = first_x0 > column_left + 0.05 * width;
@@ -800,16 +854,40 @@ pub(crate) fn emit(
                         let same_struct = element.struct_element.is_some()
                             && prev.struct_element == element.struct_element
                             && element.role.as_deref() != Some("LI");
+                        // The rest of the same visual line: a producer that
+                        // writes each run (a link, a citation, a styled word)
+                        // as its own text object, Chromium's way, leaves a
+                        // line in several elements.
+                        let same_line = prev
+                            .last_line
+                            .as_ref()
+                            .is_some_and(|last| text::same_line(last, refs[0]));
                         let continued = same_struct
+                            || same_line
                             || prev.last_line.as_ref().is_some_and(|last| {
                                 text::continues(last, prev.column_right, refs[0], left, key)
                             });
                         if continued {
                             let (more, removed) = text::join(&refs);
-                            let (glued, removed2) = glue(std::mem::take(&mut prev.chars), more);
+                            let (glued, removed2) = if same_line {
+                                (
+                                    text::abut(std::mem::take(&mut prev.chars), more, refs[0]),
+                                    0,
+                                )
+                            } else {
+                                glue(std::mem::take(&mut prev.chars), more)
+                            };
                             prev.chars = glued;
-                            prev.lines += refs.len();
-                            prev.last_line = refs.last().map(|l| (*l).clone());
+                            prev.lines += refs.len() - usize::from(same_line);
+                            let start = prev.last_line.as_ref().map(|l| l.x0);
+                            prev.last_line = refs.last().map(|l| {
+                                let mut line = (*l).clone();
+                                // One visual line: it starts where the line did.
+                                if same_line && refs.len() == 1 {
+                                    line.x0 = start.unwrap_or(line.x0).min(line.x0);
+                                }
+                                line
+                            });
                             dehyphenated += removed + removed2;
                             joins += 1;
                             continue;
@@ -830,7 +908,8 @@ pub(crate) fn emit(
                     let (first_x0, rest_x0, _, column_left, column_right, centred, end_aligned) =
                         shape(&refs, &flow, element.region, page_width);
                     let heading = element.role.as_deref().and_then(|role| match role {
-                        "H1" | "H" | "Title" => Some(1),
+                        "Title" => Some(0),
+                        "H1" | "H" => Some(1),
                         "H2" => Some(2),
                         "H3" => Some(3),
                         "H4" => Some(4),
@@ -929,6 +1008,8 @@ pub(crate) fn emit(
         styles: Vec::new(),
         heading_styles: Vec::new(),
         heading_keys: Vec::new(),
+        title_style: None,
+        title_key: None,
         normal: None,
         definitions: Definitions::default(),
         links: flow.links.clone(),
@@ -965,6 +1046,21 @@ pub(crate) fn emit(
     // Every level used needs a style: a tagged level the fonts did not
     // produce takes the font of its first paragraph.
     emitter.heading_keys = emitter.sheet.headings.clone();
+    // The Title, when a paragraph is one: the sheet's key, or a tagged
+    // `Title`'s own font.
+    emitter.title_key = items
+        .iter()
+        .find_map(|i| match i {
+            Item::Para(p) if p.heading == Some(0) => Some(
+                emitter
+                    .sheet
+                    .title
+                    .clone()
+                    .or_else(|| text::dominant(p.chars.iter(), key)),
+            ),
+            _ => None,
+        })
+        .flatten();
     let deepest = items
         .iter()
         .filter_map(|i| match i {
@@ -1031,6 +1127,27 @@ pub(crate) fn emit(
             s.ui_priority = Some(9);
             emitter.styles.push((hid, s));
             emitter.heading_styles.push(hid);
+        }
+        if let Some(title) = emitter.title_key.clone() {
+            let tid = StyleId::new(emitter.id()?);
+            let mut s = style(
+                StyleKind::Paragraph,
+                "Title",
+                ParagraphProperties {
+                    spacing: Some(Spacing {
+                        before_twips: Some(0),
+                        after_twips: Some(twips(f64::from(title.half_points) / 2.0 * 0.3)),
+                        ..Spacing::default()
+                    }),
+                    ..ParagraphProperties::default()
+                },
+                key_run(&title),
+            );
+            s.based_on = Some(id);
+            s.next = Some(id);
+            s.ui_priority = Some(10);
+            emitter.styles.push((tid, s));
+            emitter.title_style = Some(tid);
         }
         findings.record(
             report::STYLE_INFERRED,
@@ -1260,7 +1377,7 @@ pub(crate) fn emit(
                 body.push(BlockNode::Table(Box::new(table)));
             }
             Item::Vector(vector, region) => {
-                let (left, _) = column(&flow, *region, vector.bounds.x0, page_w);
+                let (left, _) = column(&flow, *region, None, vector.bounds.x0, page_w);
                 let anchor = float_anchor(vector.bounds.x0 - left, 0.0, None);
                 let inlines = emitter.group(vector, anchor)?.into_iter().collect();
                 body.push(BlockNode::Paragraph(Paragraph {
@@ -1279,7 +1396,7 @@ pub(crate) fn emit(
                     .fold((usize::MAX, f64::INFINITY, f64::INFINITY), |a, b| {
                         (a.0.min(b.0), a.1.min(b.1), a.2.min(b.2))
                     });
-                let (left, _) = column(&flow, *region, x0, page_w);
+                let (left, _) = column(&flow, *region, Some(page), x0, page_w);
                 let inlines = emitter.floats(floats, page, top, left)?;
                 body.push(BlockNode::Paragraph(Paragraph {
                     id: emitter.id()?,

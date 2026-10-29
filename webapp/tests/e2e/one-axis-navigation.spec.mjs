@@ -295,6 +295,7 @@ const VALUE_FAMILIES = [
   ["view.zoom.", "#zoom", "the zoom control, on the View band and in the footer"],
   ["insert.field.", "#insertFieldBtn", "the field dialog, on both Insert and References"],
   ["insert.chart.", "#insertChartBtn", "the Insert ▸ Chart type picker owns every chart type (HF-258)"],
+  ["reference.addText.", "#refAddTextBtn", "References ▸ Add text's menu owns every contents level (RM-25)"],
 ];
 
 // Commands with no durable BUTTON, of two kinds, kept apart on purpose.

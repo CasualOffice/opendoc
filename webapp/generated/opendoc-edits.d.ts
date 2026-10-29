@@ -635,11 +635,11 @@ export interface TableDeleteEdit {
 }
 
 /**
- * Set the shading and/or vertical alignment of one cell or a rectangle of cells.
+ * Set the shading, vertical alignment and/or text direction of one cell or a rectangle of cells.
  *
  * Family `tables`; trackable: no. Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.
  *
- * @example {"op":"table_set_cell_format","table":"1:9","from":{"row":0,"column":0},"to":{"row":0,"column":1},"shading":"#FFF2CC","vertical_alignment":"center"}
+ * @example {"op":"table_set_cell_format","table":"1:9","from":{"row":0,"column":0},"to":{"row":0,"column":1},"shading":"#FFF2CC","vertical_alignment":"center","text_direction":"rotate_up"}
  */
 export interface TableSetCellFormatEdit {
   op: "table_set_cell_format";
@@ -654,6 +654,11 @@ export interface TableSetCellFormatEdit {
   shading?: string | null;
   /** The table id. */
   table: string;
+  /**
+   * Which way the text runs: horizontal, rotated down (read top to
+   * bottom) or rotated up (read bottom to top).
+   */
+  text_direction?: "horizontal" | "rotate_down" | "rotate_up" | null;
   /** The opposite corner; omitted for one cell. */
   to?: {
     /** 0-based cell in that row. */
@@ -1475,7 +1480,7 @@ export interface RemoveHeaderFooterEdit {
 }
 
 /**
- * Put a page number in a section's header or footer, left, centred or right; the band is created when there is none, and what it holds is kept.
+ * Put a page number, or "Page X of Y", in a section's header or footer, left, centred or right; the band is created when there is none, and what it holds is kept.
  *
  * Family `headers_footers`; trackable: no. Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.
  *
@@ -1483,8 +1488,25 @@ export interface RemoveHeaderFooterEdit {
  */
 export interface InsertPageNumberEdit {
   op: "insert_page_number";
+  /** With `of_total`: the words after the count (none when omitted). */
+  after?: string | null;
   /** The header or the footer. */
   band: "header" | "footer";
+  /**
+   * With `of_total`: the words before the number, in the document's
+   * language ("Page " when omitted).
+   */
+  before?: string | null;
+  /**
+   * With `of_total`: the words between the number and the count (" of "
+   * when omitted).
+   */
+  between?: string | null;
+  /**
+   * Write "Page X of Y" — the number and the page count — rather than
+   * the number alone.
+   */
+  of_total?: boolean;
   /** Which pages (default every page). */
   pages?: "default" | "first" | "even";
   /** The 0-based section. */

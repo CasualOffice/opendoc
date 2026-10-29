@@ -276,7 +276,8 @@ test("collaboration is described as docs/169 describes it, not as planned and no
   // Presence is labelled by participant NUMBER (docs/169 §Presence), so the
   // illustrations must not show a display name the product cannot draw.
   assert.match(doc, /Labels\s+currently show participant numbers/);
+  // The hero is now a real capture of the editor, with no drawn presence; any
+  // presence flag the page does draw must still name a participant number.
   const flags = [...page.matchAll(/class="od-peer-flag"[^>]*>([^<]*)</g)].map((m) => m[1]);
-  assert.ok(flags.length > 0, "the hero must show the second participant's flag");
   for (const flag of flags) assert.match(flag, /^Participant \d+$/, "a presence flag names a participant number");
 });

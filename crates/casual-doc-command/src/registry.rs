@@ -174,7 +174,12 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::Yes,
         example: r#"{"op":"insert_text","at":{"node":"1:2","exact":"days","side":"after"},"text":" (calendar)"}"#,
-        ui_commands: &["edit.pasteText", "insert.symbol", "insert.emoji"],
+        ui_commands: &[
+            "edit.pasteText",
+            "insert.symbol",
+            "insert.emoji",
+            "insert.nonBreakingSpace",
+        ],
     },
     Command {
         id: "replace_text",
@@ -399,7 +404,7 @@ pub const COMMANDS: &[Command] = &[
         emits: &["InsertTable"],
         trackable: Trackable::No(TABLE_NOT_TRACKABLE),
         example: r#"{"op":"insert_table","after":{"node":"1:2"},"rows":2,"columns":3}"#,
-        ui_commands: &["insert.table"],
+        ui_commands: &["insert.table", "insert.tableDialog"],
     },
     Command {
         id: "table_insert_column",
@@ -449,11 +454,15 @@ pub const COMMANDS: &[Command] = &[
     Command {
         id: "table_set_cell_format",
         family: Family::Tables,
-        summary: "Set the shading and/or vertical alignment of one cell or a rectangle of cells.",
+        summary: "Set the shading, vertical alignment and/or text direction of one cell or a rectangle of cells.",
         emits: &["SetTableCellProperties"],
         trackable: Trackable::No(TABLE_NOT_TRACKABLE),
-        example: r##"{"op":"table_set_cell_format","table":"1:9","from":{"row":0,"column":0},"to":{"row":0,"column":1},"shading":"#FFF2CC","vertical_alignment":"center"}"##,
-        ui_commands: &[],
+        example: r##"{"op":"table_set_cell_format","table":"1:9","from":{"row":0,"column":0},"to":{"row":0,"column":1},"shading":"#FFF2CC","vertical_alignment":"center","text_direction":"rotate_up"}"##,
+        ui_commands: &[
+            "table.textDirection.horizontal",
+            "table.textDirection.rotateDown",
+            "table.textDirection.rotateUp",
+        ],
     },
     Command {
         id: "set_list",
@@ -787,13 +796,13 @@ pub const COMMANDS: &[Command] = &[
     Command {
         id: "insert_page_number",
         family: Family::HeadersFooters,
-        summary: "Put a page number in a section's header or footer, left, centred or right; the band is created when there is none, and what it holds is kept.",
+        summary: "Put a page number, or \"Page X of Y\", in a section's header or footer, left, centred or right; the band is created when there is none, and what it holds is kept.",
         emits: &[
             "CreateHeaderFooterBody",
             "SetSectionRunningRef",
             "SplitParagraph",
             "SetParagraphProperties",
-            "InsertField",
+            "SetInlines",
         ],
         trackable: Trackable::No(SECTION_NOT_TRACKABLE),
         example: r#"{"op":"insert_page_number","section":0,"band":"footer","side":"center"}"#,
@@ -804,6 +813,7 @@ pub const COMMANDS: &[Command] = &[
             "layout.pageNumber.bottomLeft",
             "layout.pageNumber.bottomCenter",
             "layout.pageNumber.bottomRight",
+            "layout.pageNumber.pageOfTotal",
         ],
     },
     Command {
@@ -828,8 +838,11 @@ pub const COMMANDS: &[Command] = &[
         id: "update_table_of_contents",
         family: Family::References,
         summary: "Update a table of contents: its page numbers only, or the entire table from the headings.",
+        // `CreateBookmark`: a hyperlinked (`\h`) table plants a `_Toc` bookmark on
+        // a heading added since it was built (`references` contents note).
         emits: &[
             "SetStyleDefinition",
+            "CreateBookmark",
             "DeleteBlocks",
             "InsertBlocks",
             "InsertFieldRange",
@@ -946,15 +959,20 @@ const UI_LISTS: &str = "Numbering on/off, level, format and restart arrive with 
 const UI_STYLE_DEFINITIONS: &str = "Redefining a style changes every paragraph that uses it; agents apply styles and do not define them yet (docs/181 §4.2 step 2).";
 const UI_OBJECTS: &str = "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are.";
 const UI_OBJECT_MENU: &str = "The object menus are one contract family; its members that change a picture or shape (object.altText, object.crop, object.delete, object.fill, object.outline, object.wrap) are named by the objects commands, the rest are arrangement.";
+const UI_NOTE_SETTINGS: &str = "Footnote and endnote options are a person's layout choice in the Footnote and Endnote dialog; no agent command offers them yet (docs/181 §3).";
+const UI_NOTE_CONVERT: &str = "Converting footnotes to endnotes is a person's editorial decision; an agent inserts the kind of note it means with insert_note.";
 const UI_PAGE_BORDERS: &str = "Page borders are a person's design choice in the Page Borders dialog; no agent command offers them yet (docs/181 §3).";
 const UI_HEADER_FOOTER_SETTINGS: &str = "The Header & Footer options dialog also writes the header and footer distances, which agents are not offered; its toggles and page numbering are (set_different_first_page, set_different_odd_even, set_page_numbering).";
 const UI_TABLES: &str = "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1).";
+
+const UI_TABLE_TOOLS: &str = "Table style options, converting between text and tables, splitting a table and shifting cells are lowered in casual_doc_command::table_tools, which an agent command can call, but no agent command offers them yet (docs/181 §3).";
 
 const UI_MODE: &str = "Switches the editor's own editing mode, not the document; an agent's mode is its profile plus the plan's `mode`.";
 const UI_PROTECTION: &str =
     "Protection and tracking settings are a person's decision, never an agent's.";
 const UI_COMMENT_DELETE: &str =
     "No command deletes a comment yet; an agent resolves a thread with resolve_comment.";
+const UI_CONTENTS: &str = "Removing a table of contents, a table of figures and Add text's contents levels are not offered to agents yet; insert_table_of_contents and update_table_of_contents are (docs/181 §3).";
 
 /// Editor command ids (`webapp/src/host_contract.mjs` `COMMAND_CONTRACT` and
 /// `COMMAND_FAMILIES`) that can change the document but that no registry
@@ -992,6 +1010,7 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
     ("format.character.position", UI_CHARACTER),
     ("format.character.kerning", UI_CHARACTER),
     ("format.character.ligatures", UI_CHARACTER),
+    ("format.language", UI_CHARACTER),
     ("format.painter", UI_PAINTER),
     ("format.case.upper", UI_CASE),
     ("format.case.lower", UI_CASE),
@@ -1045,16 +1064,37 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
     ("table.borderStyle", UI_TABLES),
     ("table.properties", UI_TABLES),
     ("table.style.none", UI_TABLES),
+    ("table.look.headerRow", UI_TABLE_TOOLS),
+    ("table.look.firstColumn", UI_TABLE_TOOLS),
+    ("table.look.totalRow", UI_TABLE_TOOLS),
+    ("table.look.lastColumn", UI_TABLE_TOOLS),
+    ("table.look.bandedRows", UI_TABLE_TOOLS),
+    ("table.look.bandedColumns", UI_TABLE_TOOLS),
+    ("table.splitTable", UI_TABLE_TOOLS),
+    ("table.insertCells", UI_TABLE_TOOLS),
+    ("table.deleteCells", UI_TABLE_TOOLS),
+    ("table.convertToText", UI_TABLE_TOOLS),
+    ("insert.textToTable", UI_TABLE_TOOLS),
     ("layout.headerFooterSettings", UI_HEADER_FOOTER_SETTINGS),
     ("layout.pageBorders", UI_PAGE_BORDERS),
+    ("reference.noteSettings", UI_NOTE_SETTINGS),
+    ("reference.convertNotes", UI_NOTE_CONVERT),
     ("review.mode.editing", UI_MODE),
     ("review.mode.suggesting", UI_MODE),
     ("review.restrictEditing", UI_PROTECTION),
     ("review.comment.delete", UI_COMMENT_DELETE),
+    ("reference.removeToc", UI_CONTENTS),
+    ("reference.tableOfFigures", UI_CONTENTS),
+    ("reference.addText.", UI_CONTENTS),
 ];
 
 /// The length of [`UI_NOT_EXPOSED`]. It may only fall: lower it when a command
 /// names an id; raising it needs an ADR line (`docs/181` §3).
 ///
 /// 84 -> 85 with `layout.pageBorders` (`109` HF-193), recorded in `docs/181` §3.
-pub const UI_NOT_EXPOSED_CEILING: usize = 85;
+/// 85 -> 96 with the eleven table-tool ids (`109` RM-26, RM-27), 96 -> 99 with
+/// `reference.removeToc`, `reference.tableOfFigures` and `reference.addText.`
+/// (`109` RM-25), 99 -> 101 with `reference.noteSettings` and
+/// `reference.convertNotes` (`109` RM-24), and 101 -> 102 with `format.language`
+/// (`109` RM-42), each recorded in `docs/181` §3.
+pub const UI_NOT_EXPOSED_CEILING: usize = 102;

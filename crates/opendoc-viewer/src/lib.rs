@@ -181,12 +181,14 @@ pub struct ViewerOptions {
     /// `pdf.import.ocr_unavailable`.
     #[cfg(feature = "pdf-import")]
     pub pdf_ocr: Option<PdfOcr>,
-    /// Open a PDF as a flowing document ("Convert to flowing document",
-    /// `docs/182` §18): paragraphs, headings, lists, tables and columns
-    /// inferred from the pages, instead of the fixed layout's page-anchored
-    /// frames. Off by default; no effect on any other format.
+    /// How a PDF opens (`docs/182` §4): as a flowing document (the default,
+    /// as Word and Google Docs open one: paragraphs, headings, lists, tables,
+    /// header and footer, footnotes and columns reconstructed from the
+    /// pages), or in its exact page layout ([`casual_doc_io::PdfLayout::Fixed`],
+    /// "Keep exact page layout": one positioned frame per text block). No
+    /// effect on any other format.
     #[cfg(feature = "pdf-import")]
-    pub pdf_reflow: bool,
+    pub pdf_layout: casual_doc_io::PdfLayout,
 }
 
 /// The host's PDF OCR configuration, shared: two options are equal when
@@ -231,12 +233,24 @@ impl ViewerOptions {
         self
     }
 
-    /// The options opening a PDF as a flowing document (reflowed) or, the
-    /// default, in its fixed layout.
+    /// The options opening a PDF as a flowing document (`true`, the default)
+    /// or in its exact page layout (`false`): [`Self::with_pdf_layout`] by
+    /// another name, kept for the hosts that already call it.
     #[cfg(feature = "pdf-import")]
     #[must_use]
-    pub fn with_pdf_reflow(mut self, on: bool) -> Self {
-        self.pdf_reflow = on;
+    pub fn with_pdf_reflow(self, on: bool) -> Self {
+        self.with_pdf_layout(if on {
+            casual_doc_io::PdfLayout::Flowing
+        } else {
+            casual_doc_io::PdfLayout::Fixed
+        })
+    }
+
+    /// The options opening a PDF in `layout`.
+    #[cfg(feature = "pdf-import")]
+    #[must_use]
+    pub fn with_pdf_layout(mut self, layout: casual_doc_io::PdfLayout) -> Self {
+        self.pdf_layout = layout;
         self
     }
 }
@@ -866,9 +880,10 @@ fn import(bytes: &[u8], options: &ViewerOptions) -> Result<(Document, Media), Vi
     };
     #[allow(unused_mut)] // mutated only with `pdf-import`
     let mut registry = builtin_registry_with_limits(package_limits(), PlainTextLimits::default());
-    // PDF opens only when this build asked for it (`docs/182` P1).
+    // PDF opens only when this build asked for it (`docs/182` P1), in the
+    // layout the host chose (flowing by default, `docs/182` §4).
     #[cfg(feature = "pdf-import")]
-    casual_doc_io::enable_pdf_import_with_ocr(
+    casual_doc_io::enable_pdf_import_with_layout(
         &mut registry,
         casual_doc_io::PdfReadLimits::default(),
         options
@@ -876,6 +891,7 @@ fn import(bytes: &[u8], options: &ViewerOptions) -> Result<(Document, Media), Vi
             .as_ref()
             .map(|ocr| (*ocr.0).clone())
             .unwrap_or_default(),
+        options.pdf_layout,
     )
     .map_err(|e| ViewerError::Open(e.to_string()))?;
     let imported = registry
@@ -889,16 +905,6 @@ fn import(bytes: &[u8], options: &ViewerOptions) -> Result<(Document, Media), Vi
             false,
         )
         .map_err(|e| ViewerError::Open(e.to_string()))?;
-    // A PDF asked to flow: the reflow of this import, from its envelope.
-    #[cfg(feature = "pdf-import")]
-    let imported = match options
-        .pdf_reflow
-        .then(|| casual_doc_io::pdf_reflow(&imported.source, &imported.resources))
-        .flatten()
-    {
-        Some(reflowed) => reflowed.map_err(|e| ViewerError::Open(e.to_string()))?,
-        None => imported,
-    };
     Ok((
         imported.document,
         Media(imported.resources.as_map().clone()),

@@ -1117,13 +1117,22 @@ fn apply_edit(
             to,
             shading,
             vertical_alignment,
+            text_direction,
         } => {
             refuse_untracked(kind, mode)?;
-            if shading.is_none() && vertical_alignment.is_none() {
+            if shading.is_none() && vertical_alignment.is_none() && text_direction.is_none() {
                 return Err(AiError::invalid(
-                    "Set `shading`, `vertical_alignment` or both.",
+                    "Set `shading`, `vertical_alignment`, `text_direction` or any of them.",
                 ));
             }
+            // The editor's own name table (`table_tools`), so the two cannot
+            // disagree about what "rotate down" writes.
+            let direction = text_direction
+                .map(|direction| {
+                    casual_doc_command::table_tools::text_direction_named(direction.name())
+                })
+                .transpose()
+                .map_err(AiError::invalid)?;
             let fill = match shading.as_deref() {
                 None => None,
                 Some("none") => Some(None),
@@ -1154,6 +1163,9 @@ fn apply_edit(
                     }
                     if let Some(alignment) = alignment {
                         p.vertical_alignment = Some(alignment);
+                    }
+                    if let Some(direction) = direction {
+                        p.text_direction = direction;
                     }
                 }),
             )?;
@@ -1878,9 +1890,23 @@ fn apply_edit(
             band,
             pages,
             side,
+            of_total,
+            before,
+            between,
+            after,
         } => {
             refuse_untracked(kind, mode)?;
             sections_of(state, Some(*section))?;
+            // An agent names the words; omitted, they are Word's English ones.
+            let text = if *of_total {
+                casual_doc_command::sections::PageNumberText::OfTotal {
+                    before: before.clone().unwrap_or_else(|| "Page ".to_owned()),
+                    between: between.clone().unwrap_or_else(|| " of ".to_owned()),
+                    after: after.clone().unwrap_or_default(),
+                }
+            } else {
+                casual_doc_command::sections::PageNumberText::Number
+            };
             let ids = &mut state.ids;
             let lowered = casual_doc_command::sections::insert_page_number(
                 &state.document,
@@ -1888,6 +1914,7 @@ fn apply_edit(
                 band_region(*band),
                 page_kind(*pages),
                 number_align(*side),
+                &text,
                 &mut || ids.next_id().ok(),
             )
             .map_err(|message| refusal(&message))?;

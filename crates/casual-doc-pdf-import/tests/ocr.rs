@@ -401,7 +401,11 @@ fn ocr_replaces_glyphs_whose_unicode_is_unrecoverable_and_nothing_else() {
     let scripted = Arc::new(scripted);
     let plain = import_pdf(fixture("synthetic-type3.pdf"), PdfReadLimits::default()).unwrap();
     let plain_text = text_of(&plain.document);
-    assert!(plain_text.contains('\u{fffd}'), "{plain_text:?}");
+    // Without OCR the glyphs with no Unicode are reported, never U+FFFD in
+    // the text (`docs/182` §18.8).
+    assert!(!plain_text.contains('\u{fffd}'), "{plain_text:?}");
+    assert!(!plain_text.contains("ABABAB"), "{plain_text:?}");
+    assert!(plain.report.has(report::NATIVE_TEXT_INVALID));
     let imported = import_pdf_with_ocr(
         fixture("synthetic-type3.pdf"),
         PdfReadLimits::default(),

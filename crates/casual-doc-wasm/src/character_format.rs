@@ -35,6 +35,11 @@ fn parse_character(json: &str) -> Result<CharacterFormatDelta, String> {
     {
         return Err("character border outside the supported range".into());
     }
+    if let Some(Some(tag)) = &delta.language
+        && !crate::language::is_language_tag(tag)
+    {
+        return Err("language is not a BCP 47 tag".into());
+    }
     Ok(delta)
 }
 
@@ -146,6 +151,86 @@ impl WasmDocument {
         self.commit_review(lowered).map_err(to_js)
     }
 
+    /// A tracked underline STYLE or COLOUR change over a range — Suggesting mode's
+    /// half of the underline menu (HF-255). The tracked-format delta already
+    /// carries both (`FormatDelta::underline_style` / `underline_color`, which
+    /// `typeCharacterText` uses when typing); this is the range entry point the
+    /// menu was missing, so the chrome stops refusing an edit the review model
+    /// can record.
+    ///
+    /// `style` is an `ST_Underline` token the menu offers (`single`, `double`,
+    /// `thick`, `dotted`, `dashed`, `dotDash`, `wavy`, `words`) or `none`, which
+    /// turns the underline off; `color` is `#rrggbb`, or `""`/`auto` for the
+    /// automatic colour. Either may be absent. A colour implies an underline, as
+    /// the editing path's menu does. One revision group, one undo step.
+    #[wasm_bindgen(js_name = suggestUnderline)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn suggest_underline(
+        &mut self,
+        sn: &str,
+        so: u32,
+        en: &str,
+        eo: u32,
+        style: Option<String>,
+        color: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        self.suggest_underline_inner(sn, so, en, eo, style, color, date)
+            .map_err(to_js)
+    }
+
+    /// [`suggest_underline`](Self::suggest_underline) with a `String` error, so
+    /// its refusals are reachable from a native test — a `JsValue` cannot be
+    /// constructed off a wasm target.
+    #[allow(clippy::too_many_arguments)]
+    fn suggest_underline_inner(
+        &mut self,
+        sn: &str,
+        so: u32,
+        en: &str,
+        eo: u32,
+        style: Option<String>,
+        color: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, String> {
+        let mut delta = FormatDelta::default();
+        match style.as_deref() {
+            None => {}
+            Some("none") => delta.underline = Some(false),
+            Some(token) => {
+                delta.underline = Some(true);
+                delta.underline_style = Some(parse_underline_style(token)?);
+            }
+        }
+        match color.as_deref() {
+            None => {}
+            Some("") | Some("auto") => delta.underline_color = Some(None),
+            Some(value) => {
+                let rgb =
+                    parse_hex_color(value).ok_or_else(|| "invalid underline color".to_string())?;
+                delta.underline_color = Some(Some(rgb));
+                delta.underline = Some(true);
+            }
+        }
+        let author = self.resolve_author(None);
+        validate_authored_revision_author(author.as_deref())?;
+        let (start, end) = self.order_endpoints(sn, so, en, eo)?;
+        let ranges = self.selection_subranges(start, end);
+        let lowered = casual_doc_review::lower::suggest_format_ranges(
+            &self.document,
+            &mut casual_doc_review::ReviewIds {
+                nodes: &mut self.edit_ids,
+                revisions: &mut self.revision_ids,
+            },
+            &ranges,
+            &delta,
+            author,
+            date,
+            start,
+        )?;
+        self.commit_review(lowered)
+    }
+
     /// Armed typing with additive character formatting and typed underline.
     #[wasm_bindgen(js_name = typeCharacterText)]
     #[allow(clippy::too_many_arguments)]
@@ -239,10 +324,15 @@ mod tests {
             r#"{"ligatures":"discretionary"}"#,
             r#"{"unknown":true}"#,
             r#"{"border":{"style":"single","spacePoints":32}}"#,
+            r#"{"language":""}"#,
+            r#"{"language":"fr FR"}"#,
+            r#"{"language":"-fr"}"#,
         ] {
             assert!(parse_character(json).is_err(), "{json}");
         }
         assert!(parse_character(&" ".repeat(8193)).is_err());
+        assert!(parse_character(r#"{"language":"fr-FR"}"#).is_ok());
+        assert!(parse_character(r#"{"language":null}"#).is_ok());
         assert!(parse_character(r#"{"characterScalePercent":600,"characterSpacingTwips":-31680,"positionHalfPoints":31680,"kerningHalfPoints":65534}"#).is_ok());
     }
     fn text_document() -> (WasmDocument, Vec<(NodeId, String)>) {
@@ -258,6 +348,46 @@ mod tests {
         )
         .unwrap()
     }
+    /// HF-255: an underline style and colour suggested over a range are ONE tracked
+    /// formatting change that rejecting removes exactly; an unknown token is
+    /// refused with the document untouched. Mutation: leave `underline_style`
+    /// unset in `suggest_underline` → no style change is recorded, the revision
+    /// list stays empty and the first assertion fails.
+    #[test]
+    fn a_suggested_underline_style_and_colour_is_one_rejectable_change() {
+        let (mut d, nodes) = text_document();
+        let n = nodes[0].0.to_string();
+        d.set_active_author("Tester", None, None).unwrap();
+        let before = d.document.clone();
+        d.suggest_underline_inner(
+            &n,
+            0,
+            &n,
+            5,
+            Some("double".into()),
+            Some("#3355c4".into()),
+            None,
+        )
+        .unwrap();
+        let summary: serde_json::Value = serde_json::from_str(&d.review_summary()).unwrap();
+        assert_eq!(summary["revisions"].as_array().unwrap().len(), 1);
+        assert_ne!(d.document, before, "the suggestion is in the document");
+        d.decide_all_revisions(false).unwrap();
+        assert_eq!(
+            d.copy_text(&n, 0, &n, 5),
+            "alpha",
+            "rejecting keeps the text"
+        );
+        let summary: serde_json::Value = serde_json::from_str(&d.review_summary()).unwrap();
+        assert!(summary["revisions"].as_array().unwrap().is_empty());
+        let untouched = d.document.clone();
+        assert!(
+            d.suggest_underline_inner(&n, 0, &n, 5, Some("zigzag".into()), None, None)
+                .is_err()
+        );
+        assert_eq!(d.document, untouched);
+    }
+
     #[test]
     fn inherited_ligatures_survive_save_and_direct_none_or_clear() {
         let (mut d, nodes) = text_document();

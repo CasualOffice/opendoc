@@ -24,7 +24,9 @@ use crate::registry::{COMMANDS, Command, Family, Trackable};
 /// The edit vocabulary's version (`docs/181` §4.1), `major.minor`. Adding a
 /// command is a minor bump; changing or removing one is a major bump and
 /// needs an ADR. Published in `commands.json`, the generated TypeScript and
-/// `list_edit_kinds`.
+/// `list_edit_kinds`. An OPTIONAL field added to a command is a minor bump too:
+/// every plan the previous version accepted still parses and means the same
+/// (1.5: `insert_page_number`'s `of_total`, `before`, `between`, `after`).
 pub const VOCABULARY_VERSION: &str = "1.5";
 
 /// How many commands [`VOCABULARY_VERSION`] names. A test holds it equal to

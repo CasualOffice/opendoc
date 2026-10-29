@@ -438,6 +438,9 @@ impl Server {
         if let Some(ocr) = ocr {
             result["ocr"] = ocr;
         }
+        if let Some(layout) = session.pdf_layout() {
+            result["pdfLayout"] = json!(layout.as_str());
+        }
         self.documents.insert(handle, Open { session, path });
         result
     }
@@ -752,12 +755,21 @@ impl Server {
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                let session = match &self.options.pdf_ocr {
-                    Some(ocr) => {
-                        Session::open_with_pdf_ocr(&bytes, &file_name, self.config(), ocr)?
-                    }
-                    None => Session::open(&bytes, &file_name, self.config())?,
+                // A PDF opens as a flowing document unless the agent asks for
+                // its exact page layout (`docs/182` §4).
+                let layout = match opt_str(args, "layout") {
+                    None => casual_doc_ai::PdfLayout::default(),
+                    Some(token) => casual_doc_ai::PdfLayout::parse(token).ok_or_else(|| {
+                        AiError::invalid("`layout` is `flowing` (the default) or `fixed`.")
+                    })?,
                 };
+                let session = Session::open_pdf(
+                    &bytes,
+                    &file_name,
+                    self.config(),
+                    self.options.pdf_ocr.as_deref(),
+                    layout,
+                )?;
                 plain(self.register(session, path))
             }
             // "Convert to flowing document" (`docs/182` §18): a NEW handle

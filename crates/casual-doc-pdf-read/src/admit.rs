@@ -194,6 +194,27 @@ fn strip_subset_prefix(name: &str) -> &str {
     }
 }
 
+/// Whether a (lowercased) font name says bold, in the spellings producers
+/// use besides "Bold": URW's `-Medi` (the Nimbus faces LaTeX substitutes for
+/// Times), `Demi`/`Semibold`, `Black`/`Heavy`, a `Bd` suffix, and TeX's bold
+/// extended Computer Modern (`CMBX`). Found by the corpus sweep
+/// (`tools/opendoc-reflow-score`, `docs/182` §18.10): every LaTeX paper's
+/// section headings read as body text, so none became a heading.
+pub(crate) fn bold_name(lower: &str) -> bool {
+    let style = lower.rsplit(['-', ',']).next().unwrap_or(lower);
+    lower.contains("bold")
+        || lower.contains("black")
+        || lower.contains("heavy")
+        || lower.contains("semibold")
+        || lower.contains("demi")
+        || style == "medi"
+        || (style.starts_with("medi") && !style.starts_with("medium"))
+        || style == "bd"
+        || style.ends_with("bd")
+        || lower.starts_with("cmbx")
+        || lower.starts_with("cmb10")
+}
+
 /// Builds a font's identity from its dictionary (and its descendant's
 /// descriptor for a `Type0`).
 fn font_identity(dict: &Dict<'_>) -> FontEvidence {
@@ -229,15 +250,15 @@ fn font_identity(dict: &Dict<'_>) -> FontEvidence {
         .map(|s| String::from_utf8_lossy(s.as_bytes()).into_owned());
     let lower = name.to_ascii_lowercase();
     FontEvidence {
-        bold: weight >= 600.0
-            || flags & (1 << 18) != 0
-            || lower.contains("bold")
-            || lower.contains("black")
-            || lower.contains("heavy"),
+        bold: weight >= 600.0 || flags & (1 << 18) != 0 || bold_name(&lower),
         italic: flags & (1 << 6) != 0
             || angle.abs() > 0.5
             || lower.contains("italic")
-            || lower.contains("oblique"),
+            || lower.contains("oblique")
+            || lower.ends_with("-ital")
+            || lower.ends_with("-it")
+            || lower.starts_with("cmti")
+            || lower.starts_with("cmsl"),
         serif: flags & (1 << 1) != 0 || lower.contains("times") || lower.contains("serif"),
         monospace: flags & 1 != 0 || lower.contains("courier") || lower.contains("mono"),
         family,

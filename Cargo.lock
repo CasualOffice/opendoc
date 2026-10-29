@@ -552,6 +552,7 @@ dependencies = [
  "casual-doc-wasm-pdf",
  "serde",
  "serde_json",
+ "sha2",
  "unicode-segmentation",
  "wasm-bindgen",
 ]
@@ -2029,6 +2030,16 @@ dependencies = [
  "peak_alloc",
  "serde_json",
  "skrifa 0.43.2",
+]
+
+[[package]]
+name = "opendoc-reflow-score"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-io",
+ "casual-doc-model",
+ "casual-doc-pdf-import",
+ "serde_json",
 ]
 
 [[package]]

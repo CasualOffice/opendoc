@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 use casual_doc_model::v1::{EmbeddedFontProgram, MediaReference};
 use casual_doc_pdf_read::{
     ActiveContent, AnnotationEvidence, Bounds, DocumentFonts, GlyphRunEvidence, PageEvidence,
-    PaintEvidence, PathCommand, PathEvidence, StructureTree,
+    PaintEvidence, PathCommand, PathEvidence, Rgba8, StructureTree,
 };
 
 use crate::group::{self, Block, LayoutParams};
@@ -55,6 +55,20 @@ pub struct Rule {
     pub x1: f64,
     /// Bottom.
     pub y1: f64,
+    /// Its colour (the fill of a filled rule, the stroke of a stroked one),
+    /// when a flat one: what a table's borders are drawn in.
+    pub color: Option<Rgba8>,
+}
+
+/// A filled axis-aligned rectangle wider than a rule, in a flat colour: the
+/// evidence for table cell shading. It is also vector art (`vectors`); a
+/// table that takes it as shading takes it out of the art.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fill {
+    /// Where it is.
+    pub bounds: Bounds,
+    /// Its colour.
+    pub color: Rgba8,
 }
 
 impl Rule {
@@ -138,6 +152,8 @@ pub struct SourcePage {
     pub blocks: Vec<SourceBlock>,
     /// Ruling lines.
     pub rules: Vec<Rule>,
+    /// Filled rectangles that are not rules (cell shading evidence).
+    pub fills: Vec<Fill>,
     /// Pictures.
     pub images: Vec<SourceImage>,
     /// Annotations.
@@ -167,28 +183,99 @@ pub struct PdfSourceState {
     pub active: ActiveContent,
 }
 
-/// The rule a path is, when it is one: a filled thin rectangle, or a stroked
-/// axis-aligned segment (each segment of a stroked rectangle counts). O(path).
-fn rules_of(path: &PathEvidence) -> Option<Vec<Rule>> {
-    let b = path.bounds;
+/// The axis-aligned rectangles a path is made of, one per subpath, when it
+/// is nothing else: each subpath a move and at most four straight lines
+/// (closed or not) along the axes. `x y w h re` is one such subpath; a
+/// producer that paints a table's borders as one path of many `re`
+/// (LibreOffice, Excel, report writers) gives one per border. O(path).
+#[must_use]
+pub fn rectangles(path: &PathEvidence) -> Option<Vec<Bounds>> {
+    let mut out = Vec::new();
+    let mut points: Vec<casual_doc_pdf_read::Point> = Vec::new();
+    let finish = |points: &mut Vec<casual_doc_pdf_read::Point>, out: &mut Vec<Bounds>| -> bool {
+        if points.is_empty() {
+            return true;
+        }
+        if points.len() > 5 {
+            return false;
+        }
+        // Every segment along an axis, the closing one included.
+        let n = points.len();
+        for (k, &a) in points.iter().enumerate() {
+            let b = points[(k + 1) % n];
+            if (a.x - b.x).abs() > 0.5 && (a.y - b.y).abs() > 0.5 {
+                return false;
+            }
+        }
+        let x0 = points.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        let x1 = points.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+        let y0 = points.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        let y1 = points.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+        out.push(Bounds { x0, y0, x1, y1 });
+        points.clear();
+        true
+    };
+    for command in &path.commands {
+        match *command {
+            PathCommand::MoveTo(p) => {
+                if !finish(&mut points, &mut out) {
+                    return None;
+                }
+                points.push(p);
+            }
+            PathCommand::LineTo(p) => {
+                if points.is_empty() {
+                    return None;
+                }
+                points.push(p);
+            }
+            PathCommand::Close => {
+                if !finish(&mut points, &mut out) {
+                    return None;
+                }
+            }
+            PathCommand::QuadTo(..) | PathCommand::CubicTo(..) => return None,
+        }
+    }
+    if !finish(&mut points, &mut out) || out.is_empty() {
+        return None;
+    }
+    Some(out)
+}
+
+/// Whether a rectangle is thin enough, and long enough, to be a rule.
+fn thin(b: &Bounds) -> bool {
     let (w, h) = (b.width(), b.height());
-    if path.fill.is_some() && path.stroke.is_none() {
-        let thin = (h <= RULE_THICKNESS && w >= RULE_MIN_LENGTH)
-            || (w <= RULE_THICKNESS && h >= RULE_MIN_LENGTH);
-        let rect_like = path.commands.len() <= 6;
-        return (thin && rect_like).then(|| {
-            vec![Rule {
-                x0: b.x0,
-                y0: b.y0,
-                x1: b.x1,
-                y1: b.y1,
-            }]
+    (h <= RULE_THICKNESS && w >= RULE_MIN_LENGTH) || (w <= RULE_THICKNESS && h >= RULE_MIN_LENGTH)
+}
+
+/// The rule a path is, when it is one: filled thin rectangles (one or many
+/// in one path: Word paints each border as its own `re f`, LibreOffice and
+/// Excel often paint many in one), or stroked axis-aligned segments (each
+/// segment of a stroked rectangle counts). O(path).
+fn rules_of(path: &PathEvidence) -> Option<Vec<Rule>> {
+    if let Some(fill) = path.fill
+        && path.stroke.is_none()
+    {
+        let rects = rectangles(path)?;
+        return rects.iter().all(thin).then(|| {
+            rects
+                .iter()
+                .map(|b| Rule {
+                    x0: b.x0,
+                    y0: b.y0,
+                    x1: b.x1,
+                    y1: b.y1,
+                    color: fill,
+                })
+                .collect()
         });
     }
     let stroke = path.stroke.as_ref()?;
     if stroke.width > RULE_THICKNESS * 2.0 {
         return None;
     }
+    let color = stroke.color;
     let half = stroke.width / 2.0;
     let mut out = Vec::new();
     let mut start = None;
@@ -207,6 +294,7 @@ fn rules_of(path: &PathEvidence) -> Option<Vec<Rule>> {
                         y0: a.y - half,
                         x1: a.x.max(p.x),
                         y1: a.y + half,
+                        color,
                     });
                 } else if (a.x - p.x).abs() < 0.5 && (a.y - p.y).abs() >= RULE_MIN_LENGTH {
                     out.push(Rule {
@@ -214,6 +302,7 @@ fn rules_of(path: &PathEvidence) -> Option<Vec<Rule>> {
                         y0: a.y.min(p.y),
                         x1: a.x + half,
                         y1: a.y.max(p.y),
+                        color,
                     });
                 } else if (a.x - p.x).abs() >= 0.5 || (a.y - p.y).abs() >= 0.5 {
                     return None;
@@ -233,6 +322,7 @@ fn rules_of(path: &PathEvidence) -> Option<Vec<Rule>> {
                             y0: y0 - half,
                             x1,
                             y1: y0 + half,
+                            color,
                         });
                     } else {
                         out.push(Rule {
@@ -240,6 +330,7 @@ fn rules_of(path: &PathEvidence) -> Option<Vec<Rule>> {
                             y0,
                             x1: x0 + half,
                             y1,
+                            color,
                         });
                     }
                 }
@@ -357,6 +448,14 @@ impl PdfSourceState {
                         }
                     }
                     None => {
+                        // A flat filled rectangle is shading evidence too.
+                        if let Some(Some(color)) = path.fill
+                            && path.stroke.is_none()
+                            && let Some(rects) = rectangles(path)
+                        {
+                            out.fills
+                                .extend(rects.into_iter().map(|bounds| Fill { bounds, color }));
+                        }
                         if art.is_none() {
                             art_over = last_picture;
                         }

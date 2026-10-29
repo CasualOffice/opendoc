@@ -327,3 +327,30 @@ fn every_page_stream_glyph_run_names_its_show_operator() {
     }
     assert!(numbered_runs > 100, "{numbered_runs}");
 }
+
+/// The bold spellings producers use besides "Bold" (the corpus sweep found
+/// every LaTeX paper's headings set in `NimbusRomNo9L-Medi` read as body
+/// text). Mutation: drop the `medi` arm and the first assertion fails.
+#[test]
+fn bold_is_read_from_the_names_producers_give_it() {
+    for bold in [
+        "nimbusromno9l-medi",
+        "times-bold",
+        "cmbx12",
+        "arial-black",
+        "myriadpro-semibold",
+        "futura-demi",
+        "minion-bd",
+    ] {
+        assert!(crate::admit::bold_name(bold), "{bold}");
+    }
+    for regular in [
+        "nimbusromno9l-regu",
+        "cmr10",
+        "helvetica",
+        "roboto-medium",
+        "times-roman",
+    ] {
+        assert!(!crate::admit::bold_name(regular), "{regular}");
+    }
+}

@@ -17,6 +17,7 @@ import { POSITION_PRESETS, ROTATE_CHOICES, WRAP_CHOICES, Z_ORDER_CHOICES, active
 import { t } from "./i18n.mjs";
 import { followExternalTarget } from "./link_targets.mjs";
 import { tableToolCommands as buildTableToolCommands } from "./table_commands.mjs";
+import { tableTools } from "./table_tools.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -235,6 +236,14 @@ export function createContextMenu(ed) {
     openTableProperties: () => ed.toggleTableProperties(true),
     stepTableBand: (axis, sign) => ed.tableChrome.stepCaretBand(ed.selection?.focus?.node, ed.pages, axis, sign),
     moveTableBand: (axis, sign) => ed.tableGutter.moveBand(ed.selection?.focus?.node, axis, sign),
+    // The table tools (`table_tools.mjs`): the dialogs, Split Table, the style
+    // options and text direction, the same functions the Table band calls.
+    openTableToolDialog: (kind) => tableTools.openDialog(kind),
+    splitTable: () => tableTools.splitTable(),
+    lookOptions: () => tableTools.lookOptions(),
+    toggleTableLook: (option, on) => tableTools.toggleLook(option, on),
+    cellTextDirection: () => tableTools.textDirection(),
+    setCellTextDirection: (direction) => tableTools.setTextDirection(direction),
   };
 
   const tableToolCommands = (context) => buildTableToolCommands(context, TABLE_COMMAND_HOST);
@@ -344,6 +353,29 @@ export function createContextMenu(ed) {
         icon: "linkOpen",
         run: () => void ed.followTocEntry(ed.selection?.focus?.node),
       });
+    }
+    // On a generated contents (or figures) entry: Word's right-click offers
+    // Update Field, and ONLYOFFICE's offers Update table and Remove
+    // (`docs/153` `page.toc.remove`). Both run the same commands the References
+    // band does, so the menu cannot disagree with the band about what they do.
+    if (ed.tocCommands.fields.count > 0 && ed.tocEntryTargetAt(ed.selection?.focus?.node)) {
+      annotate.push(
+        {
+          id: "reference.updateFields",
+          label: t("toc.update.command"),
+          group: "annotate",
+          icon: "linkOpen",
+          run: () => ed.tocCommands.update.open(),
+        },
+        {
+          id: "reference.removeToc",
+          label: t("toc.remove.command"),
+          group: "annotate",
+          icon: "reject",
+          danger: true,
+          run: () => void ed.tocCommands.remove.run(),
+        },
+      );
     }
     if (context.link) {
       const linkReason = context.suggesting

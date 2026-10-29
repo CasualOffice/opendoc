@@ -258,10 +258,14 @@ impl PdfImportJob {
         self.finish_package().map_err(|e| JsValue::from_str(&e))
     }
 
-    /// "Convert to flowing document": the finished import reflowed into a
-    /// new document of paragraphs, headings, lists and tables, as a package
-    /// for the main module's `openPdfReflow`. Its findings are the reflow's
-    /// inferences. Runs any pages left. O(document log document).
+    /// The flowing document (the default open, and "Convert to flowing
+    /// document", `docs/182` §4): the finished import reconstructed into
+    /// paragraphs, headings, lists, tables, header and footer, footnotes and
+    /// columns, as a package for the main module's `openPdfReflow`. Its
+    /// findings are the whole import's (`PdfImport::flowing`): what reading
+    /// the pages found, what the reconstruction inferred, and
+    /// `pdf.import.layout_inferred`. Runs any pages left.
+    /// O(document log document).
     ///
     /// # Errors
     ///
@@ -302,7 +306,7 @@ impl PdfImportJob {
     /// As [`Self::finish_reflowed`].
     pub fn finish_reflowed_package(&mut self) -> Result<Vec<u8>, String> {
         let imported = self.finish_import()?;
-        let reflowed = imported.reflow().map_err(|error| error.to_string())?;
+        let reflowed = imported.flowing().map_err(|error| error.to_string())?;
         let ocr = casual_doc_pdf_import::wire::ocr(&imported.ocr);
         let package = wire::ImportPackage {
             document_json: reflowed

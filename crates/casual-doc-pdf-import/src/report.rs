@@ -107,7 +107,9 @@ pub const FEATURES: &[&str] = &[
     COMMENT_INFERRED,
     DEHYPHENATION_INFERRED,
     ENCRYPTED_UNSUPPORTED,
+    EXACT_SAVE_FIXED_LAYOUT_ONLY,
     FLOAT_INFERRED,
+    FLOWING_UNAVAILABLE,
     FONT_EMBEDDED,
     FONT_SUBSTITUTED,
     FOOTNOTE_INFERRED,
@@ -121,8 +123,11 @@ pub const FEATURES: &[&str] = &[
     IMAGE_UNDECODABLE,
     INVISIBLE_TEXT,
     JUSTIFICATION_INFERRED,
+    LAYOUT_INFERRED,
+    LIGATURE_DECOMPOSED,
     LINK_UNRESOLVED,
     LIST_INFERRED,
+    MARKS_COMPOSED,
     NATIVE_OCR_CONFLICT,
     NATIVE_TEXT_INVALID,
     OCR_APPLIED,
@@ -135,8 +140,11 @@ pub const FEATURES: &[&str] = &[
     PAGE_SIZE_CLAMPED,
     PARAGRAPH_BOUNDARY_INFERRED,
     PATTERN_FLATTENED,
+    QUOTE_FROM_GLYPH_NAME,
     READING_ORDER_INFERRED,
     STYLE_INFERRED,
+    SYMBOL_FONT_MAPPED,
+    TABLE_CONTINUED,
     TABLE_INFERRED,
     TABLE_TOPOLOGY_DEGRADED,
     TAG_STRUCTURE_IGNORED,
@@ -183,8 +191,10 @@ pub const INVISIBLE_TEXT: &str = "pdf.import.invisible_text";
 /// disagree. The native text is kept (PDFR-I2); the count says how often the
 /// page's pixels and its text layer differ.
 pub const NATIVE_OCR_CONFLICT: &str = "pdf.import.native_ocr_conflict";
-/// Glyphs with no Unicode mapping: imported as U+FFFD, or, when OCR read the
-/// place they are drawn, replaced by the optical text (`ocr_applied`).
+/// Glyphs with no Unicode mapping (none, U+FFFD, a control character, a
+/// symbol-font code no table knows): their characters are left out of the
+/// text, never written as U+FFFD, or, when OCR read the place they are drawn,
+/// replaced by the optical text (`ocr_applied`).
 pub const NATIVE_TEXT_INVALID: &str = "pdf.import.native_text_invalid";
 /// Regions (pictures, or runs with no Unicode) read by OCR. The text is
 /// inferred from pixels, so it is reported even when every word is confident.
@@ -202,8 +212,8 @@ pub const OCR_LOW_CONFIDENCE: &str = "pdf.import.ocr_low_confidence";
 /// shows the scan again.
 pub const OCR_SCAN_COVERED: &str = "pdf.import.ocr_scan_covered";
 /// Regions that need OCR when the host supplied no recognition model: their
-/// text is not in the document (pictures stay pictures; unmapped runs stay
-/// U+FFFD).
+/// text is not in the document (pictures stay pictures; glyphs with no
+/// Unicode are left out, reported `native_text_invalid`).
 pub const OCR_UNAVAILABLE: &str = "pdf.import.ocr_unavailable";
 /// Optional content (layers) flattened to its default visibility.
 pub const OPTIONAL_CONTENT_FLATTENED: &str = "pdf.import.optional_content_flattened";
@@ -267,6 +277,38 @@ pub const STYLE_INFERRED: &str = "pdf.import.style_inferred";
 /// Reflow: a ruling-line grid, or whitespace-aligned columns above the
 /// confidence threshold, became a table.
 pub const TABLE_INFERRED: &str = "pdf.import.table_inferred";
+/// The PDF opened as a flowing document (the default, `docs/182` §4.2):
+/// paragraphs, headings, lists, tables, columns, header and footer, and
+/// footnotes were reconstructed from the page layout, which is evidence, not
+/// the document. The other `*_inferred` rows say what was reconstructed;
+/// "Keep exact page layout" opens the pages as they are instead.
+pub const LAYOUT_INFERRED: &str = "pdf.import.layout_inferred";
+/// A flowing document is a new document: saving it as PDF writes a new PDF
+/// (the semantic writer), never the original with an incremental update.
+/// The byte-preserving save (`docs/182` §7, P4) is fixed layout's only.
+pub const EXACT_SAVE_FIXED_LAYOUT_ONLY: &str = "pdf.import.exact_save_fixed_layout_only";
+/// The flowing reconstruction failed validation (an importer defect), so
+/// the PDF opened in its exact page layout instead.
+pub const FLOWING_UNAVAILABLE: &str = "pdf.import.flowing_unavailable";
+/// Ligature glyphs (U+FB00–FB06) imported as their letters, so the text
+/// searches and spell checks (`casual_doc_pdf_read::unicode`).
+pub const LIGATURE_DECOMPOSED: &str = "pdf.import.ligature_decomposed";
+/// Symbol, Wingdings and Zapf Dingbats codes (their private-use or Latin
+/// stand-ins) imported as the characters they draw: bullets, arrows,
+/// checkboxes, Greek and mathematical signs. Drawn with a text face.
+pub const SYMBOL_FONT_MAPPED: &str = "pdf.import.symbol_font_mapped";
+/// A combining mark or a spacing accent drawn as its own glyph over a
+/// letter, joined to the letter (composed to NFC where Unicode has the
+/// precomposed character).
+pub const MARKS_COMPOSED: &str = "pdf.import.marks_composed";
+/// A straight quote the font's `ToUnicode` gave a glyph the program names a
+/// curly quote (`quoteright`, `quotedblleft`, ...): imported as the named
+/// quote.
+pub const QUOTE_FROM_GLYPH_NAME: &str = "pdf.import.quote_from_glyph_name";
+/// Reflow: a table a page break cut in two (the last element of one page and
+/// the first of the next, with the same columns) became one table; a header
+/// row the next page repeated became a repeating header row.
+pub const TABLE_CONTINUED: &str = "pdf.import.table_continued";
 /// Reflow: whitespace-aligned columns scored below the table threshold and
 /// were kept as paragraphs.
 pub const TABLE_TOPOLOGY_DEGRADED: &str = "pdf.import.table_topology_degraded";

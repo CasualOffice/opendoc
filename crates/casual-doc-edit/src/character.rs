@@ -111,6 +111,17 @@ pub struct CharacterFormatDelta {
         skip_serializing_if = "Option::is_none"
     )]
     pub ligatures: Option<Option<Ligatures>>,
+    /// Set or clear the Latin language tag (`w:lang@w:val`, a BCP 47 tag such as
+    /// `fr-FR`); absent preserves it. The East Asian and complex-script tags
+    /// are left as they are, which is what Word's Set Proofing Language does to
+    /// a Latin selection (`docs/153` `text.language-of-selection`). Clearing
+    /// the Latin tag of a run that carries no other tag removes `w:lang`.
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub language: Option<Option<String>>,
 }
 impl CharacterFormatDelta {
     /// Remove exactly the properties a later concurrent patch writes.
@@ -130,6 +141,7 @@ impl CharacterFormatDelta {
             position_half_points,
             kerning_half_points,
             ligatures,
+            language,
         } = self.clone();
         let remaining = Self {
             all_caps: all_caps.filter(|_| other.all_caps.is_none()),
@@ -150,6 +162,7 @@ impl CharacterFormatDelta {
             kerning_half_points: kerning_half_points
                 .filter(|_| other.kerning_half_points.is_none()),
             ligatures: ligatures.filter(|_| other.ligatures.is_none()),
+            language: language.filter(|_| other.language.is_none()),
         };
         (remaining != Self::default()).then(|| Box::new(remaining))
     }
@@ -197,12 +210,18 @@ impl CharacterFormatDelta {
         if let Some(value) = &self.ligatures {
             props.ligatures = *value;
         }
+        if let Some(value) = &self.language {
+            let mut language = props.language.take().unwrap_or_default();
+            language.value.clone_from(value);
+            props.language = (!language.is_empty()).then_some(language);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casual_doc_model::v1::Language;
     #[test]
     fn absent_null_and_false_are_distinct_and_other_properties_survive() {
         let mut props = RunProperties {
@@ -224,5 +243,33 @@ mod tests {
             serde_json::json!({"allCaps":null,"shadow":false,"characterSpacingTwips":30})
         );
         assert!(serde_json::from_str::<CharacterFormatDelta>(r#"{"unknown":true}"#).is_err());
+    }
+
+    #[test]
+    fn language_sets_and_clears_only_the_latin_tag() {
+        let mut props = RunProperties {
+            language: Some(Language {
+                value: Some("en-US".into()),
+                east_asia: Some("ja-JP".into()),
+                bidi: None,
+            }),
+            ..Default::default()
+        };
+        let set: CharacterFormatDelta = serde_json::from_str(r#"{"language":"fr-FR"}"#).unwrap();
+        set.apply_to(&mut props);
+        let language = props.language.as_ref().unwrap();
+        assert_eq!(language.value.as_deref(), Some("fr-FR"));
+        assert_eq!(language.east_asia.as_deref(), Some("ja-JP"));
+        let clear: CharacterFormatDelta = serde_json::from_str(r#"{"language":null}"#).unwrap();
+        clear.apply_to(&mut props);
+        assert_eq!(props.language.as_ref().unwrap().value, None);
+        props.language.as_mut().unwrap().east_asia = None;
+        clear.apply_to(&mut props);
+        assert_eq!(
+            props.language, None,
+            "an empty w:lang is removed, not kept empty"
+        );
+        // A concurrent patch that writes the language wins over this one's.
+        assert_eq!(set.without(&set), None);
     }
 }

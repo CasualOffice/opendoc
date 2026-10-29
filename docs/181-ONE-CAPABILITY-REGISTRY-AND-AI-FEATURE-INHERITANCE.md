@@ -188,6 +188,39 @@ already excluded; `casual_doc_command::sections::set_page_borders` exists, so of
 agents later is one registry entry and lowers the ceiling back to 16. The editor command
 `layout.pageBorders` is listed in `registry::UI_NOT_EXPOSED` for the same reason
 (`UI_NOT_EXPOSED_CEILING` 84 → 85).
+`reference.removeToc`, `reference.tableOfFigures` and the `reference.addText.`
+family (`109` RM-25: Remove table of contents, Insert table of figures, and Add
+text's contents levels) are listed there too, until a contents command grows
+`remove`, `captions` and outline-level arguments (`UI_NOT_EXPOSED_CEILING`
+85 → 88).
+
+**Raised again, deliberately (2026-10-30, `lane/parity-tables-toc`):**
+`UI_NOT_EXPOSED_CEILING` +11 for eleven editor table tools (`109` RM-26, RM-27): the six
+table style options (`table.look.*`), `table.splitTable`, `table.insertCells`,
+`table.deleteCells`, `table.convertToText` and `insert.textToTable`. Their lowerings are in
+`casual_doc_command::table_tools`, pure and shared, so offering each to agents is one registry
+command over an existing function and lowers the ceiling by one. Two neighbours did not need
+the ratchet: the three `table.textDirection.*` commands are named by `table_set_cell_format`,
+which gained `text_direction`, and `insert.tableDialog` by `insert_table`. With the three
+contents ids above, the merged ceiling is 85 + 3 + 11 = **99**.
+
+**Raised again, deliberately (2026-10-30):** `coverage::NOT_EXPOSED_CEILING` 17 → 18 when
+RM-24 added `Operation::SetNoteProperties` (`docs/153` `page.note.settings`). Footnote and
+endnote options — location, number format, start at, restart — are a person's layout choice
+made in the Footnote and Endnote dialog, the same standing as page borders;
+`casual_doc_command::notes::set_note_properties` is the lowering, so offering it to agents
+later is one registry entry. The editor commands `reference.noteSettings` and
+`reference.convertNotes` are listed in `registry::UI_NOT_EXPOSED` (`UI_NOT_EXPOSED_CEILING`
+85 → 87): the first for the same reason, the second because converting a note's kind is an
+editorial decision and an agent already inserts the kind it means with `insert_note`.
+
+**Raised once more (2026-10-30):** `UI_NOT_EXPOSED_CEILING` 85 → 86 with the editor command
+`format.language`, Set Language on the selection (`109` RM-42). It adds no `Operation`: the
+language is one more field of the character patch inside `FormatText`, so `NOT_EXPOSED_CEILING`
+does not move. It is listed with `UI_CHARACTER` because `set_text_format` does not carry the
+character patch yet; when the formatting unification (§4.2 step 2) gives it that field, the
+entry leaves and the ceiling returns to 85. `insert.nonBreakingSpace`, the other editor command
+this change adds, needs no entry: inserting U+00A0 is `insert_text`, which now names it.
 
 **What "a feature inherits MCP" therefore means, concretely.** A developer adding, say,
 footnote insertion writes `InsertFootnote: Command` with its `lower()` (moved out of

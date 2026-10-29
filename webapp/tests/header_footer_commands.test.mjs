@@ -16,10 +16,12 @@ import {
   BAND_COMMANDS,
   HEADER_FOOTER_COMMAND_IDS,
   PAGE_NUMBER_POSITIONS,
+  PAGE_OF_TOTAL,
   bandCommandLabel,
   bandCommandReason,
   bandLabel,
   parseLinkState,
+  splitPageOfTotal,
 } from "../src/header_footer_commands.mjs";
 import { commandContract } from "../src/host_contract.mjs";
 import { menuCommandIds } from "../src/command_taxonomy.mjs";
@@ -103,5 +105,35 @@ test("every band command is a host-contract command with an Insert-menu home", (
   for (const id of HEADER_FOOTER_COMMAND_IDS) {
     assert.equal(commandContract(id)?.requires, "mutate", `${id} is a mutate command in the host contract`);
     assert.ok(insertIds.has(id), `${id} has a row in the Insert menu`);
+  }
+});
+
+// Mutation: return the English shape unconditionally from `splitPageOfTotal` —
+// the Chinese pattern then loses its words after the count and the second
+// assertion fails.
+test("Page X of Y splits the catalogue's pattern around its two fields, in every shape", () => {
+  assert.deepEqual(splitPageOfTotal(english["pageNumber.ofTotalPattern"]), {
+    before: "Page ",
+    between: " of ",
+    after: "",
+  });
+  assert.deepEqual(splitPageOfTotal("第 {page} 页，共 {pages} 页"), {
+    before: "第 ",
+    between: " 页，共 ",
+    after: " 页",
+  });
+  // Fields are always PAGE then NUMPAGES: a pattern that reverses or drops a
+  // placeholder falls back rather than writing them in the wrong order.
+  assert.deepEqual(splitPageOfTotal("{pages} / {page}"), { before: "Page ", between: " of ", after: "" });
+  assert.deepEqual(splitPageOfTotal(undefined), { before: "Page ", between: " of ", after: "" });
+  assert.equal(PAGE_OF_TOTAL.band, "footer");
+  assert.ok(HEADER_FOOTER_COMMAND_IDS.includes(PAGE_OF_TOTAL.command));
+});
+
+test("every locale's Page X of Y pattern keeps {page} before {pages}", () => {
+  for (const tag of ["ar", "de", "es", "fr", "hi", "id", "it", "ja", "ko", "nl", "pl", "pt-BR", "ru", "tr", "uk", "vi", "zh-Hans", "zh-Hant"]) {
+    const catalogue = JSON.parse(readFileSync(new URL(`../locales/${tag}.json`, import.meta.url), "utf8"));
+    const pattern = catalogue["pageNumber.ofTotalPattern"];
+    assert.ok(pattern.indexOf("{page}") >= 0 && pattern.indexOf("{page}") < pattern.indexOf("{pages}"), `${tag}: ${pattern}`);
   }
 });

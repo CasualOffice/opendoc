@@ -38,6 +38,8 @@ use casual_doc_model::v1::FieldUpdateState;
 use casual_doc_model::v1::FormFieldKind;
 use casual_doc_model::v1::LineNumbering;
 use casual_doc_model::v1::PageBorders;
+// Its own line (parallel lanes, rustfmt Preserve): the footnote/endnote options op.
+use casual_doc_model::v1::NoteProperties;
 use casual_doc_model::v1::PageNumbering;
 use casual_doc_model::v1::PageVerticalAlignment;
 use casual_doc_model::v1::PaginatedField;
@@ -1254,6 +1256,29 @@ pub enum Operation {
         section: SectionId,
         /// The borders to install; the empty value removes them.
         page_borders: Box<PageBorders>,
+    },
+    /// Replace the footnote or endnote options (`w:footnotePr`/`w:endnotePr`) —
+    /// Word's Footnote and Endnote dialog: location, number format, start at and
+    /// restart — of one section, or of the document's own defaults in
+    /// `w:settings` when `section` is `None`, leaving every other property alone
+    /// (`docs/153` `page.note.settings`).
+    ///
+    /// Self-inverse, carrying the previous options. Rejected (doc left unchanged)
+    /// when a value falls outside the model's domain (a number format token over
+    /// its bound, a start outside `0..=32_767`). The EMPTY value clears the
+    /// element, which is what import produces for a section without one and what
+    /// export skips; layout then reads the next layer down (section, then the
+    /// settings default, then Word's defaults — `casual-doc-layout`
+    /// `note_numbering.rs`).
+    ///
+    /// Boxed to keep the enum small — the number format can carry a string.
+    SetNoteProperties {
+        /// The section to update, or `None` for the document's defaults.
+        section: Option<SectionId>,
+        /// Footnotes or endnotes.
+        kind: NoteKind,
+        /// The options to install; the empty value clears them.
+        properties: Box<NoteProperties>,
     },
     /// Replace one section's page numbering (`w:pgNumType`) — the format the
     /// `PAGE` field renders in, and the number the section's first page takes —
@@ -3104,6 +3129,26 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
                 page_borders: Box::new(previous),
             })
         }
+        Operation::SetNoteProperties {
+            section,
+            kind,
+            properties,
+        } => {
+            let slot = note_properties_slot(doc, *section, *kind)?;
+            let previous = core::mem::replace(slot, (**properties).clone());
+            if doc.validate().is_err() {
+                // Put the options back before reporting, so a rejected edit leaves
+                // the document exactly as it was.
+                *note_properties_slot(doc, *section, *kind)
+                    .expect("the slot we just wrote still exists") = previous;
+                return Err(EditError::ValueTooLarge);
+            }
+            Ok(Operation::SetNoteProperties {
+                section: *section,
+                kind: *kind,
+                properties: Box::new(previous),
+            })
+        }
         Operation::SetSectionPageNumbering {
             section,
             page_numbering,
@@ -3448,6 +3493,35 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
 /// SDT), where no top-level boundary exists. Callers align run boundaries with
 /// [`ensure_run_boundary`] first, so a run straddling the offset has already been
 /// split; the index then lands exactly between the two halves.
+/// The footnote or endnote options [`Operation::SetNoteProperties`] writes: one
+/// section's, or the document defaults in settings. `NodeNotFound` for a section
+/// that is not there. O(sections).
+fn note_properties_slot(
+    doc: &mut Document,
+    section: Option<SectionId>,
+    kind: NoteKind,
+) -> Result<&mut NoteProperties, EditError> {
+    let definitions = doc.definitions_mut();
+    let (footnotes, endnotes) = match section {
+        None => {
+            let settings = &mut definitions.settings;
+            (&mut settings.footnote_props, &mut settings.endnote_props)
+        }
+        Some(id) => {
+            let boundary = definitions
+                .sections
+                .iter_mut()
+                .find(|candidate| candidate.id == id)
+                .ok_or(EditError::NodeNotFound)?;
+            (&mut boundary.footnote_props, &mut boundary.endnote_props)
+        }
+    };
+    Ok(match kind {
+        NoteKind::Footnote => footnotes,
+        NoteKind::Endnote => endnotes,
+    })
+}
+
 fn top_level_insert_index(inlines: &[InlineNode], offset: u32) -> Option<usize> {
     let mut cum = 0u32;
     for (idx, inline) in inlines.iter().enumerate() {
@@ -3987,6 +4061,15 @@ fn set_object_anchor_in_inlines(
             }
             InlineNode::Group(group) if group.id == object => {
                 return group.anchor.replace(anchor.clone());
+            }
+            // An already-floating chart or diagram (`docs/109` HF-260), on the
+            // same terms as a text box: re-anchoring does not float an in-line
+            // one, which is the anchor-kind conversion's job.
+            InlineNode::EmbeddedObject(embedded) if embedded.id == object => {
+                return embedded
+                    .anchor
+                    .as_mut()
+                    .map(|current| core::mem::replace(current, anchor.clone()));
             }
             _ => {}
         }
@@ -5459,6 +5542,24 @@ pub fn run_properties_in_paragraph_range(
         .into_iter()
         .filter(|s| s.end > start && s.start < end && s.start < s.end)
         .map(|s| s.properties)
+        .collect()
+}
+
+/// A run's byte range in the projected paragraph text and its direct
+/// properties, as [`run_property_spans`] lists them.
+pub type RunPropertySpan<'a> = (u32, u32, &'a RunProperties);
+
+/// Every non-empty run of a resolved paragraph as `(start, end, properties)`,
+/// with byte offsets in the same projected text [`run_properties_in_paragraph_range`]
+/// reads. What a per-run question (the language a word is proofed in) needs
+/// that a range query cannot answer: WHERE each run's properties apply.
+/// O(inlines in the paragraph).
+#[must_use]
+pub fn run_property_spans(para: &Paragraph) -> Vec<RunPropertySpan<'_>> {
+    flatten_run_segments(&para.inlines)
+        .into_iter()
+        .filter(|s| s.start < s.end)
+        .map(|s| (s.start, s.end, s.properties))
         .collect()
 }
 

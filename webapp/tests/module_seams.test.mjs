@@ -467,7 +467,14 @@ const SRC = new URL("../src/", import.meta.url);
 // 2978 -> 2981 with the header/footer band's commands (`109` HF-192, #910):
 // three domain modules reach `ed.headerFooterBand`, which costs a binding with
 // its comment and one context line. MEASURED with `wc -l`.
-const MAIN_JS_LINE_CEILING = 2981;
+// 2981 -> 2985 with Display for review (`docs/153` review.display-mode-*, RM-31):
+// the picker is its own module (`review_display.mjs`); `main.js` pays its import,
+// its construction, its context getter and the one line that tells it the markup
+// layout changed. MEASURED with `wc -l`.
+// 2985 -> 2988 with the note commands (`docs/153` page.note.*, RM-24): the menu
+// and both dialogs are `note_commands.mjs`; `main.js` pays its import, its
+// construction and its context getter. MEASURED with `wc -l`.
+const MAIN_JS_LINE_CEILING = 2988;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

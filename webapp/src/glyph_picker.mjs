@@ -9,6 +9,15 @@
 // what to do with a chosen glyph, whether editing is currently refused, and
 // where focus goes afterwards. That is what lets the grid's filtering and
 // keyboard model be tested without an engine behind it.
+//
+// A group or an item may carry a catalogue key (`nameKey`, `k`) for its name,
+// and an item a `d`, the glyph its cell SHOWS when the character itself is
+// invisible (a no-break space). Keys are resolved when the picker opens, never
+// at boot, because the catalogue lands later.
+import { t } from "./i18n.mjs";
+
+const groupName = (group) => (group.nameKey ? t(group.nameKey) : group.name);
+const itemName = (item) => (item.k ? t(item.k) : item.n);
 
 export function createGlyphPicker({
   dialogId,
@@ -62,7 +71,8 @@ export function createGlyphPicker({
       return groups
         .flatMap((group) => group.items)
         .filter(
-          (item) => item.n.toLowerCase().includes(query) || item.c === query,
+          (item) =>
+            itemName(item).toLowerCase().includes(query) || item.n.toLowerCase().includes(query) || item.c === query,
         );
     }
     return groups[activeGroup].items;
@@ -76,11 +86,11 @@ export function createGlyphPicker({
       cell.type = "button";
       cell.className = "glyph-cell";
       cell.tabIndex = -1;
-      cell.textContent = item.c;
+      cell.textContent = item.d ?? item.c;
       cell.title = tabsAreEmoji
-        ? item.n
-        : `${item.n} (U+${item.c.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")})`;
-      cell.setAttribute("aria-label", item.n);
+        ? itemName(item)
+        : `${itemName(item)} (U+${item.c.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")})`;
+      cell.setAttribute("aria-label", itemName(item));
       cell.dataset.glyph = item.c;
       cell.addEventListener("click", () => insertGlyph(item.c));
       grid.append(cell);
@@ -170,6 +180,14 @@ export function createGlyphPicker({
     const siblingId = tabsAreEmoji ? "symbolDialog" : "emojiDialog";
     const sibling = document.getElementById(siblingId);
     if (sibling && !sibling.hidden) sibling.hidden = true;
+    // Keyed tab names are applied now, when the catalogue is certainly loaded.
+    groups.forEach((group, index) => {
+      const tab = group.nameKey && tabs.querySelector(`[data-group-index="${index}"]`);
+      if (!tab) return;
+      tab.title = groupName(group);
+      tab.setAttribute("aria-label", groupName(group));
+      if (!tabsAreEmoji) tab.textContent = groupName(group);
+    });
     returnFocus = document.activeElement;
     search.value = "";
     selectGroup(0);

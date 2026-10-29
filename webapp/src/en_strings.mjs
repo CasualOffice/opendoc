@@ -109,6 +109,8 @@ export const EN_STRINGS = Object.freeze({
   "menuGroup.navigation": "Navigation",
   "menuGroup.newAndOpen": "New and open",
   "menuGroup.notes": "Notes",
+  // References ▸ Notes ▸ the Next / Previous footnote and endnote flyout.
+  "menuGroup.goToNote": "Go to a note",
   "menuGroup.paragraph": "Paragraph",
   "menuGroup.print": "Print",
   "menuGroup.proofing": "Proofing",
@@ -129,6 +131,8 @@ export const EN_STRINGS = Object.freeze({
   "menuGroup.textColor": "Text color",
   "menuGroup.textWidth": "Text width",
   "menuGroup.tracking": "Tracking",
+  // Review ▸ Display for review, the flyout holding the four review views.
+  "menuGroup.displayForReview": "Display for review",
   "menuGroup.undo": "Undo",
   "menuGroup.zoom": "Zoom",
   // The one sentence white-labelling needs (docs/126 phase 3). A deployment whose
@@ -332,6 +336,21 @@ export const EN_STRINGS = Object.freeze({
   "toc.noneToUpdate": "This document has no generated table of contents to update",
   "toc.jumpedTo": "Jumped to {heading}",
   "toc.notAnEntry": "Put the caret on a table-of-contents entry first",
+  // The settings dialog, Remove, Add text and the table of figures (RM-25).
+  "toc.styleLevel": "Contents level for {style}",
+  "toc.noStylesChosen": "Give at least one style a contents level",
+  "toc.caretInOtherTable": "The caret is in another kind of table; move it out to insert this one",
+  "toc.figures.inserted": "Table of figures inserted",
+  "toc.figures.command": "Insert table of figures…",
+  "toc.remove.command": "Remove table of contents",
+  "toc.removed": "Table of contents removed",
+  "toc.update.command": "Update table…",
+  "toc.addText.none": "Do not show in table of contents",
+  "toc.addText.level": "Level {level}",
+  "toc.addText.paletteNone": "Add text: do not show in table of contents",
+  "toc.addText.paletteLevel": "Add text to table of contents: level {level}",
+  "toc.addText.done": "Listed in the table of contents at level {level}",
+  "toc.addText.removed": "No longer listed in the table of contents",
   "paragraph.caretRequired": "Place the caret in a paragraph",
   // Why Restart / Continue numbering and Insert ▸ Link are unavailable. They were
   // the palette rows' English literals while the buttons for the same commands
@@ -460,6 +479,11 @@ export const EN_STRINGS = Object.freeze({
   "pageNumber.bottomCenter": "Page number: bottom center",
   "pageNumber.bottomRight": "Page number: bottom right",
   "menuGroup.pageNumbers": "Page numbers",
+  // Word's "Page X of Y". The PATTERN is document text, split around its two
+  // placeholders (`splitPageOfTotal`): keep `{page}` before `{pages}`.
+  "pageNumber.pageOfTotal": "Page number: Page X of Y",
+  "pageNumber.ofTotalPattern": "Page {page} of {pages}",
+  "pageNumber.atCursor": "Page number at the cursor",
   // The band's own chrome: the marker that opens an absent band, the status
   // line while one is open, the label Word draws on the band ("Header
   // -Section 2-"), and the footer half of the bar's Link to previous title (the
@@ -785,6 +809,28 @@ export const EN_STRINGS = Object.freeze({
   "findings.feature.pdfPageBreaks": "Page breaks inferred from where pages end",
   "findings.feature.pdfFloats": "Pictures and drawings floated beside or behind their text",
   "findings.feature.pdfVectorsPlaced": "Drawings placed as shapes",
+  // A PDF opened as a flowing document, and the characters the reader made
+  // fit for editing (`docs/182` §4, §18.8).
+  "findings.feature.pdfLayoutInferred": "Layout rebuilt as a flowing document",
+  "findings.feature.pdfExactSaveFixedOnly": "Saved as PDF, a new file (only the exact page layout saves into the original)",
+  "findings.feature.pdfLigatures": "Ligatures split into their letters",
+  "findings.feature.pdfSymbolFonts": "Symbol-font characters mapped to standard characters",
+  "findings.feature.pdfMarksComposed": "Accents joined to their letters",
+  "findings.feature.pdfQuotes": "Curly quotes restored from the font",
+  "findings.feature.pdfTableContinued": "Tables split by a page break joined",
+  "findings.feature.pdfFlowingUnavailable": "Opened with its exact page layout: the flowing rebuild failed",
+  "pdfImport.introFlowing": "Rebuilding the PDF as an editable document of paragraphs, headings, lists and tables, on this device.",
+  "pdfImport.keepLayout": "Keep exact page layout",
+  "pdfImport.keepLayoutHint": "Open every page as it is drawn, in positioned frames, instead of a flowing document.",
+  "pdfFixed.command": "Keep exact page layout",
+  "pdfFixed.title": "Opening {name} with its exact page layout",
+  "pdfFixed.cancelled": "Reopening {name} was cancelled — the document you had open is still here",
+  "pdfFixed.failed": "Could not reopen {name}: {reason}",
+  "pdfFixed.notPdf": "Only a document opened from a PDF can be reopened with its exact page layout.",
+  "pdfFixed.already": "This PDF is already open with its exact page layout.",
+  "pdfReflow.alreadyFlowing": "This PDF is already open as a flowing document.",
+  "findings.pdfFlowing.keepLayout": "To see each page exactly as the PDF draws it, choose Keep exact page layout.",
+  "findings.pdfFlowing.save": "It saves as a Word document. Saved as PDF it is a new file; the original PDF is unchanged.",
   // Opening a PDF (`pdf_import.mjs`): the progress dialog over the staged import.
   "pdfImport.title": "Opening {name}",
   "pdfImport.openFailed": "Could not open {name}: {message}",
@@ -1124,12 +1170,50 @@ export const EN_STRINGS = Object.freeze({
   // sees each shape once.
   "autocorrect.smartQuotes": "Smart quotes",
   "autocorrect.lists": "Automatic lists",
-  "autocorrect.text": "AutoCorrect",
   "autocorrect.command": "{name}: {state}",
   "autocorrect.stateOn": "on",
   "autocorrect.stateOff": "off",
   "autocorrect.statusOn": "{name} on",
   "autocorrect.statusOff": "{name} off",
+  // The rest of Word's switches and the AutoCorrect options dialog (`docs/109`
+  // RM-19; `autocorrect_dialog.mjs`, `autocorrect_table.mjs`).
+  "autocorrect.replace": "Replace text as you type",
+  "autocorrect.capitalise": "Capitalise first letters",
+  "autocorrect.capitaliseCells": "Capitalise table cells",
+  "autocorrect.dashes": "Hyphens to dashes",
+  "autocorrect.hyperlinks": "Automatic hyperlinks",
+  "autocorrect.optionsCommand": "AutoCorrect options…",
+  "autocorrect.entry": "{from} → {to}",
+  "autocorrect.addEntry": "Add",
+  "autocorrect.replaceEntry": "Replace",
+  "autocorrect.entryRefused": "That entry cannot be stored: it must be one line of at most 255 characters.",
+  "autocorrect.entryAdded": "“{from}” will be replaced with “{to}”",
+  "autocorrect.entryDeleted": "“{from}” is no longer replaced",
+  "autocorrect.exceptionAdded": "No capital letter after “{word}”",
+  "autocorrect.exceptionDeleted": "“{word}” is no longer an exception",
+  "autocorrect.listsReset": "The lists for {language} are back to their defaults",
+  "autocorrect.languageShown": "Showing the lists for {language}",
+
+  // The language of the selected text (`docs/109` RM-42; `language_selection.mjs`).
+  "language.command": "Set language…",
+  "language.none": "No language set (the default, {language})",
+  "language.withSpelling": "{language} — spelling checked",
+  "language.checked": "Text in {language} is checked for spelling.",
+  "language.notChecked": "There is no spelling dictionary for {language} yet, so text in it is not checked.",
+  "language.applied": "Language set to {language}",
+  "language.cleared": "Language cleared; the default, {language}, applies",
+  "language.mixed": "Mixed languages",
+  "language.statusTip": "Text language: {language}. Click to change it.",
+  "language.property": "Language",
+
+  // Non-breaking space and the Symbol dialog's special characters (RM-19).
+  "insert.nonBreakingSpace": "Non-breaking space",
+  "glyph.special": "Special characters",
+  "glyph.nonBreakingSpace": "No-break space",
+  "glyph.narrowNonBreakingSpace": "Narrow no-break space",
+  "glyph.enSpace": "En space",
+  "glyph.emSpace": "Em space",
+  "glyph.thinSpace": "Thin space",
 
   // ── Version history (docs/139, docs/140, ADR-038/ADR-039) ──────────────────
   //
@@ -1769,6 +1853,37 @@ export const EN_STRINGS = Object.freeze({
   "proofDocument.notConfigured": "Proofing is not set up for this document.",
   "proofDocument.disposed": "Proofing has been shut down for this document.",
   "table.moveSubmenu": "Move",
+  // The table tools (`table_tools.mjs`, `docs/153` table rows).
+  "table.tools.insertCellsCommand": "Insert cells…",
+  "table.tools.deleteCellsCommand": "Delete cells…",
+  "table.tools.splitTableCommand": "Split table",
+  "table.tools.convertToTextCommand": "Convert to text…",
+  "table.tools.lookSubmenu": "Style options",
+  "table.tools.directionSubmenu": "Text direction",
+  "table.tools.insertDialogCommand": "Insert table by size…",
+  "table.tools.textToTableCommand": "Convert text to table…",
+  "table.look.headerRow": "Header row",
+  "table.look.firstColumn": "First column",
+  "table.look.totalRow": "Total row",
+  "table.look.lastColumn": "Last column",
+  "table.look.bandedRows": "Banded rows",
+  "table.look.bandedColumns": "Banded columns",
+  "table.textDirection.horizontal": "Horizontal text",
+  "table.textDirection.rotateDown": "Rotate text down",
+  "table.textDirection.rotateUp": "Rotate text up",
+  "table.tools.inserted": "Table inserted",
+  "table.tools.convertedFromText": "Text converted to a table",
+  "table.tools.convertedToText": "Table converted to text",
+  "table.tools.split": "Table split",
+  "table.tools.cellsInserted": "Cells inserted",
+  "table.tools.cellsDeleted": "Cells deleted",
+  "table.tools.columnsRange": "Enter a whole number of columns from 1 to {max}.",
+  "table.tools.rowsRange": "Enter a whole number of rows from 1 to {max}.",
+  "table.tools.otherEmpty": "Type a character to separate the text at.",
+  "table.tools.selectParagraphs": "Select paragraphs outside a table to convert them to a table.",
+  "table.tools.lookOn": "Turned on:",
+  "table.tools.lookOff": "Turned off:",
+  "table.tools.directionSet": "Text direction:",
   "table.dragToMoveRow": "Drag to move this row",
   "table.dragToMoveColumn": "Drag to move this column",
   "table.rowMoved": "Row {from} moved to position {to}",
@@ -1840,6 +1955,32 @@ export const EN_STRINGS = Object.freeze({
   // change made here removes (ADR-052, updated 2026-10-09). `{status}` is one of
   // the sentences above.
   "protect.withPasswordRemoved": "{status}. The password set in Word was removed.",
+  // The password (`docs/153` `review.protection-password`, ADR-052 as amended
+  // 2026-10-30): the status after a passworded restriction is installed, and the
+  // three refusals said beside the dialog's fields. `protect.wrongPassword` is
+  // also the routed sentence for the engine's `document.protection-wrong-password`.
+  "protect.appliedWithPassword": "Editing restricted to: {level}, with a password",
+  "protect.passwordMismatch": "The two new passwords don't match",
+  "protect.passwordRequired": "Enter the password to change or stop this restriction",
+  "protect.wrongPassword": "That isn't the password this restriction was set with",
+
+  // Display for review (`review_display.mjs`, `docs/153` review.display-mode-*).
+  // The four mode names and the trigger's tip are markup keys; these are the
+  // Original view's read-only reason (the banner a preview shows), a change
+  // bar's tooltip, and the refusal when a version preview is already up.
+  "reviewDisplay.originalReadOnly": "Original: the document as it was before its tracked changes. Choose another display for review to edit.",
+  "reviewDisplay.changeBar": "Changed here. Click to show all markup",
+  "reviewDisplay.previewOpen": "Close the version preview before showing the original",
+
+  // Footnotes and endnotes (`note_commands.mjs`, `docs/153` page.note.*). The
+  // menu rows and both dialogs are markup keys; these are what the status line
+  // says, and the reason the selection-only box is disabled.
+  "notes.noMoreFootnotes": "There are no more footnotes that way",
+  "notes.noMoreEndnotes": "There are no more endnotes that way",
+  "notes.footnoteSettingsApplied": "Footnote options applied",
+  "notes.endnoteSettingsApplied": "Endnote options applied",
+  "notes.converted": "Notes converted",
+  "notes.convertNeedsSelection": "Select the text whose notes you want to convert first",
 
   // ---- A PARTICIPANT'S GRANT, AND THE ROOM'S REFUSALS ----------------------
   //

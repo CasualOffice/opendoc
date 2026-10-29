@@ -468,6 +468,7 @@ impl<'a> Device<'a> for Collector<'_> {
         let size = c.hypot(d) * 1000.0;
         let rotation_degrees = b.atan2(a).to_degrees();
         let along = a.hypot(b);
+        let codes = crate::unicode::FontCodes::of(&self.fonts.fonts[font].name);
         let mut glyphs = Vec::with_capacity(run.glyphs().len());
         for glyph in run.glyphs() {
             let transform = props.transform * glyph.transform();
@@ -481,8 +482,14 @@ impl<'a> Device<'a> for Collector<'_> {
                     0.0
                 }
             };
+            // The text made fit for editing (`unicode`): ligatures
+            // decomposed, symbol-font codes mapped, what is not text dropped.
+            let normalized =
+                crate::unicode::normalize(glyph.as_unicode().map(bf_text).as_deref(), codes);
+            self.notes.ligatures_decomposed += u32::from(normalized.ligature);
+            self.notes.symbols_mapped += u32::from(normalized.symbol);
             glyphs.push(GlyphEvidence {
-                text: glyph.as_unicode().map(bf_text),
+                text: normalized.text,
                 origin,
                 advance,
                 glyph: match &**glyph {
@@ -497,6 +504,11 @@ impl<'a> Device<'a> for Collector<'_> {
                 let (p, q) = (glyphs[at - 1].origin, glyphs[at].origin);
                 glyphs[at - 1].advance = (q.x - p.x).hypot(q.y - p.y);
             }
+        }
+        // Marks and accents drawn as their own glyphs join their letter
+        // (upright runs only: the overlap test is along the baseline).
+        if rotation_degrees.abs() < 0.5 {
+            self.notes.marks_composed += crate::unicode::compose_run(&mut glyphs);
         }
         let render = match mode {
             DrawMode::Fill(_) => RenderMode::Fill,

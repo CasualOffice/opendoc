@@ -1685,44 +1685,39 @@
       "area": "page",
       "title": "Convert footnotes to endnotes",
       "ours": {
-        "absent": [
-          "reference.convertNotes"
-        ]
+        "command": "reference.convertNotes"
       },
       "theirs": {
         "localeKey": "DE.Views.Links.mniConvertNote"
       },
-      "rank": 4
+      "rank": 4,
+      "note": "Convert all footnotes to endnotes, all endnotes to footnotes, or swap, over the whole document or the selection, as one undo step (`casual_doc_command::notes::convert_notes`): each note re-inserted as the other kind at the same place with the same content, its number mark and text style re-kinded. A reference nested inside a hyperlink or a tracked change is left as it is."
     },
     {
       "id": "page.note.goto",
       "area": "page",
       "title": "Go to next or previous note",
       "ours": {
-        "absent": [
-          "reference.goToFootnote"
-        ]
+        "command": "reference.nextFootnote"
       },
       "theirs": {
         "localeKey": "DE.Views.Links.textGotoFootnote"
       },
       "rank": 3,
-      "note": "Reading a document with notes means scrolling for them."
+      "note": "Next and previous footnote and endnote, Word's Next Footnote split button, from the References band's Notes dropdown, a References-menu flyout and the palette (`reference.nextFootnote`, `reference.previousFootnote`, `reference.nextEndnote`, `reference.previousEndnote`); says so at either end."
     },
     {
       "id": "page.note.settings",
       "area": "page",
       "title": "Footnote and endnote settings",
       "ours": {
-        "absent": [
-          "reference.noteSettings"
-        ]
+        "command": "reference.noteSettings"
       },
       "theirs": {
         "localeKey": "DE.Views.Links.mniNoteSettings"
       },
       "rank": 2,
-      "note": "Location, number format, start at and restart each page or section are all unreachable, so imported numbering cannot be changed."
+      "note": "Word's Footnote and Endnote dialog: location, number format, start at, numbering (continuous, each section, each page) and apply to this section or the whole document, one undoable step through `Operation::SetNoteProperties` (`casual-doc-wasm` `notes_settings.rs`). It opens on what the caret's section resolves to through the same section-then-settings layering layout reads, so an imported document's numbering can be changed."
     },
     {
       "id": "page.orientation",
@@ -1825,15 +1820,13 @@
       "area": "page",
       "title": "Table of figures",
       "ours": {
-        "absent": [
-          "reference.tableOfFigures"
-        ]
+        "command": "reference.tableOfFigures"
       },
       "theirs": {
         "control": "btnTableFigures"
       },
       "rank": 3,
-      "note": "We have captions but nothing that collects them into a table."
+      "note": "The contents dialog in its figures mode: a caption label, include label and number (`\\c` / `\\a`), page numbers, leader and links; Update entire rebuilds it from the captions."
     },
     {
       "id": "page.textFromFile",
@@ -1868,15 +1861,13 @@
       "area": "page",
       "title": "Add paragraph to table of contents",
       "ours": {
-        "absent": [
-          "reference.addText"
-        ]
+        "family": "reference.addText."
       },
       "theirs": {
         "localeKey": "DE.Views.Links.capBtnAddText"
       },
       "rank": 4,
-      "note": "Their Add text marks the current paragraph at a chosen contents level without restyling it as a heading."
+      "note": "Do not show and levels 1..9 set the paragraph's outline level without restyling it; theirs applies Heading n instead (sdkjs word/api.js:12183-12187). Outline level 9 now overrides a heading style, as Word's body text does."
     },
     {
       "id": "page.toc.followEntry",
@@ -1909,14 +1900,16 @@
       "area": "page",
       "title": "Tab leader for contents entries",
       "ours": {
-        "absent": [
-          "reference.tocLeader"
-        ]
+        "anchor": {
+          "file": "webapp/src/toc_commands.mjs",
+          "literal": "TOC_LEADERS"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.TableOfContentsSettings.textLeader"
       },
-      "rank": 3
+      "rank": 3,
+      "note": "None, dots, dashes or line, as their dialog offers; the leader lives on the entries' right tab and survives Update entire."
     },
     {
       "id": "page.toc.levels",
@@ -1939,45 +1932,45 @@
       "area": "page",
       "title": "Remove table of contents",
       "ours": {
-        "absent": [
-          "reference.removeToc"
-        ]
+        "command": "reference.removeToc"
       },
       "theirs": {
         "localeKey": "DE.Views.Links.textContentsRemove"
       },
       "rank": 3,
-      "note": "The field can be inserted and updated but not deleted as a unit."
+      "note": "One RemoveFieldRange: the field and every entry, one undo step; on the References band, the References menu, the palette and the entry's right-click menu."
     },
     {
       "id": "page.toc.settings",
       "area": "page",
       "title": "Table of contents settings (page numbers, alignment, links)",
       "ours": {
-        "absent": [
-          "reference.tocSettings"
-        ]
+        "anchor": {
+          "file": "webapp/src/toc_commands.mjs",
+          "literal": "tocSettingsFromForm"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.TableOfContentsSettings.strShowPages"
       },
       "rank": 3,
-      "note": "Show page numbers, right-align them, hyperlink the entries and build from styles rather than outline levels are all fixed for us."
+      "note": "Closed on lane/parity-tables-toc (RM-25): the contents dialog carries show page numbers (`\\n`), right align, links (`\\h`, planting a `_Toc` bookmark only on a heading without one), levels, and outline levels or selected styles (`\\t`); every choice is read back from the instruction and the entries' tab stop, so Update entire keeps it and the dialog reopens on it."
     },
     {
       "id": "page.toc.styles",
       "area": "page",
       "title": "Table of contents style gallery",
       "ours": {
-        "absent": [
-          "reference.tocStyle"
-        ]
+        "anchor": {
+          "file": "webapp/src/toc_commands.mjs",
+          "literal": "TOC_FORMATS"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.TableOfContentsSettings.textStyles"
       },
       "rank": 3,
-      "note": "Their dialog offers Simple, Standard, Modern, Classic and the rest; ours generates one shape."
+      "note": "From document, Simple, Standard, Modern, Classic and Online rewrite the TOC 1..n style definitions, after their CreateTOC shapes (sdkjs word/Editor/Styles.js:6750)."
     },
     {
       "id": "page.toc.updateEntire",
@@ -3043,32 +3036,26 @@
       "area": "review",
       "title": "AutoCorrect options dialog",
       "ours": {
-        "partial": {
-          "evidence": {
-            "command": "tools.smartQuotes"
-          },
-          "missing": "every other AutoCorrect rule, and the dialog that holds them"
-        }
+        "command": "tools.autoCorrectOptions"
       },
       "theirs": {
         "control": "btnAutoCorrect"
       },
       "rank": 2,
-      "note": "Theirs covers hyperlinks, hyphens-to-dash, double-space-with-period, first letter of sentences, math AutoCorrect, recognised functions and a replace-as-you-type table."
+      "note": "One dialog holds every switch (smart quotes, dashes, hyperlinks, lists, sentence and cell capitals, replace as you type) and the two per-language lists. Theirs also has math AutoCorrect and recognised functions, which are `docs/109` OO-016's remainder."
     },
     {
       "id": "review.autocorrect-replace-as-you-type",
       "area": "review",
       "title": "Replace text as you type (AutoCorrect table)",
       "ours": {
-        "absent": [
-          "tools.autoCorrect.replace"
-        ]
+        "command": "tools.autocorrect"
       },
       "theirs": {
         "localeKey": "Common.Views.AutoCorrectDialog.textReplaceText"
       },
-      "rank": 3
+      "rank": 3,
+      "note": "A switch in the AutoCorrect options dialog, Settings, the Review menu and the palette; each replacement is its own undo step."
     },
     {
       "id": "review.autocorrect-smart-quotes",
@@ -3418,17 +3405,13 @@
       "area": "review",
       "title": "Display mode: final (changes applied, markup hidden)",
       "ours": {
-        "partial": {
-          "evidence": {
-            "command": "view.showChanges"
-          },
-          "missing": "a named Final mode - turning the markup toggle off is the only way to reach it"
-        }
+        "command": "review.displayMode.noMarkup"
       },
       "theirs": {
         "localeKey": "Common.Views.ReviewChanges.txtFinal"
       },
-      "rank": 3
+      "rank": 3,
+      "note": "No markup: the text as accepted with no revision marks, change bars or comment highlights."
     },
     {
       "id": "review.display-mode-markup",
@@ -3448,30 +3431,26 @@
       "area": "review",
       "title": "Display mode: original (document as if every change were rejected)",
       "ours": {
-        "absent": [
-          "review.displayMode.original"
-        ]
+        "command": "review.displayMode.original"
       },
       "theirs": {
         "localeKey": "Common.Views.ReviewChanges.txtOriginal"
       },
       "rank": 2,
-      "note": "There is no way to preview the pre-review document; our markup toggle only chooses between showing and hiding the redline."
+      "note": "Review ▸ Display for review ▸ Original: a throwaway copy with every tracked change rejected through the engine's one Reject All (`casual-doc-wasm` `review_display.rs`, its restriction lifted first), shown read-only through the version preview's swap; any other display puts the live document back."
     },
     {
       "id": "review.display-mode-simple-markup",
       "area": "review",
       "title": "Display mode: simple markup (change bars only)",
       "ours": {
-        "absent": [
-          "review.displayMode.simpleMarkup"
-        ]
+        "command": "review.displayMode.simpleMarkup"
       },
       "theirs": {
         "localeKey": "Common.Views.ReviewChanges.txtMarkupSimple"
       },
       "rank": 3,
-      "note": "Word's default review view. We always paint full markup or none."
+      "note": "Word's default review view: the text as accepted, a change bar beside each changed line and no inline marks; clicking a bar shows All markup. One of four rows in the Review band's Display for review dropdown, the Review menu flyout and the palette."
     },
     {
       "id": "review.document-properties",
@@ -3614,30 +3593,26 @@
       "area": "review",
       "title": "Set the proofing language for the selection",
       "ours": {
-        "absent": [
-          "review.proofLanguage.selection"
-        ]
+        "command": "format.language"
       },
       "theirs": {
         "control": "btnLanguage"
       },
       "rank": 2,
-      "note": "We honour the document's own w:lang but cannot write it; there is no per-run language control anywhere in the chrome."
+      "note": "Set Language writes `w:lang` on the selection (the word at a caret) as one character-format step, tracked in Suggesting mode; spell check proofs each run in its own language."
     },
     {
       "id": "review.protect-document",
       "area": "review",
       "title": "Protect the document",
       "ours": {
-        "absent": [
-          "review.protectDocument"
-        ]
+        "command": "review.restrictEditing"
       },
       "theirs": {
         "control": "btnProtectDoc"
       },
       "rank": 2,
-      "note": "Not licence-gated for them. The ENGINE now models and enforces document protection and can set it - `setDocumentProtection` with the edit mode, enforcement and formatting lock (ADR-052 for enforcement, ADR-059 for the setter) - and the import arm reads `w:documentProtection`. It is graded a gap anyway because no command id reaches it: `review.protectDocument` is absent from `COMMAND_CONTRACT`, so neither a user nor a host can invoke it. Built is not reachable. A password Word set is kept: the sixteen password attributes are carried verbatim through a save, never verified, and nothing here sets one."
+      "note": "Not licence-gated for them. Theirs is Protection ▸ Protect Document (`btnProtectDoc`, `ProtectDialog.js`): four edit modes and a password. Ours is Review ▸ Protect ▸ Restrict Editing: the same four modes (read only, comments, tracked changes, filling in forms), Word's formatting restriction, Apply, and Stop protection, which asks for the password when one was set. The engine's `protectDocument` writes it and ADR-052 enforces it at the operation."
     },
     {
       "id": "review.protect-form",
@@ -3659,14 +3634,16 @@
       "area": "review",
       "title": "Password on the editing restriction",
       "ours": {
-        "absent": [
-          "review.protectDocument.password"
-        ]
+        "anchor": {
+          "file": "webapp/src/document_protection.mjs",
+          "literal": "checkProtectionPassword"
+        }
       },
       "theirs": {
         "api": "asc_docs_api.asc_setDocumentProtection"
       },
-      "rank": 3
+      "rank": 3,
+      "note": "Word's own verifier (`casual-doc-wasm` `review_protection.rs`): the legacy key fold, then SHA-512 over a 16-byte salt with 100,000 spins, written as Word 2013+ writes it, so Word asks for the same password. Stop protection and any change ask for it first. The SHA-1, SHA-256 and SHA-384 verifiers older Word versions wrote are checked too. A deterrent, not encryption, and the dialog says so."
     },
     {
       "id": "review.redaction",
@@ -3762,12 +3739,7 @@
       "area": "review",
       "title": "Restrict editing to view, comments, forms or tracked changes",
       "ours": {
-        "partial": {
-          "evidence": {
-            "command": "review.restrictEditing"
-          },
-          "missing": "setting a password. A password Word set is carried verbatim through a save and never verified; lifting a passworded restriction here removes it, and the dialog says so before Apply."
-        }
+        "command": "review.restrictEditing"
       },
       "theirs": {
         "localeKey": "DE.Views.ProtectDialog.textReview"
@@ -5143,20 +5115,16 @@
       "area": "table",
       "title": "Banded rows and columns, header / total / first / last",
       "ours": {
-        "absent": [
-          "table.look.bandedRows",
-          "table.look.bandedColumns",
-          "table.look.headerRow",
-          "table.look.totalRow",
-          "table.look.firstColumn",
-          "table.look.lastColumn"
-        ]
+        "anchor": {
+          "file": "webapp/src/table_commands.mjs",
+          "literal": "table.look.bandedRows"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.TableSettings.textBanded"
       },
       "rank": 2,
-      "note": "The six w:tblLook conditional-formatting toggles. Our model carries TableLook and round-trips it, but no wasm setter or control writes it, so an applied table style cannot be tuned."
+      "note": "The six w:tblLook toggles (header row, first column, total row, last column, banded rows, banded columns) are table.look.* commands on the Table menu, the right-click menu and the palette, checkboxes in the Table band's Style options popover and in Table properties; each is one SetTableProperties through casual_doc_command::table_tools::set_look_option."
     },
     {
       "id": "table.border-width-style",
@@ -5299,15 +5267,16 @@
       "area": "table",
       "title": "Text direction in a cell",
       "ours": {
-        "absent": [
-          "table.cell.textDirection"
-        ]
+        "anchor": {
+          "file": "webapp/src/table_commands.mjs",
+          "literal": "table.textDirection.rotateDown"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.DocumentHolder.directionText"
       },
       "rank": 3,
-      "note": "Theirs offers horizontal, rotate down and rotate up on the cell context menu. We never consume w:`textDirection` anywhere in flow, composition or hit-testing; the value round-trips only."
+      "note": "Horizontal, rotate down (tbRl) and rotate up (btLr) on the Table band, Table menu, right-click menu and palette, and for agents through table_set_cell_format. Layout lays a turned cell's content along the cell height (an auto row grows to fit, an exact row clips), paint draws it in a rotated layer, and hit-testing maps clicks into it."
     },
     {
       "id": "table.cell-vertical-align",
@@ -5359,15 +5328,16 @@
       "area": "table",
       "title": "Delete cells with a shift direction",
       "ours": {
-        "absent": [
-          "table.delete.cells"
-        ]
+        "anchor": {
+          "file": "webapp/src/table_commands.mjs",
+          "literal": "table.deleteCells"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.CellsRemoveDialog.textTitle"
       },
       "rank": 3,
-      "note": "Theirs opens a Delete cells dialog that shifts remaining cells left or up. We delete whole rows, columns or the table."
+      "note": "Word's Delete cells dialog: shift left (the row ends short with w:gridAfter), shift up (the column moves up and its bottom is left empty), entire row, entire column. Refuses a table with merged cells, by name."
     },
     {
       "id": "table.delete-column",
@@ -5556,15 +5526,16 @@
       "area": "table",
       "title": "Insert cells with a shift direction",
       "ours": {
-        "absent": [
-          "table.insert.cells"
-        ]
+        "anchor": {
+          "file": "webapp/src/table_commands.mjs",
+          "literal": "table.insertCells"
+        }
       },
       "theirs": {
         "control": "cmbRowCol"
       },
       "rank": 3,
-      "note": "Theirs opens an Insert cells dialog that shifts the existing cells right or down. We only insert whole rows and columns."
+      "note": "Word's Insert cells dialog: shift right (a wider grid and w:gridAfter on the other rows), shift down (rows added at the bottom), entire row, entire column. Refuses a table with merged cells, by name."
     },
     {
       "id": "table.insert-column",
@@ -5587,15 +5558,13 @@
       "area": "table",
       "title": "Insert table with a typed row and column count",
       "ours": {
-        "absent": [
-          "table.insert.custom"
-        ]
+        "command": "insert.tableDialog"
       },
       "theirs": {
         "localeKey": "Common.Views.InsertTableDialog.txtTitle"
       },
       "rank": 3,
-      "note": "Our only insert path is the grid picker, which caps at 8x10; a larger table has to be grown with repeated row and column inserts. The engine already clamps at 50x20, so the gap is the dialog."
+      "note": "Insert ▸ Insert table by size opens a typed columns-and-rows dialog (up to the engine's 20 x 50), beside the 8 x 10 grid on the Insert band, in the Insert menu and the palette; the agent twin is insert_table."
     },
     {
       "id": "table.insert-grid",
@@ -5700,15 +5669,16 @@
       "area": "table",
       "title": "Insert a table inside a table cell",
       "ours": {
-        "absent": [
-          "table.insert.nested"
-        ]
+        "anchor": {
+          "file": "crates/casual-doc-wasm/src/table_tools.rs",
+          "literal": "fn table_insertion_point"
+        }
       },
       "theirs": {
         "localeKey": "Common.Controllers.Shortcuts.txtDescriptionSpecialOptionsNestTable"
       },
       "rank": 3,
-      "note": "insert_table always passes container: None and drops the new table at body_index_after, so inserting from inside a cell puts the table after the outer table rather than in the cell. Nested tables imported from a file do render."
+      "note": "Insert table from a paragraph in a table cell nests the new table in that cell, after the paragraph and sized to the cell's content width; from anywhere else it goes after the caret's top-level block as before."
     },
     {
       "id": "table.position-dialog",
@@ -5868,15 +5838,16 @@
       "area": "table",
       "title": "Split a table into two",
       "ours": {
-        "absent": [
-          "table.splitTable"
-        ]
+        "anchor": {
+          "file": "webapp/src/table_commands.mjs",
+          "literal": "table.splitTable"
+        }
       },
       "theirs": {
         "localeKey": "Common.Controllers.Shortcuts.txtDescriptionInsertTableBreak"
       },
       "rank": 3,
-      "note": "Theirs has a table-break shortcut that divides the table at the caret's row. We have no command and no engine operation for it."
+      "note": "Split table at the caret's row, Ctrl/Cmd+Shift+Enter as in Word and ONLYOFFICE, from the Table band, menu, right-click menu and palette; in the first row it inserts a paragraph above the table, as Word does."
     },
     {
       "id": "table.styles",
@@ -5941,30 +5912,29 @@
       "area": "table",
       "title": "Convert table to text",
       "ours": {
-        "absent": [
-          "table.convert.tableToText"
-        ]
+        "anchor": {
+          "file": "webapp/src/table_commands.mjs",
+          "literal": "table.convertToText"
+        }
       },
       "theirs": {
         "control": "btnConvert"
       },
       "rank": 3,
-      "note": "Theirs takes a separator and a 'convert nested tables' flag."
+      "note": "Convert to text with paragraph marks, tabs, commas, semicolons or a typed character, and ONLYOFFICE's convert-nested-tables flag; inline ids are kept, so anchors in the cells survive."
     },
     {
       "id": "table.text-to-table",
       "area": "table",
       "title": "Convert text to table",
       "ours": {
-        "absent": [
-          "table.convert.textToTable"
-        ]
+        "command": "insert.textToTable"
       },
       "theirs": {
         "localeKey": "DE.Views.Toolbar.mniTextToTable"
       },
       "rank": 3,
-      "note": "Theirs takes a separator (paragraph, tab, semicolon or a typed character), a column count and an autofit choice. We have no conversion in either direction."
+      "note": "Convert text to table: paragraphs, tabs, commas, semicolons or a typed character; a column count no smaller than the widest row, pre-filled from the text; fixed, autofit to contents or autofit to window. Runs keep their formatting and the first cell of each row keeps its paragraph's id."
     },
     {
       "id": "table.text-wrapping",
@@ -6025,60 +5995,52 @@
       "area": "text",
       "title": "Capitalise the first letter of a sentence",
       "ours": {
-        "absent": [
-          "tools.autoCapitalise"
-        ]
+        "command": "tools.autoCapitalise"
       },
       "theirs": {
         "localeKey": "Common.Views.AutoCorrectDialog.textFLSentence"
       },
       "rank": 2,
-      "note": "Theirs also covers table cells and keeps a first-letter exceptions list. Ours does not autocapitalise at all."
+      "note": "Both capitalise the first letter of a sentence and, under a separate switch, of a table cell, and keep a per-language first-letter exceptions list with Reset; ours is edited in the AutoCorrect options dialog."
     },
     {
       "id": "text.autocorrect-replace",
       "area": "text",
       "title": "Replace text as you type (AutoCorrect table)",
       "ours": {
-        "absent": [
-          "tools.autoCorrect"
-        ]
+        "command": "tools.autoCorrectOptions"
       },
       "theirs": {
         "control": "btnAutoCorrect"
       },
       "rank": 2,
-      "note": "Their File ▸ Advanced Settings opens a dialog with an editable replace/by table, per-language, plus Reset and Restore. We have no AutoCorrect table — `webapp/src/text_rules.mjs` implements smart quotes and nothing else."
+      "note": "Both open a dialog with an editable replace/with table per language and Reset to default; ours stores only the user's difference from the built-in list, as their exceptions list does."
     },
     {
       "id": "text.autoformat-dashes",
       "area": "text",
       "title": "Turn typed hyphens into dashes",
       "ours": {
-        "absent": [
-          "tools.autoFormatDashes"
-        ]
+        "command": "tools.autoFormatDashes"
       },
       "theirs": {
         "localeKey": "Common.Views.AutoCorrectDialog.textHyphens"
       },
       "rank": 3,
-      "note": "Word and Docs both do this; it is the second most-noticed AutoCorrect after smart quotes."
+      "note": "word--word becomes an em dash; ` -- ` and ` - ` between words become an en dash once the next word is finished, Word's timing."
     },
     {
       "id": "text.autoformat-hyperlink",
       "area": "text",
       "title": "Turn a typed URL into a hyperlink",
       "ours": {
-        "absent": [
-          "tools.autoFormatHyperlink"
-        ]
+        "command": "tools.autoFormatHyperlink"
       },
       "theirs": {
         "localeKey": "Common.Views.AutoCorrectDialog.textHyperlink"
       },
       "rank": 2,
-      "note": "We have `insert.link` but nothing recognises a URL as it is typed, so every pasted address needs the dialog."
+      "note": "A typed URL, www. address or e-mail address becomes a link when the word ends (space or Enter), and a pasted lone address at once; the link is its own undo step and is never applied inside an existing link."
     },
     {
       "id": "text.bold",
@@ -6438,15 +6400,13 @@
       "area": "text",
       "title": "Language of the selected text",
       "ours": {
-        "absent": [
-          "format.language"
-        ]
+        "command": "format.language"
       },
       "theirs": {
         "control": "btnLanguage"
       },
       "rank": 2,
-      "note": "Their status bar carries the selection's language and opens Common.Views.LanguageDialog; the engine call is asc_docs_api.put_TextPrLang. Our model has `w:lang` but `tools.languages` only installs proofing packs — nothing tags a selection, so a mixed-language document cannot be proofed correctly."
+      "note": "The status bar names the selection's language and opens the Set Language dialog, as theirs does; the write is the character patch's `language` field through `FormatText`."
     },
     {
       "id": "text.ligatures",
@@ -6504,15 +6464,13 @@
       "area": "text",
       "title": "Insert a non-breaking space",
       "ours": {
-        "absent": [
-          "insert.nonBreakingSpace"
-        ]
+        "command": "insert.nonBreakingSpace"
       },
       "theirs": {
         "localeKey": "Common.Controllers.Shortcuts.txtDescriptionNonBreakingSpace"
       },
       "rank": 3,
-      "note": "They bind it and list it in the symbol dialog's special characters. We have neither the shortcut nor a picker entry, so keeping \"10 kg\" or \"Fig. 3\" on one line is not expressible."
+      "note": "Ctrl/Cmd+Shift+Space, the Insert menu, the palette, and Symbol ▸ Special characters, as in Word and ONLYOFFICE."
     },
     {
       "id": "text.paste",

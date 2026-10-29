@@ -51,6 +51,10 @@ pub use profile::Profile;
 /// `w:author`, so Word's review pane shows it too.
 pub const AI_AUTHOR: &str = "Casual AI";
 
+/// How a PDF session opens: flowing (the default) or its exact page layout
+/// (`docs/182` §4).
+#[cfg(feature = "pdf-import")]
+pub use casual_doc_io::PdfLayout;
 /// The host's OCR for PDF sessions (`docs/182` §20a), re-exported so a front
 /// door (`opendoc-mcp`) configures it without naming `casual-doc-io`.
 #[cfg(feature = "pdf-import")]

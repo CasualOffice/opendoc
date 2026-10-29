@@ -213,6 +213,7 @@ export function createCompatibilityFindings(io) {
     reportJson: "",
     phase: "import",
     origin: null,
+    layout: null,
     ocr: null,
     actions: null,
     totals: { headline: 0, bookkeeping: 0, entries: 0 },
@@ -319,14 +320,19 @@ export function createCompatibilityFindings(io) {
    *  `docs/131` §16.2): processed here, a reconstruction, the original kept. */
   function pdfDisclosure() {
     const reflowed = current.origin === "pdfReflow";
+    // The default open (`docs/182` §4): the PDF rebuilt as a flowing document,
+    // its exact layout one command away.
+    const flowing = !reflowed && current.layout === "flowing";
     const section = make("section", "findings-group findings-pdf");
-    section.dataset.kind = reflowed ? "pdfReflowDisclosure" : "pdfDisclosure";
+    section.dataset.kind = reflowed ? "pdfReflowDisclosure" : flowing ? "pdfFlowingDisclosure" : "pdfDisclosure";
     const title = make("h3", "findings-group-title");
-    title.textContent = t(reflowed ? "findings.pdfReflow.title" : "findings.pdf.title");
+    title.textContent = t(reflowed || flowing ? "findings.pdfReflow.title" : "findings.pdf.title");
     const list = make("ul", "findings-pdf-facts");
     const facts = reflowed
       ? ["findings.pdfReflow.new", "findings.pdfReflow.inferred", "findings.pdfReflow.source", "findings.pdf.local"]
-      : ["findings.pdf.local", "findings.pdf.reconstruction", "findings.pdf.original"];
+      : flowing
+        ? ["findings.pdf.local", "findings.pdfReflow.inferred", "findings.pdfFlowing.keepLayout", "findings.pdfFlowing.save"]
+        : ["findings.pdf.local", "findings.pdf.reconstruction", "findings.pdf.original"];
     for (const key of facts) {
       const item = make("li");
       item.dataset.fact = key.slice(key.lastIndexOf(".") + 1);
@@ -444,12 +450,20 @@ export function createCompatibilityFindings(io) {
     /** Records a report and paints the chip. Returns the HEADLINE count — the
      *  occurrences a reader would miss, Word's own bookkeeping excluded — which
      *  is the number the chip prints and the one a status line should say. */
-    show(reportJson, phase, { origin = null, ocr = null, actions = null } = {}) {
+    show(reportJson, phase, { origin = null, layout = null, ocr = null, actions = null } = {}) {
       const totals = reportJson ? findingTotals(reportJson) : { headline: 0, bookkeeping: 0, entries: 0 };
       // An export report keeps the open document's origin and actions: the
       // document is still what it was opened as.
-      const keep = phase === "export" ? current : { origin, ocr, actions };
-      current = { reportJson: reportJson ?? "", phase, origin: keep.origin, ocr: keep.ocr, actions: keep.actions, totals };
+      const keep = phase === "export" ? current : { origin, layout, ocr, actions };
+      current = {
+        reportJson: reportJson ?? "",
+        phase,
+        origin: keep.origin,
+        layout: keep.layout,
+        ocr: keep.ocr,
+        actions: keep.actions,
+        totals,
+      };
       showCompatibilityFindings(io.chip, totals.headline, phase);
       if (modal.isOpen) render();
       return totals.headline;

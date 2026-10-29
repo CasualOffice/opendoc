@@ -384,17 +384,20 @@ fn session_registry() -> casual_doc_io::FormatRegistry {
     registry
 }
 
-/// [`session_registry`] whose PDF import reads scans with the host's OCR.
+/// [`session_registry`] whose PDF import reads scans with the host's OCR
+/// and opens a PDF in `layout`.
 #[cfg(feature = "pdf-import")]
-fn session_registry_with_pdf_ocr(
-    ocr: &casual_doc_io::PdfOcrOptions,
+fn session_registry_with_pdf(
+    ocr: Option<&casual_doc_io::PdfOcrOptions>,
+    layout: casual_doc_io::PdfLayout,
 ) -> casual_doc_io::FormatRegistry {
     let mut registry =
         builtin_registry_with_limits(PackageLimits::default(), PlainTextLimits::default());
-    casual_doc_io::enable_pdf_import_with_ocr(
+    casual_doc_io::enable_pdf_import_with_layout(
         &mut registry,
         casual_doc_io::PdfReadLimits::default(),
-        ocr.clone(),
+        ocr.cloned().unwrap_or_default(),
+        layout,
     )
     .expect("re-registering PDF into a cleared slot cannot collide");
     registry
@@ -429,7 +432,44 @@ impl Session {
         config: SessionConfig,
         ocr: &casual_doc_io::PdfOcrOptions,
     ) -> AiResult<Self> {
-        Self::open_through(&session_registry_with_pdf_ocr(ocr), bytes, name, config)
+        Self::open_pdf(
+            bytes,
+            name,
+            config,
+            Some(ocr),
+            casual_doc_io::PdfLayout::default(),
+        )
+    }
+
+    /// [`Session::open`] with the host's PDF choices (`docs/182` §4): OCR for
+    /// scanned pages, and the layout. A PDF opens as a flowing document by
+    /// default ([`casual_doc_io::PdfLayout::Flowing`]: paragraphs with styles,
+    /// lists, tables, header and footer, footnotes, columns, no text boxes);
+    /// [`casual_doc_io::PdfLayout::Fixed`] is "Keep exact page layout", the
+    /// pages as drawn in positioned frames, the only layout whose save goes
+    /// back into the original PDF. Other formats open exactly as with
+    /// [`Session::open`]. **O(document)** plus OCR's bounded work.
+    ///
+    /// # Errors
+    ///
+    /// As [`Session::open`].
+    #[cfg(feature = "pdf-import")]
+    pub fn open_pdf(
+        bytes: &[u8],
+        name: &str,
+        config: SessionConfig,
+        ocr: Option<&casual_doc_io::PdfOcrOptions>,
+        layout: casual_doc_io::PdfLayout,
+    ) -> AiResult<Self> {
+        Self::open_through(&session_registry_with_pdf(ocr, layout), bytes, name, config)
+    }
+
+    /// How this session's PDF was opened; `None` when it is not a PDF's.
+    /// O(1).
+    #[cfg(feature = "pdf-import")]
+    #[must_use]
+    pub fn pdf_layout(&self) -> Option<casual_doc_io::PdfLayout> {
+        self.source.as_ref().and_then(casual_doc_io::pdf_layout)
     }
 
     /// What OCR did when this session's PDF was imported, and the manifest of
@@ -484,10 +524,24 @@ impl Session {
     /// # Errors
     ///
     /// `not-a-pdf` when this session did not open a PDF (or is itself a
-    /// conversion); `convert-failed` when the reflowed document fails
-    /// validation (an importer defect).
+    /// conversion); `already-flowing` when the PDF opened as a flowing
+    /// document (the default); `convert-failed` when the reflowed document
+    /// fails validation (an importer defect).
     #[cfg(feature = "pdf-import")]
     pub fn convert_pdf_to_flowing(&self) -> AiResult<Self> {
+        if self.source.as_ref().and_then(casual_doc_io::pdf_layout)
+            == Some(casual_doc_io::PdfLayout::Flowing)
+            && self
+                .source
+                .as_ref()
+                .and_then(casual_doc_io::pdf_retained_original)
+                .is_some()
+        {
+            return Err(AiError::new(
+                "already-flowing",
+                "This PDF already opened as a flowing document. Open it with the fixed layout to convert its pages.",
+            ));
+        }
         let reflowed = self
             .source
             .as_ref()

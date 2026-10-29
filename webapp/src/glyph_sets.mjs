@@ -65,6 +65,23 @@ export const SYMBOL_GROUPS = [
       { c: "※", n: "Reference mark" }, { c: "¡", n: "Inverted exclamation mark" }, { c: "¿", n: "Inverted question mark" },
     ],
   },
+  // Word's Symbol ▸ Special Characters tab and ONLYOFFICE's special-character
+  // list (RM-19). Invisible characters, so each carries `d`, what its cell
+  // SHOWS — ONLYOFFICE's formatting-mark glyphs (`°` for a fixed-width space,
+  // `formatting_marks.rs`) — and `k`, a catalogue key for its name, which is
+  // what a person reads and a screen reader announces. The group's name is a
+  // key too (`nameKey`), applied when the picker opens rather than at boot.
+  {
+    name: "Special characters",
+    nameKey: "glyph.special",
+    items: [
+      { c: "\u00a0", d: "°", n: "No-break space", k: "glyph.nonBreakingSpace" },
+      { c: "\u202f", d: "°", n: "Narrow no-break space", k: "glyph.narrowNonBreakingSpace" },
+      { c: "\u2002", d: "°", n: "En space", k: "glyph.enSpace" },
+      { c: "\u2003", d: "°", n: "Em space", k: "glyph.emSpace" },
+      { c: "\u2009", d: "°", n: "Thin space", k: "glyph.thinSpace" },
+    ],
+  },
   {
     name: "Latin",
     items: [

@@ -799,6 +799,7 @@ fn anchors(operation: &Operation, out: &mut Vec<NodeId>) {
         | Operation::SetSectionWatermark { .. }
         | Operation::SetSectionLineNumbering { .. }
         | Operation::SetSectionPageBorders { .. }
+        | Operation::SetNoteProperties { .. }
         | Operation::SetSectionPageNumbering { .. }
         | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetEvenAndOddHeaders { .. }
@@ -833,6 +834,8 @@ fn anchor_key(operation: &Operation) -> Option<Key> {
         | Operation::SetSectionPageNumbering { section, .. }
         | Operation::SetSectionVerticalAlignment { section, .. }
         | Operation::SetSectionFormProtection { section, .. } => Some(Key::Section(*section)),
+        // `None` is the document's own defaults, which no removal can race.
+        Operation::SetNoteProperties { section, .. } => section.map(Key::Section),
         Operation::SpliceSectionBoundary { at, .. } => at.map(Key::Section),
         Operation::InsertText { .. }
         | Operation::DeleteText { .. }
@@ -1814,6 +1817,15 @@ fn footprint(operation: &Operation) -> Option<(Target, Aspects)> {
         Operation::SetSectionPageBorders { section, .. } => {
             Some((Target::Section(*section), Aspects::SECTION_GEOMETRY))
         }
+        // A section's note options share the page-setup aspect, as page borders do:
+        // concurrent margin and note changes on one section contend, never lose a
+        // write. The document defaults are a SETTINGS target, and every one of the
+        // 32 aspect bits is spoken for, so they take the page-setup bit there too,
+        // where no other settings write uses it — a distinct aspect in effect.
+        Operation::SetNoteProperties { section, .. } => Some((
+            section.map_or(Target::Settings, Target::Section),
+            Aspects::SECTION_GEOMETRY,
+        )),
         Operation::SetSectionPageNumbering { section, .. } => {
             Some((Target::Section(*section), Aspects::SECTION_PAGE_NUMBERING))
         }

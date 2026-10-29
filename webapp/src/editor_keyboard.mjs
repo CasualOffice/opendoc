@@ -395,7 +395,7 @@ export function createKeyboard(ed) {
           return;
         }
       }
-      await ed.runEdit(() =>
+      const landed = await ed.runEdit(() =>
         ed.doc.insertPlainTextAs(
           anchor.node,
           anchor.offset,
@@ -405,6 +405,10 @@ export function createKeyboard(ed) {
           "paragraphBreak",
         ),
       );
+      // The break finished a word: AutoCorrect it on the paragraph it stayed in
+      // (a split keeps the original node for the text before the caret), as its
+      // own undo step after the break, which is Word's order (RM-19).
+      if (landed && !range) await ed.autoCorrect.afterBreak(focus.node, focus.offset);
       return;
     }
     // A printable character (single key, no modifiers). Counted in CODE POINTS,
@@ -448,18 +452,12 @@ export function createKeyboard(ed) {
         );
       } else if (ed.pendingFormat) {
         const pf = ed.pendingFormat; // armed format persists across consecutive typing
-        if (
-          ed.reviewMode === "suggesting" &&
-          !pf.character && (pf.underlineStyle != null || pf.underlineColor != null)
-        ) {
-          ed.setStatus(
-            "Underline style and color are not tracked yet; switch to Editing to type with them",
-            "error",
-          );
-          return;
-        }
+        // An armed underline style or colour types through the character path,
+        // which records both as a tracked insert in Suggesting mode (HF-255) —
+        // the plain styled insert below has no field for either.
+        const armedUnderline = pf.underlineStyle != null || pf.underlineColor != null;
         await ed.runEdit(
-          () => pf.character ? typeArmedCharacter(ed.doc, focus, typed, pf, session, ed.reviewMode) : ed.reviewMode === "suggesting"
+          () => pf.character || (armedUnderline && ed.reviewMode === "suggesting") ? typeArmedCharacter(ed.doc, focus, typed, pf, session, ed.reviewMode) : ed.reviewMode === "suggesting"
             ? ed.doc.suggestStyledInsert(
               focus.node,
               focus.offset,

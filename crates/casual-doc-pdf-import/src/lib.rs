@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! PDF import into the normalized model, fixed layout first (`docs/182`).
+//! PDF import into the normalized model (`docs/182`).
 //!
 //! Depends only on `casual-doc-model` and `casual-doc-pdf-read`, following the
 //! RTF importer's template (`docs/110`). The reader yields owned page evidence;
 //! [`fixed`](crate::ImportJob) turns it into a `v1::Document` whose pages are
-//! sections of page-anchored text boxes, pictures and shape groups. Every
-//! inference and loss is reported with a `pdf.import.*` finding ([`report`]).
+//! sections of page-anchored text boxes, pictures and shape groups (the exact
+//! page layout), and [`PdfImport::flowing`] reconstructs from the same
+//! evidence the flowing document every host opens by default (`docs/182` §4).
+//! Every inference and loss is reported with a `pdf.import.*` finding
+//! ([`report`]).
 //!
 //! The work is a resumable, budgeted job ([`ImportJob`]: `step` / `cancel` /
 //! `finish`), the shape of `casual-doc-diff`'s `DiffJob`; nothing is published
@@ -35,6 +38,7 @@ pub mod fonts;
 pub mod group;
 mod links;
 pub mod ocr;
+pub mod quotes;
 pub mod reflow;
 pub mod report;
 #[cfg(test)]
@@ -195,6 +199,78 @@ impl PdfImport {
             self.namespace ^ REFLOW_NAMESPACE,
         )
     }
+
+    /// The PDF opened as a flowing document: what every host opens by
+    /// default (`docs/182` §4.2), Word's PDF Reflow and Google Docs' "Open
+    /// with" behaviour. The document is [`PdfImport::reflow`]'s; the report
+    /// is the whole import's: what reading the pages found (fonts
+    /// substituted, text with no Unicode, OCR, active content, symbol and
+    /// ligature mapping), then what the reconstruction inferred, plus
+    /// [`report::LAYOUT_INFERRED`] (the layout is evidence, not the
+    /// document) and [`report::EXACT_SAVE_FIXED_LAYOUT_ONLY`] (saved as PDF
+    /// it is a new file). Fixed-layout-only rows (frames, reading order of
+    /// frames) are left out. O(document log document).
+    ///
+    /// # Errors
+    ///
+    /// As [`PdfImport::reflow`].
+    pub fn flowing(&self) -> Result<Reflowed, PdfImportError> {
+        let mut reflowed = self.reflow()?;
+        reflowed.report = flowing_report(&self.report, &reflowed.report, self.pages);
+        Ok(reflowed)
+    }
+}
+
+/// The rows of a fixed-layout report that describe its frames, not the PDF:
+/// a flowing document has no frames, and its reconstruction reports its own
+/// paragraphs and reading order.
+const FIXED_ONLY: &[&str] = &[
+    report::PARAGRAPH_BOUNDARY_INFERRED,
+    report::READING_ORDER_INFERRED,
+    report::TAG_STRUCTURE_IGNORED,
+    report::VECTOR_SPLIT,
+];
+
+/// The report of a flowing open: the reading half of `fixed`, the
+/// reconstruction `reflowed`, and the two rows that say what a flowing
+/// document is. A feature both report keeps the reconstruction's row.
+/// O(findings log findings).
+fn flowing_report(
+    fixed: &PdfImportReport,
+    reflowed: &PdfImportReport,
+    pages: usize,
+) -> PdfImportReport {
+    let mut rows: BTreeMap<&'static str, PdfFinding> = BTreeMap::new();
+    for finding in &fixed.findings {
+        if !FIXED_ONLY.contains(&finding.feature) {
+            rows.insert(finding.feature, finding.clone());
+        }
+    }
+    for finding in &reflowed.findings {
+        rows.insert(finding.feature, finding.clone());
+    }
+    let pages = u32::try_from(pages.max(1)).unwrap_or(u32::MAX);
+    rows.insert(
+        report::LAYOUT_INFERRED,
+        PdfFinding {
+            feature: report::LAYOUT_INFERRED,
+            occurrences: pages,
+            outcome: PdfModelOutcome::Degraded,
+            first_page: Some(0),
+        },
+    );
+    rows.insert(
+        report::EXACT_SAVE_FIXED_LAYOUT_ONLY,
+        PdfFinding {
+            feature: report::EXACT_SAVE_FIXED_LAYOUT_ONLY,
+            occurrences: 1,
+            outcome: PdfModelOutcome::Mapped,
+            first_page: None,
+        },
+    );
+    PdfImportReport {
+        findings: rows.into_values().collect(),
+    }
 }
 
 /// Where a job is.
@@ -230,6 +306,7 @@ pub struct ImportJob {
     state: State,
     sidecar: PdfSourceState,
     namespace: u64,
+    quotes: quotes::QuoteNames,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -297,6 +374,7 @@ impl ImportJob {
             state: State::Running,
             sidecar,
             namespace,
+            quotes: quotes::QuoteNames::default(),
         })
     }
 
@@ -331,6 +409,16 @@ impl ImportJob {
                 .and_then(|page| Ok((page, self.source.annotations(index)?)))
                 .map_err(PdfImportError::from)
                 .and_then(|(mut page, annotations)| {
+                    // Curly quotes a wrong `ToUnicode` flattened, from the
+                    // glyph names; before OCR, which reads only what has no
+                    // Unicode at all.
+                    let quoted = self.quotes.correct(&mut page, self.source.fonts());
+                    builder.findings_mut().record(
+                        report::QUOTE_FROM_GLYPH_NAME,
+                        PdfModelOutcome::Mapped,
+                        quoted,
+                        Some(index),
+                    );
                     self.ocr
                         .page(&mut page, self.source.bytes(), builder.findings_mut())?;
                     builder.page(&page, self.source.fonts(), &annotations)?;

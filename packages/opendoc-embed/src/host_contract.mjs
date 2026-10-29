@@ -284,11 +284,12 @@ export const COMMAND_CONTRACT = Object.freeze([
   // Opening the compatibility findings reads a report the open already produced;
   // it changes nothing, so it requires nothing.
   exact("file.compatibilityReport", null),
-  // The two PDF commands (`pdf_commands.mjs`) replace the document on screen
+  // The three PDF commands (`pdf_commands.mjs`) replace the document on screen
   // with a newly imported one, exactly as Open does, so they need what Open
   // needs. Neither uploads anything: the PDF module runs here.
   exact("file.pdf.recogniseText", "open"),
   exact("file.pdf.convertToFlowing", "open"),
+  exact("file.pdf.keepExactLayout", "open"),
   // Recovering a draft requires the capability that WROTE it. A host that
   // withheld `autosave` has no drafts of this visitor's typing, and offering to
   // restore some would be offering work from a session the host refused to keep.
@@ -349,6 +350,8 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("format.character.emboss", "mutate"),
   exact("format.character.imprint", "mutate"),
   exact("format.character.dialog", "mutate"),
+  // Set Language writes `w:lang` on the selection, a character property (RM-42).
+  exact("format.language", "mutate"),
   exact("format.character.advanced", "mutate"),
   exact("format.character.border", "mutate"),
   exact("format.character.emphasis", "mutate"),
@@ -397,7 +400,13 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("insert.textbox", "mutate"),
   exact("insert.symbol", "mutate"),
   exact("insert.emoji", "mutate"),
+  // Ctrl/Cmd+Shift+Space types U+00A0, an insert like any other (RM-19).
+  exact("insert.nonBreakingSpace", "mutate"),
   exact("insert.table", "mutate"),
+  // Insert Table by a typed size, and Convert Text to Table (`table_tools.mjs`).
+  // Both write: one inserts a table, the other replaces paragraphs with one.
+  exact("insert.tableDialog", "mutate"),
+  exact("insert.textToTable", "mutate"),
   exact("insert.header", "mutate"),
   exact("insert.footer", "mutate"),
   // Per band, because linkage and removal are per band (`docs/85` §8d Q7): a
@@ -420,6 +429,8 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("layout.pageNumber.bottomLeft", "mutate"),
   exact("layout.pageNumber.bottomCenter", "mutate"),
   exact("layout.pageNumber.bottomRight", "mutate"),
+  // Word's "Page X of Y" preset (Bottom of Page ▸ Page X of Y).
+  exact("layout.pageNumber.pageOfTotal", "mutate"),
   exact("insert.footnote", "mutate"),
   exact("insert.endnote", "mutate"),
   exact("insert.lineBreak", "mutate"),
@@ -506,9 +517,21 @@ export const COMMAND_CONTRACT = Object.freeze([
   // not, which this guard is the only thing that notices.
   exact("reference.updateToc.pageNumbers", "mutate"),
   exact("reference.updateToc.entire", "mutate"),
+  // Remove a table of contents (or figures) as a unit, and Insert table of
+  // figures (`docs/153` RM-25). Both rewrite the document.
+  exact("reference.removeToc", "mutate"),
+  exact("reference.tableOfFigures", "mutate"),
   // Navigation, not mutation: it moves the caret to the heading a contents entry
   // names and changes nothing. `null` is the same grade `view.zoom.` carries.
   exact("reference.goToHeading", null),
+  // Footnotes and endnotes (`docs/153` page.note.*): going to a note reads and
+  // moves the caret only; the options dialog and Convert change the document.
+  exact("reference.nextFootnote", null),
+  exact("reference.previousFootnote", null),
+  exact("reference.nextEndnote", null),
+  exact("reference.previousEndnote", null),
+  exact("reference.noteSettings", "mutate"),
+  exact("reference.convertNotes", "mutate"),
   exact("reference.updateFields", "mutate"),
   exact("reference.updateCaptionNumbers", "mutate"),
 
@@ -542,6 +565,13 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("review.next", null),
   exact("review.previous", null),
   exact("review.toggle", null),
+  // Display for review (`docs/153` review.display-mode-*): four VIEWS of the
+  // same document. Original shows a throwaway rejected copy read-only, so none
+  // of the four changes document state and none requires anything.
+  exact("review.displayMode.simpleMarkup", null),
+  exact("review.displayMode.allMarkup", null),
+  exact("review.displayMode.noMarkup", null),
+  exact("review.displayMode.original", null),
   // Comparing changes NOTHING. It opens a panel, reads the document out through
   // the export path it already has, parses a second document in a throwaway
   // engine job and lists the differences — `casual-doc-diff`'s facade
@@ -619,6 +649,11 @@ export const COMMAND_CONTRACT = Object.freeze([
   // The AutoCorrect switches (TA-05/06): preferences, not document state.
   exact("tools.autoFormatLists", null),
   exact("tools.autocorrect", null),
+  // The rest of the AutoCorrect switches and their dialog (RM-19): preferences too.
+  exact("tools.autoCapitalise", null),
+  exact("tools.autoFormatDashes", null),
+  exact("tools.autoFormatHyperlink", null),
+  exact("tools.autoCorrectOptions", null),
   // Word count reads the document and changes nothing (HF-051).
   exact("tools.wordCount", null),
   exact("view.outline", null),
@@ -766,6 +801,9 @@ export const COMMAND_FAMILIES = Object.freeze([
   // Insert ▸ Chart's per-type rows (`insert.chart.<kind>`, HF-258), generated
   // from the chart-type table the ribbon's picker reads.
   family("insert.chart.", "mutate", "always"),
+  // References ▸ Add text's rows (`reference.addText.none`, `.1`..`.9`):
+  // list the selected paragraphs at a contents level, or keep them out of it.
+  family("reference.addText.", "mutate", "always"),
   family("style.", "mutate", "always"),
   // Generated from the zoom menu's markup.
   family("view.zoom.", null, "always"),

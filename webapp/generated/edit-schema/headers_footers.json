@@ -255,6 +255,13 @@
       "additionalProperties": false,
       "description": "Put a page number in a section's header or footer, left, centred or\nright; the band is created when there is none, and its content is kept.",
       "properties": {
+        "after": {
+          "description": "With `of_total`: the words after the count (none when omitted).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "band": {
           "description": "The header or the footer.",
           "oneOf": [
@@ -269,6 +276,24 @@
               "type": "string"
             }
           ]
+        },
+        "before": {
+          "description": "With `of_total`: the words before the number, in the document's\nlanguage (\"Page \" when omitted).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "between": {
+          "description": "With `of_total`: the words between the number and the count (\" of \"\nwhen omitted).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "of_total": {
+          "description": "Write \"Page X of Y\" — the number and the page count — rather than\nthe number alone.",
+          "type": "boolean"
         },
         "op": {
           "const": "insert_page_number",

@@ -33,6 +33,7 @@ const REFERENCES: &str = "Removing a field or a paragraph-spanning field (unlink
 const NOTES: &str =
     "Removing a note or a header/footer body is not offered yet; inserting them is.";
 const PAGE_BORDERS: &str = "Page borders are a person's design choice in the Page Borders dialog; no agent command offers them yet.";
+const NOTE_SETTINGS: &str = "Footnote and endnote options are a person's layout choice in the Footnote and Endnote dialog; no agent command offers them yet.";
 const PROTECTION: &str =
     "Protection and tracking settings are a person's decision, never an agent's.";
 
@@ -118,6 +119,7 @@ classify! {
     SetSectionWatermark => Agent,
     SetSectionLineNumbering => Agent,
     SetSectionPageBorders => NotExposed(PAGE_BORDERS),
+    SetNoteProperties => NotExposed(NOTE_SETTINGS),
     SetSectionPageNumbering => Agent,
     SetSectionVerticalAlignment => Agent,
     SetEvenAndOddHeaders => Agent,
@@ -141,7 +143,10 @@ classify! {
 ///
 /// 16 -> 17 with `SetSectionPageBorders` (`109` HF-193, #912): page borders are a
 /// person's design choice in the Page Borders dialog, recorded in `docs/181` §3.
-pub const NOT_EXPOSED_CEILING: usize = 17;
+/// 17 -> 18 with `SetNoteProperties` (`docs/153` `page.note.settings`, `109` RM-24):
+/// note options are a person's layout choice in the Footnote and Endnote dialog,
+/// recorded in `docs/181` §3.
+pub const NOT_EXPOSED_CEILING: usize = 18;
 
 /// The reach of the variant named `name`, if it is one. O(variants).
 #[must_use]

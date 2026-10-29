@@ -21,6 +21,7 @@ use casual_doc_model::v1::{
     PageVerticalAlignment, Paragraph, ParagraphProperties, Rgba, SectionBoundary, SectionColumns,
     SectionId, Watermark, WatermarkContent, WatermarkLayout, WatermarkText,
 };
+use casual_doc_model::v1::{Run, RunProperties};
 
 fn next(ids: MintId<'_>) -> Result<NodeId, String> {
     ids().ok_or_else(|| "id space exhausted".to_owned())
@@ -654,7 +655,9 @@ impl PageNumberAlign {
 /// An inherited band is edited where it lives, as typing into it is: the number
 /// appears on every section linked to it, which is what "linked" means.
 ///
-/// The caret lands after the new field. O(sections + top-level blocks).
+/// `text` is the number alone or "Page X of Y" ([`PageNumberText`]).
+///
+/// The caret lands after what was inserted. O(sections + top-level blocks).
 ///
 /// # Errors
 /// An unknown section, a band whose edge block is not a paragraph (a table at
@@ -665,14 +668,13 @@ pub fn insert_page_number(
     region: RunningRegion,
     kind: HeaderFooterKind,
     align: PageNumberAlign,
+    text: &PageNumberText,
     ids: MintId<'_>,
 ) -> Result<RunningEdit, String> {
     let boundary =
         section_at(document, ordinal).ok_or_else(|| format!("there is no section {ordinal}"))?;
-    let field_id = next(ids)?;
-    let result_id = next(ids)?;
-    let field = CommonField::Page.build(field_id, result_id);
-    let field_len = casual_doc_edit::field_text_len(&field);
+    let inlines = page_number_inlines(text, ids)?;
+    let length = casual_doc_edit::inlines_text_len(&inlines);
     let Some(blocks) = shown_blocks(document, ordinal, region, kind) else {
         let body = HeaderFooterId::new(next(ids)?);
         let paragraph = next(ids)?;
@@ -688,7 +690,7 @@ pub fn insert_page_number(
                     blocks: vec![BlockNode::Paragraph(Paragraph {
                         id: paragraph,
                         properties: properties.into(),
-                        inlines: vec![InlineNode::Field(Box::new(field))],
+                        inlines,
                     })],
                 },
                 Operation::SetSectionRunningRef {
@@ -698,7 +700,7 @@ pub fn insert_page_number(
                     reference: Some(body),
                 },
             ],
-            caret: Pos::new(paragraph, field_len),
+            caret: Pos::new(paragraph, length),
         });
     };
     let edge = match region {
@@ -752,12 +754,72 @@ pub fn insert_page_number(
         node: target,
         properties: Box::new(properties),
     });
-    operations.push(Operation::InsertField {
-        at: Pos::new(target, 0),
-        field: Box::new(field),
+    // The target is empty in every branch above, so installing its content
+    // whole is exact — and it is one operation for "Page X of Y" as for the bare
+    // number, with no offsets to compute between two fields.
+    operations.push(Operation::SetInlines {
+        node: target,
+        inlines,
     });
     Ok(RunningEdit {
         operations,
-        caret: Pos::new(target, field_len),
+        caret: Pos::new(target, length),
     })
+}
+
+/// What a page-number preset writes: the number alone, or Word's "Page X of Y"
+/// (Page Number ▸ Bottom of Page ▸ Page X of Y).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PageNumberText {
+    /// The `PAGE` field alone.
+    Number,
+    /// `before`, `PAGE`, `between`, `NUMPAGES`, `after`. The words are the
+    /// CALLER'S, in the document's language ("Page " / " of " / "", or Chinese
+    /// "第 " / " 页，共 " / " 页"): they are document text, not chrome, so the
+    /// engine holds no English for them. An empty word writes no run.
+    OfTotal {
+        /// The text before the page number.
+        before: String,
+        /// The text between the page number and the page count.
+        between: String,
+        /// The text after the page count.
+        after: String,
+    },
+}
+
+/// The inline content of a page-number preset, every id minted from `ids` in
+/// document order. O(1).
+fn page_number_inlines(text: &PageNumberText, ids: MintId<'_>) -> Result<Vec<InlineNode>, String> {
+    fn field(common: CommonField, ids: MintId<'_>) -> Result<InlineNode, String> {
+        let id = next(ids)?;
+        let result = next(ids)?;
+        Ok(InlineNode::Field(Box::new(common.build(id, result))))
+    }
+    let mut inlines = Vec::with_capacity(4);
+    match text {
+        PageNumberText::Number => inlines.push(field(CommonField::Page, ids)?),
+        PageNumberText::OfTotal {
+            before,
+            between,
+            after,
+        } => {
+            for (words, common) in [
+                (before, Some(CommonField::Page)),
+                (between, Some(CommonField::NumPages)),
+                (after, None),
+            ] {
+                if !words.is_empty() {
+                    inlines.push(InlineNode::Run(Run {
+                        id: next(ids)?,
+                        properties: RunProperties::default().into(),
+                        text: words.clone(),
+                    }));
+                }
+                if let Some(common) = common {
+                    inlines.push(field(common, ids)?);
+                }
+            }
+        }
+    }
+    Ok(inlines)
 }
