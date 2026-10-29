@@ -1139,8 +1139,8 @@
       "trackable": "no",
       "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
       "uiCommands": [
-        "insert.header.linkToPrevious",
-        "insert.footer.linkToPrevious"
+        "layout.header.linkToPrevious",
+        "layout.footer.linkToPrevious"
       ]
     },
     {
@@ -1159,8 +1159,8 @@
       "trackable": "no",
       "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
       "uiCommands": [
-        "insert.header.remove",
-        "insert.footer.remove"
+        "layout.header.remove",
+        "layout.footer.remove"
       ]
     },
     {
@@ -1183,12 +1183,12 @@
       "trackable": "no",
       "trackableReason": "Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.",
       "uiCommands": [
-        "insert.pageNumber.topLeft",
-        "insert.pageNumber.topCenter",
-        "insert.pageNumber.topRight",
-        "insert.pageNumber.bottomLeft",
-        "insert.pageNumber.bottomCenter",
-        "insert.pageNumber.bottomRight"
+        "layout.pageNumber.topLeft",
+        "layout.pageNumber.topCenter",
+        "layout.pageNumber.topRight",
+        "layout.pageNumber.bottomLeft",
+        "layout.pageNumber.bottomCenter",
+        "layout.pageNumber.bottomRight"
       ]
     },
     {

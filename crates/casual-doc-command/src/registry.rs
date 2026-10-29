@@ -771,8 +771,8 @@ pub const COMMANDS: &[Command] = &[
         trackable: Trackable::No(SECTION_NOT_TRACKABLE),
         example: r#"{"op":"link_to_previous","section":1,"band":"header","linked":false}"#,
         ui_commands: &[
-            "insert.header.linkToPrevious",
-            "insert.footer.linkToPrevious",
+            "layout.header.linkToPrevious",
+            "layout.footer.linkToPrevious",
         ],
     },
     Command {
@@ -782,7 +782,7 @@ pub const COMMANDS: &[Command] = &[
         emits: &["CreateHeaderFooterBody", "SetSectionRunningRef"],
         trackable: Trackable::No(SECTION_NOT_TRACKABLE),
         example: r#"{"op":"remove_header_footer","section":0,"band":"footer"}"#,
-        ui_commands: &["insert.header.remove", "insert.footer.remove"],
+        ui_commands: &["layout.header.remove", "layout.footer.remove"],
     },
     Command {
         id: "insert_page_number",
@@ -798,12 +798,12 @@ pub const COMMANDS: &[Command] = &[
         trackable: Trackable::No(SECTION_NOT_TRACKABLE),
         example: r#"{"op":"insert_page_number","section":0,"band":"footer","side":"center"}"#,
         ui_commands: &[
-            "insert.pageNumber.topLeft",
-            "insert.pageNumber.topCenter",
-            "insert.pageNumber.topRight",
-            "insert.pageNumber.bottomLeft",
-            "insert.pageNumber.bottomCenter",
-            "insert.pageNumber.bottomRight",
+            "layout.pageNumber.topLeft",
+            "layout.pageNumber.topCenter",
+            "layout.pageNumber.topRight",
+            "layout.pageNumber.bottomLeft",
+            "layout.pageNumber.bottomCenter",
+            "layout.pageNumber.bottomRight",
         ],
     },
     Command {
