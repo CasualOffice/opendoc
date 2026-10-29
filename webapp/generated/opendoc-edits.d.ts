@@ -3,7 +3,7 @@
 // Regenerate: cargo run -p casual-doc-command --bin opendoc-command-gen
 
 /** The edit vocabulary version (docs/181 §4.1): a minor bump adds commands; a major bump changes or removes one. */
-export declare const VOCABULARY_VERSION: "1.3";
+export declare const VOCABULARY_VERSION: "1.4";
 
 /**
  * Insert text at an anchor.
@@ -1439,6 +1439,61 @@ export interface SetDifferentOddEvenEdit {
 }
 
 /**
+ * Link a section's header or footer to the previous section's, or give it its own copy (page number, pictures and all) to change on its own.
+ *
+ * Family `headers_footers`; trackable: no. Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"link_to_previous","section":1,"band":"header","linked":false}
+ */
+export interface LinkToPreviousEdit {
+  op: "link_to_previous";
+  /** The header or the footer. */
+  band: "header" | "footer";
+  /** Linked or not. */
+  linked: boolean;
+  /** Which pages (default every page). */
+  pages?: "default" | "first" | "even";
+  /** The 0-based section; never 0, which has no previous section. */
+  section: number;
+}
+
+/**
+ * Remove the header or footer a section shows, from that section and the sections linked to it, never from an earlier one.
+ *
+ * Family `headers_footers`; trackable: no. Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"remove_header_footer","section":0,"band":"footer"}
+ */
+export interface RemoveHeaderFooterEdit {
+  op: "remove_header_footer";
+  /** The header or the footer. */
+  band: "header" | "footer";
+  /** Which pages (default every page). */
+  pages?: "default" | "first" | "even";
+  /** The 0-based section. */
+  section: number;
+}
+
+/**
+ * Put a page number in a section's header or footer, left, centred or right; the band is created when there is none, and what it holds is kept.
+ *
+ * Family `headers_footers`; trackable: no. Page setup, section breaks, headers, footers and the watermark cannot be suggested yet: tracked section properties (`w:sectPrChange`) are not modelled. Use mode `direct` under a profile that grants `edit`.
+ *
+ * @example {"op":"insert_page_number","section":0,"band":"footer","side":"center"}
+ */
+export interface InsertPageNumberEdit {
+  op: "insert_page_number";
+  /** The header or the footer. */
+  band: "header" | "footer";
+  /** Which pages (default every page). */
+  pages?: "default" | "first" | "even";
+  /** The 0-based section. */
+  section: number;
+  /** Where across the band. */
+  side: "left" | "center" | "right";
+}
+
+/**
  * Insert a chart (column, bar, line, area, scatter, pie or doughnut, plain, stacked or percent) with sample data at an anchor.
  *
  * Family `charts`; trackable: no. Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.
@@ -1743,6 +1798,9 @@ export type EditOp =
   | "insert_footer"
   | "set_different_first_page"
   | "set_different_odd_even"
+  | "link_to_previous"
+  | "remove_header_footer"
+  | "insert_page_number"
   | "insert_chart"
   | "insert_table_of_contents"
   | "update_table_of_contents"
@@ -1807,6 +1865,9 @@ export type Edit =
   | InsertFooterEdit
   | SetDifferentFirstPageEdit
   | SetDifferentOddEvenEdit
+  | LinkToPreviousEdit
+  | RemoveHeaderFooterEdit
+  | InsertPageNumberEdit
   | InsertChartEdit
   | InsertTableOfContentsEdit
   | UpdateTableOfContentsEdit
@@ -1832,7 +1893,7 @@ export interface EditsByFamily {
   objects: InsertImageEdit | SetAltTextEdit | ResizeObjectEdit | SetWrapEdit | CropImageEdit | DeleteObjectEdit | SetShapeFillEdit | SetShapeOutlineEdit;
   notes: InsertFootnoteEdit | InsertEndnoteEdit;
   sections: InsertBreakEdit | InsertSectionBreakEdit | SetPageSetupEdit | SetLineNumberingEdit | SetPageNumberingEdit | SetWatermarkEdit;
-  headers_footers: InsertHeaderEdit | InsertFooterEdit | SetDifferentFirstPageEdit | SetDifferentOddEvenEdit;
+  headers_footers: InsertHeaderEdit | InsertFooterEdit | SetDifferentFirstPageEdit | SetDifferentOddEvenEdit | LinkToPreviousEdit | RemoveHeaderFooterEdit | InsertPageNumberEdit;
   charts: InsertChartEdit;
   references: InsertTableOfContentsEdit | UpdateTableOfContentsEdit | InsertCaptionEdit | UpdateCaptionNumbersEdit | InsertCrossReferenceEdit;
   review: CommentEdit | ResolveCommentEdit | ReviewEdit;

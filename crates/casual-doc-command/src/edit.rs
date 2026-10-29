@@ -331,6 +331,28 @@ pub enum PageKind {
     Even,
 }
 
+/// A header or a footer.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Band {
+    /// The header.
+    Header,
+    /// The footer.
+    Footer,
+}
+
+/// Where across a header or footer a page number goes.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum PageNumberSide {
+    /// At the start edge (left in left-to-right text).
+    Left,
+    /// Centred.
+    Center,
+    /// At the end edge (right in left-to-right text).
+    Right,
+}
+
 /// How text wraps around a floating object.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -1092,6 +1114,42 @@ pub enum Edit {
         /// On or off.
         enabled: bool,
     },
+    /// Link a section's header or footer to the previous section's (true), or
+    /// give the section its own copy of it to change on its own (false).
+    LinkToPrevious {
+        /// The 0-based section; never 0, which has no previous section.
+        section: u32,
+        /// The header or the footer.
+        band: Band,
+        /// Which pages (default every page).
+        #[serde(default)]
+        pages: PageKind,
+        /// Linked or not.
+        linked: bool,
+    },
+    /// Remove the header or footer a section shows, from that section only.
+    RemoveHeaderFooter {
+        /// The 0-based section.
+        section: u32,
+        /// The header or the footer.
+        band: Band,
+        /// Which pages (default every page).
+        #[serde(default)]
+        pages: PageKind,
+    },
+    /// Put a page number in a section's header or footer, left, centred or
+    /// right; the band is created when there is none, and its content is kept.
+    InsertPageNumber {
+        /// The 0-based section.
+        section: u32,
+        /// The header or the footer.
+        band: Band,
+        /// Which pages (default every page).
+        #[serde(default)]
+        pages: PageKind,
+        /// Where across the band.
+        side: PageNumberSide,
+    },
     /// Insert a chart with sample data at an anchor.
     InsertChart {
         /// Where.
@@ -1257,6 +1315,9 @@ impl Edit {
             Self::InsertFooter { .. } => "insert_footer",
             Self::SetDifferentFirstPage { .. } => "set_different_first_page",
             Self::SetDifferentOddEven { .. } => "set_different_odd_even",
+            Self::LinkToPrevious { .. } => "link_to_previous",
+            Self::RemoveHeaderFooter { .. } => "remove_header_footer",
+            Self::InsertPageNumber { .. } => "insert_page_number",
             Self::InsertChart { .. } => "insert_chart",
             Self::InsertTableOfContents { .. } => "insert_table_of_contents",
             Self::UpdateTableOfContents { .. } => "update_table_of_contents",
@@ -1334,6 +1395,9 @@ impl Edit {
             | Self::InsertFooter { .. }
             | Self::SetDifferentFirstPage { .. }
             | Self::SetDifferentOddEven { .. }
+            | Self::LinkToPrevious { .. }
+            | Self::RemoveHeaderFooter { .. }
+            | Self::InsertPageNumber { .. }
             | Self::InsertChart { .. }
             | Self::InsertTableOfContents { .. }
             | Self::UpdateTableOfContents { .. }
