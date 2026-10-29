@@ -35,6 +35,15 @@
 //! falls back to the semantic writer, reported, when it is not. A session whose
 //! content equals the import's (an edit undone) writes the original back. No
 //! PDF object reaches the model (MF-I1).
+//!
+//! # Reflow
+//!
+//! The envelope also keeps the import's reflow source (`docs/182` §3, the I4
+//! sidecar: text blocks, rules, pictures by part name, vector art,
+//! annotations, the structure tree), so [`pdf_reflow`] makes "Convert to
+//! flowing document" from an open session without parsing the PDF again
+//! (`docs/182` §18). Its memory is O(glyphs + path commands) for the
+//! session's life.
 
 use std::sync::Arc;
 
@@ -61,6 +70,9 @@ struct PdfSourceState {
     baseline: Option<Baseline>,
     /// What OCR did and which models did it (no recognised text).
     ocr: OcrSummary,
+    /// What reflow reads, and the import's id namespace; `None` in a
+    /// reflowed document's own envelope (it is not a PDF's pages any more).
+    reflow: Option<(casual_doc_pdf_import::PdfSourceState, u64)>,
 }
 
 /// What OCR did during the import `source` came from, and the manifest of
@@ -189,14 +201,66 @@ fn adapter_error(error: PdfImportError) -> AdapterError {
     AdapterError::new(format!("PDF import: {error}"))
 }
 
-fn artifact(imported: PdfImport, retain_source: bool, format: FormatId) -> ImportArtifact {
-    let mut resources = DocumentResources::default();
-    for (name, bytes) in imported.resources {
-        resources.insert(name, bytes);
-    }
-    let mut report = CompatibilityReport {
-        entries: imported
-            .report
+/// "Convert to flowing document" (`docs/182` §4.2, §18) for the PDF import
+/// `source` came from: a **new** import artifact with its own document,
+/// resources (the pictures and font programs it references, copied from
+/// `resources`, the open document's) and report (`pdf.import.*` reflow
+/// families). The open document and its envelope are not touched; the new
+/// envelope retains no original bytes, so the reflowed document never writes
+/// the PDF back. `None` when `source` is not a PDF import.
+/// O(document log document).
+///
+/// # Errors
+///
+/// [`AdapterError`] when the reflowed document fails validation (an importer
+/// defect, never a property of the input).
+pub fn pdf_reflow(
+    source: &SourceEnvelope,
+    resources: &DocumentResources,
+) -> Option<Result<ImportArtifact, AdapterError>> {
+    let state = source.state::<PdfSourceState>()?;
+    let (reflow_state, namespace) = state.reflow.as_ref()?;
+    let format = source.format().clone();
+    Some(
+        casual_doc_pdf_import::reflow::build_for_import(
+            reflow_state,
+            resources.as_map(),
+            *namespace,
+        )
+        .map_err(adapter_error)
+        .map(|reflowed| {
+            let mut resources = DocumentResources::default();
+            for (name, bytes) in reflowed.resources {
+                resources.insert(name, bytes);
+            }
+            ImportArtifact {
+                document: reflowed.document,
+                resources,
+                source: SourceEnvelope::new(
+                    format.clone(),
+                    env!("CARGO_PKG_VERSION").to_owned(),
+                    PdfSourceState {
+                        original: None,
+                        baseline: None,
+                        ocr: state.ocr.clone(),
+                        reflow: None,
+                    },
+                ),
+                report: compatibility(&reflowed.report),
+                recovery: RecoveryReport::default(),
+                format: FormatProfile {
+                    format,
+                    version: None,
+                },
+            }
+        }),
+    )
+}
+
+/// The importer's findings as a compatibility report, sorted. O(findings).
+fn compatibility(report: &casual_doc_pdf_import::PdfImportReport) -> CompatibilityReport {
+    let mut out = CompatibilityReport {
+        entries: report
             .findings
             .iter()
             .map(|finding| CompatibilityEntry {
@@ -225,7 +289,16 @@ fn artifact(imported: PdfImport, retain_source: bool, format: FormatId) -> Impor
             })
             .collect(),
     };
-    report.sort();
+    out.sort();
+    out
+}
+
+fn artifact(imported: PdfImport, retain_source: bool, format: FormatId) -> ImportArtifact {
+    let mut resources = DocumentResources::default();
+    for (name, bytes) in imported.resources {
+        resources.insert(name, bytes);
+    }
+    let report = compatibility(&imported.report);
     let baseline = retain_source
         .then(|| Baseline::new(&imported.document, imported.sources))
         .flatten();
@@ -239,6 +312,7 @@ fn artifact(imported: PdfImport, retain_source: bool, format: FormatId) -> Impor
                 baseline,
                 original: retain_source.then_some(imported.original),
                 ocr: imported.ocr,
+                reflow: Some((imported.source, imported.namespace)),
             },
         ),
         report,
@@ -646,6 +720,56 @@ mod tests {
             job.finish().unwrap().document.definitions().sections.len(),
             2
         );
+    }
+
+    #[test]
+    fn an_open_pdf_converts_to_a_new_flowing_document_from_its_envelope() {
+        let adapter = PdfImportAdapter::default();
+        let artifact = adapter
+            .import(ImportRequest {
+                bytes: PROSE,
+                retain_source: true,
+            })
+            .unwrap();
+        let before = artifact.document.clone();
+        let reflowed = pdf_reflow(&artifact.source, &artifact.resources)
+            .expect("a PDF import keeps its reflow source")
+            .expect("reflows");
+        // The same document the importer's own reflow makes: no second parse,
+        // the same ids.
+        let direct = casual_doc_pdf_import::import_pdf(PROSE.to_vec(), PdfReadLimits::default())
+            .unwrap()
+            .reflow()
+            .unwrap();
+        assert_eq!(reflowed.document, direct.document);
+        assert_eq!(artifact.document, before, "the open document is untouched");
+        // Flowing: paragraphs in the body, not one page-anchored frame per block.
+        let body = format!("{:?}", reflowed.document.body());
+        assert!(!body.contains("TextBox"), "{body}");
+        assert!(
+            reflowed
+                .report
+                .entries
+                .iter()
+                .any(|e| e.feature == "pdf.import.paragraph_boundary_inferred")
+        );
+        // The new document is not the PDF: it cannot write the original back,
+        // and it does not convert again.
+        assert_eq!(adapter.retained_source_bytes(&reflowed.source), None);
+        assert!(pdf_reflow(&reflowed.source, &reflowed.resources).is_none());
+        // Nor does a document that never was a PDF.
+        let text = crate::builtin_registry()
+            .import(
+                DetectionRequest {
+                    bytes: b"plain words",
+                    selection: FormatSelection::Auto,
+                    file_name_hint: Some("notes.txt"),
+                    mime_hint: None,
+                },
+                false,
+            )
+            .unwrap();
+        assert!(pdf_reflow(&text.source, &text.resources).is_none());
     }
 
     #[test]

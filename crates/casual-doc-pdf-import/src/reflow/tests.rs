@@ -6,6 +6,8 @@
 use casual_doc_model::v1::{
     BlockNode, Document, FieldKind, HyperlinkTarget, InlineNode, NumberFormat, Paragraph,
 };
+// Own line: floating pictures and vector art.
+use casual_doc_model::v1::{GroupChild, HorizontalAnchor, VerticalAnchor, WrapMode};
 
 use crate::report::{self, PdfModelOutcome};
 use crate::synth::{self, PROSE, Page, line, text};
@@ -959,8 +961,15 @@ fn the_loss_report_names_every_construct_reflow_could_not_keep() {
             report::LINK_UNRESOLVED,
             report::TABLE_TOPOLOGY_DEGRADED,
             report::TEXT_ROTATED,
-            report::VECTOR_OMITTED,
         ]
+    );
+    // The diamond is placed, not omitted.
+    assert_eq!(
+        reflowed
+            .report
+            .get(report::VECTOR_PLACED)
+            .map(|f| f.occurrences),
+        Some(1)
     );
     // Nothing visible was dropped silently: the rotated text and both
     // near-table columns are body text.
@@ -1596,11 +1605,276 @@ fn a_page_that_ends_early_keeps_its_break_and_justified_text_stays_justified() {
     assert_eq!(find("Chapter One").1, None);
     assert_eq!(find("The quick brown").1, None);
     assert_eq!(find("Every line").2, Some(Alignment::Justify));
+    // The ragged paragraph is the justified one's twin: the same face and
+    // column, three lines, its first reaching the right edge. Only its line
+    // ends tell them apart.
+    assert_eq!(find("A ragged paragraph").2, None, "{paras:?}");
     assert_eq!(
         find("The quick brown").2,
         None,
         "ragged-right prose is not justified"
     );
+    // Exactly one paragraph is justified: every other multi-line paragraph
+    // on these pages is ragged.
+    let justified: Vec<&String> = paras
+        .iter()
+        .filter(|p| p.2 == Some(Alignment::Justify))
+        .map(|p| &p.0)
+        .collect();
+    assert_eq!(justified.len(), 1, "{justified:?}");
+    assert_eq!(
+        reflowed
+            .report
+            .get(report::JUSTIFICATION_INFERRED)
+            .map(|f| f.occurrences),
+        Some(1)
+    );
     assert!(reflowed.report.has(report::PAGE_BREAK_INFERRED));
-    assert!(reflowed.report.has(report::JUSTIFICATION_INFERRED));
+}
+
+fn line_ending_at(x1: f64, top: f64) -> super::ILine {
+    super::ILine {
+        page: 0,
+        chars: Vec::new(),
+        x0: 72.0,
+        x1,
+        top,
+        bottom: top + 10.0,
+        baseline: top + 8.0,
+        size: 10.0,
+        mcid: None,
+    }
+}
+
+#[test]
+fn only_lines_ending_together_at_the_column_edge_are_justified() {
+    let justified = |ends: &[f64]| {
+        let lines: Vec<super::ILine> = ends
+            .iter()
+            .enumerate()
+            .map(|(i, &x1)| line_ending_at(x1, 100.0 + 12.0 * i as f64))
+            .collect();
+        let refs: Vec<&super::ILine> = lines.iter().collect();
+        super::emit::justified(&refs, 72.0, 540.0)
+    };
+    assert!(justified(&[540.0, 539.6, 540.0, 400.0]));
+    // Ragged right: the body lines end at different places.
+    assert!(!justified(&[540.0, 510.0, 400.0]), "ragged");
+    assert!(
+        !justified(&[540.0, 539.5, 540.0, 520.0, 300.0]),
+        "one line short"
+    );
+    // Straight, but well short of the column: a narrow block, not justified.
+    assert!(!justified(&[400.0, 400.0, 300.0]), "short of the edge");
+    // Every line reaches the edge, the last too: not a paragraph's end.
+    assert!(!justified(&[540.0, 540.0, 540.0]), "no short last line");
+    // Two lines are too few to tell.
+    assert!(!justified(&[540.0, 300.0]), "two lines");
+}
+
+// --- Floating pictures and vector art -------------------------------------
+
+/// `pages` with a 4x4 grey picture available to every page as `/Im1`.
+fn with_picture(pages: &[Page]) -> Vec<u8> {
+    let mut pdf = synth::Pdf::default();
+    let image = pdf.stream(
+        "/Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceGray /BitsPerComponent 8",
+        &[128u8; 16],
+    );
+    synth::document_in(
+        &mut pdf,
+        pages,
+        &format!("/XObject << /Im1 {image} 0 R >>"),
+        "",
+        |_| String::new(),
+    )
+}
+
+/// The picture drawn at (`x`, `y`) (PDF space, lower left), `w` by `h`.
+fn picture(x: f64, y: f64, w: f64, h: f64) -> String {
+    format!("q {w} 0 0 {h} {x} {y} cm /Im1 Do Q\n")
+}
+
+/// One body paragraph's text, its floats' `(wrap, behind)`, and whether it
+/// holds an inline picture.
+type Placed = (String, Vec<(WrapMode, bool)>, bool);
+
+fn graphics(document: &Document) -> Vec<Placed> {
+    paragraphs(document)
+        .into_iter()
+        .map(|p| {
+            let floats = p
+                .inlines
+                .iter()
+                .filter_map(|i| match i {
+                    InlineNode::AnchoredDrawing(d) => Some((d.anchor.wrap, d.anchor.behind_doc)),
+                    InlineNode::Group(g) => g.anchor.as_ref().map(|a| (a.wrap, a.behind_doc)),
+                    _ => None,
+                })
+                .collect();
+            let inline = p
+                .inlines
+                .iter()
+                .any(|i| matches!(i, InlineNode::Drawing(_)));
+            (para_text(p), floats, inline)
+        })
+        .collect()
+}
+
+fn floats_pdf() -> Vec<u8> {
+    // Page 1: a picture at the column's left, the prose set to its right
+    // (18 pt away), and a full-width paragraph under both.
+    let first = format!(
+        "{}{}{}",
+        picture(72.0, 640.0, 100.0, 80.0),
+        text("F2", 11.0, 190.0, 710.0, 14.0, &PROSE[..4]),
+        text("F2", 11.0, 72.0, 600.0, 14.0, &PROSE[4..8]),
+    );
+    // Page 2: a picture as wide as the text, between two paragraphs.
+    let second = format!(
+        "{}{}{}",
+        text("F2", 11.0, 72.0, 720.0, 14.0, &PROSE[..4]),
+        picture(72.0, 500.0, 460.0, 120.0),
+        text("F2", 11.0, 72.0, 460.0, 14.0, &PROSE[4..8]),
+    );
+    with_picture(&[Page::new(first), Page::new(second)])
+}
+
+#[test]
+fn a_picture_beside_text_floats_on_it_and_a_column_wide_one_stays_inline() {
+    let (_, reflowed) = reflow_of(floats_pdf());
+    let found = graphics(&reflowed.document);
+    let with_floats: Vec<&Placed> = found.iter().filter(|p| !p.1.is_empty()).collect();
+    assert_eq!(with_floats.len(), 1, "{found:?}");
+    let (text, wraps, _) = with_floats[0];
+    assert!(text.starts_with("The quick brown"), "{found:?}");
+    assert_eq!(wraps, &vec![(WrapMode::Square, false)]);
+    // The floated paragraph is not indented by the picture's width: the
+    // wrap moves its text.
+    let floated = paragraphs(&reflowed.document)
+        .into_iter()
+        .find(|p| para_text(p).starts_with("The quick brown"))
+        .unwrap();
+    assert_eq!(floated.properties.indentation, None);
+    // Its anchor: the column's left edge and the paragraph's top.
+    let anchor = floated
+        .inlines
+        .iter()
+        .find_map(|i| match i {
+            InlineNode::AnchoredDrawing(d) => Some(d.anchor.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(anchor.horizontal.relative_from, HorizontalAnchor::Column);
+    assert_eq!(anchor.vertical.relative_from, VerticalAnchor::Paragraph);
+    // The column-wide picture keeps its own line, inline.
+    assert_eq!(found.iter().filter(|p| p.2).count(), 1, "{found:?}");
+    assert_eq!(
+        reflowed
+            .report
+            .get(report::FLOAT_INFERRED)
+            .map(|f| f.occurrences),
+        Some(1)
+    );
+}
+
+fn vectors_pdf() -> Vec<u8> {
+    let content = format!(
+        "{}{}{}{}",
+        // A pale panel under the first paragraph.
+        "0.9 g 66 650 300 80 re f 0 g\n",
+        text("F2", 11.0, 72.0, 720.0, 14.0, &PROSE[..4]),
+        // A diamond on its own, between the paragraphs.
+        "0.5 g 300 400 m 340 440 l 380 400 l 340 360 l f 0 g\n",
+        text("F2", 11.0, 72.0, 300.0, 14.0, &PROSE[4..8]),
+    );
+    synth::document(&[Page::new(content)], "", "")
+}
+
+#[test]
+fn vector_art_becomes_shape_groups_behind_its_text_or_on_its_own_line() {
+    let (_, reflowed) = reflow_of(vectors_pdf());
+    let found = graphics(&reflowed.document);
+    let panel = found
+        .iter()
+        .find(|p| p.0.starts_with("The quick brown"))
+        .unwrap();
+    assert_eq!(panel.1, vec![(WrapMode::None, true)], "{found:?}");
+    let own_line: Vec<&Placed> = found
+        .iter()
+        .filter(|p| p.0.is_empty() && !p.1.is_empty())
+        .collect();
+    assert_eq!(own_line.len(), 1, "{found:?}");
+    assert_eq!(own_line[0].1, vec![(WrapMode::TopAndBottom, false)]);
+    // The shapes are the PDF's paths: one custom-geometry shape each.
+    let shapes: usize = paragraphs(&reflowed.document)
+        .iter()
+        .flat_map(|p| p.inlines.iter())
+        .filter_map(|i| match i {
+            InlineNode::Group(g) => Some(
+                g.children
+                    .iter()
+                    .filter(|c| matches!(c, GroupChild::Shape(s) if s.path.is_some()))
+                    .count(),
+            ),
+            _ => None,
+        })
+        .sum();
+    assert_eq!(shapes, 2);
+    assert_eq!(
+        reflowed
+            .report
+            .get(report::VECTOR_PLACED)
+            .map(|f| f.occurrences),
+        Some(2)
+    );
+    assert!(!reflowed.report.has(report::VECTOR_OMITTED));
+}
+
+#[test]
+fn a_fill_masking_the_picture_under_it_is_not_placed() {
+    let content = format!(
+        "{}{}{}",
+        text("F2", 11.0, 72.0, 720.0, 14.0, &PROSE[..4]),
+        picture(72.0, 400.0, 300.0, 150.0),
+        // White boxes inside the picture, painted straight after it.
+        "1 g 100 450 120 20 re f 100 420 80 20 re f 0 g\n",
+    );
+    let (_, reflowed) = reflow_of(with_picture(&[Page::new(content)]));
+    let found = graphics(&reflowed.document);
+    assert!(found.iter().all(|p| p.1.is_empty()), "{found:?}");
+    assert_eq!(found.iter().filter(|p| p.2).count(), 1, "the picture stays");
+    assert_eq!(
+        reflowed
+            .report
+            .get(report::VECTOR_OMITTED)
+            .map(|f| f.occurrences),
+        Some(1)
+    );
+    assert!(!reflowed.report.has(report::VECTOR_PLACED));
+}
+
+fn diamond_pages(n: usize) -> Vec<u8> {
+    let pages: Vec<Page> = (0..n)
+        .map(|_| {
+            Page::new(format!(
+                "{}0.5 g 300 400 m 340 440 l 380 400 l 340 360 l f 0 g\n{}",
+                text("F2", 11.0, 72.0, 720.0, 14.0, &PROSE[..4]),
+                text("F2", 11.0, 72.0, 300.0, 14.0, &PROSE[4..8]),
+            ))
+        })
+        .collect();
+    synth::document(&pages, "", "")
+}
+
+#[test]
+fn graphic_placement_work_doubles_when_the_pages_double() {
+    let (a, b) = (work_of(diamond_pages(10)), work_of(diamond_pages(20)));
+    let r = ratio(a.graphics, b.graphics);
+    assert!(
+        (1.7..2.3).contains(&r),
+        "graphics: ratio {r:.2} ({} -> {})",
+        a.graphics,
+        b.graphics
+    );
 }

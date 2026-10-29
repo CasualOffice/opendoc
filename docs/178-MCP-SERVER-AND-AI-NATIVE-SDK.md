@@ -412,6 +412,7 @@ Grouped by family. Every tool has an `inputSchema` and an `outputSchema`, return
 | --- | --- | --- | --- | --- |
 | Session | `open_document` | read | R, I | Open a file under the roots (or a resource the client supplies) and return a handle, revision, digest, page count and the import summary |
 | | `close_document` | read | I | Release a handle |
+| | `convert_pdf_to_flowing` | read | R | For a document opened from a PDF, a **new** handle to its reflow ("Convert to flowing document", `docs/182` §18); the PDF's handle is unchanged |
 | Inspect | `get_outline` | read | R, I | Heading tree, sections, tables, review counts, with anchors and token estimates |
 | | `read_blocks` | read | R, I | Blocks from an anchor, as JSON or anchored Markdown, to a token ceiling |
 | | `get_styles` | read | R, I | Paragraph and character styles in use, with their effective formatting |
@@ -431,7 +432,9 @@ Grouped by family. Every tool has an `inputSchema` and an `outputSchema`, return
 | Validate | `compatibility_report` | read | R, I | What a save to a given format would keep, degrade or lose |
 | | `validate_document` | read | R, I | Model invariants, broken references (comments, notes, bookmarks, numbering), protection state |
 
-Twenty tools at the widest profile and sixteen under `read` (`preview_edits` is offered there
+The table above plus the two discovery tools of `docs/181` §5.1 (`list_edit_kinds`,
+`describe_edit_kind`) is the whole list; `tools/opendoc-mcp/tests/conformance.rs`'s
+`ALL_TOOLS` is the count of record. Every tool marked `read` is offered under `read` (`preview_edits` is offered there
 too: it shows what a plan would do and which edits the profile would refuse). Agents choose worse
 from long tool lists, so the profile trims the list (§5.1) and the descriptions are short
 and literal. The tool names are proposals (Q7).
@@ -788,6 +791,17 @@ re-minted still differs, so ADR-052's identity convention is unchanged.
   included, until 2027-03-30), so `document.modelContext` exists there for Chrome
   users; tools still register only on opt-in. `webapp/tests/webmcp_origin_trial.test.mjs`
   fails when the token lapses or stops matching `CNAME`.
+
+- PDF (`docs/182`, 2026-10-29): `open_document` opens a PDF as its fixed layout.
+  `--ocr-models DIR` reads scanned pages with PP-OCRv5 (`docs/182` §20a): `DIR` must lie
+  inside a `--root` (outside, the server stops at launch with exit 2), a missing or
+  unloadable directory is said on stderr and OCR stays off (`pdf.import.ocr_unavailable`),
+  nothing is fetched, and `open_document` returns an `ocr` object (provider, models by role
+  and SHA-256, counts). `convert_pdf_to_flowing` (profile `read`) returns a new handle to the
+  PDF's reflow with `convertedFrom`; a document not opened from a PDF is refused
+  `not-a-pdf`. Guards: conformance
+  `ocr_models_must_be_inside_the_roots_and_missing_ones_report_ocr_unavailable` and
+  `a_read_only_agent_converts_a_pdf_into_a_new_flowing_document`.
 
 **Not built, stated.**
 

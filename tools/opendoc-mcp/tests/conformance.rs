@@ -10,11 +10,13 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use serde_json::{Value, json};
 
-/// The 22 tools at the widest profile, in `tools/list` order (`docs/178` §6.2, plus
-/// the two discovery tools of `docs/181` §5.1).
+/// The 23 tools at the widest profile, in `tools/list` order (`docs/178` §6.2, plus
+/// the two discovery tools of `docs/181` §5.1 and `convert_pdf_to_flowing`,
+/// `docs/182` §18).
 const ALL_TOOLS: &[&str] = &[
     "open_document",
     "close_document",
+    "convert_pdf_to_flowing",
     "get_outline",
     "read_blocks",
     "get_styles",
@@ -419,6 +421,11 @@ fn the_server_lists_every_tool_and_every_tool_answers() {
         kinds["withheld"],
         json!([]),
         "the review profile with no toolsets admits every op"
+    );
+    assert_eq!(
+        client.refused("convert_pdf_to_flowing", json!({ "document": doc }))["code"],
+        "not-a-pdf",
+        "a text file is not a PDF"
     );
     let described = client.ok("describe_edit_kind", json!({ "op": "replace_text" }));
     assert_eq!(
@@ -994,6 +1001,56 @@ fn an_agent_opens_a_pdf_reads_it_and_suggests_into_a_frame() {
         client.ok("list_tracked_changes", json!({ "document": doc }))["total"],
         2,
         "a suggestion inside a PDF frame is a tracked deletion and insertion"
+    );
+}
+
+/// `docs/182` §18 reach: under the default `read` profile an agent converts a
+/// PDF it opened into a NEW flowing document, whose prose is body paragraphs
+/// (the fixed layout's is in frames, found only with `surface: all`), and
+/// both handles stay open.
+#[test]
+fn a_read_only_agent_converts_a_pdf_into_a_new_flowing_document() {
+    let base = sandbox("pdf-flowing");
+    std::fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/pdf/synthetic-prose.pdf"
+        ),
+        base.join("root/prose.pdf"),
+    )
+    .expect("fixture");
+    let root = arg(&base.join("root"));
+    let mut client = Client::start(&["--root", &root]);
+    assert!(
+        tool_names(&mut client).contains(&"convert_pdf_to_flowing".to_owned()),
+        "offered under read"
+    );
+    let pdf = client.ok("open_document", json!({ "path": "prose.pdf" }))["document"].clone();
+    let flowing = client.ok("convert_pdf_to_flowing", json!({ "document": pdf }));
+    let new = flowing["document"].clone();
+    assert!(new.is_string() && new != pdf, "a new handle: {flowing}");
+    assert_eq!(flowing["convertedFrom"], pdf);
+    assert_eq!(flowing["name"], "prose.pdf (flowing)");
+    assert!(
+        flowing["importSummary"]
+            .to_string()
+            .contains("pdf.import.paragraph_boundary_inferred"),
+        "the reflow's findings reach the agent: {flowing}"
+    );
+    let hits = client.ok(
+        "search",
+        json!({ "document": new, "query": "lazy dog", "surface": "body" }),
+    );
+    assert!(
+        hits["hits"][0]["node"].is_string(),
+        "the prose is body text: {hits}"
+    );
+    client.ok("get_outline", json!({ "document": pdf }));
+    client.ok("get_outline", json!({ "document": new }));
+    assert_eq!(
+        client.refused("convert_pdf_to_flowing", json!({ "document": new }))["code"],
+        "not-a-pdf",
+        "a conversion does not convert again"
     );
 }
 

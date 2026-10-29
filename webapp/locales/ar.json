@@ -2470,6 +2470,8 @@
   "findings.feature.pdfFootnoteMarkers": "علامات حواشٍ أعيد ترقيمها",
   "findings.feature.pdfJustification": "ضبط مستنتج من عرض الأسطر",
   "findings.feature.pdfPageBreaks": "فواصل صفحات مستنتجة من نهايات الصفحات",
+  "findings.feature.pdfFloats": "صور ورسومات عائمة بجانب نصها أو خلفه",
+  "findings.feature.pdfVectorsPlaced": "رسومات موضوعة كأشكال",
   "pdfImport.title": "جارٍ فتح {name}",
   "pdfImport.intro": "جارٍ إعادة بناء صفحات ملف PDF كإطارات قابلة للتحرير على هذا الجهاز.",
   "pdfImport.reading": "جارٍ قراءة الملف…",
