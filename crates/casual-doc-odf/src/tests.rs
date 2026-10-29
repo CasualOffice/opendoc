@@ -740,6 +740,52 @@ fn master_page_round_trips_as_a_byte_and_semantic_fixed_point() {
     assert_eq!(reexported.bytes, first.bytes);
 }
 
+/// HF-210: a footer's page number survives export -> import -> export. Before
+/// the fix the writer emitted `<text:page-number/>` and the importer dropped it,
+/// so the byte fixed point above held only for plain text.
+///
+/// Mutation: drop the `page-number` arm in `master_page.rs` — the reopened
+/// footer has no field, the model equality fails, and so does the byte one.
+#[test]
+fn a_footer_page_number_round_trips_through_styles_xml() {
+    let styles = styles_with_master(
+        r#"<office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1"><style:footer><text:p>Page <text:page-number text:select-page="current">3</text:page-number></text:p></style:footer></style:master-page></office:master-styles>"#,
+    );
+    let bytes = package_with_styles(styles);
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    imported.document.validate().unwrap();
+    let reference = imported.document.definitions().sections[0].footers[0].reference;
+    let footer = imported
+        .document
+        .definitions()
+        .footers
+        .get(&reference)
+        .expect("footer");
+    let BlockNode::Paragraph(paragraph) = &footer.blocks[0] else {
+        panic!("footer paragraph")
+    };
+    assert!(
+        paragraph.inlines.iter().any(|inline| matches!(
+            inline,
+            InlineNode::Field(field) if field.kind == casual_doc_model::v1::FieldKind::Page
+        )),
+        "the page number imports as a PAGE field: {:?}",
+        paragraph.inlines
+    );
+
+    let first = crate::write_odt(&imported.document, crate::OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let styles_out = String::from_utf8(package.read_part(STYLES_PART).unwrap()).unwrap();
+    assert!(styles_out.contains("<text:page-number/>"), "{styles_out}");
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    assert_eq!(reopened.document, imported.document, "semantic fixed point");
+    let again = crate::write_odt(&reopened.document, crate::OdfExportLimits::default()).unwrap();
+    assert_eq!(again.bytes, first.bytes, "byte fixed point");
+}
+
 /// Extracts the `<office:master-styles>` … `</office:master-styles>` block of a
 /// styles.xml document, so a guard can assert on the header/footer regions
 /// without matching the rest of the part.
@@ -1235,15 +1281,12 @@ fn header_text_that_looks_like_a_namespace_prefix_stays_deterministic() {
         "header text became markup: {styles_xml}"
     );
     assert_every_master_prefix_is_declared(&styles_xml);
-    // And it still reopens through the bounded admission layer.
-    //
-    // This deliberately does NOT assert the reopened run text equals the input.
-    // The master-page importer drops XML entities from header/footer text
-    // (`a&lt;b&gt;c&amp;d` imports as `abcd`) — a separate, pre-existing,
-    // genuinely silent import-side defect in `master_page.rs`, reported rather
-    // than papered over here. Asserting the current lossy value would pin the
-    // bug; asserting the correct value would make this guard fail for a reason it
-    // is not about. It asserts the writer's side, which is what changed.
+    // And it reopens through the bounded admission layer AS THE SAME TEXT. This
+    // used to assert only a prefix, because the master-page importer dropped the
+    // escaped characters (`a&lt;b&gt;c&amp;d` imported as `abcd`, `docs/109`
+    // HF-209); that is fixed, so the guard now asserts the whole round trip.
+    // Mutation: restore the wildcard in place of `master_page.rs`'s `GeneralRef`
+    // arm — the reopened text loses `<`, `>` and `&` and the equality fails.
     let reopened = package.import_document(OdfImportLimits::default()).unwrap();
     reopened.document.validate().unwrap();
     let reference = reopened.document.definitions().sections[0].footers[0].reference;
@@ -1259,13 +1302,7 @@ fn header_text_that_looks_like_a_namespace_prefix_stays_deterministic() {
     let InlineNode::Run(run) = &paragraph.inlines[0] else {
         panic!("footer run")
     };
-    // The unescaped parts do survive, so the fragment really was read as text and
-    // not skipped as markup.
-    assert!(
-        run.text.starts_with("see table: 3 and"),
-        "footer text did not survive as text: {:?}",
-        run.text
-    );
+    assert_eq!(run.text, "see table: 3 and <draw:frame> & co");
 }
 
 #[test]
