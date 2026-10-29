@@ -199,3 +199,38 @@ test("Remove footer from the Insert menu takes it off this section only, and Und
 
   expect(consoleErrors).toEqual([]);
 });
+
+// docs/174 OL-08. Mutation: drop `showBandTab()` from `enterRunningEdit` — the
+// tab stays disabled and the first assertion after opening fails; drop the veil
+// from `drawRunningBands` and the veil assertion fails.
+test("opening a band selects the contextual Header & Footer tab and dims the body; Close restores the tab", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoSections(page);
+  await page.locator('[data-tab="insert"]').click();
+  await expect(page.locator("#tabHeaderFooter")).toBeDisabled();
+
+  await openFooterOn(page, FIRST_PAGE);
+  await expect(page.locator("#tabHeaderFooter")).toBeEnabled();
+  await expect(page.locator("#tabHeaderFooter")).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#panelHeaderFooter")).toBeVisible();
+  await expect(page.locator("#hfTabFooterBtn")).toHaveAttribute("aria-pressed", "true");
+  // The first section has nothing to link to, on the tab as on the bar.
+  await expect(page.locator("#hfTabLinkBtn")).toBeDisabled();
+  await expect(sheetOf(page, FIRST_PAGE).locator(".running-veil")).toHaveCount(1);
+
+  // Page X of Y from the tab's Page number menu adds ink to the footer.
+  const before = await footerInk(page, FIRST_PAGE);
+  await page.locator("#hfTabPageNumberBtn").click();
+  await page.locator('#hfPageNumberMenu [data-command="layout.pageNumber.pageOfTotal"]').click();
+  await expect(page.locator("#status")).toContainText("Page number added to the footer");
+  await expect.poll(async () => (await footerInk(page, FIRST_PAGE)).ink).toBeGreaterThan(before.ink);
+
+  await page.locator("#hfTabCloseBtn").click();
+  await expect(page.locator("#tabHeaderFooter")).toBeDisabled();
+  await expect(page.locator("#tabInsert")).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".running-veil")).toHaveCount(0);
+
+  expect(consoleErrors).toEqual([]);
+});

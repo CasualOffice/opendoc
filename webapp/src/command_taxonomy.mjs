@@ -160,6 +160,9 @@ export const RIBBON_TABS = [
   // Named in the markup (`documentChrome.chart`), which is the label a reader
   // sees in every locale; nothing reads a label here.
   { tab: "chart", contextual: true },
+  // Exists only while a header or footer is open (docs/174 OL-08), like
+  // ONLYOFFICE's HeaderFooterTab and Word's Header & Footer tab.
+  { tab: "headerFooter", contextual: true },
 ];
 
 /** The File roster as named bands, the shape both menu renderers take. */

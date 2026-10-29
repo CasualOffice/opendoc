@@ -8,6 +8,7 @@ import {
   BAND_COMMANDS, PAGE_NUMBER_POSITIONS, bandCommandLabel, bandCommandReason, bandLabel, parseLinkState,
 } from "./header_footer_commands.mjs";
 import { PAGE_OF_TOTAL, splitPageOfTotal } from "./header_footer_commands.mjs";
+import { EN_STRINGS } from "./en_strings.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -257,6 +258,7 @@ export function createHeaderFooter(ed) {
     ed.pagesEl.dataset.runningEdit = band;
     document.body.classList.add("running-edit");
     hideRunningMarker();
+    showBandTab();
     drawRunningBands(band);
     ed.setStatus(band === "header" ? t("runningBand.editingHeader") : t("runningBand.editingFooter"));
     ed.focusEditorSurface();
@@ -309,6 +311,16 @@ export function createHeaderFooter(ed) {
       el.appendChild(label);
       page.wrap.appendChild(el);
       if (page.pageNumber === ed.runningEditPage) placeBandBar(page, band, bands, sy);
+      // The INACTIVE layer, dimmed (docs/174 OL-08): Word and ONLYOFFICE both
+      // grey the body while a header or footer is open, so which layer the
+      // keystrokes reach is visible at a glance. A veil between the two bands,
+      // over the raster, never in it — dimming the whole sheet is what washed
+      // out the band being edited before (see `.running-band`'s comment).
+      const veil = document.createElement("div");
+      veil.className = "running-veil";
+      veil.style.top = `${Math.round(bands.top * sy)}px`;
+      veil.style.bottom = `${Math.round(bands.bottom * sy)}px`;
+      page.wrap.appendChild(veil);
     }
   }
 
@@ -323,7 +335,7 @@ export function createHeaderFooter(ed) {
     // The band BAR is not removed here: every repaint redraws the bands, and
     // removing the bar would blur the control the keyboard is on. It moves, and
     // it hides when the band closes (`exitRunningEdit`).
-    for (const el of ed.pagesEl.querySelectorAll(".running-band")) el.remove();
+    for (const el of ed.pagesEl.querySelectorAll(".running-band, .running-veil")) el.remove();
   }
 
   /** Leaves header/footer editing. The caret stays where it is rather than
@@ -338,6 +350,7 @@ export function createHeaderFooter(ed) {
     document.body.classList.remove("running-edit");
     clearRunningBands();
     hideBandBar();
+    hideBandTab();
     ed.setStatus("");
     ed.drawSelection();
     ed.updateToolbar();
@@ -658,6 +671,7 @@ export function createHeaderFooter(ed) {
       else item.removeAttribute("aria-disabled");
       item.title = removeReason;
     }
+    reflectBandTab(band, state, reason, removeReason, variants);
   }
 
   /** Puts the bar on the open page's sheet, just inside the band boundary. */
@@ -749,6 +763,129 @@ export function createHeaderFooter(ed) {
     if (settings) choose(settings, () => ed.headerFooterSettings?.open?.(true));
     for (const [band, item] of Object.entries(bandRemove)) {
       if (item) choose(item, () => removeBand(band));
+    }
+  }
+
+  // ---- The contextual Header & Footer tab (docs/174 OL-08) --------------------
+  // ONLYOFFICE's HeaderFooterTab and Word's Header & Footer tab: enabled, and
+  // selected, only while a band is open; the tab that was showing comes back
+  // when the band closes. Every control runs the SAME function as the band bar,
+  // the Insert menu and the palette — this is a face, not a second path.
+  const hfTab = byId("tabHeaderFooter");
+  const hf = {
+    header: byId("hfTabHeaderBtn"),
+    footer: byId("hfTabFooterBtn"),
+    remove: byId("hfTabRemoveBtn"),
+    pageNumber: byId("hfTabPageNumberBtn"),
+    pageNumberMenu: byId("hfPageNumberMenu"),
+    date: byId("hfTabDateBtn"),
+    field: byId("hfTabFieldBtn"),
+    picture: byId("hfTabPictureBtn"),
+    position: byId("hfTabPositionBtn"),
+    oddEven: byId("hfTabOddEvenBtn"),
+    firstPage: byId("hfTabFirstPageBtn"),
+    link: byId("hfTabLinkBtn"),
+    close: byId("hfTabCloseBtn"),
+  };
+  /** The tab showing when the band opened, restored when it closes. */
+  let tabBeforeBand = null;
+
+  function selectedRibbonTab() {
+    return document.querySelector(".ribbon-tab[aria-selected='true']")?.dataset.tab ?? "home";
+  }
+
+  function showBandTab() {
+    if (!hfTab) return;
+    if (hfTab.disabled) {
+      tabBeforeBand = selectedRibbonTab();
+      hfTab.disabled = false;
+      hfTab.removeAttribute("title");
+    }
+    if (selectedRibbonTab() !== "headerFooter") ed.selectRibbonTab?.("headerFooter");
+  }
+
+  function hideBandTab() {
+    if (!hfTab || hfTab.disabled) return;
+    hfTab.disabled = true;
+    hfTab.title = t("documentChrome.headerFooter.title");
+    if (hfTab.getAttribute("aria-selected") === "true") ed.selectRibbonTab?.(tabBeforeBand ?? "home");
+    tabBeforeBand = null;
+  }
+
+  /** Paints the tab's switches and its two band-specific controls. */
+  function reflectBandTab(band, state, linkReason, removeReason, variants) {
+    if (!hf.link) return;
+    hf.link.dataset.command = `layout.${band}.linkToPrevious`;
+    hf.link.setAttribute("aria-pressed", String(state?.linked === true));
+    hf.link.disabled = !!linkReason;
+    hf.link.title = linkReason || (band === "header" ? t("runningBand.linkHeaderTitle") : t("runningBand.linkFooterTitle"));
+    if (hf.remove) {
+      hf.remove.dataset.command = `layout.${band}.remove`;
+      hf.remove.disabled = !!removeReason;
+      hf.remove.title = removeReason || (band === "header" ? t("headerFooter.removeHeader") : t("headerFooter.removeFooter"));
+    }
+    hf.firstPage?.setAttribute("aria-pressed", String(variants.firstPage === true));
+    hf.oddEven?.setAttribute("aria-pressed", String(variants.evenOdd === true));
+    hf.header?.setAttribute("aria-pressed", String(band === "header"));
+    hf.footer?.setAttribute("aria-pressed", String(band === "footer"));
+  }
+
+  /** Runs `action` from the tab and gives the keyboard back to the band. */
+  const fromTab = (action) => () => void fromBar(action);
+  const redraw = () => {
+    if (ed.runningEditBand) drawRunningBands(ed.runningEditBand);
+  };
+  if (hf.header) onButton(hf.header, fromTab(() => editRunningContent("header", runningEditPageOrView())));
+  if (hf.footer) onButton(hf.footer, fromTab(() => editRunningContent("footer", runningEditPageOrView())));
+  if (hf.remove) onButton(hf.remove, fromTab(() => removeBand(ed.runningEditBand ?? "header")));
+  if (hf.date) onButton(hf.date, fromTab(() => ed.insertFieldAtCaret("date")));
+  if (hf.field) onButton(hf.field, () => ed.openFieldDialog());
+  if (hf.picture) onButton(hf.picture, () => ed.insertImageFromFile());
+  if (hf.position) onButton(hf.position, () => ed.headerFooterSettings?.open?.(true));
+  if (hf.oddEven) {
+    onButton(hf.oddEven, fromTab(async () => {
+      await ed.headerFooterSettings?.toggleVariant?.("evenOdd");
+      redraw();
+    }));
+  }
+  if (hf.firstPage) {
+    onButton(hf.firstPage, fromTab(async () => {
+      await ed.headerFooterSettings?.toggleVariant?.("firstPage");
+      redraw();
+    }));
+  }
+  if (hf.link) onButton(hf.link, fromTab(() => toggleLinked(ed.runningEditBand ?? "header")));
+  if (hf.close) onButton(hf.close, () => exitRunningEdit());
+  if (hf.pageNumber && hf.pageNumberMenu) {
+    // Rows built at boot WITHOUT text (a catalogue is not installed yet — SKILL
+    // §11) and labelled each time the menu opens.
+    const rows = [
+      ...PAGE_NUMBER_POSITIONS.map((row) => ({ ...row, run: () => insertPageNumber(row.band, row.align) })),
+      {
+        ...PAGE_OF_TOTAL,
+        run: () => insertPageNumber(PAGE_OF_TOTAL.band, PAGE_OF_TOTAL.align, undefined, true),
+      },
+      { command: "insert.field.page", labelKey: "pageNumber.atCursor", run: () => ed.insertFieldAtCaret("page") },
+    ];
+    const items = rows.map((row) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "menu-item";
+      item.setAttribute("role", "menuitem");
+      item.dataset.command = row.command;
+      // English until the menu first opens, so the row is never nameless.
+      item.textContent = EN_STRINGS[row.labelKey] ?? "";
+      hf.pageNumberMenu.appendChild(item);
+      return { item, row };
+    });
+    const menu = registerPopover(hf.pageNumber, hf.pageNumberMenu, () => {
+      for (const { item, row } of items) item.textContent = t(row.labelKey);
+    });
+    for (const { item, row } of items) {
+      onButton(item, () => {
+        menu.close();
+        void fromBar(row.run);
+      });
     }
   }
 

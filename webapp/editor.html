@@ -230,6 +230,12 @@
                Design sits in the same place. Disabled, with the reason, until a
                chart is selected (`chart_surface.mjs`). -->
           <button data-i18n="documentChrome.chart" id="tabChart" type="button" class="ribbon-tab ribbon-tab-contextual" data-tab="chart" role="tab" aria-controls="panelChart" aria-selected="false" tabindex="-1" disabled>Chart</button>
+          <!-- Header & Footer is contextual too (docs/174 OL-08): ONLYOFFICE's
+               HeaderFooterTab (`apps/documenteditor/main/app/view/HeaderFooterTab.js`)
+               and Word's Header & Footer tab both exist only while a header or
+               footer is open, and both are selected on entry. Disabled, with the
+               reason, otherwise (`editor_header_footer.mjs`). -->
+          <button data-i18n="documentChrome.headerFooter" data-i18n-title="documentChrome.headerFooter.title" id="tabHeaderFooter" type="button" class="ribbon-tab ribbon-tab-contextual" data-tab="headerFooter" role="tab" aria-controls="panelHeaderFooter" aria-selected="false" tabindex="-1" title="Open a header or footer first: double-click the top or bottom margin" disabled>Header &amp; Footer</button>
         </div>
           <!-- The collapse chevron is a sibling of the tab list, not a child of
                it: `role="tablist"` may only contain tabs, and the strip now
@@ -1274,6 +1280,47 @@
             <span data-i18n="panelReview.protect" class="rgroup-label">Protect</span>
           </div>
         </div>
+
+        <!-- The contextual Header & Footer band (docs/174 OL-08), in ONLYOFFICE's
+             order (`view/HeaderFooterTab.js` L50-90): the band itself, what goes
+             IN it (page number, date, field, picture), its position, its
+             options (odd/even, first page, link to previous), and Close. Every
+             control runs a command that also has a menu row and a palette row;
+             the band only gathers them where the open band is. -->
+        <div id="panelHeaderFooter" class="ribbon-panel" data-panel="headerFooter" role="tabpanel" aria-labelledby="tabHeaderFooter" hidden>
+          <div class="rgroup" data-group="hf-band">
+            <div class="rgroup-ctl">
+              <button data-i18n-title="panelHeaderFooter.editHeader.title" data-i18n-label="panelHeaderFooter.editHeader.label" id="hfTabHeaderBtn" type="button" class="fmt fmt-big" data-command="insert.header" title="Edit the page header" aria-label="Edit header"><span class="ms" aria-hidden="true">vertical_align_top</span><span data-i18n="panelHeaderFooter.header" class="fmt-big-label">Header</span></button>
+              <button data-i18n-title="panelHeaderFooter.editFooter.title" data-i18n-label="panelHeaderFooter.editFooter.label" id="hfTabFooterBtn" type="button" class="fmt fmt-big" data-command="insert.footer" title="Edit the page footer" aria-label="Edit footer"><span class="ms" aria-hidden="true">vertical_align_bottom</span><span data-i18n="panelHeaderFooter.footer" class="fmt-big-label">Footer</span></button>
+              <button data-i18n-title="panelHeaderFooter.remove.title" data-i18n-label="panelHeaderFooter.remove.label" id="hfTabRemoveBtn" type="button" class="fmt fmt-big" data-command="layout.header.remove" title="Remove the open header or footer from this section" aria-label="Remove"><span class="ms" aria-hidden="true">delete</span><span data-i18n="panelHeaderFooter.removeShort" class="fmt-big-label">Remove</span></button>
+            </div>
+            <span data-i18n="panelHeaderFooter.group" class="rgroup-label">Header &amp; footer</span>
+          </div>
+          <div class="rgroup" data-group="hf-insert">
+            <div class="rgroup-ctl">
+              <button data-i18n-title="panelHeaderFooter.pageNumber.title" data-i18n-label="panelHeaderFooter.pageNumber.label" id="hfTabPageNumberBtn" type="button" class="fmt fmt-big" title="Put a page number in the open band" aria-label="Page number" aria-haspopup="menu" aria-controls="hfPageNumberMenu" aria-expanded="false"><span class="ms" aria-hidden="true">tag</span><span data-i18n="panelHeaderFooter.pageNumberShort" class="fmt-big-label">Page number</span></button>
+              <button data-i18n-title="panelHeaderFooter.date.title" data-i18n-label="panelHeaderFooter.date.label" id="hfTabDateBtn" type="button" class="fmt" data-command="insert.field.date" title="Insert the date as a field" aria-label="Date"><span class="ms" aria-hidden="true">calendar_today</span></button>
+              <button data-i18n-title="panelHeaderFooter.field.title" data-i18n-label="panelHeaderFooter.field.label" id="hfTabFieldBtn" type="button" class="fmt" data-command="insert.field" title="Insert a field" aria-label="Field" aria-haspopup="dialog"><span class="ms" aria-hidden="true">data_object</span></button>
+              <button data-i18n-title="panelHeaderFooter.picture.title" data-i18n-label="panelHeaderFooter.picture.label" id="hfTabPictureBtn" type="button" class="fmt" data-command="insert.image" title="Insert a picture, such as a logo" aria-label="Picture"><span class="ms" aria-hidden="true">image</span></button>
+            </div>
+            <span data-i18n="panelHeaderFooter.insert" class="rgroup-label">Insert</span>
+          </div>
+          <div class="rgroup" data-group="hf-options">
+            <div class="rgroup-ctl">
+              <button data-i18n-title="panelHeaderFooter.position.title" data-i18n-label="panelHeaderFooter.position.label" id="hfTabPositionBtn" type="button" class="fmt" data-command="layout.headerFooterSettings" title="Header from top, footer from bottom, and page numbering" aria-label="Position" aria-haspopup="dialog"><span class="ms" aria-hidden="true">tune</span></button>
+              <button data-i18n-title="panelHeaderFooter.oddEven.title" data-i18n-label="panelHeaderFooter.oddEven.label" id="hfTabOddEvenBtn" type="button" class="fmt" data-command="layout.evenOddVariant" title="Different odd and even pages" aria-label="Different odd and even pages" aria-pressed="false"><span class="ms" aria-hidden="true">import_contacts</span></button>
+              <button data-i18n-title="panelHeaderFooter.firstPage.title" data-i18n-label="panelHeaderFooter.firstPage.label" id="hfTabFirstPageBtn" type="button" class="fmt" data-command="layout.firstPageVariant" title="Different first page" aria-label="Different first page" aria-pressed="false"><span class="ms" aria-hidden="true">looks_one</span></button>
+              <button data-i18n-title="panelHeaderFooter.link.title" data-i18n-label="panelHeaderFooter.link.label" id="hfTabLinkBtn" type="button" class="fmt" data-command="layout.header.linkToPrevious" title="Link to previous: show the previous section's band here" aria-label="Link to previous" aria-pressed="false"><span class="ms" aria-hidden="true">link</span></button>
+            </div>
+            <span data-i18n="panelHeaderFooter.options" class="rgroup-label">Options</span>
+          </div>
+          <div class="rgroup" data-group="hf-close">
+            <div class="rgroup-ctl">
+              <button data-i18n-title="panelHeaderFooter.close.title" data-i18n-label="panelHeaderFooter.close.label" id="hfTabCloseBtn" type="button" class="fmt fmt-big" title="Close the header and footer (Esc)" aria-label="Close header and footer"><span class="ms" aria-hidden="true">close</span><span data-i18n="panelHeaderFooter.closeShort" class="fmt-big-label">Close</span></button>
+            </div>
+            <span data-i18n="panelHeaderFooter.closeGroup" class="rgroup-label">Close</span>
+          </div>
+        </div>
         <!-- Overflow: groups that don't fit the current width move here instead
              of the ribbon ever showing a horizontal scrollbar (docs/64). -->
         <button data-i18n-title="ui.moreCommands.title" data-i18n-label="ui.moreCommands.label" id="ribbonOverflowBtn" type="button" class="fmt ribbon-overflow-btn" title="More commands" aria-label="More commands" aria-haspopup="dialog" aria-controls="ribbonOverflowMenu" aria-expanded="false" hidden><span class="ms" aria-hidden="true">more_horiz</span></button>
@@ -1982,6 +2029,14 @@
       <button data-i18n="runningBand.removeHeader" id="runningBandRemoveHeader" type="button" role="menuitem" class="menu-item">Remove header</button>
       <button data-i18n="runningBand.removeFooter" id="runningBandRemoveFooter" type="button" role="menuitem" class="menu-item" hidden>Remove footer</button>
     </div>
+
+    <!-- The Header & Footer band's Page number menu: ONLYOFFICE's gallery
+         (`view/HeaderFooterTab.js`, `capCurrentPos` and its six siblings) and
+         Word's Top / Bottom of Page, as the same commands the Insert menu's Page
+         numbers submenu runs. Its rows are built by `editor_header_footer.mjs`
+         from the same table and labelled when the menu opens, from the keys the
+         palette uses, so there is one string per command. -->
+    <div data-i18n-label="panelHeaderFooter.pageNumber.label" id="hfPageNumberMenu" class="context-menu" hidden role="menu" aria-label="Page number"></div>
 
     <!-- A size grid, not a menu: the container is a dialog holding a `role="grid"`
          so the eighty cells are gridcells rather than menuitems that never were. -->
