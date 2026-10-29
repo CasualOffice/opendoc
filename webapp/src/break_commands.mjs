@@ -91,8 +91,18 @@ export const BREAK_COMMAND_IDS = Object.freeze(BREAK_COMMANDS.map((row) => row.c
  *  Named here rather than passed in because this module is the only thing that
  *  reads either one, and two ids travelling through `main.js` as host members
  *  would be two more lines in the file the ratchet protects for no reader. */
-const BREAKS_BUTTON_ID = "insertBreaksBtn";
-const BREAKS_MENU_ID = "insertBreaksMenu";
+//
+// TWO faces, one roster (HF-203). Word puts Breaks on Layout ▸ Page Setup and
+// Page Break again on Insert; ONLYOFFICE injects the one button into a slot on
+// BOTH tabs (`apps/documenteditor/main/app/template/Toolbar.template:95` on
+// Insert and `:143` on Layout, filled by `view/Toolbar.js:2245`). So the Layout
+// band carries the same dropdown, beside Line numbers. The two popovers hold the
+// same seven rows; `breaks.spec.mjs` asserts their rosters are identical, so the
+// duplicated markup cannot drift.
+const BREAKS_FACES = Object.freeze([
+  Object.freeze({ button: "insertBreaksBtn", menu: "insertBreaksMenu" }),
+  Object.freeze({ button: "layoutBreaksBtn", menu: "layoutBreaksMenu" }),
+]);
 
 /**
  * The break rows, shaped for `LAYOUT_SURFACE`.
@@ -131,7 +141,7 @@ export function breakSurfaceRows(io) {
       return t(row.labelKey);
     },
     kw: row.kw,
-    buttons: () => [document.getElementById(BREAKS_BUTTON_ID)].filter(Boolean),
+    buttons: () => BREAKS_FACES.map((face) => document.getElementById(face.button)).filter(Boolean),
     requires: "caret",
     // The button's click opens the popover, which `registerPopover` owns, so the
     // surface table must not attach a second handler to it — the same split
@@ -199,17 +209,19 @@ async function insertBreak(io, row) {
  * @param {object} io the same host `breakSurfaceRows` takes.
  */
 export function bindBreaksMenu(io) {
-  const button = document.getElementById(BREAKS_BUTTON_ID);
-  const menu = document.getElementById(BREAKS_MENU_ID);
-  if (!button || !menu) return;
-  const popover = registerPopover(button, menu, () => {});
   const byId = new Map(BREAK_COMMANDS.map((row) => [row.command, row]));
-  for (const row of menu.querySelectorAll("[data-command]")) {
-    const spec = byId.get(row.dataset.command);
-    if (!spec) continue;
-    onButton(row, () => {
-      popover.close();
-      void insertBreak(io, spec);
-    });
+  for (const face of BREAKS_FACES) {
+    const button = document.getElementById(face.button);
+    const menu = document.getElementById(face.menu);
+    if (!button || !menu) continue;
+    const popover = registerPopover(button, menu, () => {});
+    for (const row of menu.querySelectorAll("[data-command]")) {
+      const spec = byId.get(row.dataset.command);
+      if (!spec) continue;
+      onButton(row, () => {
+        popover.close();
+        void insertBreak(io, spec);
+      });
+    }
   }
 }

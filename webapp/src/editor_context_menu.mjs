@@ -2,6 +2,7 @@
 // revision or an object offers, built from the command registry. Moved out of
 // `main.js` unchanged (docs/177); it reaches the rest of the editor only
 // through the context `ed`.
+import { mayDecideReview, reviewDecisionRefusal } from "./review_authority.mjs";
 import { buildObjectContextCommands } from "./object_context_menu.mjs";
 import { pictureToolCommands } from "./picture_tools.mjs";
 import { createObjectAlign } from "./object_align.mjs";
@@ -135,6 +136,9 @@ export function createContextMenu(ed) {
 
   function decideContextRevision(revision, accept) {
     if (!revision) return;
+    // HF-199: every single-change decision passes here (context menu, inline
+    // card, Accept/Reject ▸ Next, the palette's at-cursor rows).
+    if (!mayDecideReview(ed.HOST_CAPS, ed.setStatus)) return;
     return ed.runEdit(() =>
       revision.movePair?.fromStart && revision.movePair?.toStart
         ? ed.doc.decideMovePair(
@@ -308,6 +312,8 @@ export function createContextMenu(ed) {
           label: "Accept suggestion",
           group: "review",
           icon: "accept",
+          enabled: !reviewDecisionRefusal("review.accept", ed.HOST_CAPS),
+          disabledReason: reviewDecisionRefusal("review.accept", ed.HOST_CAPS),
           run: () => decideContextRevision(context.revision, true),
         },
         {
@@ -316,6 +322,8 @@ export function createContextMenu(ed) {
           group: "review",
           icon: "reject",
           danger: true,
+          enabled: !reviewDecisionRefusal("review.reject", ed.HOST_CAPS),
+          disabledReason: reviewDecisionRefusal("review.reject", ed.HOST_CAPS),
           run: () => decideContextRevision(context.revision, false),
         },
       );

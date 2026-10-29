@@ -120,3 +120,30 @@ test("the substitution rides the ordinary typing path: one undo, and read-only s
 
   expect(consoleErrors).toEqual([]);
 });
+
+// HF-055. The quote decision reads the character before the caret, and the
+// caret is an engine UTF-8 BYTE offset — so a JS-side `offset - 1` lands inside
+// "é" or "ü" and reads nothing, which used to look like start-of-paragraph and
+// produce an OPENING quote. Playwright types the non-ASCII letter through
+// `insertText` (there is no US-layout key for it) and the apostrophe through a
+// real keydown, so this drives the keydown path after a multi-byte character.
+test("an apostrophe after a non-ASCII letter closes (HF-055)", async ({ page, consoleErrors }) => {
+  await gotoEditor(page);
+  await typeInFreshParagraph(page, "Müller's café's");
+  await expect.poll(() => paragraphText(page, "ller")).toBe("Müller’s café’s");
+  expect(consoleErrors).toEqual([]);
+});
+
+// The same family on the other input path. A soft keyboard, dictation or an
+// on-screen keyboard delivers the quote as a `beforeinput` insertText, not a
+// keydown, and that path used to insert the straight quote as typed — curly on
+// a desktop, straight on a phone, in one document.
+test("a quote from a soft keyboard is curly too, after any letter", async ({ page, consoleErrors }) => {
+  await gotoEditor(page);
+  await typeInFreshParagraph(page, "Soft");
+  for (const ch of [" ", '"', "é", "t", "é", '"', " ", "l", "'", "é"]) {
+    await page.keyboard.insertText(ch);
+  }
+  await expect.poll(() => paragraphText(page, "Soft")).toBe("Soft “été” l’é");
+  expect(consoleErrors).toEqual([]);
+});

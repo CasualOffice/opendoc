@@ -2,6 +2,9 @@
 // per command, read by the ribbon, the menus and the palette alike. Moved out
 // of `main.js` unchanged (docs/177); it reaches the rest of the editor only
 // through the context `ed`.
+import { createPageBorders } from "./page_borders.mjs";
+import { t } from "./i18n.mjs";
+import { reviewDecisionRefusal } from "./review_authority.mjs";
 import { breakSurfaceRows } from "./break_commands.mjs";
 import { objectMenuRows } from "./reference_commands.mjs";
 import { ribbonSurfaceEnabled as surfaceEnabled, ribbonSurfaceReason as surfaceReason } from "./ribbon_surface.mjs";
@@ -101,6 +104,14 @@ export function createCommandSurfaces(ed) {
   //                thing docs/63 forbids outright, and hiding it would make the
   //                gap invisible to the person deciding what to build next.
   const BREAK_IO = { doc: () => ed.doc, caret: () => ed.selection?.focus ?? null, runEdit: (thunk, options) => ed.runEdit(thunk, options), setStatus: (text) => ed.setStatus(text) };
+  // Page borders (HF-193): Word's Borders and Shading ▸ Page Border.
+  const pageBorders = createPageBorders({
+    getDoc: () => ed.doc,
+    selectionNode: () => ed.selection?.focus?.node ?? null,
+    runEdit: (thunk, options) => ed.runEdit(thunk, options),
+    setStatus: (text, kind) => ed.setStatus(text, kind),
+    fallbackFocus: () => document.getElementById("pageBordersBtn") ?? ed.pagesEl,
+  });
   const LAYOUT_SURFACE = [
     // Page setup: one dialog, four fieldsets. Word's four buttons are four routes
     // into the same section geometry; each one opens the dialog with its own
@@ -119,6 +130,9 @@ export function createCommandSurfaces(ed) {
     // itself, so the click belongs to this table's own wiring — the popover
     // manager is not involved, and `page_setup.mjs` deliberately binds no listener
     // of its own to the button.
+    // Page borders: a modal this table's own wiring opens, the watermark's shape.
+    // `label` is a getter so the palette reads it after the catalogue lands.
+    { command: "layout.pageBorders", get label() { return t("pageBorders.command"); }, kw: "page border borders box frame outline around page art", buttons: () => [document.getElementById("pageBordersBtn")].filter(Boolean), requires: "doc", run: () => pageBorders.open() },
     { command: "layout.watermark", label: "Watermark", kw: "watermark draft confidential sample stamp diagonal background behind text", buttons: () => [ed.watermarkBtn], requires: "doc", run: () => ed.pageSetup.openWatermark(true) },
     // Paragraph: the existing relative nudges, plus the two fieldsets of the
     // paragraph-properties panel that hold the absolute indent and spacing values.
@@ -295,10 +309,10 @@ export function createCommandSurfaces(ed) {
     { command: "view.showChanges", buttons: () => [ed.reviewShowChangesBtn], run: () => ed.toggleShowChanges(), pressed: () => ed.showingChanges },
     { command: "review.previous", buttons: () => [ed.reviewPrevBtn], run: () => ed.navigateReview(-1) },
     { command: "review.next", buttons: () => [ed.reviewNextBtn], run: () => ed.navigateReview(1) },
-    { command: "review.acceptNext", buttons: () => [ed.reviewAcceptBtn], run: () => ed.decideReviewAndAdvance(true) },
-    { command: "review.rejectNext", buttons: () => [ed.reviewRejectBtn], run: () => ed.decideReviewAndAdvance(false) },
-    { command: "review.acceptAll", buttons: () => [ed.reviewAcceptAllBtn], run: () => void ed.decideAllReviewChanges(true) },
-    { command: "review.rejectAll", buttons: () => [ed.reviewRejectAllBtn], run: () => void ed.decideAllReviewChanges(false) },
+    { command: "review.acceptNext", buttons: () => [ed.reviewAcceptBtn], refusal: () => reviewDecisionRefusal("review.acceptNext", ed.HOST_CAPS), run: () => ed.decideReviewAndAdvance(true) },
+    { command: "review.rejectNext", buttons: () => [ed.reviewRejectBtn], refusal: () => reviewDecisionRefusal("review.rejectNext", ed.HOST_CAPS), run: () => ed.decideReviewAndAdvance(false) },
+    { command: "review.acceptAll", buttons: () => [ed.reviewAcceptAllBtn], refusal: () => reviewDecisionRefusal("review.acceptAll", ed.HOST_CAPS), run: () => void ed.decideAllReviewChanges(true) },
+    { command: "review.rejectAll", buttons: () => [ed.reviewRejectAllBtn], refusal: () => reviewDecisionRefusal("review.rejectAll", ed.HOST_CAPS), run: () => void ed.decideAllReviewChanges(false) },
     // Three faces, and the third is on the INSERT band: ONLYOFFICE carries Comment
     // on both Insert and Collaboration, and Word's Insert tab has a Comments group
     // of its own. Commenting was already in this editor's Insert MENU (Google
@@ -329,6 +343,8 @@ export function createCommandSurfaces(ed) {
     { command: "tools.spellCheck", buttons: () => [ed.reviewSpellCheckBtn], requires: "always", pressed: () => ed.settings.spellCheck !== false, run: () => ed.setSpellCheckEnabled(ed.settings.spellCheck === false) },
     { command: "tools.grammarCheck", buttons: () => [ed.reviewGrammarCheckBtn], requires: "always", pressed: () => ed.settings.grammarCheck !== false, run: () => ed.setGrammarCheckEnabled(ed.settings.grammarCheck === false) },
     { command: "tools.smartQuotes", buttons: () => [ed.reviewSmartQuotesBtn], requires: "always", pressed: () => ed.autoCorrect.enabled("smartQuotes"), run: () => ed.autoCorrect.toggle("smartQuotes") },
+    // Word count (HF-051): a document fact, so it needs a document and nothing else.
+    { command: "tools.wordCount", buttons: () => [document.getElementById("reviewWordCountBtn")].filter(Boolean), requires: "doc", reasonKey: "command.needsDocument", run: () => ed.wordCount.open() },
     { command: "tools.languages", buttons: () => [ed.reviewProofLanguagesBtn], requires: "always", run: () => ed.proofing.openLanguages() },
     // Restrict Editing (ADR-052, ADR-059). Declared HERE rather than beside the
     // button for the reason this table gives twice over: one owner for `disabled`,

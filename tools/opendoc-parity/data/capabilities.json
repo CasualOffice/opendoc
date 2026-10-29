@@ -1046,9 +1046,7 @@
       "area": "page",
       "title": "Page borders",
       "ours": {
-        "absent": [
-          "layout.pageBorders"
-        ]
+        "command": "layout.pageBorders"
       },
       "theirs": {
         "absent": {
@@ -1056,7 +1054,7 @@
         }
       },
       "rank": 3,
-      "note": "Neither product ships a page-borders dialog although both model the property; we import and export w:pgBorders too."
+      "note": "Theirs ships no page-borders dialog although it models the property. Ours is Word's Page Border tab without Art, Shadow and 3-D: four edges, style, width, colour, every page or first or all but first, measured from the page edge or the text, for the whole document or one section, one undo step."
     },
     {
       "id": "page.break.column",
@@ -3952,15 +3950,13 @@
       "area": "review",
       "title": "Word count dialog, including a count for the selection",
       "ours": {
-        "absent": [
-          "tools.wordCount"
-        ]
+        "command": "tools.wordCount"
       },
       "theirs": {
         "localeKey": "DE.Views.FileMenuPanels.DocumentInfo.txtStatistics"
       },
       "rank": 3,
-      "note": "Theirs is the document-info statistics block, not a live selection count; neither matches Word's dialog, but ours has no second surface at all."
+      "note": "Theirs is the document-info statistics block and the status-bar Word count menu, both for the document only (Statusbar.js:325-343). Ours is Word's dialog with a Selection column, from the Review band, the Review menu, the palette, Cmd/Ctrl+Shift+G and the status bar."
     },
     {
       "id": "review.word-count-status-bar",
@@ -5032,15 +5028,13 @@
       "area": "shell",
       "title": "Word Count dialog for the selection",
       "ours": {
-        "absent": [
-          "tools.wordCount"
-        ]
+        "command": "tools.wordCount"
       },
       "theirs": {
         "localeKey": "DE.Views.Statusbar.txtWordCount"
       },
       "rank": 4,
-      "note": "Counts for a selection rather than the document; status_counts.mjs already says in as many words that the whole-region tooltip stands in until this dialog exists."
+      "note": "The status bar reads x of y words while text is selected, and the dialog counts the selection beside the document. ONLYOFFICE counts the document only."
     },
     {
       "id": "shell.word-count-status",

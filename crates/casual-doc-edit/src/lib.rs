@@ -37,6 +37,7 @@ use std::collections::HashSet;
 use casual_doc_model::v1::FieldUpdateState;
 use casual_doc_model::v1::FormFieldKind;
 use casual_doc_model::v1::LineNumbering;
+use casual_doc_model::v1::PageBorders;
 use casual_doc_model::v1::PageNumbering;
 use casual_doc_model::v1::PageVerticalAlignment;
 use casual_doc_model::v1::PaginatedField;
@@ -1236,6 +1237,23 @@ pub enum Operation {
         section: SectionId,
         /// The rule to install; the empty value turns numbering off.
         line_numbering: LineNumbering,
+    },
+    /// Replace one section's page borders (`w:pgBorders`) — Word's Borders and
+    /// Shading ▸ Page Border — leaving every other section property alone
+    /// (HF-193).
+    ///
+    /// Self-inverse, carrying the previous borders. The EMPTY value removes
+    /// them, which is what import produces for a section without `w:pgBorders`
+    /// and what export skips. Rejected (doc left unchanged) if an edge falls
+    /// outside the model's domain: an empty or over-long style token, a width
+    /// over `w:sz`'s 1024 eighth-points, or a spacing over 31 points.
+    ///
+    /// Boxed to keep the enum small — four edges each carry a style `String`.
+    SetSectionPageBorders {
+        /// The section to update.
+        section: SectionId,
+        /// The borders to install; the empty value removes them.
+        page_borders: Box<PageBorders>,
     },
     /// Replace one section's page numbering (`w:pgNumType`) — the format the
     /// `PAGE` field renders in, and the number the section's first page takes —
@@ -3057,6 +3075,33 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             Ok(Operation::SetSectionLineNumbering {
                 section: *section,
                 line_numbering: previous,
+            })
+        }
+        Operation::SetSectionPageBorders {
+            section,
+            page_borders,
+        } => {
+            let boundary = doc
+                .definitions_mut()
+                .sections
+                .iter_mut()
+                .find(|candidate| candidate.id == *section)
+                .ok_or(EditError::NodeNotFound)?;
+            let previous = core::mem::replace(&mut boundary.page_borders, (**page_borders).clone());
+            if doc.validate().is_err() {
+                // Put the section back before reporting, so a rejected edit
+                // leaves the document exactly as it was.
+                doc.definitions_mut()
+                    .sections
+                    .iter_mut()
+                    .find(|candidate| candidate.id == *section)
+                    .expect("the section we just found still exists")
+                    .page_borders = previous;
+                return Err(EditError::ValueTooLarge);
+            }
+            Ok(Operation::SetSectionPageBorders {
+                section: *section,
+                page_borders: Box::new(previous),
             })
         }
         Operation::SetSectionPageNumbering {

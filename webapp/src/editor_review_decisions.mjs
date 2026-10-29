@@ -2,6 +2,7 @@
 // comments and changes, and the single-change decisions at the caret
 // (Accept/Reject and Next). Moved out of `main.js` unchanged (docs/177); it
 // reaches the rest of the editor only through the context `ed`.
+import { mayDecideReview, reviewDecisionRefusal } from "./review_authority.mjs";
 import { formatReviewDate, reviewAuthorColor, reviewAuthorDisplay, reviewAuthorKey, reviewChangeTypeLabel } from "./review_labels.mjs";
 import { reviewCurrentTargetIndex } from "./review_target.mjs";
 
@@ -95,7 +96,9 @@ export function createReviewDecisions(ed) {
 
     // Accept/Reject are edits; hide them in read-only Viewing mode, leaving the
     // card as a summary the reader can still see.
-    if (ed.reviewMode !== "viewing") {
+    // And not where the container withholds deciding (HF-199): the card is then
+    // a summary of a change somebody with edit access will decide.
+    if (ed.reviewMode !== "viewing" && !reviewDecisionRefusal("review.accept", ed.HOST_CAPS)) {
       const bar = document.createElement("div");
       bar.className = "review-inline-bar";
       const makeBtn = (icon, label, danger, handler) => {
@@ -461,6 +464,7 @@ export function createReviewDecisions(ed) {
    *  refused by `runEdit`, which reports that in its own words. */
   async function decideAllReviewChanges(accept) {
     if (!ed.doc) return;
+    if (!mayDecideReview(ed.HOST_CAPS, ed.setStatus)) return; // HF-199
     // One reading of "does this document carry a change", not two: this had its own
     // copy of `documentHasTrackedChanges`'s parse-and-count (SKILL §8).
     if (!ed.documentHasTrackedChanges()) {

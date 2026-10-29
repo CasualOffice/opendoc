@@ -446,6 +446,8 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("layout.tabStops", "mutate"),
   exact("layout.lineNumbers", "mutate"),
   exact("layout.watermark", "mutate"),
+  // Page borders write the section's `w:pgBorders` (HF-193).
+  exact("layout.pageBorders", "mutate"),
   exact("layout.firstPageVariant", "mutate"),
   exact("layout.evenOddVariant", "mutate"),
   // Word's Header & Footer ▸ Options, plus the position and page-numbering fields.
@@ -507,9 +509,9 @@ export const COMMAND_CONTRACT = Object.freeze([
   // Deciding a tracked change is EDITING, not commenting: accepting a suggestion
   // writes it into the document outright. So these require `edit` and not
   // `mutate`, which means a `commentor` cannot accept their own suggestions —
-  // Google Docs' Commenter cannot either, and Word's reviewer cannot. This is
-  // the one place the API is deliberately STRICTER than the chrome currently is;
-  // see the PR, which reports it rather than widening the API to match a gap.
+  // Google Docs' Commenter cannot either, and Word's reviewer cannot. The chrome
+  // reads these rows for its own controls (`review_authority.mjs`, HF-199), so
+  // the API and the buttons give one answer.
   exact("review.acceptAtCaret", "edit"),
   exact("review.rejectAtCaret", "edit"),
   exact("review.acceptNext", "edit"),
@@ -610,6 +612,8 @@ export const COMMAND_CONTRACT = Object.freeze([
   // The AutoCorrect switches (TA-05/06): preferences, not document state.
   exact("tools.autoFormatLists", null),
   exact("tools.autocorrect", null),
+  // Word count reads the document and changes nothing (HF-051).
+  exact("tools.wordCount", null),
   exact("view.outline", null),
   // `view.pages` is a panel toggle and changes no document state, so it requires
   // nothing — the same shape as `view.outline`, which the taxonomy already puts

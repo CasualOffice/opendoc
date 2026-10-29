@@ -2,6 +2,7 @@
 // registry of real editor actions the palette, the menus and the ribbon read.
 // Moved out of `main.js` unchanged (docs/177); it reaches the rest of the
 // editor only through the context `ed`.
+import { narrowDecisionsToContainer } from "./review_authority.mjs";
 import { exportCommands } from "./export_commands.mjs";
 import { mutationBlockedMessage } from "./edit_errors.mjs";
 import { buildObjectContextCommands } from "./object_context_menu.mjs";
@@ -400,6 +401,8 @@ export function createPalette(ed) {
       // from the same place it was set (SKILL.md §10).
       { id: "tools.spellCheck", label: `Spell check: ${ed.settings.spellCheck === false ? "off" : "on"}`, group: "Tools", kw: "spelling spell check squiggle dictionary misspelled proofing language red underline glossary", noDoc: true, run: () => ed.setSpellCheckEnabled(ed.settings.spellCheck === false) },
       { id: "tools.grammarCheck", label: `Grammar check: ${ed.settings.grammarCheck === false ? "off" : "on"}`, group: "Tools", kw: "grammar check agreement doubled word article a an punctuation capitalisation capitalization proofing blue underline", noDoc: true, run: () => ed.setGrammarCheckEnabled(ed.settings.grammarCheck === false) },
+      // HF-051. Word's Review ▸ Proofing ▸ Word Count, and its ⌘⇧G.
+      { id: "tools.wordCount", label: t("wordCount.command"), group: "Tools", kw: "word count words characters paragraphs pages statistics length how many", enabled: !!ed.doc, disabledReason: t("command.needsDocument"), run: () => ed.wordCount.open() },
       { id: "tools.languages", label: t("proofLanguages.command"), group: "Tools", kw: "language pack proofing spelling dictionary install download offline locale manage languages", noDoc: true, run: () => ed.proofing.openLanguages() },
       { id: "review.toggle", label: "Toggle comments & suggestions", group: "Review", kw: "sidebar review panel", run: () => ed.toggleReview() },
       { id: "review.compare", label: t("compare.command"), group: "Review", kw: "compare diff difference changes two documents review merge", enabled: !!ed.doc, disabledReason: t("compare.needsDocument"), run: () => ed.comparePanel.open() },
@@ -669,7 +672,9 @@ export function createPalette(ed) {
     // feeds — palette, menu bar, compact bar, context menus — rather than by a
     // clause in each governed row. A review command added later is governed by the
     // id it already has instead of shipping ungated (`SKILL` §10: fix the pattern).
-    return ed.SESSION.narrow(cmds.filter((command) => ed.doc || command.noDoc));
+    // Then to the CONTAINER's grant for deciding a tracked change, which the host
+    // contract has always required `edit` for (HF-199, `review_authority.mjs`).
+    return narrowDecisionsToContainer(ed.SESSION.narrow(cmds.filter((command) => ed.doc || command.noDoc)), ed.HOST_CAPS);
   }
 
   return { cmdInput, cmdList, cmdPalette, editorCommands, searchTrigger };

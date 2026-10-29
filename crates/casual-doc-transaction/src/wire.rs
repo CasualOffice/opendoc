@@ -410,6 +410,7 @@ impl WireOperation {
             | Operation::SetSectionTitlePage { .. }
             | Operation::SetSectionWatermark { .. }
             | Operation::SetSectionLineNumbering { .. }
+            | Operation::SetSectionPageBorders { .. }
             | Operation::SetSectionPageNumbering { .. }
             | Operation::SetSectionVerticalAlignment { .. }
             | Operation::SetEvenAndOddHeaders { .. }
@@ -527,6 +528,7 @@ impl WireOperation {
             | Operation::SetSectionTitlePage { .. }
             | Operation::SetSectionWatermark { .. }
             | Operation::SetSectionLineNumbering { .. }
+            | Operation::SetSectionPageBorders { .. }
             | Operation::SetSectionPageNumbering { .. }
             | Operation::SetSectionVerticalAlignment { .. }
             | Operation::SetEvenAndOddHeaders { .. }

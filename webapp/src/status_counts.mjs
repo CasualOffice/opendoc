@@ -23,9 +23,9 @@ export function countLabels({ words, characters, charactersNoSpaces, paragraphs 
     // Word distinguishes with- from without-spaces; both are on the hover.
     charactersTitle: `${withSpaces}\n${noSpaces}`,
     // Narrow windows shed the lower-priority counts from the bar. Word keeps
-    // the full set one gesture away in its Word Count dialog; until we have
-    // that dialog, the whole region carries every figure so nothing shed
-    // becomes unobtainable.
+    // the full set one gesture away in its Word Count dialog, and so does this
+    // one now (`word_count.mjs`, HF-051); the hover still carries every figure
+    // so nothing shed needs a click to read.
     allTitle: [
       t("status.words", { count: words }),
       withSpaces,

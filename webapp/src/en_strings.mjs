@@ -145,6 +145,20 @@ export const EN_STRINGS = Object.freeze({
   "status.paragraphs.one": "{count} paragraph",
   "status.paragraphs.other": "{count} paragraphs",
   "status.characters.withSpaces": "{count} characters (with spaces)",
+  // Word's status bar while text is selected: "23 of 1,204 words" (HF-051).
+  // Plural on the document's total, which is the noun the sentence ends on.
+  "status.wordsOfTotal.one": "{selected} of {count} word",
+  "status.wordsOfTotal.other": "{selected} of {count} words",
+  // Why Accept and Reject are unavailable in a container that may not edit
+  // (HF-199): deciding a tracked change writes the document, which is editing.
+  "review.decision.needsEdit": "Accepting or rejecting a change edits the document, and this editor may only comment here.",
+  // Page borders (HF-193): the palette's label, and what the dialog says.
+  "pageBorders.command": "Page borders…",
+  "pageBorders.noSection": "This document has no page setup to carry a border.",
+  "pageBorders.applied": "Page borders applied",
+  "pageBorders.removed": "Page borders removed",
+  // The Word count command's label on the palette and the Review menu (HF-051).
+  "wordCount.command": "Word count…",
   // Reassigned from script on every render, so the markup sweep never sees it.
   "status.pageOf": "Page {page} of {total}",
   // -- Reflow (pageless) ------------------------------------------------------

@@ -640,6 +640,8 @@ export const APP_MENU_SECTIONS = {
       "tools.autoFormatLists",
       "tools.autocorrect",
       "tools.languages",
+      // HF-051: Word's Review ▸ Proofing ▸ Word Count.
+      "tools.wordCount",
     ),
     band("menuGroup.comments", "review.comment.resolve", "review.comment.delete"),
     band("menuGroup.tracking", "review.toggle"),

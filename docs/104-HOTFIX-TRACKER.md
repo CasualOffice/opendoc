@@ -67,16 +67,16 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | Section | Rows | Still open |
 | --- | ---: | ---: |
 | P0 | 7 | 0 |
-| P1 | 33 | 3 |
-| P2 | 52 | 16 |
+| P1 | 33 | 2 |
+| P2 | 52 | 15 |
 | P3 | 22 | 12 |
-| Behavioural audit — 2026-09-04 | 18 | 4 |
+| Behavioural audit — 2026-09-04 | 18 | 3 |
 | Layout-space audit — 2026-09-09 | 14 | 0 |
 | Command-surface gaps found by the chrome prototypes — 2026-09-10 | 5 | 0 |
 | Ribbon keyboard reachability — 2026-09-10 | 2 | 0 |
 | Paragraph-level revision mapping — 2026-09-17 | 4 | 0 |
 | Large-document admission — 2026-09-18 | 1 | 0 |
-| **Total** | **158** | **35** |
+| **Total** | **158** | **32** |
 
 "Still open" counts any status *beginning* `Open`, `Partly fixed`, or `In progress` —
 the prefix matters, because real statuses qualify themselves (`Open (owner decision)`,
@@ -96,7 +96,7 @@ by re-reading the code they cite: **HF-016**, **HF-022** and **HF-034**.)
 
 ### Progress
 
-**35 of 158 rows remain open. Every P0 is closed.** HF-030 closed with #559. (Re-derive these counts, do not edit them by hand.)
+**32 of 158 rows remain open. Every P0 is closed.** HF-030 closed with #559. (Re-derive these counts, do not edit them by hand.)
 
 **Staleness sweep, 2026-09-20.** Every P1 row of this tracker and of `105` was re-read
 against the code it cites, because `109` is now the only queue and a stale `Open` there is
@@ -184,7 +184,7 @@ Still waiting on an owner decision, not on engineering:
 | HF-012 | Numbering, note, comment and bookmark ids are exported as 20-digit numbers Word cannot accept | import-export | M | Internal audit | Fixed |
 | HF-013 | Rich paste in Suggesting mode scrambles or drops text containing any non-ASCII character | webapp-js | S | Internal audit | Fixed |
 | HF-014 | Rendering hangs forever on dashed/dot-dash underline with a font reporting zero underline thickness | render | S | Internal audit | Fixed |
-| HF-051 | No Word Count dialog and no selection-scoped counts — the code flags this hole itself | word-count | M | Sibling gap (docs (ProseMirror)) | Open |
+| HF-051 | No Word Count dialog and no selection-scoped counts — the code flags this hole itself | word-count | M | Sibling gap (docs (ProseMirror)) | Fixed (`lane/parity-pipeline`; docs/tracker/completed.md) |
 | HF-015 | A six-byte non-ASCII color string panics the WASM module and poisons the session | wasm | S | Internal audit | Fixed |
 | HF-016 | There is no "New blank document" — the only way to get a document is to open someone else's file | file | M | Sibling gap (docs (ProseMirror)) | Fixed (#542) |
 | HF-017 | Table column count is unbounded on one side and collapses to 1 twip on the other | layout | M | Internal audit | Fixed |
@@ -234,7 +234,7 @@ Still waiting on an owner decision, not on engineering:
 | HF-097 | Tools and Help scroll out of the menu bar behind a hidden scrollbar | responsive | M | Internal audit | Fixed — the two menus that scrolled off the end do not exist any more. Settings and the Help rows are File-surface items (ONLYOFFICE's File page holds both) and the two proofing switches are Review rows and a Review band group (Word's Review ▸ Proofing), so the bar is seven names and no longer clips at 460px. The fade affordance stays and its guard moved to 360px, where the bar does still clip. See `122-ONE-AXIS-NAVIGATION-DESIGN.md` §4.3. |
 | HF-053 | Toolbar formatting state is wrong for a caret in a header, footer or note — so Bold toggles the wrong way | rust-core | S | Internal audit | Fixed |
 | HF-054 | Pasting from Word or a web page inserts a blank paragraph before the content | import-export | S | Internal audit | Fixed |
-| HF-055 | Smart quotes insert the wrong glyph after any non-ASCII character | webapp-js | S | Internal audit | Open |
+| HF-055 | Smart quotes insert the wrong glyph after any non-ASCII character | webapp-js | S | Internal audit | Fixed (`lane/parity-pipeline`; docs/tracker/completed.md) |
 | HF-056 | Images cannot be rotated or flipped — a sideways phone photo has to be fixed outside the editor | images | L | Sibling gap (docs (ProseMirror)) | Fixed (`ux/objects-v2`; see `109`) |
 | HF-057 | Object properties panel shows stale geometry and Apply reverts a drag-resize | editor-ux | M | Internal audit | Fixed (`ux/objects-v2`; see `109`) |
 | HF-058 | The object action bar stays frozen on screen while the object scrolls away | layout | S | Internal audit | Fixed (`ux/objects-v2`; see `109`) |
@@ -316,7 +316,7 @@ reproduction and the responsible `file:line` already identified.
 | HF-124 | Shift+Enter is a paragraph break everywhere — in a list it makes a second bullet, in a heading it drops into body text. The engine has no line-break operation at all, though the model and layout already support `BreakKind::Line` | rust-core | P1 | Fixed (#518) |
 | HF-125 | Enter inside a text box does nothing ("That edit isn't supported for this selection yet"): `split_paragraph` and `join_paragraphs` never recurse into a paragraph's inlines, unlike `find_paragraph_mut` | rust-core | P1 | Fixed (#518) |
 | HF-126 | Enter after a CHECKED checklist item produces another checked item, because the split clones `numbering` and a checklist item's checked state IS its numbering instance | rust-core | P2 | Fixed (#528) |
-| HF-127 | Ctrl/Cmd+Enter (page break) is inert — the chord is swallowed before the Enter branch and no inline page-break op exists | rust-core | P3 | Open |
+| HF-127 | Ctrl/Cmd+Enter (page break) is inert — the chord is swallowed before the Enter branch and no inline page-break op exists | rust-core | P3 | Fixed (commit 2fb2fabe; docs/tracker/completed.md) |
 | HF-128 | In Suggesting mode the caret, click target and selection are offset by the width of any struck-out text: selecting 7 characters struck 5 the user never touched. Extends HF-022 from "misplaced caret" to a content-integrity defect | wasm | P0 | Fixed (#519) |
 | HF-129 | A second reviewer cannot edit the first reviewer's pending suggestion — the keystrokes are silently dropped. `docs/86` already specifies the intended behaviour | wasm | P0 | Fixed (#520) |
 | HF-130 | Enter and every cross-paragraph deletion are refused in Suggesting mode, so a reviewer cannot really author | wasm | P1 | Fixed (this PR) — `108` phase 2: Enter suggests a paragraph break (the LEADING half's mark, as Word writes it), Backspace/Delete at a boundary suggests deleting that mark, and a deletion or replacement across paragraphs writes Word's RP040 shape — text struck, every mark but the last suggested deleted, later paragraphs given the first one's shape with a `w:pPrChange` holding their own. One undo step each. Another reviewer's pending break is refused with a reason; the author's own is removed outright. Guards: 6 engine tests, 3 browser tests, each driven red |

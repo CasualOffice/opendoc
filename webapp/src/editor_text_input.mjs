@@ -4,6 +4,8 @@
 import { t } from "./i18n.mjs";
 import { createAutoCorrect } from "./autocorrect.mjs";
 import { readPref, writePref } from "./prefs.mjs";
+import { smartQuoteForTyped } from "./text_rules.mjs";
+import { orderedSelectionEnds } from "./caret_navigation.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -30,10 +32,21 @@ export function createTextInput(ed) {
     if (ed.composingText) return;
     const type = e.inputType;
     if (type === "insertText" || type === "insertFromPaste" || type === "insertReplacementText") {
-      const data = e.data ?? "";
+      let data = e.data ?? "";
       if (!data) return;
       e.preventDefault();
       ed.pendingFormat = null;
+      // A soft keyboard types a quote here, not through keydown, so the same
+      // smart-quote decision runs here too (HF-055: the family, not the case).
+      // Otherwise a phone gets straight quotes while a desktop gets curly ones.
+      if (type === "insertText" && (data === '"' || data === "'") && ed.selection) {
+        const [start] = orderedSelectionEnds(ed.selection, ed.doc);
+        data = smartQuoteForTyped(data, {
+          enabled: autoCorrect.enabled("smartQuotes"),
+          offset: start.offset,
+          readPrefix: () => ed.doc.copyText(start.node, 0, start.node, start.offset),
+        });
+      }
       await ed.pasteText(data, "typing");
       return;
     }

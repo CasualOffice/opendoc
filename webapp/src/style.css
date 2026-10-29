@@ -2171,6 +2171,70 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 
 /* Two columns: term and value on one line, the way a properties sheet reads.
    `auto auto` so neither column is wider than the text it holds. */
+/* Page borders (HF-193): the four edges read across, as Word's preview buttons
+   sit around one page. */
+.page-borders-dialog {
+  width: fit-content;
+  max-inline-size: min(100%, 60ch);
+}
+
+.page-borders-edges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+
+/* Word count (HF-051): a figures table, numbers right-aligned in tabular
+   figures so the columns compare at a glance, as Word's dialog does. */
+.word-count-dialog {
+  width: fit-content;
+  max-inline-size: min(100%, 52ch);
+}
+
+.word-count-table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.word-count-table th,
+.word-count-table td {
+  padding: var(--space-1) var(--space-3);
+  text-align: start;
+}
+
+.word-count-table td {
+  text-align: end;
+}
+
+.word-count-table thead th {
+  color: var(--ink-2, var(--ink));
+  font-size: var(--fs-caption, 12px);
+  font-weight: 600;
+  border-block-end: 1px solid var(--line);
+}
+
+.word-count-table thead th + th {
+  text-align: end;
+}
+
+.word-count-table tbody th {
+  font-weight: 400;
+}
+
+.word-count-table [hidden] {
+  display: none;
+}
+
+.word-count-scope {
+  margin: var(--space-3) 0 0;
+  color: var(--ink-2, var(--ink));
+  font-size: var(--fs-caption, 12px);
+}
+
+#stats[role="button"] {
+  cursor: pointer;
+}
+
 /* The brand mark in place of a generic info glyph: About is the one dialog
    whose subject IS the product. */
 .about-mark {

@@ -13,6 +13,8 @@ import {
   isWholeWordAt,
   recaseRichRuns,
   smartQuoteChar,
+  smartQuoteForTyped,
+  stringIndexToByteOffset,
   transformCase,
 } from "../src/text_rules.mjs";
 
@@ -76,6 +78,64 @@ test("an apostrophe inside a word closes, in ASCII and outside it", () => {
   assert.equal(smartQuoteChar("'", "é"), "’");
   assert.equal(smartQuoteChar("'", "р"), "’");
   assert.equal(smartQuoteChar("'", "字"), "’");
+});
+
+// HF-055 at the caret, read the way the engine reads: offsets are UTF-8 BYTES,
+// and a range whose start falls inside a multi-byte character is clamped
+// forward, so reading `[offset - 1, offset)` after "café" returns "" and an
+// empty prefix used to read as start-of-paragraph. The fake below models that
+// clamp so the decision is judged against the engine's arithmetic, not JS's.
+function byteEngine(text) {
+  const bytes = new TextEncoder().encode(text);
+  const boundary = (b) => b >= bytes.length || (bytes[b] & 0xc0) !== 0x80;
+  const snap = (b) => {
+    let at = Math.max(0, Math.min(b, bytes.length));
+    while (!boundary(at)) at += 1;
+    return at;
+  };
+  return {
+    end: bytes.length,
+    copyText: (from, to) => {
+      const a = snap(from);
+      const z = Math.max(a, snap(to));
+      return new TextDecoder().decode(bytes.slice(a, z));
+    },
+  };
+}
+
+test("a quote typed after a non-ASCII letter closes, at an engine byte offset", () => {
+  for (const word of ["café", "Müller", "мир", "字", "𠀀"]) {
+    const engine = byteEngine(word);
+    const typed = smartQuoteForTyped("'", {
+      enabled: true,
+      offset: engine.end,
+      readPrefix: () => engine.copyText(0, engine.end),
+    });
+    assert.equal(typed, "’", `after ${word}`);
+    // The engine trap itself, kept visible: one byte back is inside the letter.
+    assert.equal(engine.copyText(engine.end - 1, engine.end), "");
+  }
+});
+
+test("a quote typed after a space opens, whatever came before the space", () => {
+  const engine = byteEngine("déjà vu ");
+  const offset = stringIndexToByteOffset("déjà vu ", 8);
+  assert.equal(offset, engine.end);
+  assert.equal(
+    smartQuoteForTyped('"', { enabled: true, offset, readPrefix: () => engine.copyText(0, offset) }),
+    "“",
+  );
+});
+
+test("the typed-quote decision passes the key through when off, refused or not a quote", () => {
+  const readPrefix = () => "word";
+  assert.equal(smartQuoteForTyped("'", { enabled: false, offset: 4, readPrefix }), "'");
+  assert.equal(smartQuoteForTyped("a", { enabled: true, offset: 4, readPrefix }), "a");
+  assert.equal(smartQuoteForTyped('"', { enabled: true, offset: 0, readPrefix }), "“");
+  const throws = () => {
+    throw new Error("unresolvable position");
+  };
+  assert.equal(smartQuoteForTyped("'", { enabled: true, offset: 4, readPrefix: throws }), "'");
 });
 
 test("anything that is not a straight quote passes through untouched", () => {

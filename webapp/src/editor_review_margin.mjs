@@ -1,6 +1,7 @@
 // The review margin: revision rectangles, the review mode and its controls,
 // comment cards and their virtualized window. Moved out of `main.js` unchanged
 // (docs/177); it reaches the rest of the editor only through the context `ed`.
+import { mayDecideReview, reviewDecisionRefusal } from "./review_authority.mjs";
 import { t } from "./i18n.mjs";
 import { reflectReviewModeAccess } from "./capabilities.mjs";
 import { orderedSelectionEnds } from "./caret_navigation.mjs";
@@ -96,9 +97,15 @@ export function createReviewMargin(ed) {
     try { count = (JSON.parse(ed.doc.listRevisions()) ?? []).length; } catch { count = 0; }
     if (ed.reviewPrevious) ed.reviewPrevious.disabled = count === 0;
     if (ed.reviewNext) ed.reviewNext.disabled = count === 0;
-    const canDecide = count > 0 && ed.reviewMode !== "viewing";
-    if (ed.reviewAcceptAll) ed.reviewAcceptAll.disabled = !canDecide;
-    if (ed.reviewRejectAll) ed.reviewRejectAll.disabled = !canDecide;
+    // HF-199: the container's own answer on deciding, with its reason on the
+    // control — the sidebar's two buttons are a third face of Accept/Reject all.
+    const refusal = reviewDecisionRefusal("review.acceptAll", ed.HOST_CAPS);
+    const canDecide = count > 0 && ed.reviewMode !== "viewing" && !refusal;
+    for (const button of [ed.reviewAcceptAll, ed.reviewRejectAll]) {
+      if (!button) continue;
+      button.disabled = !canDecide;
+      if (refusal) button.title = refusal;
+    }
     if (ed.reviewBulkActions) ed.reviewBulkActions.hidden = ed.reviewMode === "viewing";
   }
 
@@ -659,8 +666,10 @@ export function createReviewMargin(ed) {
         }
       } else if (!["move_from", "move_to"].includes(item.data.kind) || item.data.movePair) {
         const changeLabel = (reviewChangeTypeLabel(item.data.kind) || "change").toLowerCase();
+        const decisionRefusal = reviewDecisionRefusal("review.accept", ed.HOST_CAPS);
         actions.append(
           reviewCardButton("Accept", async () => {
+            if (!mayDecideReview(ed.HOST_CAPS, ed.setStatus)) return;
             await ed.runEdit(() => item.data.movePair
               ? ed.doc.decideMovePair(
                 item.data.movePair.fromStart,
@@ -675,6 +684,7 @@ export function createReviewMargin(ed) {
             ed.focusEditorSurface();
           }, false, `Accept this ${changeLabel}`),
           reviewCardButton("Reject", async () => {
+            if (!mayDecideReview(ed.HOST_CAPS, ed.setStatus)) return;
             await ed.runEdit(() => item.data.movePair
               ? ed.doc.decideMovePair(
                 item.data.movePair.fromStart,
@@ -689,6 +699,15 @@ export function createReviewMargin(ed) {
             ed.focusEditorSurface();
           }, true, `Reject this ${changeLabel}`),
         );
+        // HF-199: a container that may not edit may not decide. The buttons stay
+        // visible and say why, rather than vanishing, so the card still reads as
+        // a decision somebody else will make.
+        if (decisionRefusal) {
+          for (const button of actions.querySelectorAll(".review-margin-action")) {
+            button.disabled = true;
+            button.title = decisionRefusal;
+          }
+        }
       }
       const focus = () => {
         const expanding = ed.activeReviewItemId !== itemId;

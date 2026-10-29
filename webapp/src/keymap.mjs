@@ -245,6 +245,9 @@ export const KEYMAP = [
   // that replaced it does not.
   { chord: "⌘⌥M", command: "review.comment", scope: APP_SCOPE },
   { chord: "⌘⇧E", command: "review.mode.cycle", scope: APP_SCOPE },
+  // Word count: Word's own chord on both platforms (HF-051). Not Google Docs'
+  // ⌘⇧C, which is the format painter here as it is in Word.
+  { chord: "⌘⇧G", command: "tools.wordCount", scope: APP_SCOPE },
   { chord: "⌘⌥⏎", command: "review.acceptNext", scope: EDITOR_SCOPE },
   { chord: "⌘⌥⌫", command: "review.rejectNext", scope: EDITOR_SCOPE },
 ];
