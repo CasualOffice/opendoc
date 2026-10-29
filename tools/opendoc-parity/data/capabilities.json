@@ -3629,15 +3629,13 @@
       "area": "review",
       "title": "Protect the document",
       "ours": {
-        "absent": [
-          "review.protectDocument"
-        ]
+        "command": "review.restrictEditing"
       },
       "theirs": {
         "control": "btnProtectDoc"
       },
       "rank": 2,
-      "note": "Not licence-gated for them. The ENGINE now models and enforces document protection and can set it - `setDocumentProtection` with the edit mode, enforcement and formatting lock (ADR-052 for enforcement, ADR-059 for the setter) - and the import arm reads `w:documentProtection`. It is graded a gap anyway because no command id reaches it: `review.protectDocument` is absent from `COMMAND_CONTRACT`, so neither a user nor a host can invoke it. Built is not reachable. A password Word set is kept: the sixteen password attributes are carried verbatim through a save, never verified, and nothing here sets one."
+      "note": "Not licence-gated for them. Theirs is Protection ▸ Protect Document (`btnProtectDoc`, `ProtectDialog.js`): four edit modes and a password. Ours is Review ▸ Protect ▸ Restrict Editing: the same four modes (read only, comments, tracked changes, filling in forms), Word's formatting restriction, Apply, and Stop protection, which asks for the password when one was set. The engine's `protectDocument` writes it and ADR-052 enforces it at the operation."
     },
     {
       "id": "review.protect-form",
@@ -3659,14 +3657,16 @@
       "area": "review",
       "title": "Password on the editing restriction",
       "ours": {
-        "absent": [
-          "review.protectDocument.password"
-        ]
+        "anchor": {
+          "file": "webapp/src/document_protection.mjs",
+          "literal": "checkProtectionPassword"
+        }
       },
       "theirs": {
         "api": "asc_docs_api.asc_setDocumentProtection"
       },
-      "rank": 3
+      "rank": 3,
+      "note": "Word's own verifier (`casual-doc-wasm` `review_protection.rs`): the legacy key fold, then SHA-512 over a 16-byte salt with 100,000 spins, written as Word 2013+ writes it, so Word asks for the same password. Stop protection and any change ask for it first. The SHA-1, SHA-256 and SHA-384 verifiers older Word versions wrote are checked too. A deterrent, not encryption, and the dialog says so."
     },
     {
       "id": "review.redaction",
@@ -3762,12 +3762,7 @@
       "area": "review",
       "title": "Restrict editing to view, comments, forms or tracked changes",
       "ours": {
-        "partial": {
-          "evidence": {
-            "command": "review.restrictEditing"
-          },
-          "missing": "setting a password. A password Word set is carried verbatim through a save and never verified; lifting a passworded restriction here removes it, and the dialog says so before Apply."
-        }
+        "command": "review.restrictEditing"
       },
       "theirs": {
         "localeKey": "DE.Views.ProtectDialog.textReview"

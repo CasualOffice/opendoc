@@ -2532,6 +2532,22 @@ costed against a fallback that does not exist.
   Protection), Undo restores it with the restriction, and the host is told before Apply
   (`documentProtection().password`, the Restrict Editing dialog's note) and after (the status
   line). Prompt-compare-lift as a labelled deterrent remains what a host may ask for later.
+- **Amended (2026-10-30): the password is SET and VERIFIED, as a labelled deterrent.** The
+  owner's parity batch asked for it (`docs/153` `review.protection-password`, `109` RM-32),
+  and "prompt-compare-lift as a labelled deterrent" above is exactly the shape built.
+  `casual-doc-wasm` `review_protection.rs` writes Word 2013+'s verifier — the legacy 32-bit
+  key fold, its little-endian hex as UTF-16LE, salted (16 bytes from the host's
+  `crypto.getRandomValues`) and hashed with SHA-512 for 100,000 spins, as the transitional
+  `w:cryptAlgorithmSid="14"` attribute set — so Word asks for the same password; and it
+  checks SHA-1/256/384/512 verifiers in either attribute set, trying the folded key and the
+  raw password because Word accepts both (ONLYOFFICE does the same,
+  `sdkjs/word/api.js:14467-14478`). `protectDocument` refuses a change to a restriction
+  whose verifier does not match (`document.protection-wrong-password`); a verifier this
+  build cannot check (an unknown algorithm, or a spin count above ten million, which is
+  never attempted) keeps the 2026-10-09 behaviour and the dialog says so. **Still policy,
+  not security**, and the dialog says that beside the fields: the verifier is plain XML and
+  anyone who can edit the file can delete it. `setDocumentProtection` stays the policy-only
+  setter for hosts that want no password semantics; the chrome no longer calls it.
 - **A second document-safety defect in the same element, found with it and fixed with it:
   `w:enforcement` has three states and was read as two.** MS-OI29500 Part 1 §17.15.1.29:
   "Word enforces protection when this attribute is missing." The importer treated an

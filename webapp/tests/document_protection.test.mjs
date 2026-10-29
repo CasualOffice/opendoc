@@ -429,9 +429,10 @@ test("the command row is live on a document that is ALREADY protected", () => {
   assert.equal(h.protection.isActive(), true, "while the ribbon button reads as pressed");
 });
 
-// A restriction the file carries with a Word password: Word would ask for it,
-// this editor does not, and a change made here removes it (ADR-052, updated
-// 2026-10-09). The reader is told BEFORE Apply and again after. MUTATION: the
+// A restriction the file carries with a Word password this editor CANNOT check
+// (the fake engine has no `protectionPassword`, which reads as unverifiable):
+// a change made here removes it (ADR-052 as amended 2026-10-30). The reader is
+// told BEFORE Apply and again after. MUTATION: the
 // note never shown -> "the dialog says so before anything is applied"; the status
 // left as it was -> the second assertion's sentence.
 test("a restriction carrying a Word password says, before and after, that a change here removes it", async () => {
@@ -452,4 +453,125 @@ test("a restriction carrying a Word password says, before and after, that a chan
   const plain = build(json("readOnly", true));
   plain.protection.open();
   assert.equal(plain.passwordNote.hidden, true);
+});
+
+// ---------------------------------------------------------------------------
+// The password (`docs/153` `review.protection-password`, ADR-052 as amended).
+// The engine is faked with the methods the dialog calls, and the fake keeps a
+// REAL password and refuses a wrong one, so the dialog's own check is what
+// these assert: the refusal must be said beside the field with nothing written.
+// ---------------------------------------------------------------------------
+
+/** A dialog over a document protected (or not) with `password`. */
+function buildWithPassword(start, password) {
+  const markup = fakeMarkup(true);
+  const field = () => ({ value: "", focus() {} });
+  const current = field();
+  const fresh = field();
+  const confirm = field();
+  const error = { hidden: true, textContent: "" };
+  const currentRow = { hidden: true };
+  elements.set("restrictEditingCurrentRow", currentRow);
+  elements.set("restrictEditingCurrentPassword", current);
+  elements.set("restrictEditingNewRow", { hidden: false });
+  elements.set("restrictEditingNewPassword", fresh);
+  elements.set("restrictEditingConfirmPassword", confirm);
+  elements.set("restrictEditingPasswordError", error);
+  let stored = start;
+  let secret = password;
+  const writes = [];
+  const doc = {
+    documentProtection: () => stored,
+    protectionPassword: () => JSON.stringify({ present: secret !== null, verifiable: secret !== null }),
+    checkProtectionPassword: (attempt) => (secret === null ? "none" : attempt === secret ? "match" : "mismatch"),
+    protectDocument(edit, enforcement, formatting, currentPassword, newPassword, salt) {
+      if (secret !== null && currentPassword !== secret) throw new Error("the engine refused a wrong password");
+      writes.push({ edit, currentPassword, newPassword, salt });
+      stored = json(edit, enforcement, formatting);
+      secret = edit === null ? null : (newPassword ?? null);
+      return true;
+    },
+    setDocumentProtection() {
+      throw new Error("the password path must not fall back to the policy-only setter");
+    },
+  };
+  let selected = "off";
+  const status = [];
+  const protection = createDocumentProtection({
+    getDoc: () => doc,
+    async runEdit(thunk) {
+      try {
+        thunk();
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    registerModal: () => ({ open() {}, close() {} }),
+    fallbackFocus: () => null,
+    bindRadioGroup: () => ({ value: () => selected, selected: () => null, reflect: (v) => void (selected = v) }),
+    setStatus: (text) => void status.push(text),
+    onChanged() {},
+  });
+  return {
+    ...markup, protection, current, fresh, confirm, error, currentRow, writes, status,
+    choose: (value) => void (selected = value),
+    stored: () => readProtection(stored),
+    secret: () => secret,
+  };
+}
+
+test("a new password is stored with a fresh 16-byte salt, and the status says so", async () => {
+  const h = buildWithPassword(null, null);
+  h.protection.open();
+  assert.equal(h.currentRow.hidden, true, "no current password to ask for");
+  h.choose("readOnly");
+  h.enforce.checked = true;
+  h.fresh.value = "hunter2";
+  h.confirm.value = "hunter2";
+  assert.equal(await applyVia(h), true);
+  assert.equal(h.writes.length, 1);
+  assert.equal(h.writes[0].newPassword, "hunter2");
+  assert.ok(h.writes[0].salt instanceof Uint8Array && h.writes[0].salt.length === 16);
+  assert.equal(h.secret(), "hunter2");
+  assert.equal(
+    h.status.at(-1),
+    EN["protect.appliedWithPassword"].replace("{level}", EN["protect.level.readOnly"]),
+  );
+});
+
+test("an unconfirmed new password is refused beside the field and writes nothing", async () => {
+  // Mutation: drop the confirmation comparison in `apply` -> the write lands
+  // with "hunter2" and `writes.length` is 1.
+  const h = buildWithPassword(null, null);
+  h.protection.open();
+  h.choose("comments");
+  h.enforce.checked = true;
+  h.fresh.value = "hunter2";
+  h.confirm.value = "hunter3";
+  assert.equal(await applyVia(h), false);
+  assert.equal(h.writes.length, 0);
+  assert.equal(h.error.hidden, false);
+  assert.equal(h.error.textContent, EN["protect.passwordMismatch"]);
+});
+
+test("stopping a passworded restriction asks for the password: none and a wrong one are refused", async () => {
+  // Mutation: drop the `checkProtectionPassword` and empty-password guards in
+  // `apply` -> the engine refuses instead, nothing is said beside the field, and
+  // the two `error.textContent` assertions go red.
+  const h = buildWithPassword(json("readOnly", true), "hunter2");
+  h.protection.open();
+  assert.equal(h.currentRow.hidden, false, "the dialog asks for the current password");
+  h.choose("off");
+  h.enforce.checked = false;
+  assert.equal(await applyVia(h), false, "no password, no change");
+  assert.equal(h.error.textContent, EN["protect.passwordRequired"]);
+  h.current.value = "hunter3";
+  assert.equal(await applyVia(h), false, "a wrong password, no change");
+  assert.equal(h.error.textContent, EN["protect.wrongPassword"]);
+  assert.equal(h.writes.length, 0);
+  h.current.value = "hunter2";
+  assert.equal(await applyVia(h), true);
+  assert.equal(h.stored().active, false);
+  assert.equal(h.writes.at(-1).currentPassword, "hunter2");
 });

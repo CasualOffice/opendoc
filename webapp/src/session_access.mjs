@@ -146,6 +146,10 @@ export const PROTECTION_REFUSAL_KEYS = Object.freeze({
   // adding an enforcement without its sentence would reopen it.
   "document.protected-formatting": "document.protectedFormatting",
   "document.protected-style-locked": "document.protectedStyleLocked",
+  // Stop Protection with the wrong password (`review_protection.rs`). The dialog
+  // checks first and says this beside the field; a host calling the engine
+  // directly gets the same sentence through this route.
+  "document.protection-wrong-password": "protect.wrongPassword",
 });
 
 /** The `ODC-7xxx` collaboration family (`docs/20`) → catalogue key.

@@ -2532,14 +2532,15 @@
          restriction": Word's Stop Protection has to be reachable from the same
          control rather than from a second button that only exists sometimes.
 
-         NO PASSWORD FIELD, and both references have one. `w:documentProtection`
-         can carry `w:hash`/`w:salt`/`w:cryptSpinCount`; ADR-052 records that none
-         of it is modelled, and that verifying it would advertise a boundary this
-         product does not have — the legacy hash comes off by editing one XML
-         attribute. So the space the password box would have occupied says what the
-         restriction actually is instead. That sentence is the feature, not a
-         disclaimer: "policy, not security" has to be true in what the reader is
-         told. -->
+         THE PASSWORD (`docs/153` `review.protection-password`, ADR-052 as
+         amended 2026-10-30). Both references have one — ONLYOFFICE's
+         `inputPwd`/`repeatPwd`, Word's "Start Enforcing Protection" prompt — and
+         so does this now: a new password and its confirmation when a restriction
+         is installed, and the current password when one this editor can check is
+         already there (Word's Stop Protection asks for it). The verifier is
+         Word's own (`casual-doc-wasm` `review_protection.rs`), so Word asks for
+         the same password. The note under the fields says what it is NOT:
+         encryption. "Policy, not security" stays true in what the reader is told. -->
     <div id="restrictEditingDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="restrictEditingTitle" aria-describedby="restrictEditingDescription">
       <section class="dialog-card dialog-card-compact">
         <header class="dialog-head">
@@ -2587,16 +2588,33 @@
               <span><strong data-i18n="protect.enforce">Apply this restriction now</strong><small data-i18n="protect.enforce.hint">Word's "Start enforcing protection". Left off, the restriction is kept in the file without being applied — a state Word writes, and one this preserves.</small></span>
             </label>
           </div>
-          <p data-i18n="protect.authority" class="settings-note">This is a policy, not a password. Anyone who can open this document can lift the restriction here, exactly as in Word when no password was set. A password set in Word is kept in the file, but it is never asked for or checked here.</p>
-          <!-- Shown only when the file carries a Word password verifier with the
-               restriction (`documentProtection().password`, ADR-052 updated
-               2026-10-09): Word would ask for it, this editor does not, and a
-               change made here removes it — said before Apply, not after. -->
-          <p data-i18n="protect.passwordNote" class="settings-note" id="restrictEditingPassword" hidden>This restriction has a password set in Word. Word asks for it before the restriction can be changed; this editor does not, and changing or stopping the restriction here removes the password.</p>
+          <!-- The CURRENT password: shown only when the restriction carries a
+               verifier this editor can check (`protectionPassword().verifiable`).
+               Changing or stopping the restriction then needs it, as in Word. -->
+          <div class="settings-section" id="restrictEditingCurrentRow" hidden>
+            <label data-i18n="protect.currentPassword" class="dialog-field">Password<input id="restrictEditingCurrentPassword" type="password" maxlength="255" autocomplete="current-password" aria-describedby="restrictEditingCurrentHint restrictEditingPasswordError" /></label>
+            <small data-i18n="protect.currentPassword.hint" class="settings-note" id="restrictEditingCurrentHint">This restriction was set with a password. Enter it to change or stop the restriction.</small>
+          </div>
+          <!-- A NEW password, for the restriction being installed. Optional:
+               empty is Word's unpassworded restriction. -->
+          <div class="settings-section" id="restrictEditingNewRow">
+            <label data-i18n="protect.newPassword" class="dialog-field">New password (optional)<input id="restrictEditingNewPassword" type="password" maxlength="255" autocomplete="new-password" aria-describedby="restrictEditingNewHint restrictEditingPasswordError" /></label>
+            <label data-i18n="protect.confirmPassword" class="dialog-field">Confirm the new password<input id="restrictEditingConfirmPassword" type="password" maxlength="255" autocomplete="new-password" aria-describedby="restrictEditingPasswordError" /></label>
+            <small data-i18n="protect.newPassword.hint" class="settings-note" id="restrictEditingNewHint">Readers must enter it to change or stop the restriction, here and in Word. Leave it empty for no password.</small>
+          </div>
+          <p class="settings-note dialog-error" id="restrictEditingPasswordError" role="alert" hidden></p>
+          <p data-i18n="protect.authorityPassword" class="settings-note">A password is a deterrent, not encryption. It is stored in the file the way Word stores it, and anyone who can edit the file itself can remove it.</p>
+          <!-- Shown only when the file carries a verifier this editor CANNOT check
+               (an algorithm or spin count `review_protection.rs` does not take): a
+               change made here then removes it — said before Apply, not after. -->
+          <p data-i18n="protect.passwordUnverifiable" class="settings-note" id="restrictEditingPassword" hidden>This restriction carries a password this editor cannot check. Changing or stopping the restriction here removes that password.</p>
         </div>
         <footer class="dialog-foot">
           <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
+            <!-- Word's Stop Protection, as its own button while a restriction is
+                 in force; the "No restriction" row above reaches the same state. -->
+            <button data-i18n="protect.stop" id="restrictEditingStop" type="button" class="dialog-button" hidden>Stop protection</button>
             <button data-i18n="watermarkDialog.cancel" id="restrictEditingCancel" type="button" class="dialog-button">Cancel</button>
             <button data-i18n="watermarkDialog.apply" id="restrictEditingApply" type="button" class="dialog-button dialog-button-primary">Apply</button>
           </div>

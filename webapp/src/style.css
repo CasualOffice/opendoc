@@ -1856,6 +1856,11 @@ button.compatibility-status:hover {
   font-size: var(--fs-small);
   line-height: 1.4;
 }
+/* A dialog's own refusal (a wrong or unconfirmed password): the danger token,
+   which the AA sweep already covers in both themes. */
+.settings-note.dialog-error {
+  color: var(--danger);
+}
 
 /* ---- Modal dialogs --------------------------------------------------------- */
 body.modal-open {

@@ -1840,6 +1840,14 @@ export const EN_STRINGS = Object.freeze({
   // change made here removes (ADR-052, updated 2026-10-09). `{status}` is one of
   // the sentences above.
   "protect.withPasswordRemoved": "{status}. The password set in Word was removed.",
+  // The password (`docs/153` `review.protection-password`, ADR-052 as amended
+  // 2026-10-30): the status after a passworded restriction is installed, and the
+  // three refusals said beside the dialog's fields. `protect.wrongPassword` is
+  // also the routed sentence for the engine's `document.protection-wrong-password`.
+  "protect.appliedWithPassword": "Editing restricted to: {level}, with a password",
+  "protect.passwordMismatch": "The two new passwords don't match",
+  "protect.passwordRequired": "Enter the password to change or stop this restriction",
+  "protect.wrongPassword": "That isn't the password this restriction was set with",
 
   // ---- A PARTICIPANT'S GRANT, AND THE ROOM'S REFUSALS ----------------------
   //

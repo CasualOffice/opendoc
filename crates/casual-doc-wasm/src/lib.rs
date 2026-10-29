@@ -254,6 +254,10 @@ mod compare_view;
 // it exists.
 mod quantity;
 
+// The password on the editing restriction: Word's verifier, written and checked
+// (`docs/153` `review.protection-password`, ADR-052 as amended).
+mod review_protection;
+
 // The shared session (`docs/152`, ADR-063). Its own module because the socket is the
 // browser's and the session is the engine's: nothing here opens a connection, and nothing in
 // `webapp/src` parses a frame.

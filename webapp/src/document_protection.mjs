@@ -26,22 +26,22 @@
 // same control rather than from a second button that appears conditionally. One
 // mechanism, not two.
 //
-// ---- NO PASSWORD FIELD, AND THAT IS A DECISION -----------------------------
+// ---- THE PASSWORD (ADR-052 as amended 2026-10-30) ---------------------------
 //
-// Both references offer one and this deliberately does not. `w:documentProtection`
-// can carry `w:hash`, `w:salt`, `w:cryptProviderType`, `w:cryptAlgorithmSid` and
-// `w:cryptSpinCount`; ADR-052 records that none of it is modelled, and that
-// verifying one would advertise a boundary that does not exist — the legacy hash
-// is removable by editing a single XML attribute, and a local-first engine hands
-// the reader the bytes regardless. A password box here would promise protection
-// against an adversary this product does not have.
+// Both references offer one and, since `docs/153` `review.protection-password`,
+// so does this. Installing a restriction takes an optional new password and its
+// confirmation (ONLYOFFICE's `inputPwd`/`repeatPwd`); changing or stopping one
+// that carries a password this editor can check asks for it first (Word's Stop
+// Protection). The verifier is Word's own — `casual-doc-wasm`
+// `review_protection.rs` writes the SHA-512, 100,000-spin, legacy-key-folded
+// hash Word 2013+ writes — so Word asks a reader for the same password.
 //
-// What the dialog does instead is SAY SO, in the pane, where the password box
-// would have been: this is a policy and anyone who can open the document can lift
-// it. That is literally how Word behaves with an unpassworded restriction, and
-// ADR-052's "policy, not security" has to stay true in what the reader is told,
-// not only in an ADR.
-//
+// What the dialog says beside the fields is what it is NOT: encryption. The
+// verifier sits in plain XML next to the restriction, so "policy, not security"
+// stays true in what the reader is told. A verifier this build cannot check (an
+// algorithm or a spin count it does not take) is the one case left where a change
+// removes the password, and the dialog says so before Apply.
+
 // ---- THE ORDERING TRAP, ON THE CHROME'S SIDE OF THE LINE -------------------
 //
 // ADR-059's hard part was that an operation which LIFTS a restriction would
@@ -166,6 +166,13 @@ export function createDocumentProtection(io) {
   const cancelBtn = el("restrictEditingCancel");
   const closeBtn = el("restrictEditingClose");
   const passwordNote = el("restrictEditingPassword");
+  const currentRow = el("restrictEditingCurrentRow");
+  const currentInput = el("restrictEditingCurrentPassword");
+  const newRow = el("restrictEditingNewRow");
+  const newInput = el("restrictEditingNewPassword");
+  const confirmInput = el("restrictEditingConfirmPassword");
+  const passwordError = el("restrictEditingPasswordError");
+  const stopBtn = el("restrictEditingStop");
 
   /** What the document says right now. `{edit:null,…}` with no document open. */
   function current() {
@@ -202,11 +209,36 @@ export function createDocumentProtection(io) {
    *  radio group alone would disable Apply's own precondition on exactly the state
    *  the new control exists to reach. */
   function reflectEnforce() {
-    if (!enforce) return;
     const off = (group.value() ?? "off") === "off" && formatting?.checked !== true;
+    // A new password belongs to a restriction being installed; with none chosen
+    // there is nothing for it to guard, so the fields go rather than sit inert.
+    if (newRow) newRow.hidden = off;
+    if (!enforce) return;
     enforce.disabled = off;
     if (off) enforce.checked = false;
     if (enforceRow) enforceRow.title = off ? t("protect.enforceOff") : "";
+  }
+
+  /** Says a password problem beside the fields — `role="alert"`, so a screen
+   *  reader hears it — and puts focus where the reader has to act. */
+  function refusePassword(message, field) {
+    if (passwordError) {
+      passwordError.textContent = message;
+      passwordError.hidden = false;
+    }
+    field?.focus?.();
+  }
+
+  /** The restriction's password as the engine reads it. A build without the
+   *  password methods answers "no password", which is what it could check. */
+  function passwordState() {
+    const doc = io.getDoc();
+    try {
+      const parsed = JSON.parse(doc?.protectionPassword?.() ?? "null");
+      return { present: parsed?.present === true, verifiable: parsed?.verifiable === true };
+    } catch {
+      return { present: false, verifiable: false };
+    }
   }
 
   function open() {
@@ -215,9 +247,27 @@ export function createDocumentProtection(io) {
     group.reflect(state.value);
     if (enforce) enforce.checked = state.enforcement;
     if (formatting) formatting.checked = state.formatting;
-    if (passwordNote) passwordNote.hidden = !state.password;
+    const password = passwordState();
+    // The "removes the password" note is for the one verifier this editor cannot
+    // check; one it can check is asked for instead.
+    if (passwordNote) passwordNote.hidden = !(state.password && !password.verifiable);
+    if (currentRow) currentRow.hidden = !password.verifiable;
+    for (const input of [currentInput, newInput, confirmInput]) if (input) input.value = "";
+    if (passwordError) {
+      passwordError.hidden = true;
+      passwordError.textContent = "";
+    }
+    if (stopBtn) stopBtn.hidden = !state.active;
     reflectEnforce();
     modal.open();
+  }
+
+  /** Word's Stop Protection: the "No restriction" row, applied. */
+  function stop() {
+    group.reflect("off");
+    if (formatting) formatting.checked = false;
+    reflectEnforce();
+    void apply();
   }
 
   /** Writes the chosen level, as ONE undoable action, and says what happened.
@@ -265,19 +315,49 @@ export function createDocumentProtection(io) {
     // discarded — which is the same defect the token comparison had, in the new axis.
     const sameRestriction =
       wantedEdit === state.edit || (!restricts(wantedEdit) && !restricts(state.edit));
+    const newPassword = wantedEdit !== null ? (newInput?.value ?? "") : "";
     if (
       sameRestriction &&
       wantedEnforcement === state.enforcement &&
-      wantedFormatting === state.formatting
+      wantedFormatting === state.formatting &&
+      newPassword === ""
     ) {
       modal.close();
       return;
+    }
+    if (newPassword !== (wantedEdit !== null ? (confirmInput?.value ?? "") : "")) {
+      refusePassword(t("protect.passwordMismatch"), confirmInput);
+      return;
+    }
+    // Word's Stop Protection asks for the password before anything changes, and
+    // so does this — checked here first so the refusal is said beside the field
+    // and the dialog stays open, then checked again by the engine at the write.
+    const password = passwordState();
+    const currentPassword = currentInput?.value ?? "";
+    if (password.verifiable) {
+      if (currentPassword === "") {
+        refusePassword(t("protect.passwordRequired"), currentInput);
+        return;
+      }
+      if (doc.checkProtectionPassword(currentPassword) === "mismatch") {
+        refusePassword(t("protect.wrongPassword"), currentInput);
+        return;
+      }
     }
     // NO `gate`. See the ordering-trap note in this module's header — gating a
     // policy change behind the suggesting-mode check would rebuild the one-way door
     // ADR-059 removed in the engine.
     const applied = await io.runEdit(() =>
-      doc.setDocumentProtection(wantedEdit, wantedEnforcement, wantedFormatting),
+      typeof doc.protectDocument === "function"
+        ? doc.protectDocument(
+            wantedEdit,
+            wantedEnforcement,
+            wantedFormatting,
+            currentPassword || null,
+            newPassword || null,
+            newPassword ? globalThis.crypto.getRandomValues(new Uint8Array(16)) : null,
+          )
+        : doc.setDocumentProtection(wantedEdit, wantedEnforcement, wantedFormatting),
     );
     if (!applied) return;
     modal.close();
@@ -287,7 +367,13 @@ export function createDocumentProtection(io) {
     // thing in force and "Editing restricted to: No restriction" would be a
     // sentence that contradicts itself. What is said is what will now be refused.
     const status = statusFor(wantedEdit, wantedEnforcement, wantedFormatting, row);
-    io.setStatus(state.password ? t("protect.withPasswordRemoved", { status }) : status);
+    if (newPassword && wantedEnforcement && restricts(wantedEdit)) {
+      io.setStatus(t("protect.appliedWithPassword", { level: t(row.labelKey) }));
+    } else {
+      // Only an UNCHECKABLE password is removed silently by a change, and that is
+      // the case the status names; a checked one was asked for and the reader knows.
+      io.setStatus(state.password && !password.verifiable ? t("protect.withPasswordRemoved", { status }) : status);
+    }
   }
 
   /** What the status bar says after Apply.
@@ -321,6 +407,7 @@ export function createDocumentProtection(io) {
   applyBtn?.addEventListener("click", () => void apply());
   cancelBtn?.addEventListener("click", () => modal.close());
   closeBtn?.addEventListener("click", () => modal.close());
+  stopBtn?.addEventListener("click", stop);
   enforce?.addEventListener("change", reflectEnforce);
   // The formatting box changes whether ANYTHING is restricted, so it changes the
   // enforcement checkbox's own precondition. Without this, ticking it left Apply's
@@ -356,7 +443,7 @@ export function createDocumentProtection(io) {
           id: "review.restrictEditing",
           label: t("protect.command"),
           group: "Review",
-          kw: "restrict editing protect protection read only comments tracked changes forms lock permission policy",
+          kw: "restrict editing protect protection password stop read only comments tracked changes forms lock permission policy",
           enabled: !reason,
           disabledReason: reason,
           run: open,
