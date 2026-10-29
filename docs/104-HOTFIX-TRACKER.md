@@ -67,7 +67,7 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | Section | Rows | Still open |
 | --- | ---: | ---: |
 | P0 | 7 | 0 |
-| P1 | 33 | 3 |
+| P1 | 33 | 2 |
 | P2 | 52 | 15 |
 | P3 | 22 | 12 |
 | Behavioural audit — 2026-09-04 | 18 | 3 |
@@ -76,7 +76,7 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | Ribbon keyboard reachability — 2026-09-10 | 2 | 0 |
 | Paragraph-level revision mapping — 2026-09-17 | 4 | 0 |
 | Large-document admission — 2026-09-18 | 1 | 0 |
-| **Total** | **158** | **33** |
+| **Total** | **158** | **32** |
 
 "Still open" counts any status *beginning* `Open`, `Partly fixed`, or `In progress` —
 the prefix matters, because real statuses qualify themselves (`Open (owner decision)`,
@@ -96,7 +96,7 @@ by re-reading the code they cite: **HF-016**, **HF-022** and **HF-034**.)
 
 ### Progress
 
-**33 of 158 rows remain open. Every P0 is closed.** HF-030 closed with #559. (Re-derive these counts, do not edit them by hand.)
+**32 of 158 rows remain open. Every P0 is closed.** HF-030 closed with #559. (Re-derive these counts, do not edit them by hand.)
 
 **Staleness sweep, 2026-09-20.** Every P1 row of this tracker and of `105` was re-read
 against the code it cites, because `109` is now the only queue and a stale `Open` there is
@@ -184,7 +184,7 @@ Still waiting on an owner decision, not on engineering:
 | HF-012 | Numbering, note, comment and bookmark ids are exported as 20-digit numbers Word cannot accept | import-export | M | Internal audit | Fixed |
 | HF-013 | Rich paste in Suggesting mode scrambles or drops text containing any non-ASCII character | webapp-js | S | Internal audit | Fixed |
 | HF-014 | Rendering hangs forever on dashed/dot-dash underline with a font reporting zero underline thickness | render | S | Internal audit | Fixed |
-| HF-051 | No Word Count dialog and no selection-scoped counts — the code flags this hole itself | word-count | M | Sibling gap (docs (ProseMirror)) | Open |
+| HF-051 | No Word Count dialog and no selection-scoped counts — the code flags this hole itself | word-count | M | Sibling gap (docs (ProseMirror)) | Fixed (`lane/parity-pipeline`; docs/tracker/completed.md) |
 | HF-015 | A six-byte non-ASCII color string panics the WASM module and poisons the session | wasm | S | Internal audit | Fixed |
 | HF-016 | There is no "New blank document" — the only way to get a document is to open someone else's file | file | M | Sibling gap (docs (ProseMirror)) | Fixed (#542) |
 | HF-017 | Table column count is unbounded on one side and collapses to 1 twip on the other | layout | M | Internal audit | Fixed |

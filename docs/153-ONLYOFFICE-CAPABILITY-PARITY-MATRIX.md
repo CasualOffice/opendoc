@@ -129,7 +129,7 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-provenance -->
 | Side | Source | Inventory |
 | --- | --- | --- |
-| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 216 exact commands, 11 families |
+| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 217 exact commands, 11 families |
 | ONLYOFFICE | snapshot of 163 files, taken 2026-09-30 | 578 controls, 3529 locale keys, 2122 engine API methods, 114 boot flags (14 licence-gated, 3 desktop-only) |
 | Matrix | `tools/opendoc-parity/data/capabilities.json` | 422 graded rows |
 <!-- @end parity-provenance -->
@@ -139,11 +139,11 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-tally -->
 | Verdict | Rows | What it means |
 | --- | --- | --- |
-| Parity | 198 | both products ship it, and both anchors resolve |
+| Parity | 200 | both products ship it, and both anchors resolve |
 | Ours, ungated | 27 | we ship it in the editor itself; theirs is behind a licence result the document server issues, the desktop shell, or the integrator's own config |
 | Ours only | 24 | we ship it and their tree has no such surface |
 | Partial | 68 | we ship part of it; the row says what is missing |
-| Gap | 79 | their standalone browser session ships it and we do not |
+| Gap | 77 | their standalone browser session ships it and we do not |
 | Theirs, gated | 13 | theirs needs a licence result, the desktop shell or the integrator, and we lack it too |
 | Neither | 13 | neither product ships it, and the row records the search that established that |
 | **Total graded** | **422** | every row below |
@@ -193,7 +193,6 @@ least two surfaces (`SKILL` §10).
 | 3 | Display mode: simple markup (change bars only) | `review.display-mode-simple-markup` | `Common.Views.ReviewChanges.txtMarkupSimple` | Word's default review view. We always paint full markup or none. |
 | 3 | Manage or clear the personal dictionary | `review.personal-dictionary-manage` | `asc_docs_api.asc_spellCheckClearDictionary` | Words can be added on both sides, but only theirs can be cleared; ours has no list and no removal. |
 | 3 | Password on the editing restriction | `review.protection-password` | `asc_docs_api.asc_setDocumentProtection` | — |
-| 3 | Word count dialog, including a count for the selection | `review.word-count-dialog` | `DE.Views.FileMenuPanels.DocumentInfo.txtStatistics` | Theirs is the document-info statistics block, not a live selection count; neither matches Word's dialog, but ours has no second surface at all. |
 | 3 | Dark document (invert the page, not just the chrome) | `shell.dark-document` | `btnDarkDocument` | We have a dark interface theme but the page itself stays white. Reading a long document at night is the case this covers. |
 | 3 | Search with a regular expression | `shell.find-regex` | `Common.Views.SearchPanel.textMatchUsingRegExp` | Our scan is literal with case and whole-word options only (main.js scanAllMatches). |
 | 3 | Show several pages side by side | `shell.multiple-pages-view` | `btnMultiplePages` | Theirs lays out two or more pages across the viewport. Ours paints one column of pages at every zoom. |
@@ -226,7 +225,6 @@ least two surfaces (`SKILL` §10).
 | 4 | Export as PDF/A | `shell.export-pdfa` | `asc_docs_api.asc_DownloadAs` | Their PDFA row is FileMenuPanels.js:60. Archival PDF is a compliance requirement in public-sector deployments, which is the market the licence wedge targets. |
 | 4 | Assign form fields to roles | `shell.form-roles` | `btnViewFormRoles` | Their roles manager decides who fills which field; it is the half of their forms story that is genuinely product rather than format. |
 | 4 | Print the selection only | `shell.print-selection` | `DE.Views.DocumentHolder.txtPrintSelection` | Theirs is a context-menu entry that sets Asc.c_oAscPrintType.Selection. Ours always prints every page. |
-| 4 | Word Count dialog for the selection | `shell.word-count-dialog` | `DE.Views.Statusbar.txtWordCount` | Counts for a selection rather than the document; status_counts.mjs already says in as many words that the whole-region tooltip stands in until this dialog exists. |
 | 4 | Draw table (freehand grid tool) | `table.draw` | `DE.Views.Toolbar.mniDrawTable` | A pointer mode that draws a table outline and then its interior gridlines. We have no equivalent mode. |
 | 4 | Table position dialog | `table.position-dialog` | `DE.Views.TableSettingsAdvanced.textTablePosition` | Horizontal and vertical position relative to margin, page, column or paragraph, plus distance from surrounding text and a move-with-text / allow-overlap pair. None of it is authorable here. |
 | 4 | Paste as picture | `text.paste-as-picture` | `DE.Views.DocumentHolder.txtPastePicture` | Their special-paste badge offers Picture, which flattens the pasted content into an image. |
@@ -625,7 +623,7 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | See what changed between two versions | Partial | `webapp/src/version_panel.mjs` · `Show changes` — missing: the diff is computed nowhere in the editor, so the panel's toggle ships disabled with its reason | `asc_docs_api.asc_showDeletedTextInVersionHistory` behind `canUseHistory` | docs/140 H3. The diff crate and its wasm binding exist; only the panel wiring is missing. |
 | Version history | Ours, ungated | `file.versionHistory` | `btnHistory` behind `canUseHistory` | Ours is local, written by the autosave path, and needs only the autosave grant. Theirs needs both the licence flag and a document-management integration. |
 | Viewing mode (read-only preview) | Parity | `review.mode.viewing` | `asc_docs_api.asc_BeginViewModeInReview` | Ours requires no grant at all, since a reader may always read. |
-| Word count dialog, including a count for the selection | Gap | none (`tools.wordCount` undeclared) | `DE.Views.FileMenuPanels.DocumentInfo.txtStatistics` | Theirs is the document-info statistics block, not a live selection count; neither matches Word's dialog, but ours has no second surface at all. |
+| Word count dialog, including a count for the selection | Parity | `tools.wordCount` | `DE.Views.FileMenuPanels.DocumentInfo.txtStatistics` | Theirs is the document-info statistics block and the status-bar Word count menu, both for the document only (Statusbar.js:325-343). Ours is Word's dialog with a Selection column, from the Review band, the Review menu, the palette, Cmd/Ctrl+Shift+G and the status bar. |
 | Word and character count in the status bar | Parity | `webapp/src/status_counts.mjs` · `countLabels` | `DE.Views.Statusbar.txtWordCount` | Ours carries words, characters with and without spaces, and paragraphs, and keeps the figures shed at narrow widths on the region's tooltip. |
 
 ### Files, view, navigation and the shell (70 rows)
@@ -697,7 +695,7 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Start from a template | Ours, ungated | `webapp/src/blank_document.mjs` · `DOCUMENT_TEMPLATES` | `DE.Views.FileMenu.btnCreateNewCaption` behind `templates` | Ours ships a template table with rendered first-page thumbnails in the product. Theirs has no templates of its own: appOptions.templates is whatever list the host passes in editorConfig. |
 | Undo and redo | Parity | `edit.undo` | `btnUndo` | — |
 | Version history | Ours, ungated | `file.versionHistory` | `DE.Views.FileMenu.btnHistoryCaption` behind `canUseHistory` | Main.js:1720 requires canLicense, canCoAuthoring and not isOffline. Ours is ungated and local, gated only on the autosave capability that writes the checkpoints. |
-| Word Count dialog for the selection | Gap | none (`tools.wordCount` undeclared) | `DE.Views.Statusbar.txtWordCount` | Counts for a selection rather than the document; status_counts.mjs already says in as many words that the whole-region tooltip stands in until this dialog exists. |
+| Word Count dialog for the selection | Parity | `tools.wordCount` | `DE.Views.Statusbar.txtWordCount` | The status bar reads x of y words while text is selected, and the dialog counts the selection beside the document. ONLYOFFICE counts the document only. |
 | Word, character and paragraph counts in the status bar | Parity | `webapp/src/status_counts.mjs` · `countLabels` | `DE.Views.Statusbar.txtWords` | Ours also carries characters-without-spaces on the hover, and sheds the lower-priority counts into a whole-region tooltip on a narrow window rather than losing them. |
 | Fit page and fit width | Parity | family `view.zoom.` | `btnZoomToWidth` | Both put fit-page and fit-width on the status bar and on the View band. Ours also fits on open when the container is narrower than a page (view_zoom.mjs openingZoomMode). |
 | Zoom in and out | Parity | `view.zoomIn` | `btnZoomUp` | — |

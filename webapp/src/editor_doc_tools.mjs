@@ -12,6 +12,7 @@ import { createDocumentProtection } from "./document_protection.mjs";
 import { bindRadioGroup } from "./radio_group.mjs";
 import { createAccessChrome } from "./access_chrome.mjs";
 import { revealOnSettings } from "./surface_reveal.mjs";
+import { createWordCount } from "./word_count.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -92,8 +93,15 @@ export function createDocTools(ed) {
 
   // The band's structural controls, declared in `table_band.mjs` (`109` UX-005).
   // Its Select handler used to be a second copy of `selectTableContext`.
+  // Word count (HF-051): the dialog and the status bar's "x of y words".
+  const wordCount = createWordCount({
+    getDoc: () => ed.doc,
+    getSelection: () => ed.selection,
+    fallbackFocus: () => ed.pagesEl,
+    setStatus: (text, kind) => ed.setStatus(text, kind),
+  });
   return {
     accessChrome, comparePanel, documentProtection, formattingMarks, measurement, redlineOf,
-    showChange,
+    showChange, wordCount,
   };
 }

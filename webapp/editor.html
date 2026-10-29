@@ -1229,6 +1229,8 @@
                    belongs. Its other two surfaces are the Review menu's Proofing
                    band and the command palette (`105` UX-004). -->
               <button data-i18n-title="panelReview.proofingLanguages.title" data-i18n-label="panelReview.proofingLanguages.label" id="reviewProofLanguagesBtn" type="button" class="fmt" title="Install proofing for another language" aria-label="Proofing languages" aria-haspopup="dialog"><span class="ms" aria-hidden="true">language</span></button>
+              <!-- Word count (HF-051): Word's Review ▸ Proofing ▸ Word Count. -->
+              <button data-i18n-title="panelReview.wordCount.title" data-i18n-label="panelReview.wordCount.label" id="reviewWordCountBtn" type="button" class="fmt" title="Count words, characters and paragraphs" aria-label="Word count" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">match_word</span></button>
             </div>
             <span data-i18n="panelReview.proofing" class="rgroup-label">Proofing</span>
           </div>
@@ -1370,6 +1372,42 @@
          way to tell which build you are looking at when reporting a bug. The
          version is read from the engine (`engineVersion()`, compiled from the
          crate manifest) rather than typed here, so it cannot drift. -->
+    <!-- Word count (HF-051). Word's dialog: the document's figures, and the
+         selection's beside them whenever there is one. `word_count.mjs`. -->
+    <div id="wordCountDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="wordCountTitle" aria-describedby="wordCountScope">
+      <section class="dialog-card word-count-dialog">
+        <header class="dialog-head">
+          <h2 data-i18n="wordCountDialog.title" id="wordCountTitle">Word count</h2>
+          <button data-word-count-dismiss data-i18n-title="wordCountDialog.close.title" data-i18n-label="wordCountDialog.close.label" id="wordCountClose" type="button" class="dialog-close" title="Close" aria-label="Close word count">
+            <span class="ms" aria-hidden="true">close</span>
+          </button>
+        </header>
+        <div class="dialog-body">
+          <table class="word-count-table">
+            <thead>
+              <tr>
+                <th data-i18n="wordCountDialog.statistic" scope="col">Statistic</th>
+                <th data-i18n="wordCountDialog.selection" data-word-count-selection scope="col">Selection</th>
+                <th data-i18n="wordCountDialog.document" scope="col">Document</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-stat="pages"><th data-i18n="wordCountDialog.pages" scope="row">Pages</th><td data-word-count-selection></td><td data-word-count-document></td></tr>
+              <tr data-stat="words"><th data-i18n="wordCountDialog.words" scope="row">Words</th><td data-word-count-selection></td><td data-word-count-document></td></tr>
+              <tr data-stat="characters"><th data-i18n="wordCountDialog.charactersNoSpaces" scope="row">Characters (no spaces)</th><td data-word-count-selection></td><td data-word-count-document></td></tr>
+              <tr data-stat="charactersWithSpaces"><th data-i18n="wordCountDialog.charactersWithSpaces" scope="row">Characters (with spaces)</th><td data-word-count-selection></td><td data-word-count-document></td></tr>
+              <tr data-stat="paragraphs"><th data-i18n="wordCountDialog.paragraphs" scope="row">Paragraphs</th><td data-word-count-selection></td><td data-word-count-document></td></tr>
+            </tbody>
+          </table>
+          <p data-i18n="wordCountDialog.scope" id="wordCountScope" class="word-count-scope">Counts include tables, text boxes, headers, footers, footnotes and endnotes.</p>
+        </div>
+        <footer class="dialog-foot">
+          <div class="dialog-actions">
+            <button data-word-count-dismiss data-i18n="wordCountDialog.closeButton" id="wordCountDone" type="button" class="dialog-button dialog-button-primary">Close</button>
+          </div>
+        </footer>
+      </section>
+    </div>
     <div id="aboutDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="aboutTitle" aria-describedby="aboutDescription">
       <section class="dialog-card about-dialog">
         <header class="dialog-head">
@@ -3575,7 +3613,9 @@
              higher numbers are shed first as the window narrows, mirroring how
              Word drops its lowest-value indicators. Separators are generated in
              CSS so a shed count cannot orphan one. -->
-        <span class="stats" id="stats" hidden>
+        <!-- A button as well as a readout (HF-051): Word opens its Word Count
+             dialog from a click on these counts. -->
+        <span class="stats" id="stats" role="button" tabindex="0" aria-haspopup="dialog" hidden>
           <span data-i18n="stats.0Words" id="statWords" data-status-priority="1">0 words</span>
           <span data-i18n="stats.0Characters" id="statChars" data-status-priority="2">0 characters</span>
           <span data-i18n="stats.0Paragraphs" id="statParas" data-status-priority="3">0 paragraphs</span>

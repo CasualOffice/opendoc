@@ -145,6 +145,12 @@ export const EN_STRINGS = Object.freeze({
   "status.paragraphs.one": "{count} paragraph",
   "status.paragraphs.other": "{count} paragraphs",
   "status.characters.withSpaces": "{count} characters (with spaces)",
+  // Word's status bar while text is selected: "23 of 1,204 words" (HF-051).
+  // Plural on the document's total, which is the noun the sentence ends on.
+  "status.wordsOfTotal.one": "{selected} of {count} word",
+  "status.wordsOfTotal.other": "{selected} of {count} words",
+  // The Word count command's label on the palette and the Review menu (HF-051).
+  "wordCount.command": "Word count…",
   // Reassigned from script on every render, so the markup sweep never sees it.
   "status.pageOf": "Page {page} of {total}",
   // -- Reflow (pageless) ------------------------------------------------------

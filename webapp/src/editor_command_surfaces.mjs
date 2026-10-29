@@ -323,6 +323,8 @@ export function createCommandSurfaces(ed) {
     { command: "tools.spellCheck", buttons: () => [ed.reviewSpellCheckBtn], requires: "always", pressed: () => ed.settings.spellCheck !== false, run: () => ed.setSpellCheckEnabled(ed.settings.spellCheck === false) },
     { command: "tools.grammarCheck", buttons: () => [ed.reviewGrammarCheckBtn], requires: "always", pressed: () => ed.settings.grammarCheck !== false, run: () => ed.setGrammarCheckEnabled(ed.settings.grammarCheck === false) },
     { command: "tools.smartQuotes", buttons: () => [ed.reviewSmartQuotesBtn], requires: "always", pressed: () => ed.autoCorrect.enabled("smartQuotes"), run: () => ed.autoCorrect.toggle("smartQuotes") },
+    // Word count (HF-051): a document fact, so it needs a document and nothing else.
+    { command: "tools.wordCount", buttons: () => [document.getElementById("reviewWordCountBtn")].filter(Boolean), requires: "doc", reasonKey: "command.needsDocument", run: () => ed.wordCount.open() },
     { command: "tools.languages", buttons: () => [ed.reviewProofLanguagesBtn], requires: "always", run: () => ed.proofing.openLanguages() },
     // Restrict Editing (ADR-052, ADR-059). Declared HERE rather than beside the
     // button for the reason this table gives twice over: one owner for `disabled`,
