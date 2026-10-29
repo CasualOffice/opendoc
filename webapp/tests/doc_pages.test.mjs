@@ -568,14 +568,18 @@ test("how much English the reference pages put on the site, measured and publish
   // says the work is kept, and its new bold run is one more text node on
   // `reference/error-code-registry.html` (141 -> 142). MEASURED from this
   // assertion's own failure output on the regenerated pages.
+  //
+  // 2686 -> 2685 with PDF import (#899, `docs/182`): `docs/98`'s import non-goal now
+  // points at `docs/182`, one fewer text node on `reference/pdf-export-and-print.html`.
+  // MEASURED from this assertion's failure output in CI.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2686,
-    `the thirteen reference pages carry ${total} unrouted English strings (was 2686). That ` +
+    2685,
+    `the thirteen reference pages carry ${total} unrouted English strings (was 2685). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose, or a page was published. Regenerate the pages, then MEASURE and record ` +
       `the new figure here — do not calculate it. Per page: ` +
