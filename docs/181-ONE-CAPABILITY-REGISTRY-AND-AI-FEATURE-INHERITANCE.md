@@ -189,6 +189,15 @@ agents later is one registry entry and lowers the ceiling back to 16. The editor
 `layout.pageBorders` is listed in `registry::UI_NOT_EXPOSED` for the same reason
 (`UI_NOT_EXPOSED_CEILING` 84 → 85).
 
+**Raised again, deliberately (2026-10-30, `lane/parity-tables-toc`):**
+`UI_NOT_EXPOSED_CEILING` 85 → 96 for eleven editor table tools (`109` RM-26, RM-27): the six
+table style options (`table.look.*`), `table.splitTable`, `table.insertCells`,
+`table.deleteCells`, `table.convertToText` and `insert.textToTable`. Their lowerings are in
+`casual_doc_command::table_tools`, pure and shared, so offering each to agents is one registry
+command over an existing function and lowers the ceiling by one. Two neighbours did not need
+the ratchet: the three `table.textDirection.*` commands are named by `table_set_cell_format`,
+which gained `text_direction`, and `insert.tableDialog` by `insert_table`.
+
 **What "a feature inherits MCP" therefore means, concretely.** A developer adding, say,
 footnote insertion writes `InsertFootnote: Command` with its `lower()` (moved out of
 `lib.rs:4658`), adds one line to `commands!`, and points the editor's method at it. With no

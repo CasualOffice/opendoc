@@ -399,7 +399,7 @@ pub const COMMANDS: &[Command] = &[
         emits: &["InsertTable"],
         trackable: Trackable::No(TABLE_NOT_TRACKABLE),
         example: r#"{"op":"insert_table","after":{"node":"1:2"},"rows":2,"columns":3}"#,
-        ui_commands: &["insert.table"],
+        ui_commands: &["insert.table", "insert.tableDialog"],
     },
     Command {
         id: "table_insert_column",
@@ -449,11 +449,15 @@ pub const COMMANDS: &[Command] = &[
     Command {
         id: "table_set_cell_format",
         family: Family::Tables,
-        summary: "Set the shading and/or vertical alignment of one cell or a rectangle of cells.",
+        summary: "Set the shading, vertical alignment and/or text direction of one cell or a rectangle of cells.",
         emits: &["SetTableCellProperties"],
         trackable: Trackable::No(TABLE_NOT_TRACKABLE),
-        example: r##"{"op":"table_set_cell_format","table":"1:9","from":{"row":0,"column":0},"to":{"row":0,"column":1},"shading":"#FFF2CC","vertical_alignment":"center"}"##,
-        ui_commands: &[],
+        example: r##"{"op":"table_set_cell_format","table":"1:9","from":{"row":0,"column":0},"to":{"row":0,"column":1},"shading":"#FFF2CC","vertical_alignment":"center","text_direction":"rotate_up"}"##,
+        ui_commands: &[
+            "table.textDirection.horizontal",
+            "table.textDirection.rotateDown",
+            "table.textDirection.rotateUp",
+        ],
     },
     Command {
         id: "set_list",
@@ -950,6 +954,8 @@ const UI_PAGE_BORDERS: &str = "Page borders are a person's design choice in the 
 const UI_HEADER_FOOTER_SETTINGS: &str = "The Header & Footer options dialog also writes the header and footer distances, which agents are not offered; its toggles and page numbering are (set_different_first_page, set_different_odd_even, set_page_numbering).";
 const UI_TABLES: &str = "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1).";
 
+const UI_TABLE_TOOLS: &str = "Table style options, converting between text and tables, splitting a table and shifting cells are lowered in casual_doc_command::table_tools, which an agent command can call, but no agent command offers them yet (docs/181 §3).";
+
 const UI_MODE: &str = "Switches the editor's own editing mode, not the document; an agent's mode is its profile plus the plan's `mode`.";
 const UI_PROTECTION: &str =
     "Protection and tracking settings are a person's decision, never an agent's.";
@@ -1045,6 +1051,17 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
     ("table.borderStyle", UI_TABLES),
     ("table.properties", UI_TABLES),
     ("table.style.none", UI_TABLES),
+    ("table.look.headerRow", UI_TABLE_TOOLS),
+    ("table.look.firstColumn", UI_TABLE_TOOLS),
+    ("table.look.totalRow", UI_TABLE_TOOLS),
+    ("table.look.lastColumn", UI_TABLE_TOOLS),
+    ("table.look.bandedRows", UI_TABLE_TOOLS),
+    ("table.look.bandedColumns", UI_TABLE_TOOLS),
+    ("table.splitTable", UI_TABLE_TOOLS),
+    ("table.insertCells", UI_TABLE_TOOLS),
+    ("table.deleteCells", UI_TABLE_TOOLS),
+    ("table.convertToText", UI_TABLE_TOOLS),
+    ("insert.textToTable", UI_TABLE_TOOLS),
     ("layout.headerFooterSettings", UI_HEADER_FOOTER_SETTINGS),
     ("layout.pageBorders", UI_PAGE_BORDERS),
     ("review.mode.editing", UI_MODE),
@@ -1057,4 +1074,6 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
 /// names an id; raising it needs an ADR line (`docs/181` §3).
 ///
 /// 84 -> 85 with `layout.pageBorders` (`109` HF-193), recorded in `docs/181` §3.
-pub const UI_NOT_EXPOSED_CEILING: usize = 85;
+/// 85 -> 96 with the eleven table-tool ids (`109` RM-26, RM-27), recorded in
+/// `docs/181` §3.
+pub const UI_NOT_EXPOSED_CEILING: usize = 96;

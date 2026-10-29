@@ -15,7 +15,7 @@
 //! - [`edit`]: the vocabulary as types; [`schema`]: the JSON Schema derived
 //!   from them, published by every front door.
 //! - the lowerings the editor and agents share, one module per family:
-//!   [`table`], [`format`](mod@format) (character formatting), [`paragraph`], [`lists`],
+//!   [`table`] and [`table_tools`], [`format`](mod@format) (character formatting), [`paragraph`], [`lists`],
 //!   [`rewrite`] (the `rewrite_block` dialect), [`links`] (hyperlinks and
 //!   bookmarks), [`fields`], [`objects`] (pictures and shapes), [`notes`],
 //!   [`breaks`], [`sections`] (page setup and running content), [`charts`] and
@@ -47,5 +47,7 @@ pub mod rewrite;
 pub mod schema;
 pub mod sections;
 pub mod table;
+// Own line (anti-conflict): style options, text and tables, split, cell shifts, text direction.
+pub mod table_tools;
 
 pub use registry::{COMMANDS, Command, Family, Trackable, find, ids};

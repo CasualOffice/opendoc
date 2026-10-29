@@ -228,6 +228,10 @@ mod references;
 // command — and because its complexity contract needs stating in one place.
 mod toc;
 
+// Own line (anti-conflict): table style options, text and tables, split,
+// cell shifts, nesting and text direction (`docs/153` table rows).
+mod table_tools;
+
 // What each copied paragraph IS (heading, list item, table cell), so the
 // clipboard's HTML keeps structure (`docs/174` TA-12).
 mod clipboard_outline;
@@ -7638,9 +7642,14 @@ impl WasmDocument {
             .map_or(-1, |reference| i32::from(reference.level))
     }
 
-    /// Inserts a fresh `rows`×`cols` table into the body right after the caret's
-    /// top-level block, with equal columns spanning the content width and a thin
+    /// Inserts a fresh `rows`×`cols` table right after the caret's paragraph,
+    /// with equal columns spanning the width available there and a thin
     /// single-line grid so it is visible. The caret lands in the first cell.
+    ///
+    /// From a paragraph directly in a table cell the table is NESTED in that
+    /// cell, sized to the cell, as Word and ONLYOFFICE nest it (`docs/153`
+    /// `table.nested`); from anywhere else it goes after the caret's top-level
+    /// body block, as it always has (`table_tools::table_insertion_point`).
     #[wasm_bindgen(js_name = insertTable)]
     pub fn insert_table(
         &mut self,
@@ -7648,22 +7657,32 @@ impl WasmDocument {
         rows: u32,
         cols: u32,
     ) -> Result<EditResult, JsValue> {
-        let nid = node_id(node)?;
-        let c = &self.default_config;
-        let content_width = c.page_size.width.raw() - c.margin_start.raw() - c.margin_end.raw();
-        let index = casual_doc_command::table::body_index_after(&self.document, nid);
+        self.insert_table_inner(node, rows, cols).map_err(to_js)
+    }
+
+    /// See [`WasmDocument::insert_table`].
+    pub(crate) fn insert_table_inner(
+        &mut self,
+        node: &str,
+        rows: u32,
+        cols: u32,
+    ) -> Result<EditResult, String> {
+        let nid = node_id_msg(node)?;
+        let (container, index, content_width) = self.table_insertion_point(nid);
         let ids = &mut self.edit_ids;
         // The one lowering an agent's `insert_table` uses too (`docs/181` §4.2).
-        let edit =
-            casual_doc_command::table::insert_table(index, rows, cols, content_width, &mut || {
-                ids.next_id().ok()
-            })
-            .map_err(to_js)?;
+        let edit = casual_doc_command::table::insert_table_in(
+            container,
+            index,
+            rows,
+            cols,
+            content_width,
+            &mut || ids.next_id().ok(),
+        )?;
         let caret = edit
             .caret
             .map_or_else(|| Pos::new(nid, 0), |p| Pos::new(p, 0));
         self.apply_action_caret(edit.operations, caret)
-            .map_err(to_js)
     }
 
     /// Sets the table's horizontal alignment on the page: `"left"`/`"center"`/
@@ -21619,6 +21638,14 @@ fn placed_paragraphs(
             BlockFragment::TableRow { cells, .. } => {
                 let row_height = fragment.height();
                 for cell in cells {
+                    // A cell with turned text (`w:textDirection` tbRl/btLr) is
+                    // painted in a rotated frame, so its upright stacking here
+                    // would put an object box where nothing is drawn. Its
+                    // objects get no box rather than a wrong one; selecting
+                    // them goes through the caret and the object menu.
+                    if cell.rotation.is_some() {
+                        continue;
+                    }
                     let cell_left = left + cell.x + cell.margins.start;
                     let box_top = top + cell.cell_spacing.top;
                     let mut block_top =

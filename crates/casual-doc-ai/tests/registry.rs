@@ -70,6 +70,36 @@ fn column_one(session: &Session, table: &str) -> Vec<(String, Value)> {
         .collect()
 }
 
+/// `docs/153` `table.cell-text-direction`: an agent's `table_set_cell_format`
+/// writes the same `w:textDirection` the editor's three commands write, through
+/// the same name table. Mutation: drop the `text_direction` assignment in the
+/// plan's `TableSetCellFormat` arm, and the first cell stays horizontal.
+#[test]
+fn an_agent_rotates_cell_text_the_way_the_editor_does() {
+    use casual_doc_model::v1::{BlockNode, TextDirection};
+    let mut session = merged();
+    let table = table_id(&session, 0);
+    apply(
+        &mut session,
+        json!({
+            "op": "table_set_cell_format",
+            "table": table,
+            "from": { "row": 0, "column": 0 },
+            "text_direction": "rotate_up"
+        }),
+    );
+    // The body's first table is the one `table_id(.., 0)` named.
+    let direction = session
+        .document()
+        .body()
+        .iter()
+        .find_map(|block| match block {
+            BlockNode::Table(t) => Some(t.rows[0].cells[0].properties.text_direction),
+            _ => None,
+        });
+    assert_eq!(direction, Some(Some(TextDirection::BtLr)));
+}
+
 #[test]
 fn an_agent_row_inserted_inside_a_vertical_merge_grows_the_merge_as_a_persons_does() {
     // The second table's column 1 is one cell merged over rows 0..=2.
