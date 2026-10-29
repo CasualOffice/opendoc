@@ -11464,7 +11464,7 @@ fn build_inlines(
 /// The synthesized DOCX-style instruction for a modeled field kind (the model
 /// requires a non-empty, authoritative instruction; ODF fields are element-based
 /// so we mint a canonical one per kind).
-fn field_instruction(kind: &FieldKind) -> String {
+pub(crate) fn field_instruction(kind: &FieldKind) -> String {
     match kind {
         FieldKind::Page => "PAGE".to_owned(),
         FieldKind::NumPages => "NUMPAGES".to_owned(),
@@ -11620,7 +11620,9 @@ fn decode_attribute(
         .map_err(|_| OdfError::MalformedContent)
 }
 
-fn decode_reference(reference: &BytesRef<'_>) -> Result<String, OdfError> {
+/// An entity or character reference (`&amp;`, `&#x41;`) as the text it stands
+/// for. Shared with `master_page.rs`, whose page regions need the same answer.
+pub(crate) fn decode_reference(reference: &BytesRef<'_>) -> Result<String, OdfError> {
     let name = reference.decode().map_err(|_| OdfError::MalformedContent)?;
     let encoded = format!("&{name};");
     quick_xml::escape::unescape(&encoded)

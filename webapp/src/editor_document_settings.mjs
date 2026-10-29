@@ -66,6 +66,8 @@ export function createDocumentSettings(ed) {
     blockedFromMutating: ed.blockedFromPageSetup,
     setStatus: ed.setStatus,
     registerModal,
+    // Link to previous, per band (HF-192): the same commands as the open band's bar.
+    band: () => ed.headerFooterBand,
   });
 
   return { headerFooterSettings, pageSetup, propertiesUi };

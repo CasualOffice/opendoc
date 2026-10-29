@@ -255,7 +255,7 @@ const CEILINGS = new Map([
   ["src/editor_pointer.mjs", 4],
   ["src/editor_objects.mjs", 4],
   ["src/editor_object_moves.mjs", 3],
-  ["src/editor_header_footer.mjs", 9],
+  ["src/editor_header_footer.mjs", 6],
   ["src/editor_menu_render.mjs", 1],
   ["src/editor_formatting.mjs", 3],
   ["src/editor_format_painter.mjs", 5],

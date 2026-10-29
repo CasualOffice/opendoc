@@ -704,6 +704,19 @@ fn build_header_footer_blocks(
                     id: inline_id,
                     kind: BreakKind::Line,
                 }),
+                // Built exactly as the body's fields are (`content.rs`), so a
+                // header's page number and the body's are one model shape and
+                // the writer's `<text:page-number/>` reads back as itself.
+                HeaderFooterInline::Field(kind) => {
+                    InlineNode::Field(Box::new(casual_doc_model::v1::Field {
+                        id: inline_id,
+                        instruction: crate::content::field_instruction(kind),
+                        kind: kind.clone(),
+                        inlines: Vec::new(),
+                        form: None,
+                        update: casual_doc_model::v1::FieldUpdateState::default(),
+                    }))
+                }
             });
         }
         blocks.push(BlockNode::Paragraph(Paragraph {

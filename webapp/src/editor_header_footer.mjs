@@ -2,6 +2,11 @@
 // and context, notes, and the page-setup gate. Moved out of `main.js` unchanged
 // (docs/177); it reaches the rest of the editor only through the context `ed`.
 import { runWrapPlan, wrapAvailability, wrapPlan } from "./object_arrange.mjs";
+import { list, t } from "./i18n.mjs";
+import { onButton, registerPopover } from "./popover_manager.mjs";
+import {
+  BAND_COMMANDS, PAGE_NUMBER_POSITIONS, bandCommandLabel, bandCommandReason, bandLabel, parseLinkState,
+} from "./header_footer_commands.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -74,9 +79,10 @@ export function createHeaderFooter(ed) {
       page.wrap.appendChild(runningMarkerEl);
     }
     runningMarkerBand = band;
-    runningMarkerEl.textContent = band === "header" ? "+ Header" : "+ Footer";
-    runningMarkerEl.title = `Edit the page ${band}`;
-    runningMarkerEl.setAttribute("aria-label", `Edit the page ${band}`);
+    runningMarkerEl.textContent = band === "header" ? t("runningBand.addHeader") : t("runningBand.addFooter");
+    const name = band === "header" ? t("runningBand.editHeader") : t("runningBand.editFooter");
+    runningMarkerEl.title = name;
+    runningMarkerEl.setAttribute("aria-label", name);
     // Page-local, inside the sheet: positioned against the page's own wrap (which
     // the overlays already use as their containing block) rather than against the
     // scroller, where the offsets put it above the paper entirely.
@@ -251,7 +257,7 @@ export function createHeaderFooter(ed) {
     document.body.classList.add("running-edit");
     hideRunningMarker();
     drawRunningBands(band);
-    ed.setStatus(`Editing the ${band} — press Esc to return to the document`);
+    ed.setStatus(band === "header" ? t("runningBand.editingHeader") : t("runningBand.editingFooter"));
     ed.focusEditorSurface();
     ed.drawSelection();
     ed.updateToolbar();
@@ -298,27 +304,24 @@ export function createHeaderFooter(ed) {
       }
       const label = document.createElement("span");
       label.className = "running-band-label";
-      label.textContent = runningBandLabel(band, bands);
+      label.textContent = bandLabel(band, bands);
       el.appendChild(label);
       page.wrap.appendChild(el);
+      if (page.pageNumber === ed.runningEditPage) placeBandBar(page, band, bands, sy);
     }
   }
 
-  /** The band's label, which in Word NAMES THE SECTION once a document has more
-   *  than one ("Header -Section 2-") and says when the band is inherited ("Same as
-   *  Previous").
-   *
-   *  Without it two pages showing different headers looked identical, so a user
-   *  editing one section's header and seeing another section's pages not change had
-   *  nothing on screen to explain why — the reported confusion. */
-  function runningBandLabel(band, bands) {
-    const name = band === "header" ? "Header" : "Footer";
-    if (!bands || (bands.sectionCount ?? 1) <= 1) return name;
-    const linked = band === "header" ? bands.headerLinked : bands.footerLinked;
-    return `${name} -Section ${bands.section}-${linked ? " · Same as Previous" : ""}`;
-  }
+  /* The band's label NAMES THE SECTION once a document has more than one, the
+     way Word's does ("Header -Section 2-"), and says when the band is inherited
+     ("Same as Previous"). Without it two pages showing different headers looked
+     identical, so a user editing one section's header and seeing another
+     section's pages not change had nothing on screen to explain why. The words
+     are `bandLabel`'s, in `header_footer_commands.mjs`. */
 
   function clearRunningBands() {
+    // The band BAR is not removed here: every repaint redraws the bands, and
+    // removing the bar would blur the control the keyboard is on. It moves, and
+    // it hides when the band closes (`exitRunningEdit`).
     for (const el of ed.pagesEl.querySelectorAll(".running-band")) el.remove();
   }
 
@@ -333,6 +336,7 @@ export function createHeaderFooter(ed) {
     delete ed.pagesEl.dataset.runningEdit;
     document.body.classList.remove("running-edit");
     clearRunningBands();
+    hideBandBar();
     ed.setStatus("");
     ed.drawSelection();
     ed.updateToolbar();
@@ -469,6 +473,318 @@ export function createHeaderFooter(ed) {
       { gate: true },
     );
   }
+
+
+  // ---- The open band's own chrome, and the band commands (HF-192, RM-23) ------
+  // Google Docs' shape: while a header or footer is open, the band carries a
+  // small bar of its own — here Link to previous, Different first page, an
+  // Options menu (odd/even pages, the page-number positions, the settings
+  // dialog, Remove) and Close. ONLYOFFICE puts the same controls on a contextual
+  // Header & Footer tab (`view/HeaderFooterTab.js` L63-87); this chrome has no
+  // contextual tab to spend and the ribbon must fit 1280px, so the controls go
+  // where the band is, which is also where Word's and Docs' users look.
+  //
+  // ONE element, moved to the open page's sheet on every redraw rather than
+  // rebuilt: rebuilding it would blur a control the keyboard is on every time an
+  // edit repaints the page. Every command it runs is also an Insert-menu row and
+  // a palette row (`surfaceRows`), so none is reachable from the bar only.
+  const byId = (id) => document.getElementById(id);
+  const bandBar = byId("runningBandBar");
+  const bandLink = byId("runningBandLink");
+  const bandLinkWrap = byId("runningBandLinkWrap");
+  const bandFirst = byId("runningBandFirstPage");
+  const bandOptions = byId("runningBandOptionsBtn");
+  const bandMenu = byId("runningBandMenu");
+  const bandOddEven = byId("runningBandOddEven");
+  const bandRemove = { header: byId("runningBandRemoveHeader"), footer: byId("runningBandRemoveFooter") };
+  const bandClose = byId("runningBandCloseBtn");
+  /** The band the bar was last drawn for. */
+  let barBand = null;
+
+  const linkRow = (band) => BAND_COMMANDS.find((row) => row.band === band && row.action === "link");
+  const removeRow = (band) => BAND_COMMANDS.find((row) => row.band === band && row.action === "remove");
+
+  /** One band's Link to Previous state on `page`, from the engine. O(sections). */
+  function linkState(band, page = runningEditPageOrView()) {
+    if (!ed.doc || !page || typeof ed.doc.runningLinkState !== "function") return null;
+    try {
+      return parseLinkState(ed.doc.runningLinkState(band, page.pageNumber));
+    } catch {
+      return null;
+    }
+  }
+
+  /** The families a copy could not carry, as one sentence, or null. */
+  const LOSS_KEYS = {
+    bookmark: "paste.loss.bookmark",
+    comment: "paste.loss.comment",
+    note: "paste.loss.note",
+    fieldRange: "paste.loss.fieldRange",
+    trackedMove: "paste.loss.trackedMove",
+  };
+  function copyLossMessage(kinds) {
+    const known = (Array.isArray(kinds) ? kinds : []).filter((key) => LOSS_KEYS[key]);
+    if (!known.length) return null;
+    return t("headerFooter.copyLoss", { items: list(known.map((key) => t(LOSS_KEYS[key]))) });
+  }
+
+  /** Links one band of the page in view to the previous section's, or gives the
+   *  section its own copy (`setRunningLinked`). The copy keeps the page number
+   *  and the pictures (`docs/129` §2), and the caret, if it was in the band,
+   *  follows into the copy. Says what it did, and refuses out loud on the first
+   *  section, which has nothing to link to. */
+  async function setLinked(band, linked, page = runningEditPageOrView()) {
+    if (!ed.doc || !page) return false;
+    const state = linkState(band, page);
+    const reason = bandCommandReason(linkRow(band), state);
+    if (reason) {
+      ed.setStatus(reason, "error");
+      return false;
+    }
+    if (state.linked === linked) return true;
+    const focus = ed.selection?.focus;
+    let loss = null;
+    const applied = await ed.runEdit(
+      () => {
+        const result = ed.doc.setRunningLinked(band, page.pageNumber, linked, focus?.node ?? "", focus?.offset ?? 0);
+        loss = copyLossMessage(result.pasteLoss);
+        return result;
+      },
+      { gate: true, keepView: true },
+    );
+    if (!applied) return false;
+    if (ed.runningEditBand) drawRunningBands(ed.runningEditBand);
+    const done =
+      band === "header"
+        ? linked ? t("headerFooter.headerLinked") : t("headerFooter.headerUnlinked")
+        : linked ? t("headerFooter.footerLinked") : t("headerFooter.footerUnlinked");
+    ed.setStatus(loss ? `${done} ${loss}` : done);
+    return true;
+  }
+
+  /** Flips one band's Link to Previous. */
+  function toggleLinked(band, page = runningEditPageOrView()) {
+    const state = linkState(band, page);
+    return setLinked(band, state?.linked !== true, page);
+  }
+
+  /** Removes the band the page in view shows (`removeRunningContent`): from this
+   *  section's pages and the sections linked to it, never from an earlier one.
+   *  Leaves the band first, because the caret is about to point at nothing. */
+  async function removeBand(band, page = runningEditPageOrView()) {
+    if (!ed.doc || !page) return false;
+    const reason = bandCommandReason(removeRow(band), linkState(band, page));
+    if (reason) {
+      ed.setStatus(reason, "error");
+      return false;
+    }
+    if (ed.blockMutationInViewing()) return false;
+    if (ed.runningEditBand) exitRunningEdit();
+    const applied = await ed.runEdit(() => ed.doc.removeRunningContent(band, page.pageNumber, "", 0), {
+      gate: true,
+      keepView: true,
+    });
+    if (applied) ed.setStatus(band === "header" ? t("headerFooter.headerRemoved") : t("headerFooter.footerRemoved"));
+    return applied;
+  }
+
+  /** Puts a page number left, centre or right in one band of the page in view
+   *  (`insertRunningPageNumber`), creating the band when the page has none and
+   *  keeping what it holds, then opens the band with the caret after the number
+   *  — Word opens the header too, so the person sees what was added and can
+   *  type beside it. The context is set BEFORE the edit for the reason
+   *  `createRunningContent` gives. */
+  async function insertPageNumber(band, align, page = runningEditPageOrView()) {
+    if (!ed.doc || !page) return false;
+    if (ed.blockMutationInViewing()) return false;
+    if (ed.reviewMode === "suggesting") {
+      ed.setStatus(t("headerFooter.notTrackable"), "error");
+      return false;
+    }
+    const previous = { band: ed.runningEditBand, page: ed.runningEditPage };
+    setRunningContext(band, page);
+    let result;
+    try {
+      result = ed.doc.insertRunningPageNumber(band, page.pageNumber, align);
+    } catch (err) {
+      if (previous.band) setRunningContext(previous.band, { pageNumber: previous.page });
+      else exitRunningEdit();
+      const message = String(err?.message ?? err);
+      ed.setStatus(
+        /table/.test(message) ? t("headerFooter.pageNumberEdgeTable") : t("headerFooter.bandChangeFailed", { message }),
+        "error",
+      );
+      return false;
+    }
+    const node = result.node;
+    const offset = result.offset;
+    await ed.applyEditResult(result);
+    enterRunningEdit(band, node, offset, page);
+    ed.setStatus(band === "header" ? t("headerFooter.pageNumberInHeader") : t("headerFooter.pageNumberInFooter"));
+    return true;
+  }
+
+  /** Paints the bar's controls from the engine for `band` on `page`. */
+  function reflectBandBar(band, page) {
+    if (!bandBar) return;
+    const state = linkState(band, page);
+    const reason = bandCommandReason(linkRow(band), state);
+    if (bandLink) {
+      bandLink.checked = state?.linked === true;
+      bandLink.disabled = !!reason;
+    }
+    if (bandLinkWrap) {
+      // The reason is the title of the WHOLE control, so a pointer on the words
+      // gets it as well as one on the box; `aria-describedby` would need a
+      // second, visible element for the same sentence.
+      bandLinkWrap.title = reason || (band === "header" ? t("runningBand.linkHeaderTitle") : t("runningBand.linkFooterTitle"));
+    }
+    const variants = ed.headerFooterSettings?.variantState?.(page) ?? {};
+    if (bandFirst) bandFirst.checked = variants.firstPage === true;
+    bandOddEven?.setAttribute("aria-checked", String(variants.evenOdd === true));
+    const removeReason = bandCommandReason(removeRow(band), state);
+    for (const [which, item] of Object.entries(bandRemove)) {
+      if (!item) continue;
+      item.hidden = which !== band;
+      // `aria-disabled`, not `disabled`: a menu row the keyboard cannot land on
+      // cannot tell anyone why it is unavailable (SKILL §10).
+      if (removeReason) item.setAttribute("aria-disabled", "true");
+      else item.removeAttribute("aria-disabled");
+      item.title = removeReason;
+    }
+  }
+
+  /** Puts the bar on the open page's sheet, just inside the band boundary. */
+  function placeBandBar(page, band, bands, sy) {
+    if (!bandBar || !page?.wrap) return;
+    barBand = band;
+    if (bandBar.parentElement !== page.wrap) page.wrap.appendChild(bandBar);
+    bandBar.classList.toggle("is-footer", band === "footer");
+    const edge = Math.round((band === "header" ? bands.top : bands.bottom) * sy);
+    bandBar.style.top = band === "header" ? `${edge + 4}px` : "auto";
+    bandBar.style.bottom = band === "footer" ? `${edge + 4}px` : "auto";
+    reflectBandBar(band, page);
+    bandBar.hidden = false;
+  }
+
+  function hideBandBar() {
+    if (!bandBar) return;
+    bandBar.hidden = true;
+    barBand = null;
+  }
+
+  /** Runs `action` and gives the keyboard back to the band, which is where the
+   *  person was typing. */
+  async function fromBar(action) {
+    await action();
+    if (ed.runningEditBand) ed.focusEditorSurface();
+  }
+
+  if (bandBar) {
+    // The bar sits inside the sheet, whose pointer handlers would otherwise read
+    // a press on a control as a click in the page and move the caret or leave
+    // the band.
+    for (const type of ["pointerdown", "mousedown", "dblclick"]) {
+      bandBar.addEventListener(type, (event) => event.stopPropagation());
+    }
+    // A toolbar is one Tab stop; the arrows move inside it (WAI-ARIA toolbar).
+    bandBar.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const items = [...bandBar.querySelectorAll("input, button")].filter((item) => !item.disabled);
+      const at = items.indexOf(document.activeElement);
+      if (at < 0) return;
+      event.preventDefault();
+      const step = event.key === "ArrowRight" ? 1 : -1;
+      items[(at + step + items.length) % items.length].focus();
+    });
+    bandLink?.addEventListener("change", () => {
+      const band = barBand ?? ed.runningEditBand;
+      if (band) void fromBar(() => setLinked(band, bandLink.checked));
+    });
+    bandFirst?.addEventListener("change", () => {
+      void fromBar(async () => {
+        await ed.headerFooterSettings?.toggleVariant?.("firstPage");
+        if (ed.runningEditBand) drawRunningBands(ed.runningEditBand);
+      });
+    });
+    if (bandClose) onButton(bandClose, () => exitRunningEdit());
+  }
+  if (bandOptions && bandMenu) {
+    const popover = registerPopover(bandOptions, bandMenu, () => {
+      if (barBand) reflectBandBar(barBand, runningEditPageOrView());
+    });
+    const choose = (item, action) =>
+      onButton(item, () => {
+        if (item.getAttribute("aria-disabled") === "true") {
+          if (item.title) ed.setStatus(item.title, "error");
+          return;
+        }
+        popover.close();
+        void fromBar(action);
+      });
+    if (bandOddEven) {
+      choose(bandOddEven, async () => {
+        await ed.headerFooterSettings?.toggleVariant?.("evenOdd");
+        if (ed.runningEditBand) drawRunningBands(ed.runningEditBand);
+      });
+    }
+    for (const item of bandMenu.querySelectorAll("[data-page-number-align]")) {
+      choose(item, () => insertPageNumber(barBand ?? ed.runningEditBand ?? "footer", item.dataset.pageNumberAlign));
+    }
+    const here = byId("runningBandPageNumberHere");
+    if (here) choose(here, () => ed.insertFieldAtCaret("page"));
+    const settings = byId("runningBandSettings");
+    if (settings) choose(settings, () => ed.headerFooterSettings?.open?.(true));
+    for (const [band, item] of Object.entries(bandRemove)) {
+      if (item) choose(item, () => removeBand(band));
+    }
+  }
+
+  /** The palette and Insert-menu rows of every band command, shaped for
+   *  `LAYOUT_SURFACE` (no ribbon face: the bar above is the in-place one).
+   *
+   *  `label` is a GETTER, read only when the palette or a menu builds its rows
+   *  (after the catalogue is installed): a link row is a switch with its state
+   *  ("Header: linked to previous section"). A row that cannot run on this page
+   *  — Link to Previous on the first section, Remove where there is no band —
+   *  refuses with the reason; the in-place faces show it disabled. */
+  function surfaceRows() {
+    return [
+      ...BAND_COMMANDS.map((row) => ({
+        command: row.command,
+        get label() {
+          return bandCommandLabel(row, linkState(row.band));
+        },
+        kw:
+          row.action === "link"
+            ? `link to previous same as previous section ${row.band} unlink inherit`
+            : `remove delete ${row.band} running section`,
+        buttons: () => [],
+        // "doc", not a getter over the page's state: the toolbar sweep reads
+        // `requires` on every keystroke, and asking the engine and measuring the
+        // pages there would make typing O(sections + sheets). The band bar and
+        // the dialog show the disabled state with its reason; from the palette
+        // and the menu the command refuses OUT LOUD with the same sentence
+        // (`setLinked`, `removeBand`).
+        requires: "doc",
+        run: () => void (row.action === "link" ? toggleLinked(row.band) : removeBand(row.band)),
+      })),
+      ...PAGE_NUMBER_POSITIONS.map((row) => ({
+        command: row.command,
+        get label() {
+          return t(row.labelKey);
+        },
+        kw: `page number numbering ${row.band} ${row.align} position insert field`,
+        buttons: () => [],
+        requires: "doc",
+        run: () => void insertPageNumber(row.band, row.align),
+      })),
+    ];
+  }
+
+  // On the editor context, so the dialog and the surface tables reach the same
+  // functions without a new line in `main.js`, which sits at its ratchet.
+  ed.headerFooterBand = { insertPageNumber, linkState, removeBand, setLinked, surfaceRows, toggleLinked };
 
   return {
     blockedFromPageSetup, deleteSelectedObject, drawRunningBands, editRunningContent,

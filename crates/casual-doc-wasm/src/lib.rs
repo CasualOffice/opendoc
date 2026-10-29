@@ -270,6 +270,11 @@ mod chart;
 // that module for the hayro half. No PDF reader is linked here.
 mod pdf_import;
 
+// Header and footer band commands: Link to Previous, Remove, page-number
+// positions (`docs/109` HF-192, RM-23). Its own module for the reason `objects`
+// gives; the lowerings are `casual_doc_command::sections`, shared with agents.
+mod running;
+
 mod ai; // `editor.ai`: the in-page assistant's reads and private preview (`docs/181` §4.4).
 // The opt-in sparse-strip raster (`docs/architecture/179`, ADR-073 Proposed): one more export
 // with `renderPage`'s contract, compiled only with the `sparse-raster` feature.
@@ -2320,24 +2325,22 @@ impl WasmDocument {
     /// Whether the band this page shows is INHERITED from an earlier section
     /// (Word's "Same as Previous"), rather than declared by the page's own section.
     ///
-    /// A section that declares the applicable variant owns its band; so does one
-    /// that declares only the default the variant falls back to. The first section
-    /// has nothing to inherit from, so it is never "same as previous".
+    /// Per VARIANT, the rule the layout applies (`merge_running_refs`) and the one
+    /// the Link to Previous control writes (`casual_doc_command::sections`): a
+    /// section that declares only a default header still INHERITS the chain's
+    /// first-page header, so its first page is "same as previous". This used to
+    /// count a declared default as owning every variant, which made the band's
+    /// label and the Link to Previous control disagree on such a page (HF-192).
+    /// The first section has nothing to inherit from, so it is never linked.
     fn running_is_linked(&self, page: u32, section_index: usize, region: RunningRegion) -> bool {
-        if section_index == 0 {
-            return false;
-        }
         let kind = self.running_kind_for_page(page, section_index);
-        let Some(section) = self.document.definitions().sections.get(section_index) else {
-            return false;
-        };
-        let references = match region {
-            RunningRegion::Header => &section.headers,
-            RunningRegion::Footer => &section.footers,
-        };
-        !references
-            .iter()
-            .any(|reference| reference.kind == kind || reference.kind == HeaderFooterKind::Default)
+        casual_doc_command::sections::is_linked_to_previous(
+            &self.document,
+            section_index,
+            region,
+            kind,
+        )
+        .unwrap_or(false)
     }
 
     /// One page's own running-content context, as JSON

@@ -129,7 +129,7 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-provenance -->
 | Side | Source | Inventory |
 | --- | --- | --- |
-| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 218 exact commands, 11 families |
+| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 228 exact commands, 11 families |
 | ONLYOFFICE | snapshot of 163 files, taken 2026-09-30 | 578 controls, 3529 locale keys, 2122 engine API methods, 114 boot flags (14 licence-gated, 3 desktop-only) |
 | Matrix | `tools/opendoc-parity/data/capabilities.json` | 422 graded rows |
 <!-- @end parity-provenance -->
@@ -139,11 +139,11 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-tally -->
 | Verdict | Rows | What it means |
 | --- | --- | --- |
-| Parity | 198 | both products ship it, and both anchors resolve |
+| Parity | 201 | both products ship it, and both anchors resolve |
 | Ours, ungated | 27 | we ship it in the editor itself; theirs is behind a licence result the document server issues, the desktop shell, or the integrator's own config |
 | Ours only | 24 | we ship it and their tree has no such surface |
-| Partial | 68 | we ship part of it; the row says what is missing |
-| Gap | 79 | their standalone browser session ships it and we do not |
+| Partial | 67 | we ship part of it; the row says what is missing |
+| Gap | 77 | their standalone browser session ships it and we do not |
 | Theirs, gated | 13 | theirs needs a licence result, the desktop shell or the integrator, and we lack it too |
 | Neither | 13 | neither product ships it, and the row records the search that established that |
 | **Total graded** | **422** | every row below |
@@ -180,10 +180,8 @@ least two surfaces (`SKILL` §10).
 | 3 | Replace a picture's bytes in place | `object.replace-image` | `asc_docs_api.ChangeImageFromFile` | We can delete and re-insert, which loses the object's size, wrap and position. The engine has no replace-bytes op. |
 | 3 | Reset crop | `object.reset-crop` | `btnResetCrop` | Committing a crop session with every inset back at zero does clear the crop, but there is no one-gesture reset from a cropped picture. |
 | 3 | Content controls / structured document tags | `page.contentControls` | `btnContentControls` | We import and export w:sdt and refuse breaks inside one, but nothing can insert or configure a control. |
-| 3 | Remove header or footer | `page.header.remove` | `DE.Views.Toolbar.mniRemoveHeader` | There is no removeRunningContent binding, so a band that exists can be emptied but not deleted. |
 | 3 | Hyphenation | `page.hyphenation` | `btnHyphenation` | The model carries w:autoHyphenation and w:hyphenationZone; no control reads or writes them. |
 | 3 | Go to next or previous note | `page.note.goto` | `DE.Views.Links.textGotoFootnote` | Reading a document with notes means scrolling for them. |
-| 3 | Page number position presets | `page.pageNumber.position` | `DE.Views.HeaderFooterTab.capCurrentPos` | They offer six top and bottom by left, centre and right placements; ours inserts at the caret only. |
 | 3 | Table of figures | `page.tableOfFigures` | `btnTableFigures` | We have captions but nothing that collects them into a table. |
 | 3 | Tab leader for contents entries | `page.toc.leader` | `DE.Views.TableOfContentsSettings.textLeader` | — |
 | 3 | Remove table of contents | `page.toc.remove` | `DE.Views.Links.textContentsRemove` | The field can be inserted and updated but not deleted as a unit. |
@@ -520,9 +518,9 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Header and footer distance from edge | Parity | `layout.headerFooterSettings` | `DE.Views.HeaderFooterTab.capHeaderTop` | — |
 | Edit header | Parity | `insert.header` | `DE.Views.Toolbar.mniEditHeader` | — |
 | Different first page | Parity | `layout.firstPageVariant` | `DE.Views.HeaderFooterTab.txtDiffFirst` | — |
-| Link to previous | Partial | `webapp/editor.html` · `headerFooterLinkToPrevious` — missing: the ability to change it — the checkbox ships disabled and read-only | `DE.Views.HeaderFooterTab.txtSameAs` | Our dialog shows what the document says and says why it cannot be changed: unlinking needs a deep copy of the inherited band the engine cannot make (docs/129). |
+| Link to previous | Parity | `layout.header.linkToPrevious` | `DE.Views.HeaderFooterTab.txtSameAs` | Per band (layout.header.linkToPrevious, layout.footer.linkToPrevious): the open band's bar, the Insert menu, the palette and the Header and footer dialog. Unlinking copies the inherited band, page number and pictures included (casual_doc_edit::clone, docs/129); disabled with the reason on the first section, as theirs is. |
 | Different odd and even pages | Parity | `layout.evenOddVariant` | `DE.Views.HeaderFooterTab.txtDiffOddEven` | — |
-| Remove header or footer | Gap | none (`insert.header.remove` undeclared) | `DE.Views.Toolbar.mniRemoveHeader` | There is no removeRunningContent binding, so a band that exists can be emptied but not deleted. |
+| Remove header or footer | Parity | `layout.header.remove` | `DE.Views.Toolbar.mniRemoveHeader` | layout.header.remove and layout.footer.remove remove the band from this section and the sections linked to it only; theirs empties a later section's body in place, which also empties every earlier section linked to it. |
 | Insert hyperlink | Parity | `insert.link` | `DE.Views.Links.capBtnInsLink` | A real dialog with display text, URL, internal target and ScreenTip. |
 | Link to a place in this document | Partial | `webapp/editor.html` · `linkPlaceSelect` — missing: linking straight to a heading — only bookmarks are listed | `DE.Views.HyperlinkSettingsDialog.txtHeadings` | Auto-bookmarking a heading would be a second undoable op, so a user has to bookmark the heading first. |
 | Remove hyperlink | Parity | `webapp/src/editor_link_dialog.mjs` · `linkRemoveBtn` | `DE.Views.DocumentHolder.removeHyperlinkText` | — |
@@ -542,7 +540,7 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Page orientation | Parity | `layout.orientation` | `btnPageOrient` | — |
 | Page number format | Parity | `layout.headerFooterSettings` | `DE.Views.PageNumberingDlg.textNumberFormat` | Five ST_NumberFormat tokens; their sixth (- 1 -) is deliberately out because the layout cannot render it. |
 | Insert page number | Parity | family `insert.field.` | `DE.Views.Toolbar.textInsertPageNumber` | insert.field.page puts a PAGE field at the caret and has its own Insert-band button; insert.field.numpages is the page-count field. |
-| Page number position presets | Gap | none (`insert.pageNumber.position` undeclared) | `DE.Views.HeaderFooterTab.capCurrentPos` | They offer six top and bottom by left, centre and right placements; ours inserts at the caret only. |
+| Page number position presets | Parity | `layout.pageNumber.bottomCenter` | `DE.Views.HeaderFooterTab.capCurrentPos` | The six top/bottom by left/centre/right presets (layout.pageNumber.*) plus the field at the caret. They create the band when there is none and keep what it holds, where theirs clears it first. |
 | Start page numbering at | Parity | `webapp/editor.html` · `pageNumberStart` | `DE.Views.PageNumberingDlg.textFrom` | Continue from previous section versus Start at N, the same radio pair as theirs. |
 | Custom page size | Parity | `layout.size` | `btnPageSize` | Width and height in inches in the Page setup dialog. |
 | Page size presets (A4, Letter, Legal) | Parity | `webapp/src/page_presets.mjs` · `PAPER_PRESETS` | `DE.Views.PageSizeDialog.textPreset` | Letter, Legal, A4 and A5 presets preserve orientation and reader measurement units. |

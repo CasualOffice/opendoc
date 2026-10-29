@@ -871,7 +871,7 @@ impl Builder {
                         let target = self.link_target(index)?;
                         match paragraph_inlines.last_mut() {
                             Some(InlineNode::Hyperlink(h)) if h.target == target => {
-                                h.inlines.push(run);
+                                push_run(&mut h.inlines, run);
                             }
                             _ => {
                                 paragraph_inlines.push(InlineNode::Hyperlink(Box::new(Hyperlink {
@@ -884,7 +884,7 @@ impl Builder {
                             }
                         }
                     }
-                    None => paragraph_inlines.push(run),
+                    None => push_run(&mut paragraph_inlines, run),
                 }
             }
         }
@@ -1679,4 +1679,54 @@ fn path_bounds(commands: &[PathCommand]) -> (f64, f64, f64, f64) {
         }
     }
     b
+}
+
+/// Appends `run`, merging it into the previous inline when that is a run with
+/// equal properties: two PDF glyph styles can map to the same `RunProperties`
+/// (two font programs substituted by one face, say), and the model forbids
+/// adjacent equivalent runs (`AdjacentEquivalentTextRuns`). The merged run
+/// keeps the first run's id. O(1).
+fn push_run(inlines: &mut Vec<InlineNode>, run: InlineNode) {
+    if let (Some(InlineNode::Run(previous)), InlineNode::Run(next)) = (inlines.last_mut(), &run)
+        && previous.properties == next.properties
+    {
+        previous.text.push_str(&next.text);
+        return;
+    }
+    inlines.push(run);
+}
+
+#[cfg(test)]
+mod push_run_tests {
+    use super::*;
+
+    fn run(id: u128, text: &str, bold: bool) -> InlineNode {
+        InlineNode::Run(Run {
+            id: NodeId::new(id).expect("id"),
+            properties: RunProperties {
+                bold: bold.then_some(true),
+                ..RunProperties::default()
+            }
+            .into(),
+            text: text.to_owned(),
+        })
+    }
+
+    /// Two styles that resolve to the same properties become one run, and a
+    /// different run after them stays separate. Mutation: make `push_run` a bare
+    /// `inlines.push(run)` and the first assertion sees two runs.
+    #[test]
+    fn equal_properties_merge_into_one_run_and_different_ones_do_not() {
+        let mut inlines = Vec::new();
+        push_run(&mut inlines, run(1, "Hello ", false));
+        push_run(&mut inlines, run(2, "world", false));
+        assert_eq!(inlines.len(), 1, "{inlines:?}");
+        let InlineNode::Run(merged) = &inlines[0] else {
+            panic!("a run: {inlines:?}")
+        };
+        assert_eq!(merged.text, "Hello world");
+        assert_eq!(merged.id, NodeId::new(1).expect("id"));
+        push_run(&mut inlines, run(3, "!", true));
+        assert_eq!(inlines.len(), 2, "{inlines:?}");
+    }
 }
