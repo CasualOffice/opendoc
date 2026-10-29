@@ -170,28 +170,46 @@ impl WasmDocument {
         color: Option<String>,
         date: Option<String>,
     ) -> Result<EditResult, JsValue> {
+        self.suggest_underline_inner(sn, so, en, eo, style, color, date)
+            .map_err(to_js)
+    }
+
+    /// [`suggest_underline`](Self::suggest_underline) with a `String` error, so
+    /// its refusals are reachable from a native test — a `JsValue` cannot be
+    /// constructed off a wasm target.
+    #[allow(clippy::too_many_arguments)]
+    fn suggest_underline_inner(
+        &mut self,
+        sn: &str,
+        so: u32,
+        en: &str,
+        eo: u32,
+        style: Option<String>,
+        color: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, String> {
         let mut delta = FormatDelta::default();
         match style.as_deref() {
             None => {}
             Some("none") => delta.underline = Some(false),
             Some(token) => {
                 delta.underline = Some(true);
-                delta.underline_style = Some(parse_underline_style(token).map_err(to_js)?);
+                delta.underline_style = Some(parse_underline_style(token)?);
             }
         }
         match color.as_deref() {
             None => {}
             Some("") | Some("auto") => delta.underline_color = Some(None),
             Some(value) => {
-                let rgb = parse_hex_color(value)
-                    .ok_or_else(|| to_js("invalid underline color".into()))?;
+                let rgb =
+                    parse_hex_color(value).ok_or_else(|| "invalid underline color".to_string())?;
                 delta.underline_color = Some(Some(rgb));
                 delta.underline = Some(true);
             }
         }
         let author = self.resolve_author(None);
-        validate_authored_revision_author(author.as_deref()).map_err(to_js)?;
-        let (start, end) = self.order_endpoints(sn, so, en, eo).map_err(to_js)?;
+        validate_authored_revision_author(author.as_deref())?;
+        let (start, end) = self.order_endpoints(sn, so, en, eo)?;
         let ranges = self.selection_subranges(start, end);
         let lowered = casual_doc_review::lower::suggest_format_ranges(
             &self.document,
@@ -204,9 +222,8 @@ impl WasmDocument {
             author,
             date,
             start,
-        )
-        .map_err(to_js)?;
-        self.commit_review(lowered).map_err(to_js)
+        )?;
+        self.commit_review(lowered)
     }
 
     /// Armed typing with additive character formatting and typed underline.
@@ -332,7 +349,7 @@ mod tests {
         let n = nodes[0].0.to_string();
         d.set_active_author("Tester", None, None).unwrap();
         let before = d.document.clone();
-        d.suggest_underline(
+        d.suggest_underline_inner(
             &n,
             0,
             &n,
@@ -355,7 +372,7 @@ mod tests {
         assert!(summary["revisions"].as_array().unwrap().is_empty());
         let untouched = d.document.clone();
         assert!(
-            d.suggest_underline(&n, 0, &n, 5, Some("zigzag".into()), None, None)
+            d.suggest_underline_inner(&n, 0, &n, 5, Some("zigzag".into()), None, None)
                 .is_err()
         );
         assert_eq!(d.document, untouched);

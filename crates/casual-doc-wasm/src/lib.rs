@@ -173,6 +173,7 @@ mod object_align;
 
 // A floating Word chart opened, placed, re-wrapped and saved (`docs/109` HF-260).
 #[cfg(test)]
+#[path = "floating_chart_tests.rs"]
 mod floating_chart_tests;
 
 // Moving an in-line object to a new place in the text (`docs/109` UX-OB-02).

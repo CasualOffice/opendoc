@@ -418,8 +418,11 @@ fn every_modeled_chart_family_writes_a_part_that_reads_back_as_the_same_chart() 
 fn a_floating_chart_keeps_its_anchor_through_a_save() {
     use casual_doc_model::v1::{
         AnchorHorizontal, AnchorVertical, DrawingAnchor, HorizontalAnchor, HorizontalPosition,
-        VerticalAlign, VerticalAnchor, VerticalPosition, WrapDistances, WrapMode,
+        VerticalAlign, VerticalAnchor, VerticalPosition, WrapDistances, WrapMode, WrapSide,
     };
+    // `wrapText` is as Word writes it: a square wrap always carries the side
+    // selector (CT_WrapSquare requires it), so the writer emits `bothSides` for
+    // an unset one and the reopened anchor would read it back as set.
     let anchor = DrawingAnchor {
         horizontal: AnchorHorizontal {
             relative_from: HorizontalAnchor::Margin,
@@ -430,7 +433,7 @@ fn a_floating_chart_keeps_its_anchor_through_a_save() {
             position: VerticalPosition::Align(VerticalAlign::Top),
         },
         wrap: WrapMode::Square,
-        wrap_text: None,
+        wrap_text: Some(WrapSide::BothSides),
         wrap_distances: WrapDistances {
             top_emu: 0,
             bottom_emu: 0,

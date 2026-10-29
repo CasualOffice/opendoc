@@ -2253,7 +2253,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 
 .word-count-table thead th {
   color: var(--ink-2, var(--ink));
-  font-size: var(--fs-caption, 12px);
+  font-size: var(--fs-caption, 0.75rem);
   font-weight: 600;
   border-block-end: 1px solid var(--line);
 }
@@ -2273,7 +2273,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 .word-count-scope {
   margin: var(--space-3) 0 0;
   color: var(--ink-2, var(--ink));
-  font-size: var(--fs-caption, 12px);
+  font-size: var(--fs-caption, 0.75rem);
 }
 
 #stats[role="button"] {
@@ -12601,7 +12601,7 @@ body[data-shape-draw] .page-wrap * {
 }
 
 .running-band-close .ms {
-  font-size: 16px;
+  font-size: 1rem;
 }
 
 /* Touch: a finger needs the full target (SKILL §10). */
@@ -12612,8 +12612,8 @@ body[data-shape-draw] .page-wrap * {
   }
 
   .running-band-check input {
-    width: 20px;
-    height: 20px;
+    width: 1.25rem;
+    height: 1.25rem;
   }
 }
 
