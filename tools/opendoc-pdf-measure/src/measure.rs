@@ -205,9 +205,12 @@ pub fn measure(name: &str, bytes: &[u8]) -> Value {
     };
     let open_us = started.elapsed().as_micros() as u64;
     let pages = pdf.pages();
+    // The reader's resolvers, not hayro's bundled faces and CMaps
+    // (`docs/182` §17a): the deterministic half of the committed artifact is
+    // then the proof that the trim moved no evidence.
     let settings = InterpreterSettings {
         render_annotations: false,
-        ..InterpreterSettings::default()
+        ..casual_doc_pdf_read::provision::interpreter_settings()
     };
     let cache = InterpreterCache::new();
     let mut counts = Counts::default();

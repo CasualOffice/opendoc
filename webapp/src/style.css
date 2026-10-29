@@ -1385,6 +1385,12 @@ button.compatibility-status:hover {
   margin-top: var(--space-1);
 }
 
+/* The PDF commands beside Done (`pdf_commands.mjs`): they lay out as the
+   footer's own buttons, wrapping on a phone like any other row of actions. */
+.findings-actions {
+  display: contents;
+}
+
 /* Opening a PDF (`pdf_import.mjs`): one bar, its count, its phase. The bar is
    the editor's accent on its line colour; indeterminate until the page count is
    known, which is only after admission. */

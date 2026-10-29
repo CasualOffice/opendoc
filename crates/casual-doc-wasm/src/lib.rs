@@ -265,9 +265,9 @@ mod presence;
 // write and the gate that decides when the write survives a save.
 mod chart;
 
-// The staged PDF import (`docs/182` §6, P2): begin, step a page budget, cancel,
-// and an atomic finish into a session. Its own module because it is one binding
-// over `casual-doc-io`'s job and touches no live document until `finish`.
+// A PDF-origin session (`docs/182` §17a): the lazily loaded PDF module imports,
+// this module opens its package, and the byte-preserving save calls back into
+// that module for the hayro half. No PDF reader is linked here.
 mod pdf_import;
 
 mod ai; // `editor.ai`: the in-page assistant's reads and private preview (`docs/181` §4.4).
@@ -1221,38 +1221,35 @@ impl WasmDocument {
             && !matches!(mode, ExportMode::ExactIfUnchanged)
             && self.revision != 0;
         let statistics = refresh.then(|| self.current_statistics());
-        // A PDF opened here and saved as PDF before any edit is the original file,
-        // byte for byte (`docs/182` §7, MF-I4): the retained bytes, not a
-        // regeneration. Every other PDF save is the semantic writer below.
-        let original = (format.as_str() == formats::PDF
-            && mode == ExportMode::ExactIfUnchanged
-            && self.revision == 0)
-            .then(|| pdf_import::retained_original(self.format_state.source.as_ref()))
-            .flatten();
-        let artifact = if let Some(bytes) = original {
-            casual_doc_io::ExportArtifact {
-                bytes,
-                report: IoCompatibilityReport::default(),
-                format: casual_doc_io::FormatProfile {
-                    format: format.clone(),
-                    version: None,
-                },
-                mime_type: "application/pdf".to_owned(),
-                suggested_extension: "pdf".to_owned(),
+        // A PDF opened here and saved as PDF is `casual-doc-io`'s PDF-session save
+        // (`docs/182` §7, §17a): before any edit the original file, byte for byte
+        // (MF-I4); edited, an incremental update when that is safe, through the
+        // PDF module's plan; otherwise the semantic writer, reported. Any other
+        // document saved as PDF is the semantic writer.
+        let pdf_session = self
+            .format_state
+            .source
+            .as_ref()
+            .is_some_and(|source| casual_doc_io::pdf_retained_original(source).is_some());
+        let artifact = if format.as_str() == formats::PDF {
+            let request = ExportRequest {
+                document: &self.document,
+                resources: &self.resources,
+                source: self.format_state.source.as_ref(),
+                source_unchanged: self.revision == 0,
+                mode,
+            };
+            let semantic = |request: ExportRequest<'_>| {
+                PdfAdapter::default().export_with_shaper(request, &self.shaper)
+            };
+            if pdf_session {
+                pdf_import::with_planner(|planner| {
+                    casual_doc_io::export_pdf_session(request, planner, &semantic)
+                })
+            } else {
+                semantic(request)
             }
-        } else if format.as_str() == formats::PDF {
-            PdfAdapter::default()
-                .export_with_shaper(
-                    ExportRequest {
-                        document: &self.document,
-                        resources: &self.resources,
-                        source: self.format_state.source.as_ref(),
-                        source_unchanged: self.revision == 0,
-                        mode,
-                    },
-                    &self.shaper,
-                )
-                .map_err(|error| format!("export {format}: {error}"))?
+            .map_err(|error| format!("export {format}: {error}"))?
         } else {
             let registry = builtin_registry_with_limits(viewer_limits(), viewer_text_limits());
             // The host's opt-in `people.xml` entry (`docs/175` §6.2) on the editor's own Save
