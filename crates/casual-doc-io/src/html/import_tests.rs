@@ -258,3 +258,75 @@ fn html_and_markdown_spelling_one_document_open_alike() {
     assert_eq!(style_names(&html), style_names(&markdown));
     assert_eq!(plain(&html), plain(&markdown));
 }
+
+/// Our own single-file HTML export of a real producer's document opens back
+/// with its structure: the tables and the pictures (embedded as `data:` URIs)
+/// survive the trip, and the text does.
+#[test]
+fn our_own_html_export_of_a_real_document_opens_back_with_its_structure() {
+    use crate::{ExportMode, ExportRequest, FormatExporter};
+    const SAMPLE: &[u8] = include_bytes!("../../../../sample.docx");
+    let registry = builtin_registry();
+    let imported = registry
+        .import(
+            DetectionRequest {
+                bytes: SAMPLE,
+                selection: FormatSelection::Auto,
+                file_name_hint: Some("sample.docx"),
+                mime_hint: None,
+            },
+            false,
+        )
+        .expect("the sample imports");
+    let html = HtmlAdapter::default()
+        .export(ExportRequest {
+            document: &imported.document,
+            resources: &imported.resources,
+            source: None,
+            source_unchanged: false,
+            mode: ExportMode::Semantic,
+        })
+        .expect("html export");
+    let back = HtmlAdapter::default()
+        .import(ImportRequest {
+            bytes: &html.bytes,
+            retain_source: false,
+        })
+        .expect("our own HTML opens");
+    let tables = |document: &Document| {
+        document
+            .body()
+            .iter()
+            .filter(|block| matches!(block, BlockNode::Table(_)))
+            .count()
+    };
+    assert_eq!(tables(&back.document), tables(&imported.document));
+    // At least as many: a picture the document shows twice is embedded twice
+    // in a single-file page, and reads back as two.
+    let pictures = imported
+        .resources
+        .as_map()
+        .keys()
+        .filter(|name| name.contains("media/"))
+        .count();
+    assert!(
+        back.resources.as_map().len() >= pictures && pictures > 0,
+        "every embedded picture comes back as a picture: {pictures} -> {}",
+        back.resources.as_map().len()
+    );
+    let words = |document: &Document| {
+        let mut text = String::new();
+        for block in document.body() {
+            if let BlockNode::Paragraph(paragraph) = block {
+                text.push_str(&casual_doc_model::v1::node_plain_text(&paragraph.inlines));
+                text.push(' ');
+            }
+        }
+        text.split_whitespace().count()
+    };
+    let (original, reread) = (words(&imported.document), words(&back.document));
+    assert!(
+        reread * 10 >= original * 9,
+        "body words: {original} exported, {reread} read back"
+    );
+}
