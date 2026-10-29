@@ -290,7 +290,8 @@ test("the narrow-width override no longer stacks paired number fields", () => {
   // Anchored to the start of a line: the phrase also appears inside the
   // explanatory comment on `.dialog-field-grid`, and matching THAT made this
   // guard brace-match a comment and pass without ever reading the rule.
-  const at = css.search(/\n@media \(max-width: 620px\)/);
+  // 620px, written in em like every breakpoint in the sheet (HF-413).
+  const at = css.search(/\n@media \(max-width: 38\.75em\)/);
   assert.ok(at > 0, "the 620px breakpoint must exist");
   const open = css.indexOf("{", at);
   let depth = 0;

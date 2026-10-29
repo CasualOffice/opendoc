@@ -110,7 +110,8 @@ test("the stylesheet and the script change shape at the same width", () => {
 
   const css = read("style.css");
   const rung = new RegExp(
-    `@media \\(max-width: ${width}px\\)\\s*\\{[^}]*\\.viewport\\.has-review-sidebar \\.pages`,
+    // Breakpoints are em (HF-413): 700px is 43.75em at the default 16px.
+    `@media \\(max-width: ${width / 16}em\\)\\s*\\{[^}]*\\.viewport\\.has-review-sidebar \\.pages`,
   );
   assert.match(
     css,
