@@ -75,10 +75,13 @@ async function offeredCommands(target) {
  *  from `documentStats()`, so they move if and only if the document moved — where
  *  a DOM assertion on the canvas could be satisfied by a repaint. */
 async function engineStats(target) {
+  // The document's totals: a selection makes the status read "x of y words",
+  // which is the selection changing, not the document, so only y is compared.
+  const total = (text) => text.replace(/^.*\bof\s+/u, "");
   return target.evaluate(() => ({
     words: document.getElementById("statWords")?.textContent ?? "",
     chars: document.getElementById("statChars")?.textContent ?? "",
-  }));
+  })).then((stats) => ({ words: total(stats.words), chars: total(stats.chars) }));
 }
 
 test("the contract covers the command registry exactly, in every state a family needs", async ({
