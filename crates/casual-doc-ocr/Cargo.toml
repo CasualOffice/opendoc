@@ -1,0 +1,39 @@
+[package]
+name = "casual-doc-ocr"
+description = "Optical evidence for OpenDoc: text recognition and layout regions from a raster behind provider traits, with host-supplied models and no network access"
+version.workspace = true
+edition.workspace = true
+# rten 0.26 declares rust-version 1.94; the workspace toolchain is pinned to
+# 1.96.0 (`rust-toolchain.toml`).
+rust-version = "1.94"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+# Recognition (feature `paddle`, the default): PP-OCRv5 graphs on rten.
+# Recognition (feature `ocrs`, the fallback): Robert Knight's ocrs pipeline on his rten
+# inference engine. All MIT OR Apache-2.0, pure Rust, built for
+# wasm32-unknown-unknown (rten runs single-threaded there). The engine only:
+# the published ocrs weights are CC-BY-SA-4.0 and are never committed or
+# fetched here (docs/182 §20).
+ocrs = { version = "0.13.1", optional = true }
+rten = { version = "0.26.0", optional = true, default-features = false, features = ["rten_format", "onnx_format"] }
+rten-imageproc = { version = "0.26.0", optional = true }
+rten-tensor = { version = "0.26.0", optional = true }
+# Model identity for the manifest (PDFR-I8). Already in the tree.
+sha2 = { version = "0.10.9", optional = true }
+
+[features]
+# PP-OCRv5 is the default provider (owner decision 2026-10-29).
+default = ["paddle"]
+# The PP-OCRv5 recognition provider: DB detection and CTC recognition on rten.
+paddle = ["dep:rten", "dep:rten-tensor", "dep:sha2"]
+# The ocrs recognition provider.
+ocrs = ["dep:ocrs", "dep:rten", "dep:rten-imageproc", "dep:rten-tensor", "dep:sha2"]
+# The docling-layout-heron layout provider (docs/182 P6).
+layout-heron = ["dep:rten", "dep:rten-tensor", "dep:sha2"]
+
+[lints]
+workspace = true

@@ -31,6 +31,7 @@ use casual_doc_layout::display::{
 };
 use casual_doc_layout::text::{Glyph, GlyphRun};
 use casual_doc_layout::units::{Point, Rect, Twip};
+use casual_doc_model::v1::FillRule;
 use casual_doc_model::v1::{DashStyle, UnderlineStyle};
 use casual_doc_render::{GlyphSource, MediaSource};
 use skrifa::instance::{LocationRef, Size};
@@ -60,7 +61,12 @@ pub trait SparseCanvas {
     fn reset_paint_transform(&mut self);
     /// Sets the stroke for [`SparseCanvas::stroke_path`].
     fn set_stroke(&mut self, stroke: Stroke);
-    /// Fills `path` (non-zero winding) with the current paint.
+    /// Sets the winding rule for the following fills (`vello_common`'s
+    /// `peniko::Fill`). The encoder sets it around each even-odd fill and
+    /// restores [`peniko::Fill::NonZero`] straight after, so every other fill
+    /// and every clip path stays non-zero (`docs/182` G-2).
+    fn set_fill_rule(&mut self, rule: peniko::Fill);
+    /// Fills `path` with the current paint and fill rule.
     fn fill_path(&mut self, path: &BezPath);
     /// Strokes `path` with the current paint and stroke.
     fn stroke_path(&mut self, path: &BezPath);
@@ -358,6 +364,16 @@ impl Encoder<'_> {
         stroke: Option<&ShapeOutline>,
         local: Affine,
     ) {
+        // The one geometry that can state a rule: a `CustomGeometry` with
+        // `FillRule::EvenOdd` (a PDF `f*` import, `docs/182` G-2). Every other
+        // primitive is one contour, where the rules agree.
+        let even_odd = matches!(
+            geometry,
+            ShapeGeometry::Path {
+                fill_rule: FillRule::EvenOdd,
+                ..
+            }
+        );
         let (path, bounds) = match geometry {
             ShapeGeometry::Rect { rect } => (self.rect_path(*rect), self.device_bounds(*rect)),
             ShapeGeometry::Ellipse { rect } => {
@@ -367,7 +383,9 @@ impl Encoder<'_> {
                 self.rounded_rect_path(*rect, *radius),
                 self.device_bounds(*rect),
             ),
-            ShapeGeometry::Path { commands, closed } => (
+            ShapeGeometry::Path {
+                commands, closed, ..
+            } => (
                 self.command_path(commands, *closed),
                 self.command_path(commands, *closed)
                     .map(|path| path.bounding_box()),
@@ -398,7 +416,13 @@ impl Encoder<'_> {
             };
             if let Some(paint) = paint {
                 self.canvas.set_paint(paint);
+                if even_odd {
+                    self.canvas.set_fill_rule(peniko::Fill::EvenOdd);
+                }
                 self.canvas.fill_path(&path);
+                if even_odd {
+                    self.canvas.set_fill_rule(peniko::Fill::NonZero);
+                }
             }
         }
         if let Some(stroke) = stroke {

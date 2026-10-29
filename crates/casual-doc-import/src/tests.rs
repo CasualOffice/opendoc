@@ -4954,6 +4954,7 @@ fn drawingml_text_box_is_modeled_and_does_not_corrupt_the_paragraph() {
                 font_scale: 75_000,
                 line_spacing_reduction: 20_000,
             },
+            ..casual_doc_model::v1::TextBoxBodyProperties::default()
         }
     );
 }

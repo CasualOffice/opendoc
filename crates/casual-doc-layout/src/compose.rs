@@ -21,6 +21,8 @@ use crate::page::{AnchorContent, AnchorStroke, Page, PlacedAnchor, ResolvedPageB
 use crate::display::LayerBlend;
 // Own line (anti-conflict): a geometry path's `a:path@fill` mode.
 use casual_doc_model::v1::PathFill;
+// Own line (anti-conflict): a path's fill rule (`docs/182` G-2).
+use casual_doc_model::v1::FillRule;
 // Own line (anti-conflict): the paint-only non-printing-character overlay.
 use crate::formatting_marks::{FormattingMarks, MarkLayer};
 use crate::page::PlacedWatermarkContent;
@@ -339,6 +341,7 @@ fn compose_chart_primitive(list: &mut DisplayList, primitive: &ChartPrimitive, o
                 geometry: ShapeGeometry::Path {
                     commands,
                     closed: *closed,
+                    fill_rule: FillRule::NonZero,
                 },
                 fill: solid(*fill),
                 stroke: outline(*stroke),
@@ -898,14 +901,30 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor, marks: &mut Mar
             border,
             content_layout,
             backdrop,
+            orientation,
         } => {
+            // A turned frame (a group child's `a:xfrm@rot`/flips) paints its
+            // chrome inside ONE layer through the frame's transform, rather than
+            // threading it into each item: the border is a flat `Rect`, which
+            // carries no transform, and would otherwise stay upright around a
+            // turned fill (`docs/182` G-3).
+            let chrome_layer = anchor.transform.is_some();
+            let chrome_transform = if chrome_layer {
+                list.push(PaintItem::PushLayer {
+                    transform: anchor.transform,
+                    blend: LayerBlend::Normal,
+                });
+                None
+            } else {
+                anchor.transform
+            };
             // A text-bearing shape with a real preset geometry paints THAT
             // behind its text — through the identical mapping a text-free shape
             // takes, so an ellipse text box is the same ellipse either way. It
             // carries the box's fill and outline, which is why `fill`/`border`
             // below are unset whenever a backdrop is present.
             if let Some(content) = backdrop.as_deref() {
-                push_shape_items(list, content, anchor.rect, anchor.transform);
+                push_shape_items(list, content, anchor.rect, chrome_transform);
             }
             if let Some(fill) = fill {
                 // The box background paints as a shape rect so a gradient fill
@@ -916,7 +935,7 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor, marks: &mut Mar
                     stroke: None,
                     head_end: None,
                     tail_end: None,
-                    transform: anchor.transform,
+                    transform: chrome_transform,
                 });
             }
             if let Some(border) = border {
@@ -929,16 +948,34 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor, marks: &mut Mar
                     }),
                 });
             }
+            if chrome_layer {
+                list.push(PaintItem::PopLayer);
+            }
+            // The text is composed upright in its content box (the frame, or
+            // the frame with width and height exchanged for vertical lines) and
+            // turned onto the frame by one layer. That is the seam
+            // `PaintItem::PushLayer` was introduced to wait for.
+            let content_box = orientation.content_box(anchor.rect);
+            let text_transform = orientation.transform(anchor.rect);
+            if text_transform.is_some() {
+                list.push(PaintItem::PushLayer {
+                    transform: text_transform,
+                    blend: LayerBlend::Normal,
+                });
+            }
             let content_origin = Point::new(
-                anchor.rect.origin.x + content_layout.origin.x,
-                anchor.rect.origin.y + content_layout.origin.y,
+                content_box.origin.x + content_layout.origin.x,
+                content_box.origin.y + content_layout.origin.y,
             );
-            let clip = text_box_clip(anchor.rect, *content_layout);
+            let clip = text_box_clip(content_box, *content_layout);
             list.push(PaintItem::PushClip(clip));
             let inner =
-                Twip((anchor.rect.size.width.raw() - 2 * content_layout.origin.x.raw()).max(0));
+                Twip((content_box.size.width.raw() - 2 * content_layout.origin.x.raw()).max(0));
             compose_blocks(list, blocks, content_origin, inner, marks);
             list.push(PaintItem::PopClip);
+            if text_transform.is_some() {
+                list.push(PaintItem::PopLayer);
+            }
         }
         AnchorContent::Table { rows } => {
             // A positioned table's rows are ordinary block fragments stacked
@@ -1040,6 +1077,7 @@ fn push_shape_items(
                     geometry: ShapeGeometry::Path {
                         commands: path.commands.clone(),
                         closed: false,
+                        fill_rule: path.fill_rule,
                     },
                     fill,
                     stroke,
@@ -2666,6 +2704,7 @@ mod tests {
                 // This guard is about the CLIP rectangle, which a backdrop
                 // shape does not take part in.
                 backdrop: None,
+                orientation: crate::page::TextOrientation::default(),
             },
             rect,
         );

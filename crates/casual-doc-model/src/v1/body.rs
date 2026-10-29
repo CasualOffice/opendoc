@@ -1180,6 +1180,81 @@ pub enum TextBoxVerticalOverflow {
     Ellipsis,
 }
 
+/// The direction a text body's lines run inside its shape (`wps:bodyPr@vert`,
+/// `ST_TextVerticalType`, ECMA-376 Part 1 §21.1.10.83).
+///
+/// Word's "Text direction" for a text box writes `vert` ("Rotate all text
+/// 90°") and `vert270` ("Rotate all text 270°"); the line length is then the
+/// shape's HEIGHT and the lines stack along its width. Every token is retained
+/// for round-trip. Layout lays the three rotated readings (`vert`, `eaVert`,
+/// `mongolianVert`) as a quarter turn clockwise and `vert270` as three, which
+/// for Latin text is exactly what Word shows. Deliberately not built, and laid
+/// out horizontally: `eaVert`'s upright East Asian glyphs (they rotate with the
+/// line here), and the two `wordArtVert` stacks (one letter per line).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextBoxVerticalText {
+    /// Horizontal lines (`horz`, the schema default).
+    #[default]
+    Horizontal,
+    /// Every line turned a quarter turn clockwise (`vert`).
+    Vertical,
+    /// Every line turned three quarter turns clockwise (`vert270`).
+    Vertical270,
+    /// Letters stacked one above another, left to right (`wordArtVert`).
+    WordArtVertical,
+    /// East Asian vertical text (`eaVert`).
+    EastAsianVertical,
+    /// Mongolian vertical text (`mongolianVert`).
+    MongolianVertical,
+    /// Letters stacked one above another, right to left (`wordArtVertRtl`).
+    WordArtVerticalRtl,
+}
+
+impl TextBoxVerticalText {
+    /// The `ST_TextVerticalType` token.
+    #[must_use]
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::Horizontal => "horz",
+            Self::Vertical => "vert",
+            Self::Vertical270 => "vert270",
+            Self::WordArtVertical => "wordArtVert",
+            Self::EastAsianVertical => "eaVert",
+            Self::MongolianVertical => "mongolianVert",
+            Self::WordArtVerticalRtl => "wordArtVertRtl",
+        }
+    }
+
+    /// The value for an `ST_TextVerticalType` token, if it is one.
+    #[must_use]
+    pub fn from_token(token: &str) -> Option<Self> {
+        [
+            Self::Horizontal,
+            Self::Vertical,
+            Self::Vertical270,
+            Self::WordArtVertical,
+            Self::EastAsianVertical,
+            Self::MongolianVertical,
+            Self::WordArtVerticalRtl,
+        ]
+        .into_iter()
+        .find(|value| value.token() == token)
+    }
+
+    /// The clockwise quarter turns layout gives the lines: 1 for the rotated
+    /// readings, 3 for `vert270`, 0 for horizontal and for the stacked WordArt
+    /// readings (not built, see the type).
+    #[must_use]
+    pub const fn quarter_turns(self) -> u8 {
+        match self {
+            Self::Vertical | Self::EastAsianVertical | Self::MongolianVertical => 1,
+            Self::Vertical270 => 3,
+            Self::Horizontal | Self::WordArtVertical | Self::WordArtVerticalRtl => 0,
+        }
+    }
+}
+
 /// DrawingML text autofit choice (`a:noAutofit` / `a:spAutoFit` /
 /// `a:normAutofit`). Omission is semantically equivalent to no autofit.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -1239,6 +1314,24 @@ pub struct TextBoxBodyProperties {
     /// Text/shape autofit behavior.
     #[serde(default, skip_serializing_if = "is_default_text_box_auto_fit")]
     pub auto_fit: TextBoxAutoFit,
+    /// The rotation applied to the TEXT inside the shape, clockwise, in
+    /// 60000ths of a degree (`wps:bodyPr@rot`, ECMA-376 Part 1 §21.1.2.1.1),
+    /// about the shape's centre and independently of the shape's own
+    /// `a:xfrm@rot`. `0` (the schema default, and what Word writes) is upright.
+    /// It does not change the box the lines wrap in.
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
+    pub text_rotation: i32,
+    /// The direction the lines run (`wps:bodyPr@vert`).
+    #[serde(default, skip_serializing_if = "is_default_text_box_vertical_text")]
+    pub vertical_text: TextBoxVerticalText,
+}
+
+fn is_zero_i32(value: &i32) -> bool {
+    *value == 0
+}
+
+fn is_default_text_box_vertical_text(value: &TextBoxVerticalText) -> bool {
+    *value == TextBoxVerticalText::default()
 }
 
 impl TextBoxBodyProperties {

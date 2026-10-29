@@ -27,6 +27,15 @@ opendoc-viewer.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+[features]
+default = []
+# Sessions open PDFs (docs/182 P1). `opendoc-mcp` turns this on; the editor's
+# WASM build, which depends on this crate, does not.
+pdf-import = ["casual-doc-io/pdf-import"]
+# The heron layout model when a host's OCR models include one (docs/182 P6).
+pdf-layout = ["pdf-ocr", "casual-doc-io/pdf-layout"]
+pdf-ocr = ["pdf-import", "casual-doc-io/pdf-ocr"]
+
 [dev-dependencies]
 zip.workspace = true
 

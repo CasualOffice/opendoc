@@ -1,0 +1,33 @@
+[package]
+name = "opendoc-pdf-measure"
+description = "P0 measurement harness for PDF import (docs/182 §10): runs hayro over a rights-safe PDF corpus and records parse success, Unicode coverage, time and peak heap per page, and image codecs"
+version.workspace = true
+edition.workspace = true
+# hayro 0.8 declares rust-version 1.92; the workspace toolchain is pinned to
+# 1.96.0 (`rust-toolchain.toml`), so this states the truth for this crate.
+rust-version = "1.92"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+# Writer-produced corpus: fixture DOCX -> registry import -> the PDF exporter.
+casual-doc-io.workspace = true
+# The candidate native-evidence provider (docs/182 §3.1). Apache-2.0 OR MIT.
+hayro-syntax = "0.8.0"
+hayro-interpret = "0.8.0"
+kurbo = "0.13"
+# Heap peak per page. A `#[global_allocator]` declared in safe code; the one
+# `unsafe impl GlobalAlloc` lives in this MIT crate (about 60 lines, reviewed).
+peak_alloc = "0.3.0"
+serde_json.workspace = true
+# Used only to ask whether an embedded program is an sfnt with a Unicode cmap
+# (docs/182 G-1); already in the tree for the renderer.
+skrifa = "0.43"
+# Synthetic corpus: Flate streams and one baseline JPEG.
+flate2 = "1.1"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+
+[lints]
+workspace = true

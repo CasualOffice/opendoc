@@ -557,6 +557,7 @@ pub struct ConnectionSite {
 /// one list either way.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
 pub struct CustomGeometry {
     /// The guide formulas (`a:gdLst/a:gd`), in definition order — each sees the
     /// ones before it.
@@ -575,6 +576,44 @@ pub struct CustomGeometry {
     pub text_rect: Option<GeometryRect>,
     /// The paths (`a:pathLst/a:path`), painted in order.
     pub paths: Vec<ShapePath>,
+    /// How each path's subpaths decide what is inside (`docs/182` gap G-2).
+    ///
+    /// DrawingML has no such attribute — `CT_Path2D` (ECMA-376 Part 1
+    /// §20.1.9.15) carries only `w`, `h`, `fill`, `stroke` and `extrusionOk` —
+    /// so a geometry read from DOCX is always [`FillRule::NonZero`], the rule
+    /// this engine has always painted with and the one the standard's own
+    /// presets are written for (a `donut`'s or `frame`'s inner subpath is wound
+    /// against its outer one). [`FillRule::EvenOdd`] comes from a source that
+    /// states it: a PDF `f*`/`B*` fill. The DOCX writer re-winds such a geometry
+    /// so it paints the same under either rule, or reports it when it cannot
+    /// (see [`CustomGeometry::to_non_zero`]). Additive: omitted
+    /// when non-zero so existing snapshots serialize byte-identically.
+    #[serde(default, skip_serializing_if = "FillRule::is_non_zero")]
+    pub fill_rule: FillRule,
+}
+
+/// Which points a filled path covers when its subpaths overlap or nest — the
+/// PostScript, PDF, SVG and Skia fill rules.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FillRule {
+    /// A point is inside when the path winds around it a non-zero number of
+    /// times (PDF `f`, SVG `nonzero`). The default, and the rule a DrawingML
+    /// geometry is painted with.
+    #[default]
+    NonZero,
+    /// A point is inside when a ray from it crosses the path an odd number of
+    /// times (PDF `f*`, SVG `evenodd`): a nested subpath is a hole whichever way
+    /// it is wound.
+    EvenOdd,
+}
+
+impl FillRule {
+    /// Whether this is [`FillRule::NonZero`].
+    #[must_use]
+    pub const fn is_non_zero(&self) -> bool {
+        matches!(self, Self::NonZero)
+    }
 }
 
 /// The current snapshot form of [`CustomGeometry`].
@@ -590,6 +629,8 @@ struct CustomGeometryCurrent {
     #[serde(default)]
     text_rect: Option<GeometryRect>,
     paths: Vec<ShapePath>,
+    #[serde(default)]
+    fill_rule: FillRule,
 }
 
 /// Either snapshot form: the current one, or the single-path object a snapshot
@@ -610,6 +651,7 @@ impl<'de> Deserialize<'de> for CustomGeometry {
                 connections: current.connections,
                 text_rect: current.text_rect,
                 paths: current.paths,
+                fill_rule: current.fill_rule,
             },
             CustomGeometryWire::SinglePath(path) => Self {
                 paths: vec![path],
@@ -623,10 +665,55 @@ impl CustomGeometry {
     /// A geometry of one path and nothing else — what a hand-drawn freeform is.
     #[must_use]
     pub fn single_path(path: ShapePath) -> Self {
+        Self::from_paths(vec![path])
+    }
+
+    /// A geometry of these paths, with no guides, handles, connection sites or
+    /// text rectangle, filled non-zero. The starting point of the builder: the
+    /// struct is `#[non_exhaustive]` (`SKILL` §5a), so a caller outside this
+    /// crate adds the rest with the `with_*` methods instead of a literal that
+    /// every new field would break.
+    #[must_use]
+    pub fn from_paths(paths: Vec<ShapePath>) -> Self {
         Self {
-            paths: vec![path],
+            paths,
             ..Self::default()
         }
+    }
+
+    /// Sets the guide formulas (`a:gdLst`).
+    #[must_use]
+    pub fn with_guides(mut self, guides: Vec<ShapeAdjustment>) -> Self {
+        self.guides = guides;
+        self
+    }
+
+    /// Sets the adjust handles (`a:ahLst`).
+    #[must_use]
+    pub fn with_handles(mut self, handles: Vec<AdjustHandle>) -> Self {
+        self.handles = handles;
+        self
+    }
+
+    /// Sets the connection sites (`a:cxnLst`).
+    #[must_use]
+    pub fn with_connections(mut self, connections: Vec<ConnectionSite>) -> Self {
+        self.connections = connections;
+        self
+    }
+
+    /// Sets the text rectangle (`a:rect`).
+    #[must_use]
+    pub fn with_text_rect(mut self, text_rect: Option<GeometryRect>) -> Self {
+        self.text_rect = text_rect;
+        self
+    }
+
+    /// Sets the fill rule.
+    #[must_use]
+    pub fn with_fill_rule(mut self, fill_rule: FillRule) -> Self {
+        self.fill_rule = fill_rule;
+        self
     }
 
     /// Checks every bound the model places on a geometry, returning the name of

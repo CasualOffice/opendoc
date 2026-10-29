@@ -46,6 +46,9 @@ pdf = ["dep:casual-doc-pdf"]
 # are registered together — the measured cost is in `docs/176` §4.2, and the
 # reader/writer split is prerequisite P1 there.
 formats = ["dep:casual-doc-io"]
+# Opens PDFs as fixed-layout documents (docs/182 P1): the io registry with
+# `enable_pdf_import`. Headless hosts only; the editor does not until P2.
+pdf-import = ["formats", "casual-doc-io/pdf-import"]
 
 # Same wasm-opt pass as `casual-doc-wasm` (see the rationale there), so the two
 # artefacts are measured under one optimiser setting.

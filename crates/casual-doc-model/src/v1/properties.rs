@@ -633,6 +633,158 @@ impl EmbeddedFontSet {
     }
 }
 
+/// The outline format of an [`EmbeddedFontProgram`]: what its bytes ARE, so a
+/// consumer can tell a face it can register from one it has to report.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub enum FontProgramFormat {
+    /// An sfnt with TrueType (`glyf`) outlines: signature `0x00010000` or
+    /// `true`. A PDF `FontFile2`.
+    TrueType,
+    /// An sfnt with CFF outlines: signature `OTTO`. A PDF `FontFile3` of
+    /// subtype `OpenType`.
+    OpenTypeCff,
+    /// A bare CFF table with no sfnt wrapper (a PDF `FontFile3` of subtype
+    /// `Type1C` or `CIDFontType0C`). No shaper here registers one directly: the
+    /// producer wraps it into an `OTTO` sfnt first, or the face is reported as
+    /// unusable rather than silently substituted.
+    BareCff,
+}
+
+/// Which face of its family an [`EmbeddedFontProgram`] serves — the same four
+/// a DOCX `w:embed*` slot can name, so both sources resolve one way.
+#[derive(
+    Clone, Copy, Debug, Default, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
+)]
+#[serde(rename_all = "camelCase")]
+pub enum FontProgramStyle {
+    /// Upright, normal weight (`w:embedRegular`).
+    #[default]
+    Regular,
+    /// Upright, bold (`w:embedBold`).
+    Bold,
+    /// Italic, normal weight (`w:embedItalic`).
+    Italic,
+    /// Italic, bold (`w:embedBoldItalic`).
+    BoldItalic,
+}
+
+impl FontProgramStyle {
+    /// `(bold, italic)`.
+    #[must_use]
+    pub const fn attributes(self) -> (bool, bool) {
+        match self {
+            Self::Regular => (false, false),
+            Self::Bold => (true, false),
+            Self::Italic => (false, true),
+            Self::BoldItalic => (true, true),
+        }
+    }
+
+    /// The `w:embed*` element a DOCX writer files this face under.
+    #[must_use]
+    pub const fn embed_element(self) -> &'static str {
+        match self {
+            Self::Regular => "w:embedRegular",
+            Self::Bold => "w:embedBold",
+            Self::Italic => "w:embedItalic",
+            Self::BoldItalic => "w:embedBoldItalic",
+        }
+    }
+
+    fn is_regular(&self) -> bool {
+        *self == Self::Regular
+    }
+}
+
+/// The most [`EmbeddedFontProgram`]s one document may carry. A bound on the
+/// list, not on the bytes (the font registry budgets those): a PDF names one
+/// program per font resource, and a long PDF of subset fonts reaches the low
+/// thousands.
+pub const MAX_FONT_PROGRAMS: usize = 4096;
+
+/// A font program a document carries that did NOT come from a DOCX `.odttf`
+/// (`docs/182` §5.4, gap G-1): a PDF's embedded `FontFile2`/`FontFile3`, or any
+/// other source that hands over plain (unobfuscated) TrueType, OpenType or CFF
+/// bytes and the family and style they serve.
+///
+/// # The bytes are a part, not a field
+///
+/// Like every other binary the model refers to ([`MediaReference`] for
+/// pictures, [`EmbeddedFace`] for `.odttf` faces), the program's bytes live in
+/// the host's resource map under [`EmbeddedFontProgram::part_name`], not in the
+/// model. A JSON snapshot that inlined a CJK face would grow by tens of
+/// megabytes per font; a part name keeps the model the size of its metadata,
+/// and the font registry and the DOCX writer resolve the bytes through the same
+/// `part_name → bytes` map they already take for `.odttf` faces.
+///
+/// The bytes are stored **unobfuscated**: obfuscation is a property of the DOCX
+/// container (ECMA-376 Part 1 §17.8.1), applied by the DOCX writer when it
+/// embeds the program, never by the source.
+///
+/// [`MediaReference`]: crate::v1::MediaReference
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct EmbeddedFontProgram {
+    /// The family name runs request it by (`w:rFonts`), non-empty, at most 255
+    /// bytes. For a PDF this is the `BaseFont` with any `ABCDEF+` subset tag
+    /// removed, which is what the importer writes into the runs.
+    pub family: String,
+    /// Which face of the family it is.
+    #[serde(default, skip_serializing_if = "FontProgramStyle::is_regular")]
+    pub style: FontProgramStyle,
+    /// What the bytes are.
+    pub format: FontProgramFormat,
+    /// The resource-map key the bytes are stored under (for example
+    /// `pdf/fonts/F1.ttf`), non-empty, at most 1,024 bytes.
+    pub part_name: String,
+    /// Whether the program is a subset (PDFs almost always subset). A subset
+    /// renders the text it shipped with; new characters fall back to a
+    /// substitute.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub subsetted: bool,
+    /// The name the source gave the font (a PDF `BaseFont`, subset tag kept),
+    /// for reports. At most 255 bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_name: Option<String>,
+}
+
+impl EmbeddedFontProgram {
+    /// A full (not subsetted) program with no source name.
+    #[must_use]
+    pub fn new(
+        family: impl Into<String>,
+        style: FontProgramStyle,
+        format: FontProgramFormat,
+        part_name: impl Into<String>,
+    ) -> Self {
+        Self {
+            family: family.into(),
+            style,
+            format,
+            part_name: part_name.into(),
+            subsetted: false,
+            source_name: None,
+        }
+    }
+
+    /// Marks the program as a subset (or not).
+    #[must_use]
+    pub fn with_subsetted(mut self, subsetted: bool) -> Self {
+        self.subsetted = subsetted;
+        self
+    }
+
+    /// Records the source's own name for the font.
+    #[must_use]
+    pub fn with_source_name(mut self, source_name: impl Into<String>) -> Self {
+        self.source_name = Some(source_name.into());
+        self
+    }
+}
+
 /// One theme font entry (`a:latin`/`a:ea`/`a:cs`, ECMA-376 §20.1.4.1). Its
 /// `typeface` may be empty (meaning "fall back to the latin entry"); the
 /// panose/pitch/charset hints are retained verbatim (opaque).

@@ -21,6 +21,8 @@ mod containers;
 mod custom_geometry;
 mod definitions;
 mod document;
+// Own line (anti-conflict): even-odd to non-zero re-winding (`docs/182` G-2).
+mod fill_rule;
 mod geometry_program;
 mod ids;
 mod intern;
@@ -49,6 +51,8 @@ pub use containers::*;
 pub use custom_geometry::*;
 pub use definitions::*;
 pub use document::*;
+// Own line (anti-conflict).
+pub use fill_rule::*;
 pub use geometry_program::*;
 pub use ids::*;
 pub use intern::*;

@@ -10,7 +10,11 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-casual-doc-ai.workspace = true
+# `pdf-import`: open_document reads PDFs as fixed-layout documents (docs/182 P1),
+# so an agent can read and suggest into one with no PDF-specific tool.
+# `pdf-layout`: a host's `--ocr-models` directory may include the heron layout
+# model (docs/182 P6); no crate is added for it.
+casual-doc-ai = { workspace = true, features = ["pdf-import", "pdf-ocr", "pdf-layout"] }
 casual-doc-command.workspace = true
 serde_json.workspace = true
 

@@ -231,6 +231,59 @@ export const FEATURE_CATALOGUE = Object.freeze({
   "source_envelope": entry("findings.feature.sourceMismatch", CONTENT),
   "docx.export.report.overflow": entry("findings.feature.overflow", CONTENT),
   "(overflow)": entry("findings.feature.overflow", CONTENT),
+
+  // ---- A PDF's reconstruction (`docs/182` P2, the `docs/131` §16.1 families) --
+  // What the import found on the pages; which group a row sits in is the
+  // engine's model outcome (`compat_findings.mjs`'s PDF kinds), never these words.
+  "pdf.import.active_content_blocked": entry("findings.feature.pdfActiveContent", CONTENT),
+  "pdf.import.annotation_omitted": entry("findings.feature.pdfAnnotations", CONTENT),
+  "pdf.import.attachment_omitted": entry("findings.feature.pdfAttachments", CONTENT),
+  "pdf.import.clip_ignored": entry("findings.feature.pdfClip", CONTENT),
+  "pdf.import.encrypted_unsupported": entry("findings.feature.pdfEncrypted", CONTENT),
+  "pdf.import.font_embedded": entry("findings.feature.pdfFontEmbedded", CONTENT),
+  "pdf.import.font_substituted": entry("findings.feature.pdfFontSubstituted", CONTENT),
+  "pdf.import.form_omitted": entry("findings.feature.pdfForms", CONTENT),
+  "pdf.import.image_clip_ignored": entry("findings.feature.pdfImageClip", CONTENT),
+  "pdf.import.image_reencoded": entry("findings.feature.pdfImageReencoded", CONTENT),
+  "pdf.import.image_undecodable": entry("findings.feature.pdfImageUndecodable", CONTENT),
+  "pdf.import.invisible_text": entry("findings.feature.pdfInvisibleText", CONTENT),
+  "pdf.import.native_text_invalid": entry("findings.feature.pdfTextUnidentified", CONTENT),
+  "pdf.import.optional_content_flattened": entry("findings.feature.pdfLayers", CONTENT),
+  "pdf.import.page_size_clamped": entry("findings.feature.pdfPageSize", CONTENT),
+  "pdf.import.paragraph_boundary_inferred": entry("findings.feature.pdfParagraphs", CONTENT),
+  "pdf.import.pattern_flattened": entry("findings.feature.pdfPatterns", CONTENT),
+  "pdf.import.reading_order_inferred": entry("findings.feature.pdfReadingOrder", CONTENT),
+  "pdf.import.tag_structure_ignored": entry("findings.feature.pdfTags", CONTENT),
+  "pdf.import.text_render_mode_degraded": entry("findings.feature.pdfTextEffects", CONTENT),
+  "pdf.import.text_rotated": entry("findings.feature.pdfRotatedText", CONTENT),
+  "pdf.import.transparency_flattened": entry("findings.feature.pdfTransparency", CONTENT),
+  "pdf.import.type3_glyphs_substituted": entry("findings.feature.pdfType3", CONTENT),
+  "pdf.import.vector_split": entry("findings.feature.pdfVectorSplit", CONTENT),
+  // Reflow (P3), links and notes, and OCR (P5).
+  "pdf.import.native_ocr_conflict": entry("findings.feature.pdfOcrConflict", CONTENT),
+  "pdf.import.ocr_applied": entry("findings.feature.pdfOcrApplied", CONTENT),
+  "pdf.import.ocr_limit_reached": entry("findings.feature.pdfOcrLimit", CONTENT),
+  "pdf.import.ocr_low_confidence": entry("findings.feature.pdfOcrLowConfidence", CONTENT),
+  "pdf.import.ocr_scan_covered": entry("findings.feature.pdfOcrScanCovered", CONTENT),
+  "pdf.import.ocr_unavailable": entry("findings.feature.pdfOcrUnavailable", CONTENT),
+  "pdf.import.artifact_omitted": entry("findings.feature.pdfArtifacts", CONTENT),
+  "pdf.import.bookmark_inferred": entry("findings.feature.pdfBookmarks", CONTENT),
+  "pdf.import.columns_inferred": entry("findings.feature.pdfColumns", CONTENT),
+  "pdf.import.comment_inferred": entry("findings.feature.pdfComments", CONTENT),
+  "pdf.import.dehyphenation_inferred": entry("findings.feature.pdfDehyphenation", CONTENT),
+  "pdf.import.footnote_inferred": entry("findings.feature.pdfFootnotes", CONTENT),
+  "pdf.import.header_footer_inferred": entry("findings.feature.pdfHeaderFooter", CONTENT),
+  "pdf.import.heading_inferred": entry("findings.feature.pdfHeadings", CONTENT),
+  "pdf.import.hyperlink_inferred": entry("findings.feature.pdfHyperlinks", CONTENT),
+  "pdf.import.link_unresolved": entry("findings.feature.pdfLinksUnresolved", CONTENT),
+  "pdf.import.list_inferred": entry("findings.feature.pdfLists", CONTENT),
+  "pdf.import.style_inferred": entry("findings.feature.pdfStyles", CONTENT),
+  "pdf.import.table_inferred": entry("findings.feature.pdfTables", CONTENT),
+  "pdf.import.table_topology_degraded": entry("findings.feature.pdfTablesSimplified", CONTENT),
+  "pdf.import.vector_omitted": entry("findings.feature.pdfVectorsOmitted", CONTENT),
+  "pdf.import.footnote_marker_renumbered": entry("findings.feature.pdfFootnoteMarkers", CONTENT),
+  "pdf.import.justification_inferred": entry("findings.feature.pdfJustification", CONTENT),
+  "pdf.import.page_break_inferred": entry("findings.feature.pdfPageBreaks", CONTENT),
 });
 
 const PREFIXES = Object.keys(FEATURE_CATALOGUE)
@@ -302,6 +355,9 @@ export function partArea(partName) {
   if (!partName) return null;
   // Case-insensitive, as OPC part names are (`customXML/item1.xml`).
   const part = String(partName).replace(/^\//, "");
+  // A PDF finding's location is the first page it was seen on ("page 3"), not
+  // a package part (`casual-doc-io`'s PDF adapter).
+  if (/^page \d+$/.test(part)) return "pdfPage";
   const rules = [
     [/^word\/document\d*\.xml$/i, "body"],
     [/^word\/header\d*\.xml$/i, "header"],
@@ -391,7 +447,9 @@ export function describeFinding(reportEntry) {
   if (area && partName !== feature) {
     where = area === "part"
       ? { key: "findings.where.part", params: { part: partName } }
-      : { key: `findings.where.${area}` };
+      : area === "pdfPage"
+        ? { key: "findings.where.pdfPage", params: { page: Number(partName.slice(5)) } }
+        : { key: `findings.where.${area}` };
   } else if (!known && !partName && shape === "class") {
     const format = formatArea(feature);
     if (format) where = { key: `findings.where.${format}` };
@@ -454,4 +512,5 @@ const WHERE_AREAS = Object.freeze([
   "formatHtml",
   "formatPdf",
   "formatText",
+  "pdfPage",
 ]);

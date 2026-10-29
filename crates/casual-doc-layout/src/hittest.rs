@@ -1100,6 +1100,14 @@ impl<'a> LayoutSnapshot<'a> {
     /// caret inside a text box had no geometry and a click in one could not be
     /// resolved.
     fn text_box_line_boxes(&self, page_number: u32) -> Vec<LineBox<'a>> {
+        self.text_box_line_boxes_where(page_number, true)
+    }
+
+    /// [`Self::text_box_line_boxes`], optionally without the boxes whose text
+    /// is TURNED (`docs/182` G-3). A turned box's lines are in its upright
+    /// content space, not the page's, so a page point can only be matched
+    /// against them after `TextOrientation::to_content`.
+    fn text_box_line_boxes_where(&self, page_number: u32, turned: bool) -> Vec<LineBox<'a>> {
         let mut out = Vec::new();
         // ANCHORED text boxes — floating ones, and every text box inside a shape
         // group — are placed as `PlacedAnchor`s rather than hanging off a line,
@@ -1117,12 +1125,21 @@ impl<'a> LayoutSnapshot<'a> {
                     AnchorContent::TextBox {
                         blocks,
                         content_layout,
+                        orientation,
                         ..
-                    } => (
-                        blocks,
-                        anchor.rect.origin.x + content_layout.origin.x,
-                        anchor.rect.origin.y + content_layout.origin.y,
-                    ),
+                    } => {
+                        if !turned && !orientation.is_upright() {
+                            continue;
+                        }
+                        // The upright box the lines were flowed in: the frame,
+                        // or the frame exchanged for vertical lines.
+                        let content = orientation.content_box(anchor.rect);
+                        (
+                            blocks,
+                            content.origin.x + content_layout.origin.x,
+                            content.origin.y + content_layout.origin.y,
+                        )
+                    }
                     AnchorContent::Table { rows } => {
                         (rows, anchor.rect.origin.x, anchor.rect.origin.y)
                     }
@@ -1171,27 +1188,71 @@ impl<'a> LayoutSnapshot<'a> {
     /// exactly as it does for a header band.
     #[must_use]
     pub fn hit_test_text_box(&self, page_number: u32, point: Point) -> Option<HitResult> {
-        let lines = self.text_box_line_boxes(page_number);
-        if lines.is_empty() {
-            return None;
+        // A point inside a TURNED text box (`docs/182` G-3) is mapped into that
+        // box's upright content space and resolved against its lines alone;
+        // the topmost such box wins. Exact at quarter turns; to the nearest twip
+        // at any other angle.
+        for page in self.layout.pages.iter().filter(|p| p.number == page_number) {
+            for anchor in page.anchored.iter().rev() {
+                let AnchorContent::TextBox {
+                    blocks,
+                    content_layout,
+                    orientation,
+                    ..
+                } = &anchor.content
+                else {
+                    continue;
+                };
+                if orientation.is_upright() {
+                    continue;
+                }
+                let local = orientation.to_content(anchor.rect, point);
+                let content = orientation.content_box(anchor.rect);
+                if !content.contains(local) {
+                    continue;
+                }
+                let mut lines = Vec::new();
+                let left = content.origin.x + content_layout.origin.x;
+                let mut top = content.origin.y + content_layout.origin.y;
+                for block in blocks {
+                    collect_fragment(block, left, top, page.number, None, &mut lines);
+                    top = top + block.height();
+                }
+                if let Some(hit) = resolve_text_box_hit(&lines, local) {
+                    return Some(hit);
+                }
+            }
         }
-        let (x, y) = (point.x.raw(), point.y.raw());
-        let chosen = lines
-            .iter()
-            .find(|lb| lb.contains_y(y))
-            .or_else(|| lines.iter().min_by_key(|lb| (lb.top.raw() - y).abs()))?;
-        let stops = stops_for(chosen.line, chosen.left);
-        let nearest = nearest_stop(&stops, Twip(x));
-        Some(HitResult {
-            pos: ModelPos::new(chosen.line.range.start.node, nearest.offset),
-            zone: if chosen.contains_y(y) {
-                HitZone::Content
-            } else {
-                HitZone::Outside
-            },
-        })
+        let lines = self.text_box_line_boxes_where(page_number, false);
+        resolve_text_box_hit(&lines, point)
     }
+}
 
+/// The caret position nearest `point` among a text box's `lines`: the line
+/// whose band holds the point, else the nearest line, and the nearest stop on
+/// it. `None` for no lines. O(lines + stops).
+fn resolve_text_box_hit(lines: &[LineBox<'_>], point: Point) -> Option<HitResult> {
+    if lines.is_empty() {
+        return None;
+    }
+    let (x, y) = (point.x.raw(), point.y.raw());
+    let chosen = lines
+        .iter()
+        .find(|lb| lb.contains_y(y))
+        .or_else(|| lines.iter().min_by_key(|lb| (lb.top.raw() - y).abs()))?;
+    let stops = stops_for(chosen.line, chosen.left);
+    let nearest = nearest_stop(&stops, Twip(x));
+    Some(HitResult {
+        pos: ModelPos::new(chosen.line.range.start.node, nearest.offset),
+        zone: if chosen.contains_y(y) {
+            HitZone::Content
+        } else {
+            HitZone::Outside
+        },
+    })
+}
+
+impl<'a> LayoutSnapshot<'a> {
     /// The line boxes of one running band on one page.
     fn running_line_boxes(&self, page_number: u32, band: RunningBand) -> Vec<LineBox<'a>> {
         let mut out = Vec::new();

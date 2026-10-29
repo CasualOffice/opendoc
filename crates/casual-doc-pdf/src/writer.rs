@@ -32,9 +32,34 @@ const MIN_COMPRESSED_STREAM_BYTES: usize = 128;
 /// The incremental PDF file builder.
 pub(crate) struct Writer {
     bytes: Vec<u8>,
-    /// Byte offset of each reserved object, indexed by `object number - 1`.
-    /// `None` until the object body is written.
+    /// Byte offset of each reserved object, indexed by `object number -
+    /// first`. `None` until the object body is written.
     offsets: Vec<Option<usize>>,
+    /// The first object number this writer allocates: 1 for a new file, the
+    /// original trailer's `/Size` for an incremental update.
+    first: u32,
+    /// Objects of an earlier revision this update replaces: `(number,
+    /// generation, offset)`.
+    replaced: Vec<(u32, u16, usize)>,
+}
+
+/// The earlier revision an incremental update (ISO 32000-1 §7.5.6) is
+/// appended to. Every value is raw file syntax, carried as it is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IncrementalBase {
+    /// The offset the original's last `startxref` names (the new `/Prev`).
+    pub prev_xref: usize,
+    /// The original trailer's `/Size`: new objects are numbered from here.
+    pub size: u32,
+    /// `/Root`, raw.
+    pub root: String,
+    /// `/Info`, raw, if any.
+    pub info: Option<String>,
+    /// The first `/ID` element, raw, if any; it is kept, the second changes.
+    pub id_first: Option<String>,
+    /// Whether to write a cross-reference stream (the original's last section
+    /// is one) rather than a table.
+    pub xref_stream: bool,
 }
 
 impl Writer {
@@ -47,15 +72,46 @@ impl Writer {
         Self {
             bytes,
             offsets: Vec::new(),
+            first: 1,
+            replaced: Vec::new(),
         }
+    }
+
+    /// Continues `original` with an incremental update: the original bytes are
+    /// copied unchanged as the prefix, and new objects are numbered from
+    /// `first`. O(original bytes) for the copy.
+    pub(crate) fn append_to(original: &[u8], first: u32) -> Self {
+        let mut bytes = Vec::with_capacity(original.len() + 16 * 1024);
+        bytes.extend_from_slice(original);
+        if !matches!(original.last(), Some(b'\n' | b'\r')) {
+            bytes.push(b'\n');
+        }
+        Self {
+            bytes,
+            offsets: Vec::new(),
+            first: first.max(1),
+            replaced: Vec::new(),
+        }
+    }
+
+    /// Writes a new body for object `number` of an earlier revision, keeping
+    /// its generation (an update supersedes it, ISO 32000-1 §7.5.6).
+    pub(crate) fn replace_object(&mut self, number: u32, generation: u16, body: &[u8]) {
+        self.replaced.push((number, generation, self.bytes.len()));
+        self.bytes
+            .extend_from_slice(format!("{number} {generation} obj\n").as_bytes());
+        self.bytes.extend_from_slice(body);
+        self.bytes.extend_from_slice(b"\nendobj\n");
     }
 
     /// Reserves the next object number without writing its body, so a
     /// dictionary can reference an object that is emitted later.
     pub(crate) fn reserve(&mut self) -> Ref {
         self.offsets.push(None);
-        // Object numbering starts at 1; object 0 is the free-list head.
-        Ref(u32::try_from(self.offsets.len()).expect("object count fits in u32"))
+        // Object numbering starts at `first` (1 for a new file; object 0 is
+        // the free-list head).
+        let count = u32::try_from(self.offsets.len()).expect("object count fits in u32");
+        Ref(self.first + count - 1)
     }
 
     /// Writes a complete indirect object whose body is `body`.
@@ -119,7 +175,7 @@ impl Writer {
     }
 
     fn start_object(&mut self, id: Ref) {
-        let index = usize::try_from(id.0).expect("object number fits in usize") - 1;
+        let index = usize::try_from(id.0 - self.first).expect("object number fits in usize");
         debug_assert!(
             self.offsets[index].is_none(),
             "an object number is written exactly once"
@@ -159,6 +215,100 @@ impl Writer {
         );
         self.bytes
     }
+}
+
+impl Writer {
+    /// Writes the update's cross-reference section (a table, or a stream when
+    /// `base.xref_stream`) and trailer, chained to the original by `/Prev`,
+    /// and returns the whole file. Only the replaced and new objects are
+    /// listed; every other object resolves through the earlier sections.
+    pub(crate) fn finish_incremental(mut self, base: &IncrementalBase) -> Vec<u8> {
+        let mut entries: Vec<(u32, u16, Option<usize>)> = self
+            .replaced
+            .iter()
+            .map(|(number, generation, offset)| (*number, *generation, Some(*offset)))
+            .collect();
+        for (at, offset) in self.offsets.iter().enumerate() {
+            let number = self.first + u32::try_from(at).expect("object count fits in u32");
+            entries.push((number, 0, *offset));
+        }
+        let id = content_id(&self.bytes);
+        let first_id = base.id_first.clone().unwrap_or_else(|| format!("<{id}>"));
+        let mut size = base
+            .size
+            .max(self.first + u32::try_from(self.offsets.len()).expect("fits"));
+        let mut trailer = format!("/Root {}", base.root);
+        if let Some(info) = &base.info {
+            trailer.push_str(&format!("/Info {info}"));
+        }
+        trailer.push_str(&format!("/ID[{first_id}<{id}>]/Prev {}", base.prev_xref));
+        let xref_offset = self.bytes.len();
+        if base.xref_stream {
+            // The stream lists itself too.
+            let own = size;
+            size += 1;
+            entries.push((own, 0, Some(xref_offset)));
+            entries.sort_unstable_by_key(|entry| entry.0);
+            let mut index = String::new();
+            let mut data = Vec::new();
+            for run in runs(&entries) {
+                index.push_str(&format!("{} {} ", run[0].0, run.len()));
+                for (_, generation, offset) in run {
+                    match offset {
+                        Some(offset) => {
+                            data.push(1);
+                            data.extend_from_slice(&(*offset as u32).to_be_bytes());
+                            data.extend_from_slice(&generation.to_be_bytes());
+                        }
+                        None => data.extend_from_slice(&[0, 0, 0, 0, 0, 0xff, 0xff]),
+                    }
+                }
+            }
+            self.bytes.extend_from_slice(
+                format!(
+                    "{own} 0 obj\n<</Type/XRef/Size {size}/W[1 4 2]/Index[{}]{trailer}/Length {}>>\nstream\n",
+                    index.trim_end(),
+                    data.len()
+                )
+                .as_bytes(),
+            );
+            self.bytes.extend_from_slice(&data);
+            self.bytes.extend_from_slice(b"\nendstream\nendobj\n");
+        } else {
+            entries.sort_unstable_by_key(|entry| entry.0);
+            self.bytes.extend_from_slice(b"xref\n");
+            for run in runs(&entries) {
+                self.bytes
+                    .extend_from_slice(format!("{} {}\n", run[0].0, run.len()).as_bytes());
+                for (_, generation, offset) in run {
+                    let line = match offset {
+                        Some(offset) => format!("{offset:010} {generation:05} n \n"),
+                        None => "0000000000 65535 f \n".to_owned(),
+                    };
+                    self.bytes.extend_from_slice(line.as_bytes());
+                }
+            }
+            self.bytes
+                .extend_from_slice(format!("trailer\n<</Size {size}{trailer}>>\n").as_bytes());
+        }
+        self.bytes
+            .extend_from_slice(format!("startxref\n{xref_offset}\n%%EOF\n").as_bytes());
+        self.bytes
+    }
+}
+
+/// Splits sorted entries into runs of consecutive object numbers (one
+/// cross-reference subsection each).
+fn runs(entries: &[(u32, u16, Option<usize>)]) -> Vec<&[(u32, u16, Option<usize>)]> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for at in 1..=entries.len() {
+        if at == entries.len() || entries[at].0 != entries[at - 1].0 + 1 {
+            out.push(&entries[start..at]);
+            start = at;
+        }
+    }
+    out
 }
 
 /// Flate-compresses `data`, returning `None` when the result is not smaller than

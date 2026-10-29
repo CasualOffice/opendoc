@@ -6,11 +6,14 @@
 //! no PDF-specific code path (`docs/104` HF-030 "Decision": a PDF writer in the
 //! export registry, not a browser Save-as-PDF).
 //!
-//! # Import is deliberately absent
+//! # Import is an explicit, separate capability
 //!
-//! No importer is registered, so `.pdf` never appears in a detection result and
-//! the UI cannot offer a format the engine cannot read. PDF *editing* is out of
-//! scope for the product (`AGENTS.md`).
+//! This adapter registers no importer, so in the built-in registry `.pdf` never
+//! appears in a detection result and the editor cannot offer to open a format it
+//! does not yet drive (`docs/182` P2). PDF import (`docs/182` P1) lives in
+//! `pdf_import.rs` behind the `pdf-import` feature, and a host turns it on with
+//! `enable_pdf_import`, which replaces this registration with one whose
+//! descriptor says `can_import: true`.
 //!
 //! # Fonts and the parity question
 //!
@@ -82,7 +85,7 @@ impl PdfAdapter {
 }
 
 /// Serves the export's pictures out of the request's [`DocumentResources`].
-struct ResourceMedia<'a>(&'a DocumentResources);
+pub(crate) struct ResourceMedia<'a>(pub(crate) &'a DocumentResources);
 
 impl PdfMediaSource for ResourceMedia<'_> {
     fn media_bytes(&self, media: &str) -> Option<&[u8]> {
@@ -189,10 +192,14 @@ mod tests {
     }
 
     #[test]
-    fn pdf_is_export_only_and_never_offered_as_an_import_format() {
+    fn pdf_import_is_an_explicit_capability_the_builtin_registry_does_not_enable() {
         // No `register_pdf_exporter` call: the builtin registry carries the
         // exporter now, and that is the property worth asserting — a host that
-        // never opts in still gets PDF, and cannot ship without it.
+        // never opts in still gets PDF, and cannot ship without it. Import is
+        // the opposite: `docs/182` P1 builds it, but only a host that calls
+        // `enable_pdf_import` gets it (the editor does not until P2), so the
+        // built-in descriptor still says `can_import: false` with the feature
+        // compiled in. `pdf_import::tests` asserts the opted-in contract.
         let registry = builtin_registry();
         let pdf = FormatId::new(formats::PDF).unwrap();
         assert!(registry.export_formats().contains(&&pdf));

@@ -1,0 +1,55 @@
+[package]
+name = "casual-doc-pdf-import"
+description = "PDF import for OpenDoc: page evidence to a fixed-layout v1::Document of page-anchored text boxes, pictures and shapes, with every inference and loss reported"
+version.workspace = true
+edition.workspace = true
+# Through casual-doc-pdf-read, hayro 0.8 declares rust-version 1.92.
+rust-version = "1.92"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+casual-doc-model.workspace = true
+casual-doc-pdf-read.workspace = true
+# Asks whether an embedded program maps every character the PDF drew with it
+# before registering it for editing (docs/182 G-1). Already in the tree (the
+# renderer); pure Rust, WASM-clean.
+skrifa = "0.43"
+# The same read-fonts skrifa 0.43 re-exports (`skrifa::raw`), named directly
+# only to enable `agl`: the Adobe Glyph List, which builds the Unicode cmap of
+# a wrapped CFF or converted Type1 program from its glyph names (`fonts.rs`).
+# No new crate or version enters the tree.
+read-fonts = { version = "0.40", default-features = false, features = ["std", "agl"] }
+# The OCR and layout provider seam (docs/182 P5/P6). Without features it is
+# traits and evidence types only; the host picks a provider.
+casual-doc-ocr.workspace = true
+# Selective rasterisation of the regions OCR reads (docs/182 §20): hayro's own
+# renderer over the bytes the reader admitted. Was the oracle's dev-dependency;
+# Apache-2.0 OR MIT, pure Rust, WASM-clean.
+hayro = "0.8.0"
+
+[features]
+# OCR providers are opt-in: the editor's build links no OCR runtime until a host
+# turns a provider on (`casual-doc-io/pdf-ocr`). The plumbing types compile
+# without one, and a scan then reports `ocr_unavailable`.
+default = []
+# The providers, enabled through this crate: PP-OCRv5 (the default), ocrs
+# (the fallback) and the heron layout model.
+paddle = ["casual-doc-ocr/paddle"]
+ocrs = ["casual-doc-ocr/ocrs"]
+layout-heron = ["casual-doc-ocr/layout-heron"]
+
+[dev-dependencies]
+# The model-gated tests (tests/ocr.rs) build both providers.
+casual-doc-ocr = { workspace = true, features = ["paddle", "ocrs", "layout-heron"] }
+# Builds the synthetic scan (an image-only PDF) in tests/ocr.rs.
+flate2 = "1.1"
+# DOCX save and reopen for the edit round trip (no PDF feature needed there).
+casual-doc-io.workspace = true
+casual-doc-layout.workspace = true
+casual-doc-render.workspace = true
+
+[lints]
+workspace = true

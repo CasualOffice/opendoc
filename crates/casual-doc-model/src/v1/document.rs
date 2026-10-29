@@ -528,6 +528,26 @@ impl Document {
                 )?;
             }
         }
+        check_domain(
+            self.definitions.font_programs.len() <= super::MAX_FONT_PROGRAMS,
+            "fontPrograms",
+        )?;
+        for program in &self.definitions.font_programs {
+            check_domain(
+                !program.family.is_empty() && program.family.len() <= 255,
+                "fontProgram.family",
+            )?;
+            check_domain(
+                !program.part_name.is_empty() && program.part_name.len() <= 1024,
+                "fontProgram.partName",
+            )?;
+            if let Some(name) = &program.source_name {
+                check_domain(
+                    !name.is_empty() && name.len() <= 255,
+                    "fontProgram.sourceName",
+                )?;
+            }
+        }
         Ok(())
     }
 

@@ -2397,6 +2397,8 @@ fn text_box_with_block_content_validates_and_round_trips_json() {
                 font_scale: 80_000,
                 line_spacing_reduction: 20_000,
             },
+            text_rotation: -1_800_000,
+            vertical_text: crate::v1::TextBoxVerticalText::Vertical270,
         },
         blocks: vec![paragraph_block(tid(11))],
     };
@@ -2899,6 +2901,88 @@ fn a_single_path_snapshot_still_reads_as_a_custom_geometry() {
         serde_json::from_str::<CustomGeometry>(&json).expect("reads back"),
         current
     );
+}
+
+/// `docs/182` G-2: a geometry snapshot written before the fill rule existed
+/// reads as non-zero, a non-zero geometry still serializes without the key
+/// (so existing snapshots are byte-identical), and an even-odd one round-trips.
+#[test]
+fn a_snapshot_without_a_fill_rule_reads_as_non_zero_and_even_odd_round_trips() {
+    let before = r#"{"paths":[{"commands":[
+        {"type":"moveTo","point":{"x":0,"y":0}},
+        {"type":"lineTo","point":{"x":10,"y":0}},
+        {"type":"close"}]}]}"#;
+    let geometry: CustomGeometry = serde_json::from_str(before).expect("the old form reads");
+    assert_eq!(geometry.fill_rule, FillRule::NonZero);
+    let json = serde_json::to_string(&geometry).unwrap();
+    assert!(
+        !json.contains("fillRule"),
+        "a non-zero geometry writes what it was read from: {json}"
+    );
+
+    let even_odd = geometry.with_fill_rule(FillRule::EvenOdd);
+    let json = serde_json::to_string(&even_odd).unwrap();
+    assert!(json.contains(r#""fillRule":"evenOdd""#), "{json}");
+    assert_eq!(
+        serde_json::from_str::<CustomGeometry>(&json).unwrap(),
+        even_odd
+    );
+}
+
+/// `docs/182` G-1: `Definitions` written before the font-program slot existed
+/// still read (empty), an empty slot is not written, and a populated one
+/// round-trips through a validated document.
+#[test]
+fn a_snapshot_without_font_programs_reads_and_a_program_round_trips() {
+    let definitions: Definitions = serde_json::from_str("{}").expect("the old form reads");
+    assert!(definitions.font_programs.is_empty());
+    assert!(
+        !serde_json::to_string(&definitions)
+            .unwrap()
+            .contains("fontPrograms")
+    );
+
+    let program = EmbeddedFontProgram::new(
+        "Probe Sans",
+        FontProgramStyle::Bold,
+        FontProgramFormat::TrueType,
+        "pdf/fonts/F1.ttf",
+    )
+    .with_subsetted(true)
+    .with_source_name("ABCDEF+ProbeSans-Bold");
+    let document = Document::new(
+        NodeId::from_parts(1, 1).unwrap(),
+        vec![paragraph_block(NodeId::from_parts(2, 1).unwrap())],
+        Definitions {
+            font_programs: vec![program.clone()],
+            ..Definitions::default()
+        },
+    )
+    .expect("a document with a font program is valid");
+    let json = serde_json::to_string(document.definitions()).unwrap();
+    assert!(json.contains(r#""fontPrograms""#), "{json}");
+    let back: Definitions = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.font_programs, vec![program]);
+
+    let empty_family = EmbeddedFontProgram::new(
+        "",
+        FontProgramStyle::Regular,
+        FontProgramFormat::TrueType,
+        "pdf/fonts/F2.ttf",
+    );
+    assert!(matches!(
+        Document::new(
+            NodeId::from_parts(1, 1).unwrap(),
+            vec![paragraph_block(NodeId::from_parts(2, 1).unwrap())],
+            Definitions {
+                font_programs: vec![empty_family],
+                ..Definitions::default()
+            },
+        ),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "fontProgram.family"
+        })
+    ));
 }
 
 /// A one-paragraph document whose only inline is a group of one freeform shape
@@ -6265,4 +6349,47 @@ fn a_chart_projection_resolves_inside_a_nested_container() {
         .insert(ChartId::new(tid(3)), chart_projection(object));
     Document::new(tid(99), vec![nested], definitions)
         .expect("a chart inside a table cell projects");
+}
+
+/// `wps:bodyPr@rot`/`@vert` (`docs/182` G-3): a snapshot written before the
+/// fields existed reads as upright horizontal text, the defaults are not
+/// written back, and every `ST_TextVerticalType` token maps both ways.
+#[test]
+fn text_box_rotation_and_direction_default_upright_and_round_trip() {
+    use crate::v1::TextBoxVerticalText;
+    let upright: TextBoxBodyProperties = serde_json::from_str("{}").unwrap();
+    assert_eq!(upright.text_rotation, 0);
+    assert_eq!(upright.vertical_text, TextBoxVerticalText::Horizontal);
+    assert!(upright.is_default());
+    assert_eq!(serde_json::to_string(&upright).unwrap(), "{}");
+    let turned = TextBoxBodyProperties {
+        text_rotation: 5_400_000,
+        vertical_text: TextBoxVerticalText::Vertical,
+        ..TextBoxBodyProperties::default()
+    };
+    let json = serde_json::to_string(&turned).unwrap();
+    assert_eq!(
+        json,
+        r#"{"textRotation":5400000,"verticalText":"vertical"}"#
+    );
+    assert_eq!(
+        serde_json::from_str::<TextBoxBodyProperties>(&json).unwrap(),
+        turned
+    );
+    for token in [
+        "horz",
+        "vert",
+        "vert270",
+        "wordArtVert",
+        "eaVert",
+        "mongolianVert",
+        "wordArtVertRtl",
+    ] {
+        let value = TextBoxVerticalText::from_token(token).unwrap();
+        assert_eq!(value.token(), token);
+    }
+    assert_eq!(TextBoxVerticalText::from_token("sideways"), None);
+    assert_eq!(TextBoxVerticalText::Vertical.quarter_turns(), 1);
+    assert_eq!(TextBoxVerticalText::Vertical270.quarter_turns(), 3);
+    assert_eq!(TextBoxVerticalText::WordArtVertical.quarter_turns(), 0);
 }

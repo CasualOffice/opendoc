@@ -33,6 +33,8 @@ use casual_doc_model::v1::{
 // Kept on a separate `use` line (anti-conflict): the outline dash style the anchor
 // stroke now carries through to paint.
 use casual_doc_model::v1::DashStyle;
+// Own line (anti-conflict): a geometry's fill rule (`docs/182` G-2).
+use casual_doc_model::v1::FillRule;
 // Its own `use` line on purpose: a new v1 import added into the sorted block
 // above conflicts with every other branch doing the same.
 use casual_doc_model::v1::{Fill, ShapeAdjustment};
@@ -47,10 +49,14 @@ use crate::block::BlockFragment;
 use crate::display::PathCommand;
 use crate::display::ShapeTransform;
 use crate::flow::flow_anchored_text_box;
+// Own lines (anti-conflict): turned text-box text (`docs/182` G-3).
+use crate::flow::FlowedTextBox;
 use crate::page::{
     AnchorContent, AnchorPath, AnchorStroke, AnchorZ, PaginatedLayout, PlacedAnchor, PlacedFragment,
 };
+use crate::page::{QUARTER_TURN, TextOrientation};
 use crate::paginate::PageConfig;
+use casual_doc_model::v1::{TextBoxBodyProperties, TextBoxInsets};
 // Own line (anti-conflict): the theme style resolution types.
 use crate::text::{LineShaper, TextBoxStroke};
 use crate::units::{
@@ -799,14 +805,17 @@ fn collect_inlines(
                 let (page_index, refs) =
                     target(layout, ctx, paragraph, scope, section, known_target);
                 let mut rect = resolve_anchor_rect(&anchor, extent, &refs);
-                let flowed = flow_anchored_text_box(
+                // A lone `TextBox` has no shape rotation of its own (a turned
+                // one is imported as a group of one), so only its body turns it.
+                let (flowed, size, orientation) = flow_turned_text_box(
                     ctx.document,
                     &text_box.blocks,
                     ctx.shaper,
                     rect.size,
                     &text_box.body_properties,
+                    0,
                 );
-                rect.size = flowed.size;
+                rect.size = size;
                 push(
                     layout,
                     page_index,
@@ -822,13 +831,14 @@ fn collect_inlines(
                             // importer REPORTS the dropped preset rather than
                             // letting it vanish.
                             backdrop: None,
+                            orientation,
                         },
                         rect,
                         behind_doc: anchor.behind_doc,
                         z,
                         descr: None,
-                        // Rotated text-box CONTENT is a follow-up; the box paints
-                        // axis-aligned for now.
+                        // The frame of a lone text box is never turned: its
+                        // `wps:bodyPr@rot`/`@vert` turn only the text.
                         transform: None,
                     },
                 );
@@ -971,23 +981,25 @@ fn place_group_children(
                 );
             }
             GroupChild::TextBox(text_box) => {
-                // Repositioned but NOT reoriented. `compose_anchor` hands
-                // `anchor.transform` to the box's backdrop, fill and border but
-                // composes its text blocks outside any layer, so a rotation here
-                // would spin the chrome and leave the glyphs behind — visibly worse
-                // than an unrotated box in the right place. Rotated text-box content
-                // is the already-tracked follow-up this waits on.
+                // Repositioned AND reoriented (`docs/182` G-3): the frame takes
+                // its composed rotation and flips, and the text takes the
+                // rotation (with the body's own) through `orientation`, which
+                // `compose_anchor` and the hit-test both apply. A flip is the
+                // outline's alone; Word keeps the words readable.
                 let mut rect =
                     pose.reposition(mapper.child_rect(origin, text_box.offset, text_box.extent));
                 let placed_size = rect.size;
-                let flowed = flow_anchored_text_box(
+                let (rotation, flip_h, flip_v) =
+                    pose.compose_child(text_box.rotation, text_box.flip_h, text_box.flip_v);
+                let (flowed, size, orientation) = flow_turned_text_box(
                     ctx.document,
                     &text_box.blocks,
                     ctx.shaper,
                     rect.size,
                     &text_box.body_properties,
+                    rotation.unwrap_or(0),
                 );
-                rect.size = flowed.size;
+                rect.size = size;
                 let z = AnchorZ {
                     relative_height,
                     order: ctx.next_order(),
@@ -1016,14 +1028,13 @@ fn place_group_children(
                                 .flatten(),
                             content_layout: flowed.content_layout,
                             backdrop,
+                            orientation,
                         },
                         rect,
                         behind_doc,
                         z,
                         descr: None,
-                        // Rotated text-box CONTENT is a follow-up; the box paints
-                        // axis-aligned for now.
-                        transform: None,
+                        transform: shape_transform(rect, flip_h, flip_v, rotation),
                     },
                 );
             }
@@ -1220,8 +1231,12 @@ pub(crate) fn geometry_content(
     let Some(resolved) = resolved else {
         return rectangle();
     };
+    // The rule is the geometry's own: a preset is always non-zero.
+    let fill_rule = shape
+        .custom
+        .map_or(FillRule::NonZero, |custom| custom.fill_rule);
     AnchorContent::Path {
-        paths: anchor_paths(&resolved, shape.extent, rect),
+        paths: anchor_paths(&resolved, shape.extent, rect, fill_rule),
         fill: fill.cloned(),
         stroke: shape_stroke(stroke),
         head_end: stroke.and_then(|s| s.head_end),
@@ -1237,7 +1252,12 @@ pub(crate) fn geometry_content(
 /// already absolute EMU and convert at 635 per twip.
 ///
 /// Complexity: O(c) in the resolved commands.
-fn anchor_paths(resolved: &ResolvedGeometry, extent: Extent, rect: Rect) -> Vec<AnchorPath> {
+fn anchor_paths(
+    resolved: &ResolvedGeometry,
+    extent: Extent,
+    rect: Rect,
+    fill_rule: FillRule,
+) -> Vec<AnchorPath> {
     #[allow(clippy::cast_precision_loss)] // see `geometry_content`
     let scale = |painted: Twip, own: i64| {
         if own > 0 {
@@ -1288,6 +1308,7 @@ fn anchor_paths(resolved: &ResolvedGeometry, extent: Extent, rect: Rect) -> Vec<
                 .collect(),
             fill: path.fill,
             stroke: path.stroke,
+            fill_rule,
         })
         .collect()
 }
@@ -1315,6 +1336,68 @@ fn text_box_backdrop(
         text_box.fill.as_ref(),
         text_box.border,
     )))
+}
+
+/// Flows a floating or grouped text box's content UPRIGHT, in the box its lines
+/// run along, and says how that box turns onto the frame (`docs/182` G-3).
+///
+/// `frame` is the frame's placed size and `shape_rotation` the shape's own
+/// composed `a:xfrm@rot`. When the lines run vertically (`vert`/`vert270`) the
+/// content is flowed in the frame with width and height exchanged and the insets
+/// turned with it, so each physical inset stays on its physical side. Returns
+/// the flowed content, the frame's (possibly autofit-grown) size and the
+/// orientation.
+///
+/// Complexity: one flow of the box's blocks, as before.
+fn flow_turned_text_box(
+    document: &Document,
+    blocks: &[BlockNode],
+    shaper: &dyn LineShaper,
+    frame: Size,
+    properties: &TextBoxBodyProperties,
+    shape_rotation: i32,
+) -> (FlowedTextBox, Size, TextOrientation) {
+    let turns = properties.vertical_text.quarter_turns();
+    let exchanged = turns % 2 == 1;
+    let rotation = i64::from(shape_rotation)
+        + i64::from(properties.text_rotation)
+        + i64::from(turns) * i64::from(QUARTER_TURN);
+    if !exchanged {
+        let flowed = flow_anchored_text_box(document, blocks, shaper, frame, properties);
+        let size = flowed.size;
+        return (flowed, size, TextOrientation::new(rotation, false));
+    }
+    let insets = properties.insets;
+    // The content box turns onto the frame clockwise by `turns` quarters, so
+    // its left edge lands on the frame's top (one turn) or bottom (three).
+    let turned = if turns == 1 {
+        TextBoxInsets {
+            left_emu: insets.top_emu,
+            top_emu: insets.right_emu,
+            right_emu: insets.bottom_emu,
+            bottom_emu: insets.left_emu,
+        }
+    } else {
+        TextBoxInsets {
+            left_emu: insets.bottom_emu,
+            top_emu: insets.left_emu,
+            right_emu: insets.top_emu,
+            bottom_emu: insets.right_emu,
+        }
+    };
+    let content_properties = TextBoxBodyProperties {
+        insets: turned,
+        ..*properties
+    };
+    let flowed = flow_anchored_text_box(
+        document,
+        blocks,
+        shaper,
+        Size::new(frame.height, frame.width),
+        &content_properties,
+    );
+    let size = Size::new(flowed.size.height, flowed.size.width);
+    (flowed, size, TextOrientation::new(rotation, true))
 }
 
 /// A text box's own extent grown by the factor its text's autofit grew the

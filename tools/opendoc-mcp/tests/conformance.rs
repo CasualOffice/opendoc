@@ -950,3 +950,148 @@ fn a_client_that_opens_with_initialize_keeps_the_older_lifecycle() {
     assert!(listed["result"]["tools"].is_array(), "{listed}");
     assert_eq!(client.raw("ping", json!({}))["result"], json!({}));
 }
+
+/// `docs/182` P1 headless reach: `open_document` opens a PDF through the
+/// registry, and an agent reads it and suggests into one of its frames with
+/// the same tools it uses on a DOCX. No PDF-specific tool exists.
+#[test]
+fn an_agent_opens_a_pdf_reads_it_and_suggests_into_a_frame() {
+    let base = sandbox("pdf");
+    std::fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/pdf/synthetic-prose.pdf"
+        ),
+        base.join("root/prose.pdf"),
+    )
+    .expect("fixture");
+    let root = arg(&base.join("root"));
+    let mut client = Client::start(&["--root", &root, "--profile", "suggest"]);
+    let opened = client.ok("open_document", json!({ "path": "prose.pdf" }));
+    assert_eq!(opened["format"], "application.pdf", "{opened}");
+    assert_eq!(opened["pageCount"], 2, "{opened}");
+    let doc = opened["document"].clone();
+
+    let hits = client.ok(
+        "search",
+        json!({ "document": doc, "query": "lazy dog", "surface": "all" }),
+    );
+    let node = hits["hits"][0]["node"].clone();
+    assert!(node.is_string(), "the frame text is searchable: {hits}");
+    assert!(
+        opened["importSummary"]
+            .to_string()
+            .contains("pdf.import.font_substituted"),
+        "the import's findings reach the agent: {opened}"
+    );
+
+    let plan = json!({
+        "base_revision": opened["revision"],
+        "edits": [{ "op": "replace_text", "target": { "node": node, "exact": "lazy dog" }, "text": "sleepy cat" }],
+    });
+    client.ok("apply_edits", json!({ "document": doc, "plan": plan }));
+    assert_eq!(
+        client.ok("list_tracked_changes", json!({ "document": doc }))["total"],
+        2,
+        "a suggestion inside a PDF frame is a tracked deletion and insertion"
+    );
+}
+
+/// A one-page image-only PDF: a white 8 x 8 grey picture over the whole
+/// page, uncompressed. A scan with nothing native on it.
+fn blank_scan() -> Vec<u8> {
+    let objects: [Vec<u8>; 5] = [
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>".to_vec(),
+        [
+            b"<< /Type /XObject /Subtype /Image /Width 8 /Height 8 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 64 >>\nstream\n".as_slice(),
+            &[255u8; 64],
+            b"\nendstream",
+        ]
+        .concat(),
+        {
+            let content = b"q 612 0 0 792 0 0 cm /Im0 Do Q";
+            [
+                format!("<< /Length {} >>\nstream\n", content.len()).as_bytes(),
+                content,
+                b"\nendstream",
+            ]
+            .concat()
+        },
+    ];
+    let mut out = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+        out.extend_from_slice(body);
+        out.extend_from_slice(b"\nendobj\n");
+    }
+    let xref = out.len();
+    out.extend_from_slice(
+        format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+    );
+    for offset in offsets {
+        out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    out
+}
+
+/// `--ocr-models` (`docs/178` §5.6, `docs/182` §20a): the directory must be
+/// inside a `--root`; a missing or unloadable one leaves OCR off and a scan
+/// reports `pdf.import.ocr_unavailable`. Nothing is fetched. The real models
+/// are exercised by `casual-doc-pdf-import`'s model-gated tests.
+#[test]
+fn ocr_models_must_be_inside_the_roots_and_missing_ones_report_ocr_unavailable() {
+    let base = sandbox("ocr-models");
+    std::fs::write(base.join("root/scan.pdf"), blank_scan()).expect("fixture");
+    std::fs::create_dir_all(base.join("outside/models/paddle")).expect("mkdir");
+    let root = arg(&base.join("root"));
+
+    // Outside every root: the server refuses to start.
+    let outside = arg(&base.join("outside/models"));
+    let output = Command::new(env!("CARGO_BIN_EXE_opendoc-mcp"))
+        .args(["--root", &root, "--ocr-models", &outside])
+        .stdin(Stdio::null())
+        .output()
+        .expect("runs");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("outside every --root"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Missing, then present but not loadable (bytes that are no model): the
+    // server runs without OCR and says so in the import summary.
+    std::fs::create_dir_all(base.join("root/models/paddle")).expect("mkdir");
+    for (file, bytes) in [
+        ("root/models/paddle/det.onnx", "not a model"),
+        ("root/models/paddle/rec.onnx", "not a model"),
+        ("root/models/paddle/rec.dict.txt", "a\n"),
+    ] {
+        std::fs::write(base.join(file), bytes).expect("fixture");
+    }
+    for dir in [
+        arg(&base.join("root/absent")),
+        arg(&base.join("root/models")),
+    ] {
+        let mut client = Client::start(&["--root", &root, "--ocr-models", &dir]);
+        let opened = client.ok("open_document", json!({ "path": "scan.pdf" }));
+        assert!(
+            opened["importSummary"]
+                .to_string()
+                .contains("pdf.import.ocr_unavailable"),
+            "{dir}: {opened}"
+        );
+        assert_eq!(opened["ocr"]["provider"], Value::Null, "{dir}: {opened}");
+    }
+}

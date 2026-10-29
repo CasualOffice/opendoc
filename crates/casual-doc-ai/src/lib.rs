@@ -51,5 +51,9 @@ pub use profile::Profile;
 /// `w:author`, so Word's review pane shows it too.
 pub const AI_AUTHOR: &str = "Casual AI";
 
+/// The host's OCR for PDF sessions (`docs/182` §20a), re-exported so a front
+/// door (`opendoc-mcp`) configures it without naming `casual-doc-io`.
+#[cfg(feature = "pdf-import")]
+pub use casual_doc_io::{PdfOcrModels, PdfOcrModelsError, PdfOcrOptions, PdfOcrSummary, pdf_ocr};
 pub use session::{Clock, ExportFormat, Session, SessionConfig};
 pub use surface::Surface;

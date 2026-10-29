@@ -2206,6 +2206,8 @@ pub(crate) fn import_with_named_sources(
         document_defaults,
         latent_styles,
         font_table,
+        // DOCX faces live on their `w:font`; this slot is for other sources.
+        font_programs: Vec::new(),
         font_scheme: theme.font_scheme,
         color_scheme: theme.color_scheme,
         format_scheme: theme.format_scheme,

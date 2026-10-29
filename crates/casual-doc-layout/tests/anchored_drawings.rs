@@ -1306,6 +1306,7 @@ fn floating_text_box_body_properties_apply_in_both_headers_and_footers() {
             horizontal_overflow: TextBoxHorizontalOverflow::Clip,
             vertical_overflow: TextBoxVerticalOverflow::Clip,
             auto_fit: TextBoxAutoFit::None,
+            ..TextBoxBodyProperties::default()
         },
         blocks: vec![BlockNode::Paragraph(Paragraph {
             id: node(411),
@@ -2523,7 +2524,10 @@ fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
         .iter()
         .filter_map(|item| match item {
             PaintItem::Shape {
-                geometry: DisplayShapeGeometry::Path { commands, closed },
+                geometry:
+                    DisplayShapeGeometry::Path {
+                        commands, closed, ..
+                    },
                 ..
             } => Some(*closed || closes(commands)),
             _ => None,

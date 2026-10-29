@@ -169,6 +169,14 @@ impl FormatRegistry {
         Ok(())
     }
 
+    /// Removes a format's importer, exporter and descriptor, so a host can
+    /// re-register it with a different capability (the PDF adapter's import
+    /// opt-in replaces the export-only descriptor this way). Returns whether
+    /// anything was registered.
+    pub fn unregister(&mut self, format: &FormatId) -> bool {
+        self.formats.remove(format).is_some()
+    }
+
     /// Returns all registered descriptors in ascending format-id order.
     #[must_use]
     pub fn descriptors(&self) -> Vec<&FormatDescriptor> {

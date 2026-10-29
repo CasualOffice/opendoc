@@ -1,0 +1,30 @@
+[package]
+name = "casual-doc-pdf-read"
+description = "Security-bounded PDF reader for OpenDoc: wraps hayro and collects per-page evidence (glyph runs, paths, images, marked content, page boxes) for import"
+version.workspace = true
+edition.workspace = true
+# hayro 0.8 declares rust-version 1.92; the workspace toolchain is pinned to
+# 1.96.0 (`rust-toolchain.toml`).
+rust-version = "1.92"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+# The native-evidence provider chosen in docs/182 §3.1 and measured in P0
+# (fixtures/pdf/measurement.json). Apache-2.0 OR MIT, pure Rust, WASM-clean.
+hayro-syntax = "0.8.0"
+hayro-interpret = "0.8.0"
+kurbo = "0.13"
+# Bounded inflate for the decompression-bomb pre-pass (docs/21 PDF limits).
+flate2 = "1.1"
+# Re-encodes decoded rasters for the model's media table (PNG is lossless).
+png = "0.18"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# An independent reader for the Unicode cross-check: the writer's inspector.
+casual-doc-pdf.workspace = true

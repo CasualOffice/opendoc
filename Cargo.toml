@@ -9,9 +9,12 @@ members = [
     "crates/casual-doc-io",
     "crates/casual-doc-layout",
     "crates/casual-doc-model",
+    "crates/casual-doc-ocr",
     "crates/casual-doc-odf",
     "crates/casual-doc-package",
     "crates/casual-doc-pdf",
+    "crates/casual-doc-pdf-import",
+    "crates/casual-doc-pdf-read",
     "crates/casual-doc-ooxml",
     "crates/casual-doc-render",
     "crates/casual-doc-render-gpu",
@@ -27,6 +30,7 @@ members = [
     "tools/opendoc-fidelity",
     "tools/opendoc-mcp",
     "tools/opendoc-parity",
+    "tools/opendoc-pdf-measure",
     "tools/opendoc-render",
 ]
 resolver = "3"
@@ -49,9 +53,12 @@ casual-doc-import = { path = "crates/casual-doc-import", version = "=0.0.1" }
 casual-doc-io = { path = "crates/casual-doc-io", version = "=0.0.1" }
 casual-doc-layout = { path = "crates/casual-doc-layout", version = "=0.0.1" }
 casual-doc-model = { path = "crates/casual-doc-model", version = "=0.0.1" }
+casual-doc-ocr = { path = "crates/casual-doc-ocr", version = "=0.0.1", default-features = false }
 casual-doc-odf = { path = "crates/casual-doc-odf", version = "=0.0.1" }
 casual-doc-package = { path = "crates/casual-doc-package", version = "=0.0.1" }
 casual-doc-pdf = { path = "crates/casual-doc-pdf", version = "=0.0.1" }
+casual-doc-pdf-import = { path = "crates/casual-doc-pdf-import", version = "=0.0.1" }
+casual-doc-pdf-read = { path = "crates/casual-doc-pdf-read", version = "=0.0.1" }
 casual-doc-ooxml = { path = "crates/casual-doc-ooxml", version = "=0.0.1" }
 casual-doc-render = { path = "crates/casual-doc-render", version = "=0.0.1" }
 casual-doc-render-gpu = { path = "crates/casual-doc-render-gpu", version = "=0.0.1" }

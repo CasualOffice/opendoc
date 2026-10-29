@@ -39,6 +39,8 @@ use casual_doc_model::v1::{CROP_FULL, CropRect, OPACITY_FULL};
 // Kept on a separate `use` line (anti-conflict): the dash/line-end model types the
 // shape paint path consumes.
 use casual_doc_model::v1::{DashStyle, LineEnd, LineEndKind, LineEndSize};
+// Own line (anti-conflict): the model's path fill rule (`docs/182` G-2).
+use casual_doc_model::v1::FillRule as ModelFillRule;
 use skrifa::bitmap::BitmapData;
 use skrifa::color::{Brush, ColorPainter, PaintCachedColorGlyph, PaintError};
 use skrifa::instance::{LocationRef, Size};
@@ -1910,7 +1912,9 @@ fn render_shape(
             rounded_rect_path(*rect, *radius, dpi),
             device_bounds(*rect, dpi),
         ),
-        ShapeGeometry::Path { commands, closed } => (
+        ShapeGeometry::Path {
+            commands, closed, ..
+        } => (
             command_path(commands, *closed, dpi),
             command_bounds(commands, dpi),
         ),
@@ -1943,9 +1947,18 @@ fn render_shape(
             }
         }
         paint.anti_alias = true;
+        // A path states its rule (`docs/182` G-2); every other primitive is a
+        // single contour, for which the two rules agree.
+        let rule = match geometry {
+            ShapeGeometry::Path {
+                fill_rule: ModelFillRule::EvenOdd,
+                ..
+            } => FillRule::EvenOdd,
+            _ => FillRule::Winding,
+        };
         surface
             .pixmap
-            .fill_path(&path, &paint, FillRule::Winding, transform, clip);
+            .fill_path(&path, &paint, rule, transform, clip);
     }
 
     if let Some(stroke) = stroke {
@@ -1973,9 +1986,9 @@ fn render_shape(
         // rotated/flipped shape keeps its heads attached and correctly oriented.
         let ends = match geometry {
             ShapeGeometry::Line { from, to } => Some(((*from, *to), (*to, *from))),
-            ShapeGeometry::Path { commands, closed } if !*closed => {
-                casual_doc_layout::display::open_path_ends(commands)
-            }
+            ShapeGeometry::Path {
+                commands, closed, ..
+            } if !*closed => casual_doc_layout::display::open_path_ends(commands),
             _ => None,
         };
         if let Some(((start, start_toward), (end, end_from))) = ends {
@@ -3878,6 +3891,7 @@ mod tests {
                     },
                 ],
                 closed: false,
+                fill_rule: casual_doc_model::v1::FillRule::NonZero,
             },
             fill: None,
             stroke: Some(ShapeOutline {
@@ -3920,6 +3934,7 @@ mod tests {
                     },
                 ],
                 closed: false,
+                fill_rule: casual_doc_model::v1::FillRule::NonZero,
             },
             fill: None,
             stroke: Some(ShapeOutline {
@@ -3975,6 +3990,7 @@ mod tests {
                         },
                     ],
                     closed,
+                    fill_rule: casual_doc_model::v1::FillRule::NonZero,
                 },
                 fill: None,
                 stroke: Some(ShapeOutline {
@@ -4046,6 +4062,7 @@ mod tests {
                     },
                 ],
                 closed: false,
+                fill_rule: casual_doc_model::v1::FillRule::NonZero,
             },
             fill: None,
             stroke: Some(ShapeOutline {
@@ -4097,6 +4114,7 @@ mod tests {
                     PathCommand::LineTo { point: at(10, 50) },
                 ],
                 closed: false,
+                fill_rule: casual_doc_model::v1::FillRule::NonZero,
             },
             fill: None,
             stroke: Some(black_outline()),
@@ -4147,6 +4165,7 @@ mod tests {
                         },
                     ],
                     closed: false,
+                    fill_rule: casual_doc_model::v1::FillRule::NonZero,
                 },
                 fill: None,
                 stroke: Some(black_outline()),

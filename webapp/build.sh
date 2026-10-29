@@ -130,11 +130,15 @@ run_wasm_pack() {
   # tofu), so dropping the bytes requires the host to register equivalents first
   # — `webapp/src/web_fonts.mjs` currently fetches Roboto, Noto Sans and Noto
   # Serif and none of these four families. Owner call, font-provisioning lane.
+  #
+  # `pdf-import` (`docs/182` P2): File -> Open accepts a PDF, imported through
+  # the staged `beginPdfImport` job. Its size cost is recorded in
+  # `tests/wasm_size.test.mjs` and `docs/182` §17.
   wasm-pack build "$repo/crates/casual-doc-wasm" \
     --target web \
     --out-dir "$here/pkg" \
     --out-name casual_doc_wasm \
-    -- --features web-host-fonts
+    -- --features web-host-fonts,pdf-import
 }
 
 build_with_retry() {

@@ -68,6 +68,7 @@
 mod cluster;
 mod content;
 mod font;
+mod incremental;
 pub mod inspect;
 mod picture;
 mod subset;
@@ -90,9 +91,13 @@ pub use cluster::PdfTextSource;
 pub use content::PdfPage;
 pub use font::EmbeddedFace;
 pub use font::PdfFontSource;
+pub use incremental::EditedPage;
+pub use incremental::IncrementalExport;
+pub use incremental::write_incremental_update;
 pub use picture::MapMediaSource;
 pub use picture::NoMediaSource;
 pub use picture::PdfMediaSource;
+pub use writer::IncrementalBase;
 
 use cluster::ClusterText;
 use content::Transcriber;
@@ -394,6 +399,64 @@ fn write_pdf_with_metadata(
         page_objects.push(object);
     }
 
+    let (findings, faces) =
+        write_resources(&mut writer, transcriber, pages, fonts, text, resources)?;
+
+    let kids: Vec<String> = page_objects
+        .iter()
+        .map(|object| object.reference())
+        .collect();
+    writer.object(
+        page_tree,
+        &format!(
+            "<</Type/Pages/Count {}/Kids[{}]>>",
+            page_objects.len(),
+            kids.join(" ")
+        ),
+    );
+
+    let info = if metadata.is_empty() && options.producer.is_none() {
+        None
+    } else {
+        let object = writer.reserve();
+        let producer = options
+            .producer
+            .clone()
+            .unwrap_or_else(|| "OpenDoc".to_owned());
+        let mut body = format!("<</Producer {}", text_string(&producer));
+        for (key, value) in metadata {
+            body.push_str(&format!("/{key} {}", text_string(value)));
+        }
+        body.push_str(">>");
+        writer.object(object, &body);
+        Some(object)
+    };
+
+    writer.object(
+        catalog,
+        &format!("<</Type/Catalog/Pages {}>>", page_tree.reference()),
+    );
+
+    Ok(PdfExport {
+        bytes: writer.finish(catalog, info),
+        pages: pages.len(),
+        faces,
+        findings,
+    })
+}
+
+/// Writes the file-wide resource dictionary `resources` the transcribed pages
+/// share (fonts, images, shadings, graphics states), and returns the findings
+/// and the embedded faces. Shared by the whole-file writer and the incremental
+/// update so both report and embed identically.
+fn write_resources(
+    writer: &mut Writer,
+    transcriber: Transcriber<'_>,
+    pages: &[PdfPage<'_>],
+    fonts: &dyn PdfFontSource,
+    text: &dyn PdfTextSource,
+    resources: writer::Ref,
+) -> Result<(Vec<PdfFinding>, Vec<EmbeddedFace>), PdfError> {
     let mut shading_entries = String::new();
     for (name, dictionary) in transcriber.shadings().to_vec() {
         let object = writer.reserve();
@@ -444,8 +507,8 @@ fn write_pdf_with_metadata(
     let has_fonts = !transcriber.fonts.is_empty();
     let has_images = !transcriber.images.is_empty();
     let clusters = ClusterText::build(pages, text);
-    let faces = transcriber.fonts.write(&mut writer, fonts, &clusters)?;
-    transcriber.images.write(&mut writer);
+    let faces = transcriber.fonts.write(writer, fonts, &clusters)?;
+    transcriber.images.write(writer);
 
     for face in &faces {
         if !face.subset {
@@ -487,48 +550,7 @@ fn write_pdf_with_metadata(
     }
     resource_body.push_str("/ProcSet[/PDF/Text/ImageB/ImageC/ImageI]>>");
     writer.object(resources, &resource_body);
-
-    let kids: Vec<String> = page_objects
-        .iter()
-        .map(|object| object.reference())
-        .collect();
-    writer.object(
-        page_tree,
-        &format!(
-            "<</Type/Pages/Count {}/Kids[{}]>>",
-            page_objects.len(),
-            kids.join(" ")
-        ),
-    );
-
-    let info = if metadata.is_empty() && options.producer.is_none() {
-        None
-    } else {
-        let object = writer.reserve();
-        let producer = options
-            .producer
-            .clone()
-            .unwrap_or_else(|| "OpenDoc".to_owned());
-        let mut body = format!("<</Producer {}", text_string(&producer));
-        for (key, value) in metadata {
-            body.push_str(&format!("/{key} {}", text_string(value)));
-        }
-        body.push_str(">>");
-        writer.object(object, &body);
-        Some(object)
-    };
-
-    writer.object(
-        catalog,
-        &format!("<</Type/Catalog/Pages {}>>", page_tree.reference()),
-    );
-
-    Ok(PdfExport {
-        bytes: writer.finish(catalog, info),
-        pages: pages.len(),
-        faces,
-        findings,
-    })
+    Ok((findings, faces))
 }
 
 /// The `/Info` entries a document's own metadata supplies. No clock is read:

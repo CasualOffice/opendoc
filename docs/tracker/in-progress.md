@@ -30,6 +30,7 @@ currently assigned. Rows stay in their queue order.
 | 143 | FID-L-13 | P2 | Cell `noWrap`, `fitText`, `hideMark` and cell `textDirection` are unconsumed | Partly fixed |
 | 150 | FID-R-05 | P2 | Retained opaque parts are never invalidated on edit | Partly fixed (`fid/attributes-v2`) |
 | 164 | OO-014 | P2 | Charts and SmartArt are not drawn, so there is nothing to author | In progress |
+| 195 | RM-49 | — | PDF into the model for editing (owner, 2026-10-28): fixed-layout import (each page a section of page-anchored text boxes, pictures and shape groups, paragraphs through the body pipeline), reflow as an explicit "Convert to flowing document", native evidence parsed in Rust by `hayro` (PDFium fallback), a resumable cancellable import job, exact/semantic save then a byte-preserving incremental update | In progress: built in #899, not merged |
 | 198 | RM-18 | P2 | Character formatting: effects and spacing: effect toggles; Outline, shadow, emboss and engrave: author and paint; Character border and emphasis marks: author and paint; Font dialog, Advanced tab | Open — implementation merged in #835; acceptance and parity re-grade pending |
 | 200 | RM-20 | P2 | Paragraph formatting: right-to-left; Pagination and outline; Tabs; Paragraph borders; Clear all paragraph formatting | In progress |
 | 201 | RM-21 | P2 | Lists and styles: multilevel list gallery; List settings dialog; Numbering value and symbol bullets; Picture bullets: model, draw, save, author; Styles: new from selection, update to match, delete, next style, restore | In progress |

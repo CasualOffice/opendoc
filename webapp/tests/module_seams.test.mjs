@@ -476,6 +476,10 @@ const PURE_MODULES = [
   // checks — which is `docs/107` §4's rule about counts rather than clocks,
   // one layer out. The DOM half is `main.js`'s status line.
   "collab_transport.mjs",
+  // The staged PDF import's slices (`docs/182` §6): the job, the clock and the
+  // slice scheduler are injected, so "no slice overruns its budget" and "Cancel
+  // lands between pages" are exact in node instead of timed in a browser.
+  "pdf_import_scheduler.mjs",
   // Holds the vertical goal column and nothing else: no DOM and no engine, so
   // the arrow-key rule is unit-testable as a plain state machine.
   "caret_navigation.mjs",

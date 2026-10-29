@@ -93,6 +93,37 @@ defaults before PNG/JPEG decode and applies a matching 400,000,000-byte decoder
 allocation ceiling. Media outside either bound follows the renderer's existing
 graceful-skip behavior. Aggregate decoded-image caching remains host policy.
 
+## PDF Import Defaults
+
+Set 2026-10-29 from the P0 measurement (`docs/182` §16), whose artifact is
+`fixtures/pdf/measurement.json` (regenerate with
+`cargo run --release -p opendoc-pdf-measure -- measure fixtures/pdf --out fixtures/pdf/measurement.json`;
+the `opendoc-pdf-measure` test fails if the committed numbers drift). Enforced by
+`casual_doc_pdf_read::PdfReadLimits`; a breach is the typed refusal
+`PdfReadError::Limit` with the limit's name, observed and allowed values, and no
+partial document (PDFR-I3).
+
+| Limit | Secure default | Hard ceiling | Measured basis |
+| --- | ---: | ---: | --- |
+| Input bytes | 256 MiB | 1 GiB | reuses the package input limit |
+| Indirect objects | 500,000 | 4,000,000 | corpus max 5,002 (the page-flood file) |
+| Pages | 2,000 | 10,000 | `docs/131` §14.2 provisional, kept |
+| Page width or height | 14,400 pt | 72,000 pt | `docs/131` §14.2; the model's section cap is 1,584 pt, so a larger admitted page is clamped and reported |
+| Decoded bytes per content stream | 32 MiB | 256 MiB | real-world corpus max page under 0.1 MiB; the 96 MiB bomb peaked at 235 MB heap |
+| Decoded content bytes per document | 256 MiB | 1 GiB | as above |
+| Operators per page | 1,000,000 | 4,000,000 | real-world max 19,274 per page; the 2,000,000-operator flood is refused |
+| Evidence records per page (glyphs + paths + images) | 100,000 | 1,000,000 | `docs/131` §14.2 provisional, kept |
+| Declared image pixels | 100 megapixels | 400 megapixels | reuses the image limit; real-world max 7.7 MP |
+| Distinct fonts per document | 4,096 | 16,384 | real-world max 116 over 4 files |
+| Embedded font program bytes | 32 MiB | 128 MiB | reuses the font limit |
+| Form/pattern/Type3 nesting | 50 | 50 | hayro's fixed interpreter bound (`MAX_NESTED_INTERPRETATION_DEPTH`) |
+
+Content-stream decoded size is checked with a bounded inflate **before** the
+interpreter decodes a stream, so a bomb is refused without being expanded.
+Encrypted files are refused (`pdf.import.encrypted_unsupported`), including
+files with an empty user password. JavaScript, launch actions, embedded files
+and form fields are never executed or extracted, and are reported.
+
 ## Runtime Budgets
 
 Layout, history, scene, image cache, and operation-log budgets are separate from

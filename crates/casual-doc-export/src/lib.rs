@@ -28,6 +28,8 @@ mod chart;
 mod chart_workbook;
 // Own line (anti-conflict): legacy VML written back as its source.
 mod legacy_vml;
+// Own line (anti-conflict): non-DOCX font programs embedded as `.odttf` (`docs/182` G-1).
+mod font_programs;
 mod report;
 mod semantic;
 pub use report::{

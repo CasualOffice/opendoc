@@ -31,6 +31,8 @@ use casual_doc_model::v1::{
     BlockNode, Definitions, Document, EmbeddedFace, EmbeddedFontSet, FontDescriptor, FontSig,
     InlineNode, Paragraph, ParagraphProperties, Run, RunProperties,
 };
+// Own line (anti-conflict): `docs/182` G-1 font programs.
+use casual_doc_model::v1::{EmbeddedFontProgram, FontProgramFormat, FontProgramStyle};
 
 /// A family name no entry in `font_substitution`'s table knows, and with no
 /// `mono`/`serif` substring — so without an embedded face it classifies generic
@@ -380,4 +382,168 @@ fn a_document_without_embedded_fonts_is_unaffected() {
     });
     assert_eq!(outcome, Default::default());
     assert!(shaper.registry().snapshot().is_empty());
+}
+
+// --- Font programs from a non-DOCX source (`docs/182` gap G-1) -------------
+
+const PROGRAM_REGULAR: &str = "pdf/fonts/F1.ttf";
+const PROGRAM_BOLD: &str = "pdf/fonts/F2.ttf";
+
+/// A document with NO `fontTable.xml` entry for `FAMILY` — a PDF import has
+/// none — whose only source for the family is its font programs.
+fn program_document(programs: Vec<EmbeddedFontProgram>) -> Document {
+    Document::new(
+        node(1),
+        vec![BlockNode::Paragraph(Paragraph {
+            id: node(10),
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![InlineNode::Run(Run {
+                id: node(11),
+                properties: RunProperties::default().into(),
+                text: "iiiWWW".to_owned(),
+            })],
+        })],
+        Definitions {
+            font_programs: programs,
+            ..Definitions::default()
+        },
+    )
+    .expect("the probe document is valid")
+}
+
+fn program(style: FontProgramStyle, format: FontProgramFormat, part: &str) -> EmbeddedFontProgram {
+    EmbeddedFontProgram::new(FAMILY, style, format, part).with_subsetted(true)
+}
+
+/// G-1's headline: a run naming a family the document carries as a plain
+/// TrueType program shapes with that program, and the registry serves its exact
+/// bytes to the rasterizer — so the glyphs painted are the source's own, not the
+/// metric substitute's.
+#[test]
+fn a_font_program_outranks_the_metric_substitute() {
+    let doc = program_document(vec![program(
+        FontProgramStyle::Regular,
+        FontProgramFormat::TrueType,
+        PROGRAM_REGULAR,
+    )]);
+
+    let bare = ParleyShaper::new();
+    let (substitute_face, substitute_advances) = shape(&bare, false, false);
+    assert!(!FontRegistry::is_dynamic(substitute_face));
+
+    let shaper = ParleyShaper::new();
+    let outcome = register_embedded_fonts(&shaper, &doc, |part| {
+        (part == PROGRAM_REGULAR).then_some(LIBERATION_MONO_REGULAR)
+    });
+    assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
+    assert_eq!(outcome.faces, 1);
+    assert_eq!(outcome.families, vec![FAMILY.to_owned()]);
+
+    let (face, advances) = shape(&shaper, false, false);
+    assert!(
+        FontRegistry::is_dynamic(face),
+        "the run resolved to the registered program, not a bundled substitute"
+    );
+    assert_eq!(
+        shaper.registry().face(face).unwrap().bytes.as_slice(),
+        LIBERATION_MONO_REGULAR,
+        "the rasterizer is handed the program's own bytes"
+    );
+    assert!(
+        advances.windows(2).all(|pair| pair[0] == pair[1]),
+        "shaped with the (monospaced) program itself: {advances:?}"
+    );
+    assert_ne!(advances, substitute_advances);
+}
+
+/// A program's style is its slot: a bold run picks the program filed as bold.
+///
+/// The bytes are deliberately crossed — the REGULAR slot holds Mono Bold and the
+/// BOLD slot holds Mono Regular — so the guard can tell "selected by the model's
+/// style" from "selected by the face's own weight". A PDF subset's OS/2 table is
+/// often missing or wrong; the source's declaration is what selection follows,
+/// as it does for a `w:embed*` slot.
+#[test]
+fn a_bold_font_program_serves_bold_runs() {
+    // Bold first, so registration order cannot stand in for the style either.
+    let doc = program_document(vec![
+        program(
+            FontProgramStyle::Bold,
+            FontProgramFormat::TrueType,
+            PROGRAM_BOLD,
+        ),
+        program(
+            FontProgramStyle::Regular,
+            FontProgramFormat::TrueType,
+            PROGRAM_REGULAR,
+        ),
+    ]);
+    let shaper = ParleyShaper::new();
+    let outcome = register_embedded_fonts(&shaper, &doc, |part| match part {
+        PROGRAM_REGULAR => Some(LIBERATION_MONO_BOLD),
+        PROGRAM_BOLD => Some(LIBERATION_MONO_REGULAR),
+        _ => None,
+    });
+    assert_eq!(outcome.faces, 2, "{:?}", outcome.failures);
+    for (bold, expected) in [
+        (false, LIBERATION_MONO_BOLD),
+        (true, LIBERATION_MONO_REGULAR),
+    ] {
+        let (id, _) = shape(&shaper, bold, false);
+        // A bool, not `assert_eq!` on the bytes: a failure would print 300 KB.
+        assert!(
+            shaper.registry().face(id).unwrap().bytes.as_slice() == expected,
+            "bold={bold} picked the program its style declares"
+        );
+    }
+}
+
+/// A bare CFF program cannot be registered here; it is reported by reason and
+/// the run substitutes — never a silent swap.
+#[test]
+fn a_bare_cff_program_is_reported_and_substituted() {
+    let doc = program_document(vec![program(
+        FontProgramStyle::Regular,
+        FontProgramFormat::BareCff,
+        PROGRAM_REGULAR,
+    )]);
+    let shaper = ParleyShaper::new();
+    let outcome = register_embedded_fonts(&shaper, &doc, |_| Some(LIBERATION_MONO_REGULAR));
+    assert_eq!(outcome.faces, 0);
+    assert_eq!(outcome.failures.len(), 1);
+    let failure = &outcome.failures[0];
+    assert_eq!(failure.error, EmbeddedFaceError::UnsupportedFormat);
+    assert_eq!(failure.family, FAMILY);
+    assert_eq!(failure.part_name, PROGRAM_REGULAR);
+    assert_eq!(failure.slot, "w:embedRegular");
+    let (id, _) = shape(&shaper, false, false);
+    assert!(!FontRegistry::is_dynamic(id), "the run kept its substitute");
+}
+
+/// Bytes that contradict the declared format (a TrueType file declared CFF), and
+/// a program whose bytes are absent, are each reported rather than trusted.
+#[test]
+fn a_program_with_contradicting_or_missing_bytes_is_reported() {
+    let doc = program_document(vec![
+        program(
+            FontProgramStyle::Regular,
+            FontProgramFormat::OpenTypeCff,
+            PROGRAM_REGULAR,
+        ),
+        program(
+            FontProgramStyle::Bold,
+            FontProgramFormat::TrueType,
+            PROGRAM_BOLD,
+        ),
+    ]);
+    let shaper = ParleyShaper::new();
+    let outcome = register_embedded_fonts(&shaper, &doc, |part| {
+        (part == PROGRAM_REGULAR).then_some(LIBERATION_MONO_REGULAR)
+    });
+    assert_eq!(outcome.faces, 0);
+    let errors: Vec<_> = outcome.failures.iter().map(|f| f.error).collect();
+    assert_eq!(
+        errors,
+        vec![EmbeddedFaceError::NotSfnt, EmbeddedFaceError::MissingPart]
+    );
 }

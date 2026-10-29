@@ -11,6 +11,8 @@ use casual_doc_model::v1::SectionId;
 // Kept on a separate `use` line (anti-conflict): the shape fill/outline/line-end
 // model types the anchor paint content carries.
 use casual_doc_model::v1::{DashStyle, Fill, LineEnd, PathFill};
+// Own line (anti-conflict): a path's fill rule (`docs/182` G-2).
+use casual_doc_model::v1::FillRule;
 use serde::{Deserialize, Serialize};
 
 use crate::block::{BlockFragment, ResolvedEdge};
@@ -221,6 +223,11 @@ pub enum AnchorContent {
         /// exactly as before this field existed.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         backdrop: Option<Box<AnchorContent>>,
+        /// How the TEXT is turned inside the frame: the shape's own rotation,
+        /// `wps:bodyPr@rot` and `@vert` together (`docs/182` G-3). Upright for
+        /// every text box that states none of them.
+        #[serde(default, skip_serializing_if = "TextOrientation::is_upright")]
+        orientation: TextOrientation,
     },
     /// A **positioned (floating) table** — `w:tblPr/w:tblpPr` — lifted out of
     /// block flow and placed against a page/margin/text reference frame, with
@@ -236,6 +243,123 @@ pub enum AnchorContent {
     },
 }
 
+/// A full turn in `a:xfrm@rot` units (60000ths of a degree).
+pub const FULL_TURN: i32 = 21_600_000;
+/// A quarter turn in the same units.
+pub const QUARTER_TURN: i32 = 5_400_000;
+
+/// How a floating text box's text is turned inside its frame
+/// ([`AnchorContent::TextBox`], `docs/182` G-3).
+///
+/// The text is flowed UPRIGHT in a content box and then painted, and hit, through
+/// one rotation about the frame's centre. The content box is the frame itself,
+/// or — when the lines run vertically (`vert`/`vert270`), so their length is the
+/// frame's height — the frame with its width and height `exchanged`, centred on
+/// the same point. A quarter turn of that exchanged box is exactly the frame.
+///
+/// The rotation sums the shape's own `a:xfrm@rot` (the text turns with its
+/// shape, as in Word), `wps:bodyPr@rot` (the text alone) and the direction's
+/// quarter turns. A shape's FLIP is not applied to its text: Word mirrors the
+/// outline and keeps the words readable.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub struct TextOrientation {
+    /// Clockwise rotation about the frame centre, in 60000ths of a degree,
+    /// normalised into `0..FULL_TURN`.
+    #[serde(default, skip_serializing_if = "is_zero_rotation")]
+    pub rotation: i32,
+    /// Whether the lines were flowed in the frame with its width and height
+    /// exchanged.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub exchanged: bool,
+}
+
+fn is_zero_rotation(rotation: &i32) -> bool {
+    *rotation == 0
+}
+
+impl TextOrientation {
+    /// The orientation for a total clockwise `rotation` (any `i32`, folded into
+    /// one turn) over a content box that is or is not `exchanged`.
+    #[must_use]
+    pub fn new(rotation: i64, exchanged: bool) -> Self {
+        let folded = rotation.rem_euclid(i64::from(FULL_TURN));
+        Self {
+            rotation: i32::try_from(folded).unwrap_or(0),
+            exchanged,
+        }
+    }
+
+    /// Whether the text is painted as laid out (no turn, no exchanged box).
+    #[must_use]
+    pub fn is_upright(&self) -> bool {
+        self.rotation == 0 && !self.exchanged
+    }
+
+    /// The upright box the lines were flowed in, for a frame placed at `frame`:
+    /// the frame, or the exchanged box centred on the frame's centre.
+    #[must_use]
+    pub fn content_box(&self, frame: Rect) -> Rect {
+        if !self.exchanged {
+            return frame;
+        }
+        let (width, height) = (frame.size.width.raw(), frame.size.height.raw());
+        let centre_x = frame.origin.x.raw() + width / 2;
+        let centre_y = frame.origin.y.raw() + height / 2;
+        Rect::new(
+            Point::new(Twip(centre_x - height / 2), Twip(centre_y - width / 2)),
+            Size::new(Twip(height), Twip(width)),
+        )
+    }
+
+    /// The paint transform that turns the content box onto the page, or `None`
+    /// when the text is not turned.
+    #[must_use]
+    pub fn transform(&self, frame: Rect) -> Option<ShapeTransform> {
+        (self.rotation != 0).then(|| ShapeTransform {
+            rotation: self.rotation,
+            flip_h: false,
+            flip_v: false,
+            center: Point::new(
+                Twip(frame.origin.x.raw() + frame.size.width.raw() / 2),
+                Twip(frame.origin.y.raw() + frame.size.height.raw() / 2),
+            ),
+        })
+    }
+
+    /// Maps a page point into the content box's upright space: the inverse of
+    /// [`transform`](Self::transform). Exact at quarter turns (integer swaps);
+    /// rounded to the nearest twip at any other angle. O(1).
+    #[must_use]
+    pub fn to_content(&self, frame: Rect, point: Point) -> Point {
+        let cx = i64::from(frame.origin.x.raw()) * 2 + i64::from(frame.size.width.raw());
+        let cy = i64::from(frame.origin.y.raw()) * 2 + i64::from(frame.size.height.raw());
+        // Twice the offset from the centre, so a half-twip centre stays exact.
+        let dx = i64::from(point.x.raw()) * 2 - cx;
+        let dy = i64::from(point.y.raw()) * 2 - cy;
+        // Undo a clockwise turn in y-down space: rotate counter-clockwise.
+        let (ux, uy) = match self.rotation {
+            0 => (dx, dy),
+            QUARTER_TURN => (dy, -dx),
+            r if r == 2 * QUARTER_TURN => (-dx, -dy),
+            r if r == 3 * QUARTER_TURN => (-dy, dx),
+            r => {
+                let angle = f64::from(r) / 60_000.0 * core::f64::consts::PI / 180.0;
+                let (sin, cos) = angle.sin_cos();
+                #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+                {
+                    let (x, y) = (dx as f64, dy as f64);
+                    (
+                        (x * cos + y * sin).round() as i64,
+                        (-x * sin + y * cos).round() as i64,
+                    )
+                }
+            }
+        };
+        let clamp = |v: i64| Twip(i32::try_from(v.div_euclid(2)).unwrap_or(i32::MAX));
+        Point::new(clamp(ux + cx), clamp(uy + cy))
+    }
+}
+
 /// One painted path of an [`AnchorContent::Path`] (`a:pathLst/a:path`), in
 /// page-local twips.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -249,6 +373,10 @@ pub struct AnchorPath {
     pub fill: PathFill,
     /// Whether the shape's outline is drawn on this path (`a:path@stroke`).
     pub stroke: bool,
+    /// The geometry's fill rule (`CustomGeometry::fill_rule`), which applies to
+    /// each of its paths. Omitted when non-zero.
+    #[serde(default, skip_serializing_if = "FillRule::is_non_zero")]
+    pub fill_rule: FillRule,
 }
 
 fn is_norm_fill(fill: &PathFill) -> bool {
