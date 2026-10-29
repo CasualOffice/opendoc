@@ -375,7 +375,7 @@ test("the gutter moves the text column in from the binding edge", async ({
   expect(consoleErrors).toEqual([]);
 });
 
-test("Link to previous is offered, disabled, and says why — never a dead control", async ({
+test("Link to previous is offered per band, and on the first section is disabled and says why", async ({
   page,
   consoleErrors,
 }) => {
@@ -383,11 +383,14 @@ test("Link to previous is offered, disabled, and says why — never a dead contr
   await clickIntoFirstPage(page);
   await openHeaderFooterSettings(page);
 
-  const box = page.locator("#headerFooterLinkToPrevious");
-  // Present and reflecting the document, because the engine already reports
-  // inheritance per page (`runningBands` returns `headerLinked`/`footerLinked`).
-  await expect(box).toBeVisible();
-  await expect(box).toBeDisabled();
+  // One box per band (HF-192): header and footer link independently, and the
+  // dialog opens from the body, where "which band" has no answer. Live on later
+  // sections; `header-footer-bands.spec.mjs` drives them there.
+  for (const id of ["#headerFooterLinkHeader", "#headerFooterLinkFooter"]) {
+    await expect(page.locator(id)).toBeVisible();
+    // The caret is on page 1, the FIRST section: nothing to link to.
+    await expect(page.locator(id)).toBeDisabled();
+  }
 
   // And the reason is ON SCREEN, not only in a tooltip: a hover has no equivalent
   // on a touch screen, and docs/126 is explicit that a command inside a surface

@@ -4348,6 +4348,206 @@
     },
     {
       "additionalProperties": false,
+      "description": "Link a section's header or footer to the previous section's (true), or\ngive the section its own copy of it to change on its own (false).",
+      "properties": {
+        "band": {
+          "description": "The header or the footer.",
+          "oneOf": [
+            {
+              "const": "header",
+              "description": "The header.",
+              "type": "string"
+            },
+            {
+              "const": "footer",
+              "description": "The footer.",
+              "type": "string"
+            }
+          ]
+        },
+        "linked": {
+          "description": "Linked or not.",
+          "type": "boolean"
+        },
+        "op": {
+          "const": "link_to_previous",
+          "type": "string"
+        },
+        "pages": {
+          "default": "default",
+          "description": "Which pages (default every page).",
+          "oneOf": [
+            {
+              "const": "default",
+              "description": "Every page that has no first-page or even-page variant (the default).",
+              "type": "string"
+            },
+            {
+              "const": "first",
+              "description": "The section's first page (needs a different first page).",
+              "type": "string"
+            },
+            {
+              "const": "even",
+              "description": "Even pages (needs different odd and even pages).",
+              "type": "string"
+            }
+          ]
+        },
+        "section": {
+          "description": "The 0-based section; never 0, which has no previous section.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op",
+        "section",
+        "band",
+        "linked"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Remove the header or footer a section shows, from that section only.",
+      "properties": {
+        "band": {
+          "description": "The header or the footer.",
+          "oneOf": [
+            {
+              "const": "header",
+              "description": "The header.",
+              "type": "string"
+            },
+            {
+              "const": "footer",
+              "description": "The footer.",
+              "type": "string"
+            }
+          ]
+        },
+        "op": {
+          "const": "remove_header_footer",
+          "type": "string"
+        },
+        "pages": {
+          "default": "default",
+          "description": "Which pages (default every page).",
+          "oneOf": [
+            {
+              "const": "default",
+              "description": "Every page that has no first-page or even-page variant (the default).",
+              "type": "string"
+            },
+            {
+              "const": "first",
+              "description": "The section's first page (needs a different first page).",
+              "type": "string"
+            },
+            {
+              "const": "even",
+              "description": "Even pages (needs different odd and even pages).",
+              "type": "string"
+            }
+          ]
+        },
+        "section": {
+          "description": "The 0-based section.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op",
+        "section",
+        "band"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Put a page number in a section's header or footer, left, centred or\nright; the band is created when there is none, and its content is kept.",
+      "properties": {
+        "band": {
+          "description": "The header or the footer.",
+          "oneOf": [
+            {
+              "const": "header",
+              "description": "The header.",
+              "type": "string"
+            },
+            {
+              "const": "footer",
+              "description": "The footer.",
+              "type": "string"
+            }
+          ]
+        },
+        "op": {
+          "const": "insert_page_number",
+          "type": "string"
+        },
+        "pages": {
+          "default": "default",
+          "description": "Which pages (default every page).",
+          "oneOf": [
+            {
+              "const": "default",
+              "description": "Every page that has no first-page or even-page variant (the default).",
+              "type": "string"
+            },
+            {
+              "const": "first",
+              "description": "The section's first page (needs a different first page).",
+              "type": "string"
+            },
+            {
+              "const": "even",
+              "description": "Even pages (needs different odd and even pages).",
+              "type": "string"
+            }
+          ]
+        },
+        "section": {
+          "description": "The 0-based section.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "side": {
+          "description": "Where across the band.",
+          "oneOf": [
+            {
+              "const": "left",
+              "description": "At the start edge (left in left-to-right text).",
+              "type": "string"
+            },
+            {
+              "const": "center",
+              "description": "Centred.",
+              "type": "string"
+            },
+            {
+              "const": "right",
+              "description": "At the end edge (right in left-to-right text).",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "section",
+        "band",
+        "side"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
       "description": "Insert a chart with sample data at an anchor.",
       "properties": {
         "at": {
