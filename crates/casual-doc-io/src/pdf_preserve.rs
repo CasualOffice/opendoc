@@ -173,7 +173,10 @@ fn write_update(
     if laid_out.pages.len() != page_count {
         return Err(Fallback::new("pagination_changed"));
     }
-    let mut pages = Vec::with_capacity(plans.len());
+    // Two passes: `PdfPage` borrows its display list, so every page's list is
+    // built and owned first and the pages borrow them afterwards.
+    let mut parts = Vec::with_capacity(plans.len());
+    let mut lists = Vec::with_capacity(plans.len());
     for (plan, page_parts) in plans.iter().zip(revision.pages) {
         let index = plan.index as usize;
         if page_parts.index != plan.index {
@@ -195,7 +198,11 @@ fn write_update(
             .iter()
             .filter_map(|id| NodeId::new(*id).ok())
             .collect();
-        let list = overlay_list(&compose_page(laid), &paragraphs);
+        lists.push((size, overlay_list(&compose_page(laid), &paragraphs)));
+        parts.push(page_parts);
+    }
+    let mut pages = Vec::with_capacity(parts.len());
+    for (page_parts, (size, list)) in parts.into_iter().zip(&lists) {
         let mut form_name = "OpenDocEdit".to_owned();
         let mut n = 0;
         while page_parts
