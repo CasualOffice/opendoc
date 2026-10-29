@@ -827,6 +827,7 @@
   "indentSpecial.hanging": "凸排",
   "indentSpecial.mixed": "混合",
   "insert.chart": "圖表",
+  "insert.chartOfType": "插入圖表：{type}",
   "insert.reason.linkNeedsText": "請選取文字以新增連結",
   "insertChartBtn.chart": "圖表",
   "insertPictureBtn.picture": "圖片",

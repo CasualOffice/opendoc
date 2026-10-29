@@ -829,6 +829,7 @@
   "indentSpecial.hanging": "Francesa",
   "indentSpecial.mixed": "Mixto",
   "insert.chart": "Gráfico",
+  "insert.chartOfType": "Insertar gráfico: {type}",
   "insert.reason.linkNeedsText": "Seleccione texto para añadir un vínculo",
   "insertChartBtn.chart": "Gráfico",
   "insertPictureBtn.picture": "Imagen",

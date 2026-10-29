@@ -727,6 +727,9 @@ export const COMMAND_FAMILIES = Object.freeze([
   family("paragraph.listFormat.", "mutate", "always"),
   // Generated from the field-kind table, and from the document's own style list.
   family("insert.field.", "mutate", "always"),
+  // Insert ▸ Chart's per-type rows (`insert.chart.<kind>`, HF-258), generated
+  // from the chart-type table the ribbon's picker reads.
+  family("insert.chart.", "mutate", "always"),
   family("style.", "mutate", "always"),
   // Generated from the zoom menu's markup.
   family("view.zoom.", null, "always"),

@@ -829,6 +829,7 @@
   "indentSpecial.hanging": "Deslocamento",
   "indentSpecial.mixed": "Misto",
   "insert.chart": "Gráfico",
+  "insert.chartOfType": "Inserir gráfico: {type}",
   "insert.reason.linkNeedsText": "Selecione um texto para adicionar um link",
   "insertChartBtn.chart": "Gráfico",
   "insertPictureBtn.picture": "Imagem",

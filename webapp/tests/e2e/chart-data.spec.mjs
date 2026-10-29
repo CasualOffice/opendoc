@@ -30,6 +30,8 @@ const done = (page) => dialog(page).getByRole("button", { name: "Done" });
 async function insertChart(page) {
   await page.locator("#tabInsert").click();
   await page.locator("#insertChartBtn").click();
+  // Insert ▸ Chart opens the type picker first (HF-258); Word's default type.
+  await page.getByRole("menuitem", { name: /^Clustered column$/ }).click();
   await expect(dialog(page)).toBeVisible();
 }
 
@@ -130,6 +132,28 @@ test("a value that is not a number is refused at the cell, saying which cell and
   // A second Escape on the untouched cell closes the window.
   await cell(page, 1, 0).press("Escape");
   await expect(dialog(page)).toBeHidden();
+});
+
+// HF-258: Insert ▸ Chart is a type picker, as ONLYOFFICE's Insert Chart menu is.
+// The type picked is the type inserted: the Chart tab's Change type menu then
+// checks Pie, not the default. Mutation: `insertChartAtCaret` ignoring `kind`
+// (inserting DEFAULT_CHART_KIND) leaves "Clustered column" checked instead.
+test("Insert ▸ Chart opens a keyboard-operable type picker, and the type picked is the type inserted", async ({ page }) => {
+  await gotoEditor(page);
+  await page.locator("#tabInsert").click();
+  const button = page.locator("#insertChartBtn");
+  await expect(button).toHaveAttribute("aria-haspopup", "menu");
+  await button.click();
+  await expect(page.getByRole("menuitem", { name: /^Stacked column$/ })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /^Doughnut$/ })).toBeVisible();
+  await page.getByRole("menuitem", { name: /^Pie$/ }).click();
+  await expect(dialog(page)).toBeVisible();
+  await done(page).click();
+
+  await page.locator("#tabChart").click();
+  await page.locator("#chartTypeBtn").click();
+  await expect(page.getByRole("menuitem", { name: /^Pie\s*✓$/ })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /^Clustered column$/ })).toBeVisible();
 });
 
 test("the Chart tab is contextual and changes the type, the elements and the style", async ({ page }) => {

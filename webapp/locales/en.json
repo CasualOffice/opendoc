@@ -989,6 +989,7 @@
   "indentSpecial.hanging": "Hanging",
   "indentSpecial.mixed": "Mixed",
   "insert.chart": "Chart",
+  "insert.chartOfType": "Insert chart: {type}",
   "insert.reason.linkNeedsText": "Select text to add a link",
   "insertChartBtn.chart": "Chart",
   "insertPictureBtn.picture": "Picture",

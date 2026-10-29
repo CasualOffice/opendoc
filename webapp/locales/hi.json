@@ -828,6 +828,7 @@
   "indentSpecial.hanging": "लटकता",
   "indentSpecial.mixed": "मिश्रित",
   "insert.chart": "चार्ट",
+  "insert.chartOfType": "चार्ट डालें: {type}",
   "insert.reason.linkNeedsText": "लिंक जोड़ने के लिए टेक्स्ट चुनें",
   "insertChartBtn.chart": "चार्ट",
   "insertPictureBtn.picture": "चित्र",

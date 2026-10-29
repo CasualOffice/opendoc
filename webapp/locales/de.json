@@ -828,6 +828,7 @@
   "indentSpecial.hanging": "Hängend",
   "indentSpecial.mixed": "Gemischt",
   "insert.chart": "Diagramm",
+  "insert.chartOfType": "Diagramm einfügen: {type}",
   "insert.reason.linkNeedsText": "Markieren Sie Text, um einen Link hinzuzufügen",
   "insertChartBtn.chart": "Diagramm",
   "insertPictureBtn.picture": "Bild",

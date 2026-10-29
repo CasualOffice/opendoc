@@ -829,6 +829,7 @@
   "indentSpecial.hanging": "Négatif",
   "indentSpecial.mixed": "Mixte",
   "insert.chart": "Graphique",
+  "insert.chartOfType": "Insérer un graphique : {type}",
   "insert.reason.linkNeedsText": "Sélectionnez du texte pour ajouter un lien",
   "insertChartBtn.chart": "Graphique",
   "insertPictureBtn.picture": "Image",

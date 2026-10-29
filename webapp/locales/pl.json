@@ -830,6 +830,7 @@
   "indentSpecial.hanging": "Wysunięcie",
   "indentSpecial.mixed": "Mieszane",
   "insert.chart": "Wykres",
+  "insert.chartOfType": "Wstaw wykres: {type}",
   "insert.reason.linkNeedsText": "Zaznacz tekst, aby dodać łącze",
   "insertChartBtn.chart": "Wykres",
   "insertPictureBtn.picture": "Obraz",

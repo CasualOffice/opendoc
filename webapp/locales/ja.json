@@ -827,6 +827,7 @@
   "indentSpecial.hanging": "ぶら下げ",
   "indentSpecial.mixed": "混在",
   "insert.chart": "グラフ",
+  "insert.chartOfType": "グラフを挿入: {type}",
   "insert.reason.linkNeedsText": "リンクを追加するにはテキストを選択してください",
   "insertChartBtn.chart": "グラフ",
   "insertPictureBtn.picture": "画像",

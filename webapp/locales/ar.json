@@ -832,6 +832,7 @@
   "indentSpecial.hanging": "معلّق",
   "indentSpecial.mixed": "مختلط",
   "insert.chart": "مخطط",
+  "insert.chartOfType": "إدراج مخطط: {type}",
   "insert.reason.linkNeedsText": "حدد نصًا لإضافة ارتباط",
   "insertChartBtn.chart": "مخطط",
   "insertPictureBtn.picture": "صورة",

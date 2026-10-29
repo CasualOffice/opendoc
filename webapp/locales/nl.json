@@ -828,6 +828,7 @@
   "indentSpecial.hanging": "Verkeerd-om",
   "indentSpecial.mixed": "Gemengd",
   "insert.chart": "Diagram",
+  "insert.chartOfType": "Diagram invoegen: {type}",
   "insert.reason.linkNeedsText": "Selecteer tekst om een koppeling toe te voegen",
   "insertChartBtn.chart": "Diagram",
   "insertPictureBtn.picture": "Afbeelding",

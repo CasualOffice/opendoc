@@ -827,6 +827,7 @@
   "indentSpecial.hanging": "Treo",
   "indentSpecial.mixed": "Kết hợp",
   "insert.chart": "Biểu đồ",
+  "insert.chartOfType": "Chèn biểu đồ: {type}",
   "insert.reason.linkNeedsText": "Chọn văn bản để thêm liên kết",
   "insertChartBtn.chart": "Biểu đồ",
   "insertPictureBtn.picture": "Hình ảnh",

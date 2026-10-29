@@ -827,6 +827,7 @@
   "indentSpecial.hanging": "Menggantung",
   "indentSpecial.mixed": "Campuran",
   "insert.chart": "Bagan",
+  "insert.chartOfType": "Sisipkan bagan: {type}",
   "insert.reason.linkNeedsText": "Pilih teks untuk menambahkan tautan",
   "insertChartBtn.chart": "Bagan",
   "insertPictureBtn.picture": "Gambar",

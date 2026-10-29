@@ -830,6 +830,7 @@
   "indentSpecial.hanging": "Выступ",
   "indentSpecial.mixed": "Смешанно",
   "insert.chart": "Диаграмма",
+  "insert.chartOfType": "Вставить диаграмму: {type}",
   "insert.reason.linkNeedsText": "Выделите текст, чтобы добавить ссылку",
   "insertChartBtn.chart": "Диаграмма",
   "insertPictureBtn.picture": "Рисунок",

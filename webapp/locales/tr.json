@@ -828,6 +828,7 @@
   "indentSpecial.hanging": "Askıda",
   "indentSpecial.mixed": "Karışık",
   "insert.chart": "Grafik",
+  "insert.chartOfType": "Grafik ekle: {type}",
   "insert.reason.linkNeedsText": "Bağlantı eklemek için metin seçin",
   "insertChartBtn.chart": "Grafik",
   "insertPictureBtn.picture": "Resim",
