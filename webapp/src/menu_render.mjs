@@ -74,6 +74,13 @@ export function renderMenuLevel(el, entries, depth, hooks) {
     button.dataset.menuIndex = String(index);
     button.dataset.commandId = entry.id;
     button.setAttribute("role", "menuitem");
+    // A row that carries a state says so to a screen reader too, not only with
+    // its tick: a checkbox (the table style options) or one of a set (text
+    // direction).
+    if (typeof entry.checked === "boolean") {
+      button.setAttribute("role", entry.radio ? "menuitemradio" : "menuitemcheckbox");
+      button.setAttribute("aria-checked", String(entry.checked));
+    }
     button.disabled = entry.enabled === false;
     button.tabIndex = -1;
     if (hasSub) {

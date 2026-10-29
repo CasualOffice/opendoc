@@ -26,6 +26,8 @@
 use casual_doc_model::NodeId;
 
 use crate::block::BlockFragment;
+// Own line (anti-conflict): turned table-cell text (`table.cell-text-direction`).
+use crate::block::TurnedContent;
 use crate::model::{ModelPos, ModelRange};
 use crate::page::{AnchorContent, PaginatedLayout};
 use crate::text::GlyphRun;
@@ -110,6 +112,12 @@ struct CellBox {
     top: Twip,
     /// Page-local y just past the cell's bottom edge.
     bottom: Twip,
+    /// For a cell whose text is TURNED (`w:textDirection` tbRl/btLr): where its
+    /// upright content space lands on the page. Every line inside such a cell
+    /// is located in that upright space, so a page point is mapped into it
+    /// before it is matched against them, and every rect built from one of
+    /// those lines is mapped back onto the page ([`LineBox::to_page`]).
+    turned: Option<TurnedContent>,
 }
 
 impl CellBox {
@@ -164,6 +172,15 @@ struct LineBox<'a> {
 }
 
 impl<'a> LineBox<'a> {
+    /// `rect`, built from this line's own coordinates, on the page: unchanged
+    /// for upright text, turned onto the cell for a turned cell's line. O(1).
+    fn to_page(&self, rect: Rect) -> Rect {
+        match self.cell.and_then(|cell| cell.turned) {
+            Some(turned) => turned.orientation.rect_to_page(turned.frame, rect),
+            None => rect,
+        }
+    }
+
     /// The y just past the bottom of the line.
     fn bottom(&self) -> i32 {
         self.top.raw() + self.line.height.raw()
@@ -379,8 +396,23 @@ impl<'a> LayoutSnapshot<'a> {
         let confined = innermost.is_some();
         if let Some(cell) = innermost {
             page_lines.retain(|lb| lb.cell == Some(cell));
+        } else if page_lines
+            .iter()
+            .any(|lb| lb.cell.is_none_or(|cell| cell.turned.is_none()))
+        {
+            // Outside every cell, a turned cell's lines are not candidates:
+            // their coordinates are in that cell's upright space, not the
+            // page's, so a distance to them would mean nothing.
+            page_lines.retain(|lb| lb.cell.is_none_or(|cell| cell.turned.is_none()));
         }
         let first = *page_lines.first()?;
+        // A TURNED cell's lines are in its upright content space: resolve the
+        // point there. Exact, because a cell turns by quarter turns only.
+        let point = match innermost.and_then(|cell| cell.turned) {
+            Some(turned) => turned.orientation.to_content(turned.frame, point),
+            None => point,
+        };
+        let (x, y) = (point.x.raw(), point.y.raw());
 
         // Choose the target line by vertical band *and* horizontal cell, so a click
         // in a table row lands in the cell it falls in rather than always the first
@@ -549,7 +581,9 @@ impl<'a> LayoutSnapshot<'a> {
         // instead, and is the same box a proofing mark is hung from.
         let (top, height) = lb.run_text_box(pos.offset);
         let rect = Rect::new(Point::new(x, top), Size::new(Twip::ZERO, height));
-        Some((lb.page, rect))
+        // In a turned cell the zero-width bar comes back as a zero-height one
+        // across the turned line, which is where a caret in turned text goes.
+        Some((lb.page, lb.to_page(rect)))
     }
 
     /// The page-local rect of every list **marker** (a bullet/number/checkbox glyph
@@ -577,7 +611,7 @@ impl<'a> LayoutSnapshot<'a> {
                 Point::new(Twip(min_x), lb.top),
                 Size::new(Twip(max_x - min_x), lb.line.height),
             );
-            out.push((lb.page, rect, lb.line.range.start.node));
+            out.push((lb.page, lb.to_page(rect), lb.line.range.start.node));
         }
         out
     }
@@ -1518,7 +1552,7 @@ where
         if lo.raw() == hi.raw() {
             continue;
         }
-        rects.push((lb.page, rect(lb, lo, hi)));
+        rects.push((lb.page, lb.to_page(rect(lb, lo, hi))));
     }
     rects
 }
@@ -1642,6 +1676,12 @@ fn collect_chrome_rows(fragment: &BlockFragment, left: Twip, top: Twip, out: &mu
         // A nested table's rows belong to their own table and are collected at
         // the inner content origin, which is the same origin `find_cell_rect`
         // recurses from.
+        // A table nested in a TURNED cell is painted turned; its chrome would
+        // need the same turn, which pointer resizing does not offer, so it
+        // reports none (the outer table's chrome is unaffected).
+        if cell.rotation.is_some() {
+            continue;
+        }
         let content_left = cell_x + cell.margins.start;
         let cell_top = top + cell.cell_spacing.top;
         let mut content_top = cell_top + cell.content_y_offset(cell.box_height(row_height));
@@ -1818,6 +1858,17 @@ fn clearance(lines: &[LineBox<'_>], table: Rect) -> (Twip, Twip) {
     (Twip(above), Twip(before))
 }
 
+/// Whether `block` is paragraph `node` or a table row holding it at any depth.
+/// O(fragments under `block`).
+fn blocks_hold_paragraph(block: &BlockFragment, node: NodeId) -> bool {
+    match block {
+        BlockFragment::Paragraph { id, .. } => *id == node,
+        BlockFragment::TableRow { cells, .. } => cells
+            .iter()
+            .any(|cell| cell.blocks.iter().any(|b| blocks_hold_paragraph(b, node))),
+    }
+}
+
 /// The page-local border box of the innermost table cell containing paragraph
 /// `node`, if `fragment` (placed at `left`, `top`) is or holds the table row that
 /// owns it. Mirrors `collect_fragment`'s cell geometry (cell x-box = `cell.x` +
@@ -1836,6 +1887,21 @@ fn find_cell_rect(fragment: &BlockFragment, left: Twip, top: Twip, node: NodeId)
         let content_left = cell_x + cell.margins.start;
         let cell_top = top + cell.cell_spacing.top;
         let mut content_top = cell_top + cell.content_y_offset(cell.box_height(row_height));
+        // A TURNED cell's nested content is in its upright space, so the turned
+        // cell itself is the box reported for anything inside it.
+        if cell.rotation.is_some() {
+            if cell
+                .blocks
+                .iter()
+                .any(|block| blocks_hold_paragraph(block, node))
+            {
+                return Some(Rect::new(
+                    Point::new(cell_x, cell_top),
+                    Size::new(cell.width, cell.box_height(row_height)),
+                ));
+            }
+            continue;
+        }
         for block in &cell.blocks {
             if let Some(rect) = find_cell_rect(block, content_left, content_top, node) {
                 return Some(rect);
@@ -1898,7 +1964,22 @@ fn collect_fragment<'a>(
         }
         BlockFragment::TableRow { cells, .. } => {
             let row_height = fragment.height();
+            // Inside a TURNED cell everything is in its upright space, so a
+            // table nested there keeps the turned cell as its bounds: the point
+            // is mapped once, by the outer cell, and resolved among all of it.
+            let inherited_turn = cell.filter(|outer| outer.turned.is_some());
             for cell in cells {
+                if let Some(outer) = inherited_turn {
+                    let mut cell_top = top
+                        + cell.cell_spacing.top
+                        + cell.content_y_offset(cell.box_height(row_height));
+                    let cell_left = left + cell.x + cell.margins.start;
+                    for block in &cell.blocks {
+                        collect_fragment(block, cell_left, cell_top, page, Some(outer), out);
+                        cell_top = cell_top + block.height();
+                    }
+                    continue;
+                }
                 // The cell's full page-local border box — its grid-column span
                 // and its whole row/merge height, NOT the extent of its content.
                 // That is what a click has to be resolved against, so the blank
@@ -1909,12 +1990,24 @@ fn collect_fragment<'a>(
                 let cell_x0 = left + cell.x;
                 let cell_y0 = top + cell.cell_spacing.top;
                 let box_height = cell.box_height(row_height);
+                let turned = cell.turned_content(Point::new(cell_x0, cell_y0));
                 let cell_bounds = Some(CellBox {
                     left: cell_x0,
                     right: cell_x0 + cell.width,
                     top: cell_y0,
                     bottom: cell_y0 + box_height,
+                    turned,
                 });
+                if let Some(turned) = turned {
+                    // Upright, from the exchanged box's origin, exactly as
+                    // `compose_fragment` composes it before turning it.
+                    let mut cell_top = turned.origin.y;
+                    for block in &cell.blocks {
+                        collect_fragment(block, turned.origin.x, cell_top, page, cell_bounds, out);
+                        cell_top = cell_top + block.height();
+                    }
+                    continue;
+                }
                 let cell_left = cell_x0 + cell.margins.start;
                 let mut cell_top = cell_y0 + cell.content_y_offset(box_height);
                 for block in &cell.blocks {
@@ -2549,6 +2642,7 @@ mod tests {
             id: node(10),
             table: node(20),
             cells: vec![CellFragment {
+                rotation: None,
                 id: node(11),
                 grid_span: 1,
                 x: Twip(200),
@@ -2655,6 +2749,7 @@ mod tests {
     ) -> crate::block::CellFragment {
         use crate::block::{CellBorders, CellContentMargins, CellFragment, CellVerticalMerge};
         CellFragment {
+            rotation: None,
             id: node(id),
             grid_span: 1,
             x: Twip(x),
@@ -3015,6 +3110,7 @@ mod tests {
             CellBorders, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
         };
         let cell = |id: u64, x: i32, width: i32, para: u64| CellFragment {
+            rotation: None,
             id: node(id),
             grid_span: 1,
             x: Twip(x),
@@ -3072,6 +3168,7 @@ mod tests {
             CellBorders, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
         };
         let table_cell = CellFragment {
+            rotation: None,
             id: node(11),
             grid_span: 1,
             x: Twip::ZERO,
@@ -3705,6 +3802,7 @@ mod tests {
             CellBorders, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
         };
         let cell = |id: u64, x: i32, width: i32, para: u64| CellFragment {
+            rotation: None,
             id: node(id),
             grid_span: 1,
             x: Twip(x),
@@ -4204,6 +4302,7 @@ mod table_chrome_tests {
                     .map(|c| {
                         let seq = (r * columns + c) as u64;
                         CellFragment {
+                            rotation: None,
                             id: node(100_000 + seq),
                             grid_span: 1,
                             x: Twip(COL_W * c as i32),
@@ -4399,6 +4498,7 @@ mod table_chrome_tests {
             id: node(5_000),
             table: node(77),
             cells: vec![CellFragment {
+                rotation: None,
                 id: node(5_001),
                 grid_span: 1,
                 x: Twip::ZERO,

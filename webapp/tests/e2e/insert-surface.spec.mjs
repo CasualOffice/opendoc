@@ -79,6 +79,10 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     .evaluateAll((buttons) => buttons.map((button) => button.id));
   expect(buttonIds).toEqual([
     "insertTableBtn",
+    // Word's Insert Table… and Convert Text to Table…, stacked beside the grid
+    // (`docs/153` table.insert-custom-size, table.text-to-table).
+    "insertTableDialogBtn",
+    "textToTableBtn",
     // Breaks, second. ONE dropdown for all six — Word's Layout ▸ Page Setup ▸
     // Breaks and ONLYOFFICE's Insert ▸ Breaks are both one control
     // (`Toolbar.js:2382-2390`), and six band buttons for six breaks would spend

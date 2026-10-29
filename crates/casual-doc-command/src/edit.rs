@@ -136,6 +136,30 @@ pub enum CellAlignment {
     Bottom,
 }
 
+/// Which way a cell's text runs (`w:textDirection`).
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CellTextDirection {
+    /// Left to right, the default.
+    Horizontal,
+    /// Rotated 90 degrees clockwise: read top to bottom.
+    RotateDown,
+    /// Rotated 90 degrees counter-clockwise: read bottom to top.
+    RotateUp,
+}
+
+impl CellTextDirection {
+    /// The name `table_tools::text_direction_named` reads.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Horizontal => "horizontal",
+            Self::RotateDown => "rotate_down",
+            Self::RotateUp => "rotate_up",
+        }
+    }
+}
+
 /// Horizontal paragraph alignment.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -816,6 +840,10 @@ pub enum Edit {
         /// Vertical alignment of the text.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         vertical_alignment: Option<CellAlignment>,
+        /// Which way the text runs: horizontal, rotated down (read top to
+        /// bottom) or rotated up (read bottom to top).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text_direction: Option<CellTextDirection>,
     },
     /// Put a paragraph in a bulleted or numbered list, or take it out.
     SetList {

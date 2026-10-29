@@ -2174,7 +2174,7 @@ function place(flat, kind) {
   el.style.left = `${x * sx}px`;
   el.style.top = `${y * sy}px`;
   el.style.width = `${Math.max(w * sx, kind === "caret" ? 2 : 0)}px`;
-  el.style.height = `${h * sy}px`;
+  el.style.height = `${Math.max(h * sy, kind === "caret" ? 2 : 0)}px`; // a turned-cell caret is a bar across the line
   page.overlay.appendChild(el);
   return el;
 }

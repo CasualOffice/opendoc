@@ -4278,6 +4278,15 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
   border: none;
 }
 
+/* The contents dialog's style list: one row per paragraph style, which a
+   Word-authored file can carry by the hundred, so it scrolls inside the dialog
+   rather than pushing the buttons off a phone screen (`docs/153` RM-25). */
+#tocStylesList {
+  max-height: 12rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .dialog-field-grid {
   display: grid;
   /* Pairs (Top/Bottom, Left/Right) stay side by side wherever two will fit,
@@ -5513,6 +5522,18 @@ body.compact-mode {
   justify-content: center;
   gap: 0.125rem;
   min-height: 2rem;
+}
+
+/* Two small controls stacked beside a big one (Insert ▸ Table: Insert table by
+   size, Convert text to table), so the pair costs one control's width. */
+.rgroup-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rgroup-stack .fmt {
+  height: calc(var(--h-control) - 4px);
 }
 
 .rgroup-mini-divider {

@@ -203,6 +203,14 @@ export const TABLE_FACES = Object.freeze([
   face("#tableBtn", "table.cellFormat"),
   face("#tablePropertiesBtn", "table.properties"),
   chooser("#tableStyleBtn", "table.style."),
+  // The table tools (`table_tools.mjs`): two choosers over their families and
+  // four commands, each the same function the Table menu runs.
+  chooser("#tableLookBtn", "table.look."),
+  chooser("#tableTextDirectionBtn", "table.textDirection."),
+  face("#tableSplitBtn", "table.splitTable"),
+  face("#tableToTextBtn", "table.convertToText"),
+  face("#tableInsertCellsBtn", "table.insertCells"),
+  face("#tableDeleteCellsBtn", "table.deleteCells"),
 ]);
 
 /** The contextual Chart band (`chart_surface.mjs`). Edit Data and Chart

@@ -10,6 +10,8 @@ import { objectMenuRows } from "./reference_commands.mjs";
 import { ribbonSurfaceEnabled as surfaceEnabled, ribbonSurfaceReason as surfaceReason } from "./ribbon_surface.mjs";
 import { arrangeSurfaceRows } from "./object_arrange_commands.mjs";
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
+import { tableTools } from "./table_tools.mjs";
+import { tocSurfaceRows } from "./toc_commands.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -46,6 +48,10 @@ export function createCommandSurfaces(ed) {
     // `blockUntrackedInSuggesting`, which tells the user WHY the insert did not
     // happen. A greyed button would only say "no".
     { command: "insert.table", buttons: [ed.insertTableBtn], requires: "doc", activate: null },
+    // Insert Table by size and Convert Text to Table, beside the grid (Word keeps
+    // both in the Table dropdown). The two dialogs are `table_tools.mjs`'s.
+    { command: "insert.tableDialog", buttons: [document.getElementById("insertTableDialogBtn")].filter(Boolean), requires: "doc", activate: () => tableTools.openDialog("insertTable") },
+    { command: "insert.textToTable", buttons: [document.getElementById("textToTableBtn")].filter(Boolean), requires: "doc", activate: () => tableTools.openDialog("textToTable") },
     { command: "insert.image", buttons: [ed.insertPictureBtn], requires: "doc", activate: () => ed.insertImageFromFile() },
     // Link is the one Insert command that genuinely needs a range: it hyperlinks
     // selected text. A cross-paragraph range still enables the button and is
@@ -248,6 +254,9 @@ export function createCommandSurfaces(ed) {
     { command: "reference.updateFields", label: "Update table of contents", kw: "update fields refresh recalculate table of contents toc page numbers rebuild", buttons: () => [ed.refUpdateFieldsBtn], requires: "tocField", run: () => ed.tocCommands.update.open() },
     { command: "reference.updateToc.pageNumbers", label: "Update table of contents: page numbers only", kw: "toc contents update page numbers only repaginate refresh", buttons: () => [], requires: "tocField", run: () => void ed.tocCommands.update.run("pageNumbers") },
     { command: "reference.updateToc.entire", label: "Update table of contents: entire table", kw: "toc contents update entire rebuild regenerate headings refresh", buttons: () => [], requires: "tocField", run: () => void ed.tocCommands.update.run("entire") },
+    // Remove, Table of figures and Add text (`docs/153` RM-25), with their
+    // labels read from the catalogue when the palette builds (`toc_commands.mjs`).
+    ...tocSurfaceRows(() => ed.tocCommands),
   ];
 
   /** The object/table right-click rows the References surface declares — see

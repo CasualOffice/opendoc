@@ -215,6 +215,11 @@ export const KEYMAP = [
   { chord: "⌥⇧←", command: "table.column.shrink", scope: EDITOR_SCOPE },
   { chord: "⌥⇧↓", command: "table.row.grow", scope: EDITOR_SCOPE },
   { chord: "⌥⇧↑", command: "table.row.shrink", scope: EDITOR_SCOPE },
+  // Split Table: ONLYOFFICE's table break (`sdkjs/word/Editor/Shortcuts.js:188`,
+  // Ctrl+Shift+Enter, and `:272` for Cmd+Shift+Enter on a Mac) and Word's own
+  // chord. Outside a table the command is absent, the dispatcher claims nothing
+  // and the keystroke goes on to the editor as before.
+  { chord: "⌘⇧⏎", command: "table.splitTable", scope: EDITOR_SCOPE },
 
   // ---- View ----------------------------------------------------------------
   { chord: "⌘=", command: "view.zoomIn", scope: APP_SCOPE },

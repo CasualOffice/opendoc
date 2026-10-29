@@ -19,6 +19,23 @@
 import { t } from "./i18n.mjs";
 import { announceTableEdit } from "./table_band.mjs";
 
+// The style-option and text-direction rows, spelled out id by id: the menu and
+// keymap guards read the ids in this file literally, and a template literal
+// would hide nine commands from them.
+const LOOK_ROWS = Object.freeze([
+  { id: "table.look.headerRow", option: "headerRow" },
+  { id: "table.look.firstColumn", option: "firstColumn" },
+  { id: "table.look.totalRow", option: "totalRow" },
+  { id: "table.look.lastColumn", option: "lastColumn" },
+  { id: "table.look.bandedRows", option: "bandedRows" },
+  { id: "table.look.bandedColumns", option: "bandedColumns" },
+]);
+const DIRECTION_ROWS = Object.freeze([
+  { id: "table.textDirection.horizontal", direction: "horizontal" },
+  { id: "table.textDirection.rotateDown", direction: "rotateDown" },
+  { id: "table.textDirection.rotateUp", direction: "rotateUp" },
+]);
+
 /**
  * The table command tree for `context`.
  *
@@ -92,6 +109,11 @@ export function tableToolCommands(context, host) {
     tableMutation("table.insert.columnRight", "Column right",
       () => runEdit(() => doc.insertColumn(context.anchor.node, true), { gate: true }),
       { say: "insert-column-right", group: "col" }),
+    // Word's Insert Cells dialog: shift right, shift down, entire row, entire
+    // column (`table_tools.mjs`).
+    tableMutation("table.insertCells", t("table.tools.insertCellsCommand"),
+      () => host.openTableToolDialog("insertCells"),
+      { group: "cell" }),
   ];
   const deleteSubmenu = [
     tableMutation("table.delete.row", "Delete row",
@@ -103,6 +125,10 @@ export function tableToolCommands(context, host) {
     tableMutation("table.delete.table", "Delete table",
       () => runEdit(() => doc.deleteTable(context.anchor.node), { gate: true }),
       { danger: true, say: "delete-table", group: "table" }),
+    // Word's Delete Cells dialog: shift left, shift up, entire row, entire column.
+    tableMutation("table.deleteCells", t("table.tools.deleteCellsCommand"),
+      () => host.openTableToolDialog("deleteCells"),
+      { danger: true, group: "cell" }),
   ];
   const selectSubmenu = [
     {
@@ -186,6 +212,26 @@ export function tableToolCommands(context, host) {
       { group: "size" }),
   ];
 
+  // The six table style options (`w:tblLook`): checkboxes, each carrying its
+  // state, read once when the tree is built (O(document), like `tableInfo`).
+  const lookOn = new Set(host.lookOptions?.() ?? []);
+  const lookSubmenu = LOOK_ROWS.map(({ id, option }) => {
+    const on = lookOn.has(option);
+    return {
+      ...tableMutation(id, t(id), () => host.toggleTableLook(option, !on), { group: "look" }),
+      checked: on,
+      shortcut: on ? "✓" : "",
+    };
+  });
+  // Cell text direction: one of three, the current one checked.
+  const direction = host.cellTextDirection?.() || "horizontal";
+  const directionSubmenu = DIRECTION_ROWS.map(({ id, direction: value }) => ({
+    ...tableMutation(id, t(id), () => host.setCellTextDirection(value), { group: "direction" }),
+    checked: value === direction,
+    radio: true,
+    shortcut: value === direction ? "✓" : "",
+  }));
+
   return [
     {
       id: "table.insert",
@@ -248,6 +294,13 @@ export function tableToolCommands(context, host) {
     tableMutation("table.split", "Split cell…",
       () => host.openSplitCellDialog(),
       { group: "table" }),
+    // Word's Split Table (Ctrl/Cmd+Shift+Enter, ONLYOFFICE's table break).
+    tableMutation("table.splitTable", t("table.tools.splitTableCommand"),
+      () => host.splitTable(),
+      { group: "table" }),
+    tableMutation("table.convertToText", t("table.tools.convertToTextCommand"),
+      () => host.openTableToolDialog("tableToText"),
+      { group: "table" }),
     {
       id: "table.move",
       // Through the catalogue, unlike its four sibling submenu labels: those are
@@ -271,6 +324,20 @@ export function tableToolCommands(context, host) {
       group: "table-select",
       icon: "tableLayout",
       submenu: layoutSubmenu,
+    },
+    {
+      id: "table.look",
+      label: t("table.tools.lookSubmenu"),
+      group: "table-properties",
+      icon: "tableLayout",
+      submenu: lookSubmenu,
+    },
+    {
+      id: "table.textDirection",
+      label: t("table.tools.directionSubmenu"),
+      group: "table-properties",
+      icon: "format",
+      submenu: directionSubmenu,
     },
     {
       id: "table.cellFormat",

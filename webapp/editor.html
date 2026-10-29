@@ -760,6 +760,10 @@
           <div class="rgroup" data-group="insert-table" data-ribbon-pinned>
             <div class="rgroup-ctl">
               <button data-i18n-title="panelInsert.insertTable.title" data-i18n-label="panelInsert.insertTable.label" id="insertTableBtn" type="button" class="fmt fmt-big" title="Insert table" aria-label="Insert table" aria-haspopup="dialog" aria-controls="insertTableMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">table_chart</span><span data-i18n="insertTableBtn.table" class="fmt-big-label">Table</span></button>
+              <span class="rgroup-stack">
+                <button data-i18n-title="panelInsert.insertTableDialog.title" data-i18n-label="panelInsert.insertTableDialog.label" id="insertTableDialogBtn" type="button" class="fmt" title="Insert a table with a typed number of columns and rows" aria-label="Insert table by size" aria-haspopup="dialog" aria-controls="tableInsertDialog" disabled><span class="ms" aria-hidden="true">grid_on</span></button>
+                <button data-i18n-title="panelInsert.textToTable.title" data-i18n-label="panelInsert.textToTable.label" id="textToTableBtn" type="button" class="fmt" title="Convert the selected paragraphs to a table" aria-label="Convert text to table" aria-haspopup="dialog" aria-controls="textToTableDialog" disabled><span class="ms" aria-hidden="true">table_view</span></button>
+              </span>
             </div>
             <span data-i18n="panelInsert.table" class="rgroup-label">Table</span>
           </div>
@@ -972,6 +976,12 @@
           <div class="rgroup" data-group="ref-navigation" data-ribbon-pinned>
             <div class="rgroup-ctl">
               <button data-i18n-title="toc.description" data-i18n-label="panelReferences.tableContents.label" id="refTocBtn" type="button" class="fmt fmt-big" title="Lists every heading with the page it is on, as a field you can update later." aria-label="Table of contents" aria-haspopup="dialog" aria-controls="tocDialog" disabled><span class="ms" aria-hidden="true">toc</span><span data-i18n="refTocBtn.contents" class="fmt-big-label">Contents</span></button>
+              <!-- ONLYOFFICE's Table of Contents dropdown carries Remove, and its
+                   Add text dropdown sits beside it (`DE.Views.Links`
+                   `textContentsRemove`, `capBtnAddText`). Icon buttons, so the
+                   band's 1280px budget is barely touched. -->
+              <button data-i18n-title="panelReferences.removeToc.title" data-i18n-label="panelReferences.removeToc.label" id="refTocRemoveBtn" type="button" class="fmt" title="Remove the table of contents the caret is in" aria-label="Remove table of contents" disabled><span class="ms" aria-hidden="true">playlist_remove</span></button>
+              <button data-i18n-title="panelReferences.addText.title" data-i18n-label="panelReferences.addText.label" id="refAddTextBtn" type="button" class="fmt" title="List this paragraph in the table of contents at a level, without restyling it" aria-label="Add text" aria-haspopup="menu" aria-controls="refAddTextMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">playlist_add</span></button>
               <!-- Following a contents entry from the keyboard. The pointer path
                    is a plain click on the entry; this is the second surface, and
                    `contextMenu: true` on its declaration gives the third. -->
@@ -996,6 +1006,10 @@
             <div class="rgroup-ctl">
               <button data-i18n-title="panelReferences.insertCaption.title" data-i18n-label="panelReferences.insertCaption.label" id="refCaptionBtn" type="button" class="fmt fmt-big" title="Insert a numbered caption for a picture, table or equation" aria-label="Insert caption" aria-haspopup="dialog" aria-controls="captionDialog" disabled><span class="ms" aria-hidden="true">closed_caption</span><span data-i18n="tablePropertiesPanel.caption" class="fmt-big-label">Caption</span></button>
               <button data-i18n-title="panelReferences.insertCrossReference.title" data-i18n-label="panelReferences.crossReference.label" id="refCrossRefBtn" type="button" class="fmt fmt-big" title="Insert a reference to a caption, heading, bookmark or note" aria-label="Cross-reference" aria-haspopup="dialog" aria-controls="crossRefDialog" disabled><span class="ms" aria-hidden="true">swap_calls</span><span data-i18n="refCrossRefBtn.crossReference" class="fmt-big-label">Cross-reference</span></button>
+              <!-- Word's References ▸ Captions ▸ Insert Table of Figures and
+                   ONLYOFFICE's `btnTableFigures`: the contents dialog in its
+                   figures mode, built from the captions of one label. -->
+              <button data-i18n-title="panelReferences.tableOfFigures.title" data-i18n-label="panelReferences.tableOfFigures.label" id="refTableOfFiguresBtn" type="button" class="fmt" title="Insert a table of figures from the captions" aria-label="Table of figures" aria-haspopup="dialog" aria-controls="tocDialog" disabled><span class="ms" aria-hidden="true">photo_library</span></button>
               <!-- Word has no equivalent button, and does not need one: it
                    recomputes fields on print, on F9 and on open. Ours deliberately
                    do NOT renumber on a Backspace, because that would make a
@@ -1050,7 +1064,17 @@
           </div>
           <div class="rgroup">
             <div class="rgroup-ctl">
+              <button data-i18n-title="panelTable.splitTable.title" data-i18n-label="panelTable.splitTable.label" type="button" class="fmt" id="tableSplitBtn" title="Split the table so this row starts a new one" aria-label="Split table" disabled><span class="ms" aria-hidden="true">horizontal_split</span></button>
+              <button data-i18n-title="panelTable.insertCells.title" data-i18n-label="panelTable.insertCells.label" type="button" class="fmt" id="tableInsertCellsBtn" title="Insert cells and shift the others" aria-label="Insert cells" aria-haspopup="dialog" aria-controls="tableInsertCellsDialog" disabled><span class="ms" aria-hidden="true">add_box</span></button>
+              <button data-i18n-title="panelTable.deleteCells.title" data-i18n-label="panelTable.deleteCells.label" type="button" class="fmt table-danger" id="tableDeleteCellsBtn" title="Delete cells and shift the others" aria-label="Delete cells" aria-haspopup="dialog" aria-controls="tableDeleteCellsDialog" disabled><span class="ms" aria-hidden="true">indeterminate_check_box</span></button>
+              <button data-i18n-title="panelTable.convertToText.title" data-i18n-label="panelTable.convertToText.label" type="button" class="fmt" id="tableToTextBtn" title="Convert the table to text" aria-label="Convert to text" aria-haspopup="dialog" aria-controls="tableToTextDialog" disabled><span class="ms" aria-hidden="true">notes</span></button>
+            </div>
+            <span data-i18n="panelTable.tools" class="rgroup-label">Tools</span>
+          </div>
+          <div class="rgroup">
+            <div class="rgroup-ctl">
               <button data-i18n-title="panelTable.cellShadingAlignmentBorders.title" data-i18n-label="panelTable.cellBorderFormatting.label" id="tableBtn" type="button" class="fmt" title="Cell shading, alignment, and borders" aria-label="Cell and border formatting" aria-haspopup="dialog" aria-expanded="false" disabled><span class="ms" aria-hidden="true">format_color_fill</span></button>
+              <button data-i18n-title="panelTable.textDirection.title" data-i18n-label="panelTable.textDirection.label" id="tableTextDirectionBtn" type="button" class="fmt" title="Text direction in the selected cells" aria-label="Text direction" aria-haspopup="menu" aria-controls="tableTextDirectionMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">text_rotate_vertical</span></button>
             </div>
             <span data-i18n="panelTable.cellFormat" class="rgroup-label">Cell format</span>
           </div>
@@ -1061,7 +1085,7 @@
             <span data-i18n="panelTable.properties" class="rgroup-label">Properties</span>
           </div>
           <div class="rgroup">
-            <div class="rgroup-ctl"><button data-i18n-title="panelTable.chooseTableStyle.title" data-i18n-label="panelTable.chooseTableStyle.label" id="tableStyleBtn" type="button" class="fmt" title="Choose table style" aria-label="Choose table style" aria-haspopup="menu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">palette</span></button></div>
+            <div class="rgroup-ctl"><button data-i18n-title="panelTable.chooseTableStyle.title" data-i18n-label="panelTable.chooseTableStyle.label" id="tableStyleBtn" type="button" class="fmt" title="Choose table style" aria-label="Choose table style" aria-haspopup="menu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">palette</span></button><button data-i18n-title="panelTable.styleOptions.title" data-i18n-label="panelTable.styleOptions.label" id="tableLookBtn" type="button" class="fmt" title="Header row, total row, banded rows and the other style options" aria-label="Table style options" aria-haspopup="menu" aria-controls="tableLookMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">checklist</span></button></div>
             <span data-i18n="panelTable.style" class="rgroup-label">Style</span>
           </div>
           <div class="rgroup table-context-group" aria-live="polite">
@@ -2050,6 +2074,9 @@
          `data-command` here is NOT read by the Insert surface-parity guard: that
          one scans `.ribbon-panel .rgroup button[data-command]`, and a popover is
          not inside a ribbon panel. -->
+    <!-- References ▸ Add text: rows built when it opens, so the current level
+         is checked (`toc_commands.mjs`). -->
+    <div data-i18n-label="panelReferences.addText.label" id="refAddTextMenu" class="context-menu" hidden role="menu" aria-label="Add text"></div>
     <div data-i18n-label="panelInsert.breaks.label" id="insertBreaksMenu" class="context-menu" hidden role="menu" aria-label="Breaks">
       <button data-i18n="break.blankPage" type="button" role="menuitem" class="menu-item" data-command="layout.blankPage">Blank page</button>
       <button data-i18n="break.page" type="button" role="menuitem" class="menu-item" data-command="layout.break.page">Page break</button>
@@ -2107,6 +2134,8 @@
       <div data-i18n="insertTableMenu.insertTable" id="gridLabel" class="grid-label">Insert table</div>
     </div>
     <div data-i18n-label="ui.tableStyles.label" id="tableStyleMenu" class="context-menu table-style-menu" hidden role="menu" aria-label="Table styles"></div>
+    <div data-i18n-label="panelTable.styleOptions.label" id="tableLookMenu" class="context-menu" hidden role="menu" aria-label="Table style options"></div>
+    <div data-i18n-label="panelTable.textDirection.label" id="tableTextDirectionMenu" class="context-menu" hidden role="menu" aria-label="Text direction"></div>
 
     <!-- Font family picker: searchable, each name in its own typeface, a
          recently-used group above the full list (docs/63 §3 popover pattern). -->
@@ -2368,6 +2397,169 @@
           </form>
           </section>
           </div>
+    <!-- The table tools' dialogs (`table_tools.mjs`): Word's Insert Table,
+         Convert Text to Table, Convert Table to Text, Insert Cells and Delete
+         Cells, in Word's field order. ONLYOFFICE's are the same shapes
+         (`InsertTableDialog`, `TextToTableDialog.js:392-406`,
+         `TableToTextDialog.js:164-203`, `CellsRemoveDialog`). -->
+    <div id="tableInsertDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="tableInsertTitle" aria-describedby="tableInsertDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="tableTools.insert.title" id="tableInsertTitle">Insert table</h2>
+              <p data-i18n="tableTools.insert.description" id="tableInsertDescription">Type the number of columns and rows.</p>
+            </div>
+          </div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="tableTools.insert.close.label" id="tableInsertClose" type="button" class="dialog-close" data-dialog-cancel title="Close" aria-label="Close insert table"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <div class="dialog-field-grid">
+            <label data-i18n="tableTools.insert.columns" class="dialog-field">Columns<input id="tableInsertColumns" type="number" min="1" max="20" step="1" value="5" inputmode="numeric" /></label>
+            <label data-i18n="tableTools.insert.rows" class="dialog-field">Rows<input id="tableInsertRows" type="number" min="1" max="50" step="1" value="2" inputmode="numeric" /></label>
+          </div>
+          <p data-i18n="tableTools.insert.limits" class="dialog-field-note">Up to 20 columns and 50 rows. In a table cell, the new table goes inside the cell.</p>
+        </div>
+        <footer class="dialog-foot">
+          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" type="button" class="dialog-button" data-dialog-cancel>Cancel</button>
+            <button data-i18n="tableTools.insert.apply" type="button" class="dialog-button dialog-button-primary" data-dialog-apply>Insert</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <div id="textToTableDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="textToTableTitle" aria-describedby="textToTableDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="tableTools.textToTable.title" id="textToTableTitle">Convert text to table</h2>
+              <p data-i18n="tableTools.textToTable.description" id="textToTableDescription">Each selected paragraph becomes a row, divided into cells where the separator is.</p>
+            </div>
+          </div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="tableTools.textToTable.close.label" id="textToTableClose" type="button" class="dialog-close" data-dialog-cancel title="Close" aria-label="Close convert text to table"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <label data-i18n="tableTools.textToTable.columns" class="dialog-field">Number of columns<input id="textToTableColumns" type="number" min="1" max="63" step="1" value="1" inputmode="numeric" /></label>
+          <fieldset class="dialog-group">
+            <legend data-i18n="tableTools.textToTable.autofit">AutoFit behaviour</legend>
+            <label class="dialog-check"><input type="radio" name="textToTableAutofit" value="fixed" checked /><span data-i18n="tableTools.autofit.fixed">Fixed column width</span></label>
+            <label class="dialog-check"><input type="radio" name="textToTableAutofit" value="contents" /><span data-i18n="tableTools.autofit.contents">AutoFit to contents</span></label>
+            <label class="dialog-check"><input type="radio" name="textToTableAutofit" value="window" /><span data-i18n="tableTools.autofit.window">AutoFit to window</span></label>
+          </fieldset>
+          <fieldset class="dialog-group">
+            <legend data-i18n="tableTools.textToTable.separator">Separate text at</legend>
+            <label class="dialog-check"><input type="radio" name="textToTableSeparator" value="paragraph" /><span data-i18n="tableTools.separator.paragraph">Paragraphs</span></label>
+            <label class="dialog-check"><input type="radio" name="textToTableSeparator" value="tab" checked /><span data-i18n="tableTools.separator.tab">Tabs</span></label>
+            <label class="dialog-check"><input type="radio" name="textToTableSeparator" value="comma" /><span data-i18n="tableTools.separator.comma">Commas</span></label>
+            <label class="dialog-check"><input type="radio" name="textToTableSeparator" value="semicolon" /><span data-i18n="tableTools.separator.semicolon">Semicolons</span></label>
+            <label class="dialog-check"><input type="radio" name="textToTableSeparator" value="other" /><span data-i18n="tableTools.separator.other">Other</span></label>
+            <label data-i18n="tableTools.separator.otherCharacter" class="dialog-field">Other character<input id="textToTableOther" type="text" maxlength="2" autocomplete="off" /></label>
+          </fieldset>
+        </div>
+        <footer class="dialog-foot">
+          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" type="button" class="dialog-button" data-dialog-cancel>Cancel</button>
+            <button data-i18n="tableTools.convert.apply" type="button" class="dialog-button dialog-button-primary" data-dialog-apply>Convert</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <div id="tableToTextDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="tableToTextTitle" aria-describedby="tableToTextDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="tableTools.tableToText.title" id="tableToTextTitle">Convert table to text</h2>
+              <p data-i18n="tableTools.tableToText.description" id="tableToTextDescription">Each row becomes a paragraph, its cells joined by the separator.</p>
+            </div>
+          </div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="tableTools.tableToText.close.label" id="tableToTextClose" type="button" class="dialog-close" data-dialog-cancel title="Close" aria-label="Close convert table to text"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <fieldset class="dialog-group">
+            <legend data-i18n="tableTools.tableToText.separator">Separate text with</legend>
+            <label class="dialog-check"><input type="radio" name="tableToTextSeparator" value="paragraph" /><span data-i18n="tableTools.separator.paragraphMarks">Paragraph marks</span></label>
+            <label class="dialog-check"><input type="radio" name="tableToTextSeparator" value="tab" checked /><span data-i18n="tableTools.separator.tab">Tabs</span></label>
+            <label class="dialog-check"><input type="radio" name="tableToTextSeparator" value="comma" /><span data-i18n="tableTools.separator.comma">Commas</span></label>
+            <label class="dialog-check"><input type="radio" name="tableToTextSeparator" value="semicolon" /><span data-i18n="tableTools.separator.semicolon">Semicolons</span></label>
+            <label class="dialog-check"><input type="radio" name="tableToTextSeparator" value="other" /><span data-i18n="tableTools.separator.other">Other</span></label>
+            <label data-i18n="tableTools.separator.otherCharacter" class="dialog-field">Other character<input id="tableToTextOther" type="text" maxlength="2" autocomplete="off" /></label>
+          </fieldset>
+          <label class="dialog-check"><input id="tableToTextNested" type="checkbox" checked /><span data-i18n="tableTools.tableToText.nested">Convert nested tables</span></label>
+        </div>
+        <footer class="dialog-foot">
+          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" type="button" class="dialog-button" data-dialog-cancel>Cancel</button>
+            <button data-i18n="tableTools.convert.apply" type="button" class="dialog-button dialog-button-primary" data-dialog-apply>Convert</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <div id="tableInsertCellsDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="tableInsertCellsTitle" aria-describedby="tableInsertCellsDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="tableTools.insertCells.title" id="tableInsertCellsTitle">Insert cells</h2>
+              <p data-i18n="tableTools.insertCells.description" id="tableInsertCellsDescription">Insert cells at the selected cells and move the others out of the way.</p>
+            </div>
+          </div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="tableTools.insertCells.close.label" id="tableInsertCellsClose" type="button" class="dialog-close" data-dialog-cancel title="Close" aria-label="Close insert cells"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <fieldset class="dialog-group" data-i18n-label="tableTools.insertCells.title" aria-label="Insert cells">
+            <label class="dialog-check"><input type="radio" name="tableInsertCellsShift" value="right" checked /><span data-i18n="tableTools.shift.right">Shift cells right</span></label>
+            <label class="dialog-check"><input type="radio" name="tableInsertCellsShift" value="down" /><span data-i18n="tableTools.shift.down">Shift cells down</span></label>
+            <label class="dialog-check"><input type="radio" name="tableInsertCellsShift" value="row" /><span data-i18n="tableTools.shift.insertRow">Insert entire row</span></label>
+            <label class="dialog-check"><input type="radio" name="tableInsertCellsShift" value="column" /><span data-i18n="tableTools.shift.insertColumn">Insert entire column</span></label>
+          </fieldset>
+        </div>
+        <footer class="dialog-foot">
+          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" type="button" class="dialog-button" data-dialog-cancel>Cancel</button>
+            <button data-i18n="tableTools.insert.apply" type="button" class="dialog-button dialog-button-primary" data-dialog-apply>Insert</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <div id="tableDeleteCellsDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="tableDeleteCellsTitle" aria-describedby="tableDeleteCellsDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="tableTools.deleteCells.title" id="tableDeleteCellsTitle">Delete cells</h2>
+              <p data-i18n="tableTools.deleteCells.description" id="tableDeleteCellsDescription">Delete the selected cells and close up the gap.</p>
+            </div>
+          </div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="tableTools.deleteCells.close.label" id="tableDeleteCellsClose" type="button" class="dialog-close" data-dialog-cancel title="Close" aria-label="Close delete cells"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <fieldset class="dialog-group" data-i18n-label="tableTools.deleteCells.title" aria-label="Delete cells">
+            <label class="dialog-check"><input type="radio" name="tableDeleteCellsShift" value="left" checked /><span data-i18n="tableTools.shift.left">Shift cells left</span></label>
+            <label class="dialog-check"><input type="radio" name="tableDeleteCellsShift" value="up" /><span data-i18n="tableTools.shift.up">Shift cells up</span></label>
+            <label class="dialog-check"><input type="radio" name="tableDeleteCellsShift" value="row" /><span data-i18n="tableTools.shift.deleteRow">Delete entire row</span></label>
+            <label class="dialog-check"><input type="radio" name="tableDeleteCellsShift" value="column" /><span data-i18n="tableTools.shift.deleteColumn">Delete entire column</span></label>
+          </fieldset>
+        </div>
+        <footer class="dialog-foot">
+          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" type="button" class="dialog-button" data-dialog-cancel>Cancel</button>
+            <button data-i18n="tableTools.deleteCells.apply" type="button" class="dialog-button dialog-button-primary" data-dialog-apply>Delete</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
     <div id="splitCellDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="splitCellTitle" aria-describedby="splitCellDescription">
       <section class="dialog-card dialog-card-compact">
         <header class="dialog-head">
@@ -2783,14 +2975,47 @@
         <header class="dialog-head">
           <div class="dialog-heading">
             <div>
-              <h2 data-i18n="toc.title" id="tocTitle">Table of contents</h2>
-              <p data-i18n="toc.description" id="tocDescription">Lists every heading with the page it is on, as a field you can update later.</p>
+              <h2 id="tocTitle"><span data-i18n="toc.title" data-toc-mode="contents">Table of contents</span><span data-i18n="toc.figures.title" data-toc-mode="figures" hidden>Table of figures</span></h2>
+              <p id="tocDescription"><span data-i18n="toc.description" data-toc-mode="contents">Lists every heading with the page it is on, as a field you can update later.</span><span data-i18n="toc.figures.description" data-toc-mode="figures" hidden>Lists every caption of one label with the page it is on, as a field you can update later.</span></p>
             </div>
           </div>
           <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="toc.close.label" id="tocClose" type="button" class="dialog-close" title="Close" aria-label="Close table of contents"><span class="ms" aria-hidden="true">close</span></button>
         </header>
+        <!-- The settings both rivals' dialogs carry, in ONLYOFFICE's order
+             (`TableOfContentsSettings.js:157-247`): page numbers, right align,
+             leader, links, then what to build from and the format. One dialog,
+             two modes: Table of figures swaps the build-from controls for the
+             caption label, as theirs does (`type==1`). -->
         <form id="tocForm" class="dialog-body">
-          <label data-i18n="toc.showLevels" class="dialog-field">Show levels<input data-i18n-title="toc.showLevels.title" id="tocLevels" type="number" min="1" max="9" step="1" inputmode="numeric" value="3" title="How deep to list: 1 lists only Heading 1, 3 is Word's default" /></label>
+          <label class="dialog-check"><input id="tocPageNumbers" type="checkbox" checked /><span data-i18n="toc.showPageNumbers">Show page numbers</span></label>
+          <label class="dialog-check"><input id="tocRightAlign" type="checkbox" checked /><span data-i18n="toc.rightAlign">Right align page numbers</span></label>
+          <label class="dialog-field"><span data-i18n="toc.leader">Tab leader</span><select id="tocLeader" class="dialog-select">
+            <option data-i18n="toc.leader.none" value="none">None</option>
+            <option data-i18n="toc.leader.dot" value="dot" selected>Dots</option>
+            <option data-i18n="toc.leader.hyphen" value="hyphen">Dashes</option>
+            <option data-i18n="toc.leader.underscore" value="underscore">Line</option>
+          </select></label>
+          <label class="dialog-check"><input id="tocHyperlinks" type="checkbox" /><span data-i18n="toc.hyperlinks">Format entries as links</span></label>
+          <div data-toc-mode="contents">
+            <fieldset class="dialog-group" data-i18n-label="toc.buildFrom" aria-label="Build from">
+              <label class="dialog-check"><input type="radio" name="tocSource" value="outline" checked /><span data-i18n="toc.source.outline">Outline levels</span></label>
+              <label class="dialog-check"><input type="radio" name="tocSource" value="styles" /><span data-i18n="toc.source.styles">Selected styles</span></label>
+            </fieldset>
+            <label data-i18n="toc.showLevels" class="dialog-field">Show levels<input data-i18n-title="toc.showLevels.title" id="tocLevels" type="number" min="1" max="9" step="1" inputmode="numeric" value="3" title="How deep to list: 1 lists only Heading 1, 3 is Word's default" /></label>
+            <div data-i18n-label="toc.stylesList.label" id="tocStylesList" class="dialog-group" role="group" aria-label="Styles and their contents levels" hidden></div>
+            <label class="dialog-field"><span data-i18n="toc.format">Format</span><select id="tocFormat" class="dialog-select">
+              <option data-i18n="toc.format.current" value="current" selected>From document</option>
+              <option data-i18n="toc.format.simple" value="simple">Simple</option>
+              <option data-i18n="toc.format.standard" value="standard">Standard</option>
+              <option data-i18n="toc.format.modern" value="modern">Modern</option>
+              <option data-i18n="toc.format.classic" value="classic">Classic</option>
+              <option data-i18n="toc.format.online" value="online">Online</option>
+            </select></label>
+          </div>
+          <div data-toc-mode="figures" hidden>
+            <label class="dialog-field"><span data-i18n="toc.captionLabel">Caption label</span><select id="tocCaptionLabel" class="dialog-select"></select></label>
+            <label class="dialog-check"><input id="tocIncludeLabel" type="checkbox" checked /><span data-i18n="toc.includeLabel">Include label and number</span></label>
+          </div>
         </form>
         <footer class="dialog-foot">
           <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
@@ -3638,6 +3863,16 @@
                 <label data-i18n="tablePropertiesPanel.indentFromLeft" class="dialog-field">Indent from left<span class="number-control"><input id="tableIndent" type="number" min="-22" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
               </div>
               <label class="dialog-check"><input id="tableFixedLayout" type="checkbox" /><span><strong data-i18n="tablePropertiesPanel.fixedColumnWidths">Fixed column widths</strong><small data-i18n="tablePropertiesPanel.turnOffAutofitStyle">Turn off for AutoFit-style layout.</small></span></label>
+            </fieldset>
+
+            <fieldset class="dialog-group table-property-section">
+              <legend data-i18n="panelTable.styleOptions.label">Table style options</legend>
+              <label class="dialog-check"><input type="checkbox" data-table-look="headerRow" /><span data-i18n="tableTools.look.headerRow">Header row</span></label>
+              <label class="dialog-check"><input type="checkbox" data-table-look="firstColumn" /><span data-i18n="tableTools.look.firstColumn">First column</span></label>
+              <label class="dialog-check"><input type="checkbox" data-table-look="totalRow" /><span data-i18n="tableTools.look.totalRow">Total row</span></label>
+              <label class="dialog-check"><input type="checkbox" data-table-look="lastColumn" /><span data-i18n="tableTools.look.lastColumn">Last column</span></label>
+              <label class="dialog-check"><input type="checkbox" data-table-look="bandedRows" /><span data-i18n="tableTools.look.bandedRows">Banded rows</span></label>
+              <label class="dialog-check"><input type="checkbox" data-table-look="bandedColumns" /><span data-i18n="tableTools.look.bandedColumns">Banded columns</span></label>
             </fieldset>
 
             <fieldset class="dialog-group table-property-section">

@@ -438,6 +438,34 @@
           "description": "The table id.",
           "type": "string"
         },
+        "text_direction": {
+          "anyOf": [
+            {
+              "description": "Which way a cell's text runs (`w:textDirection`).",
+              "oneOf": [
+                {
+                  "const": "horizontal",
+                  "description": "Left to right, the default.",
+                  "type": "string"
+                },
+                {
+                  "const": "rotate_down",
+                  "description": "Rotated 90 degrees clockwise: read top to bottom.",
+                  "type": "string"
+                },
+                {
+                  "const": "rotate_up",
+                  "description": "Rotated 90 degrees counter-clockwise: read bottom to top.",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Which way the text runs: horizontal, rotated down (read top to\nbottom) or rotated up (read bottom to top)."
+        },
         "to": {
           "additionalProperties": false,
           "description": "The opposite corner; omitted for one cell.",

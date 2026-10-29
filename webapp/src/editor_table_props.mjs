@@ -9,6 +9,7 @@ import { optionalInchesToTwips, signedInchesToTwips, twipsToDialogInches } from 
 import { bindSplitCellDialog } from "./table_cell_chrome.mjs";
 import { announceTableEdit, bindTableBand, tableContextLabel } from "./table_band.mjs";
 import { createTableGridPicker } from "./table_grid_picker.mjs";
+import { createTableTools } from "./table_tools.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -99,6 +100,7 @@ export function createTableProps(ed) {
     ed.tableCellSpacing.value = twipsToDialogInches(info.cellSpacingTwips);
     tableAlignGroup.reflect(info.alignment);
     updateTableRowHeightField();
+    tableTools.reflectProperties();
 
     tablePropertiesCurrent = {
       alignment: info.alignment,
@@ -215,6 +217,29 @@ export function createTableProps(ed) {
       return true;
     },
     focusEditor: ed.focusEditorSurface,
+  });
+
+  // -- Table tools: Insert Table by size, conversions, Split Table, cell shifts,
+  // style options and text direction (`table_tools.mjs`) ------------------------
+  const tableTools = createTableTools({
+    doc: () => ed.doc,
+    caretNode: () => (ed.selection && ed.doc ? ed.selection.focus.node : null),
+    selectionEnds: () => (ed.selection && ed.doc ? [ed.selection.anchor.node, ed.selection.focus.node] : null),
+    cellRange: () => {
+      const range = ed.tableRange.descriptor();
+      return range?.anchorNode ? [range.anchorNode, range.focusNode] : null;
+    },
+    runEdit: (fn, options) => ed.runEdit(fn, options),
+    status: (text, kind) => ed.setStatus(text, kind),
+    registerModal,
+    registerPopover,
+    closePopover,
+    onButton,
+    fallbackFocus: () => ed.pagesEl,
+    afterEdit: () => {
+      ed.tableRange.clear();
+      ed.updateToolbar();
+    },
   });
 
   /** Rebuilds the off-screen accessibility mirror for the caret's part of the

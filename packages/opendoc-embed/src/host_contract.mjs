@@ -399,6 +399,10 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("insert.symbol", "mutate"),
   exact("insert.emoji", "mutate"),
   exact("insert.table", "mutate"),
+  // Insert Table by a typed size, and Convert Text to Table (`table_tools.mjs`).
+  // Both write: one inserts a table, the other replaces paragraphs with one.
+  exact("insert.tableDialog", "mutate"),
+  exact("insert.textToTable", "mutate"),
   exact("insert.header", "mutate"),
   exact("insert.footer", "mutate"),
   // Per band, because linkage and removal are per band (`docs/85` §8d Q7): a
@@ -507,6 +511,10 @@ export const COMMAND_CONTRACT = Object.freeze([
   // not, which this guard is the only thing that notices.
   exact("reference.updateToc.pageNumbers", "mutate"),
   exact("reference.updateToc.entire", "mutate"),
+  // Remove a table of contents (or figures) as a unit, and Insert table of
+  // figures (`docs/153` RM-25). Both rewrite the document.
+  exact("reference.removeToc", "mutate"),
+  exact("reference.tableOfFigures", "mutate"),
   // Navigation, not mutation: it moves the caret to the heading a contents entry
   // names and changes nothing. `null` is the same grade `view.zoom.` carries.
   exact("reference.goToHeading", null),
@@ -767,6 +775,9 @@ export const COMMAND_FAMILIES = Object.freeze([
   // Insert ▸ Chart's per-type rows (`insert.chart.<kind>`, HF-258), generated
   // from the chart-type table the ribbon's picker reads.
   family("insert.chart.", "mutate", "always"),
+  // References ▸ Add text's rows (`reference.addText.none`, `.1`..`.9`):
+  // list the selected paragraphs at a contents level, or keep them out of it.
+  family("reference.addText.", "mutate", "always"),
   family("style.", "mutate", "always"),
   // Generated from the zoom menu's markup.
   family("view.zoom.", null, "always"),

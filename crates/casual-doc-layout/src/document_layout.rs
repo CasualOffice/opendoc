@@ -2292,6 +2292,18 @@ fn collect_cell_paragraph_rects(
         if matches!(cell.vertical_merge, CellVerticalMerge::Continue) {
             continue;
         }
+        // A turned cell's paragraphs occupy its content box on the page.
+        if let Some(turned) = cell.turned_content(Point::new(
+            row_rect.origin.x + cell.x,
+            row_rect.origin.y + cell.cell_spacing.top,
+        )) {
+            for block in &cell.blocks {
+                if let BlockFragment::Paragraph { id, .. } = block {
+                    out.push((page_index, *id, turned.frame));
+                }
+            }
+            continue;
+        }
         let cell_height = cell.box_height(row_rect.size.height);
         let content_width =
             Twip((cell.width.raw() - cell.margins.start.raw() - cell.margins.end.raw()).max(1));

@@ -2036,6 +2036,22 @@ fn walk_paragraph_rects(
         BlockFragment::TableRow { cells, .. } => {
             let row_height = fragment.height();
             for cell in cells {
+                // A turned cell's paragraphs are laid out in its upright content
+                // space; on the page they occupy the cell's content box, which is
+                // the rect reported for each (a float does not wrap turned text).
+                if let Some(turned) = cell.turned_content(Point::new(
+                    origin.x + cell.x,
+                    origin.y + cell.cell_spacing.top,
+                )) {
+                    for block in &cell.blocks {
+                        if let BlockFragment::Paragraph { id, .. } = block
+                            && visit(*id, turned.frame)
+                        {
+                            return true;
+                        }
+                    }
+                    continue;
+                }
                 let content_origin = Point::new(
                     origin.x + cell.x + cell.margins.start,
                     origin.y

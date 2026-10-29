@@ -17,6 +17,7 @@ import { collabCommands } from "./collab_chrome.mjs";
 import { flattenCommandTree, tableCommandLabel, tableMenuPlaceholders } from "./command_taxonomy.mjs";
 import { FIELD_KINDS } from "./field_kinds.mjs";
 import { insertChartTypeCommands } from "./chart_insert.mjs";
+import { tableTools } from "./table_tools.mjs";
 import { revealOnSettings } from "./surface_reveal.mjs";
 import { quickStyleCommands } from "./quick_styles.mjs";
 
@@ -251,6 +252,24 @@ export function createPalette(ed) {
         kw: "grid rows columns",
         enabled: ed.insertCommandEnabled("insert.table"),
         run: () => ed.insertTableBtn.click(),
+      },
+      // Word's Insert Table… and Convert Text to Table… (`table_tools.mjs`): a
+      // typed size beyond the 8 x 10 grid, and the selected paragraphs as a table.
+      {
+        id: "insert.tableDialog",
+        label: t("table.tools.insertDialogCommand"),
+        group: "Insert",
+        kw: "table rows columns size dialog custom number",
+        enabled: ed.insertCommandEnabled("insert.tableDialog"),
+        run: () => tableTools.openDialog("insertTable"),
+      },
+      {
+        id: "insert.textToTable",
+        label: t("table.tools.textToTableCommand"),
+        group: "Insert",
+        kw: "convert text table tabs commas separator",
+        enabled: ed.insertCommandEnabled("insert.textToTable"),
+        run: () => tableTools.openDialog("textToTable"),
       },
       // Shift+Enter was reachable ONLY from the keyboard — no id, so no palette
       // row, no menu row, and nothing in the shortcut reference. It is placed in

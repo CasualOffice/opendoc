@@ -200,6 +200,16 @@ impl MarkLayer {
         !self.marks.is_empty()
     }
 
+    /// An empty collector for the same marks, for content painted through a
+    /// transform of its own (a turned table cell): its marks are composed in
+    /// that content's upright space and must be painted inside the same layer
+    /// as its text, not on the page-space overlay.
+    ///
+    /// O(1).
+    pub(crate) fn fork(&self) -> Self {
+        Self::new(self.marks)
+    }
+
     /// The collected paint items, in collection order.
     ///
     /// O(1) (moves the buffer).

@@ -1292,6 +1292,32 @@ fn compose_fragment(
                 // layout tables); a gray default grid would show boundaries Word
                 // hides. Bordered tables get their borders via the resolved edges.
                 compose_cell_borders(list, cell_rect, &cell.borders);
+                // A TURNED cell (`w:textDirection` tbRl/btLr): the blocks were
+                // flowed upright at the cell's content height, so they are
+                // composed upright in the exchanged content box and turned onto
+                // the cell by one layer — the seam the turned text box uses.
+                // Shading and borders above stay on the unrotated cell box, and
+                // the clip is that box in page space, so nothing turned can
+                // spill into a neighbour.
+                if let Some(turned) = cell.turned_content(cell_origin) {
+                    list.push(PaintItem::PushClip(cell_rect));
+                    list.push(PaintItem::PushLayer {
+                        transform: turned.orientation.transform(turned.frame),
+                        blend: LayerBlend::Normal,
+                    });
+                    let mut turned_marks = marks.fork();
+                    compose_blocks(
+                        list,
+                        &cell.blocks,
+                        turned.origin,
+                        turned.measure,
+                        &mut turned_marks,
+                    );
+                    list.items.extend(turned_marks.into_items());
+                    list.push(PaintItem::PopLayer);
+                    list.push(PaintItem::PopClip);
+                    continue;
+                }
                 // Content is inset by the cell margins (`w:tcMar`/`w:tblCellMar`)
                 // and shifted down by the vertical-alignment slack (`w:vAlign`), so
                 // it no longer hugs the top-left grid line; bottom-aligned labels
@@ -1771,6 +1797,7 @@ mod tests {
         };
         use crate::units::Size;
         let cell = CellFragment {
+            rotation: None,
             id: NodeId::from_parts(1, 1).unwrap(),
             grid_span: 1,
             x: Twip::ZERO,
@@ -2419,6 +2446,7 @@ mod tests {
             pattern: BorderPattern::Solid,
         };
         let cell = CellFragment {
+            rotation: None,
             id: node(501),
             grid_span: 1,
             x: Twip(120),
@@ -2479,6 +2507,7 @@ mod tests {
             CellBorders, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
         };
         let cell = CellFragment {
+            rotation: None,
             id: node(1),
             grid_span: 1,
             x: Twip::ZERO,
@@ -2535,6 +2564,7 @@ mod tests {
             CellBorders, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
         };
         let cell = |id, vertical_merge, shading| CellFragment {
+            rotation: None,
             id: node(id),
             grid_span: 1,
             x: Twip::ZERO,

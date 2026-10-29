@@ -401,6 +401,18 @@ fn grid_line() -> BorderEdge {
     }
 }
 
+/// Draws the thin single grid a new table gets on every edge of `properties`,
+/// so a freshly made table is visible. O(1).
+pub(crate) fn grid_borders(properties: &mut TableProperties) {
+    let borders = &mut properties.borders;
+    borders.top = Some(grid_line());
+    borders.bottom = Some(grid_line());
+    borders.start = Some(grid_line());
+    borders.end = Some(grid_line());
+    borders.inside_h = Some(grid_line());
+    borders.inside_v = Some(grid_line());
+}
+
 /// The most rows and columns a new table may have.
 pub const MAX_NEW_TABLE: (u32, u32) = (50, 20);
 
@@ -413,6 +425,24 @@ pub const MAX_NEW_TABLE: (u32, u32) = (50, 20);
 /// # Errors
 /// When ids run out or the body index overflows.
 pub fn insert_table(
+    index: usize,
+    rows: u32,
+    columns: u32,
+    content_width: i32,
+    ids: MintId<'_>,
+) -> Result<TableEdit, String> {
+    insert_table_in(None, index, rows, columns, content_width, ids)
+}
+
+/// [`insert_table`] into `container` (`None` = the body, else the table cell
+/// or content control whose blocks receive it): how a table is nested inside a
+/// cell (`docs/153` `table.nested`). `content_width` is then the cell's own
+/// content width (`table_tools::cell_content_width`). O(rows x columns).
+///
+/// # Errors
+/// When ids run out or the index overflows.
+pub fn insert_table_in(
+    container: Option<NodeId>,
     index: usize,
     rows: u32,
     columns: u32,
@@ -454,13 +484,7 @@ pub fn insert_table(
         });
     }
     let mut properties = TableProperties::default();
-    let borders = &mut properties.borders;
-    borders.top = Some(grid_line());
-    borders.bottom = Some(grid_line());
-    borders.start = Some(grid_line());
-    borders.end = Some(grid_line());
-    borders.inside_h = Some(grid_line());
-    borders.inside_v = Some(grid_line());
+    grid_borders(&mut properties);
     let table = Table {
         id: mint(ids)?,
         grid,
@@ -475,7 +499,7 @@ pub fn insert_table(
         .and_then(first_paragraph_of_cell);
     Ok(TableEdit {
         operations: vec![Operation::InsertTable {
-            container: None,
+            container,
             index: u32::try_from(index).map_err(|_| "the body is too long".to_owned())?,
             table: Box::new(table),
         }],

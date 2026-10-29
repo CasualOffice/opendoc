@@ -635,11 +635,11 @@ export interface TableDeleteEdit {
 }
 
 /**
- * Set the shading and/or vertical alignment of one cell or a rectangle of cells.
+ * Set the shading, vertical alignment and/or text direction of one cell or a rectangle of cells.
  *
  * Family `tables`; trackable: no. Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.
  *
- * @example {"op":"table_set_cell_format","table":"1:9","from":{"row":0,"column":0},"to":{"row":0,"column":1},"shading":"#FFF2CC","vertical_alignment":"center"}
+ * @example {"op":"table_set_cell_format","table":"1:9","from":{"row":0,"column":0},"to":{"row":0,"column":1},"shading":"#FFF2CC","vertical_alignment":"center","text_direction":"rotate_up"}
  */
 export interface TableSetCellFormatEdit {
   op: "table_set_cell_format";
@@ -654,6 +654,11 @@ export interface TableSetCellFormatEdit {
   shading?: string | null;
   /** The table id. */
   table: string;
+  /**
+   * Which way the text runs: horizontal, rotated down (read top to
+   * bottom) or rotated up (read bottom to top).
+   */
+  text_direction?: "horizontal" | "rotate_down" | "rotate_up" | null;
   /** The opposite corner; omitted for one cell. */
   to?: {
     /** 0-based cell in that row. */

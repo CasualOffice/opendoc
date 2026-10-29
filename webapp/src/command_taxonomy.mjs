@@ -11,6 +11,7 @@
 // Nothing here touches the DOM or the engine. The behaviour (what a command
 // DOES, whether it is enabled, what it refuses with) stays in `main.js` with
 // the state it reads; only the taxonomy and the pure label/shape rules move.
+import { has, t } from "./i18n.mjs";
 
 // ---- The File surface: ONE declaration, two renderings ---------------------
 //
@@ -380,7 +381,7 @@ export const APP_MENU_SECTIONS = {
   // and outvoted a third time by our ribbon, which had the notes on References
   // while the menu had them on Insert.
   insert: [
-    band("menuGroup.table", "insert.table"),
+    band("menuGroup.table", "insert.table", "insert.tableDialog", "insert.textToTable"),
     // Breaks. A SUBMENU, because six rows of "… break" would make this menu long
     // for a group nobody opens twice in a paragraph — the same argument the
     // Export band makes on the File surface, and the shape ONLYOFFICE uses for
@@ -455,6 +456,7 @@ export const APP_MENU_SECTIONS = {
       "menuGroup.navigation",
       "reference.tableOfContents",
       "reference.updateFields",
+      "reference.removeToc",
       "reference.goToHeading",
     ),
     band("menuGroup.notes", "insert.footnote", "insert.endnote"),
@@ -462,6 +464,7 @@ export const APP_MENU_SECTIONS = {
       "menuGroup.captions",
       "reference.caption",
       "reference.crossReference",
+      "reference.tableOfFigures",
       "reference.updateCaptionNumbers",
     ),
   ],
@@ -563,8 +566,9 @@ export const APP_MENU_SECTIONS = {
       "table.insert.rowBelow",
       "table.insert.columnLeft",
       "table.insert.columnRight",
+      "table.insertCells",
     ),
-    sub("menuGroup.delete", "table.delete.row", "table.delete.column", "table.delete.table"),
+    sub("menuGroup.delete", "table.delete.row", "table.delete.column", "table.delete.table", "table.deleteCells"),
     // Reordering. The gutter's drag is the pointer half (`docs/141` §4.2.3) and
     // these are the half a keyboard, a menu and the palette can reach — the rule
     // every other gesture in that layer already follows.
@@ -580,7 +584,8 @@ export const APP_MENU_SECTIONS = {
     // and Google Docs both put on the right-click menu of a merged cell, and it
     // had no reachable path at all: the split dialog's smallest legal value is
     // 1x2, so no number a person could type unmerged a cell (`docs/141` TBL-02).
-    sub("menuGroup.merge", "table.merge", "table.unmerge", "table.split"),
+    // Split Table sits with the merges, as in Word's Layout ▸ Merge group.
+    sub("menuGroup.merge", "table.merge", "table.unmerge", "table.split", "table.splitTable"),
     // Sizing the caret's band from the keyboard. These are the ONLY table
     // commands with a chord (Alt+Shift+Arrow), and they are on the menu as well
     // because a chord is not a surface a user browses. Distributing rows and
@@ -595,7 +600,8 @@ export const APP_MENU_SECTIONS = {
       "table.distribute.rows",
       "table.distribute.columns",
     ),
-    band("menuGroup.sort", "table.sort.ascending", "table.sort.descending"),
+    // Convert to Text is in Word's Data group, beside Sort.
+    band("menuGroup.sort", "table.sort.ascending", "table.sort.descending", "table.convertToText"),
     // `table.borderStyle` sits with the other two format rows, which is where
     // Word keeps the pen: Table Design holds Line Style beside the border
     // controls rather than in a submenu of its own. It had three surfaces --
@@ -608,12 +614,27 @@ export const APP_MENU_SECTIONS = {
       "table.cellFormat",
       "table.borderStyle",
       "table.properties",
+      // Cell text direction: Word's Layout ▸ Alignment ▸ Text Direction.
+      "table.textDirection.horizontal",
+      "table.textDirection.rotateDown",
+      "table.textDirection.rotateUp",
     ),
     // Clearing the table style. The named styles are generated per document, so
     // they cannot be listed here — the ribbon's chooser and the palette's
     // `table.style.<name>` rows are their two surfaces — but "back to no style"
     // is a fixed command and the Table menu is where Word keeps it.
-    band("menuGroup.style", "table.style.none"),
+    // The six Table Style Options sit with the style they tune, Word's Table
+    // Design order.
+    band(
+      "menuGroup.style",
+      "table.style.none",
+      "table.look.headerRow",
+      "table.look.firstColumn",
+      "table.look.totalRow",
+      "table.look.lastColumn",
+      "table.look.bandedRows",
+      "table.look.bandedColumns",
+    ),
   ],
   // Word's Review tab order, which ONLYOFFICE's also follows: Proofing first,
   // then Comments, then Tracking, then Changes. Proofing led this menu in
@@ -715,7 +736,48 @@ export const TABLE_MENU_LABELS = new Map([
   ["table.borderStyle", "Border line style…"],
   ["table.properties", "Table properties…"],
   ["table.style.none", "No table style"],
+  // The table tools (`table_tools.mjs`). Their menu words are also catalogue
+  // entries (`TABLE_MENU_LABEL_KEYS`), so a translated build shows them in its
+  // own language; the English here is what a build without a catalogue shows.
+  ["table.insertCells", "Insert cells…"],
+  ["table.deleteCells", "Delete cells…"],
+  ["table.splitTable", "Split table"],
+  ["table.convertToText", "Convert to text…"],
+  ["table.textDirection.horizontal", "Horizontal text"],
+  ["table.textDirection.rotateDown", "Rotate text down"],
+  ["table.textDirection.rotateUp", "Rotate text up"],
+  ["table.look.headerRow", "Header row"],
+  ["table.look.firstColumn", "First column"],
+  ["table.look.totalRow", "Total row"],
+  ["table.look.lastColumn", "Last column"],
+  ["table.look.bandedRows", "Banded rows"],
+  ["table.look.bandedColumns", "Banded columns"],
 ]);
+
+/** The catalogue key for a Table menu row whose words are routed. Only the table
+ *  tools have one; the older rows are English debt this map does not add to. */
+export const TABLE_MENU_LABEL_KEYS = new Map([
+  ["table.insertCells", "table.tools.insertCellsCommand"],
+  ["table.deleteCells", "table.tools.deleteCellsCommand"],
+  ["table.splitTable", "table.tools.splitTableCommand"],
+  ["table.convertToText", "table.tools.convertToTextCommand"],
+  ["table.textDirection.horizontal", "table.textDirection.horizontal"],
+  ["table.textDirection.rotateDown", "table.textDirection.rotateDown"],
+  ["table.textDirection.rotateUp", "table.textDirection.rotateUp"],
+  ["table.look.headerRow", "table.look.headerRow"],
+  ["table.look.firstColumn", "table.look.firstColumn"],
+  ["table.look.totalRow", "table.look.totalRow"],
+  ["table.look.lastColumn", "table.look.lastColumn"],
+  ["table.look.bandedRows", "table.look.bandedRows"],
+  ["table.look.bandedColumns", "table.look.bandedColumns"],
+]);
+
+/** A Table menu row's words: its catalogue entry when it has one and the
+ *  catalogue answers it, else the map's English. O(1). */
+export function tableMenuLabel(id) {
+  const key = TABLE_MENU_LABEL_KEYS.get(id);
+  return key && has(key) ? t(key) : TABLE_MENU_LABELS.get(id);
+}
 
 /** The menu names the bar offers, in bar order. */
 export function appMenuNames() {
@@ -809,7 +871,7 @@ export function flattenCommandTree(entries, describe, trail = "") {
  * palette is one flat global list and the row has to name its own subject.
  */
 export function tableCommandLabel(id, label, trail, surface) {
-  if (surface === "menu" && TABLE_MENU_LABELS.has(id)) return TABLE_MENU_LABELS.get(id);
+  if (surface === "menu" && TABLE_MENU_LABELS.has(id)) return tableMenuLabel(id);
   return trail ? `Table: ${trail} ${label}` : `Table: ${label}`;
 }
 
@@ -825,9 +887,9 @@ export function tableCommandLabel(id, label, trail, surface) {
  * the commands they stand in for.
  */
 export function tableMenuPlaceholders(disabledReason) {
-  return [...TABLE_MENU_LABELS].map(([id, label]) => ({
+  return [...TABLE_MENU_LABELS].map(([id]) => ({
     id,
-    label,
+    label: tableMenuLabel(id),
     group: "Table",
     kw: `table ${label}`.toLowerCase(),
     enabled: false,
