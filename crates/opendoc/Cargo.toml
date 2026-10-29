@@ -1,0 +1,56 @@
+[package]
+name = "opendoc"
+description = "OpenDoc Native SDK: create, read, modify, template, convert and render documents (DOCX, ODT, RTF, TXT, HTML, Markdown, PDF) with a loss report and its own page layout"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+# `docs/176` §3.3 and §12 (the Native SDK). The one public facade crate
+# (`docs/176` §5.2: the crates.io name `opendoc` is reserved for it); every
+# `casual-doc-*` crate stays internal and none of their types is re-exported.
+#
+# - Reads are a projection (`view`), serialisable, with stable node ids.
+# - Writes are `edit` batches lowered to `casual_doc_edit::Operation` and
+#   applied through `casual_doc_edit::apply`, the single mutation choke point
+#   (ADR-030 I1). There is no writable DOM.
+# - Render and PDF go through `opendoc-viewer`, so a page here is the page the
+#   Viewer SDK shows, with bundled faces only by default (deterministic pixels).
+#
+# `cdylib` for the headless JavaScript package (`packages/opendoc`, built with
+# wasm-pack and the `wasm` feature); `rlib` for the CLI, the C ABI and Python.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# The wasm-bindgen facade the npm package `@casualoffice/opendoc` wraps. No DOM,
+# no `web-sys`: it runs in Node, Deno, Bun, a worker and a page alike.
+wasm = ["dep:wasm-bindgen"]
+# Open PDFs as documents (`docs/182`, hayro). Native hosts only (the CLI).
+pdf-import = ["casual-doc-io/pdf-import", "opendoc-viewer/pdf-import"]
+
+# Same wasm-opt pass as the other engine artefacts.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ['-Oz', '--enable-bulk-memory', '--enable-sign-ext', '--enable-nontrapping-float-to-int']
+
+[dependencies]
+casual-doc-edit.workspace = true
+casual-doc-io.workspace = true
+casual-doc-model.workspace = true
+casual-doc-ooxml.workspace = true
+casual-doc-review.workspace = true
+opendoc-viewer = { workspace = true, features = ["pdf", "formats"] }
+serde.workspace = true
+serde_json.workspace = true
+zip.workspace = true
+wasm-bindgen = { version = "0.2", optional = true }
+
+[dev-dependencies]
+zip.workspace = true
+
+[lints]
+workspace = true

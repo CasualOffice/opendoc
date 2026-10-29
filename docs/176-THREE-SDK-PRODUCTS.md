@@ -604,6 +604,164 @@ Steps:
   the shipped artefact, the field-face defect, the size budget, and the generated size
   record). Each was seen red; the mutations are in the commit message.
 
+## 12. The Native SDK's API: research, then decision (owner, 2026-10-30)
+
+**Owner goal, 2026-10-30.** Make OpenDoc ready to beat docx-js, Apache POI and the paid SDKs
+(Aspose.Words and others) at handling DOCX and other formats, both as a headless SDK and as
+a rendering and preview engine. **Language order**, by usage and by how readily AI agents
+adopt a library: JavaScript/TypeScript (Node and the browser, headless) first, then Python,
+then Java; .NET later. **API rule:** research the popular libraries first, and make ours
+standard and familiar, because similarity drives adoption.
+
+### 12.1 What the incumbents' APIs look like
+
+Read from each project's public documentation on 2026-10-30. Anything a page did not show
+is marked *unverified*. The fetch tool returns pages paraphrased with short verbatim
+fragments, so the snippets below are rebuilt from those fragments, not pasted whole.
+
+| Library | Licence | Create / modify idiom | Open existing | Layout, PDF, images | Source |
+| --- | --- | --- | --- | --- | --- |
+| **docx** (docx-js) | MIT | Declarative tree: `new Document({ sections: [{ properties, headers: { default: new Header({children}) }, footers, children: [new Paragraph({ children: [new TextRun({ text, bold: true })] })] }] })`, then `Packer.toBuffer(doc)` / `toBlob`. `Table` → `TableRow` → `TableCell({children})`; `HeadingLevel.HEADING_1`; `ImageRun({ type, data, transformation: { width, height } })` in pixels; `PageBreak`; `ExternalHyperlink({ children, link })`; `numbering: { config: [{ reference, levels: [{ level, format, text, alignment }] }] }`; `styles: { paragraphStyles: [{ id, name, basedOn, run, paragraph }] }`; comments through `CommentRangeStart`/`End`/`Reference` | No reader. `patchDocument({ data, patches })` fills `{{placeholder}}`s; an unmatched patch is silently skipped | None stated | [README][docxjs-readme], [usage docs][docxjs-docs] |
+| **docxtemplater** | MIT or GPL-3.0 core; paid modules | `new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true })`, `doc.render(data)`, `doc.toBuffer()`. Tags `{name}`, loops/conditions `{#x}…{/x}` (or `{/}`), inverted `{^x}`, `{.}`; options `delimiters`, `nullGetter`, `parser` | Template only | None. Images, HTML, tables, charts, footnotes, ODT, subtemplates and more are **paid modules** (€500/yr per module up to €9000/yr) | [tag types][dt-tags], [configuration][dt-config], [errors][dt-errors], [pricing][dt-pricing] |
+| **mammoth.js** | BSD-2-Clause | Read only: `convertToHtml({ path \| buffer \| arrayBuffer }, { styleMap })`, `extractRawText`; result `{ value, messages: [{ type, message }] }` | Yes, to HTML | "simple and clean HTML"; ignores font, size and colour; writes no DOCX | [README][mammoth] |
+| **docx-preview** | Apache-2.0 | Render only: `renderAsync(data, bodyContainer, styleContainer, options)` (`breakPages`, `ignoreLastRenderedPageBreak`, `renderHeaders`, `renderComments`, …) | Yes, to DOM | Pages break only at explicit or last-rendered breaks; fields (so a TOC) unsupported | [README][docxjs] |
+| **python-docx** | MIT | Imperative: `Document()`, `add_heading(text, level)`, `add_paragraph(text, style)`, `p.add_run(text).bold = True`, `add_table(rows, cols)`, `table.cell(r, c).text`, `add_picture(path, width=Inches(1.25))`, `add_page_break()`, `save(path)`; `document.add_comment(runs, text, author, initials)` (body only, no replies) | `Document(path \| file)`; `paragraphs`, `tables`, `sections[i].header.paragraphs`, `core_properties` | None found | [docs][pydocx-home], [quickstart][pydocx-quick], [comments][pydocx-comments] |
+| **docxtpl** | LGPL-2.1 | `DocxTemplate(path)`, `render(context)`, `save()`; Jinja2 `{{ }}`, `{%p %}`, `{%tr %}`, `{%tc %}` | Template only | Plain tags must sit in one run | [docs][docxtpl] |
+| **Apache POI XWPF** | Apache-2.0 (ASF; not restated on the pages read) | `new XWPFDocument()`, `createParagraph()`, `createRun()`, `XWPFRun.setText/setBold/setFontSize`, `createTable(rows, cols)`, `createHeader(HeaderFooterType.DEFAULT)`, `write(OutputStream)` | `new XWPFDocument(InputStream)`, `getParagraphs()`, `getTables()`, `XWPFWordExtractor.getText()` | "moderately functional"; may "generate invalid files"; no XWPF layout; FO/PDF only for old `.doc` | [component][poi], [XWPFDocument][poi-doc], [XWPFRun][poi-run] |
+| **docx4j** | Apache-2.0 (+ commercial edition) | `WordprocessingMLPackage.createPackage()`, `getMainDocumentPart().addStyledParagraphOfText("Title", …)`, `addParagraphOfText`, `save(File)` | `Docx4J.load`; JAXB object model | `Docx4J.toPDF` ("3 strategies", XSL-FO) | [README][docx4j], [Docx4J.java][docx4j-api], [blog][docx4j-blog] |
+| **Aspose.Words** | Commercial | `new Document()`, `DocumentBuilder` (`write`, `writeln`, `insertBreak(BreakType.PAGE_BREAK)`, `startTable`/`insertCell`/`endRow`/`endTable`, `moveToHeaderFooter`, `insertImage`, `insertHyperlink`, `insertField`) | `new Document(path)`, `getText()`, `getPageCount()`, `getRange().replace(a, b)`, `acceptAllRevisions()`, `compare`, `mailMerge` | Own layout engine; `save("out.pdf")` infers the format from the extension; `LayoutCollector` page indices | [Document][aspose-doc], [DocumentBuilder][aspose-builder], [Range.Replace][aspose-replace], [LayoutCollector][aspose-layout-collector] |
+
+**What the table says.** Each permissive library does one of the jobs: generate (docx-js),
+fill (docxtemplater, docxtpl), read and modify (python-docx, POI, docx4j), convert to HTML
+(mammoth) or preview in a browser (docx-preview). Only Aspose lays a document out and prints
+it, and it is commercial. Among the permissive ones, docx4j's PDF goes through XSL-FO, not a
+layout engine.
+
+### 12.2 Decision: one engine, familiar front doors
+
+We **adopt each ecosystem's dominant idiom verbatim**, so a user changes the import and
+little else. Underneath, every front door lowers to the same Rust core (`crates/opendoc`),
+so the languages cannot drift.
+
+| Layer | Idiom adopted | Where it is built |
+| --- | --- | --- |
+| **JS generation** | docx-js's declarative tree, the same class names and the same option names (`new Document({ sections })`, `Paragraph`, `TextRun({ bold, italics, size, color, font, underline })`, `HeadingLevel`, `Table`/`TableRow`/`TableCell({ columnSpan, rowSpan })`, `ImageRun({ data, transformation })`, `ExternalHyperlink`, `InternalHyperlink`, `Bookmark`, `PageBreak`, `FootnoteReferenceRun`, `PageNumber`, `TableOfContents`, `numbering.config`, `styles.paragraphStyles`, `comments.children`, `Packer.toBuffer/toBlob/toBase64String`). A docx-js user's object literal is, field for field, a valid spec | `packages/opendoc/src/builder.js` serialises to `DocumentSpec` JSON; `crates/opendoc/src/builder.rs` writes the package |
+| **JS templating** | docxtemplater's tags (`{x}`, `{#x}…{/x}`, `{^x}`, `{.}`, dotted paths), options (`delimiters`, `nullGetter` as a constant, `paragraphLoop` and `linebreaks` always on) and error shape (`properties.errors[]` with `id` and `explanation`) | `crates/opendoc/src/template.rs`; `doc.render(data)` in JS |
+| **JS read, modify, convert** | python-docx-like readable names in camelCase (`doc.paragraphs`, `doc.tables`, `doc.sections`, `doc.comments`), mammoth's result shape for conversion messages (`{ value, messages }`), Aspose's one-call `save(format)` with the format named | `packages/opendoc/src/index.js` |
+| **Python** | python-docx's surface (`Document()`, `Document(path)`, `add_heading`, `add_paragraph(text, style)`, `add_run(text).bold = True`, `add_table(rows, cols)`, `cell(r, c).text`, `add_page_break`, `paragraphs`, `tables`, `sections`, `core_properties`, `save`), plus docxtpl's `render(context)` with docxtemplater tags | `bindings/python` (PyO3) |
+| **Java** | POI XWPF's naming (`OpenDocument` ≈ `XWPFDocument`: `createParagraph()`, `createRun()`, `setText`, `setBold`, `getParagraphs()`, `getTables()`, `write(OutputStream)`) and Aspose's `save(path)` by extension | `bindings/java` (Panama FFM over `crates/opendoc-ffi`) |
+| **Rust** | The `docs/176` §3.3 shape: `Document::open`, a read projection, `doc.edit(\|e\| …)` batches, `save(Format, SaveMode)` with a report | `crates/opendoc` |
+
+**What we add that none of them has in one permissive package**, each of which is a test in
+this repository:
+
+1. **Layout, page images and real-text PDF** from the editor's own pagination
+   (`render_page_png`, `to_pdf`, `page_count`, `page_text`, `outline`). This is Aspose's
+   capability, under Apache-2.0.
+2. **A loss report on every open and every save** (`import_report`, `SaveReport.losses`)
+   and three save modes: `exact` returns the original bytes when the document is unchanged,
+   `preserve` keeps verbatim-retained parts, `semantic` regenerates. No library in §12.1
+   reports loss.
+3. **Templating in the same package**, with images, tables, footnotes and headers kept
+   because the engine edits the document rather than the XML text. docxtemplater charges for
+   several of these as modules.
+4. **Every edit goes through the engine's checked operation set** (ADR-030 I1): ids,
+   protection (a read-only document refuses), atomic batches and an exact undo. POI warns it
+   "may be possible to accidentally generate invalid files"; here a batch either applies
+   whole or not at all.
+5. **The same engine everywhere.** The Node package, the CLI, Python, Java and the
+   in-browser editor lay out one document to the same pages. Deterministic pixels across
+   platforms are a CI gate (§12.5).
+
+**Deliberately not copied.**
+
+- docx-js's silent skip of an unknown option. Here an unknown spec field is an error naming
+  the field, except inside `TextRun` and `Paragraph`, whose options flatten into one object.
+- docxtemplater's default `nullGetter`, which prints `undefined`. Here a missing value prints
+  `""`, or is an `undefined_value` error with `strict`.
+- python-docx's writable proxies over the XML. Here a run's `bold = True` is a typed edit.
+
+**Offsets.** Edits address text by **character** (Unicode scalar) offsets into a paragraph's
+`text`, which is a Python `str` index. JavaScript UTF-16 indices differ only outside the BMP,
+and the JS package converts.
+
+### 12.3 The Rust core (S1), as built
+
+`crates/opendoc` is the one public façade (`docs/176` §5.2). It re-exports no `casual-doc-*`
+type.
+
+- **Open and create.** `Document::open` / `open_with(bytes, OpenOptions)` go through the
+  `casual-doc-io` registry: DOCX, ODT, RTF, TXT and JSON, plus PDF with the `pdf-import`
+  feature. The source is retained, so an exact save works. `Document::create()` and
+  `from_spec(DocumentSpec, media)` build a WordprocessingML package and open it. It carries
+  Word's built-in style ids and names (Normal, Title, Heading 1-6, List Bullet, List Number,
+  Quote, Caption, Table Grid, Hyperlink, the TOC and note styles), an A4 page and Calibri
+  11 pt, which the bundled Carlito lays out metric-identically.
+- **Read view** (`opendoc::view`): `body()` returns `Block::{Paragraph, Table,
+  ContentControl, Other}` with stable ids. Paragraphs carry their style name, text, heading
+  level, alignment, list membership and runs. Runs carry text, direct formatting, hyperlink,
+  tracked change, field, image and note/comment references. Also `paragraphs()`, `tables()`,
+  `sections()`, `styles()`, `comments()` (with anchors), `revisions()`,
+  `headers_footers()`, `notes()`, `media()` plus `media_bytes()`, `properties()` and
+  `text()`. Everything serialises to the camelCase JSON every binding reads.
+- **Edit** (`doc.edit(|e| …)`, or `edit_commands(&[EditCommand])` from JSON). The text,
+  format, hyperlink and paragraph calls lower to `casual_doc_edit::Operation` and apply
+  through `casual_doc_edit::apply` after `refuse_if_protected`. They are: `insert_text`,
+  `delete_text`, `replace_text`, `replace_all`, `set_run_format`, `clear_formatting`,
+  `set_hyperlink`, `set_paragraph_style`, `set_alignment`, `set_page_break_before`,
+  `insert_paragraph`, `append_paragraph`, `append_heading`, `append_run`, `delete_block`.
+  Tables: `insert_table`, `set_cell_text`, `add_row`, `delete_row`. Review edits lower
+  through `casual_doc_review::lower`, the editor's own lowering: `add_comment`,
+  `suggest_insert`, `suggest_delete`, `suggest_replace`, `accept_all_revisions`,
+  `reject_all_revisions`. Properties: `set_properties`. The batch runs on a copy and
+  replaces the document only if every call succeeded. It returns an exact `Undo`, which
+  `doc.undo` applies and which returns the redo.
+- **Template:** `render_template(data, TemplateOptions)` and `template_tags()`, the
+  docxtemplater idiom of §12.2 lowered to `InsertText`, `DeleteText`, `InsertBlocks`, `DeleteBlocks`, `InsertRow`, `DeleteRow` and `SetInlines`.
+- **Save:** `save(Format, SaveMode) -> (bytes, SaveReport)` to DOCX, DOTX, ODT, TXT, JSON,
+  HTML, Markdown or PDF. A same-format save honours the mode. A cross-format save is semantic
+  and its report says `lossyByNature` for the renditions. `opendoc::convert(bytes, to)` does
+  both steps in one call.
+- **Render:** `page_count`, `page_sizes`, `page_text`, `render_page` (RGBA),
+  `render_page_png`, `to_pdf`, `outline` and `font_needs`. One layout serves all of them,
+  cached until the next edit. It uses bundled faces by default (`RenderOptions` adds faces or
+  allows OS fonts).
+- **Not built (stated, not hidden):**
+  - inserting pictures, headers, footers or notes by edit (the builder writes all four);
+  - page or section edits;
+  - paragraph loops inside headers and footers (value tags work there);
+  - SVG (no backend, §3.1);
+  - opening HTML or Markdown (export-only adapters).
+
+**One defect class found and handled in the SDK.** A comment's anchor from
+`casual_doc_review` is measured in the layout anchor stream, which counts a footnote
+reference's printed number. The read view's `text` does not count it, so the first build
+returned `"noted "` for a comment on `" noted"` after a footnote. `Document::comments` and
+`revisions` now map anchors through both length functions (`ParagraphSpace`). The engine-side
+disagreement is the one recorded on `casual_doc_review::body::inline_anchor_len`.
+
+### 12.4 Guards (S1)
+
+`crates/opendoc/tests/sdk.rs` (17 tests) and `tests/deterministic_pixels.rs`. These run in
+CI's `test` job (Linux) and `platform` job (macOS arm64, Windows x64). Builder and template
+unit tests are in the crate.
+
+- **Mutation:** `layout()` forced to `with_system_fonts(true)`. `pages_render_the_same_pixels_on_every_platform`
+  went red: `sample.docx page 1 … fc24f2a86aa20ddb` against the golden's `9305778ed26f9531`.
+  It was green again once restored.
+- **Mutation (red before the fix):** without the anchor mapping,
+  `a_docx_js_shaped_spec_builds_every_story` failed with `left: "noted " right: " noted"`.
+
+### 12.5 The deterministic-pixels gate (V2)
+
+`tests/pixels.golden` holds an FNV-1a hash of each page's **RGBA** (not the PNG, so an
+encoder change cannot move it) for the first three pages of the committed `sample.docx` and
+for one built document, at 72 dpi with the bundled faces. It is written by
+`OPENDOC_BLESS=1 cargo test -p opendoc --test deterministic_pixels` and never by hand. It was
+blessed on macOS arm64. CI's Linux `test` job and the Windows `platform` job are its first
+cross-platform check, and a red on one platform alone is exactly the finding the gate exists
+to make.
+
 [poi]: https://poi.apache.org/components/document/
 [pydocx]: https://python-docx.readthedocs.io/en/latest/api/text.html
 [pydocx-gh]: https://github.com/python-openxml/python-docx
@@ -616,3 +774,22 @@ Steps:
 [uniffi]: https://mozilla.github.io/uniffi-rs/latest/
 [uniffi-readme]: https://github.com/mozilla/uniffi-rs
 [jep454]: https://openjdk.org/jeps/454
+
+[docxjs-readme]: https://raw.githubusercontent.com/dolanmiu/docx/master/README.md
+[docxjs-docs]: https://github.com/dolanmiu/docx/tree/master/docs/usage
+[dt-tags]: https://docxtemplater.com/docs/tag-types/
+[dt-config]: https://docxtemplater.com/docs/configuration/
+[dt-errors]: https://docxtemplater.com/docs/errors/
+[dt-pricing]: https://docxtemplater.com/pricing/
+[pydocx-home]: https://python-docx.readthedocs.io/en/latest/
+[pydocx-quick]: https://python-docx.readthedocs.io/en/latest/user/quickstart.html
+[pydocx-comments]: https://python-docx.readthedocs.io/en/latest/user/comments.html
+[docxtpl]: https://docxtpl.readthedocs.io/en/latest/
+[poi-doc]: https://poi.apache.org/apidocs/dev/org/apache/poi/xwpf/usermodel/XWPFDocument.html
+[poi-run]: https://poi.apache.org/apidocs/dev/org/apache/poi/xwpf/usermodel/XWPFRun.html
+[docx4j-api]: https://raw.githubusercontent.com/plutext/docx4j/master/docx4j-core/src/main/java/org/docx4j/Docx4J.java
+[docx4j-blog]: https://www.docx4java.org/blog/?p=148
+[aspose-doc]: https://reference.aspose.com/words/java/com.aspose.words/document/
+[aspose-builder]: https://reference.aspose.com/words/net/aspose.words/documentbuilder/
+[aspose-replace]: https://reference.aspose.com/words/net/aspose.words/range/replace/
+[aspose-layout-collector]: https://reference.aspose.com/words/java/com.aspose.words/layoutcollector/
