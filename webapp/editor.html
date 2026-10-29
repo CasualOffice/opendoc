@@ -922,6 +922,9 @@
                    painted behind every page of a section — belongs with the rest of
                    the section's page setup, so it sits beside Line numbers. An icon
                    button for the same reason: the band is budgeted at 1280px. -->
+              <!-- Breaks, mirrored from Insert (HF-203): Word's Layout ▸ Page Setup
+                   ▸ Breaks, and ONLYOFFICE's Layout slot for the same button. -->
+              <button data-i18n-title="panelInsert.insertBreak.title" data-i18n-label="panelInsert.breaks.label" id="layoutBreaksBtn" type="button" class="fmt" title="Insert a page, column or section break" aria-label="Breaks" aria-haspopup="menu" aria-controls="layoutBreaksMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">insert_page_break</span></button>
               <button data-i18n-title="panelLayout.watermark.title" data-i18n-label="panelLayout.watermark.label" id="watermarkBtn" type="button" class="fmt" title="Watermark" aria-label="Watermark" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">branding_watermark</span></button>
             </div>
             <span data-i18n="panelLayout.pageSetup" class="rgroup-label">Page setup</span>
@@ -1952,6 +1955,17 @@
          one scans `.ribbon-panel .rgroup button[data-command]`, and a popover is
          not inside a ribbon panel. -->
     <div data-i18n-label="panelInsert.breaks.label" id="insertBreaksMenu" class="context-menu" hidden role="menu" aria-label="Breaks">
+      <button data-i18n="break.blankPage" type="button" role="menuitem" class="menu-item" data-command="layout.blankPage">Blank page</button>
+      <button data-i18n="break.page" type="button" role="menuitem" class="menu-item" data-command="layout.break.page">Page break</button>
+      <button data-i18n="break.column" type="button" role="menuitem" class="menu-item" data-command="layout.break.column">Column break</button>
+      <div class="menu-divider"></div>
+      <button data-i18n="break.section.nextPage" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.nextPage">Section break (next page)</button>
+      <button data-i18n="break.section.continuous" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.continuous">Section break (continuous)</button>
+      <button data-i18n="break.section.evenPage" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.evenPage">Section break (even page)</button>
+      <button data-i18n="break.section.oddPage" type="button" role="menuitem" class="menu-item" data-command="layout.break.section.oddPage">Section break (odd page)</button>
+    </div>
+    <!-- The Layout face's copy of the same roster (HF-203); `breaks.spec.mjs` holds the two equal. -->
+    <div data-i18n-label="panelInsert.breaks.label" id="layoutBreaksMenu" class="context-menu" hidden role="menu" aria-label="Breaks">
       <button data-i18n="break.blankPage" type="button" role="menuitem" class="menu-item" data-command="layout.blankPage">Blank page</button>
       <button data-i18n="break.page" type="button" role="menuitem" class="menu-item" data-command="layout.break.page">Page break</button>
       <button data-i18n="break.column" type="button" role="menuitem" class="menu-item" data-command="layout.break.column">Column break</button>

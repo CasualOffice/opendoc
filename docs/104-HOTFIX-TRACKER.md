@@ -70,13 +70,13 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | P1 | 33 | 3 |
 | P2 | 52 | 15 |
 | P3 | 22 | 12 |
-| Behavioural audit — 2026-09-04 | 18 | 4 |
+| Behavioural audit — 2026-09-04 | 18 | 3 |
 | Layout-space audit — 2026-09-09 | 14 | 0 |
 | Command-surface gaps found by the chrome prototypes — 2026-09-10 | 5 | 0 |
 | Ribbon keyboard reachability — 2026-09-10 | 2 | 0 |
 | Paragraph-level revision mapping — 2026-09-17 | 4 | 0 |
 | Large-document admission — 2026-09-18 | 1 | 0 |
-| **Total** | **158** | **34** |
+| **Total** | **158** | **33** |
 
 "Still open" counts any status *beginning* `Open`, `Partly fixed`, or `In progress` —
 the prefix matters, because real statuses qualify themselves (`Open (owner decision)`,
@@ -96,7 +96,7 @@ by re-reading the code they cite: **HF-016**, **HF-022** and **HF-034**.)
 
 ### Progress
 
-**34 of 158 rows remain open. Every P0 is closed.** HF-030 closed with #559. (Re-derive these counts, do not edit them by hand.)
+**33 of 158 rows remain open. Every P0 is closed.** HF-030 closed with #559. (Re-derive these counts, do not edit them by hand.)
 
 **Staleness sweep, 2026-09-20.** Every P1 row of this tracker and of `105` was re-read
 against the code it cites, because `109` is now the only queue and a stale `Open` there is
@@ -316,7 +316,7 @@ reproduction and the responsible `file:line` already identified.
 | HF-124 | Shift+Enter is a paragraph break everywhere — in a list it makes a second bullet, in a heading it drops into body text. The engine has no line-break operation at all, though the model and layout already support `BreakKind::Line` | rust-core | P1 | Fixed (#518) |
 | HF-125 | Enter inside a text box does nothing ("That edit isn't supported for this selection yet"): `split_paragraph` and `join_paragraphs` never recurse into a paragraph's inlines, unlike `find_paragraph_mut` | rust-core | P1 | Fixed (#518) |
 | HF-126 | Enter after a CHECKED checklist item produces another checked item, because the split clones `numbering` and a checklist item's checked state IS its numbering instance | rust-core | P2 | Fixed (#528) |
-| HF-127 | Ctrl/Cmd+Enter (page break) is inert — the chord is swallowed before the Enter branch and no inline page-break op exists | rust-core | P3 | Open |
+| HF-127 | Ctrl/Cmd+Enter (page break) is inert — the chord is swallowed before the Enter branch and no inline page-break op exists | rust-core | P3 | Fixed (commit 2fb2fabe; docs/tracker/completed.md) |
 | HF-128 | In Suggesting mode the caret, click target and selection are offset by the width of any struck-out text: selecting 7 characters struck 5 the user never touched. Extends HF-022 from "misplaced caret" to a content-integrity defect | wasm | P0 | Fixed (#519) |
 | HF-129 | A second reviewer cannot edit the first reviewer's pending suggestion — the keystrokes are silently dropped. `docs/86` already specifies the intended behaviour | wasm | P0 | Fixed (#520) |
 | HF-130 | Enter and every cross-paragraph deletion are refused in Suggesting mode, so a reviewer cannot really author | wasm | P1 | Fixed (this PR) — `108` phase 2: Enter suggests a paragraph break (the LEADING half's mark, as Word writes it), Backspace/Delete at a boundary suggests deleting that mark, and a deletion or replacement across paragraphs writes Word's RP040 shape — text struck, every mark but the last suggested deleted, later paragraphs given the first one's shape with a `w:pPrChange` holding their own. One undo step each. Another reviewer's pending break is refused with a reason; the author's own is removed outright. Guards: 6 engine tests, 3 browser tests, each driven red |
