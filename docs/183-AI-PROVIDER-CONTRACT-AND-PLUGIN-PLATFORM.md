@@ -204,9 +204,10 @@ The provider is chosen once per call, strongest first:
 2. **Host, over `postMessage`:** the frame was opened with `?aiProvider=host` (the element
    writes it when its property is set). The editor emits the `ai-provider` event `{qid, kind:
    "request", request, purpose}` and the host answers with the `ai-provider.answer` request
-   `{qid, kind: "chunk" | "result" | "error", chunk? | response? | error?}`; `{qid, kind:
-   "cancel"}` withdraws a request. The same correlation-by-`qid` pattern as `directory-query`
-   (`175` §7.2), with a 120 s ceiling per request.
+   `{qid, chunk}` while streaming, then `{qid, response}` or `{qid, error, status?}`, told
+   apart by which field is present (`kind` and `type` belong to the envelope); the event
+   `{qid, kind: "cancel"}` withdraws a request. The same correlation-by-`qid` pattern as
+   `directory-query` (`175` §7.2), with a 120 s ceiling per request, reset by each chunk.
 3. **MCP sampling**, when a requester was supplied.
 4. **Bring your own key**, standalone only: the editor is not framed and the host config did
    not say otherwise.
@@ -784,3 +785,90 @@ No provider configured (every AI entry point)
 | **P3** assistant plugin | After the owner's review of §13 | — |
 | **P4** further first-party plugins | After §13; licences checked first (no GPL, AGPL or non-commercial) | — |
 | **P5** RAG, MCP client, agent loop | §12 | — |
+
+## 15. Built (2026-10-30, `program/ai-plugins`)
+
+### 15.1 P1: the provider contract
+
+- `webapp/src/ai_provider.mjs` — the contract: `checkRequest` (field allowlist, message
+  shapes, `max_completion_tokens` always set and clamped, the `bytes/4` input estimate refused
+  locally as `context-too-long`, a 4 MiB body bound), `checkResponse` / `checkChunk` (only the
+  contract's fields survive), `createAssembler` (chunks into one response, tool-call fragments
+  merged by index), the error normalisation of §3.3, `createBudget`, `endpointAllowed`.
+- `webapp/src/ai_provider_adapters.mjs` — `openAiAdapter` (bearer, Azure `api-key` and
+  `api-version`, the `max_tokens` compatibility switch), `anthropicAdapter` (the three headers,
+  system lifting, role merging, tool use, SSE event mapping), `hostAdapter`,
+  `mcpSamplingAdapter`; one SSE parser; a watchdog for first byte (30 s) and idle (60 s);
+  Stop keeps the text that had arrived as `partial`.
+- `webapp/src/ai_provider_channel.mjs` — `createHostProviderChannel` (the `postMessage` half:
+  `ai-provider` out, `ai-provider.answer` back by `qid`, a cancel on Stop and on timeout) and
+  `createAiProviders` (the resolution of §3.8, budgets, an audit record per call with purpose,
+  kind, endpoint, model, usage, duration and code, and never text).
+- The host contract gained one event (`ai-provider`) and one verb (`ai-provider.answer`);
+  `casual-doc-sdk`'s `HostEvent::AiProvider` and `HostRequest::AiProviderAnswer` keep
+  `host_parity.rs` exact. `window.opendoc.aiProvider` in process, `client.serveAiProvider(fn)`
+  on the host client, and the element's `aiProvider` property and `ai-provider="off"`.
+- `webapp/src/ai_settings.mjs` and `ai_platform.mjs` — Settings ▸ AI provider and the palette's
+  "AI provider settings…" (`ai.providerSettings`, an exact contract row requiring nothing): ten
+  presets, Test connection through the same contract with a fixed prompt, Save, Forget, the
+  disclosure, the key never written back into the form. Present and disabled with its reason
+  in a frame or under `?aiProvider=off`.
+- Schemas: `webapp/schemas/ai-provider-request.schema.json`, `-response`, `-chunk`.
+- Started from `createAssistant`, so `main.js` carries no line.
+
+### 15.2 P2: the plugin runtime
+
+- `webapp/src/plugin_manifest.mjs` — `checkManifest` (§4, unknown fields refused),
+  `effectiveGrant` (§6.3), `addedPermissions`, `sandboxCsp` and `sandboxDocument` (§7),
+  `SANDBOX_TOKENS = ["allow-scripts"]`.
+- `webapp/src/plugin_rpc.mjs` — JSON-RPC 2.0 over a `MessagePort` with the §5 bounds.
+- `webapp/src/plugin_host.mjs` — one running plugin: the frame, the handshake, and every
+  method of §5. `tools/list` and `tools/call` are `ai_webmcp.toolsFor` and `editor.ai`; edits
+  only through `ai.preview`. A second `load` closes the plugin.
+- `webapp/src/plugin_catalogue.mjs` — host, first-party and installed catalogues, grants per id.
+- `webapp/src/plugin_platform.mjs` — the grant prompt, Manage add-ins, the Add-ins menu (Review
+  ▸ Proofing), the side panel, the `plugin.` command family (palette and context menu), and
+  the editor's `change`/`selection` events forwarded within each grant.
+- `webapp/plugins/sdk/opendoc-plugin.js` — the client a plugin page includes;
+  `webapp/plugins/catalogue.json` — the first-party catalogue, empty until P3/P4;
+  `webapp/schemas/plugin-manifest.schema.json`; `tests/fixtures/plugins/probe/`.
+- Host configuration: `?plugins=` / the element's `plugins` attribute; `docs/149`'s plugin rows
+  and `docs/153`'s `shell.plugins` moved accordingly.
+
+### 15.3 Guards, each driven red
+
+| Guard | Mutation | Red |
+| --- | --- | --- |
+| A framed editor never uses BYOK | the `framed` check removed | "a framed editor never uses BYOK, even with a key stored" |
+| Nothing provider-specific leaves | the field allowlist skipped | "checkRequest refuses a field outside the contract" |
+| Stop reaches the host | no `cancel` event on abort | "host channel: … cancel on Stop" |
+| The audit never carries text | the request added to the record | "the audit records … and never the text" |
+| No provider, no network | a fetch made when unconfigured | "no provider configured: … NO network call" |
+| Stop keeps what arrived | `partial` dropped | "openai: Stop mid-stream … keeps the text" |
+| Anthropic from a browser | the direct-browser-access header dropped | the three Anthropic tests |
+| The output ceiling holds | `max_completion_tokens` not clamped | "checkRequest always sets max_completion_tokens, clamped" |
+| Scripts only | `allow-same-origin` added | "the frame may run scripts and nothing else" |
+| No network without the permission | `connect-src *` | "the CSP connects nowhere unless network is held" |
+| Unknown manifest fields refused | the field check skipped | "an unknown field is refused, not ignored" |
+| Edits only propose | `tools/call` also calls `apply` | "an edit goes to the private preview and never to apply" |
+| The mount caps the grant | the mount term dropped | "the effective grant is declared ∩ granted, capped by the mount" |
+| A navigating frame is closed | the second-`load` check disabled | "a frame that navigates itself is closed and reported" |
+| No file or session commands | the `NEVER` set skipped | "commands by id: no file, session, plugin or AI commands" |
+| Tools need `read` | the `read` check dropped from `tools/list` | "without read a plugin may not list tools …" |
+| The CSP comes first | the policy appended after the plugin's markup | "the CSP and the base come before the plugin's own markup" |
+| No prototype methods | `handlers[method]` | "rpc: … unknown methods …" |
+
+### 15.4 Not built, and why
+
+- **P3 onward** waits on the owner's review of §11–§13 (owner instruction, 2026-10-30).
+- **The first-party catalogue is empty:** its first entries are the P3/P4 plugins.
+- **The side panel overlaps the assistant's card** at the right edge; docking both in one
+  column is a P3 design question, because the assistant becomes a plugin panel there.
+- **No streaming UI and no Stop button yet:** both belong to the P3 surfaces; the contract,
+  the adapters and the plugin RPC carry streaming and cancellation today.
+- **MCP sampling has no transport in the editor yet:** the adapter is a mapping behind
+  `useSampling(requester)`; nothing in the product supplies a requester (§3.7, owner F6).
+- **ONLYOFFICE's `pluginsData` format is not read** (`docs/149`): a host lists OpenDoc
+  manifests.
+- **Residual T2** (a frame navigating itself can carry data out before it is closed) stands
+  as §10 records it.

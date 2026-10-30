@@ -13983,4 +13983,43 @@ body[data-table-draw] .page-wrap * {
   .table-position-distances {
     grid-template-columns: 1fr 1fr;
   }
+/* ---- Add-ins (docs/183 §8) ------------------------------------------------
+   One plugin panel at a time, docked at the right like the assistant's card;
+   a bottom sheet on a phone. The frames inside are sandboxed plugin pages. */
+.plugin-panel {
+  position: fixed;
+  top: calc(var(--chrome-bottom) + var(--space-3));
+  right: var(--space-3);
+  bottom: var(--space-3);
+  z-index: var(--z-inspector);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: min(var(--plugin-panel-width, 20rem), calc(100vw - 2 * var(--space-3)));
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-popover);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-popover);
+}
+.plugin-panel[hidden] { display: none; }
+.plugin-panel-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--line); }
+.plugin-panel-title { margin: 0; font-size: 0.9375rem; font-weight: 600; }
+.plugin-panel-body { flex: 1 1 auto; min-height: 0; display: flex; }
+.plugin-frame { flex: 1 1 auto; width: 100%; height: 100%; border: 0; background: var(--surface); }
+.plugin-frame[hidden] { display: none; }
+#addinsManage { border-top: 1px solid var(--line); border-radius: 0; margin-top: 0.25rem; }
+.menu-empty { margin: 0; padding: 0.375rem 0.625rem; color: var(--muted); font-size: var(--fs-small); }
+.plugins-list { margin: 0; padding: 0; list-style: none; }
+.plugins-row { display: grid; gap: 0.25rem; padding: var(--space-2) 0; border-bottom: 1px solid var(--line); }
+.plugins-meta, .plugins-permissions, .plugins-description { margin: 0; color: var(--muted); font-size: var(--fs-small); line-height: 1.45; }
+.plugins-description { color: var(--ink); }
+.plugins-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.plugins-empty { padding: var(--space-2) 0; color: var(--muted); }
+.plugins-install { display: flex; align-items: flex-end; gap: var(--space-2); margin-top: var(--space-3); }
+.plugins-install[hidden] { display: none; }
+.plugins-install .dialog-field { flex: 1 1 auto; }
+.plugin-grant-list { margin: 0 0 var(--space-2); padding-left: 1.125rem; line-height: 1.5; }
+@media (max-width: 37.5em) {
+  .plugin-panel { top: auto; left: var(--space-2); right: var(--space-2); bottom: var(--space-2); width: auto; height: 60vh; }
 }

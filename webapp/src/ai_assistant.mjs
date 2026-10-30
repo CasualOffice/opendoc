@@ -34,6 +34,7 @@
 import { CAPABILITIES, hostConfig } from "./capabilities.mjs";
 import { t } from "./i18n.mjs";
 import { startWebMcp } from "./ai_webmcp.mjs";
+import { startAiPlatform } from "./ai_platform.mjs";
 
 /** The access levels the engine's `aiRead`/`aiPreview` accept, weakest first. */
 export const AI_ACCESS = Object.freeze(["none", "read", "comment", "suggest", "review"]);
@@ -422,5 +423,8 @@ export function createAssistant(ed, { onDecision = () => {} } = {}) {
   // WebMCP (`docs/178` §9 item 2): only when the host asked, and only over the
   // methods above, so a browser agent reaches nothing this object does not offer.
   webmcpStatus = startWebMcp(assistant, hostConfig());
+  // The AI provider service and the plugin platform (`docs/183`), started here for
+  // WebMCP's reason: `main.js` carries no line for it. Nothing is requested at boot.
+  startAiPlatform(ed, { assistant });
   return assistant;
 }

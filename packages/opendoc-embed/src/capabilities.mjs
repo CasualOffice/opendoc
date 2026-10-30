@@ -962,6 +962,14 @@ export function hostConfig(view = globalThis) {
     // `direct` | `deny` | a proxy URL with `{url}`). Verbatim here; read by
     // `picture_url.mjs`'s `resolveRemoteImagePolicy`, which fails closed.
     remoteImages: get("remoteImages"),
+    // Which model AI features use (`?aiProvider=host` or `off`, `docs/183` §3.8):
+    // `host` sends requests to the host over `postMessage`, `off` withdraws AI,
+    // bring-your-own key included. Absent: the in-process host's, or BYOK when
+    // standalone, or none. `ai_provider_channel.mjs` resolves it.
+    aiProvider: get("aiProvider"),
+    // The host's plugin catalogue (`?plugins=<URL>` or `none`, `docs/183` §9).
+    // `plugin_catalogue.mjs` reads it.
+    plugins: get("plugins"),
     framed,
   };
 }
