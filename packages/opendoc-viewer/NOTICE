@@ -123,6 +123,14 @@ SCOWL (Spell Checker Oriented Word Lists)
   further copyright holders named in the licence file itself.
   webapp/dict/LICENSE.SCOWL.txt
 
+PP-OCRv5 mobile text detection and Latin recognition models (PaddleOCR)
+  docs/assets/ocr/det.onnx, docs/assets/ocr/latin_rec.onnx,
+  docs/assets/ocr/latin_rec.dict.txt -- converted from Paddle inference format
+  to ONNX, weights unchanged; provenance in docs/assets/ocr/NOTICE.txt.
+  Copyright PaddlePaddle Authors (https://github.com/PaddlePaddle/PaddleOCR).
+  Licensed under the Apache License, Version 2.0
+  docs/assets/ocr/LICENSE-Apache-2.0.txt
+
 --------------------------------------------------------------------------------
 4. Document fonts self-hosted and served from this origin
 --------------------------------------------------------------------------------

@@ -122,7 +122,9 @@ export const FILE_SURFACE = [
   // different questions, and because §6 of `docs/122` listed Version History as
   // "not adopted … `docs/107` designs it; not built" — that sentence was true
   // when it was written and is corrected there in this change.
-  { nameKey: "menuGroup.history", ids: ["file.versionHistory", "file.saveSharedVersion"] },
+  // Google Docs' File ▸ Version history ▸ (See version history, Name current
+  // version): one row, so File stays within a screenful (menu-submenus).
+  { nameKey: "menuGroup.history", submenu: true, ids: ["file.versionHistory", "file.saveSharedVersion"] },
   // ONLYOFFICE's "Advanced Settings" and "Help" are both File-page items. They
   // were the whole content of a `Tools` menu and a `Help` menu, which is two
   // more top-level names for five rows — and the two that fell off the end of

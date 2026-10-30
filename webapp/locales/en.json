@@ -1843,6 +1843,8 @@
   "panelInsert.insertEmoji.title": "Insert an emoji",
   "panelInsert.insertField.label": "Insert field",
   "panelInsert.insertFieldPageNumber.title": "Insert a field (page number, date, file name…)",
+  "panelInsert.insertNbsp.label": "Non-breaking space",
+  "panelInsert.insertNbsp.title": "Insert a non-breaking space",
   "panelInsert.insertPageNumberField.title": "Insert the page number as a field that updates as pages reflow",
   "panelInsert.insertPicture.label": "Insert picture",
   "panelInsert.insertPictureFromFile.title": "Insert a picture from a file",
