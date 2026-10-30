@@ -300,7 +300,7 @@ impl<'a> Editor<'a> {
 
     /// The paragraph's text, on any surface.
     fn paragraph_text(&self, paragraph: NodeId) -> Result<String> {
-        casual_doc_edit::find_paragraph_any(&self.state.model, paragraph)
+        find_paragraph(&self.state.model, paragraph)
             .map(|p| node_plain_text(&p.inlines))
             .ok_or_else(|| Error::invalid(format!("no paragraph with id {paragraph}")))
     }
@@ -364,7 +364,7 @@ impl<'a> Editor<'a> {
     /// Turns `\n` and `\t` in a paragraph's runs into line breaks and tabs
     /// (one `SetInlines`), so inserted text means what a reader expects.
     fn split_controls(&mut self, paragraph: NodeId) -> Result<()> {
-        let Some(p) = casual_doc_edit::find_paragraph_any(&self.state.model, paragraph) else {
+        let Some(p) = find_paragraph(&self.state.model, paragraph) else {
             return Ok(());
         };
         let inlines = p.inlines.clone();
@@ -550,7 +550,7 @@ impl<'a> Editor<'a> {
     }
 
     fn paragraph_properties(&self, node: NodeId) -> Result<ParagraphProperties> {
-        casual_doc_edit::find_paragraph_any(&self.state.model, node)
+        find_paragraph(&self.state.model, node)
             .map(|p| (*p.properties).clone())
             .ok_or_else(|| Error::invalid(format!("no paragraph with id {node}")))
     }
@@ -726,8 +726,8 @@ impl<'a> Editor<'a> {
         // new range explicitly, clearing what was inherited.
         self.insert_text(paragraph, start, text)?;
         let end = start + text.chars().count();
-        let inherited = casual_doc_edit::find_paragraph_any(&self.state.model, node)
-            .is_some_and(|p| p.inlines.len() > 1);
+        let inherited =
+            find_paragraph(&self.state.model, node).is_some_and(|p| p.inlines.len() > 1);
         if inherited {
             self.clear_formatting(paragraph, start, end)?;
         }
@@ -1206,6 +1206,25 @@ pub struct PropertiesPatch {
     /// Category.
     #[serde(default)]
     pub category: Option<String>,
+}
+
+/// The paragraph `id`, on any surface.
+///
+/// The last few body blocks are checked first, because a builder loop
+/// (`add_paragraph`, then `add_run`) addresses the paragraph it just appended,
+/// and a new paragraph is a cold miss in the model's route cache. Everything
+/// else goes to `casual_doc_edit::find_paragraph_any`, which is the model's
+/// route-cached locator (`Document::paragraph`): **O(1)** warm, one walk cold.
+pub(crate) fn find_paragraph(model: &Model, id: NodeId) -> Option<&Paragraph> {
+    let body = model.body();
+    for block in body.iter().rev().take(8) {
+        if let BlockNode::Paragraph(p) = block
+            && p.id == id
+        {
+            return Some(p);
+        }
+    }
+    casual_doc_edit::find_paragraph_any(model, id)
 }
 
 /// Finds the container (`None` for the body, else a cell or content control)

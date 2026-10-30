@@ -24,13 +24,13 @@
       "task": "generate",
       "input": "100 paragraphs + table",
       "docx-js": {
-        "ms": 4.18,
-        "peakMB": 87.9,
+        "ms": 4.26,
+        "peakMB": 87.8,
         "output": 10247
       },
       "opendoc": {
-        "ms": 4.08,
-        "peakMB": 244.9,
+        "ms": 4.04,
+        "peakMB": 234.4,
         "output": 5423
       }
     },
@@ -38,13 +38,13 @@
       "task": "generate",
       "input": "1000 paragraphs + table",
       "docx-js": {
-        "ms": 16.9,
-        "peakMB": 151.4,
-        "output": 14247
+        "ms": 17.28,
+        "peakMB": 150.8,
+        "output": 14246
       },
       "opendoc": {
-        "ms": 14.14,
-        "peakMB": 268.3,
+        "ms": 18.09,
+        "peakMB": 278.8,
         "output": 9437
       }
     },
@@ -52,13 +52,13 @@
       "task": "generate",
       "input": "5000 paragraphs + table",
       "docx-js": {
-        "ms": 76.58,
-        "peakMB": 410.5,
+        "ms": 75.47,
+        "peakMB": 410.7,
         "output": 31056
       },
       "opendoc": {
-        "ms": 60.19,
-        "peakMB": 325.6,
+        "ms": 60.24,
+        "peakMB": 332.2,
         "output": 26814
       }
     },
@@ -66,13 +66,13 @@
       "task": "template",
       "input": "100-item loop",
       "docxtemplater": {
-        "ms": 2.78,
-        "peakMB": 93.3,
+        "ms": 2.53,
+        "peakMB": 93.2,
         "output": 42141
       },
       "opendoc": {
-        "ms": 4.22,
-        "peakMB": 291.5,
+        "ms": 2.57,
+        "peakMB": 271.4,
         "output": 31243
       }
     },
@@ -80,13 +80,13 @@
       "task": "template",
       "input": "1000-item loop",
       "docxtemplater": {
-        "ms": 9.39,
-        "peakMB": 114.1,
+        "ms": 10.34,
+        "peakMB": 111,
         "output": 109841
       },
       "opendoc": {
-        "ms": 15.84,
-        "peakMB": 323.5,
+        "ms": 17.68,
+        "peakMB": 319.1,
         "output": 98943
       }
     },
@@ -94,13 +94,13 @@
       "task": "html",
       "input": "sample",
       "mammoth": {
-        "ms": 35.2,
-        "peakMB": 230.9,
+        "ms": 34.99,
+        "peakMB": 231,
         "output": 94540
       },
       "opendoc": {
-        "ms": 16.24,
-        "peakMB": 316.1,
+        "ms": 16.42,
+        "peakMB": 335.7,
         "output": 179345
       }
     },
@@ -108,13 +108,13 @@
       "task": "html",
       "input": "scale",
       "mammoth": {
-        "ms": 54.13,
-        "peakMB": 288.8,
+        "ms": 53.78,
+        "peakMB": 288.4,
         "output": 275450
       },
       "opendoc": {
-        "ms": 24,
-        "peakMB": 303.2,
+        "ms": 26.1,
+        "peakMB": 310.1,
         "output": 331606
       }
     },
@@ -122,13 +122,13 @@
       "task": "text",
       "input": "sample",
       "mammoth": {
-        "ms": 31.26,
-        "peakMB": 191.8,
+        "ms": 30.58,
+        "peakMB": 228.7,
         "output": 12169
       },
       "opendoc": {
-        "ms": 12.43,
-        "peakMB": 323.2,
+        "ms": 12.53,
+        "peakMB": 332,
         "output": 11878
       }
     },
@@ -136,13 +136,13 @@
       "task": "text",
       "input": "scale",
       "mammoth": {
-        "ms": 41.88,
-        "peakMB": 276.3,
+        "ms": 41.51,
+        "peakMB": 273.9,
         "output": 233240
       },
       "opendoc": {
-        "ms": 16.15,
-        "peakMB": 315,
+        "ms": 17.24,
+        "peakMB": 317.6,
         "output": 230209
       }
     },
@@ -150,8 +150,8 @@
       "task": "pdf",
       "input": "sample",
       "opendoc": {
-        "ms": 54.51,
-        "peakMB": 358,
+        "ms": 55.21,
+        "peakMB": 362.2,
         "output": 156988
       }
     },
@@ -159,8 +159,8 @@
       "task": "pdf",
       "input": "scale",
       "opendoc": {
-        "ms": 258.65,
-        "peakMB": 355.9,
+        "ms": 261.39,
+        "peakMB": 362,
         "output": 112730
       }
     },
@@ -168,13 +168,13 @@
       "task": "py-generate",
       "input": "100 paragraphs + table (Python)",
       "python-docx": {
-        "ms": 16.64,
+        "ms": 16.2,
         "peakMB": 44.2,
         "output": 37208
       },
       "opendoc": {
-        "ms": 2.98,
-        "peakMB": 18.6,
+        "ms": 2.6,
+        "peakMB": 18.4,
         "output": 38254
       }
     },
@@ -182,13 +182,13 @@
       "task": "py-generate",
       "input": "1000 paragraphs + table (Python)",
       "python-docx": {
-        "ms": 93.38,
-        "peakMB": 64,
+        "ms": 92.43,
+        "peakMB": 63.8,
         "output": 40389
       },
       "opendoc": {
-        "ms": 50.1,
-        "peakMB": 21.6,
+        "ms": 24.39,
+        "peakMB": 19.8,
         "output": 227254
       }
     },
@@ -196,13 +196,13 @@
       "task": "py-generate",
       "input": "5000 paragraphs + table (Python)",
       "python-docx": {
-        "ms": 712.15,
-        "peakMB": 81.9,
+        "ms": 667.32,
+        "peakMB": 81,
         "output": 53964
       },
       "opendoc": {
-        "ms": 995.79,
-        "peakMB": 33.5,
+        "ms": 187.96,
+        "peakMB": 26.8,
         "output": 1071654
       }
     },
@@ -210,12 +210,12 @@
       "task": "py-read",
       "input": "sample (Python)",
       "python-docx": {
-        "ms": 7.93,
-        "peakMB": 52.4,
+        "ms": 7.2,
+        "peakMB": 52.3,
         "output": 5458
       },
       "opendoc": {
-        "ms": 8.77,
+        "ms": 7.17,
         "peakMB": 26.4,
         "output": 5468
       }
@@ -224,13 +224,13 @@
       "task": "py-read",
       "input": "scale (Python)",
       "python-docx": {
-        "ms": 94.3,
-        "peakMB": 56.5,
+        "ms": 66.88,
+        "peakMB": 56.2,
         "output": 227180
       },
       "opendoc": {
-        "ms": 102.77,
-        "peakMB": 48,
+        "ms": 43.26,
+        "peakMB": 44.1,
         "output": 227180
       }
     },
@@ -238,56 +238,56 @@
       "task": "java-generate",
       "input": "100 paragraphs + table (Java)",
       "poi": {
-        "ms": 12.26,
-        "output": 2814,
-        "peakMB": 136.6
+        "ms": 10.15,
+        "output": 2812,
+        "peakMB": 142.5
       },
       "opendoc": {
-        "ms": 16.86,
+        "ms": 4.94,
         "output": 37988,
-        "peakMB": 109.2
+        "peakMB": 98.6
       }
     },
     {
       "task": "java-generate",
       "input": "1000 paragraphs + table (Java)",
       "poi": {
-        "ms": 23.57,
+        "ms": 20.85,
         "output": 5990,
-        "peakMB": 182.5
+        "peakMB": 186.7
       },
       "opendoc": {
-        "ms": 167.83,
+        "ms": 30.9,
         "output": 226988,
-        "peakMB": 252.9
+        "peakMB": 200.4
       }
     },
     {
       "task": "java-read",
       "input": "sample (Java)",
       "poi": {
-        "ms": 28.34,
+        "ms": 34.9,
         "output": 5471,
-        "peakMB": 219.5
+        "peakMB": 217.1
       },
       "opendoc": {
-        "ms": 13.99,
+        "ms": 14.59,
         "output": 5471,
-        "peakMB": 102.6
+        "peakMB": 103.8
       }
     },
     {
       "task": "java-read",
       "input": "scale (Java)",
       "poi": {
-        "ms": 51.15,
+        "ms": 92.45,
         "output": 227180,
-        "peakMB": 246.7
+        "peakMB": 242.7
       },
       "opendoc": {
-        "ms": 63.18,
+        "ms": 96.38,
         "output": 227180,
-        "peakMB": 226.7
+        "peakMB": 217.4
       }
     }
   ],
