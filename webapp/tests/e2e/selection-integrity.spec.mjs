@@ -412,8 +412,9 @@ test("a text-range highlight is fully cleared by type, delete, paste and cut", a
 // GREEN today. Ten keydowns fired back-to-back with no repaint between them
 // replace the selection exactly once and leave no residual highlight — the
 // "rapid typing smears the highlight" hypothesis does not hold.
-// QUARANTINED (2026-10-31), named and temporary: rapid typing over a selection lands reversed ("ajihgfedcb").
-test.fixme("rapid typing over a selection replaces it exactly once", async ({
+// Mutation: `await` the placeholder check on the ordinary answer again
+// (`editor_keyboard.mjs`) -> the burst lands reversed, "ajihgfedcb".
+test("rapid typing over a selection replaces it exactly once", async ({
   page,
   consoleErrors,
 }) => {

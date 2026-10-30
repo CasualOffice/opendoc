@@ -43,7 +43,15 @@ export function createClipboard(ed) {
     const { anchor, focus } = ed.selection;
     // A soft keyboard or an IME typing over a content control's placeholder
     // replaces it, as a desktop keystroke does (`content_controls.mjs`).
-    if (actionKind === "typing" && !ed.hasRange() && !text.includes("\n") && (await ed.contentControls.typeIntoPlaceholder(text))) return;
+    // Asked synchronously and awaited only when taken, as on the keydown path:
+    // `anchor`/`focus` are already read, so yielding on the ordinary answer
+    // would let a burst of soft-keyboard input land reversed.
+    const placeholder =
+      actionKind === "typing" && !ed.hasRange() && !text.includes("\n") && ed.contentControls.typeIntoPlaceholder(text);
+    if (placeholder) {
+      await placeholder;
+      return;
+    }
     const sameParagraph = anchor.node === focus.node && !text.includes("\n");
     if (ed.reviewMode === "suggesting" && sameParagraph) {
       const start = Math.min(anchor.offset, focus.offset);

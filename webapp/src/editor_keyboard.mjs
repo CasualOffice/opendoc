@@ -426,7 +426,13 @@ export function createKeyboard(ed) {
     if ([...key].length === 1) {
       e.preventDefault();
       // Typing over a content control's placeholder replaces it, as in Word.
-      if (!ed.hasRange() && (await ed.contentControls.typeIntoPlaceholder(key))) return;
+      // Asked synchronously and awaited only when taken: `anchor`/`focus` were
+      // read above, so yielding here on the ordinary answer reverses a burst.
+      const placeholder = !ed.hasRange() && ed.contentControls.typeIntoPlaceholder(key);
+      if (placeholder) {
+        await placeholder;
+        return;
+      }
       const session = ed.typingSessionForKey();
       // Straight quotes become typographic ones, decided from what precedes the
       // insertion point — the start of the replaced range when there is a

@@ -549,10 +549,17 @@ export function createContentControls(io) {
   /**
    * Typing over a control that is still showing its placeholder replaces the
    * placeholder, as in Word: the first keystroke becomes the content and the
-   * placeholder flag is cleared, as one undoable step. Returns whether it took
-   * the keystroke.
+   * placeholder flag is cleared, as one undoable step.
+   *
+   * Returns `false` SYNCHRONOUSLY when it does not take the keystroke, and
+   * otherwise `true` or a Promise of `true`. The split is load-bearing: the
+   * typing path reads the caret before it asks, so an `await` on the ordinary
+   * "not in a placeholder" answer let every key in a burst capture the same
+   * caret and then insert there in order, so "abcdefghij" typed over a selection
+   * landed as "ajihgfedcb". Callers await only a truthy answer. O(1) when not
+   * taken (`atCaret` is one engine lookup at the caret).
    */
-  async function typeIntoPlaceholder(text) {
+  function typeIntoPlaceholder(text) {
     const control = atCaret();
     const doc = io.getDoc();
     if (!control || !doc || !control.showingPlaceholder || control.scope !== "inline") return false;
@@ -562,10 +569,11 @@ export function createContentControls(io) {
       io.setStatus(t("controls.notFillable"), "error");
       return true;
     }
-    const landed = await io.runEdit(() => doc.fillContentControl(control.id, JSON.stringify({ text })));
-    forget();
-    if (landed) io.select(control.paragraph, control.start + new TextEncoder().encode(text).length);
-    return true;
+    return io.runEdit(() => doc.fillContentControl(control.id, JSON.stringify({ text }))).then((landed) => {
+      forget();
+      if (landed) io.select(control.paragraph, control.start + new TextEncoder().encode(text).length);
+      return true;
+    });
   }
 
   // ---- The Insert band's dropdown -----------------------------------------------
