@@ -201,6 +201,10 @@ export const TABLE_FACES = Object.freeze([
   face("#mergeCellsBtn", "table.merge"),
   face("#splitCellBtn", "table.split"),
   face("#tableBtn", "table.cellFormat"),
+  face("#tableBordersBtn", "table.borderStyle"),
+  // Draw table's pencil: the Insert command, faced on the band Word puts it on
+  // (Layout ▸ Draw Table) as well as in the Insert table popover.
+  face("#tableDrawBtn", "insert.drawTable"),
   face("#tablePropertiesBtn", "table.properties"),
   chooser("#tableStyleBtn", "table.style."),
   // The table tools (`table_tools.mjs`): two choosers over their families and

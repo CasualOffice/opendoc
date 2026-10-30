@@ -1409,6 +1409,7 @@ mod tests {
             border: None,
             body_properties: casual_doc_model::v1::TextBoxBodyProperties::default(),
             blocks,
+            shadow: None,
         }))
     }
 

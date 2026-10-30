@@ -875,6 +875,7 @@ fn an_anchor_inside_a_removed_shape_group_is_also_a_tombstone() {
                     flip_v: false,
                     rotation: None,
                     hyperlink: None,
+                    shadow: None,
                 }),
                 GroupChild::TextBox(GroupTextBox {
                     id: text_box,
@@ -891,6 +892,7 @@ fn an_anchor_inside_a_removed_shape_group_is_also_a_tombstone() {
                     flip_v: false,
                     rotation: None,
                     hyperlink: None,
+                    shadow: None,
                 }),
             ],
         })));

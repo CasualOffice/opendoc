@@ -1711,6 +1711,30 @@ export const EN_STRINGS = Object.freeze({
   "shape.gradient.linearLeft": "Linear left",
   "shape.gradient.linearDiagonal": "Linear diagonal",
   "shape.gradient.fromCenter": "From center",
+  // Shape Effects ▸ Shadow (`shape_shadow.mjs`, `docs/153` object.shape-shadow):
+  // Word's outer presets, named by where the shadow falls.
+  "shape.shadow": "Shadow",
+  "shape.shadow.none": "No shadow",
+  "shape.shadow.bottomRight": "Offset: bottom right",
+  "shape.shadow.bottom": "Offset: bottom",
+  "shape.shadow.bottomLeft": "Offset: bottom left",
+  "shape.shadow.right": "Offset: right",
+  "shape.shadow.center": "Offset: center",
+  "shape.shadow.left": "Offset: left",
+  "shape.shadow.topRight": "Offset: top right",
+  "shape.shadow.top": "Offset: top",
+  "shape.shadow.topLeft": "Offset: top left",
+  "shape.shadow.options": "Shadow options…",
+  "shape.shadow.bad.color": "Choose a colour for the shadow.",
+  "shape.shadow.bad.transparency": "Transparency is a percentage from 0 to 100.",
+  "shape.shadow.bad.angle": "Enter the angle in degrees.",
+  "shape.shadow.bad.distance": "Distance is from 0 to 200 pt.",
+  "shape.shadow.bad.blur": "Blur is from 0 to 100 pt.",
+  // Layout ▸ More layout options (`object_layout_options.mjs`, `docs/153`
+  // object.advanced-layout-options).
+  "object.layoutOptions": "More layout options…",
+  "object.layoutOptions.inline": "Choose a text wrapping other than In line first",
+  "object.layoutOptions.badDistance": "Distance from text is from 0 to 1584 pt.",
   // Wrap. “In line” is the mode an inserted picture STARTS in, so it leads the
   // row — Google Docs puts it first for the same reason.
   "object.wrap.inline": "In line",
@@ -1995,9 +2019,25 @@ export const EN_STRINGS = Object.freeze({
   "units.refused.outOfRange": "{field}: “{value}” is too large for a measurement.",
   "units.refused.unreadable": "{field}: “{value}” could not be read as a measurement.",
 
-  // The border line style's palette and context-menu row. The ellipsis is this
-  // chrome's convention for a row that opens a control rather than acting.
-  "table.borderStyleCommand": "Border line style\u2026",
+  // Borders and shading (`table_borders_dialog.mjs`): the Table menu, palette
+  // and context-menu row (the ellipsis: it opens a dialog), and what the status
+  // line says once it applies.
+  "table.bordersShadingCommand": "Borders and shading\u2026",
+  "tableBorders.applied": "Borders and shading applied",
+
+  // Text wrapping and Positioning (`table_position_dialog.mjs`).
+  "tablePosition.wrapAround": "Text now wraps around the table",
+  "tablePosition.wrapNone": "The table is back in line with the text",
+  "tablePosition.applied": "Table position updated",
+  "tablePosition.needsAround": "Set Text wrapping to Around to position the table",
+  "tablePosition.invalid": "Enter a measurement of no more than 22 inches",
+
+  // Draw table (`table_draw_mode.mjs`): the command row and the status line.
+  "tableDraw.command": "Draw table",
+  "tableDraw.armed": "Draw table: drag on the page to draw a table, or across a table to split its cells. Press Esc to stop.",
+  "tableDraw.off": "Draw table off",
+  "tableDraw.drawn": "Table drawn",
+  "tableDraw.split": "Cells split",
 
   // Restrict Editing. The dialog's own strings are markup; these are the command
   // row, the two things the status bar says, and the one disabled reason.
@@ -2456,4 +2496,36 @@ export const EN_STRINGS = Object.freeze({
   "ai.refusal.gone": "This suggestion is no longer open.",
   "ai.refusal.noDocument": "Open a document first.",
   "ai.refusal.generic": "This change can’t be applied.",
+  // Picture from URL and Paste as picture (`picture_url_dialog.mjs`, `paste_picture.mjs`).
+  "insert.imageFromUrl": "Picture from URL…",
+  "insert.imageFromUrl.keywords": "image picture online web address link url download internet",
+  "edit.pasteImage": "Paste as picture",
+  "edit.pasteImage.keywords": "paste special image snapshot screenshot picture rasterize",
+  "pictureUrl.downloading": "Downloading the picture…",
+  "pictureUrl.received": "Downloaded {size}…",
+  "pictureUrl.sizeMb": "{size} MB",
+  "pictureUrl.sizeKb": "{size} KB",
+  "pictureUrl.error.invalid": "Enter a web address that starts with http:// or https://.",
+  "pictureUrl.error.credentials": "Remove the user name and password from the address.",
+  "pictureUrl.error.denied": "This editor’s host does not allow pictures to be downloaded from the web.",
+  "pictureUrl.error.network": "The picture couldn’t be downloaded. The site may be unreachable, or it may not let other sites use its pictures.",
+  "pictureUrl.error.http": "The site answered with error {status}; no picture was downloaded.",
+  "pictureUrl.error.notImage": "That address is not a picture.",
+  "pictureUrl.error.unsupported": "That picture’s format can’t be used. Use a PNG, JPEG, GIF, BMP, TIFF or WebP picture.",
+  "pictureUrl.error.tooLarge": "That picture is larger than 20 MB.",
+  "pictureUrl.error.empty": "The site sent an empty file.",
+  "pictureUrl.error.aborted": "The download was cancelled.",
+  "pastePicture.empty": "There is nothing visible on the clipboard to paste as a picture.",
+  "pastePicture.tooLarge": "The clipboard is too large to paste as one picture.",
+  "pastePicture.failed": "The clipboard couldn’t be pasted as a picture.",
+  "pastePicture.nothing": "There is nothing on the clipboard to paste as a picture.",
+  "pastePicture.blocked": "The browser did not allow the clipboard to be read.",
+  // Edit Points on a shape (`shape_edit_points.mjs`).
+  "object.editPoints": "Edit points",
+  "object.editPoints.hint": "Drag a point to reshape the outline · Enter to keep · Esc to cancel",
+  "object.editPoints.done": "Shape outline changed",
+  "object.editPoints.cancelled": "Points not changed",
+  "object.editPoints.suggesting": "Editing a shape’s points cannot be tracked yet; switch to Editing to change it",
+  "object.editPoints.unavailable": "This shape’s outline can’t be edited",
+  "object.editPoints.rotated": "Rotate this shape back to 0° to edit its points",
 });

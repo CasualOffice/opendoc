@@ -186,6 +186,33 @@ fn device_bounds(item: &PaintItem, dpi: f32) -> Option<KRect> {
                 object_transform(transform.as_ref(), dpi),
             ))
         }
+        PaintItem::Shadow {
+            geometry,
+            stroke_width,
+            offset,
+            blur,
+            transform,
+            ..
+        } => {
+            let local = match geometry {
+                ShapeGeometry::Rect { rect }
+                | ShapeGeometry::Ellipse { rect }
+                | ShapeGeometry::RoundedRect { rect, .. } => rect_box(rect),
+                ShapeGeometry::Path { commands, .. } => {
+                    points_box(&mut commands.iter().flat_map(|command| command.points()))?
+                }
+                ShapeGeometry::Line { from, to } => points_box(&mut [*from, *to].into_iter())?,
+            };
+            // Three sigmas of blur (sigma = blurRad / 2) and the outline.
+            let pad = f64::from(blur.to_device_px(dpi)) * 1.5
+                + f64::from(stroke_width.unwrap_or(0.0))
+                + 4.0;
+            let placed = transformed_box(
+                local.inflate(pad, pad),
+                object_transform(transform.as_ref(), dpi),
+            );
+            Some(placed + vello_common::kurbo::Vec2::new(px(offset.x), px(offset.y)))
+        }
         PaintItem::Image {
             rect, transform, ..
         } => {
@@ -288,6 +315,16 @@ pub(crate) fn translate_item(item: &mut PaintItem, dx: Twip, dy: Twip) {
                     shift_point(to, dx, dy);
                 }
             }
+            if let Some(transform) = transform {
+                shift_point(&mut transform.center, dx, dy);
+            }
+        }
+        PaintItem::Shadow {
+            geometry,
+            transform,
+            ..
+        } => {
+            *geometry = geometry.translated(dx, dy);
             if let Some(transform) = transform {
                 shift_point(&mut transform.center, dx, dy);
             }

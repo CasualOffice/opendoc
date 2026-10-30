@@ -470,6 +470,10 @@ pub struct PlacedAnchor {
     /// text-box content is a follow-up (content stays axis-aligned).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transform: Option<ShapeTransform>,
+    /// The float's outer drop shadow (`a:outerShdw`), for a shape or a text box;
+    /// [`compose_page`](crate::compose::compose_page) paints it behind the float.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<casual_doc_model::v1::ShapeShadow>,
 }
 
 /// A column separator rule (`w:cols/@w:sep`) to paint on a page: a thin vertical

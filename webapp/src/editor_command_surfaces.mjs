@@ -14,6 +14,7 @@ import { ribbonSurfaceEnabled as surfaceEnabled, ribbonSurfaceReason as surfaceR
 import { arrangeSurfaceRows } from "./object_arrange_commands.mjs";
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
 import { tableTools } from "./table_tools.mjs";
+import { tableDrawMode } from "./table_draw_mode.mjs";
 import { tocSurfaceRows } from "./toc_commands.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
@@ -55,7 +56,13 @@ export function createCommandSurfaces(ed) {
     // both in the Table dropdown). The two dialogs are `table_tools.mjs`'s.
     { command: "insert.tableDialog", buttons: [document.getElementById("insertTableDialogBtn")].filter(Boolean), requires: "doc", activate: () => tableTools.openDialog("insertTable") },
     { command: "insert.textToTable", buttons: [document.getElementById("textToTableBtn")].filter(Boolean), requires: "doc", activate: () => tableTools.openDialog("textToTable") },
+    // Draw Table (`table_draw_mode.mjs`): the Table band's pencil toggles the mode;
+    // the Insert table popover's own row is wired by `editor_table_props.mjs`,
+    // because a row inside a popover is not a ribbon face.
+    { command: "insert.drawTable", buttons: [document.getElementById("tableDrawBtn")].filter(Boolean), requires: "doc", activate: () => tableDrawMode.toggle() },
     { command: "insert.image", buttons: [ed.insertPictureBtn], requires: "doc", activate: () => ed.insertImageFromFile() },
+    // Word's Online Pictures / Docs' Image > By URL, beside the file route.
+    { command: "insert.imageFromUrl", buttons: [document.getElementById("insertPictureUrlBtn")].filter(Boolean), requires: "doc", activate: () => ed.objectInsert.openPictureFromUrl() },
     // Link is the one Insert command that genuinely needs a range: it hyperlinks
     // selected text. A cross-paragraph range still enables the button and is
     // answered by `editSelectionLink`'s "Links must stay within one paragraph",

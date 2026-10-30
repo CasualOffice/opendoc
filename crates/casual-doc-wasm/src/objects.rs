@@ -613,6 +613,13 @@ struct PositionRead {
     /// The `wp:anchor@relativeHeight` stacking key, when the producer set one.
     #[serde(skip_serializing_if = "Option::is_none")]
     z_order: Option<u32>,
+    /// Word's "Allow overlap" (`wp:anchor@allowOverlap`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    allow_overlap: Option<bool>,
+    /// Word's "Move object with text": the vertical position is measured from
+    /// the anchoring paragraph (or line) rather than from the page or a margin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    move_with_text: Option<bool>,
 }
 
 /// One axis of a requested position. Both members optional: a host that is
@@ -645,6 +652,8 @@ struct PositionWrite {
     behind_doc: Option<bool>,
     wrap_distances: Option<DistancesJson>,
     z_order: Option<u32>,
+    allow_overlap: Option<bool>,
+    move_with_text: Option<bool>,
 }
 
 /// The read view of one axis.
@@ -890,6 +899,7 @@ fn default_float_anchor() -> DrawingAnchor {
         wrap_distances: WrapDistances::default(),
         behind_doc: false,
         wrap_polygon: None,
+        allow_overlap: true,
     }
 }
 
@@ -954,6 +964,7 @@ fn into_group_child(inline: InlineNode, offset: PointEmu, extent: Extent) -> Opt
                 flip_h: false,
                 flip_v: false,
                 rotation: None,
+                shadow: None,
             })
         }
         InlineNode::Group(group) => {
@@ -1012,6 +1023,7 @@ fn out_of_group_child(
                 border: text_box.border,
                 body_properties: text_box.body_properties,
                 blocks: text_box.blocks,
+                shadow: None,
             }))
         }
         GroupChild::Group(nested) => {
@@ -1210,6 +1222,8 @@ impl WasmDocument {
                     behind_doc: None,
                     wrap_distances: None,
                     z_order: None,
+                    allow_overlap: None,
+                    move_with_text: None,
                 })
                 .unwrap_or_default()
             } else {
@@ -1232,6 +1246,8 @@ impl WasmDocument {
                 behind_doc: None,
                 wrap_distances: None,
                 z_order: None,
+                allow_overlap: None,
+                move_with_text: None,
             },
             #[allow(clippy::cast_precision_loss)] // EMU distances are far below 2^53
             Some(anchor) => PositionRead {
@@ -1248,6 +1264,8 @@ impl WasmDocument {
                     end_emu: anchor.wrap_distances.end_emu as f64,
                 }),
                 z_order: top_level_z(&source.inlines, object),
+                allow_overlap: Some(anchor.allow_overlap),
+                move_with_text: Some(moves_with_text(anchor.vertical.relative_from)),
             },
         };
         serde_json::to_string(&read).unwrap_or_default()
@@ -1329,6 +1347,22 @@ impl WasmDocument {
                 start_emu: distance_emu(distances.start_emu, "the leading wrap distance")?,
                 end_emu: distance_emu(distances.end_emu, "the trailing wrap distance")?,
             };
+        }
+        if let Some(allow) = want.allow_overlap {
+            anchor.allow_overlap = allow;
+        }
+        if let Some(moves) = want.move_with_text {
+            // Applied after any explicit vertical change, and refused alongside
+            // a vertical REFERENCE, which would be two answers to one question.
+            if want
+                .vertical
+                .as_ref()
+                .is_some_and(|axis| axis.relative_from.is_some())
+            {
+                return Err(MOVE_WITH_TEXT_AMBIGUOUS.to_owned());
+            }
+            anchor.vertical =
+                self.move_with_text_vertical(object, paragraph, anchor.vertical, moves)?;
         }
         self.apply_action_caret_as(
             vec![Operation::SetAnchor {
@@ -2679,6 +2713,87 @@ impl WasmDocument {
     }
 }
 
+/// Whether a vertical reference moves the object with its text — Word's "Move
+/// object with text" — which is true of the paragraph and the line. O(1).
+fn moves_with_text(reference: VerticalAnchor) -> bool {
+    matches!(reference, VerticalAnchor::Paragraph | VerticalAnchor::Line)
+}
+
+impl WasmDocument {
+    /// Word's "Move object with text" toggle on one float: the vertical
+    /// reference becomes the anchoring paragraph (`moves`) or the page, and the
+    /// offset is CONVERTED so the object stays exactly where it is on the page —
+    /// Word's checkbox changes what the object follows, never where it sits.
+    ///
+    /// The object's page-local top is the old reference's top plus its offset
+    /// when the old reference is the page or the paragraph (exact, in EMU);
+    /// for a margin reference or an alignment it is read from the laid-out
+    /// object frame. The new offset is that top less the new reference's top:
+    /// zero for the page, the paragraph box `casual-doc-layout` resolves
+    /// paragraph-relative floats against for the paragraph
+    /// ([`casual_doc_layout::anchor::paragraph_anchor_box`]).
+    ///
+    /// A reference the toggle would not change is returned unchanged.
+    ///
+    /// O(placed fragments) for the paragraph box, plus one object-box walk only
+    /// when the top is not known from the anchor.
+    fn move_with_text_vertical(
+        &self,
+        object: NodeId,
+        paragraph: NodeId,
+        current: AnchorVertical,
+        moves: bool,
+    ) -> Result<AnchorVertical, String> {
+        if moves_with_text(current.relative_from) == moves {
+            return Ok(current);
+        }
+        let paragraph_top_emu =
+            casual_doc_layout::anchor::paragraph_anchor_box(self.painted_layout(), paragraph)
+                .map(|(_, rect)| i64::from(rect.origin.y.raw()) * EMU_PER_TWIP_I64);
+        let old_reference_top = match current.relative_from {
+            VerticalAnchor::Page => Some(0),
+            VerticalAnchor::Paragraph | VerticalAnchor::Line => paragraph_top_emu,
+            _ => None,
+        };
+        let top_emu = match (current.position, old_reference_top) {
+            (VerticalPosition::Offset(offset), Some(reference)) => reference + offset,
+            _ => {
+                let top = self
+                    .object_boxes()
+                    .into_iter()
+                    .filter(|candidate| candidate.root == object)
+                    .map(|candidate| candidate.rect.origin.y.raw())
+                    .min()
+                    .ok_or_else(|| MOVE_WITH_TEXT_UNPLACED.to_owned())?;
+                i64::from(top) * EMU_PER_TWIP_I64
+            }
+        };
+        let (relative_from, reference_top) = if moves {
+            (
+                VerticalAnchor::Paragraph,
+                paragraph_top_emu.ok_or_else(|| MOVE_WITH_TEXT_UNPLACED.to_owned())?,
+            )
+        } else {
+            (VerticalAnchor::Page, 0)
+        };
+        Ok(AnchorVertical {
+            relative_from,
+            position: VerticalPosition::Offset((top_emu - reference_top).clamp(-MAX_EMU, MAX_EMU)),
+        })
+    }
+}
+
+/// `setObjectPosition`'s refusal when `moveWithText` arrives with a vertical
+/// reference: both say what the object follows.
+pub(crate) const MOVE_WITH_TEXT_AMBIGUOUS: &str =
+    "moveWithText and a vertical relativeFrom cannot be set together";
+
+/// `setObjectPosition`'s refusal when the float or its paragraph is not laid
+/// out (a header or footer float, or one outside the laid-out window), so its
+/// place on the page — which the toggle must keep — is unknown.
+pub(crate) const MOVE_WITH_TEXT_UNPLACED: &str =
+    "the object is not laid out on a body page, so Move with text cannot keep it in place";
+
 /// Every top-level floating object in `inlines`, with the paragraph that owns
 /// it. Descends through the wrappers a float can sit in.
 fn collect_floats(inlines: &[InlineNode], paragraph: NodeId, out: &mut Vec<Float>) {
@@ -2920,6 +3035,7 @@ fn add_text_in_group(
                     flip_h: shape.flip_h,
                     flip_v: shape.flip_v,
                     rotation: shape.rotation,
+                    shadow: None,
                 });
                 return Ok(AddText::Added);
             }
@@ -3568,6 +3684,102 @@ mod tests {
             }),
             "the margin-relative alignment survived the DOCX round trip: {anchors:?}"
         );
+    }
+
+    /// Word's Layout ▸ Position ▸ Options (`docs/153`
+    /// `object.advanced-layout-options`): "Allow overlap" round-trips through
+    /// the position payload, and "Move object with text" changes what the
+    /// object follows WITHOUT moving it — the converted offset keeps the
+    /// laid-out frame exactly where it was, both ways. Each is one undo step.
+    ///
+    /// Mutation: converting without the reference arithmetic (writing the old
+    /// offset under the new reference) moves the frame by the paragraph's top
+    /// and fails the "does not jump" assertions; dropping the `allow_overlap`
+    /// assignment fails the first read.
+    #[test]
+    fn allow_overlap_and_move_with_text_keep_the_object_in_place() {
+        let mut document = open_document(RICH_DOCX).expect("open the rich fixture");
+        let (_, object, _) = two_boxes(&mut document);
+        let read = |document: &WasmDocument| -> serde_json::Value {
+            serde_json::from_str(&document.object_position(&object)).expect("JSON")
+        };
+        assert_eq!(read(&document)["allowOverlap"], serde_json::json!(true));
+
+        document
+            .set_object_position_inner(&object, r#"{"allowOverlap":false}"#)
+            .expect("turn overlap off");
+        assert_eq!(read(&document)["allowOverlap"], serde_json::json!(false));
+
+        // Put it a known distance below its paragraph, then note its frame.
+        document
+            .set_object_position_inner(
+                &object,
+                r#"{"vertical":{"relativeFrom":"paragraph","offsetEmu":914400}}"#,
+            )
+            .expect("paragraph relative");
+        assert_eq!(read(&document)["moveWithText"], serde_json::json!(true));
+        let frame = document.object_rect(&object);
+        assert_eq!(frame.len(), 5, "the box is laid out");
+
+        document
+            .set_object_position_inner(&object, r#"{"moveWithText":false}"#)
+            .expect("fix it to the page");
+        let fixed = read(&document);
+        assert_eq!(fixed["moveWithText"], serde_json::json!(false));
+        assert_eq!(fixed["vertical"]["relativeFrom"], "page");
+        assert_eq!(
+            document.object_rect(&object),
+            frame,
+            "the object does not jump when it stops moving with text"
+        );
+
+        document
+            .set_object_position_inner(&object, r#"{"moveWithText":true}"#)
+            .expect("move with text again");
+        let moving = read(&document);
+        assert_eq!(moving["vertical"]["relativeFrom"], "paragraph");
+        assert_eq!(
+            moving["vertical"]["offsetEmu"],
+            serde_json::json!(914_400.0)
+        );
+        assert_eq!(document.object_rect(&object), frame, "nor when it starts");
+
+        // Two answers to one question are refused.
+        assert_eq!(
+            document
+                .set_object_position_inner(
+                    &object,
+                    r#"{"moveWithText":true,"vertical":{"relativeFrom":"page"}}"#,
+                )
+                .err()
+                .as_deref(),
+            Some(MOVE_WITH_TEXT_AMBIGUOUS)
+        );
+
+        // Undo walks back one toggle at a time.
+        document.undo_inner().expect("undo move-with-text");
+        assert_eq!(read(&document)["vertical"]["relativeFrom"], "page");
+
+        // And the overlap choice survives the writer.
+        let bytes = document.export_docx().expect("export");
+        let reopened = open_document(&bytes).expect("reopen");
+        let overlaps: Vec<bool> = reopened
+            .document
+            .body()
+            .iter()
+            .filter_map(|block| match block {
+                BlockNode::Paragraph(paragraph) => Some(paragraph),
+                _ => None,
+            })
+            .flat_map(|paragraph| paragraph.inlines.iter())
+            .filter_map(|inline| match inline {
+                InlineNode::TextBox(text_box) => {
+                    text_box.anchor.as_ref().map(|anchor| anchor.allow_overlap)
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(overlaps.contains(&false), "{overlaps:?}");
     }
 
     /// A token this build does not know is an ERROR, not a value quietly

@@ -111,6 +111,7 @@ import { createSelectionToolbar } from "./editor_selection_toolbar.mjs";
 import { createSave } from "./editor_save.mjs";
 import { createSelectionCommands } from "./editor_selection_commands.mjs";
 import { createClipboard } from "./editor_clipboard.mjs";
+import { createObjectInsert } from "./object_insert.mjs";
 import { createZoom } from "./editor_zoom.mjs";
 import { createTextInput } from "./editor_text_input.mjs";
 import { createKeyboard } from "./editor_keyboard.mjs";
@@ -451,6 +452,7 @@ const ed = {
   get objectContextMenuHost() { return objectContextMenuHost; },
   get objectCropSession() { return objectCropSession; }, set objectCropSession(v) { objectCropSession = v; },
   get objectEditBlocked() { return objectEditBlocked; },
+  get objectInsert() { return objectInsert; },
   get objectInspector() { return objectInspector; },
   get objectMoveDrag() { return objectMoveDrag; }, set objectMoveDrag(v) { objectMoveDrag = v; },
   get objectPositionBtn() { return objectPositionBtn; },
@@ -2910,6 +2912,7 @@ const {
   commitComposedText, cut, editorTextInputEvent, hidePasteOptions, paste, pasteAsText,
   pasteOptionsShowing, pasteRichRunsJson, pasteText,
 } = createClipboard(ed);
+const objectInsert = createObjectInsert(ed);
 const { addWordToDictionary, autoCorrect, autoCorrectDialog, languageSelection } = createTextInput(ed);
 createKeyboard(ed);
 const { handleFile } = createFilePick(ed);

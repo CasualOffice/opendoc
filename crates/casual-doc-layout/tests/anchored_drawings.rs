@@ -177,6 +177,7 @@ fn anchored(id: u64, media: MediaId, h_offset: i64, v_offset: i64, behind_doc: b
             wrap_distances: Default::default(),
             wrap_polygon: None,
             behind_doc,
+            allow_overlap: true,
         },
         descr: Some("A floating logo".to_owned()),
         relative_height: None,
@@ -283,6 +284,7 @@ fn a_non_integral_emu_anchor_rounds_rather_than_truncates() {
             wrap_distances: Default::default(),
             wrap_polygon: None,
             behind_doc: false,
+            allow_overlap: true,
         },
         descr: None,
         relative_height: None,
@@ -348,6 +350,7 @@ fn a_rotated_group_turns_its_children_about_the_group_centre() {
         flip_h: false,
         flip_v: false,
         rotation: None,
+        shadow: None,
     });
     let group_with = |rotation: Option<i32>| {
         InlineNode::Group(Box::new(WordprocessingGroup {
@@ -489,6 +492,7 @@ fn page_anchor(h: i64, v: i64) -> DrawingAnchor {
         wrap_distances: Default::default(),
         wrap_polygon: None,
         behind_doc: false,
+        allow_overlap: true,
     }
 }
 
@@ -507,6 +511,7 @@ fn paragraph_anchor() -> DrawingAnchor {
         wrap_distances: Default::default(),
         wrap_polygon: None,
         behind_doc: false,
+        allow_overlap: true,
     }
 }
 
@@ -528,6 +533,7 @@ fn top_bottom_anchor(bottom_twips: i64) -> DrawingAnchor {
         },
         wrap_polygon: None,
         behind_doc: false,
+        allow_overlap: true,
     }
 }
 
@@ -597,6 +603,7 @@ fn anchored_at_column_right(id: u64, media: MediaId) -> InlineNode {
             wrap_distances: WrapDistances::default(),
             wrap_polygon: None,
             behind_doc: false,
+            allow_overlap: true,
         },
         descr: None,
         relative_height: None,
@@ -632,6 +639,7 @@ fn anchored_at_page_right(id: u64, media: MediaId) -> InlineNode {
             wrap_distances: WrapDistances::default(),
             wrap_polygon: None,
             behind_doc: false,
+            allow_overlap: true,
         },
         descr: None,
         relative_height: None,
@@ -785,6 +793,7 @@ fn top_and_bottom_reflow_coalesces_pictures_text_boxes_and_groups() {
             properties: ParagraphProperties::default().into(),
             inlines: vec![run(22, "inside")],
         })],
+        shadow: None,
     }));
     let group_extent = Extent {
         width_emu: 127_000,
@@ -819,6 +828,7 @@ fn top_and_bottom_reflow_coalesces_pictures_text_boxes_and_groups() {
             flip_h: false,
             flip_v: false,
             rotation: None,
+            shadow: None,
         })],
     }));
     let paragraph = BlockNode::Paragraph(Paragraph {
@@ -1313,6 +1323,7 @@ fn floating_text_box_body_properties_apply_in_both_headers_and_footers() {
             properties: ParagraphProperties::default().into(),
             inlines: vec![run(412, "header box")],
         })],
+        shadow: None,
     }));
     let footer_box = InlineNode::TextBox(Box::new(TextBox {
         hyperlink: None,
@@ -1340,6 +1351,7 @@ fn floating_text_box_body_properties_apply_in_both_headers_and_footers() {
             properties: ParagraphProperties::default().into(),
             inlines: vec![run(422, "footer box")],
         })],
+        shadow: None,
     }));
     let header_block = BlockNode::Paragraph(Paragraph {
         id: node(400),
@@ -1514,6 +1526,7 @@ fn grouped_text_box_uses_body_properties_and_shape_autofit() {
             flip_h: false,
             flip_v: false,
             rotation: None,
+            shadow: None,
         })],
     }));
     let body = vec![BlockNode::Paragraph(Paragraph {
@@ -1677,6 +1690,7 @@ fn a_floating_text_box_places_at_its_anchor_not_inline() {
             properties: ParagraphProperties::default().into(),
             inlines: vec![run(22, "Powered by")],
         })],
+        shadow: None,
     }));
     let para = BlockNode::Paragraph(Paragraph {
         id: node(10),
@@ -1792,6 +1806,7 @@ fn a_group_paints_children_in_document_order_with_the_picture_at_its_own_extent(
             flip_h: false,
             flip_v: false,
             rotation: None,
+            shadow: None,
         })
     };
     let group = InlineNode::Group(Box::new(WordprocessingGroup {
@@ -1922,6 +1937,7 @@ fn ellipse_and_rounded_rectangle_reach_distinct_display_primitives() {
             flip_h: false,
             flip_v: false,
             rotation: None,
+            shadow: None,
         })
     };
     let group = InlineNode::Group(Box::new(WordprocessingGroup {
@@ -2027,6 +2043,7 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
             flip_h: false,
             flip_v: false,
             rotation: None,
+            shadow: None,
         })
     };
     let group = InlineNode::Group(Box::new(WordprocessingGroup {
@@ -2168,6 +2185,7 @@ fn a_shape_with_no_explicit_fill_resolves_its_theme_style() {
             flip_h: false,
             flip_v: false,
             rotation: None,
+            shadow: None,
         });
         let extent = Extent {
             width_emu: 914_400,
@@ -2351,6 +2369,7 @@ fn a_curves_control_points_are_resolved_into_page_space() {
         flip_h: false,
         flip_v: false,
         rotation: None,
+        shadow: None,
     });
 
     let content = only_anchor_content(&single_child_group_document(child));
@@ -2415,6 +2434,7 @@ fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
             flip_h: false,
             flip_v: false,
             rotation: None,
+            shadow: None,
         })
     };
 
@@ -2628,6 +2648,7 @@ fn footer_text_box_layout(page_instr: &str) -> casual_doc_layout::page::Paginate
                 field(440, " NUMPAGES ", "99"),
             ],
         })],
+        shadow: None,
     }));
     let footer_para = BlockNode::Paragraph(Paragraph {
         id: node(390),
@@ -2734,6 +2755,7 @@ fn a_page_field_in_an_inline_text_box_resolves() {
             properties: ParagraphProperties::default().into(),
             inlines: vec![field(52, " PAGE ", "99")],
         })],
+        shadow: None,
     }));
     let para = BlockNode::Paragraph(Paragraph {
         id: node(10),
@@ -3185,6 +3207,7 @@ fn a_text_box_with_a_preset_geometry_paints_that_geometry_behind_its_text() {
         flip_h: false,
         flip_v: false,
         rotation: None,
+        shadow: None,
     }));
 
     let content = only_anchor_content(&document);
@@ -3291,6 +3314,7 @@ fn preset_shape_child(geometry: ShapeGeometry, adjustments: Vec<ShapeAdjustment>
         flip_h: false,
         flip_v: false,
         rotation: None,
+        shadow: None,
     })
 }
 
@@ -3355,6 +3379,7 @@ fn wrap_float_sided(
             wrap_distances: WrapDistances::default(),
             wrap_polygon: None,
             behind_doc: false,
+            allow_overlap: true,
         },
         descr: None,
         relative_height: None,
@@ -3608,6 +3633,7 @@ fn a_floating_text_box_excludes_text_in_its_own_table_cell() {
             wrap_distances: WrapDistances::default(),
             wrap_polygon: None,
             behind_doc: false,
+            allow_overlap: true,
         }),
         relative_height: None,
         extent: Some(Extent {
@@ -3622,6 +3648,7 @@ fn a_floating_text_box_excludes_text_in_its_own_table_cell() {
             properties: ParagraphProperties::default().into(),
             inlines: vec![run(882, "pull quote")],
         })],
+        shadow: None,
     }));
 
     let control = wrap_cell(

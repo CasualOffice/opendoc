@@ -237,6 +237,21 @@ mod toc;
 // cell shifts, nesting and text direction (`docs/153` table rows).
 mod table_tools;
 
+// Own line (anti-conflict): Paste as picture, the clipboard laid out and
+// painted by the engine (`docs/153` `text.paste-as-picture`).
+mod picture_insert;
+
+// Own line (anti-conflict): Word's Edit Points on a shape (`docs/153`
+// `object.edit-points`, `docs/109` FID-SH-02).
+mod shape_points;
+
+// Own line (anti-conflict): the Borders and Shading dialog, table text
+// wrapping and positioning, and Draw Table (`docs/153` table rows).
+mod table_layout;
+// Own line (anti-conflict): shape effects — the outer shadow (`docs/153`
+// `object.shape-shadow`).
+mod object_effects;
+
 // What each copied paragraph IS (heading, list item, table cell), so the
 // clipboard's HTML keeps structure (`docs/174` TA-12).
 mod clipboard_outline;
@@ -3306,6 +3321,7 @@ impl WasmDocument {
                 properties: ParagraphProperties::default().into(),
                 inlines: Vec::new(),
             })],
+            shadow: None,
         };
         self.apply_action_caret_as(
             vec![Operation::InsertInlineObject {
@@ -3407,6 +3423,7 @@ impl WasmDocument {
             flip_h: false,
             flip_v: false,
             rotation: None,
+            shadow: None,
         };
         let group = WordprocessingGroup {
             hyperlink: None,
@@ -23169,6 +23186,7 @@ fn new_object_anchor() -> DrawingAnchor {
         wrap_distances: casual_doc_model::v1::WrapDistances::default(),
         behind_doc: false,
         wrap_polygon: None,
+        allow_overlap: true,
     }
 }
 
@@ -28176,6 +28194,7 @@ mod tests {
                 flip_h: false,
                 flip_v: false,
                 rotation: None,
+                shadow: None,
             })],
         };
         let mut inlines = vec![InlineNode::Group(Box::new(group))];
@@ -36779,6 +36798,7 @@ mod tests {
             wrap_distances: casual_doc_model::v1::WrapDistances::default(),
             wrap_polygon: None,
             behind_doc: false,
+            allow_overlap: true,
         }
     }
 
@@ -36853,6 +36873,7 @@ mod tests {
                         flip_h: false,
                         flip_v: false,
                         rotation: None,
+                        shadow: None,
                     })],
                 }))],
             })],
@@ -42442,6 +42463,7 @@ mod tests {
             wrap_distances: WrapDistances::default(),
             wrap_polygon: None,
             behind_doc: false,
+            allow_overlap: true,
         };
         let extent = Extent {
             width_emu: 914_400,
@@ -42536,6 +42558,7 @@ mod tests {
                 border: None,
                 body_properties: TextBoxBodyProperties::default(),
                 blocks: vec![paragraph(id(), vec![run(id(), "in a box")])],
+                shadow: None,
             })),
             InlineNode::Group(Box::new(WordprocessingGroup {
                 id: id(),
@@ -42592,6 +42615,7 @@ mod tests {
                         flip_h: false,
                         flip_v: false,
                         rotation: None,
+                        shadow: None,
                     }),
                 ],
             })),
@@ -45021,6 +45045,7 @@ mod tests {
                     properties: ParagraphProperties::default().into(),
                     inlines: vec![run(run_id, text)],
                 })],
+                shadow: None,
             }))
         };
         let first = id();
@@ -45627,6 +45652,7 @@ mod tests {
                     properties: ParagraphProperties::default().into(),
                     inlines: vec![run],
                 })],
+                shadow: None,
             }))
         }
 

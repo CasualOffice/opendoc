@@ -8711,6 +8711,7 @@ mod tests {
             wrap_distances: WrapDistances::default(),
             wrap_polygon: None,
             behind_doc: false,
+            allow_overlap: true,
         };
         let mut definitions = Definitions::default();
         definitions.media.insert(
@@ -8768,6 +8769,7 @@ mod tests {
             wrap_distances: WrapDistances::default(),
             wrap_polygon: None,
             behind_doc: true,
+            allow_overlap: true,
         };
         let inverse = apply(
             &mut d,
@@ -9392,6 +9394,7 @@ mod tests {
                 wrap_distances: WrapDistances::default(),
                 wrap_polygon: None,
                 behind_doc: true,
+                allow_overlap: true,
             },
             descr: None,
             relative_height: None,
@@ -10779,6 +10782,7 @@ mod tests {
                         properties: ParagraphProperties::default().into(),
                         inlines: vec![run(962, "Caption")],
                     })],
+                    shadow: None,
                 })),
             ],
         })]);
@@ -11187,6 +11191,7 @@ mod tests {
                     flip_h: false,
                     flip_v: false,
                     rotation: None,
+                    shadow: None,
                 })],
             }))],
         })
@@ -14281,6 +14286,7 @@ mod tests {
             border: None,
             body_properties: TextBoxBodyProperties::default(),
             blocks: vec![para(inner, vec![run(text_id, "boxed")])],
+            shadow: None,
         };
 
         let mut definitions = Definitions::default();
@@ -14352,6 +14358,7 @@ mod tests {
                             flip_h: false,
                             flip_v: false,
                             rotation: None,
+                            shadow: None,
                         })],
                     })),
                 ],
@@ -14653,6 +14660,7 @@ mod tests {
             flip_h: false,
             flip_v: false,
             rotation: None,
+            shadow: None,
         }
     }
 
@@ -14669,6 +14677,7 @@ mod tests {
             border: None,
             body_properties: TextBoxBodyProperties::default(),
             blocks,
+            shadow: None,
         })
     }
 

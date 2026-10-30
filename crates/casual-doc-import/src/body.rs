@@ -44,6 +44,8 @@ use casual_doc_model::v1::FieldUpdateState;
 use casual_doc_model::v1::Watermark;
 use casual_doc_model::v1::{FieldRange, FieldRangeEnd, FieldRangeId, FieldRangeStart};
 use casual_doc_model::v1::{MAX_SHAPE_PATH_COMMANDS, ShapePath, ShapePathCommand};
+// Own line (anti-conflict): the outer shadow (`object.shape-shadow`).
+use casual_doc_model::v1::{SHADOW_FULL_TURN, ShadowAlignment, ShapeShadow};
 // Own line (anti-conflict): the rest of the `a:custGeom` grammar.
 use casual_doc_model::v1::{
     AdjustHandle, ConnectionSite, CustomGeometry, GeometryPoint, GeometryRect, GeometryValue,
@@ -295,6 +297,9 @@ enum AnchorAxis {
 struct PendingAnchor {
     /// `@behindDoc` (z-order behind the text).
     behind_doc: bool,
+    /// `@allowOverlap="0"`: the float must not overlap another. Stored inverted
+    /// so `Default` is Word's default (overlap allowed).
+    disallow_overlap: bool,
     /// `@relativeHeight` (the monotonic z-order key within the behind/front band).
     relative_height: Option<u32>,
     /// `wp:positionH@relativeFrom`.
@@ -353,6 +358,7 @@ impl PendingAnchor {
             wrap_distances: self.wrap_distances,
             wrap_polygon: self.wrap_polygon.clone(),
             behind_doc: self.behind_doc,
+            allow_overlap: !self.disallow_overlap,
         }
     }
 }
@@ -391,6 +397,8 @@ struct ShapeBuilder {
     in_adjustment_list: bool,
     fill: Option<Fill>,
     stroke: Option<ShapeStroke>,
+    /// The `a:effectLst/a:outerShdw` drop shadow, once its colour has closed.
+    shadow: Option<ShapeShadow>,
     /// The picture's `a:blip@r:embed`, for a picture child.
     embed: Option<String>,
     /// The alt text (`pic:cNvPr@descr` / `wps:cNvPr@descr`), if declared.
@@ -549,6 +557,8 @@ enum ColorDest {
     StyleRefFill,
     /// The color an `a:lnRef` names, substituted the same way for the outline.
     StyleRefLine,
+    /// The colour of the open `a:effectLst/a:outerShdw`.
+    Shadow,
 }
 
 /// A DrawingML color (`a:srgbClr`/`a:schemeClr`/`a:sysClr`) being accumulated,
@@ -1236,6 +1246,13 @@ struct BodyParser<'a> {
     /// `a:fontRef` in `wps:style`). A `schemeClr` inside one selects a theme style
     /// index, NOT the shape's actual fill/stroke, so color capture is suppressed.
     style_ref_depth: u32,
+    /// Depth of an open `a:spPr/a:effectLst` on the open shape. A colour inside
+    /// it belongs to an effect, never to the shape's fill.
+    effect_depth: u32,
+    /// Whether the open effect is the modelled `a:outerShdw`.
+    in_outer_shadow: bool,
+    /// The open outer shadow's geometry, waiting for its colour.
+    pending_shadow: Option<ShapeShadow>,
     /// Which style reference is open, so a color inside it lands on the right half of
     /// the shape's reference instead of on the shape's own fill or stroke. `None`
     /// inside `a:effectRef`/`a:fontRef`, which stay suppressed.
@@ -1585,6 +1602,9 @@ impl<'a> BodyParser<'a> {
             pending_picture_border: None,
             picture_border_color: None,
             style_ref_depth: 0,
+            effect_depth: 0,
+            in_outer_shadow: false,
+            pending_shadow: None,
             style_ref_dest: None,
             pending_style_ref: None,
             relative_size_pct: None,
@@ -3392,8 +3412,16 @@ impl BodyParser<'_> {
                         }
                     }
                 };
+                // `@allowOverlap` is required by the schema; only an explicit
+                // false turns overlap off, so an absent or unreadable value keeps
+                // Word's default and the writer's long-standing `1`.
+                let disallow_overlap = matches!(
+                    attribute_value(element, b"allowOverlap").as_deref(),
+                    Some("0") | Some("false")
+                );
                 self.pending_anchor = Some(PendingAnchor {
                     behind_doc,
+                    disallow_overlap,
                     relative_height,
                     wrap_distances: WrapDistances {
                         top_emu: bounded_distance(b"distT"),
@@ -3580,6 +3608,7 @@ impl BodyParser<'_> {
                     in_adjustment_list: false,
                     fill: None,
                     stroke: None,
+                    shadow: None,
                     embed: None,
                     descr: None,
                     object_name: ObjectName::default(),
@@ -3610,6 +3639,7 @@ impl BodyParser<'_> {
                     in_adjustment_list: false,
                     fill: None,
                     stroke: None,
+                    shadow: None,
                     embed: None,
                     descr: None,
                     object_name: ObjectName::default(),
@@ -3813,6 +3843,30 @@ impl BodyParser<'_> {
                 }
                 self.cust_geom = Some(CustomGeometryBuilder::default());
             }
+            // A shape's effect list (`a:spPr/a:effectLst`). The list itself is
+            // modelled through the one effect the model carries, the outer
+            // shadow; every other effect inside it falls through to the report
+            // arm by its own name (`glow`, `innerShdw`, `reflection`, …), so a
+            // list holding only a shadow is no longer a loss.
+            // `on_end` runs for a self-closing element too, so the depth is
+            // balanced either way.
+            b"effectLst" if self.pending_shape.is_some() && self.ln_depth == 0 => {
+                self.effect_depth += 1;
+            }
+            b"outerShdw"
+                if self.effect_depth > 0
+                    && self.pending_shape.is_some()
+                    && !self.in_outer_shadow =>
+            {
+                let shadow = self.outer_shadow_of(element);
+                // Held until its colour closes (which rewrites `shape.shadow`); a
+                // shadow whose colour never arrives keeps opaque black.
+                self.in_outer_shadow = true;
+                self.pending_shadow = Some(shadow);
+                if let Some(shape) = self.pending_shape.as_mut() {
+                    shape.shadow = Some(shadow);
+                }
+            }
             // An outline (`a:ln`): its `@w` is the stroke width; a `solidFill` inside
             // it colors the stroke rather than the fill.
             b"ln" if self.pending_shape.is_some() => {
@@ -3942,6 +3996,54 @@ impl BodyParser<'_> {
                         alpha: None,
                         stroke_width_emu: 0,
                     });
+                }
+            }
+            // A colour inside an effect other than the modelled outer shadow (a
+            // glow, an inner shadow, a reflection's tint) is that effect's, not
+            // the shape's: before the shadow was modelled it fell through to the
+            // arm below and REPLACED the shape's fill with the effect colour. The
+            // effect itself is reported by name where it opens.
+            b"srgbClr" | b"schemeClr" | b"sysClr" | b"prstClr"
+                if self.effect_depth > 0 && !self.in_outer_shadow => {}
+            b"srgbClr" | b"schemeClr" | b"sysClr" | b"prstClr"
+                if self.in_outer_shadow
+                    && self.pending_shape.is_some()
+                    && self.pending_color.is_none() =>
+            {
+                let base = match local {
+                    b"srgbClr" => attribute_value(element, b"val")
+                        .and_then(|hex| parse_rgb(&hex))
+                        .map(|rgb| [rgb.r, rgb.g, rgb.b, 255]),
+                    b"schemeClr" => attribute_value(element, b"val")
+                        .as_deref()
+                        .and_then(scheme_slot_index)
+                        .map(|index| self.palette[index]),
+                    b"prstClr" => attribute_value(element, b"val")
+                        .as_deref()
+                        .and_then(preset_color),
+                    // `a:sysClr@lastClr` is the resolved system colour.
+                    _ => Some(
+                        attribute_value(element, b"lastClr")
+                            .and_then(|hex| parse_rgb(&hex))
+                            .map_or([0, 0, 0, 255], |rgb| [rgb.r, rgb.g, rgb.b, 255]),
+                    ),
+                };
+                match base {
+                    Some(base) => {
+                        self.pending_color = Some(PendingColor {
+                            dest: ColorDest::Shadow,
+                            base,
+                            lum_mod: None,
+                            lum_off: None,
+                            tint: None,
+                            shade: None,
+                            alpha: None,
+                            stroke_width_emu: 0,
+                        });
+                    }
+                    // An unknown preset or scheme slot: the shadow keeps its
+                    // default black and the colour is named as not carried.
+                    None => self.reporter.report_attribute(local, b"val"),
                 }
             }
             b"srgbClr" | b"schemeClr" | b"sysClr"
@@ -5463,9 +5565,16 @@ impl BodyParser<'_> {
                     anchor.in_wrap_polygon = false;
                 }
             }
+            b"effectLst" if self.effect_depth > 0 => {
+                self.effect_depth -= 1;
+            }
+            b"outerShdw" if self.in_outer_shadow => {
+                self.in_outer_shadow = false;
+                self.pending_shadow = None;
+            }
             // A DrawingML color element closes: fold its modifiers and assign the
-            // resulting color to the open shape's fill or stroke.
-            b"srgbClr" | b"schemeClr" | b"sysClr" if self.pending_color.is_some() => {
+            // resulting color to the open shape's fill or stroke (or shadow).
+            b"srgbClr" | b"schemeClr" | b"sysClr" | b"prstClr" if self.pending_color.is_some() => {
                 self.commit_color();
             }
             // An outline closes: apply the buffered dash/line-ends to the shape's
@@ -5872,6 +5981,70 @@ impl BodyParser<'_> {
         }
     }
 
+    /// The geometry of an `a:outerShdw` start tag, its colour defaulting to opaque
+    /// black until the colour child closes. A length or angle outside the
+    /// schema's range is clamped into it and named as not carried as written;
+    /// a malformed alignment token is dropped (the schema default) and named.
+    ///
+    /// O(attributes).
+    fn outer_shadow_of(&mut self, element: &BytesStart<'_>) -> ShapeShadow {
+        let mut length = |name: &[u8]| -> i64 {
+            match attr_i64(element, name) {
+                None => {
+                    if attribute_value(element, name).is_some() {
+                        self.reporter.report_attribute(b"outerShdw", name);
+                    }
+                    0
+                }
+                Some(value) if (0..=MAX_EMU).contains(&value) => value,
+                Some(value) => {
+                    self.reporter.report_attribute(b"outerShdw", name);
+                    value.clamp(0, MAX_EMU)
+                }
+            }
+        };
+        let blur_rad_emu = length(b"blurRad");
+        let dist_emu = length(b"dist");
+        let dir = match attr_i64(element, b"dir") {
+            None => 0,
+            Some(value) => {
+                if !(0..i64::from(SHADOW_FULL_TURN)).contains(&value) {
+                    self.reporter.report_attribute(b"outerShdw", b"dir");
+                }
+                #[allow(clippy::cast_possible_truncation)] // rem_euclid of a full turn
+                let turned = value.rem_euclid(i64::from(SHADOW_FULL_TURN)) as i32;
+                turned
+            }
+        };
+        let alignment = attribute_value(element, b"algn").and_then(|token| {
+            let parsed = ShadowAlignment::from_token(&token);
+            if parsed.is_none() {
+                self.reporter.report_attribute(b"outerShdw", b"algn");
+            }
+            parsed
+        });
+        let rot_with_shape = attribute_value(element, b"rotWithShape")
+            .map(|value| matches!(value.as_str(), "1" | "true"));
+        let int = |name: &[u8]| attr_i64(element, name).and_then(|value| i32::try_from(value).ok());
+        ShapeShadow {
+            color: Rgba {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            blur_rad_emu,
+            dist_emu,
+            dir,
+            alignment,
+            rot_with_shape,
+            sx: int(b"sx"),
+            sy: int(b"sy"),
+            kx: int(b"kx"),
+            ky: int(b"ky"),
+        }
+    }
+
     /// Folds the open [`PendingColor`] and assigns it: to a lone picture's frame
     /// border, to the open gradient stop, or to the open shape's flat fill/stroke.
     fn commit_color(&mut self) {
@@ -5908,6 +6081,14 @@ impl BodyParser<'_> {
             ColorDest::Fill => {
                 if let Some(shape) = self.pending_shape.as_mut() {
                     shape.fill = Some(Fill::Solid(rgba));
+                }
+            }
+            ColorDest::Shadow => {
+                if let (Some(shape), Some(mut shadow)) =
+                    (self.pending_shape.as_mut(), self.pending_shadow)
+                {
+                    shadow.color = rgba;
+                    shape.shadow = Some(shadow);
                 }
             }
             ColorDest::Stroke => {
@@ -6397,6 +6578,7 @@ impl BodyParser<'_> {
                     border: shape.stroke,
                     body_properties: shape.body_properties,
                     blocks,
+                    shadow: shape.shadow,
                 }));
                 self.drawing_emitted_text_box = true;
             }
@@ -6417,6 +6599,7 @@ impl BodyParser<'_> {
                     border: shape.stroke,
                     body_properties: shape.body_properties,
                     blocks,
+                    shadow: shape.shadow,
                 }));
                 self.drawing_emitted_text_box = true;
             }
@@ -6444,6 +6627,11 @@ impl BodyParser<'_> {
     /// only once the child is known to exist.
     fn shape_to_group_child_unnamed(&mut self, mut shape: ShapeBuilder) -> Option<GroupChild> {
         if shape.is_picture {
+            // A picture's drop shadow is not modelled (only shapes and text
+            // boxes carry one), so it is named rather than dropped.
+            if shape.shadow.is_some() {
+                self.reporter.report(b"outerShdw");
+            }
             let embed = shape.embed.as_deref()?;
             let media = *self.media_index.get(embed)?;
             return Some(GroupChild::Picture(GroupPicture {
@@ -6490,6 +6678,7 @@ impl BodyParser<'_> {
                 flip_h: shape.flip_h,
                 flip_v: shape.flip_v,
                 rotation: shape.rotation,
+                shadow: shape.shadow,
             }));
         }
         Some(GroupChild::Shape(GroupShape {
@@ -6506,6 +6695,7 @@ impl BodyParser<'_> {
             flip_h: shape.flip_h,
             flip_v: shape.flip_v,
             rotation: shape.rotation,
+            shadow: shape.shadow,
         }))
     }
 
@@ -6847,6 +7037,7 @@ impl BodyParser<'_> {
                 border: None,
                 body_properties: vml_text_box_body_properties(None),
                 blocks,
+                shadow: None,
             }));
         }
         if segments.is_empty() && !lifted {
@@ -7045,6 +7236,7 @@ impl BodyParser<'_> {
                     flip_h: drawing.flip_h,
                     flip_v: drawing.flip_v,
                     rotation: crate::vml_map::rotation(drawing.rotation_degrees),
+                    shadow: None,
                 }));
             } else {
                 children.extend(self.vml_shape_children(drawing, Some(origin))?);
@@ -7233,6 +7425,7 @@ impl BodyParser<'_> {
                 border: vml_stroke(&drawing.stroke),
                 body_properties,
                 blocks,
+                shadow: None,
             }))
         } else {
             Some(Segment::TextBox(TextBox {
@@ -7245,6 +7438,7 @@ impl BodyParser<'_> {
                 border: vml_stroke(&drawing.stroke),
                 body_properties,
                 blocks,
+                shadow: None,
             }))
         }
     }
@@ -7390,6 +7584,7 @@ impl BodyParser<'_> {
             flip_h,
             flip_v,
             rotation,
+            shadow: None,
         }));
         Ok(children)
     }
@@ -7911,6 +8106,7 @@ impl BodyParser<'_> {
                         border: None,
                         body_properties: vml_text_box_body_properties(None),
                         blocks,
+                        shadow: None,
                     }));
                 }
             }
@@ -9586,6 +9782,30 @@ pub(crate) fn parse_dash_style(token: &str) -> Option<DashStyle> {
 /// Parses an `a:headEnd`/`a:tailEnd` (`CT_LineEndProperties`) into a [`LineEnd`].
 /// A missing/unrecognized `@type` defaults to [`LineEndKind::None`]; unrecognized
 /// `@w`/`@len` size tokens drop that attribute.
+/// The DrawingML preset colours (`a:prstClr@val`, `ST_PresetColorVal`) a
+/// shadow is written with in practice, as opaque RGBA. Word writes `black` for
+/// every shadow preset it offers; the rest are the CSS-named colours the schema
+/// shares. `None` for a token outside this table, which the caller reports.
+/// O(1).
+fn preset_color(token: &str) -> Option<[u8; 4]> {
+    let rgb: [u8; 3] = match token {
+        "black" => [0, 0, 0],
+        "white" => [255, 255, 255],
+        "gray" | "grey" => [128, 128, 128],
+        "dkGray" | "dkGrey" | "darkGray" | "darkGrey" => [169, 169, 169],
+        "ltGray" | "ltGrey" | "lightGray" | "lightGrey" => [211, 211, 211],
+        "silver" => [192, 192, 192],
+        "dimGray" | "dimGrey" => [105, 105, 105],
+        "red" => [255, 0, 0],
+        "green" => [0, 128, 0],
+        "blue" => [0, 0, 255],
+        "yellow" => [255, 255, 0],
+        "navy" => [0, 0, 128],
+        _ => return None,
+    };
+    Some([rgb[0], rgb[1], rgb[2], 255])
+}
+
 fn parse_line_end(element: &BytesStart<'_>) -> LineEnd {
     let kind = match attribute_value(element, b"type").as_deref() {
         Some("triangle") => LineEndKind::Triangle,
@@ -10326,6 +10546,7 @@ fn vml_anchor_from(
         // VML text wrapping has no polygon contour.
         wrap_polygon: None,
         behind_doc: position.behind_doc(),
+        allow_overlap: true,
     };
     (anchor, position.z_index.map(vml_rel_height))
 }

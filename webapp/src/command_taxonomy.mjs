@@ -250,7 +250,7 @@ export const APP_MENU_SECTIONS = {
   // that this row is not a member of the band above it.
   edit: [
     band("menuGroup.undo", "edit.undo", "edit.redo"),
-    band("menuGroup.clipboard", "edit.cut", "edit.copy", "edit.paste", "edit.pasteText"),
+    band("menuGroup.clipboard", "edit.cut", "edit.copy", "edit.paste", "edit.pasteText", "edit.pasteImage"),
     band("menuGroup.selection", "edit.selectAll"),
     band("menuGroup.find", "edit.find"),
   ],
@@ -384,7 +384,7 @@ export const APP_MENU_SECTIONS = {
   // and outvoted a third time by our ribbon, which had the notes on References
   // while the menu had them on Insert.
   insert: [
-    band("menuGroup.table", "insert.table", "insert.tableDialog", "insert.textToTable"),
+    band("menuGroup.table", "insert.table", "insert.tableDialog", "insert.textToTable", "insert.drawTable"),
     // Breaks. A SUBMENU, because six rows of "… break" would make this menu long
     // for a group nobody opens twice in a paragraph — the same argument the
     // Export band makes on the File surface, and the shape ONLYOFFICE uses for
@@ -407,7 +407,7 @@ export const APP_MENU_SECTIONS = {
       "layout.break.section.evenPage",
       "layout.break.section.oddPage",
     ),
-    band("menuGroup.illustrations", "insert.image", "insert.shape", "insert.chart"),
+    band("menuGroup.illustrations", "insert.image", "insert.imageFromUrl", "insert.shape", "insert.chart"),
     // Content controls (`109` RM-34): Word's Developer ▸ Controls, as a submenu
     // for the same reason Breaks is one — seven kinds and three actions.
     sub(
@@ -777,9 +777,8 @@ export const TABLE_MENU_LABELS = new Map([
   ["table.row.grow", "Taller row"],
   ["table.row.shrink", "Shorter row"],
   ["table.cellFormat", "Cell formatting…"],
-  // Word's own wording in Table Design, and an ellipsis because the row opens
-  // the cell-format popover with the pen focused rather than applying a style.
-  ["table.borderStyle", "Border line style…"],
+  // Word's own wording, and an ellipsis because the row opens a dialog.
+  ["table.borderStyle", "Borders and shading…"],
   ["table.properties", "Table properties…"],
   ["table.style.none", "No table style"],
   // The table tools (`table_tools.mjs`). Their menu words are also catalogue
@@ -803,6 +802,7 @@ export const TABLE_MENU_LABELS = new Map([
 /** The catalogue key for a Table menu row whose words are routed. Only the table
  *  tools have one; the older rows are English debt this map does not add to. */
 export const TABLE_MENU_LABEL_KEYS = new Map([
+  ["table.borderStyle", "table.bordersShadingCommand"],
   ["table.insertCells", "table.tools.insertCellsCommand"],
   ["table.deleteCells", "table.tools.deleteCellsCommand"],
   ["table.splitTable", "table.tools.splitTableCommand"],
@@ -939,7 +939,7 @@ export function tableMenuPlaceholders(disabledReason) {
     id,
     label,
     group: "Table",
-    kw: `table ${label}`.toLowerCase(),
+    kw: `table ${tableMenuLabel(id)}`.toLowerCase(),
     enabled: false,
     disabledReason,
     run: () => {},

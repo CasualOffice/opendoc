@@ -1611,6 +1611,7 @@ impl Document {
                         &text_box.body_properties,
                         "textBox.bodyProperties",
                     )?;
+                    check_shadow(text_box.shadow.as_ref(), "textBox.shadow")?;
                     // A text box is a fresh block container: its table budget
                     // restarts at 0, matching the importer (which gives each box a
                     // fresh table stack). Threading the enclosing `table_depth`
@@ -1898,6 +1899,7 @@ impl Document {
                         &text_box.body_properties,
                         "group.textBox.bodyProperties",
                     )?;
+                    check_shadow(text_box.shadow.as_ref(), "group.textBox.shadow")?;
                     if let Some(border) = &text_box.border {
                         check_domain(
                             (0..=MAX_EMU).contains(&border.width_emu),
@@ -1910,6 +1912,7 @@ impl Document {
                 }
                 GroupChild::Shape(shape) => {
                     check_extent(&shape.extent, "group.shape.extent")?;
+                    check_shadow(shape.shadow.as_ref(), "group.shape.shadow")?;
                     check_preset_geometry(
                         shape.geometry,
                         shape.preset.as_ref(),
@@ -3717,6 +3720,20 @@ fn check_anchor_offset(
 }
 
 /// Bounds the four non-negative `wp:anchor` text-exclusion distances.
+/// Bounds an outer shadow's lengths to `0..=MAX_EMU` and its direction to one
+/// turn, the ranges import admits and export writes. O(1).
+fn check_shadow(shadow: Option<&ShapeShadow>, property: &'static str) -> Result<(), ModelError> {
+    let Some(shadow) = shadow else {
+        return Ok(());
+    };
+    check_domain(
+        (0..=MAX_EMU).contains(&shadow.blur_rad_emu)
+            && (0..=MAX_EMU).contains(&shadow.dist_emu)
+            && (0..SHADOW_FULL_TURN).contains(&shadow.dir),
+        property,
+    )
+}
+
 fn check_wrap_distances(distances: &WrapDistances) -> Result<(), ModelError> {
     for distance in [
         distances.top_emu,

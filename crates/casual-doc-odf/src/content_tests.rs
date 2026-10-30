@@ -1535,6 +1535,7 @@ fn deleted_field_symbol_math_and_text_box_content_reaches_the_region() {
                         text: "boxed".to_owned(),
                     })],
                 })],
+                shadow: None,
             })),
         ]
     });

@@ -5,6 +5,7 @@
 import { extractMarker, htmlToRuns, htmlToStructured } from "./clipboard.mjs";
 import { modalIsOpen } from "./modal.mjs";
 import { onButton } from "./popover_manager.mjs";
+import { textToRuns } from "./paste_picture.mjs";
 import { externalPasteLossMessage, pasteLossMessage, structureFamilies } from "./paste_loss.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
@@ -485,7 +486,31 @@ export function createClipboard(ed) {
     await pasteRichRunsJson(JSON.stringify(merged));
     ed.focusEditorSurface();
   }
+  /** Word's Paste Options ▸ Picture: undo the paste and put the same content in
+   *  as one picture of how it looks (`paste_picture.mjs`). The rich runs when the
+   *  paste kept them, else the plain text — never a third reading of the
+   *  clipboard, which may have changed since. */
+  async function switchPasteToPicture() {
+    const runsJson = pasteOptionsRuns;
+    const text = pasteOptionsPlain;
+    const onTop = pasteOptionsStillOnTop();
+    hidePasteOptions();
+    if ((!runsJson && !text) || !ed.doc) return;
+    if (!onTop) return refusePasteOptions();
+    let runs = null;
+    try {
+      runs = runsJson ? JSON.parse(runsJson) : null;
+    } catch {
+      runs = null;
+    }
+    await ed.objectInsert.pasteRunsAsPicture(Array.isArray(runs) ? runs : textToRuns(text), {
+      beforeInsert: async () => {
+        if (ed.doc.canUndo) await ed.runEdit(() => ed.doc.undo());
+      },
+    });
+  }
   onButton(document.getElementById("pasteOptionsTextOnly"), () => void switchPasteToTextOnly());
+  onButton(document.getElementById("pasteOptionsPicture"), () => void switchPasteToPicture());
   onButton(pasteOptionsMergeBtn, () => void switchPasteToMergeFormatting());
   onButton(document.getElementById("pasteOptionsClose"), hidePasteOptions);
   pasteOptionsEl.addEventListener("mousedown", (e) => {

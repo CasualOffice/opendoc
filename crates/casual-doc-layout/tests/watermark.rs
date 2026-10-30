@@ -180,6 +180,7 @@ fn behind_text_picture() -> casual_doc_layout::page::PlacedAnchor {
         },
         descr: None,
         transform: None,
+        shadow: None,
     }
 }
 

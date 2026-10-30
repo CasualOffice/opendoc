@@ -310,6 +310,8 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("edit.copy", null),
   exact("edit.paste", "mutate"),
   exact("edit.pasteText", "mutate"),
+  // Paste as picture (`paste_picture.mjs`): the clipboard inserted as one picture.
+  exact("edit.pasteImage", "mutate"),
   exact("edit.selectAll", null),
   exact("edit.find", null),
   // The same panel on its replacement field (⌘H). Opening it changes nothing; a
@@ -388,6 +390,9 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("insert.field", "mutate"),
   exact("insert.dropCap", "mutate"),
   exact("insert.image", "mutate"),
+  // Picture from URL (`picture_url.mjs`): downloaded through the host's network
+  // policy (`?remoteImages=`) and embedded.
+  exact("insert.imageFromUrl", "mutate"),
   exact("insert.shape", "mutate"),
   exact("insert.chart", "mutate"),
   exact("insert.textbox", "mutate"),
@@ -400,6 +405,9 @@ export const COMMAND_CONTRACT = Object.freeze([
   // Both write: one inserts a table, the other replaces paragraphs with one.
   exact("insert.tableDialog", "mutate"),
   exact("insert.textToTable", "mutate"),
+  // Draw Table's pencil (`table_draw_mode.mjs`): a drawn outline inserts a
+  // table, a drawn line splits cells, so the mode exists to write.
+  exact("insert.drawTable", "mutate"),
   exact("insert.header", "mutate"),
   exact("insert.footer", "mutate"),
   // Per band, because linkage and removal are per band (`docs/85` §8d Q7): a
