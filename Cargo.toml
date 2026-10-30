@@ -27,6 +27,7 @@ members = [
     "crates/casual-doc-transaction",
     "crates/opendoc-viewer",
     "crates/opendoc",
+    "crates/opendoc-ffi",
     "crates/casual-doc-wasm",
     "crates/casual-doc-wasm-pdf",
     "server",

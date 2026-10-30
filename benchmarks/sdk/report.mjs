@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Renders benchmarks/sdk/results.json into the generated region of
-// docs/176 section 12.7. No number in that region is typed (SKILL section 9):
+// docs/176 section 12.10. No number in that region is typed (SKILL section 9):
 //
 //   node benchmarks/sdk/report.mjs           rewrite the region
 //   node benchmarks/sdk/report.mjs --check   fail if the region is stale
@@ -100,12 +100,12 @@ if (process.argv[1] && relative(process.argv[1], fileURLToPath(import.meta.url))
   const next = apply(doc, JSON.parse(readFileSync(RESULTS, "utf8")));
   if (process.argv.includes("--check")) {
     if (next !== doc) {
-      console.error("docs/176 section 12.7 is stale; run node benchmarks/sdk/report.mjs");
+      console.error("docs/176 section 12.10 is stale; run node benchmarks/sdk/report.mjs");
       process.exit(1);
     }
-    console.log("docs/176 section 12.7 matches results.json.");
+    console.log("docs/176 section 12.10 matches results.json.");
   } else {
     writeFileSync(DOC, next);
-    console.log("docs/176 section 12.7 written.");
+    console.log("docs/176 section 12.10 written.");
   }
 }

@@ -2012,6 +2012,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "opendoc-ffi"
+version = "0.0.1"
+dependencies = [
+ "opendoc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "opendoc-fidelity"
 version = "0.0.1"
 dependencies = [

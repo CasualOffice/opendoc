@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The SDK benchmark and conformance suite (docs/176 section 12.7).
+// The SDK benchmark and conformance suite (docs/176 section 12.10).
 //
 // The same fixtures go through OpenDoc and through every permissive competitor
 // installed on this machine; it measures speed, peak memory, page-count
@@ -164,6 +164,64 @@ if (python) {
       results.speed.push(row);
     }
   }
+}
+
+// Java: the same POI-style program against Apache POI XWPF and against the
+// OpenDoc binding (POI's naming over the C ABI). --java-cp is a directory of
+// POI's jars; --java-lib the built libopendoc_ffi. Peak RSS comes from the OS
+// (`/usr/bin/time`), so it includes the JVM itself.
+const javaLib = opt("--java-lib");
+if (javaCp && javaLib) {
+  const classes = join(scratch, "java-classes");
+  const jars = readdirSync(javaCp)
+    .filter((f) => f.endsWith(".jar"))
+    .map((f) => join(javaCp, f));
+  const sources = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.name.endsWith(".java")) sources.push(path);
+    }
+  };
+  walk(join(repo, "bindings", "java", "src", "main", "java"));
+  sources.push(join(here, "java", "Bench.java"));
+  const sep = platform() === "win32" ? ";" : ":";
+  const cp = [...jars, classes].join(sep);
+  execFileSync("javac", ["--release", "22", "-d", classes, "-cp", jars.join(sep), ...sources], { stdio: "inherit" });
+  const timeFlag = platform() === "darwin" ? "-l" : "-v";
+  const javaTask = (name, library, input) => {
+    const run = spawnSync(
+      "/usr/bin/time",
+      [timeFlag, "java", "--enable-native-access=ALL-UNNAMED", `-Dopendoc.library=${javaLib}`, "-cp", cp, "Bench", name, library, String(input), String(iterations)],
+      { encoding: "utf8" },
+    );
+    if (run.status !== 0) return { error: run.stderr.trim().split("\n").slice(-2).join(" ") };
+    const result = JSON.parse(run.stdout.trim().split("\n").pop());
+    const darwin = /(\d+)\s+maximum resident set size/.exec(run.stderr);
+    const linux = /Maximum resident set size \(kbytes\): (\d+)/.exec(run.stderr);
+    result.peakMB = darwin ? Number((Number(darwin[1]) / 2 ** 20).toFixed(1)) : linux ? Number((Number(linux[1]) / 1024).toFixed(1)) : null;
+    return result;
+  };
+  results.versions.poi = (/poi-(\d[\w.-]*)\.jar/.exec(jars.join(" ")) ?? [])[1] ?? null;
+  {
+    const v = spawnSync("java", ["-version"], { encoding: "utf8" });
+    results.versions.java = (v.stderr || v.stdout).trim().split("\n")[0];
+  }
+  for (const [name, inputs, label] of [
+    ["generate", [100, 1000], (n) => `${n} paragraphs + table (Java)`],
+    ["read", ["sample", "scale"], (n) => `${n} (Java)`],
+  ]) {
+    for (const input of inputs) {
+      const row = { task: `java-${name}`, input: label(input) };
+      for (const library of ["poi", "opendoc"]) {
+        log(`java-${name} ${input} ${library}`);
+        row[library] = javaTask(name, library, named[input] ?? input);
+      }
+      results.speed.push(row);
+    }
+  }
+  results.notes.push("Java peak memory is the whole JVM process's maximum resident set (`/usr/bin/time`), for both libraries.");
 }
 
 // LibreOffice headless: DOCX to PDF, batch and single, wall time including its
