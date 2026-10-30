@@ -634,7 +634,10 @@ fn labels(
     let mut out = Vec::new();
     for (i, e) in elements.iter().enumerate() {
         *work += 1;
-        if taken[i] || !e.floats.is_empty() {
+        // A tagged table's cells are the table's, however short (the
+        // structure tree builds it after this; a table's header fill and
+        // rules had made it a figure and its cells its labels).
+        if taken[i] || !e.floats.is_empty() || e.lineage.iter().any(|n| n.role == "Table") {
             continue;
         }
         let EKind::Text(lines) = &e.kind else {

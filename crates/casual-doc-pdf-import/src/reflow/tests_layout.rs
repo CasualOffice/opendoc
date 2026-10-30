@@ -750,3 +750,38 @@ fn a_charts_labels_are_drawn_with_it_and_its_pieces_are_one_drawing() {
             .all(|p| p.properties.page_break_before != Some(true))
     );
 }
+
+#[test]
+fn a_tagged_table_with_a_filled_header_stays_a_table() {
+    // NISTIR 8105 (a US federal work, committed in the reflow corpus): its
+    // Table 1 is tagged, its header row a black fill, its cells ruled. The
+    // fill and the rules once made it a figure and its cells that figure's
+    // labels, so the table vanished into a drawing.
+    let bytes = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/pdf-reflow-corpus/nist-ir8105.pdf"),
+    )
+    .expect("the committed corpus file");
+    let reflowed = reflow_of(bytes);
+    let table = reflowed
+        .document
+        .body()
+        .iter()
+        .find_map(|b| match b {
+            BlockNode::Table(t)
+                if t.rows.first().is_some_and(|r| {
+                    r.cells.first().is_some_and(|c| {
+                        c.blocks.iter().any(|b| {
+                            matches!(b, BlockNode::Paragraph(p) if para_text(p).contains("Cryptographic Algorithm"))
+                        })
+                    })
+                }) =>
+            {
+                Some(t)
+            }
+            _ => None,
+        })
+        .expect("Table 1 is a table");
+    assert_eq!(table.rows.len(), 6);
+    assert!(table.rows.iter().all(|r| r.cells.len() == 4));
+}

@@ -1831,17 +1831,26 @@ refused by the stream limit):
 
 | Measure | Before | After |
 | --- | --- | --- |
-| Paragraphs | 54,550 | 51,470 |
-| Paragraphs of three words or fewer | 13,468 | 12,482 |
-| Headings | 2,708 | 2,626 |
-| List items | 9,927 | 9,679 |
+| Paragraphs | 54,550 | 50,394 |
+| Paragraphs of three words or fewer | 13,468 | 11,855 |
+| Headings | 2,708 | 2,588 |
+| List items | 9,927 | 9,627 |
+| Tables | 1,379 | 1,358 |
+| Shape groups (drawings) | 9,963 | 3,730 |
 | Files whose flowing document failed validation | 0 | 0 |
 | Files with U+FFFD | 0 | 0 |
-| Tables, files with a heading, list, header or footer | unchanged | unchanged |
+| Files with a heading, list, header or footer | unchanged | unchanged |
 
 Read by hand: the headings removed are false ones (bold lines inside paragraphs of the ACL
-and arXiv papers, which read as Heading 2), and the list items removed are continuations
-(NIST's bold lead-in items had split into a bulleted line and an unbulleted rest).
+and arXiv papers, which read as Heading 2); the list items removed are continuations
+(NIST's bold lead-in items had split into a bulleted line and an unbulleted rest); the
+tables removed are fragments rejoined (NISTIR 8105's Table 1 was five one-row tables and is
+one 6 x 4 table); the drawings removed are pieces of one figure now drawn as one.
+
+One regression was caught by this sweep and fixed before the push: a tagged table with a
+filled header row and ruled cells had become a figure whose labels were its cells. A tagged
+table's cells are never labels (`a_tagged_table_with_a_filled_header_stays_a_table`, on the
+committed `nist-ir8105.pdf`).
 
 **Still weak on these files**, in the order they hurt:
 
