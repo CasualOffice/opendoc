@@ -324,9 +324,7 @@ for (const tab of ["home", "view", "table"]) {
     );
 
     const divergent = [];
-    // QUARANTINED (2026-10-31), named and temporary: the Borders button and
-    // table.borderStyle drifted apart in #918; the fix removes this filter.
-    for (const face of pairs.filter((f) => f.name !== "tableBordersBtn")) {
+    for (const face of pairs) {
       await forgetPreferences(page);
       await prepare(page);
       await page.locator(`.ribbon-tab[data-tab="${tab}"]`).click();

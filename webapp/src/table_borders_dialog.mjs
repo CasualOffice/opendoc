@@ -326,6 +326,14 @@ export function createTableBordersDialog(io) {
     },
     apply,
   };
+  // The Table band's face of `table.borderStyle` (`ribbon_faces.mjs` declares
+  // the identity; a face keeps its own handler). #918 shipped the button stamped
+  // and enabled with no handler at all, so the ribbon's Borders and shading did
+  // nothing while the menu, the palette and the right-click menu opened this
+  // dialog. Bound here, beside the dialog it opens, through `onButton` like the
+  // dialog's own controls.
+  const bandButton = el("tableBordersBtn");
+  if (bandButton) io.onButton(bandButton, () => instance.open());
   active = instance;
   return instance;
 }
