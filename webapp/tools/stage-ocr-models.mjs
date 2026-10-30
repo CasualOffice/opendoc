@@ -4,16 +4,16 @@
 // Stages the deployment's OCR models (docs/182 §19-§20) into webapp/ocr/ for the
 // Pages build, so scanned PDFs can be recognised on opendoc.casualoffice.org.
 //
-// The models are PaddlePaddle's PP-OCRv5 mobile graphs (Apache-2.0), stored as
-// GitHub release assets (tools/ocr-models.json names the release and every
-// file's SHA-256), not in the repository. Release downloads carry no CORS
+// The models are PaddlePaddle's PP-OCRv5 mobile graphs (Apache-2.0): detection and
+// Latin recognition are committed in docs/assets/ocr (about 13 MB); a GitHub
+// release is the fallback source. tools/ocr-models.json holds every SHA-256. Release downloads carry no CORS
 // headers a browser can use, so they are fetched HERE, at build time, verified,
 // and served same-origin. Only after every digest matches does this write
 // webapp/ocr/manifest.json and the <meta name="opendoc-ocr-manifest"> tag the
 // editor reads (src/ocr_models.mjs). A missing release or a digest mismatch
 // leaves the site without models, and says so, rather than shipping bad bytes.
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,10 +23,19 @@ const spec = JSON.parse(readFileSync(join(webapp, "..", "tools", "ocr-models.jso
 const out = join(webapp, "ocr");
 const base = `https://github.com/${spec.repository}/releases/download/${spec.release}/`;
 
+// The models committed in the repository (docs/assets/ocr) are the first source:
+// no release, no network. The release is the fallback for a checkout without them.
+const committed = join(webapp, "..", "docs", "assets", "ocr");
+
 async function fetchVerified(entry) {
-  const response = await fetch(base + entry.file);
-  if (!response.ok) throw new Error(`${entry.file}: HTTP ${response.status}`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  let bytes;
+  if (existsSync(join(committed, entry.file))) {
+    bytes = new Uint8Array(readFileSync(join(committed, entry.file)));
+  } else {
+    const response = await fetch(base + entry.file);
+    if (!response.ok) throw new Error(`${entry.file}: HTTP ${response.status}`);
+    bytes = new Uint8Array(await response.arrayBuffer());
+  }
   const sha = createHash("sha256").update(bytes).digest("hex");
   if (sha !== entry.sha256 || bytes.length !== entry.bytes) {
     throw new Error(`${entry.file}: digest or size mismatch (${sha}, ${bytes.length} B)`);
