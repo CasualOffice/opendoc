@@ -80,6 +80,12 @@ export function createVersions(ed) {
     }
     ed.armBackgroundMeasure();
     await ed.renderAll();
+    // The chrome that DESCRIBES the document — the screen-reader mirror, the
+    // outline and the footer counts — is rebuilt on content-changed triggers, and
+    // a swap is one: without this a version preview, a Compare view and Review ▸
+    // Original all painted the other document while the mirror still read the
+    // live one, so Original's rejected text was invisible to a screen reader.
+    ed.scheduleChromeRefresh({ stats: true, outline: true, a11y: true });
     ed.drawSelection();
     ed.updateToolbar();
   }
