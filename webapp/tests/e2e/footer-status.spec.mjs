@@ -57,15 +57,19 @@ const footerGeometry = () => {
     needs: status.scrollWidth,
     title: status.getAttribute("title"),
     cut,
-    words: (() => {
-      const w = document.getElementById("statWords").getBoundingClientRect();
-      return w.top < box.bottom - 1 && w.right <= box.right + 1;
-    })(),
+    // The counts still PAINTED in the box, by id: on the first line and wholly
+    // inside it. A shed count is on the clipped second line.
+    shown: [...stats.children]
+      .filter((count) => count.getClientRects().length > 0)
+      .filter((count) => {
+        const r = count.getBoundingClientRect();
+        return r.width > 0 && r.top < box.bottom - 1 && r.right <= box.right + 1;
+      })
+      .map((count) => count.id),
   };
 };
 
-// QUARANTINED (2026-10-31), named and temporary: a footer count is cut part-way at 1280x800.
-test.fixme("at 1280x800 a 66-character message is painted whole, and the counts give way whole", async ({
+test("at 1280x800 a 66-character message is painted whole, and the counts give way whole", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -77,8 +81,14 @@ test.fixme("at 1280x800 a 66-character message is painted whole, and the counts 
     `the message needs ${geometry.needs}px and is painted in ${geometry.painted}px`,
   ).toBeLessThanOrEqual(geometry.painted + 1);
   expect(geometry.cut, "a count was cut part-way rather than shed").toEqual([]);
-  // The word count is the last to go, and at this width it stays.
-  expect(geometry.words, "the word count was shed at 1280px").toBe(true);
+  // The word count is the LAST to go: while any count is painted, it is one of
+  // them. Whether it still fits beside this message at 1280px is a property of
+  // the platform's metrics, not a guarantee. macOS keeps it here and the Linux
+  // runner's wider text sheds it (whole, which `cut` above asserts), so pinning
+  // "it stays" made a correct shed read as a failure.
+  if (geometry.shown.length > 0) {
+    expect(geometry.shown, "a count outlived the word count").toContain("statWords");
+  }
   // Untruncated, so no tooltip repeating it.
   expect(geometry.title).toBeNull();
 });

@@ -10703,6 +10703,23 @@ body:not(.doc-loaded) .drop-title {
   overflow: hidden;
 }
 
+/* The FIRST count could not give way. Flexbox never wraps the first item of a
+   line, so once even "12,483 words" did not fit beside a long message it was
+   clipped mid-text instead of dropped (`footer-status.spec.mjs`, cut on CI's
+   metrics at 1280x800 and locally below 1216px). A zero-width leading item
+   means no real count is ever first, so the word count wraps away whole like
+   the other two. Its negative margin cancels the column gap it would otherwise
+   add, so nothing moves while everything fits. It is a full line TALL: an empty
+   item makes a zero-height first line, and the wrapped count then sat on the
+   second line at the very top of the box, painted and overhanging, which is
+   the cut this exists to remove. */
+.stats::before {
+  content: "";
+  width: 0;
+  height: 1.5em;
+  margin-inline-end: -0.4375rem;
+}
+
 .stats[hidden],
 .stat-pages[hidden] {
   display: none;
