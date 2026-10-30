@@ -129,6 +129,7 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     "headerFooterSettingsBtn",
     "insertSymbolBtn",
     "insertEmojiBtn",
+    "insertNbspBtn",
   ]);
 
   // Word's Insert tab order: Tables ▸ Illustrations ▸ Links ▸ Text ▸ Symbols.

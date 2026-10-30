@@ -57,6 +57,8 @@ test("the ribbon chrome shows ONE axis: the tab strip, File first, no menu bar",
     "View",
     "Table",
     "Chart",
+    // Contextual like Table and Chart: present, disabled until a band is open (RM-23).
+    "Header & Footer",
   ]);
   expect(consoleErrors).toEqual([]);
 });

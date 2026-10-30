@@ -73,7 +73,11 @@ test("the Symbol dialog's special characters insert a no-break space too", async
   await expect(cell).toHaveAttribute("aria-label", "No-break space");
   await cell.click();
   await page.keyboard.press("Escape");
-  await expect.poll(() => mirror(page)).toContain("QZsym\u00a0");
+  // A character after it: the mirror trims a paragraph's trailing whitespace, so
+  // a no-break space left last could never be seen (the Ctrl+Shift+Space test
+  // types "kg" after it for the same reason).
+  await page.keyboard.type("kg");
+  await expect.poll(() => mirror(page)).toContain("QZsym\u00a0kg");
   expect(consoleErrors).toEqual([]);
 });
 

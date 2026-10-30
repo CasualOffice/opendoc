@@ -651,7 +651,11 @@ export const APP_MENU_SECTIONS = {
       "table.cellFormat",
       "table.borderStyle",
       "table.properties",
-      // Cell text direction: Word's Layout ▸ Alignment ▸ Text Direction.
+    ),
+    // Cell text direction: Word's Layout ▸ Alignment ▸ Text Direction, one
+    // submenu so the menu stays within a screenful (menu-submenus).
+    sub(
+      "table.tools.directionSubmenu",
       "table.textDirection.horizontal",
       "table.textDirection.rotateDown",
       "table.textDirection.rotateUp",
@@ -665,6 +669,10 @@ export const APP_MENU_SECTIONS = {
     band(
       "menuGroup.style",
       "table.style.none",
+    ),
+    // Word's Table Style Options group, as one submenu (menu-submenus).
+    sub(
+      "table.tools.lookSubmenu",
       "table.look.headerRow",
       "table.look.firstColumn",
       "table.look.totalRow",

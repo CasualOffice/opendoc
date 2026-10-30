@@ -347,11 +347,13 @@ test("the review column keeps its geometry and agrees with its own cards", async
     };
     const head = document.querySelector(".review-sidebar-header");
     const root = document.documentElement;
-    const want = `${getComputedStyle(root).getPropertyValue("--pnl-pad-y").trim()} ${getComputedStyle(
-      root,
-    )
-      .getPropertyValue("--pnl-pad-x")
-      .trim()}`;
+    // The token pair RESOLVED: the chrome is rem (HF-413), so the token reads
+    // `0.5rem` while computed padding is always px. A probe element resolves it.
+    const probe = document.createElement("div");
+    probe.style.padding = "var(--pnl-pad-y) var(--pnl-pad-x)";
+    document.body.append(probe);
+    const want = inset(probe);
+    probe.remove();
     return {
       position: getComputedStyle(document.querySelector(".review-sidebar")).position,
       header: inset(head),
