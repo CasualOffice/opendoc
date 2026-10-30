@@ -1,0 +1,80 @@
+{
+  "name": "@casualoffice/opendoc",
+  "version": "0.1.0",
+  "description": "OpenDoc headless SDK: create, read, modify, template, convert and render DOCX, ODT, RTF and text in Node and the browser, with its own page layout, real-text PDF, page PNGs and a loss report. A docx-js-style builder and docxtemplater-style templates in one Apache-2.0 package.",
+  "license": "Apache-2.0",
+  "author": "The CasualOffice Team (https://github.com/CasualOffice)",
+  "type": "module",
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "node": "./src/node.js",
+      "import": "./src/index.js"
+    },
+    "./node": {
+      "types": "./types/node.d.ts",
+      "import": "./src/node.js"
+    },
+    "./docx": {
+      "types": "./types/docx.d.ts",
+      "node": "./src/docx-node.js",
+      "import": "./src/docx.js"
+    },
+    "./opendoc_bg.wasm": "./pkg/opendoc_bg.wasm"
+  },
+  "files": [
+    "src",
+    "types",
+    "pkg/opendoc.js",
+    "pkg/opendoc.d.ts",
+    "pkg/opendoc_bg.wasm",
+    "pkg/opendoc_bg.wasm.d.ts",
+    "pkg/LICENSES/OFL-1.1-Carlito.txt",
+    "pkg/LICENSES/OFL-1.1-Liberation.txt",
+    "pkg/LICENSES/OFL-1.1-NotoEmoji.txt",
+    "examples",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "sideEffects": [
+    "./src/node.js",
+    "./src/docx-node.js"
+  ],
+  "scripts": {
+    "build": "./build.sh",
+    "test": "node --test test/*.test.mjs"
+  },
+  "keywords": [
+    "docx",
+    "word",
+    "document",
+    "odt",
+    "pdf",
+    "docx-to-pdf",
+    "template",
+    "docxtemplater",
+    "docx-js",
+    "mammoth",
+    "wasm",
+    "headless"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CasualOffice/opendoc.git",
+    "directory": "packages/opendoc"
+  },
+  "homepage": "https://github.com/CasualOffice/opendoc/tree/main/packages/opendoc",
+  "bugs": {
+    "url": "https://github.com/CasualOffice/opendoc/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

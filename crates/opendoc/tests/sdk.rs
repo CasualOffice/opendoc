@@ -562,3 +562,54 @@ fn every_body_block_kind_is_projected() {
     let json = serde_json::to_value(&body).unwrap();
     assert!(json[0]["type"].is_string());
 }
+
+#[test]
+fn the_format_table_matches_the_engine_registry() {
+    // `Format::can_open`/`can_save` are what bindings and the CLI publish; they
+    // must say what the registry the SDK opens and saves through actually does.
+    let registry = casual_doc_io::builtin_registry();
+    for format in Format::ALL {
+        let descriptor = registry
+            .descriptors()
+            .into_iter()
+            .find(|d| d.id.as_str() == format.registry_id())
+            .unwrap_or_else(|| panic!("{format} is not registered"));
+        let opens = if format == Format::Pdf {
+            cfg!(feature = "pdf-import")
+        } else {
+            descriptor.can_import
+        };
+        assert_eq!(format.can_open(), opens, "{format} open");
+        assert_eq!(format.can_save(), descriptor.can_export, "{format} save");
+    }
+}
+
+#[test]
+fn a_linked_table_of_contents_opens_and_lists_each_heading() {
+    // One heading is the case that failed: a single-paragraph TOC field whose
+    // result held a hyperlink, which the engine refuses (a field's inlines are
+    // leaves), so the whole open failed.
+    for headings in [1, 2] {
+        let mut children =
+            vec![json!({"type": "tableOfContents", "title": "Contents", "hyperlink": true})];
+        for i in 0..headings {
+            children.push(
+                json!({"type": "paragraph", "heading": "Heading1", "text": format!("Part {i}")}),
+            );
+        }
+        let doc = spec(json!({"sections": [{"children": children}]}));
+        let entries: Vec<_> = doc
+            .paragraphs()
+            .into_iter()
+            .filter(|p| p.style.as_deref() == Some("toc 1"))
+            .map(|p| p.text)
+            .collect();
+        let expected: Vec<_> = (0..headings).map(|i| format!("Part {i}")).collect();
+        assert_eq!(entries, expected);
+        assert!(doc.paragraphs().iter().any(|p| {
+            p.runs
+                .iter()
+                .any(|r| r.hyperlink.as_deref() == Some("#_Toc00000001"))
+        }));
+    }
+}
