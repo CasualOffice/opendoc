@@ -296,6 +296,7 @@ allowlist
 allowlisted
 alt
 altChunk
+api
 app
 args
 arrowing
@@ -417,6 +418,7 @@ enum
 enums
 escapeHtml
 etc
+eval
 exfiltration
 fallbacks
 façade

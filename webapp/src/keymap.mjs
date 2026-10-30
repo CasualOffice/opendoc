@@ -266,6 +266,12 @@ export const KEYMAP = [
   // Word count: Word's own chord on both platforms (HF-051). Not Google Docs'
   // ⌘⇧C, which is the format painter here as it is in Word.
   { chord: "⌘⇧G", command: "tools.wordCount", scope: APP_SCOPE },
+  // Casual AI's actions on the selection, or its panel with none (`docs/183` §13).
+  // ONLYOFFICE's own chord for its AI panel, Ctrl+/. NOT ⌘J (Notion's): that is
+  // Justify here, as in Word, and NOT ⌘⇧J or ⌘⌥J, which Chrome takes for its
+  // downloads and its console. The row exists only while an AI plugin runs, so
+  // with no provider the chord does nothing and offers nothing.
+  { chord: "⌘/", command: "plugin.actions", scope: EDITOR_SCOPE },
   { chord: "⌘⌥⏎", command: "review.acceptNext", scope: EDITOR_SCOPE },
   { chord: "⌘⌥⌫", command: "review.rejectNext", scope: EDITOR_SCOPE },
 ];

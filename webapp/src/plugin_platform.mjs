@@ -1,24 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 // The plugin platform in the editor: catalogues, the grant prompt, Manage
-// add-ins, the Add-ins menu, the side panel and the commands plugins contribute
-// (`docs/183` §6.5, §8, §9; ADR-077).
+// add-ins, the Add-ins menu, the ✦ selection menu, the side panel and the
+// commands plugins contribute (`docs/183` §6.5, §8, §9; ADR-077).
 //
-// DESIGNED FROM THE PRODUCTS PEOPLE KNOW. Word puts one Add-ins button on its
-// ribbon that opens the add-in list; Google Docs has one Extensions menu;
-// ONLYOFFICE has a Plugins tab. A button per plugin is how a ribbon overflows, so
-// this editor has ONE Add-ins menu button (Review ▸ Proofing, fixed width,
-// whatever the number of plugins), a palette row per command, context-menu rows
-// where a manifest asks for them, and one side panel at a time.
+// DESIGNED FROM THE PRODUCTS PEOPLE KNOW, and held to the owner's rule of
+// 2026-10-31: a plugin adds NOTHING to the editor until it runs, and then only
+// inside chrome that already exists.
+//
+//   * The Add-ins menu button (Review ▸ Proofing) is hidden until a running
+//     plugin contributes a ribbon row. Word has one Add-ins button and Docs one
+//     Extensions menu; a button per plugin is how a ribbon overflows.
+//   * The ✦ item in the EXISTING selection toolbar is hidden until a running
+//     plugin contributes a selection action (Docs' Refine bar, Word's
+//     "Edit with Copilot" on the mini toolbar).
+//   * A plugin's panel is an ordinary `.side-panel` in the workarea, the slot the
+//     outline, pages and compare panels use: same frame, head, close button and
+//     width. One at a time.
+//   * Palette rows: every command of a running plugin.
+//   * A first-party plugin marked `when: "ai"` (the assistant) does not exist at
+//     all until an AI provider is configured: no row, no button, no panel.
 //
 // Every plugin command is `plugin.<pluginId>.<commandId>` in the one registry,
-// so it reaches the palette, the menus and the host contract (the `plugin.`
-// family) like any other command. A command whose plugin is not running is
-// PRESENT AND DISABLED with the reason (SKILL §10).
+// so it reaches the palette and the host contract (the `plugin.` family) like
+// any other command. An installed plugin that is turned off keeps its rows,
+// disabled with the reason (SKILL §10); an AI-gated one has none.
 //
 // Complexity: O(plugins) per registry build; nothing here reads the document.
-import { t, activeLocale, direction } from "./i18n.mjs";
+import { t, has, activeLocale, direction } from "./i18n.mjs";
 import { registerModal } from "./modal.mjs";
-import { onButton, registerPopover, closePopover } from "./popover_manager.mjs";
+import { onButton, registerPopover, closePopover, openPopover } from "./popover_manager.mjs";
 import { commandContract } from "./host_contract.mjs";
 import { fetchVocabulary } from "./ai_webmcp.mjs";
 import { MANIFEST_BOUNDS, addedPermissions, checkManifest, localised } from "./plugin_manifest.mjs";
@@ -36,6 +46,10 @@ import {
 
 /** The Manage add-ins command, the family's one fixed member. */
 export const MANAGE_COMMAND = "plugin.manage";
+/** ⌘/ (Ctrl+/): the ✦ actions on a selection, or the first AI plugin's panel
+ *  with none. ONLYOFFICE's own chord for its AI panel. Present only while such a
+ *  plugin runs. */
+export const ACTIONS_COMMAND = "plugin.actions";
 
 /** A plugin command's registry id. */
 export const pluginCommandId = (pluginId, commandId) => `plugin.${pluginId}.${commandId}`;
@@ -50,13 +64,75 @@ export const PERMISSION_KEYS = Object.freeze({
   ai: "plugins.permission.ai",
 });
 
+/** The design tokens a plugin's page receives as values (owner rule 3: reuse the
+ *  product's tokens, never invent). Read from the editor's own computed style, so
+ *  both themes and a white-label `brand.css` reach the plugin unchanged. */
+export const PLUGIN_TOKENS = Object.freeze([
+  "--accent",
+  "--accent-ink",
+  "--accent-soft",
+  "--accent-line",
+  "--accent-text",
+  "--bg",
+  "--bg-2",
+  "--ink",
+  "--muted",
+  "--surface",
+  "--surface-alt",
+  "--paper",
+  "--paper-ink",
+  "--paper-insert",
+  "--paper-delete",
+  "--line",
+  "--line-strong",
+  "--danger",
+  "--danger-soft",
+  "--primary-bg",
+  "--primary-bg-hover",
+  "--primary-ink",
+  "--radius",
+  "--radius-sm",
+  "--radius-md",
+  "--radius-popover",
+  "--space-1",
+  "--space-2",
+  "--space-3",
+  "--space-4",
+  "--fs-body",
+  "--fs-small",
+  "--fs-caption",
+  "--h-control",
+  "--h-field",
+  "--h-search",
+  "--pnl-pad-x",
+  "--pnl-pad-y",
+  "--shadow-sm",
+  "--shadow-popover",
+  "--brand-font",
+]);
+
+/** A short, stable, opaque key for a string (FNV-1a, 32-bit, hex). Pure. */
+export function opaqueKey(text) {
+  let hash = 0x811c9dc5;
+  for (const char of String(text ?? "")) {
+    hash ^= char.codePointAt(0);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+/** The catalogue namespace a first-party plugin's strings live under:
+ *  `plugins.<last id segment>.`, e.g. `plugins.assistant.`. Pure. */
+export const stringNamespace = (pluginId) => `plugins.${String(pluginId).split(".").at(-1)}.`;
+
 /**
  * The command rows the plugins contribute. Pure over its inputs.
  *
- * @param {{plugins: object[], context?: object, openManager: () => void, invoke: (plugin: object, command: object) => void}} io
+ * @param {{plugins: object[], context?: object, openManager: () => void,
+ *   invoke: (plugin: object, command: object) => void, actions?: (() => void) | null}} io
  *   each plugin: `{manifest, running, enabled, name, title(command)}`
  */
-export function pluginCommands({ plugins, context = {}, openManager, invoke }) {
+export function pluginCommands({ plugins, context = {}, openManager, invoke, actions = null }) {
   const rows = [
     {
       id: MANAGE_COMMAND,
@@ -67,6 +143,16 @@ export function pluginCommands({ plugins, context = {}, openManager, invoke }) {
       run: openManager,
     },
   ];
+  if (actions) {
+    rows.push({
+      id: ACTIONS_COMMAND,
+      label: t("plugins.actions.command"),
+      group: "Tools",
+      kw: "ai assistant casual actions rewrite ask",
+      noDoc: false,
+      run: actions,
+    });
+  }
   for (const plugin of plugins) {
     const { manifest } = plugin;
     const inMenu = new Map(manifest.contributes.contextMenu.map((item) => [item.command, item.when ?? "always"]));
@@ -101,7 +187,7 @@ export function pluginCommands({ plugins, context = {}, openManager, invoke }) {
  */
 export function startPluginPlatform(ed, { assistant, providers, config, view = globalThis }) {
   const doc = view.document;
-  /** id -> {manifest, entry, running: host|null, enabled, problem} */
+  /** id -> {manifest, entry, running: host|null, enabled} */
   const plugins = new Map();
   let catalogue = { mode: "none", entries: [], allowInstall: false, problems: [] };
   let activePanel = null;
@@ -116,8 +202,20 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
   };
   const fetchJson = async (url) => JSON.parse(await fetchText(url, MANIFEST_BOUNDS.manifestBytes));
 
-  const nameOf = (manifest) => localised(manifest, "name", activeLocale(), manifest.name);
-  const titleOf = (manifest) => (command) => localised(manifest, `commands.${command.id}`, activeLocale(), command.title);
+  /** A FIRST-PARTY plugin's words come from the product's own catalogue
+   *  (`plugins.<name>.name`, `.command.<id>`, `.panel`), translated with the
+   *  editor's; any other plugin's from its manifest's `locales`. */
+  const firstParty = (manifest) => plugins.get(manifest.id)?.entry.source === "first-party";
+  const catalogued = (manifest, key, fallback) => {
+    const full = `${stringNamespace(manifest.id)}${key}`;
+    return firstParty(manifest) && has(full) ? t(full) : fallback;
+  };
+  const nameOf = (manifest) => catalogued(manifest, "name", localised(manifest, "name", activeLocale(), manifest.name));
+  const titleOf = (manifest) => (command) =>
+    catalogued(manifest, `command.${command.id}`, localised(manifest, `commands.${command.id}`, activeLocale(), command.title));
+  /** An AI-gated plugin exists only while a provider is configured. */
+  const present = (record) => record.entry.when !== "ai" || providers.available();
+  const isRunning = (record) => !!record.running && record.running.state === "running";
 
   function storageFor(id) {
     const key = storageKeyFor(id);
@@ -139,7 +237,19 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
     };
   }
 
-  // ---- The side panel ------------------------------------------------------
+  function tokens() {
+    const style = view.getComputedStyle?.(doc.documentElement);
+    const out = {};
+    if (!style) return out;
+    for (const name of PLUGIN_TOKENS) {
+      const value = style.getPropertyValue(name).trim();
+      if (value) out[name] = value;
+    }
+    return out;
+  }
+  const theme = () => doc.documentElement.dataset.theme ?? (view.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+
+  // ---- The side panel (the existing `.side-panel` slot) --------------------
 
   const panel = doc.getElementById("pluginPanel");
   const panelTitle = doc.getElementById("pluginPanelTitle");
@@ -148,25 +258,33 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
   let panelOpener = null;
 
   function showPanel(record, open) {
-    if (!panel || !record.running?.frame) return;
+    if (!panel || !record?.running?.frame) return;
     if (!open) {
       if (activePanel !== record) return;
       activePanel = null;
       panel.hidden = true;
       record.running.frame.hidden = true;
-      const back = panelOpener;
+      ed.reanchorPageOverlays?.();
+      const back = shown(panelOpener);
       panelOpener = null;
-      (back && back.isConnected ? back : null)?.focus?.({ preventScroll: true }) ?? ed.focusEditorSurface?.();
+      if (back) back.focus({ preventScroll: true });
+      else ed.focusEditorSurface?.();
       return;
     }
-    panelOpener = doc.activeElement instanceof view.HTMLElement ? doc.activeElement : null;
+    if (activePanel !== record) panelOpener = doc.activeElement instanceof view.HTMLElement ? doc.activeElement : null;
     for (const other of plugins.values()) if (other.running?.frame) other.running.frame.hidden = other !== record;
     activePanel = record;
-    panelTitle.textContent = localised(record.manifest, "panel.title", activeLocale(), record.manifest.contributes.panel.title);
-    panel.style.setProperty("--plugin-panel-width", `${record.manifest.contributes.panel.width}px`);
+    panelTitle.textContent = catalogued(record.manifest, "panel", localised(record.manifest, "panel.title", activeLocale(), record.manifest.contributes.panel.title));
     panelClose.setAttribute("aria-label", t("plugins.panel.close", { name: nameOf(record.manifest) }));
     panelClose.title = panelClose.getAttribute("aria-label");
+    // One side panel at a time, as the outline and the review sidebar already
+    // agree between themselves (`editor_outline.mjs`).
+    if (ed.reviewSidebar && !ed.reviewSidebar.hidden) ed.toggleReview?.(false);
+    ed.closeFlankingPanel?.(ed.outlinePanel, ed.railOutline);
+    ed.closeFlankingPanel?.(ed.pagesPanel, ed.railPages);
     panel.hidden = false;
+    ed.reanchorPageOverlays?.();
+    record.running.frame.focus?.();
   }
   panelClose?.addEventListener("click", () => activePanel && showPanel(activePanel, false));
   panel?.addEventListener("keydown", (event) => {
@@ -179,12 +297,27 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
   // ---- Running a plugin ------------------------------------------------------
 
   function granted(record) {
-    if (record.entry.source === "host") return [...(record.entry.hostGrant ?? [])];
+    if (record.entry.hostGrant) return [...record.entry.hostGrant];
     return grantFor(record.manifest.id, view)?.permissions ?? [];
   }
 
+  /** Puts the caret at the start of a paragraph the plugin read, and shows it. */
+  function reveal(node) {
+    if (!ed.doc) return false;
+    try {
+      ed.selection = { anchor: { node, offset: 0 }, focus: { node, offset: 0 } };
+      ed.drawSelection?.();
+      ed.scrollReviewSelectionIntoView?.();
+      ed.focusEditorSurface?.();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   function run(record) {
-    if (record.running || !panelBody) return;
+    if (record.running || !panelBody || !record.enabled || !present(record)) return;
+    const namespace = stringNamespace(record.manifest.id);
     record.running = startPlugin({
       manifest: record.manifest,
       granted: () => granted(record),
@@ -210,28 +343,58 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
         },
         notify: (message, kind) => ed.setStatus(t("plugins.notify", { name: nameOf(record.manifest), message }), kind === "error" ? "error" : undefined),
         panel: (open) => showPanel(record, open),
+        reveal,
+        strings: (keys) => {
+          if (record.entry.source !== "first-party") return {};
+          const out = {};
+          for (const key of keys.slice(0, 400)) if (key.startsWith(namespace)) out[key] = t(key);
+          return out;
+        },
+        documentKey: () => opaqueKey(`${ed.draftDocKey ?? ""}|${ed.currentName ?? ""}`),
         locale: () => activeLocale(),
         direction: () => direction(activeLocale()),
-        theme: () => doc.documentElement.dataset.theme ?? (view.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light"),
+        theme,
+        tokens,
         storage: storageFor(record.manifest.id),
         fetchEntry: (url) => fetchText(url, MANIFEST_BOUNDS.entryBytes),
         onClosed: (reason) => {
           if (activePanel === record) showPanel(record, false);
           record.running = null;
+          reflectChrome();
           if (reason === "navigated") ed.setStatus(t("plugins.navigated", { name: nameOf(record.manifest) }), "error");
           else if (reason === "entry-unavailable") ed.setStatus(t("plugins.unavailable", { name: nameOf(record.manifest) }), "error");
         },
       },
     });
+    // The frame connects asynchronously; the chrome follows once it is running.
+    void waitRunning(record).then(reflectChrome);
+  }
+
+  async function waitRunning(record, tries = 100) {
+    for (let i = 0; i < tries && record.running && record.running.state !== "running"; i += 1) {
+      await new Promise((resolve) => view.setTimeout(resolve, 50));
+    }
   }
 
   function stop(record, reason = "disabled") {
+    if (activePanel === record) showPanel(record, false);
     record.running?.close(reason);
     record.running = null;
+    reflectChrome();
+  }
+
+  /** Starts what should run and stops what should not: called when the provider
+   *  may have changed (a saved key, a host provider set late). O(plugins). */
+  function refresh() {
+    for (const record of plugins.values()) {
+      if (record.enabled && present(record)) run(record);
+      else if (record.running && !present(record)) stop(record, "provider-gone");
+    }
+    reflectChrome();
   }
 
   async function invoke(record, command) {
-    if (!record.running) return;
+    if (!isRunning(record)) return;
     if (record.manifest.contributes.panel) showPanel(record, true);
     record.running.invoke(command.id, { hasRange: ed.hasRange?.() ?? false });
   }
@@ -290,7 +453,7 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
   }
 
   async function enable(record) {
-    if (record.entry.source !== "host") {
+    if (!record.entry.hostGrant) {
       const stored = grantFor(record.manifest.id, view);
       const asking = stored ? addedPermissions(stored.permissions, record.manifest.permissions) : [...record.manifest.permissions];
       if (asking.length || !stored) {
@@ -298,6 +461,9 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
         if (!allowed) return false;
       }
       storeGrant(record.manifest.id, { version: record.manifest.version, permissions: [...record.manifest.permissions], enabled: true }, view);
+    } else if (record.entry.source === "first-party") {
+      // The installation granted it; remember only the person's on/off choice.
+      storeGrant(record.manifest.id, { version: record.manifest.version, permissions: [...record.entry.hostGrant], enabled: true }, view);
     }
     record.enabled = true;
     run(record);
@@ -310,7 +476,7 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
     record.enabled = false;
     if (record.entry.source !== "host") {
       const stored = grantFor(record.manifest.id, view);
-      if (stored) storeGrant(record.manifest.id, { ...stored, enabled: false }, view);
+      storeGrant(record.manifest.id, { version: record.manifest.version, permissions: stored?.permissions ?? [], enabled: false }, view);
     }
     renderManager();
   }
@@ -322,7 +488,8 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
       removeInstalled(record.entry.manifestUrl, view);
       plugins.delete(record.manifest.id);
     } else {
-      record.enabled = false;
+      record.enabled = record.entry.source === "first-party" ? record.entry.enabled : false;
+      if (record.enabled) run(record);
     }
     renderManager();
   }
@@ -343,14 +510,13 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
     // A stored grant runs again on reload only while it still covers what this
     // version declares; a version that added a permission waits for the prompt.
     const covered = stored ? addedPermissions(stored.permissions, manifest.permissions).length === 0 : false;
-    const record = {
-      manifest,
-      entry,
-      running: null,
-      enabled: entry.source === "host" ? entry.enabled : stored?.enabled === true && covered,
-    };
+    let enabled;
+    if (entry.source === "host") enabled = entry.enabled;
+    else if (entry.source === "first-party" && entry.hostGrant) enabled = stored ? stored.enabled : entry.enabled;
+    else enabled = stored?.enabled === true && covered;
+    const record = { manifest, entry, running: null, enabled };
     plugins.set(manifest.id, record);
-    if (record.enabled) run(record);
+    run(record);
     return { ok: true, record };
   }
 
@@ -358,14 +524,27 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
     // The editor's own events, forwarded within each plugin's grant: a revision
     // handle and a flag, never document text (`docs/183` §5).
     let selectionTimer = null;
-    session()?.on("change", ({ detail }) => platform.notifyAll("document/changed", { revision: detail.revision }));
+    let lastKey = null;
+    session()?.on("change", ({ detail }) => {
+      platform.notifyAll("document/changed", { revision: detail.revision });
+      const key = opaqueKey(`${ed.draftDocKey ?? ""}|${ed.currentName ?? ""}`);
+      if (lastKey !== null && key !== lastKey) platform.notifyAll("document/opened", { documentKey: key });
+      lastKey = key;
+    });
     session()?.on("selection", ({ detail }) => {
       view.clearTimeout(selectionTimer);
       selectionTimer = view.setTimeout(() => platform.notifyAll("selection/changed", { hasRange: !!detail.hasRange }), 250);
     });
+    // Theme and locale changes reach running plugins with the tokens' new values.
+    const themeChanged = () => platform.notifyAll("theme/changed", { theme: theme(), tokens: tokens() }, { always: true });
+    if (typeof view.MutationObserver === "function") {
+      new view.MutationObserver(themeChanged).observe(doc.documentElement, { attributes: true, attributeFilter: ["data-theme", "style", "lang", "dir"] });
+    }
+    view.matchMedia?.("(prefers-color-scheme: dark)").addEventListener?.("change", themeChanged);
     catalogue = await loadCatalogues({ config, baseUrl: view.location.href, fetchJson, view });
     for (const entry of catalogue.entries) await admit(entry);
     renderManager();
+    reflectChrome();
   }
 
   // ---- Manage add-ins ----------------------------------------------------------
@@ -378,7 +557,7 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
   const installBtn = doc.getElementById("pluginsInstallBtn");
   const managedNote = doc.getElementById("pluginsManaged");
   const managerController = manager
-    ? registerModal(manager, { initialFocus: () => doc.getElementById("pluginsClose"), fallbackFocus: () => shown(doc.getElementById("reviewAddinsBtn")) ?? ed.pagesEl })
+    ? registerModal(manager, { initialFocus: () => doc.getElementById("pluginsClose"), fallbackFocus: () => shown(doc.getElementById("settingsAddinsBtn")) ?? shown(doc.getElementById("reviewAddinsBtn")) ?? ed.pagesEl })
     : null;
 
   function button(labelKey, params, onClick, primary = false) {
@@ -424,7 +603,13 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
       } else {
         actions.append(button("plugins.turnOn", {}, () => void enable(record), true));
       }
-      if (record.entry.source !== "host" && (record.entry.source === "installed" || grantFor(manifest.id, view))) {
+      if (record.enabled && !present(record)) {
+        const state = doc.createElement("span");
+        state.className = "plugins-meta";
+        state.textContent = t("plugins.state.needsProvider");
+        actions.append(state);
+      }
+      if (record.entry.source === "installed" || (record.entry.source !== "host" && !record.entry.hostGrant && grantFor(manifest.id, view))) {
         actions.append(button(record.entry.source === "installed" ? "plugins.remove" : "plugins.forgetGrant", {}, () => remove(record)));
       }
       item.append(name, meta, description, perms, actions);
@@ -449,7 +634,7 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
       return;
     }
     managerStatus.textContent = t("plugins.install.checking");
-    const admitted = await admit({ manifestUrl: url, source: "installed", hostGrant: null, enabled: false });
+    const admitted = await admit({ manifestUrl: url, source: "installed", hostGrant: null, enabled: false, when: null });
     if (!admitted.ok) {
       managerStatus.textContent = t("plugins.install.refused", { reason: admitted.reason });
       return;
@@ -468,9 +653,42 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
     renderManager();
   }
   doc.getElementById("pluginsClose")?.addEventListener("click", () => managerController?.close());
+  doc.getElementById("settingsAddinsBtn")?.addEventListener("click", openManager);
   doc.getElementById("pluginsDone")?.addEventListener("click", () => managerController?.close());
 
-  // ---- The Add-ins menu ----------------------------------------------------
+  // ---- Menus: Add-ins (ribbon) and ✦ (selection toolbar) --------------------
+
+  /** One menu row for a contributed command. */
+  function menuRow(record, item, close) {
+    const command = record.manifest.contributes.commands.find((c) => c.id === item.command);
+    const row = doc.createElement("button");
+    row.type = "button";
+    row.className = "menu-item";
+    row.setAttribute("role", "menuitem");
+    row.dataset.pluginCommand = pluginCommandId(record.manifest.id, command.id);
+    const icon = doc.createElement("span");
+    icon.className = item.icon ? "ms" : "menu-check";
+    icon.setAttribute("aria-hidden", "true");
+    if (item.icon) icon.textContent = item.icon;
+    const label = doc.createElement("span");
+    label.textContent = titleOf(record.manifest)(command);
+    row.append(icon, label);
+    onButton(row, () => {
+      close();
+      void invoke(record, command);
+    });
+    return row;
+  }
+
+  /** Every running plugin's rows of one contribution kind. */
+  function contributed(kind) {
+    const out = [];
+    for (const record of plugins.values()) {
+      if (!isRunning(record) || !present(record)) continue;
+      for (const item of record.manifest.contributes[kind] ?? []) out.push([record, item]);
+    }
+    return out;
+  }
 
   const menuButton = doc.getElementById("reviewAddinsBtn");
   const menu = doc.getElementById("addinsMenu");
@@ -480,44 +698,7 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
     popover = registerPopover(
       menuButton,
       menu,
-      () => {
-        const rows = [];
-        for (const record of plugins.values()) {
-          if (!record.enabled) continue;
-          for (const item of record.manifest.contributes.ribbon) {
-            const command = record.manifest.contributes.commands.find((c) => c.id === item.command);
-            const row = doc.createElement("button");
-            row.type = "button";
-            row.className = "menu-item";
-            row.setAttribute("role", "menuitem");
-            row.dataset.pluginCommand = pluginCommandId(record.manifest.id, command.id);
-            if (item.icon) {
-              const icon = doc.createElement("span");
-              icon.className = "ms";
-              icon.setAttribute("aria-hidden", "true");
-              icon.textContent = item.icon;
-              row.append(icon);
-            }
-            const label = doc.createElement("span");
-            label.textContent = t("plugins.commandLabel", { plugin: nameOf(record.manifest), command: titleOf(record.manifest)(command) });
-            row.append(label);
-            row.disabled = !record.running;
-            if (row.disabled) row.title = t("plugins.notRunning", { name: nameOf(record.manifest) });
-            onButton(row, () => {
-              closePopover(popover);
-              void invoke(record, command);
-            });
-            rows.push(row);
-          }
-        }
-        if (!rows.length) {
-          const empty = doc.createElement("p");
-          empty.className = "menu-empty";
-          empty.textContent = t("plugins.menuEmpty");
-          rows.push(empty);
-        }
-        menuItems.replaceChildren(...rows);
-      },
+      () => menuItems.replaceChildren(...contributed("ribbon").map(([record, item]) => menuRow(record, item, () => closePopover(popover)))),
       { needsDocument: false },
     );
     const manage = doc.getElementById("addinsManage");
@@ -529,13 +710,54 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
     }
   }
 
+  const selButton = doc.getElementById("selAiBtn");
+  const selDivider = doc.getElementById("selAiDivider");
+  const selMenu = doc.getElementById("selAiMenu");
+  let selPopover = null;
+  if (selButton && selMenu) {
+    selPopover = registerPopover(selButton, selMenu, () => {
+      selMenu.replaceChildren(...contributed("selection").map(([record, item]) => menuRow(record, item, () => closePopover(selPopover))));
+    });
+  }
+
+  /** The ✦ actions on a selection, or the first AI plugin's panel with none. */
+  function actions() {
+    if (ed.hasRange?.() && selPopover && contributed("selection").length) {
+      ed.positionSelToolbar?.();
+      openPopover(selPopover, { keyboard: true, anchor: shown(selButton) ?? selButton });
+      return;
+    }
+    const first = contributed("selection")[0]?.[0] ?? null;
+    if (first?.manifest.contributes.panel) {
+      showPanel(first, true);
+      first.running.invoke("panel", { hasRange: false });
+    }
+  }
+
+  /** Shows only what running plugins contribute (owner rule 1). O(plugins). */
+  function reflectChrome() {
+    const ribbonRows = contributed("ribbon").length > 0;
+    if (menuButton) menuButton.hidden = !ribbonRows;
+    const selectionRows = contributed("selection").length > 0;
+    if (selButton) selButton.hidden = !selectionRows;
+    if (selDivider) selDivider.hidden = !selectionRows;
+  }
+
   // ---- The registry --------------------------------------------------------
 
-  addCommandSource((context) =>
-    pluginCommands({
-      plugins: [...plugins.values()].map((record) => ({
+  addCommandSource((context) => {
+    // A provider can arrive at any time (a key saved, a host provider set late);
+    // the registry is rebuilt often enough to notice, at O(plugins).
+    let changed = false;
+    for (const record of plugins.values()) {
+      if ((record.enabled && present(record) && !record.running) || (record.running && !present(record))) changed = true;
+    }
+    if (changed) refresh();
+    const visible = [...plugins.values()].filter(present);
+    return pluginCommands({
+      plugins: visible.map((record) => ({
         manifest: record.manifest,
-        running: !!record.running && record.running.state === "running",
+        running: isRunning(record),
         enabled: record.enabled,
         name: nameOf(record.manifest),
         title: titleOf(record.manifest),
@@ -543,8 +765,9 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
       context,
       openManager,
       invoke: (plugin, command) => void invoke(plugins.get(plugin.manifest.id), command),
-    }),
-  );
+      actions: contributed("selection").length ? actions : null,
+    });
+  });
 
   // Everything stops when the page goes: a plugin must not outlive its editor.
   view.addEventListener?.("pagehide", () => {
@@ -552,10 +775,12 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
   }, { once: true });
 
   const platform = {
-    plugins: () => [...plugins.values()].map((record) => ({ id: record.manifest.id, enabled: record.enabled, state: record.running?.state ?? "stopped", source: record.entry.source, grant: record.running?.grant() ?? null })),
+    plugins: () => [...plugins.values()].map((record) => ({ id: record.manifest.id, enabled: record.enabled, present: present(record), state: record.running?.state ?? "stopped", source: record.entry.source, grant: record.running?.grant() ?? null })),
     openManager,
+    refresh,
+    actions,
     install: async (manifestUrl) => {
-      const admitted = await admit({ manifestUrl, source: "installed", hostGrant: null, enabled: false });
+      const admitted = await admit({ manifestUrl, source: "installed", hostGrant: null, enabled: false, when: null });
       if (!admitted.ok) return admitted;
       addInstalled(manifestUrl, view);
       return { ok: await enable(admitted.record) };

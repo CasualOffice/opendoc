@@ -1,0 +1,97 @@
+/* SPDX-License-Identifier: Apache-2.0
+   The OpenDoc plugin stylesheet (`docs/183` §8): the editor's own components,
+   drawn from the editor's own tokens, for a plugin page in its sandbox.
+
+   No colour, radius or size is written here. Every value is a `var(--…)` the
+   editor sends at `initialize` and again on `theme/changed` (`opendoc-plugin.js`
+   puts them on `:root`), so a plugin page matches the product in both themes and
+   under a white-label `brand.css`, and cannot drift from it. A page stays hidden
+   until the first tokens arrive (`OpenDocPlugin` sets `data-ready`). Inter and
+   Material Symbols are the editor's own self-hosted faces (never a CDN). */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("../../assets/fonts/inter-latin-400-700.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Material Symbols Outlined";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("../../assets/fonts/material-symbols-outlined.woff2") format("woff2");
+}
+
+:root { color-scheme: light dark; }
+html, body { height: 100%; margin: 0; }
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  color: var(--ink);
+  font: var(--fs-body, 0.875rem)/1.5 var(--brand-font, "Inter"), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+:focus-visible { outline: 2px solid var(--accent-text, var(--accent)); outline-offset: 1px; }
+.ms {
+  font-family: "Material Symbols Outlined";
+  font-weight: normal;
+  font-style: normal;
+  font-size: 1.125rem;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+  direction: ltr;
+  -webkit-font-feature-settings: "liga";
+  font-feature-settings: "liga";
+  flex-shrink: 0;
+}
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+[hidden] { display: none !important; }
+html:not([data-ready]) body { visibility: hidden; }
+
+/* The dialog button, as `.dialog-button` / `.dialog-button-primary` are. */
+.btn {
+  min-height: var(--h-search, 2rem);
+  padding: 0 var(--space-3, 0.75rem);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1, 0.25rem);
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled) { border-color: var(--muted); background: var(--bg-2); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn-primary { border-color: var(--primary-bg); background: var(--primary-bg); color: var(--primary-ink); }
+.btn-primary:hover:not(:disabled) { border-color: var(--primary-bg-hover); background: var(--primary-bg-hover); }
+/* A quiet text button, as the panels' secondary links are. */
+.btn-quiet { border-color: transparent; background: transparent; color: var(--muted); font-weight: 500; }
+.btn-quiet:hover:not(:disabled) { border-color: transparent; background: var(--bg-2); color: var(--ink); }
+
+/* The text field, as `.dialog-field > textarea` is. */
+.field {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-2) 0.625rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
+select.field { min-height: var(--h-field, 2rem); padding: 0 0.5rem; resize: none; }
+
+.note { margin: 0; color: var(--muted); font-size: var(--fs-small); line-height: 1.45; }
+.error { color: var(--danger); }

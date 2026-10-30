@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Casual AI</title>
+<link rel="stylesheet" href="../sdk/plugin.css">
+<link rel="stylesheet" href="assistant.css">
+</head>
+<body>
+<!-- Casual AI's panel (`docs/183` §13). Every word below is set from the editor's
+     catalogue once the plugin connects (`ui/strings`), so nothing is shown in a
+     language the reader did not choose; the page stays hidden until then. -->
+<main class="ca">
+  <p id="disclosure" class="note ca-disclosure"></p>
+  <div id="log" class="ca-log" role="log" aria-live="polite" tabindex="0">
+    <p id="empty" class="note ca-empty"></p>
+  </div>
+  <div id="translateRow" class="ca-row" hidden>
+    <label for="translateTo" id="translateLabel" class="note"></label>
+    <select id="translateTo" class="field"></select>
+    <button id="translateGo" type="button" class="btn btn-primary"></button>
+  </div>
+  <div id="working" class="ca-working" hidden>
+    <span id="workingText" class="note" role="status"></span>
+    <button id="stop" type="button" class="btn"><span class="ms" aria-hidden="true">stop_circle</span><span id="stopLabel"></span></button>
+  </div>
+  <div id="chips" class="ca-chips" role="group">
+    <button type="button" class="btn" data-chip="summary"></button>
+    <button type="button" class="btn" data-chip="keyPoints"></button>
+    <button type="button" class="btn" data-chip="actions"></button>
+    <button type="button" class="btn" data-chip="review"></button>
+    <button type="button" class="btn" data-chip="replies"></button>
+  </div>
+  <!-- A group, not a <form>: the sandbox grants no `allow-forms`, so a form
+       could never submit; Enter and Send are handled in script. -->
+  <div id="composer" class="ca-composer" role="group">
+    <label for="prompt" id="promptLabel" class="sr-only"></label>
+    <textarea id="prompt" class="field" rows="2"></textarea>
+    <div class="ca-row">
+      <label for="mode" id="modeLabel" class="sr-only"></label>
+      <select id="mode" class="field ca-mode">
+        <option value="ask" id="modeAsk"></option>
+        <option value="draft" id="modeDraft"></option>
+      </select>
+      <button id="send" type="button" class="btn btn-primary"></button>
+    </div>
+  </div>
+  <div class="ca-foot">
+    <span id="historyNote" class="note"></span>
+    <button id="clear" type="button" class="btn btn-quiet"></button>
+  </div>
+</main>
+<script src="../sdk/opendoc-plugin.js"></script>
+<script src="assistant_core.js"></script>
+<script src="assistant.js"></script>
+</body>
+</html>

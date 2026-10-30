@@ -72,10 +72,37 @@
       listeners.get(method).add(fn);
       return function () { listeners.get(method).delete(fn); };
     }
+    /** Puts the editor's tokens on `:root` and its theme, language and direction
+     *  on `<html>`, so `plugin.css` draws with the product's own values. */
+    function applyTheme(info) {
+      var rootEl = document.documentElement;
+      var tokens = (info && info.tokens) || {};
+      Object.keys(tokens).forEach(function (name) {
+        if (/^--[a-z0-9-]+$/.test(name)) rootEl.style.setProperty(name, String(tokens[name]));
+      });
+      if (info && info.theme) {
+        rootEl.dataset.theme = info.theme;
+        rootEl.style.colorScheme = info.theme === "dark" ? "dark" : "light";
+      }
+      if (info && info.locale) rootEl.lang = info.locale;
+      if (info && info.direction) rootEl.dir = info.direction;
+      rootEl.dataset.ready = "1";
+    }
+    on("theme/changed", applyTheme);
     return {
       request: request,
       on: on,
-      initialize: function () { return request("initialize"); },
+      applyTheme: applyTheme,
+      initialize: function () {
+        return request("initialize").then(function (info) {
+          applyTheme(info);
+          return info;
+        });
+      },
+      /** Paragraph `node` scrolled to and selected in the editor (a citation). */
+      reveal: function (node) { return request("ui/reveal", { node: node }); },
+      /** First-party plugins: strings from the editor's catalogue. */
+      strings: function (keys) { return request("ui/strings", { keys: keys }).then(function (r) { return r.strings; }); },
       selection: function () { return request("selection/get"); },
       tools: {
         list: function () { return request("tools/list").then(function (r) { return r.tools; }); },

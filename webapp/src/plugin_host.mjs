@@ -107,6 +107,13 @@ export function startPlugin({ manifest, granted, env, container }) {
         locale: env.locale(),
         direction: env.direction(),
         theme: env.theme(),
+        // The editor's own design tokens (`--accent`, `--ink`, `--radius`, …) as
+        // values, so a plugin's page draws with the product's colours and spacing in
+        // both themes rather than inventing its own (owner rule, 2026-10-31).
+        tokens: env.tokens?.() ?? {},
+        // A stable, opaque key for the open document on this device, so a plugin may
+        // keep per-document state (the assistant's history) without learning its name.
+        documentKey: held.permissions.includes("read") ? (env.documentKey?.() ?? null) : null,
         // The disclosure the person sees, never the key or the URL's path.
         provider: held.permissions.includes("ai") ? { available: provider.available, kind: provider.kind, endpoint: provider.endpoint } : { available: false },
       };
@@ -170,6 +177,20 @@ export function startPlugin({ manifest, granted, env, container }) {
     "ai/cancel"(params, { cancel }) {
       need("ai");
       return { cancelled: cancel(params?.requestId) };
+    },
+    /** Scrolls to and selects a paragraph the plugin read (a citation chip). */
+    "ui/reveal"(params) {
+      need("read");
+      const node = String(params?.node ?? "");
+      if (!node) throw new RpcRefusal("bad-request", "ui/reveal needs a paragraph id.");
+      return { revealed: env.reveal?.(node) === true };
+    },
+    /** Strings from the editor's own catalogue, for a FIRST-PARTY plugin only: its
+     *  words are translated with the product's (19 locales). Keys outside the
+     *  plugin's namespace are refused. */
+    "ui/strings"(params) {
+      const keys = Array.isArray(params?.keys) ? params.keys.map(String) : [];
+      return { strings: env.strings?.(keys) ?? {} };
     },
     "ui/notify"(params) {
       const message = truncate(params?.message, PLUGIN_LIMITS.notifyChars);

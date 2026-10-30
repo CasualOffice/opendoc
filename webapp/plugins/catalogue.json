@@ -1,4 +1,11 @@
 {
   "catalogueVersion": 1,
-  "plugins": []
+  "plugins": [
+    {
+      "manifest": "assistant/manifest.json",
+      "grant": ["read", "comment", "suggest", "ai"],
+      "enabled": true,
+      "when": "ai"
+    }
+  ]
 }
