@@ -90,11 +90,15 @@ pub enum HostEvent {
     /// Carries the preview id, the decision, the revision after it and, for a refused
     /// Accept, the refusal code.
     AiDecision,
+    /// An AI feature needs the host's model (`docs/183` §3.8): `kind` is `request`,
+    /// carrying an OpenAI Chat Completions body and its purpose, or `cancel`. Answered
+    /// with [`HostRequest::AiProviderAnswer`]. Never carries a key.
+    AiProvider,
 }
 
 impl HostEvent {
     /// Every host event, in the order the contract declares them.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Ready,
         Self::Change,
         Self::Selection,
@@ -105,6 +109,7 @@ impl HostEvent {
         Self::DirectoryQuery,
         Self::Mention,
         Self::AiDecision,
+        Self::AiProvider,
     ];
 
     /// The event's name on the wire, which is also its name in the editor.
@@ -121,6 +126,7 @@ impl HostEvent {
             Self::DirectoryQuery => "directory-query",
             Self::Mention => "mention",
             Self::AiDecision => "ai-decision",
+            Self::AiProvider => "ai-provider",
         }
     }
 }
@@ -254,11 +260,14 @@ pub enum HostRequest {
     /// The in-page assistant's door (`docs/178` §9, `docs/181` §4.4): one verb whose
     /// `method` reads, previews privately, applies, accepts or discards an edit plan.
     Ai,
+    /// The host's answer to a [`HostEvent::AiProvider`] request, by its `qid`: a stream
+    /// chunk, the Chat Completions response, or an error (`docs/183` §3.8).
+    AiProviderAnswer,
 }
 
 impl HostRequest {
     /// Every request verb, in the order the contract declares them.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Describe,
         Self::Execute,
         Self::Query,
@@ -267,6 +276,7 @@ impl HostRequest {
         Self::DirectoryAnswer,
         Self::MentionAnswer,
         Self::Ai,
+        Self::AiProviderAnswer,
     ];
 
     /// The verb's spelling on the wire.
@@ -281,6 +291,7 @@ impl HostRequest {
             Self::DirectoryAnswer => "directory.answer",
             Self::MentionAnswer => "mention.answer",
             Self::Ai => "ai",
+            Self::AiProviderAnswer => "ai-provider.answer",
         }
     }
 }

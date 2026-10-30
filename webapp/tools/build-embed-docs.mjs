@@ -170,6 +170,8 @@ const EVENT_WHEN = Object.freeze({
     "When a comment that mentions people has been ordered (acknowledged in a room, saved standalone). Answer with `mention.answer`.",
   "ai-decision":
     "When the person accepts or discards an assistant's private preview (`ai.preview`), or an Accept is refused because the document moved on.",
+  "ai-provider":
+    "When an AI feature needs the host's model and the frame was opened with `aiProvider=host`: `kind` is `request` (an OpenAI Chat Completions body) or `cancel`. Answer with `ai-provider.answer`.",
 });
 
 /** What each refusal code means, and which layer decided it.

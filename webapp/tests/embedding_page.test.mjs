@@ -409,8 +409,10 @@ test("everything under 'does not do yet' is still not done", () => {
   // two directory answers carry people the HOST found (§7), never a document.
   // `ai` (`docs/181` §4.4) reads anchored TEXT projections and proposes edit plans
   // the person accepts; it never hands over or takes in the file's bytes.
+  // `ai-provider.answer` (`docs/183` §3.8) carries the HOST model's Chat Completions
+  // answer to a request the editor made; it never carries the document's bytes.
   assert.deepEqual([...PROTOCOL.requests],
-    ["describe", "execute", "query", "ping", "identify", "directory.answer", "mention.answer", "ai"]);
+    ["describe", "execute", "query", "ping", "identify", "directory.answer", "mention.answer", "ai", "ai-provider.answer"]);
   const write = HOST_EVENTS.find((event) => event.name === "export");
   assert.deepEqual(
     [...write.detail],

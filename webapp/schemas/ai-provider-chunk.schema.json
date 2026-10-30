@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://casualoffice.github.io/opendoc/schemas/ai-provider-chunk.schema.json",
+  "title": "OpenDoc AI provider contract v1: stream chunk",
+  "description": "One chat.completion.chunk (https://platform.openai.com/docs/api-reference/chat-streaming). Over HTTP these arrive as SSE data lines ending with [DONE]; over the host channel and the plugin RPC they are these objects. docs/183 section 3.3.",
+  "type": "object",
+  "required": ["choices"],
+  "properties": {
+    "id": { "type": "string" },
+    "object": { "const": "chat.completion.chunk" },
+    "model": { "type": "string" },
+    "choices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["delta"],
+        "properties": {
+          "index": { "type": "integer" },
+          "delta": {
+            "type": "object",
+            "properties": {
+              "role": { "type": "string" },
+              "content": { "type": "string" },
+              "tool_calls": { "type": "array" }
+            }
+          },
+          "finish_reason": { "enum": ["stop", "length", "content_filter", "tool_calls", null] }
+        }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "prompt_tokens": { "type": "integer" },
+        "completion_tokens": { "type": "integer" },
+        "total_tokens": { "type": "integer" }
+      }
+    }
+  }
+}

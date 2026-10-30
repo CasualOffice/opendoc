@@ -129,7 +129,7 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 <!-- @generated parity-provenance -->
 | Side | Source | Inventory |
 | --- | --- | --- |
-| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 267 exact commands, 14 families |
+| OpenDoc | `webapp/src/host_contract.mjs`, read on every run | 268 exact commands, 15 families |
 | ONLYOFFICE | snapshot of 163 files, taken 2026-09-30 | 578 controls, 3529 locale keys, 2122 engine API methods, 114 boot flags (14 licence-gated, 3 desktop-only) |
 | Matrix | `tools/opendoc-parity/data/capabilities.json` | 424 graded rows |
 <!-- @end parity-provenance -->
@@ -141,11 +141,11 @@ one of theirs that a server has to authorise is graded **Ours, ungated**, not
 | --- | --- | --- |
 | Parity | 265 | both products ship it, and both anchors resolve |
 | Ours, ungated | 30 | we ship it in the editor itself; theirs is behind a licence result the document server issues, the desktop shell, or the integrator's own config |
-| Ours only | 26 | we ship it and their tree has no such surface |
+| Ours only | 27 | we ship it and their tree has no such surface |
 | Partial | 66 | we ship part of it; the row says what is missing |
 | Gap | 14 | their standalone browser session ships it and we do not |
 | Theirs, gated | 12 | theirs needs a licence result, the desktop shell or the integrator, and we lack it too |
-| Neither | 11 | neither product ships it, and the row records the search that established that |
+| Neither | 10 | neither product ships it, and the row records the search that established that |
 | **Total graded** | **424** | every row below |
 <!-- @end parity-tally -->
 
@@ -614,7 +614,7 @@ that stops resolving fails the build rather than quietly downgrading a row.
 | Open a local file with no server | Ours only | `webapp/src/editor_file_open.mjs` · `casual_doc_wasm` | none (searched `grep -rl WebAssembly across sdkjs/ returns only the PDF viewer, libfont and hash engines — nothing under sdkjs/word; asc_isOffline is defined only in sdkjs/*/Local/api.js (the desktop builds); format I/O goes through asc_DownloadAs/openDocument to the document server`) | This is the structural difference. Our importer and exporter are the WASM engine in the page, so a file opens with the network off. Theirs converts through x2t on a document server; the web client has no converter. |
 | Page N of M in the status bar | Parity | `webapp/src/status_counts.mjs` · `pageIndicator` | `DE.Views.Statusbar.pageIndexText` | Ours can show an estimated total while a long document is still being measured. |
 | Page thumbnails pane | Parity | `view.pages` | `btnThumbnails` | Both render real page rasters lazily. Ours windows 40 cards around the page being read so a 13,000-page document costs the same as a short one. |
-| Third-party plugins | Neither | none (`tools.plugins` undeclared) | none (searched `Main.js:464 hard-sets this.appOptions.canPlugins = false in the document editor, so no plugin surface is reachable in the tree that was read; the plugin views live under apps/common and are only wired up by other editors`) | Neither product offers plugins in its document editor as read. docs/149 grades editorConfig.plugins on the host side and says why a plugin API waits for the command surface to stabilise. |
+| Third-party plugins | Ours only | family `plugin.` | none (searched `Main.js:464 hard-sets this.appOptions.canPlugins = false in the document editor, so no plugin surface is reachable in the tree that was read; the plugin views live under apps/common and are only wired up by other editors`) | Ours: sandboxed iframe plugins over the same tools MCP and WebMCP use (docs/183, ADR-077): a manifest with six permissions, a grant prompt, Review > Add-ins and Manage add-ins, a side panel, palette and context-menu rows, and a host catalogue (?plugins=). Every edit a plugin proposes waits in the private preview. Theirs is not reachable in the document editor as read. |
 | Print | Parity | `file.print` | `btnPrint` | — |
 | Print preview with printer, range, copies and sides | Partial | `webapp/src/print.mjs` · `printViaPdf` — missing: an in-app preview panel with printer, page range, copies, duplex and colour settings | `DE.Views.PrintWithPreview.txtPrint` behind `canPreviewPrint` | Main.js:1735 sets canPreviewPrint = canPrint && !isMac && isDesktopApp, so their preview panel never appears in a browser either. Ours hands a real-text PDF to the browser, whose own print dialog carries the range and copies. Quick print to the default printer (canQuickPrint) is gated identically at Main.js:1736, so it too is absent from every browser session of theirs. |
 | Print the selection only | Parity | `file.printSelection` | `DE.Views.DocumentHolder.txtPrintSelection` | File ▸ Print selection, the text context menu over a selection (where ONLYOFFICE puts txtPrintSelection) and the palette print a throwaway copy of the document holding only the selection (`selectionDocument`) through the same print path as Print, with the document's page setup, headers and footers. |

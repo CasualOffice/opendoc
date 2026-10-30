@@ -139,7 +139,7 @@ the note gives the reason.
 | `editorConfig.recent` | — | Declined | A list of the host's other documents inside our File page is the host's navigation drawn in our chrome. `can=-open` is how a host keeps the container on one document. |
 | `editorConfig.templates` | — | Gap — work named | There is no template gallery yet; `can=-new` withholds the blank document instead. |
 | `editorConfig.actionLink` | — | Gap — work named | Open-and-scroll-to-a-bookmark exists as a command (`reference.goToHeading`, bookmarks) but not as a boot parameter. A real gap, and chrome work rather than engine work. |
-| `editorConfig.plugins` | — | Gap — work named | Deliberately after the command surface (docs/126): a plugin API built before the command contract stabilises is a second addressing scheme. `host_contract.mjs` is that surface, and a plugin registry layers on it. |
+| `editorConfig.plugins` | — | Gap — work named | Their `pluginsData` list of ONLYOFFICE plugin configs (in-page code on their `asc_*` API) is not read. Ours is `?plugins=<catalogue URL>` (the element's `plugins` attribute): OpenDoc manifests, each with the permissions the host grants it, run as sandboxed iframes over the capability registry (docs/183, ADR-077). A host lists its plugins once in that form. |
 | `editorConfig.wopi` | — | Declined | WOPI is a server integration protocol; there is no mandatory server. |
 | `customization.logo.image` | `brand.json mark` | Have it | A build-time artifact, not a runtime URL: the chrome must paint with the network off. |
 | `customization.logo.imageDark` | `brand.json markDark` | Have it | — |
@@ -177,7 +177,7 @@ the note gives the reason.
 | `customization.layout.toolbar.view` | `chrome=-band.view` | Have it | — |
 | `customization.layout.toolbar.draw` | — | Gap — work named | There is no Draw band: inking is not implemented. Shapes are on Insert. |
 | `customization.layout.toolbar.protect` | — | Gap — work named | No Protect band; see `permissions.protect`. |
-| `customization.layout.toolbar.plugins` | — | Gap — work named | No plugin surface yet; see `editorConfig.plugins`. |
+| `customization.layout.toolbar.plugins` | — | Gap — work named | Plugins appear in one Add-ins menu on the Review band, never as toolbar buttons of their own (docs/183 §8); `?plugins=none` removes them. See `editorConfig.plugins`. |
 | `customization.layout.header` | `chrome=-brand,-title,-state` | Have it, differently | Our top bar is three regions rather than one switch, which is finer: a host can keep the document name and drop the mark. There is no users list or avatar to hide. |
 | `customization.layout.leftMenu` | `chrome=-rail` | Have it | — |
 | `customization.layout.leftMenu.mode` | — | Gap — work named | The rail's open/closed state at boot is not a stored setting; `chrome=-rail` removes it entirely. |
@@ -212,7 +212,7 @@ the note gives the reason.
 | `customization.pointerMode` | — | Gap — work named | There is no hand/pan tool; `webapp/src/pointer_cursor.mjs` reflects state, it does not offer a mode. |
 | `customization.macros` | — | Declined | There is no macro engine and there is not going to be one on this schedule. A document format that can execute code in the reader's browser is the single largest attack surface an office suite has; `.docm` is already refused at open. So there is nothing to gate — which is a stronger answer than a policy flag. |
 | `customization.macrosMode` | — | Declined | See `customization.macros`: no engine, so no warn/enable/disable policy. |
-| `customization.plugins` | — | Gap — work named | See `editorConfig.plugins`. |
+| `customization.plugins` | — | Gap — work named | Their on/off switch for their plugin system. Ours is `?plugins=none`; see `editorConfig.plugins`. |
 | `customization.mentionShare` | — | Gap — work named | Mentions need a user directory, which arrives with collaboration. |
 | `customization.compatibleFeatures` | — | Declined | We do not have a lowest-common-denominator mode to switch into: unsupported document data is preserved or reported (SKILL §12), which is the same promise without a flag. |
 | `customization.integrationMode` | — | Declined | Their flag turns off a scroll-into-view the embed does; ours never scrolls the host's page. |
@@ -280,9 +280,10 @@ somebody can pick up. Every one of them is `Gap — work named` in the table abo
 * **Per-group review and comment rights** (`reviewGroups`, `commentGroups`,
   `userInfoGroups`, `reviewPermissions`) — all need multi-user identity, which
   arrives with collaboration (ADR-033, `docs/107`).
-* **Plugins** — deliberately after the command surface. A plugin API built before
-  the command contract stabilises is a second addressing scheme, and
-  `host_contract.mjs` is that surface.
+* **Plugins in ONLYOFFICE's format** — the plugin platform is built (`docs/183`,
+  ADR-077: sandboxed iframes over the capability registry, `?plugins=<catalogue>`),
+  but their `pluginsData` configs, which run in-page on their `asc_*` API, are not
+  read; a host lists OpenDoc manifests instead.
 * **`zoom`**, **`leftMenu.mode`**, **`review.reviewDisplay`**, **`mobile.*`** — each
   needs a stored value or a designed switch that does not exist yet.
 

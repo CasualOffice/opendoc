@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://casualoffice.github.io/opendoc/schemas/ai-provider-request.schema.json",
+  "title": "OpenDoc AI provider contract v1: request",
+  "description": "The subset of the OpenAI Chat Completions request body (https://platform.openai.com/docs/api-reference/chat/create) the editor sends. A host proxy may accept more; the editor never sends more. docs/183 section 3.2.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["model", "messages", "max_completion_tokens"],
+  "properties": {
+    "model": { "type": "string" },
+    "messages": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/message" }
+    },
+    "max_completion_tokens": { "type": "integer", "minimum": 1, "maximum": 32768 },
+    "temperature": { "type": "number", "minimum": 0, "maximum": 2 },
+    "stop": { "type": "array", "maxItems": 4, "items": { "type": "string" } },
+    "stream": { "type": "boolean" },
+    "stream_options": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "include_usage": { "type": "boolean" } }
+    },
+    "tools": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "required": ["type", "function"],
+        "properties": {
+          "type": { "const": "function" },
+          "function": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$" },
+              "description": { "type": "string" },
+              "parameters": { "type": "object" }
+            }
+          }
+        }
+      }
+    },
+    "tool_choice": {
+      "oneOf": [
+        { "enum": ["auto", "none", "required"] },
+        {
+          "type": "object",
+          "required": ["type", "function"],
+          "properties": {
+            "type": { "const": "function" },
+            "function": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } }
+          }
+        }
+      ]
+    },
+    "response_format": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["text", "json_object", "json_schema"] },
+        "json_schema": { "type": "object" }
+      }
+    }
+  },
+  "$defs": {
+    "textPart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "text"],
+      "properties": { "type": { "const": "text" }, "text": { "type": "string" } }
+    },
+    "toolCall": {
+      "type": "object",
+      "required": ["id", "type", "function"],
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "const": "function" },
+        "function": {
+          "type": "object",
+          "required": ["name", "arguments"],
+          "properties": { "name": { "type": "string" }, "arguments": { "type": "string" } }
+        }
+      }
+    },
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role"],
+      "properties": {
+        "role": { "enum": ["system", "user", "assistant", "tool"] },
+        "content": {
+          "oneOf": [
+            { "type": "string" },
+            { "type": "null" },
+            { "type": "array", "items": { "$ref": "#/$defs/textPart" } }
+          ]
+        },
+        "name": { "type": "string" },
+        "tool_call_id": { "type": "string" },
+        "tool_calls": { "type": "array", "items": { "$ref": "#/$defs/toolCall" } }
+      }
+    }
+  }
+}

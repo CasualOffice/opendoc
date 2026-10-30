@@ -97,6 +97,7 @@ export function attachHostBridge({ session, view }) {
     if (type === "directory.answer") return session["directory.answer"](message);
     if (type === "mention.answer") return session["mention.answer"](message);
     if (type === "ai") return session.ai.call(message.method, message.args ?? []);
+    if (type === "ai-provider.answer") return session["ai-provider.answer"](message);
     return session.ping();
   }
 
