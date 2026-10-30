@@ -40,6 +40,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use casual_doc_model::v1::Document;
 use casual_doc_pdf_read::{AnnotationEvidence, AnnotationKind, Bounds, LinkTarget, StructNode};
+// Own line: rules made vector art.
+use casual_doc_pdf_read::{PathCommand, Point};
 
 pub use record::{Fill, PdfSourceState, Rule, SourceBlock, SourceImage, SourcePage, SourceVector};
 
@@ -356,6 +358,9 @@ pub struct Element {
     pub lineage: Vec<StructNode>,
     /// Graphics floated on it (text elements only).
     pub floats: Vec<Float>,
+    /// Vector art only: the text drawn inside it (a chart's axis labels and
+    /// legend, a diagram's captions), drawn with it (`labels`).
+    pub labels: Vec<ILine>,
 }
 
 /// The ordinal of the nearest `role` element on a lineage.
@@ -467,7 +472,195 @@ fn tagged_table(cells: Vec<Element>) -> Element {
         region,
         lineage: Vec::new(),
         floats,
+        labels: Vec::new(),
     }
+}
+
+/// A label line: at most six words and forty characters (an axis value,
+/// a legend entry, a box's caption), never prose.
+fn label_line(line: &ILine) -> bool {
+    let text: String = line.chars.iter().map(|c| c.text.as_str()).collect();
+    text.split_whitespace().count() <= 6 && text.trim().chars().count() <= 40
+}
+
+/// The smallest drawing whose text is its own: a chart or a diagram, at
+/// least an inch wide, half an inch tall and of three paths.
+const LABELLED_ART: (f64, f64, usize) = (72.0, 36.0, 3);
+
+/// The largest share of the page a figure covers: anything larger is a
+/// background.
+const FIGURE_AREA: f64 = 0.5;
+
+/// How near two runs of vector art are to be one figure, in points.
+const FIGURE_GAP: f64 = 6.0;
+
+/// Runs of vector art that overlap or nearly touch, merged into one, paths
+/// in paint order: a chart's frame, gridlines, bars and legend keys are
+/// painted between its text, so each was a drawing of its own, the chart
+/// reflowed as several pieces. O(runs^2) on a page, which holds few.
+/// Each run carries whether it is only rules (`free_rules`); a merged
+/// figure is only rules when all its pieces are.
+fn merge_figures(
+    vectors: Vec<(SourceVector, bool)>,
+    area: f64,
+    work: &mut u64,
+) -> Vec<(SourceVector, bool)> {
+    // A page-sized fill (a page's or a frame's background) is behind
+    // everything; it is no figure's piece.
+    let background = |b: &Bounds| b.width() * b.height() > FIGURE_AREA * area;
+    let near = |a: &Bounds, b: &Bounds| {
+        !background(a)
+            && !background(b)
+            && a.x0 <= b.x1 + FIGURE_GAP
+            && b.x0 <= a.x1 + FIGURE_GAP
+            && a.y0 <= b.y1 + FIGURE_GAP
+            && b.y0 <= a.y1 + FIGURE_GAP
+    };
+    let mut out: Vec<(SourceVector, bool)> = Vec::new();
+    for vector in vectors {
+        out.push(vector);
+        // Fold every earlier figure the last one meets into it, until none.
+        loop {
+            let last = out.len() - 1;
+            *work += last as u64;
+            let Some(k) = (0..last).find(|&k| near(&out[k].0.bounds, &out[last].0.bounds)) else {
+                break;
+            };
+            let (other, rules) = out.remove(k);
+            let last = out.len() - 1;
+            out[last].1 &= rules;
+            let merged = &mut out[last].0;
+            merged.bounds = Bounds {
+                x0: merged.bounds.x0.min(other.bounds.x0),
+                y0: merged.bounds.y0.min(other.bounds.y0),
+                x1: merged.bounds.x1.max(other.bounds.x1),
+                y1: merged.bounds.y1.max(other.bounds.y1),
+            };
+            let mut paths = other.paths;
+            paths.append(&mut merged.paths);
+            merged.paths = paths;
+        }
+    }
+    out
+}
+
+/// The shortest rule kept on its own, as a share of the page's width: a
+/// separator line across the text. Shorter lone rules are a form's fields
+/// or a footnote separator, and stay out.
+const SEPARATOR_WIDTH: f64 = 0.5;
+
+/// The page's rules no table, decoration or furniture band took, as one-path
+/// vector art each (a filled bar in the rule's colour): a chart's axes and
+/// gridlines, a diagram's connectors, a separator. They were dropped, so a
+/// chart reflowed without its frame or gridlines. Rules within 8 pt of a
+/// table (a borderless table's rules over and under its header) and in the
+/// top or bottom furniture band (a header's or a footer's line) stay out.
+/// O(rules x tables).
+fn free_rules(
+    page: &SourcePage,
+    grids: &BTreeSet<usize>,
+    decorations: &BTreeSet<usize>,
+    tables: &[(f64, f64, f64, f64)],
+) -> Vec<SourceVector> {
+    let band = FURNITURE_BAND * page.height;
+    page.rules
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !grids.contains(i) && !decorations.contains(i))
+        .filter(|(_, r)| r.y0 > band && r.y1 < page.height - band)
+        .filter(|(_, r)| {
+            !tables.iter().any(|&(x0, y0, x1, y1)| {
+                r.x0 >= x0 - 8.0 && r.x1 <= x1 + 8.0 && r.y0 >= y0 - 8.0 && r.y1 <= y1 + 8.0
+            })
+        })
+        .map(|(_, r)| {
+            // At least a quarter point thick, so a hairline still draws.
+            let (y0, y1) = if r.y1 - r.y0 < 0.25 {
+                let c = (r.y0 + r.y1) / 2.0;
+                (c - 0.125, c + 0.125)
+            } else {
+                (r.y0, r.y1)
+            };
+            let (x0, x1) = if r.x1 - r.x0 < 0.25 {
+                let c = (r.x0 + r.x1) / 2.0;
+                (c - 0.125, c + 0.125)
+            } else {
+                (r.x0, r.x1)
+            };
+            let bounds = Bounds { x0, y0, x1, y1 };
+            SourceVector {
+                bounds,
+                paths: vec![casual_doc_pdf_read::PathEvidence {
+                    commands: vec![
+                        PathCommand::MoveTo(Point { x: x0, y: y0 }),
+                        PathCommand::LineTo(Point { x: x1, y: y0 }),
+                        PathCommand::LineTo(Point { x: x1, y: y1 }),
+                        PathCommand::LineTo(Point { x: x0, y: y1 }),
+                        PathCommand::Close,
+                    ],
+                    fill: Some(Some(r.color.unwrap_or([0, 0, 0, 255]))),
+                    even_odd: false,
+                    stroke: None,
+                    bounds,
+                    clipped: false,
+                }],
+            }
+        })
+        .collect()
+}
+
+/// The text drawn inside `figure`, when it is a figure: every text element
+/// inside its bounds (two of the text's ems of slack), not yet taken, whose lines are all
+/// labels; they are marked taken. A chart's axis values and legend,
+/// reflowed as paragraphs, came out as a column of one-word lines beside a
+/// chart with none. Prose over a drawing stays prose (the drawing floats
+/// behind it). O(elements).
+fn labels(
+    figure: &SourceVector,
+    area: f64,
+    body_size: f64,
+    elements: &[Element],
+    taken: &mut [bool],
+    work: &mut u64,
+) -> Vec<ILine> {
+    let b = figure.bounds;
+    if b.width() < LABELLED_ART.0
+        || b.height() < LABELLED_ART.1
+        || b.width() * b.height() > FIGURE_AREA * area
+        || figure.paths.len() < LABELLED_ART.2
+    {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for (i, e) in elements.iter().enumerate() {
+        *work += 1;
+        if taken[i] || !e.floats.is_empty() {
+            continue;
+        }
+        let EKind::Text(lines) = &e.kind else {
+            continue;
+        };
+        // An axis value sits just outside the frame it labels (right-aligned
+        // against it, so a long value reaches farther): inside the drawing
+        // along one axis and within two of its ems of it along the other
+        // counts. Labels are set no larger than the body, so a heading
+        // just above a chart stays a heading.
+        let em = lines.iter().map(|l| l.size).fold(0.5, f64::max);
+        let slack = 2.0 * em;
+        let r = e.rect;
+        let within_x = r.x0 >= b.x0 - slack && r.x1 <= b.x1 + slack;
+        let within_y = r.y0 >= b.y0 - slack && r.y1 <= b.y1 + slack;
+        let near_x = r.x1 >= b.x0 - slack && r.x0 <= b.x1 + slack;
+        let near_y = r.y1 >= b.y0 - slack && r.y0 <= b.y1 + slack;
+        if ((within_x && near_y) || (within_y && near_x))
+            && em <= body_size + 0.5
+            && lines.iter().all(label_line)
+        {
+            taken[i] = true;
+            out.extend(lines.iter().cloned());
+        }
+    }
+    out
 }
 
 /// A column region and the page it is on.
@@ -600,6 +793,9 @@ pub(crate) struct Flow {
     /// measure per page, and one document-wide edge made every portrait
     /// line look short (found by `tools/opendoc-reflow-score`).
     pub page_body: Vec<(f64, f64)>,
+    /// Per page, its size in points (a landscape page in a portrait
+    /// document starts a section of its own).
+    pub page_sizes: Vec<(f64, f64)>,
 }
 
 /// The font key of a character, through the families the fixed build chose.
@@ -1158,7 +1354,14 @@ pub fn build(
         }
         // Underlines, strikethroughs, highlights, paragraph shading and
         // borders the PDF drew as paths go back on the text.
-        let taken: BTreeSet<usize> = page
+        // The rules of the grids that became tables (a grid with no text in
+        // it, a chart's frame and gridlines, is no table: its rules are art).
+        let ruled: Vec<(f64, f64, f64, f64)> = page_tables
+            .iter()
+            .filter(|t| t.ruled)
+            .map(|t| t.bounds)
+            .collect();
+        let taken_rules: BTreeSet<usize> = page
             .rules
             .iter()
             .enumerate()
@@ -1167,6 +1370,9 @@ pub fn build(
                     .iter()
                     .flat_map(|g| g.2.iter())
                     .any(|g| g.x0 == r.x0 && g.x1 == r.x1 && g.y0 == r.y0 && g.y1 == r.y1)
+                    && ruled.iter().any(|&(x0, y0, x1, y1)| {
+                        r.x0 >= x0 - 1.0 && r.x1 <= x1 + 1.0 && r.y0 >= y0 - 1.0 && r.y1 <= y1 + 1.0
+                    })
             })
             .map(|(i, _)| i)
             .collect();
@@ -1175,7 +1381,7 @@ pub fn build(
         let decorated = decorate::decorate(
             &mut lines_only,
             &page.rules,
-            &taken,
+            &taken_rules,
             &page.fills,
             &table_bounds,
             page.width * page.height,
@@ -1293,6 +1499,7 @@ pub fn build(
                 region: None,
                 lineage: node.map(|n| n.lineage.clone()).unwrap_or_default(),
                 floats: Vec::new(),
+                labels: Vec::new(),
             });
         }
         for table in page_tables {
@@ -1314,27 +1521,87 @@ pub fn build(
                 region: None,
                 lineage: Vec::new(),
                 floats: Vec::new(),
+                labels: Vec::new(),
             });
         }
         // Pictures and vector art: floated on the text they sit beside or
         // under, else on their own line in reading order.
+        // A figure's pieces (a chart's frame, bars and legend keys, painted
+        // between its labels) are one drawing, and the text inside it is its
+        // labels, drawn with it on its own line.
+        let mut pieces: Vec<(SourceVector, bool)> = page
+            .vectors
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !shading_art.contains(i) && !decoration_art.contains(i))
+            .map(|(_, v)| (v.clone(), false))
+            .collect();
+        pieces.extend(
+            free_rules(page, &taken_rules, &decorated.rules, &table_bounds)
+                .into_iter()
+                .map(|v| (v, true)),
+        );
+        let figures = merge_figures(pieces, page.width * page.height, &mut work.graphics);
+        let mut labelled: Vec<(SourceVector, Vec<ILine>)> = Vec::new();
+        let mut taken = vec![false; elements.len()];
+        let mut unlabelled: Vec<SourceVector> = Vec::new();
+        for (figure, only_rules) in figures {
+            // Rules on their own: a long one is a separator line in the
+            // text (kept as a drawing); short ones (a form's fields, a
+            // footnote's separator) are left out, as before.
+            if only_rules {
+                if figure.paths.len() == 1 && figure.bounds.width() >= SEPARATOR_WIDTH * page.width
+                {
+                    unlabelled.push(figure);
+                }
+                continue;
+            }
+            let lines = labels(
+                &figure,
+                page.width * page.height,
+                body_size,
+                &elements,
+                &mut taken,
+                &mut work.graphics,
+            );
+            if lines.is_empty() {
+                unlabelled.push(figure);
+            } else {
+                labelled.push((figure, lines));
+            }
+        }
         let text_rects: Vec<(usize, Rect)> = elements
             .iter()
             .enumerate()
-            .filter(|(_, e)| matches!(e.kind, EKind::Text(_)))
+            .filter(|(i, e)| matches!(e.kind, EKind::Text(_)) && !taken[*i])
             .map(|(i, e)| (i, e.rect))
             .collect();
+        for (figure, lines) in labelled {
+            let b = figure.bounds;
+            vectors_placed += 1;
+            elements.push(Element {
+                page: page.index,
+                rect: Rect {
+                    x0: b.x0,
+                    y0: b.y0,
+                    x1: b.x1,
+                    y1: b.y1,
+                },
+                kind: EKind::Vector(figure),
+                leaf: None,
+                struct_element: None,
+                role: None,
+                region: None,
+                lineage: Vec::new(),
+                floats: Vec::new(),
+                labels: lines,
+            });
+        }
         let graphics = page
             .images
             .iter()
             .map(|image| Graphic::Image(image.clone()))
-            .chain(
-                page.vectors
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| !shading_art.contains(i) && !decoration_art.contains(i))
-                    .map(|(_, v)| Graphic::Vector(v.clone())),
-            );
+            .chain(unlabelled.into_iter().map(Graphic::Vector));
         for graphic in graphics {
             let b = graphic.bounds();
             let rect = Rect {
@@ -1368,11 +1635,26 @@ pub fn build(
                 region: None,
                 lineage: Vec::new(),
                 floats: Vec::new(),
+                labels: Vec::new(),
             });
         }
+        // The labels left their text elements for their drawings.
+        let mut index = 0;
+        elements.retain(|_| {
+            let keep = taken.get(index).is_none_or(|t| !t);
+            index += 1;
+            keep
+        });
         let mut page_bottom = f64::NEG_INFINITY;
         let (mut px0, mut px1) = (f64::INFINITY, f64::NEG_INFINITY);
         for e in &elements {
+            // Where the page's content stops: a picture or a figure at the
+            // bottom of the page is content (a chart closing a page had read
+            // as a page that ended early, so the next page started with a
+            // break and the reflow left a page nearly empty).
+            if !matches!(e.kind, EKind::Text(_) | EKind::Table(_)) {
+                page_bottom = page_bottom.max(e.rect.y1);
+            }
             if matches!(e.kind, EKind::Text(_) | EKind::Table(_)) {
                 page_bottom = page_bottom.max(e.rect.y1);
                 px0 = px0.min(e.rect.x0);
@@ -1387,6 +1669,7 @@ pub fn build(
             }
         }
         flow.page_body.push((px0, px1));
+        flow.page_sizes.push((page.width, page.height));
 
         flow.page_bottoms.push(page_bottom);
         // Reading order: XY-Cut++ always (it also finds the column regions);

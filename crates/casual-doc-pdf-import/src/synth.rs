@@ -174,10 +174,16 @@ pub fn document_in(
         } else {
             FONTS
         };
+        // A page naming its own `/MediaBox` (a landscape page) keeps it.
+        let media = if page.extra.contains("/MediaBox") {
+            ""
+        } else {
+            "/MediaBox [0 0 612 792]"
+        };
         pdf.set(
             ids[i],
             format!(
-                "<< /Type /Page /Parent {tree} 0 R /MediaBox [0 0 612 792] /Contents {content} 0 R /Resources << {fonts} {resources} >> {annots} {} {} >>",
+                "<< /Type /Page /Parent {tree} 0 R {media} /Contents {content} 0 R /Resources << {fonts} {resources} >> {annots} {} {} >>",
                 page.extra,
                 page_extra(i)
             ),

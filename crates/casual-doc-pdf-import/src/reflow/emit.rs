@@ -24,6 +24,10 @@ use casual_doc_model::v1::{
 use casual_doc_model::v1::{BorderEdge, NoteNumberRestart, NoteProperties, TableBorders};
 // Own line: cell shading from the PDF's filled rectangles.
 use casual_doc_model::v1::Shading;
+// Own line: a drawing's labels as text boxes in its group.
+use casual_doc_model::v1::{
+    GroupChild, GroupTextBox, PointEmu, ShapeGeometry, TextBoxBodyProperties, TextBoxInsets,
+};
 // Own line: paragraph borders from the PDF's rules.
 use casual_doc_model::v1::ParagraphBorders;
 // Own line: ruled rows keep the PDF's height.
@@ -145,18 +149,36 @@ enum Item {
     Para(IPara),
     Table(ITable, Option<usize>),
     Image(SourceImage, Option<usize>),
-    /// Vector art on its own line.
-    Vector(SourceVector, Option<usize>),
+    /// Vector art on its own line, with the text drawn inside it.
+    Vector(SourceVector, Option<usize>, Vec<ILine>),
     /// Floats whose text produced no paragraph of its own (a tagged table's
     /// cells): carried by an empty paragraph.
     Floats(Vec<Float>, Option<usize>),
 }
 
 impl Item {
+    /// The page it was on, when it says (a table by its cells' text;
+    /// pictures and drawings follow what is around them).
+    fn page(&self) -> Option<usize> {
+        match self {
+            Self::Para(p) => Some(p.page),
+            Self::Table(t, _) => t
+                .rows
+                .iter()
+                .flatten()
+                .flat_map(|c| c.lines.first())
+                .map(|l| l.page)
+                .next(),
+            Self::Image(..) | Self::Vector(..) | Self::Floats(..) => None,
+        }
+    }
+
     fn region(&self) -> Option<usize> {
         match self {
             Self::Para(p) => p.region,
-            Self::Table(_, r) | Self::Image(_, r) | Self::Vector(_, r) | Self::Floats(_, r) => *r,
+            Self::Table(_, r) | Self::Image(_, r) | Self::Vector(_, r, _) | Self::Floats(_, r) => {
+                *r
+            }
         }
     }
 }
@@ -213,14 +235,75 @@ impl Emitter<'_> {
         &mut self,
         vector: &SourceVector,
         anchor: DrawingAnchor,
+        labels: &[ILine],
     ) -> Result<Option<InlineNode>, PdfImportError> {
         let paths: Vec<&casual_doc_pdf_read::PathEvidence> = vector.paths.iter().collect();
-        let built = crate::fixed::vector_children(&paths, &mut || self.id())?;
+        let mut built = crate::fixed::vector_children(&paths, &mut || self.id())?;
         self.vector_clipped += built.clipped;
         self.vector_split += built.split;
-        let Some(bounds) = built.bounds else {
+        let Some(mut bounds) = built.bounds else {
             return Ok(None);
         };
+        // The text drawn inside it, each line a text box where the PDF set
+        // it, painted over the shapes (a chart's labels and legend).
+        for line in labels {
+            let (chars, _) = text::join(&[line]);
+            let inlines = self.inlines(&chars, None)?;
+            // Wider than the line by a third: a substitute face sets it
+            // wider, and a label must not wrap.
+            let width = (line.x1 - line.x0) * 4.0 / 3.0 + 2.0;
+            let height = (line.bottom - line.top).max(1.0) + 1.0;
+            bounds = (
+                bounds.0.min(line.x0),
+                bounds.1.min(line.top),
+                bounds.2.max(line.x0 + width),
+                bounds.3.max(line.top + height),
+            );
+            built.children.push(GroupChild::TextBox(GroupTextBox {
+                id: self.id()?,
+                offset: PointEmu {
+                    x_emu: crate::fixed::emu(line.x0),
+                    y_emu: crate::fixed::emu(line.top),
+                },
+                extent: Extent {
+                    width_emu: crate::fixed::emu(width).max(1),
+                    height_emu: crate::fixed::emu(height).max(1),
+                },
+                geometry: ShapeGeometry::Rectangle,
+                preset: None,
+                adjustments: Vec::new(),
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: self.id()?,
+                    properties: ParagraphProperties {
+                        spacing: Some(Spacing {
+                            before_twips: Some(0),
+                            after_twips: Some(0),
+                            line_percent: Some(100),
+                            ..Spacing::default()
+                        }),
+                        ..ParagraphProperties::default()
+                    }
+                    .into(),
+                    inlines,
+                })],
+                fill: None,
+                border: None,
+                shadow: None,
+                body_properties: TextBoxBodyProperties {
+                    insets: TextBoxInsets {
+                        left_emu: 0,
+                        top_emu: 0,
+                        right_emu: 0,
+                        bottom_emu: 0,
+                    },
+                    ..TextBoxBodyProperties::default()
+                },
+                hyperlink: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            }));
+        }
         self.z += 1;
         let id = self.id()?;
         Ok(Some(InlineNode::Group(Box::new(
@@ -272,7 +355,7 @@ impl Emitter<'_> {
                     })));
                 }
                 Graphic::Vector(vector) => {
-                    if let Some(group) = self.group(vector, anchor)? {
+                    if let Some(group) = self.group(vector, anchor, &[])? {
                         out.push(group);
                     }
                 }
@@ -1219,7 +1302,11 @@ pub(crate) fn emit(
             }
             EKind::Vector(vector) => {
                 object_bottom = Some((element.page, vector.bounds.y1));
-                items.push(Item::Vector(vector.clone(), element.region));
+                items.push(Item::Vector(
+                    vector.clone(),
+                    element.region,
+                    element.labels.clone(),
+                ));
             }
         }
     }
@@ -1530,6 +1617,21 @@ pub(crate) fn emit(
             .map_or((1, 0), |r| (r.columns.count, twips(r.columns.gutter)))
     };
     let (page_w, page_h) = flow.page_size;
+    // A page turned the other way from the document's (a landscape page
+    // among portrait ones) is its own section on a page of its size; any
+    // other page, whatever its exact size, is on the document's.
+    let turned = |page: usize| -> bool {
+        flow.page_sizes
+            .get(page)
+            .is_some_and(|&(w, h)| (w > h) != (page_w > page_h))
+    };
+    let size_of_page = |page: usize| -> (f64, f64) {
+        if turned(page) {
+            flow.page_sizes[page]
+        } else {
+            (page_w, page_h)
+        }
+    };
     let (bx0, by0, bx1, by1) = flow.body;
     let header_top = flow
         .furniture
@@ -1596,17 +1698,31 @@ pub(crate) fn emit(
     let mut body: Vec<BlockNode> = Vec::new();
     let mut sections: Vec<SectionBoundary> = Vec::new();
     let mut current_shape = items.first().map_or((1, 0), |i| shape_of(i.region()));
+    let mut current_size = items
+        .iter()
+        .find_map(Item::page)
+        .map_or((page_w, page_h), size_of_page);
+    // How the current section starts: after a change of page size on a new
+    // page, else on the same page.
+    let mut current_start = SectionType::Continuous;
+    // The section break of a change of page size starts the page; the first
+    // paragraph after it must not start another.
+    let mut drop_break = false;
     let mut column_sections = 0;
     let section = |emitter: &mut Emitter<'_>,
                    shape: (u16, i32),
+                   size: (f64, f64),
+                   start: SectionType,
                    first: bool|
      -> Result<SectionBoundary, PdfImportError> {
         let id = SectionId::new(emitter.id()?);
+        // A turned page keeps the document's margins: Word's own landscape
+        // section does, and the PDFs measured do.
         Ok(SectionBoundary {
             id,
             page_size: PageSize {
-                width_twips: twips(page_w).clamp(1, 31_680),
-                height_twips: twips(page_h).clamp(1, 31_680),
+                width_twips: twips(size.0).clamp(1, 31_680),
+                height_twips: twips(size.1).clamp(1, 31_680),
             },
             page_margins: margins,
             columns: SectionColumns {
@@ -1618,8 +1734,10 @@ pub(crate) fn emit(
             },
             headers: header_refs.clone(),
             footers: footer_refs.clone(),
-            section_type: (!first).then_some(SectionType::Continuous),
-            title_page,
+            section_type: (!first).then_some(start),
+            // Only the document's first page is a title page; a later
+            // section's first page carries the running header and footer.
+            title_page: if first { title_page } else { None },
             vertical_alignment: None,
             page_numbering: casual_doc_model::v1::PageNumbering::default(),
             doc_grid: casual_doc_model::v1::DocGrid::default(),
@@ -1640,8 +1758,16 @@ pub(crate) fn emit(
     }
     for item in &items {
         let shape = shape_of(item.region());
-        if shape.0 != current_shape.0 && !body.is_empty() {
-            let boundary = section(&mut emitter, current_shape, sections.is_empty())?;
+        let size = item.page().map_or(current_size, size_of_page);
+        let resized = size != current_size;
+        if (shape.0 != current_shape.0 || resized) && !body.is_empty() {
+            let boundary = section(
+                &mut emitter,
+                current_shape,
+                current_size,
+                current_start,
+                sections.is_empty(),
+            )?;
             // The section ends at a paragraph carrying its break.
             let needs_carrier = !matches!(body.last(), Some(BlockNode::Paragraph(_)));
             if needs_carrier {
@@ -1658,23 +1784,38 @@ pub(crate) fn emit(
             }
             sections.push(boundary);
             current_shape = shape;
+            drop_break = resized;
+            current_start = if resized {
+                SectionType::NextPage
+            } else {
+                SectionType::Continuous
+            };
+            current_size = size;
             if shape.0 > 1 {
                 column_sections += 1;
             }
         }
         match item {
             Item::Para(p) => {
-                let paragraph = emitter.paragraph(p)?;
+                let paragraph = if drop_break && p.page_break {
+                    let mut p = p.clone();
+                    p.page_break = false;
+                    emitter.paragraph(&p)?
+                } else {
+                    emitter.paragraph(p)?
+                };
+                drop_break = false;
                 body.push(BlockNode::Paragraph(paragraph));
             }
             Item::Table(t, _) => {
                 let table = emitter.table(t)?;
                 body.push(BlockNode::Table(Box::new(table)));
             }
-            Item::Vector(vector, region) => {
-                let (left, _) = column(&flow, *region, None, vector.bounds.x0, page_w);
-                let anchor = float_anchor(vector.bounds.x0 - left, 0.0, None);
-                let inlines = emitter.group(vector, anchor)?.into_iter().collect();
+            Item::Vector(vector, region, labels) => {
+                let x0 = labels.iter().map(|l| l.x0).fold(vector.bounds.x0, f64::min);
+                let (left, _) = column(&flow, *region, None, x0, page_w);
+                let anchor = float_anchor(x0 - left, 0.0, None);
+                let inlines = emitter.group(vector, anchor, labels)?.into_iter().collect();
                 body.push(BlockNode::Paragraph(Paragraph {
                     id: emitter.id()?,
                     properties: ParagraphProperties::default().into(),
@@ -1751,7 +1892,13 @@ pub(crate) fn emit(
         emitter.vector_split,
         None,
     );
-    let last = section(&mut emitter, current_shape, sections.is_empty())?;
+    let last = section(
+        &mut emitter,
+        current_shape,
+        current_size,
+        current_start,
+        sections.is_empty(),
+    )?;
     sections.push(last);
     // Footnote numbering that reproduces the PDF's own markers.
     match note_numbering(&flow.notes) {

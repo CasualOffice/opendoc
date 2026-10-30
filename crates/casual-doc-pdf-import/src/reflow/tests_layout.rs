@@ -8,6 +8,8 @@
 use casual_doc_model::v1::{
     Alignment, BlockNode, Document, HeightRule, InlineNode, Paragraph, Spacing,
 };
+// Own line: sections and drawings.
+use casual_doc_model::v1::{GroupChild, SectionType};
 
 use crate::synth::{self, Page, text};
 use crate::{PdfImportError, PdfReadLimits, Reflowed, import_pdf};
@@ -595,4 +597,156 @@ fn a_line_set_with_leading_spaces_keeps_its_indent() {
         .and_then(|i| i.start_twips)
         .unwrap_or_else(|| panic!("{:?}", body.properties));
     assert!((start - 528).abs() <= 4, "{start}");
+}
+
+#[test]
+fn a_landscape_page_is_its_own_landscape_section() {
+    // A title page without the running head, a landscape page and two
+    // upright pages with it; every page but the last stops early (so each
+    // would start with a page break), the last runs down the page.
+    let head = |height: f64| text("F1", 9.0, 72.0, height - 30.0, 11.0, &["Running head"]);
+    let page = |x: &str, y: f64| text("F1", 11.0, 72.0, y, 14.0, &[x]);
+    let prose = full("prose");
+    let long: Vec<&str> = std::iter::repeat_n(prose.as_str(), 40).collect();
+    let landscape = Page {
+        content: format!(
+            "{}{}",
+            head(612.0),
+            page("A wide page in the middle.", 540.0)
+        ),
+        extra: "/MediaBox [0 0 792 612]".to_owned(),
+        ..Page::default()
+    };
+    let bytes = synth::document(
+        &[
+            Page::new(page("The first page is upright.", 720.0)),
+            landscape,
+            Page::new(format!("{}{}", head(792.0), page("Upright again.", 720.0))),
+            Page::new(format!(
+                "{}{}",
+                head(792.0),
+                text("F1", 11.0, 72.0, 720.0, 14.0, &long)
+            )),
+        ],
+        COURIER,
+        "",
+    );
+    let reflowed = reflow_of(bytes);
+    let document = &reflowed.document;
+    let sections = &document.definitions().sections;
+    let shape: Vec<(i32, i32)> = sections
+        .iter()
+        .map(|s| (s.page_size.width_twips, s.page_size.height_twips))
+        .collect();
+    assert_eq!(
+        shape,
+        vec![(12_240, 15_840), (15_840, 12_240), (12_240, 15_840)]
+    );
+    // Each change of size starts a new page, once: the paragraph opening a
+    // section of another size carries no page break of its own.
+    assert_eq!(sections[1].section_type, Some(SectionType::NextPage));
+    assert_eq!(sections[2].section_type, Some(SectionType::NextPage));
+    let opening = |text: &str| {
+        paragraphs(document)
+            .into_iter()
+            .find(|p| para_text(p).starts_with(text))
+            .unwrap_or_else(|| panic!("{text}"))
+            .properties
+            .page_break_before
+    };
+    assert_eq!(opening("A wide page"), None);
+    assert_eq!(opening("Upright again"), None);
+    // The first page is a title page; the later sections' first pages carry
+    // the running head.
+    assert_eq!(sections[0].title_page, Some(true));
+    assert!(sections[1..].iter().all(|s| s.title_page.is_none()));
+}
+
+/// A chart closing its page: a frame, three bars painted between their
+/// labels, axis values just left of the frame (5 pt off) and a legend inside
+/// it, under a paragraph of prose; the next page is a full page of prose.
+fn chart_pdf() -> Vec<u8> {
+    let mut content = text(
+        "F1",
+        11.0,
+        72.0,
+        720.0,
+        14.0,
+        &["A paragraph of prose comes before the chart, and it ends here."],
+    );
+    content.push_str("0.5 G 0.5 w 150 100 m 450 100 l 450 300 l 150 300 l h S 0 G\n");
+    content.push_str(&text("F1", 8.0, 140.0, 100.0, 10.0, &["0"]));
+    content.push_str("0 0 1 rg 180 100 40 120 re f 0 g\n");
+    content.push_str(&text("F1", 8.0, 135.0, 200.0, 10.0, &["50"]));
+    content.push_str("1 0 0 rg 260 100 40 160 re f 0 g\n");
+    content.push_str(&text("F1", 8.0, 130.0, 290.0, 10.0, &["100"]));
+    content.push_str("0 1 0 rg 340 100 40 80 re f 0 g\n");
+    content.push_str(&text("F1", 8.0, 390.0, 270.0, 10.0, &["Series A"]));
+    content.push_str("0 0 1 rg 380 270 6 6 re f 0 g\n");
+    let prose = full("prose");
+    let lines: Vec<&str> = std::iter::repeat_n(prose.as_str(), 40)
+        .chain(["and the prose ends here."])
+        .collect();
+    let next = text("F1", 11.0, 72.0, 720.0, 14.0, &lines);
+    synth::document(&[Page::new(content), Page::new(next)], COURIER, "")
+}
+
+#[test]
+fn a_charts_labels_are_drawn_with_it_and_its_pieces_are_one_drawing() {
+    let reflowed = reflow_of(chart_pdf());
+    let document = &reflowed.document;
+    let texts: Vec<String> = paragraphs(document).iter().map(|p| para_text(p)).collect();
+    // No label is a paragraph of its own.
+    for label in ["0", "50", "100", "Series A"] {
+        assert!(!texts.iter().any(|t| t == label), "{texts:?}");
+    }
+    assert_eq!(
+        texts.len(),
+        2,
+        "{:?}",
+        texts
+            .iter()
+            .map(|t| t.chars().take(20).collect::<String>())
+            .collect::<Vec<_>>()
+    );
+    // One group holds the frame, the bars, the key and the four labels.
+    let groups: Vec<&casual_doc_model::v1::WordprocessingGroup> = document
+        .body()
+        .iter()
+        .filter_map(|b| match b {
+            BlockNode::Paragraph(p) => Some(p.inlines.iter().filter_map(|i| match i {
+                InlineNode::Group(g) => Some(g.as_ref()),
+                _ => None,
+            })),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(groups.len(), 1);
+    let boxes: Vec<String> = groups[0]
+        .children
+        .iter()
+        .filter_map(|c| match c {
+            GroupChild::TextBox(t) => t.blocks.iter().find_map(|b| match b {
+                BlockNode::Paragraph(p) => Some(para_text(p)),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(boxes.len(), 4, "{boxes:?}");
+    assert!(boxes.iter().any(|b| b == "Series A"));
+    let shapes = groups[0]
+        .children
+        .iter()
+        .filter(|c| matches!(c, GroupChild::Shape(_)))
+        .count();
+    assert!(shapes >= 5, "{shapes}");
+    // A chart closing its page is content: the page did not end early, so
+    // the next page's prose is no page break.
+    assert!(
+        paragraphs(document)
+            .iter()
+            .all(|p| p.properties.page_break_before != Some(true))
+    );
 }

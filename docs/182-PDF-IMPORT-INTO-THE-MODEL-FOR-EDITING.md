@@ -1806,6 +1806,8 @@ driven red by the mutation named in its commit):
 | Decorations drawn as paths | Underline and strikethrough lost; a highlight came out as a yellow box under its line; a paragraph's shading and bottom border lost, or its fill placed as a drawing above the text; a title's rule gone | Rules outside a table were dropped and fills became vector art | `reflow/decorate.rs`: a thin rule under a run (−0.05 to 0.4 em below its baseline) is its underline, one 0.12 to 0.5 em above is its strikethrough; a fill one line tall that ends where the run's glyphs do is the run's shading; a fill spanning whole lines (no taller than them plus a line) is their paragraph's shading; a rule within 1.2 em under a paragraph's last line and as wide as it is the paragraph's bottom border. Reported `pdf.import.decoration_inferred`; the paths used are not placed as drawings |
 | Borderless tables | A shaded-header table reflowed as narrow as its text, its fills placed as drawings beside it; rows packed together; a tab-leader list's last column wrapped "12 ms" onto two lines; a wide column's text wrapped | The table's extent was its text's; rows were their text's height; Word's default cell margins were added to columns measured from the text | `tables::fit_to_fills` widens the table to the fills behind its rows (its text bounds, which set the page margins, stay the text's); a row's height is the PDF's baseline pitch (`atLeast`); cell margins are the padding before the first column's text and nothing after; the last column has 12 pt of slack |
 | Indented code | Lines of a code block lost their indentation | A line's left was its first glyph, a leading space | A paragraph starts at its first visible character |
+| Landscape pages | `sample.docx`'s landscape page reflowed onto a portrait page; every section after the first opened on a page with no running head | One page size for the whole document; the title-page flag was on every section | A page turned the other way from the document's is a section of its own size (`NextPage`, the document's margins, and no extra page break on its first paragraph); only the first section can be a title page |
+| Charts and figures | A chart reflowed in pieces with no frame or gridlines, its axis values and legend as a column of one-word paragraphs; a chart closing a page made the next page start with a break, leaving a page nearly empty | Each run of paths between two text runs was its own drawing; rules outside tables were dropped (a grid with no text was counted as a table's); text over a drawing was always prose; only text and tables counted as a page's content | Runs of vector art that overlap or come within 6 pt are one figure (a page-sized background is no figure's piece); rules no table, decoration or furniture band took become art (a lone one only when it spans half the page: a separator); label lines (≤ 6 words, ≤ 40 characters, no larger than the body) inside a figure, or within two of their ems of it, become text boxes in its group, drawn where the PDF set them; pictures and drawings count as where a page's content stops |
 
 **`sample.docx` through our writer, before and after** (the scorer fix applied to both):
 
@@ -1846,14 +1848,13 @@ and arXiv papers, which read as Heading 2), and the list items removed are conti
 1. A table whose cells are aligned differently in one tall row (top, centre, bottom: the
    source's "merged cells and vertical alignment" table) reads as a staircase of rows, since
    its cells share no baseline.
-2. Text inside a chart (axis labels, legend) reflows as loose one-word paragraphs beside the
-   chart's drawing.
-3. Text wrapped around a picture: the lines beside it start a new paragraph at the picture's
+2. Text wrapped around a picture: the lines beside it start a new paragraph at the picture's
    edge.
-4. A landscape section is reflowed onto the document's portrait page size.
-5. Light weights (Helvetica Neue Light and UltraLight) map to the regular face: the model has
+3. A chart's labels are text boxes inside its group: right where they were, but a label that
+   was a figure's caption ("Figure 1", short) sitting within two ems of it joins it too.
+4. Light weights (Helvetica Neue Light and UltraLight) map to the regular face: the model has
    bold and not a weight. Letter spacing (a subtitle's expanded tracking) is not read.
-6. A scanned PDF has no text without an OCR provider; the headless tools have none.
-7. Glyphs the writer's bundled faces lack (checkboxes, Indic, CJK) are missing from our own
+5. A scanned PDF has no text without an OCR provider; the headless tools have none.
+6. Glyphs the writer's bundled faces lack (checkboxes, Indic, CJK) are missing from our own
    PDF of `sample.docx`, so its reflow cannot have them (`special` 0.371): the writer's font
    fallback, not the reflow.
