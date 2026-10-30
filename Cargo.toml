@@ -31,6 +31,7 @@ members = [
     "crates/casual-doc-wasm-pdf",
     "server",
     "tools/opendoc-benchmark",
+    "tools/opendoc-cli",
     "tools/opendoc-fidelity",
     "tools/opendoc-mcp",
     "tools/opendoc-parity",

@@ -554,6 +554,29 @@ impl Document {
             .map(|_| ())
     }
 
+    /// Compares this document (the older side) with `newer`: the engine's
+    /// structural diff (the same one the editor's Compare runs), as its
+    /// versioned JSON sidecar (`schema`, `changes`, `kindCounts`, `findings`,
+    /// `complete`). **O(both documents)**; it runs to completion.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorCode::InvalidArgument`] if the diff produced no result.
+    pub fn compare(&self, newer: &Document) -> Result<serde_json::Value> {
+        let mut job = casual_doc_diff::DiffJob::new();
+        let sides = casual_doc_diff::DiffSides {
+            left: &self.state.model,
+            right: &newer.state.model,
+            left_digests: None,
+            right_digests: None,
+        };
+        while let casual_doc_diff::Progress::Working { .. } = job.step(sides, 4_096) {}
+        let diff = job
+            .take()
+            .ok_or_else(|| Error::invalid("the comparison produced no result"))?;
+        serde_json::to_value(&diff).map_err(|e| Error::invalid(e.to_string()))
+    }
+
     /// The tags a template uses: `(name, "value" | "loop" | "inverted")`.
     #[must_use]
     pub fn template_tags(&self, options: &TemplateOptions) -> Vec<(String, &'static str)> {

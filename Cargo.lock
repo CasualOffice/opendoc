@@ -1978,6 +1978,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 name = "opendoc"
 version = "0.0.1"
 dependencies = [
+ "casual-doc-diff",
  "casual-doc-edit",
  "casual-doc-io",
  "casual-doc-model",
@@ -1999,6 +2000,14 @@ dependencies = [
  "casual-doc-ooxml",
  "casual-doc-sdk",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "opendoc-cli"
+version = "0.0.1"
+dependencies = [
+ "opendoc",
  "serde_json",
 ]
 

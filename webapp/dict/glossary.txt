@@ -335,6 +335,7 @@ checkmark
 checksums
 ciphertext
 cjk
+cli
 clippy
 cmap
 codebase
@@ -380,6 +381,7 @@ docProps
 docprops
 documentProtection
 docx
+docxtemplater
 dpi
 draggable
 drawSelection
