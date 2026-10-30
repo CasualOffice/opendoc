@@ -1956,6 +1956,7 @@
   "site.header.playground": "Playground",
   "site.header.preRelease": "Vorabversion",
   "site.header.primaryNavigation": "Hauptnavigation",
+  "site.header.sdk": "SDK",
   "spacing.addSpaceAfter": "Abstand nach dem Absatz hinzufügen",
   "spacing.addSpaceBefore": "Abstand vor dem Absatz hinzufügen",
   "spacing.fromStyleHint": "Dieser Absatz übernimmt den Zeilenabstand aus seiner Formatvorlage. Geben Sie einen Wert ein, um ihn hier festzulegen.",

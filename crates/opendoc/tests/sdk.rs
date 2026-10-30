@@ -692,3 +692,26 @@ fn a_linked_table_of_contents_opens_and_lists_each_heading() {
         }));
     }
 }
+
+#[path = "../examples/quickstart.rs"]
+mod quickstart;
+
+#[test]
+fn the_quickstart_example_the_site_quotes_runs() {
+    // `webapp/sdk.page.html` publishes `examples/quickstart.rs` verbatim, so the
+    // example is run here rather than only compiled.
+    let out = std::env::temp_dir().join(format!("opendoc-quickstart-{}", std::process::id()));
+    let (pages, lost) = quickstart::run(&out).expect("the example runs");
+    assert_eq!(pages, 1);
+    assert!(lost.is_empty(), "the example's DOCX save lost {lost:?}");
+    for name in ["report.docx", "report.pdf", "page-1.png"] {
+        let bytes = std::fs::read(out.join(name)).expect("the example wrote its file");
+        assert!(!bytes.is_empty(), "{name} is empty");
+    }
+    let docx = Document::open(&std::fs::read(out.join("report.docx")).unwrap()).unwrap();
+    assert!(
+        docx.paragraphs().iter().any(|p| p.text == "Revenue grew 12%"),
+        "the example's paragraph is in the DOCX it wrote"
+    );
+    std::fs::remove_dir_all(&out).ok();
+}

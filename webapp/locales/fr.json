@@ -1957,6 +1957,7 @@
   "site.header.playground": "Bac à sable",
   "site.header.preRelease": "Préversion",
   "site.header.primaryNavigation": "Navigation principale",
+  "site.header.sdk": "SDK",
   "spacing.addSpaceAfter": "Ajouter un espace après le paragraphe",
   "spacing.addSpaceBefore": "Ajouter un espace avant le paragraphe",
   "spacing.fromStyleHint": "Ce paragraphe tient son interligne de son style. Saisissez une valeur pour le définir ici.",

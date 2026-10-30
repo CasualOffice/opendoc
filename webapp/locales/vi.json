@@ -1955,6 +1955,7 @@
   "site.header.playground": "Khu thử nghiệm",
   "site.header.preRelease": "Bản phát hành trước",
   "site.header.primaryNavigation": "Điều hướng chính",
+  "site.header.sdk": "SDK",
   "spacing.addSpaceAfter": "Thêm khoảng cách sau đoạn",
   "spacing.addSpaceBefore": "Thêm khoảng cách trước đoạn",
   "spacing.fromStyleHint": "Đoạn này lấy giãn dòng từ kiểu của nó. Nhập một giá trị để đặt tại đây.",

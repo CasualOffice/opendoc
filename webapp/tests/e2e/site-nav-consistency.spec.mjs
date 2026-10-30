@@ -1,16 +1,16 @@
 import { test, expect } from "./fixtures.mjs";
 
 // Every marketing/docs page must render the SAME shared header partial with the
-// six primary-nav links (Overview · Editor · Playground · Embedding · Docs ·
-// Fidelity) plus a GitHub link and the "Open the editor" CTA. This proves the
+// seven primary-nav links (Overview · Editor · Playground · Embedding · SDK ·
+// Docs · Fidelity) plus a GitHub link and the "Open the editor" CTA. This proves the
 // build-time partial inlining kept the nav consistent site-wide — the whole
 // point of authoring pages from _partials/.
 //
 // Playground and Embedding joined the nav because they had shipped without a
 // nav entry and were unreachable from the header; tests/site_nav_reach.test.mjs
 // is the guard that fails the build when a page ships that way again.
-const PAGES = ["/", "/docs.html", "/embedding.html", "/fidelity.html", "/playground.html"];
-const NAV_LINKS = ["Overview", "Editor", "Playground", "Embedding", "Docs", "Fidelity"];
+const PAGES = ["/", "/docs.html", "/embedding.html", "/fidelity.html", "/playground.html", "/sdk.html"];
+const NAV_LINKS = ["Overview", "Editor", "Playground", "Embedding", "SDK", "Docs", "Fidelity"];
 
 for (const path of PAGES) {
   test(`shared header + primary nav render on ${path}`, async ({ page, consoleErrors }) => {
@@ -64,4 +64,7 @@ test("the active page is marked in the nav", async ({ page }) => {
 
   await page.goto("/embedding.html");
   await expect(page.locator('header nav a[data-nav="embedding"]')).toHaveAttribute("aria-current", "page");
+
+  await page.goto("/sdk.html");
+  await expect(page.locator('header nav a[data-nav="sdk"]')).toHaveAttribute("aria-current", "page");
 });

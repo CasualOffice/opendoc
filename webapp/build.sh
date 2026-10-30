@@ -211,6 +211,9 @@ cp "$repo/docs/assets/site-editor.webp" "$here/assets/site-editor.webp"
 # moved without the page being regenerated. Same contract as build-site --check
 # below, and as build-embed-package --check for the published package.
 node "$here/tools/build-embed-docs.mjs" --check
+# The SDK page's panels, benchmark table and format counts, the same way: from
+# the example files a test runs and from benchmarks/sdk/results.json.
+node "$here/tools/build-sdk-page.mjs" --check
 
 # The capability registry's generated files (`webapp/generated/`, docs/181 §6,
 # G3/G4): the edit JSON Schema and one per family, `commands.json` (which

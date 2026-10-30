@@ -1958,6 +1958,7 @@
   "site.header.playground": "Песочница",
   "site.header.preRelease": "Предварительная версия",
   "site.header.primaryNavigation": "Основная навигация",
+  "site.header.sdk": "SDK",
   "spacing.addSpaceAfter": "Добавить интервал после абзаца",
   "spacing.addSpaceBefore": "Добавить интервал перед абзацем",
   "spacing.fromStyleHint": "Этот абзац берёт межстрочный интервал из своего стиля. Введите значение, чтобы задать его здесь.",

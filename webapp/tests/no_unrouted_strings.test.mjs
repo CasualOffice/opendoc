@@ -131,6 +131,12 @@ const CEILINGS = new Map([
   ["fidelity.page.html", 0],
   ["index.page.html", 0],
   ["playground.page.html", 3],
+  // The SDK page (`docs/176` §12), MEASURED at 146 when it landed. Every prose
+  // clause is routed (`site.sdk.*`); what is left is what the embedding guide's
+  // floor is made of and for the same reasons: code (API names, paths, commands,
+  // import specifiers), and the benchmark's generated figures ("4.04 ms",
+  // "1.3× faster", "100 paragraphs + table"), which are `results.json`'s values.
+  ["sdk.page.html", 146],
   // Still 0 after the footer gained the copyright line and the licence line
   // (`© 2026 CasualOffice — developed by the CasualOffice Team` and `Apache-2.0
   // · contributions welcome under the same licence`). RE-MEASURED with the
@@ -354,6 +360,7 @@ const SITE_SOURCES = [
   "fidelity.page.html",
   "index.page.html",
   "playground.page.html",
+  "sdk.page.html",
   "_partials/site-footer.html",
   "_partials/site-header.html",
 ];
@@ -555,6 +562,10 @@ test("how much the code exemptions suppress is measured, per file", () => {
     // the closing `>`.
     "index.page.html": 6,
     "playground.page.html": 2,
+    // The SDK page, MEASURED: two of its nine code panels read as prose with the
+    // exemption off (the Python install commands and the CLI's usage text); the
+    // other panels begin with a tag-shaped or symbol-only line the scanner skips.
+    "sdk.page.html": 2,
   };
   const measured = {};
   for (const file of [...CEILINGS.keys()].filter((name) => name.endsWith(".html"))) {

@@ -1055,6 +1055,28 @@ Measured on darwin arm64 25.3.0, Apple M4 (10 cores, 16 GB), Node v24.22.1; medi
 
 <!-- sdk-bench:end -->
 
+### 12.11 The site page
+
+`webapp/sdk.html` (from `webapp/sdk.page.html`) is the SDK's public page: the three products,
+install per language, one example per language, the familiarity table, the benchmark with
+its losses, and the format table. It is in the header nav, the docs rail and the home page,
+and this document is published beside it as `reference/three-sdk-products.html`.
+
+- **Generated, not typed.** `webapp/tools/build-sdk-page.mjs` copies every code panel whole
+  from a file a test runs (`packages/opendoc/test/examples.test.mjs`,
+  `bindings/python/tests/test_opendoc.py`, `bindings/java/build.sh`,
+  `crates/opendoc/tests/sdk.rs`), renders the benchmark table and its list of losses from
+  `benchmarks/sdk/results.json`, and reads the format table from the `casual-doc-io`
+  descriptors. `webapp/build.sh` runs its `--check`.
+- **Guards.** `webapp/tests/sdk_page.test.mjs` re-derives the ratios, the loss count and the
+  format counts independently of the generator, checks each panel is verbatim in its file
+  and that the file it names as the runner runs it, and checks every API name in the
+  familiarity table exists in the binding. `webapp/tests/e2e/sdk-page.spec.mjs` checks the
+  chrome, every route, no horizontal scroll at 390 px and WCAG AA.
+- **Mutation.** A docxtemplater time in `results.json` changed from 10.34 to 30 made the
+  page stale (`--check` red) and, with the page regenerated, the loss list one shorter;
+  the guard's independent count went red against a hand-edited claim.
+
 [poi]: https://poi.apache.org/components/document/
 [pydocx]: https://python-docx.readthedocs.io/en/latest/api/text.html
 [pydocx-gh]: https://github.com/python-openxml/python-docx

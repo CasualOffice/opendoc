@@ -33,7 +33,7 @@ test("the embedding guide renders with the site chrome and marks itself in the n
   const nav = page.locator('header.site-header nav[aria-label="Primary navigation"]');
   // Its own primary link, not a borrowed Docs tab. The guide used to be reachable
   // only from the docs rail, which meant a reader had to already know it existed.
-  await expect(nav.getByRole("link")).toHaveCount(6);
+  await expect(nav.getByRole("link")).toHaveCount(7);
   await expect(page.locator('header nav a[data-nav="embedding"]')).toHaveAttribute(
     "aria-current",
     "page",

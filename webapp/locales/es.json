@@ -1957,6 +1957,7 @@
   "site.header.playground": "Entorno de pruebas",
   "site.header.preRelease": "Versión preliminar",
   "site.header.primaryNavigation": "Navegación principal",
+  "site.header.sdk": "SDK",
   "spacing.addSpaceAfter": "Añadir espacio después del párrafo",
   "spacing.addSpaceBefore": "Añadir espacio antes del párrafo",
   "spacing.fromStyleHint": "Este párrafo toma el interlineado de su estilo. Escriba un valor para fijarlo aquí.",

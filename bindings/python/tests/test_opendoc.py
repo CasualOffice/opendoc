@@ -4,6 +4,8 @@
 import io
 import os
 import pathlib
+import subprocess
+import sys
 
 import pytest
 
@@ -167,3 +169,13 @@ def test_convert_and_formats(tmp_path):
     names = {f["name"] for f in opendoc.formats() if f["save"]}
     assert {"docx", "odt", "pdf", "md"} <= names
     assert opendoc.__version__
+
+
+def test_the_quickstart_example_the_site_quotes_runs(tmp_path):
+    # webapp/sdk.page.html publishes examples/quickstart.py verbatim, so it is run.
+    script = pathlib.Path(__file__).resolve().parents[1] / "examples" / "quickstart.py"
+    result = subprocess.run([sys.executable, str(script), str(tmp_path)], capture_output=True, text=True, check=True)
+    assert "nothing lost" in result.stdout
+    for name in ("report.docx", "report.pdf", "page-1.png"):
+        assert (tmp_path / name).stat().st_size > 0
+    assert Document(tmp_path / "report.docx").paragraphs[1].text == "Revenue grew 12% quarter on quarter."

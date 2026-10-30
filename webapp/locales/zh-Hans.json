@@ -1955,6 +1955,7 @@
   "site.header.playground": "演练场",
   "site.header.preRelease": "预发布",
   "site.header.primaryNavigation": "主导航",
+  "site.header.sdk": "SDK",
   "spacing.addSpaceAfter": "在段后添加间距",
   "spacing.addSpaceBefore": "在段前添加间距",
   "spacing.fromStyleHint": "此段落的行距来自其样式。输入数值可在此处设定。",

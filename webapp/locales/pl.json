@@ -1958,6 +1958,7 @@
   "site.header.playground": "Piaskownica",
   "site.header.preRelease": "Wersja wstępna",
   "site.header.primaryNavigation": "Nawigacja główna",
+  "site.header.sdk": "SDK",
   "spacing.addSpaceAfter": "Dodaj odstęp po akapicie",
   "spacing.addSpaceBefore": "Dodaj odstęp przed akapitem",
   "spacing.fromStyleHint": "Ten akapit dziedziczy interlinię ze swojego stylu. Wpisz wartość, aby ustawić ją tutaj.",

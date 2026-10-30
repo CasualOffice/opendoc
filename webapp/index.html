@@ -124,6 +124,7 @@
           <a href="./editor.html" data-nav="editor" data-i18n="site.header.editor">Editor</a>
           <a href="./playground.html" data-nav="playground" data-i18n="site.header.playground">Playground</a>
           <a href="./embedding.html" data-nav="embedding" data-i18n="site.header.embedding">Embedding</a>
+          <a href="./sdk.html" data-nav="sdk" data-i18n="site.header.sdk">SDK</a>
           <a href="./docs.html" data-nav="docs" data-i18n="site.header.docs">Docs</a>
           <a href="./fidelity.html" data-nav="fidelity" data-i18n="site.header.fidelity">Fidelity</a>
         </nav>
@@ -602,6 +603,27 @@
         </div>
       </section>
 
+      <!-- The Native SDK. Prose and a link only: its examples and its numbers live on
+           sdk.html, where each is extracted or generated and held by sdk_page.test.mjs. -->
+      <section class="home-section" id="sdk">
+        <div class="wrap">
+          <div class="home-split-copy" data-reveal>
+            <span class="home-kicker" data-i18n="site.index.sdkKicker">SDK</span>
+            <h2 data-i18n="site.index.sdkTitle">Documents in code, with the API you already know.</h2>
+            <p class="home-split-lede" data-i18n="site.index.sdkLede">
+              Create, read, edit, template, convert and render documents from JavaScript, Python,
+              Java, Rust or the command line. Each language gets the names of the library it
+              replaces (docx-js, docxtemplater, mammoth, python-docx, Apache POI), and one engine
+              underneath lays the pages out, writes real-text PDF and reports what a save would
+              lose.
+            </p>
+            <div class="home-split-links">
+              <a class="btn btn--ink" href="./sdk.html" data-i18n="site.index.sdkLink">Read the SDK guide</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Fidelity. Every number here has a committed source, and the guard in
            webapp/tests/site_claims.test.mjs fails if one drifts from it. -->
       <section class="home-section" id="fidelity">
@@ -833,6 +855,7 @@ doc.insertText(at.node, at.offset, <span class="str">"Hello from OpenDoc"</span>
             <a href="./editor.html" data-i18n="site.header.editor">Editor</a>
             <a href="./playground.html" data-i18n="site.header.playground">Playground</a>
             <a href="./embedding.html" data-i18n="site.header.embedding">Embedding</a>
+            <a href="./sdk.html" data-i18n="site.header.sdk">SDK</a>
           </div>
           <div class="site-footer-col">
             <p class="site-footer-head" data-i18n="site.footer.learn">Learn</p>

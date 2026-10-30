@@ -1958,6 +1958,7 @@
   "site.header.playground": "Пісочниця",
   "site.header.preRelease": "Попередня версія",
   "site.header.primaryNavigation": "Основна навігація",
+  "site.header.sdk": "SDK",
   "spacing.addSpaceAfter": "Додати інтервал після абзацу",
   "spacing.addSpaceBefore": "Додати інтервал перед абзацом",
   "spacing.fromStyleHint": "Цей абзац бере міжрядковий інтервал зі свого стилю. Введіть значення, щоб задати його тут.",

@@ -1955,6 +1955,7 @@
   "site.header.playground": "플레이그라운드",
   "site.header.preRelease": "사전 릴리스",
   "site.header.primaryNavigation": "기본 탐색",
+  "site.header.sdk": "SDK",
   "spacing.addSpaceAfter": "단락 뒤에 공백 추가",
   "spacing.addSpaceBefore": "단락 앞에 공백 추가",
   "spacing.fromStyleHint": "이 단락은 줄 간격을 스타일에서 가져옵니다. 여기서 지정하려면 값을 입력하세요.",

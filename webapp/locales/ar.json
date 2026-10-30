@@ -1960,6 +1960,7 @@
   "site.header.playground": "ساحة التجربة",
   "site.header.preRelease": "إصدار أولي",
   "site.header.primaryNavigation": "التنقل الرئيسي",
+  "site.header.sdk": "SDK",
   "spacing.addSpaceAfter": "إضافة مسافة بعد الفقرة",
   "spacing.addSpaceBefore": "إضافة مسافة قبل الفقرة",
   "spacing.fromStyleHint": "تأخذ هذه الفقرة تباعد الأسطر من نمطها. اكتب قيمة لتعيينه هنا.",

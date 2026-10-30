@@ -1957,6 +1957,7 @@
   "site.header.playground": "Area di prova",
   "site.header.preRelease": "Versione preliminare",
   "site.header.primaryNavigation": "Navigazione principale",
+  "site.header.sdk": "SDK",
   "spacing.addSpaceAfter": "Aggiungi spazio dopo il paragrafo",
   "spacing.addSpaceBefore": "Aggiungi spazio prima del paragrafo",
   "spacing.fromStyleHint": "Questo paragrafo eredita l’interlinea dal suo stile. Digita un valore per impostarla qui.",

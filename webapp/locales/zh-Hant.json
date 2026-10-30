@@ -1955,6 +1955,7 @@
   "site.header.playground": "試驗場",
   "site.header.preRelease": "預先發行",
   "site.header.primaryNavigation": "主要導覽",
+  "site.header.sdk": "SDK",
   "spacing.addSpaceAfter": "在段後加入間距",
   "spacing.addSpaceBefore": "在段前加入間距",
   "spacing.fromStyleHint": "此段落的行距來自其樣式。輸入數值即可在此設定。",

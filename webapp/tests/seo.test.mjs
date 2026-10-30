@@ -497,6 +497,11 @@ test("page metadata is outside the i18n seam, by measurement and on purpose", ()
   // `og:image:alt` they never had — 18 + 3 = 21. Every one of the
   // new strings is a copy of one of the five cards' alt text, which is written
   // once, in `tools/build-social-cards.mjs`.
+  //
+  // 246 -> 273 with the SDK (`docs/176` §12): two new indexable pages, `sdk.html`
+  // and `reference/three-sdk-products.html`, each with the seven readable meta
+  // values, its schema `name`, `headline` and `description`, and a three- or
+  // four-step breadcrumb. MEASURED by running this test.
   const READABLE_META = [
     "description",
     "og:title",
@@ -520,9 +525,9 @@ test("page metadata is outside the i18n seam, by measurement and on purpose", ()
   }
   assert.equal(
     strings,
-    246,
+    273,
     `the site publishes ${strings} human-readable metadata strings outside the i18n ` +
-      `seam (was 246). That is not a failure — it is the number, and it moved. Update ` +
+      `seam (was 273). That is not a failure — it is the number, and it moved. Update ` +
       `it deliberately, and note that localising these needs per-language pages with ` +
       `hreflang, which does not exist yet.`,
   );

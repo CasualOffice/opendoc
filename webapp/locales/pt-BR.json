@@ -1957,6 +1957,7 @@
   "site.header.playground": "Ambiente de testes",
   "site.header.preRelease": "Versão prévia",
   "site.header.primaryNavigation": "Navegação principal",
+  "site.header.sdk": "SDK",
   "spacing.addSpaceAfter": "Adicionar espaço depois do parágrafo",
   "spacing.addSpaceBefore": "Adicionar espaço antes do parágrafo",
   "spacing.fromStyleHint": "Este parágrafo herda o espaçamento entre linhas do seu estilo. Digite um valor para defini-lo aqui.",
