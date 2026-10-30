@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! PDF reflow, measured (`docs/182` §18.10).
 //!
 //! ```text

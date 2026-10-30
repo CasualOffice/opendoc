@@ -160,6 +160,104 @@ impl CellTextDirection {
     }
 }
 
+/// Which way Insert Cells pushes the cells already there.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum InsertShift {
+    /// Push the row's later cells right.
+    Right,
+    /// Push the cells below down.
+    Down,
+}
+
+impl InsertShift {
+    /// The lowering's shift. O(1).
+    #[must_use]
+    pub const fn shift(self) -> crate::table_tools::CellShift {
+        match self {
+            Self::Right => crate::table_tools::CellShift::Right,
+            Self::Down => crate::table_tools::CellShift::Down,
+        }
+    }
+}
+
+/// Which way Delete Cells closes the gap.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum DeleteShift {
+    /// Close the row up to the left.
+    Left,
+    /// Move the cells below up.
+    Up,
+}
+
+impl DeleteShift {
+    /// The lowering's shift. O(1).
+    #[must_use]
+    pub const fn shift(self) -> crate::table_tools::CellShift {
+        match self {
+            Self::Left => crate::table_tools::CellShift::Left,
+            Self::Up => crate::table_tools::CellShift::Up,
+        }
+    }
+}
+
+/// Where text is cut into cells, or what joins cells back into text.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum TextSeparator {
+    /// A paragraph mark: each paragraph is a cell, each cell's paragraphs stay
+    /// paragraphs.
+    Paragraph,
+    /// A tab.
+    Tab,
+    /// A comma.
+    Comma,
+    /// A semicolon.
+    Semicolon,
+    /// The single character given in `character`.
+    Other,
+}
+
+impl TextSeparator {
+    /// The name `table_tools::Separator::parse` reads. O(1).
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Paragraph => "paragraph",
+            Self::Tab => "tab",
+            Self::Comma => "comma",
+            Self::Semicolon => "semicolon",
+            Self::Other => "other",
+        }
+    }
+}
+
+/// How a converted table's columns are sized.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum TableAutofit {
+    /// Equal fixed columns across the content width (the default, Word's).
+    #[default]
+    Fixed,
+    /// Columns sized by their contents.
+    Contents,
+    /// The table spans the window: 100% wide.
+    Window,
+}
+
+impl TableAutofit {
+    /// The name `table_tools::Autofit::parse` reads. O(1).
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Fixed => "fixed",
+            Self::Contents => "contents",
+            Self::Window => "window",
+        }
+    }
+}
+
 /// Horizontal paragraph alignment.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -845,6 +943,98 @@ pub enum Edit {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         text_direction: Option<CellTextDirection>,
     },
+    /// Turn table style options on or off: which parts of the table style
+    /// (header row, first column, total row, last column, banding) apply.
+    TableSetStyleOptions {
+        /// The table id.
+        table: String,
+        /// The style's header-row formatting.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        header_row: Option<bool>,
+        /// The style's first-column formatting.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        first_column: Option<bool>,
+        /// The style's total-row formatting.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        total_row: Option<bool>,
+        /// The style's last-column formatting.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_column: Option<bool>,
+        /// Alternate row shading.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        banded_rows: Option<bool>,
+        /// Alternate column shading.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        banded_columns: Option<bool>,
+    },
+    /// Split a table so a row starts a second table, with an empty paragraph
+    /// between; at row 0 the paragraph goes above the table instead.
+    TableSplit {
+        /// The table id (a table in the document body).
+        table: String,
+        /// The 0-based row that starts the second table.
+        row: u32,
+    },
+    /// Insert empty cells at one cell or a rectangle, shifting the cells
+    /// already there right or down.
+    TableInsertCells {
+        /// The table id.
+        table: String,
+        /// The cell, or one corner of the rectangle.
+        from: CellRef,
+        /// The opposite corner; omitted for one cell.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<CellRef>,
+        /// Which way the cells already there move.
+        shift: InsertShift,
+    },
+    /// Delete one cell or a rectangle, closing the gap left or up.
+    TableDeleteCells {
+        /// The table id.
+        table: String,
+        /// The cell, or one corner of the rectangle.
+        from: CellRef,
+        /// The opposite corner; omitted for one cell.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<CellRef>,
+        /// Which way the remaining cells move.
+        shift: DeleteShift,
+    },
+    /// Convert a table to text, each row a paragraph with its cells joined by
+    /// a separator (or, for `paragraph`, each cell's paragraphs in order).
+    TableToText {
+        /// The table id (a table in the document body).
+        table: String,
+        /// What joins the cells.
+        separator: TextSeparator,
+        /// The character, when `separator` is `other`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        character: Option<String>,
+        /// Convert tables nested in its cells too; kept as tables when false.
+        #[serde(default)]
+        nested: bool,
+    },
+    /// Convert consecutive paragraphs into a table, cutting each paragraph
+    /// into cells at a separator.
+    TextToTable {
+        /// The first paragraph.
+        from: Anchor,
+        /// The last paragraph, in the same container; omitted for one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<Anchor>,
+        /// Where each paragraph is cut into cells.
+        separator: TextSeparator,
+        /// The character, when `separator` is `other`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        character: Option<String>,
+        /// Columns, 1 to 63; omitted for what the text needs, and never fewer.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(range(min = 1, max = 63))]
+        columns: Option<u32>,
+        /// How the columns are sized; `fixed` when omitted.
+        #[serde(default)]
+        autofit: TableAutofit,
+    },
     /// Put a paragraph in a bulleted or numbered list, or take it out.
     SetList {
         /// The paragraph.
@@ -1221,6 +1411,38 @@ pub enum Edit {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         field: Option<String>,
     },
+    /// Remove a table of contents or table of figures: its field and every
+    /// entry paragraph.
+    RemoveTableOfContents {
+        /// The table's field id, as `read_blocks` lists it; omitted, the
+        /// document's only one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        field: Option<String>,
+    },
+    /// Insert a table of figures before a body paragraph: one entry per
+    /// caption of a label, with the page it is on.
+    InsertTableOfFigures {
+        /// The body paragraph the table goes before (its id).
+        before: Anchor,
+        /// The caption label listed: `Figure`, `Table`, `Equation` or a label
+        /// the document uses.
+        label: String,
+        /// Keep "Figure 3" in front of each entry's caption text; true when
+        /// omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        include_label: Option<bool>,
+    },
+    /// List paragraphs in the table of contents at a level, or keep them out
+    /// of it, without restyling them (their outline level).
+    SetContentsLevel {
+        /// The body paragraph ids.
+        #[schemars(length(min = 1, max = 500))]
+        paragraphs: Vec<String>,
+        /// 1 to 9 lists them at that level; 0 is "do not show in table of
+        /// contents".
+        #[schemars(range(min = 0, max = 9))]
+        level: u8,
+    },
     /// Insert a numbered caption above or below a table, picture or
     /// paragraph in the body; later captions of the same label renumber.
     InsertCaption {
@@ -1328,6 +1550,12 @@ impl Edit {
             Self::TableSplitCell { .. } => "table_split_cell",
             Self::TableDelete { .. } => "table_delete",
             Self::TableSetCellFormat { .. } => "table_set_cell_format",
+            Self::TableSetStyleOptions { .. } => "table_set_style_options",
+            Self::TableSplit { .. } => "table_split",
+            Self::TableInsertCells { .. } => "table_insert_cells",
+            Self::TableDeleteCells { .. } => "table_delete_cells",
+            Self::TableToText { .. } => "table_to_text",
+            Self::TextToTable { .. } => "text_to_table",
             Self::SetList { .. } => "set_list",
             Self::ChangeListLevel { .. } => "change_list_level",
             Self::RestartNumbering { .. } => "restart_numbering",
@@ -1364,6 +1592,9 @@ impl Edit {
             Self::InsertChart { .. } => "insert_chart",
             Self::InsertTableOfContents { .. } => "insert_table_of_contents",
             Self::UpdateTableOfContents { .. } => "update_table_of_contents",
+            Self::RemoveTableOfContents { .. } => "remove_table_of_contents",
+            Self::InsertTableOfFigures { .. } => "insert_table_of_figures",
+            Self::SetContentsLevel { .. } => "set_contents_level",
             Self::InsertCaption { .. } => "insert_caption",
             Self::UpdateCaptionNumbers { .. } => "update_caption_numbers",
             Self::InsertCrossReference { .. } => "insert_cross_reference",
@@ -1390,6 +1621,7 @@ impl Edit {
             Self::RenameBookmark { new_name, .. } => new_name.len(),
             Self::InsertField { result, .. } => result.as_ref().map_or(0, String::len),
             Self::InsertCaption { label, text, .. } => label.len() + text.len(),
+            Self::InsertTableOfFigures { label, .. } => label.len(),
             Self::SetAltText { text, .. } => text.as_ref().map_or(0, String::len),
             Self::SetWatermark { text, .. } => text.as_ref().map_or(0, String::len),
             Self::InsertPageNumber {
@@ -1426,6 +1658,12 @@ impl Edit {
             | Self::TableSplitCell { .. }
             | Self::TableDelete { .. }
             | Self::TableSetCellFormat { .. }
+            | Self::TableSetStyleOptions { .. }
+            | Self::TableSplit { .. }
+            | Self::TableInsertCells { .. }
+            | Self::TableDeleteCells { .. }
+            | Self::TableToText { .. }
+            | Self::TextToTable { .. }
             | Self::SetList { .. }
             | Self::ChangeListLevel { .. }
             | Self::RestartNumbering { .. }
@@ -1452,6 +1690,8 @@ impl Edit {
             | Self::InsertChart { .. }
             | Self::InsertTableOfContents { .. }
             | Self::UpdateTableOfContents { .. }
+            | Self::RemoveTableOfContents { .. }
+            | Self::SetContentsLevel { .. }
             | Self::UpdateCaptionNumbers { .. }
             | Self::InsertCrossReference { .. }
             | Self::ResolveComment { .. }

@@ -392,7 +392,8 @@
       "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
       "uiCommands": [
         "insert.table",
-        "insert.tableDialog"
+        "insert.tableDialog",
+        "insert.drawTable"
       ]
     },
     {
@@ -525,6 +526,137 @@
         "table.textDirection.horizontal",
         "table.textDirection.rotateDown",
         "table.textDirection.rotateUp"
+      ]
+    },
+    {
+      "emits": [
+        "SetTableProperties"
+      ],
+      "example": {
+        "banded_rows": false,
+        "header_row": true,
+        "op": "table_set_style_options",
+        "table": "1:9"
+      },
+      "family": "tables",
+      "id": "table_set_style_options",
+      "summary": "Turn table style options on or off: header row, first column, total row, last column, banded rows, banded columns.",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "table.look.headerRow",
+        "table.look.firstColumn",
+        "table.look.totalRow",
+        "table.look.lastColumn",
+        "table.look.bandedRows",
+        "table.look.bandedColumns"
+      ]
+    },
+    {
+      "emits": [
+        "ReplaceTable",
+        "InsertBlocks"
+      ],
+      "example": {
+        "op": "table_split",
+        "row": 1,
+        "table": "1:9"
+      },
+      "family": "tables",
+      "id": "table_split",
+      "summary": "Split a body table so a row starts a second table, with an empty paragraph between; at row 0 the paragraph goes above the table.",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "table.splitTable"
+      ]
+    },
+    {
+      "emits": [
+        "ReplaceTable"
+      ],
+      "example": {
+        "from": {
+          "column": 1,
+          "row": 0
+        },
+        "op": "table_insert_cells",
+        "shift": "right",
+        "table": "1:9"
+      },
+      "family": "tables",
+      "id": "table_insert_cells",
+      "summary": "Insert empty cells at a cell or rectangle, shifting the cells there right or down (refused in a table with merged cells).",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "table.insertCells"
+      ]
+    },
+    {
+      "emits": [
+        "ReplaceTable"
+      ],
+      "example": {
+        "from": {
+          "column": 0,
+          "row": 1
+        },
+        "op": "table_delete_cells",
+        "shift": "up",
+        "table": "1:9",
+        "to": {
+          "column": 1,
+          "row": 1
+        }
+      },
+      "family": "tables",
+      "id": "table_delete_cells",
+      "summary": "Delete a cell or rectangle of cells, closing the gap left or up (refused in a table with merged cells).",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "table.deleteCells"
+      ]
+    },
+    {
+      "emits": [
+        "InsertBlocks",
+        "DeleteTable"
+      ],
+      "example": {
+        "op": "table_to_text",
+        "separator": "tab",
+        "table": "1:9"
+      },
+      "family": "tables",
+      "id": "table_to_text",
+      "summary": "Convert a body table to text: one paragraph per row with its cells joined by a separator, or every cell's paragraphs in order.",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "table.convertToText"
+      ]
+    },
+    {
+      "emits": [
+        "DeleteBlocks",
+        "InsertTable"
+      ],
+      "example": {
+        "from": {
+          "node": "1:2"
+        },
+        "op": "text_to_table",
+        "separator": "comma"
+      },
+      "family": "tables",
+      "id": "text_to_table",
+      "summary": "Convert consecutive paragraphs into a table, cutting each paragraph into cells at a separator (tab, comma, semicolon, a character) or one cell per paragraph.",
+      "trackable": "no",
+      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "insert.textToTable"
       ]
     },
     {
@@ -1270,6 +1402,64 @@
     },
     {
       "emits": [
+        "RemoveFieldRange",
+        "DeleteBlocks"
+      ],
+      "example": {
+        "op": "remove_table_of_contents"
+      },
+      "family": "references",
+      "id": "remove_table_of_contents",
+      "summary": "Remove a table of contents or table of figures: its field and every entry paragraph.",
+      "trackable": "no",
+      "trackableReason": "Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "reference.removeToc"
+      ]
+    },
+    {
+      "emits": [
+        "SetStyleDefinition",
+        "InsertFieldRange"
+      ],
+      "example": {
+        "before": {
+          "node": "1:2"
+        },
+        "label": "Figure",
+        "op": "insert_table_of_figures"
+      },
+      "family": "references",
+      "id": "insert_table_of_figures",
+      "summary": "Insert a table of figures (every caption of a label, with its page) before a body paragraph.",
+      "trackable": "no",
+      "trackableReason": "Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "reference.tableOfFigures"
+      ]
+    },
+    {
+      "emits": [
+        "SetParagraphProperties"
+      ],
+      "example": {
+        "level": 2,
+        "op": "set_contents_level",
+        "paragraphs": [
+          "1:2"
+        ]
+      },
+      "family": "references",
+      "id": "set_contents_level",
+      "summary": "List body paragraphs in the table of contents at a level (1 to 9), or keep them out of it (0), without restyling them.",
+      "trackable": "no",
+      "trackableReason": "Tables of contents, captions and cross-references cannot be suggested yet: they insert fields and whole paragraphs and rewrite field results, which the review lowering does not track. Use mode `direct` under a profile that grants `edit`.",
+      "uiCommands": [
+        "reference.addText."
+      ]
+    },
+    {
+      "emits": [
         "SetStyleDefinition",
         "InsertBlocks",
         "SetInlines"
@@ -1442,7 +1632,13 @@
         "table_merge_cells",
         "table_split_cell",
         "table_delete",
-        "table_set_cell_format"
+        "table_set_cell_format",
+        "table_set_style_options",
+        "table_split",
+        "table_insert_cells",
+        "table_delete_cells",
+        "table_to_text",
+        "text_to_table"
       ],
       "name": "tables"
     },
@@ -1524,6 +1720,9 @@
       "commands": [
         "insert_table_of_contents",
         "update_table_of_contents",
+        "remove_table_of_contents",
+        "insert_table_of_figures",
+        "set_contents_level",
         "insert_caption",
         "update_caption_numbers",
         "insert_cross_reference"
@@ -1862,50 +2061,6 @@
       "reason": "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1)."
     },
     {
-      "id": "table.look.headerRow",
-      "reason": "Table style options, converting between text and tables, splitting a table and shifting cells are lowered in casual_doc_command::table_tools, which an agent command can call, but no agent command offers them yet (docs/181 §3)."
-    },
-    {
-      "id": "table.look.firstColumn",
-      "reason": "Table style options, converting between text and tables, splitting a table and shifting cells are lowered in casual_doc_command::table_tools, which an agent command can call, but no agent command offers them yet (docs/181 §3)."
-    },
-    {
-      "id": "table.look.totalRow",
-      "reason": "Table style options, converting between text and tables, splitting a table and shifting cells are lowered in casual_doc_command::table_tools, which an agent command can call, but no agent command offers them yet (docs/181 §3)."
-    },
-    {
-      "id": "table.look.lastColumn",
-      "reason": "Table style options, converting between text and tables, splitting a table and shifting cells are lowered in casual_doc_command::table_tools, which an agent command can call, but no agent command offers them yet (docs/181 §3)."
-    },
-    {
-      "id": "table.look.bandedRows",
-      "reason": "Table style options, converting between text and tables, splitting a table and shifting cells are lowered in casual_doc_command::table_tools, which an agent command can call, but no agent command offers them yet (docs/181 §3)."
-    },
-    {
-      "id": "table.look.bandedColumns",
-      "reason": "Table style options, converting between text and tables, splitting a table and shifting cells are lowered in casual_doc_command::table_tools, which an agent command can call, but no agent command offers them yet (docs/181 §3)."
-    },
-    {
-      "id": "table.splitTable",
-      "reason": "Table style options, converting between text and tables, splitting a table and shifting cells are lowered in casual_doc_command::table_tools, which an agent command can call, but no agent command offers them yet (docs/181 §3)."
-    },
-    {
-      "id": "table.insertCells",
-      "reason": "Table style options, converting between text and tables, splitting a table and shifting cells are lowered in casual_doc_command::table_tools, which an agent command can call, but no agent command offers them yet (docs/181 §3)."
-    },
-    {
-      "id": "table.deleteCells",
-      "reason": "Table style options, converting between text and tables, splitting a table and shifting cells are lowered in casual_doc_command::table_tools, which an agent command can call, but no agent command offers them yet (docs/181 §3)."
-    },
-    {
-      "id": "table.convertToText",
-      "reason": "Table style options, converting between text and tables, splitting a table and shifting cells are lowered in casual_doc_command::table_tools, which an agent command can call, but no agent command offers them yet (docs/181 §3)."
-    },
-    {
-      "id": "insert.textToTable",
-      "reason": "Table style options, converting between text and tables, splitting a table and shifting cells are lowered in casual_doc_command::table_tools, which an agent command can call, but no agent command offers them yet (docs/181 §3)."
-    },
-    {
       "id": "layout.headerFooterSettings",
       "reason": "The Header & Footer options dialog also writes the header and footer distances, which agents are not offered; its toggles and page numbering are (set_different_first_page, set_different_odd_even, set_page_numbering)."
     },
@@ -1936,20 +2091,8 @@
     {
       "id": "review.comment.delete",
       "reason": "No command deletes a comment yet; an agent resolves a thread with resolve_comment."
-    },
-    {
-      "id": "reference.removeToc",
-      "reason": "Removing a table of contents, a table of figures and Add text's contents levels are not offered to agents yet; insert_table_of_contents and update_table_of_contents are (docs/181 §3)."
-    },
-    {
-      "id": "reference.tableOfFigures",
-      "reason": "Removing a table of contents, a table of figures and Add text's contents levels are not offered to agents yet; insert_table_of_contents and update_table_of_contents are (docs/181 §3)."
-    },
-    {
-      "id": "reference.addText.",
-      "reason": "Removing a table of contents, a table of figures and Add text's contents levels are not offered to agents yet; insert_table_of_contents and update_table_of_contents are (docs/181 §3)."
     }
   ],
-  "uiNotExposedCeiling": 102,
-  "vocabularyVersion": "1.5"
+  "uiNotExposedCeiling": 88,
+  "vocabularyVersion": "1.6"
 }

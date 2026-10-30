@@ -271,7 +271,7 @@ const CEILINGS = new Map([
   // Measured 2026-10-30: three "<n> pt" width labels (a number and a unit symbol)
   // and three dialog title KEYS the scanner reads as prose.
   ["src/page_borders.mjs", 3],
-  ["src/pdf_import.mjs", 3],
+  ["src/pdf_import.mjs", 4],
   ["src/editor_edit_pipeline.mjs", 1],
   ["src/editor_palette_ui.mjs", 1],
   ["src/editor_link_dialog.mjs", 2],
@@ -301,6 +301,12 @@ const CEILINGS = new Map([
   // The table tools' dialogs and popovers (`docs/153` table rows): routed from
   // the first commit, measured at zero.
   ["src/table_tools.mjs", 0],
+  // Borders and shading, table positioning and Draw table (`docs/153`
+  // table.borders-dialog, table.position-dialog, table.draw): every sentence
+  // through t(), every label in the dialog markup. Routed from the first commit.
+  ["src/table_borders_dialog.mjs", 0],
+  ["src/table_position_dialog.mjs", 0],
+  ["src/table_draw_mode.mjs", 0],
   // The object right-click menu's nine row labels ("Wrap text", "Alt text…",
   // "Shape fill", "No fill", "Shape outline", "No outline", "Crop image",
   // "Properties…", "Delete"). They were nine of `main.js`'s 342 and moved here

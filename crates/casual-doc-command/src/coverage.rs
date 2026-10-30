@@ -25,7 +25,6 @@ pub enum Reach {
     NotExposed(&'static str),
 }
 
-const TABLES: &str = "Whole-table properties (width, borders, style, layout) are not offered to agents yet; cell formatting and structure are.";
 const OBJECTS: &str = "Grouping, moving an inline object, inserting into a group and text-box body properties are arrangement gestures not offered to agents yet; pictures and their formatting are (docs/181 §12, lane families-b).";
 const DOCUMENT: &str = "Document-wide settings are not offered to agents; a person changes them.";
 const SECTIONS: &str = "Mirrored margins are a document-wide setting a person chooses; section page setup is offered (set_page_setup).";
@@ -88,7 +87,7 @@ classify! {
     InsertInlineObject => Agent,
     RemoveInlineObject => NotExposed(OBJECTS),
     SetTableCellProperties => Agent,
-    SetTableProperties => NotExposed(TABLES),
+    SetTableProperties => Agent,
     ReplaceTable => Agent,
     SetCoreProperties => NotExposed(DOCUMENT),
     UpdateReviewState => Agent,
@@ -109,7 +108,7 @@ classify! {
     InsertField => Agent,
     RemoveField => NotExposed(REFERENCES),
     InsertFieldRange => Agent,
-    RemoveFieldRange => NotExposed(REFERENCES),
+    RemoveFieldRange => Agent,
     InsertNote => Agent,
     RemoveNote => NotExposed(NOTES),
     CreateHeaderFooterBody => Agent,
@@ -145,8 +144,10 @@ classify! {
 /// person's design choice in the Page Borders dialog, recorded in `docs/181` §3.
 /// 17 -> 18 with `SetNoteProperties` (`docs/153` `page.note.settings`, `109` RM-24):
 /// note options are a person's layout choice in the Footnote and Endnote dialog,
-/// recorded in `docs/181` §3.
-pub const NOT_EXPOSED_CEILING: usize = 18;
+/// recorded in `docs/181` §3. 18 -> 16 when `table_set_style_options` reached
+/// `SetTableProperties` and `remove_table_of_contents` reached
+/// `RemoveFieldRange` (`docs/181` §3, round 3).
+pub const NOT_EXPOSED_CEILING: usize = 16;
 
 /// The reach of the variant named `name`, if it is one. O(variants).
 #[must_use]

@@ -43,6 +43,7 @@
 // Simple from No markup. So Suggesting turning the markup on (review UX Q1), the
 // View menu's `view.showChanges` toggle and a version preview leaving can never
 // leave this picker saying something the canvas does not show.
+import { authoredTitle } from "./localize.mjs";
 import { t } from "./i18n.mjs";
 import { onButton, registerPopover } from "./popover_manager.mjs";
 
@@ -127,7 +128,9 @@ export function createReviewDisplay(ed) {
       await ed.showVersionPreview(copy, { reason: t("reviewDisplay.originalReadOnly") });
     } else {
       await leaveOriginal();
-      hidden = next === "none";
+      // Only an off choice is remembered: All markup leaves it, so markup turned
+      // off again by something else returns to the reader's own off mode.
+      if (next !== "all") hidden = next === "none";
       await ed.setShowingChanges(next === "all");
       ed.drawSelection();
     }
@@ -154,7 +157,9 @@ export function createReviewDisplay(ed) {
     const current = mode();
     if (button) {
       button.disabled = !ed.doc;
-      button.title = ed.doc ? t("reviewDisplay.tip") : t("command.needsDocument");
+      // The authored title, through the catalogue when it has arrived: chrome
+      // reflected at boot must not paint a raw key (chrome-raw-keys, SKILL §11).
+      button.title = ed.doc ? authoredTitle(button) : t("command.needsDocument");
     }
     for (const row of menu?.querySelectorAll("[data-display-mode]") ?? []) {
       row.setAttribute("aria-checked", String(row.dataset.displayMode === current));

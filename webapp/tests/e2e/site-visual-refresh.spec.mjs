@@ -9,8 +9,8 @@ test("the developer landing page exposes the redesigned hero and real editor rou
   // The 2026-09 redesign's headline, with its serif phrase as a real <em> so the
   // emphasis survives for assistive technology and not only for the eye.
   const h1 = page.getByRole("heading", { level: 1 });
-  await expect(h1).toHaveText(/Build documents on an engine\s*you control\./);
-  await expect(h1.locator("em")).toHaveText("you control.");
+  await expect(h1).toHaveText(/The open-source document engine\s*for your product\./);
+  await expect(h1.locator("em")).toHaveText("for your product.");
 
   // The primary route into the product stays same-origin and relative. The
   // design prototype linked the absolute production URL, which breaks every

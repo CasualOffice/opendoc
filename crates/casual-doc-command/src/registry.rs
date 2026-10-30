@@ -404,7 +404,10 @@ pub const COMMANDS: &[Command] = &[
         emits: &["InsertTable"],
         trackable: Trackable::No(TABLE_NOT_TRACKABLE),
         example: r#"{"op":"insert_table","after":{"node":"1:2"},"rows":2,"columns":3}"#,
-        ui_commands: &["insert.table", "insert.tableDialog"],
+        // `insert.drawTable` is Draw Table's pencil: its outline inserts a table,
+        // which is this command; an agent splits cells with the row and column
+        // inserts below, which the pencil's lines are the pointer form of.
+        ui_commands: &["insert.table", "insert.tableDialog", "insert.drawTable"],
     },
     Command {
         id: "table_insert_column",
@@ -463,6 +466,67 @@ pub const COMMANDS: &[Command] = &[
             "table.textDirection.rotateDown",
             "table.textDirection.rotateUp",
         ],
+    },
+    Command {
+        id: "table_set_style_options",
+        family: Family::Tables,
+        summary: "Turn table style options on or off: header row, first column, total row, last column, banded rows, banded columns.",
+        emits: &["SetTableProperties"],
+        trackable: Trackable::No(TABLE_NOT_TRACKABLE),
+        example: r#"{"op":"table_set_style_options","table":"1:9","header_row":true,"banded_rows":false}"#,
+        ui_commands: &[
+            "table.look.headerRow",
+            "table.look.firstColumn",
+            "table.look.totalRow",
+            "table.look.lastColumn",
+            "table.look.bandedRows",
+            "table.look.bandedColumns",
+        ],
+    },
+    Command {
+        id: "table_split",
+        family: Family::Tables,
+        summary: "Split a body table so a row starts a second table, with an empty paragraph between; at row 0 the paragraph goes above the table.",
+        emits: &["ReplaceTable", "InsertBlocks"],
+        trackable: Trackable::No(TABLE_NOT_TRACKABLE),
+        example: r#"{"op":"table_split","table":"1:9","row":1}"#,
+        ui_commands: &["table.splitTable"],
+    },
+    Command {
+        id: "table_insert_cells",
+        family: Family::Tables,
+        summary: "Insert empty cells at a cell or rectangle, shifting the cells there right or down (refused in a table with merged cells).",
+        emits: &["ReplaceTable"],
+        trackable: Trackable::No(TABLE_NOT_TRACKABLE),
+        example: r#"{"op":"table_insert_cells","table":"1:9","from":{"row":0,"column":1},"shift":"right"}"#,
+        ui_commands: &["table.insertCells"],
+    },
+    Command {
+        id: "table_delete_cells",
+        family: Family::Tables,
+        summary: "Delete a cell or rectangle of cells, closing the gap left or up (refused in a table with merged cells).",
+        emits: &["ReplaceTable"],
+        trackable: Trackable::No(TABLE_NOT_TRACKABLE),
+        example: r#"{"op":"table_delete_cells","table":"1:9","from":{"row":1,"column":0},"to":{"row":1,"column":1},"shift":"up"}"#,
+        ui_commands: &["table.deleteCells"],
+    },
+    Command {
+        id: "table_to_text",
+        family: Family::Tables,
+        summary: "Convert a body table to text: one paragraph per row with its cells joined by a separator, or every cell's paragraphs in order.",
+        emits: &["InsertBlocks", "DeleteTable"],
+        trackable: Trackable::No(TABLE_NOT_TRACKABLE),
+        example: r#"{"op":"table_to_text","table":"1:9","separator":"tab"}"#,
+        ui_commands: &["table.convertToText"],
+    },
+    Command {
+        id: "text_to_table",
+        family: Family::Tables,
+        summary: "Convert consecutive paragraphs into a table, cutting each paragraph into cells at a separator (tab, comma, semicolon, a character) or one cell per paragraph.",
+        emits: &["DeleteBlocks", "InsertTable"],
+        trackable: Trackable::No(TABLE_NOT_TRACKABLE),
+        example: r#"{"op":"text_to_table","from":{"node":"1:2"},"separator":"comma"}"#,
+        ui_commands: &["insert.textToTable"],
     },
     Command {
         id: "set_list",
@@ -859,6 +923,33 @@ pub const COMMANDS: &[Command] = &[
         ],
     },
     Command {
+        id: "remove_table_of_contents",
+        family: Family::References,
+        summary: "Remove a table of contents or table of figures: its field and every entry paragraph.",
+        emits: &["RemoveFieldRange", "DeleteBlocks"],
+        trackable: Trackable::No(REFERENCES_NOT_TRACKABLE),
+        example: r#"{"op":"remove_table_of_contents"}"#,
+        ui_commands: &["reference.removeToc"],
+    },
+    Command {
+        id: "insert_table_of_figures",
+        family: Family::References,
+        summary: "Insert a table of figures (every caption of a label, with its page) before a body paragraph.",
+        emits: &["SetStyleDefinition", "InsertFieldRange"],
+        trackable: Trackable::No(REFERENCES_NOT_TRACKABLE),
+        example: r#"{"op":"insert_table_of_figures","before":{"node":"1:2"},"label":"Figure"}"#,
+        ui_commands: &["reference.tableOfFigures"],
+    },
+    Command {
+        id: "set_contents_level",
+        family: Family::References,
+        summary: "List body paragraphs in the table of contents at a level (1 to 9), or keep them out of it (0), without restyling them.",
+        emits: &["SetParagraphProperties"],
+        trackable: Trackable::No(REFERENCES_NOT_TRACKABLE),
+        example: r#"{"op":"set_contents_level","paragraphs":["1:2"],"level":2}"#,
+        ui_commands: &["reference.addText."],
+    },
+    Command {
         id: "insert_caption",
         family: Family::References,
         summary: "Insert a numbered caption (Figure, Table, Equation or the document's own label) above or below a table, picture or paragraph.",
@@ -968,14 +1059,11 @@ const UI_PAGE_BORDERS: &str = "Page borders are a person's design choice in the 
 const UI_HEADER_FOOTER_SETTINGS: &str = "The Header & Footer options dialog also writes the header and footer distances, which agents are not offered; its toggles and page numbering are (set_different_first_page, set_different_odd_even, set_page_numbering).";
 const UI_TABLES: &str = "Table structure beyond inserting and deleting rows (columns, merge and split, move, sort, sizing, cell and table formatting, table styles) arrives with the rest of the tables family (docs/181 §4.2 step 1).";
 
-const UI_TABLE_TOOLS: &str = "Table style options, converting between text and tables, splitting a table and shifting cells are lowered in casual_doc_command::table_tools, which an agent command can call, but no agent command offers them yet (docs/181 §3).";
-
 const UI_MODE: &str = "Switches the editor's own editing mode, not the document; an agent's mode is its profile plus the plan's `mode`.";
 const UI_PROTECTION: &str =
     "Protection and tracking settings are a person's decision, never an agent's.";
 const UI_COMMENT_DELETE: &str =
     "No command deletes a comment yet; an agent resolves a thread with resolve_comment.";
-const UI_CONTENTS: &str = "Removing a table of contents, a table of figures and Add text's contents levels are not offered to agents yet; insert_table_of_contents and update_table_of_contents are (docs/181 §3).";
 
 /// Editor command ids (`webapp/src/host_contract.mjs` `COMMAND_CONTRACT` and
 /// `COMMAND_FAMILIES`) that can change the document but that no registry
@@ -1067,17 +1155,6 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
     ("table.borderStyle", UI_TABLES),
     ("table.properties", UI_TABLES),
     ("table.style.none", UI_TABLES),
-    ("table.look.headerRow", UI_TABLE_TOOLS),
-    ("table.look.firstColumn", UI_TABLE_TOOLS),
-    ("table.look.totalRow", UI_TABLE_TOOLS),
-    ("table.look.lastColumn", UI_TABLE_TOOLS),
-    ("table.look.bandedRows", UI_TABLE_TOOLS),
-    ("table.look.bandedColumns", UI_TABLE_TOOLS),
-    ("table.splitTable", UI_TABLE_TOOLS),
-    ("table.insertCells", UI_TABLE_TOOLS),
-    ("table.deleteCells", UI_TABLE_TOOLS),
-    ("table.convertToText", UI_TABLE_TOOLS),
-    ("insert.textToTable", UI_TABLE_TOOLS),
     ("layout.headerFooterSettings", UI_HEADER_FOOTER_SETTINGS),
     ("layout.pageBorders", UI_PAGE_BORDERS),
     ("reference.noteSettings", UI_NOTE_SETTINGS),
@@ -1086,9 +1163,6 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
     ("review.mode.suggesting", UI_MODE),
     ("review.restrictEditing", UI_PROTECTION),
     ("review.comment.delete", UI_COMMENT_DELETE),
-    ("reference.removeToc", UI_CONTENTS),
-    ("reference.tableOfFigures", UI_CONTENTS),
-    ("reference.addText.", UI_CONTENTS),
 ];
 
 /// The length of [`UI_NOT_EXPOSED`]. It may only fall: lower it when a command
@@ -1099,5 +1173,10 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
 /// `reference.removeToc`, `reference.tableOfFigures` and `reference.addText.`
 /// (`109` RM-25), 99 -> 101 with `reference.noteSettings` and
 /// `reference.convertNotes` (`109` RM-24), and 101 -> 102 with `format.language`
-/// (`109` RM-42), each recorded in `docs/181` §3.
-pub const UI_NOT_EXPOSED_CEILING: usize = 102;
+/// (`109` RM-42), each recorded in `docs/181` §3. 102 -> 88 when the eleven
+/// table tools and the three contents ids gained agent commands
+/// (`table_set_style_options`, `table_split`, `table_insert_cells`,
+/// `table_delete_cells`, `table_to_text`, `text_to_table`,
+/// `remove_table_of_contents`, `insert_table_of_figures`,
+/// `set_contents_level`), recorded in `docs/181` §3.
+pub const UI_NOT_EXPOSED_CEILING: usize = 88;

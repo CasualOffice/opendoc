@@ -320,9 +320,9 @@ not claim those gains. See docs/170 for the transaction, rendering and UX design
 
 | Task | Closes in docs/153 |
 | --- | --- |
-| Note settings, and layout honouring format, restart and position (FID-L-05) | `page.note.settings` |
-| Convert footnotes to endnotes | `page.note.convert` |
-| Go to next or previous note | `page.note.goto` |
+| Note settings, and layout honouring format, restart and position (FID-L-05) | — |
+| Convert footnotes to endnotes | — |
+| Go to next or previous note | — |
 | Separator customisation | — |
 
 ### 10. Contents, captions and cross-references (RM-25)
@@ -333,9 +333,9 @@ not claim those gains. See docs/170 for the transaction, rendering and UX design
 
 | Task | Closes in docs/153 |
 | --- | --- |
-| Contents settings and leader | `page.toc.settings`, `page.toc.leader` |
-| Contents styles, removal and adding a paragraph | `page.toc.styles`, `page.toc.remove`, `page.toc.addText` |
-| Table of figures | `page.tableOfFigures` |
+| Contents settings and leader | — |
+| Contents styles, removal and adding a paragraph | — |
+| Table of figures | — |
 | Cross-references and links to headings | `page.crossReference.numberedItem`, `page.hyperlink.internal` |
 
 ### 11. Tables: structure (RM-26)
@@ -346,10 +346,10 @@ not claim those gains. See docs/170 for the transaction, rendering and UX design
 
 | Task | Closes in docs/153 |
 | --- | --- |
-| Insert dialog and nested tables | `table.insert-custom-size`, `table.nested` |
-| Split a table | `table.split-table` |
-| Convert between text and tables | `table.text-to-table`, `table.table-to-text` |
-| Insert and delete cells with a shift | `table.insert-cells`, `table.delete-cells` |
+| Insert dialog and nested tables | — |
+| Split a table | — |
+| Convert between text and tables | — |
+| Insert and delete cells with a shift | — |
 | Select the current cell | `table.select-cell` |
 
 ### 12. Tables: look and tools (RM-27)
@@ -360,7 +360,7 @@ not claim those gains. See docs/170 for the transaction, rendering and UX design
 
 | Task | Closes in docs/153 |
 | --- | --- |
-| Table style options and built-in gallery | `table.banded-rows-columns`, `table.styles` |
+| Table style options and built-in gallery | `table.styles` |
 | Table fill, width and margins | `table.table-background`, `table.preferred-width`, `table.cell-margins` |
 | Borders: presets and the dialog with a preview | `table.cell-borders`, `table.borders-dialog` |
 | Eraser and draw table | `table.erase-borders`, `table.draw` |
@@ -415,7 +415,7 @@ not claim those gains. See docs/170 for the transaction, rendering and UX design
 
 | Task | Closes in docs/153 |
 | --- | --- |
-| Display modes: simple markup, original, final | `review.display-mode-simple-markup`, `review.display-mode-original`, `review.display-mode-final` |
+| Display modes: simple markup, original, final | — |
 | Decide changes in a selection; resolve all comments | `review.accept-reject-in-selection`, `review.comment-resolve-all` |
 | Suggesting table and list structure; table revisions listed and decided | — |
 | Comments over several paragraphs; highlight drawn by the engine | — |
@@ -428,8 +428,8 @@ not claim those gains. See docs/170 for the transaction, rendering and UX design
 
 | Task | Closes in docs/153 |
 | --- | --- |
-| Protect the document from the editor | `review.protect-document`, `review.restrict-editing` |
-| Set a password (needs the ADR-052 decision) | `review.protection-password` |
+| Protect the document from the editor | — |
+| Set a password (needs the ADR-052 decision) | — |
 | Editable ranges (w:permStart/w:permEnd): model, shade, edit | — |
 | A tracked-changes restriction forces Suggesting | — |
 
@@ -494,7 +494,7 @@ not claim those gains. See docs/170 for the transaction, rendering and UX design
 | Task | Closes in docs/153 |
 | --- | --- |
 | Section and cell text direction through flow, paint and hit-testing (FID-L-08) | — |
-| Text direction in a cell | `table.cell-text-direction` |
+| Text direction in a cell | — |
 | Vertical and rotated text-box content | — |
 
 ### 23. Rendering fidelity (RM-38)

@@ -348,27 +348,23 @@ export function tableToolCommands(context, host) {
       disabledReason: structuralReason,
       run: () => host.openCellFormat(),
     },
-    // The border LINE STYLE's second and third surfaces (`docs/153`
-    // `table.border-width-style`; `105` UX-004). The control itself is the pen in
-    // the Cell formatting popover, which is Word's Table Design shape — line
-    // style, weight and colour, applied by whichever border button comes next —
-    // and this row carries it into the right-click menu and the command palette
-    // ("Table: Border line style…") rather than growing a second copy of a control
-    // that would then have to agree with the first about what the pen is set to.
-    //
-    // It LANDS ON the select rather than opening a menu of six values: a style
-    // chosen with no border button pressed changes nothing on the page, so six
-    // palette rows would each be a control that appears to do nothing — which is
-    // the dead control `docs/63` forbids, in the one costume that passes a
-    // reachability guard.
+    // Borders and shading… (`docs/153` `table.borders-dialog`, and the line
+    // style of `table.border-width-style`). Word's dialog: a preview whose six
+    // lines are clicked on and off, presets, the pen (style, width, colour), the
+    // shading and "Apply to" (`table_borders_dialog.mjs`). The id is the one the
+    // line-style row already had, because the dialog IS where the line style is
+    // now chosen with the lines it applies to: that row used to land on the
+    // popover's pen select, which only said what the NEXT border button would
+    // draw. One command, one dialog, on the Table menu, the right-click menu,
+    // the palette and the Table band.
     {
       id: "table.borderStyle",
-      label: t("table.borderStyleCommand"),
+      label: t("table.bordersShadingCommand"),
       group: "table-properties",
       icon: "tableLayout",
       enabled: structuralEnabled,
       disabledReason: structuralReason,
-      run: () => host.openCellFormat("borderStyle"),
+      run: () => host.openBordersDialog(),
     },
     {
       id: "table.properties",

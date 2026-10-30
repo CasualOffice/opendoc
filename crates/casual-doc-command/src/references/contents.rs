@@ -933,6 +933,43 @@ pub fn insert_table_of_contents(
     )
 }
 
+/// Inserts a table of FIGURES before the top-level body block holding
+/// `before`: every caption of `label`, with or without the label in front of
+/// each entry, with the default entry format (page numbers on a right-aligned
+/// dot leader). The agent command's lowering; the editor's dialog reaches the
+/// same table through [`insert_table_of_contents_with`] with
+/// [`TocSource::Captions`]. Like [`insert_table_of_contents`] it refuses inside
+/// an existing table rather than replacing it.
+///
+/// # Errors
+/// As [`insert_table_of_contents_with`], and inside an existing table.
+pub fn insert_table_of_figures(
+    document: &Document,
+    facts: &impl LayoutFacts,
+    before: NodeId,
+    label: &str,
+    include_label: bool,
+    tab_position_twips: i32,
+    ids: MintId<'_>,
+) -> Result<Placed, String> {
+    let options = TocOptions {
+        source: TocSource::Captions {
+            label: label.to_owned(),
+            include_label,
+        },
+        ..TocOptions::default()
+    };
+    insert_contents(
+        document,
+        facts,
+        before,
+        &options,
+        tab_position_twips,
+        ids,
+        Replace::Refuse,
+    )
+}
+
 /// What an insert does when the caret is inside an existing table.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Replace {

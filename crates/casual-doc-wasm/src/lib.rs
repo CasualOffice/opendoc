@@ -245,6 +245,10 @@ mod picture_insert;
 // `object.edit-points`, `docs/109` FID-SH-02).
 mod shape_points;
 
+// Own line (anti-conflict): the Borders and Shading dialog, table text
+// wrapping and positioning, and Draw Table (`docs/153` table rows).
+mod table_layout;
+
 // What each copied paragraph IS (heading, list item, table cell), so the
 // clipboard's HTML keeps structure (`docs/174` TA-12).
 mod clipboard_outline;
