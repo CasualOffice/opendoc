@@ -85,6 +85,12 @@ export function startPlugin({ manifest, granted, env, container }) {
   let state = "starting";
 
   const grant = () => effectiveGrant(manifest.permissions, granted(), env.access());
+  /** The private preview, signed by this add-in unless the platform says it is
+   *  the product's own assistant. */
+  const previewAs = (plan) => {
+    const name = env.addInName?.() ?? "";
+    return name && typeof env.ai.previewFrom === "function" ? env.ai.previewFrom(plan, name) : env.ai.preview(plan);
+  };
   const need = (permission) => {
     if (!grant().permissions.includes(permission)) throw new RpcRefusal("permission-denied", `This add-in does not hold the ${permission} permission.`, { permission });
   };
@@ -111,6 +117,8 @@ export function startPlugin({ manifest, granted, env, container }) {
         // values, so a plugin's page draws with the product's colours and spacing in
         // both themes rather than inventing its own (owner rule, 2026-10-31).
         tokens: env.tokens?.() ?? {},
+        // What the administrator configured for this plugin (a server URL, say).
+        config: env.config?.() ?? {},
         // A stable, opaque key for the open document on this device, so a plugin may
         // keep per-document state (the assistant's history) without learning its name.
         documentKey: held.permissions.includes("read") ? (env.documentKey?.() ?? null) : null,
@@ -132,11 +140,11 @@ export function startPlugin({ manifest, granted, env, container }) {
       if (read) return env.ai.read({ ...args, tool: read });
       if (name === "add_comment") {
         const { base_revision, ...edit } = args;
-        return proposal(env.ai.preview({ base_revision, edits: [{ op: "comment", ...edit }] }));
+        return proposal(previewAs({ base_revision, edits: [{ op: "comment", ...edit }] }));
       }
       if (args.mode === "direct" && !grant().direct) throw new RpcRefusal("permission-denied", "Direct edits are not granted to this add-in.", { permission: "edit" });
       // `propose_edits` / `review_tracked_changes`: the private card. Never apply.
-      return proposal(env.ai.preview(args));
+      return proposal(previewAs(args));
     },
     "selection/get"() {
       need("read");

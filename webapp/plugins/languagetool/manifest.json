@@ -1,0 +1,16 @@
+{
+  "manifestVersion": 1,
+  "id": "org.casualoffice.languagetool",
+  "name": "LanguageTool",
+  "version": "1.0.0",
+  "description": "Grammar, style and spelling checks from a LanguageTool server, proposed as suggestions. The public server is used unless your administrator set your own.",
+  "publisher": "Casual Office",
+  "entry": "index.html",
+  "permissions": ["read", "suggest", "network"],
+  "network": ["https://api.languagetool.org"],
+  "contributes": {
+    "commands": [{ "id": "check", "title": "Check with LanguageTool" }],
+    "ribbon": [{ "command": "check", "icon": "spellcheck" }],
+    "panel": { "title": "LanguageTool" }
+  }
+}

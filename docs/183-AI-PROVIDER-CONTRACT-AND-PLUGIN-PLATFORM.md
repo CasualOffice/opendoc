@@ -1,6 +1,6 @@
 # 183 — The AI provider contract and the plugin platform
 
-**Status:** Designed 2026-10-30. P1 (provider contract), P2 (plugin runtime) and P3 (Casual AI)
+**Status:** Designed 2026-10-30. P1 (provider contract), P2 (plugin runtime), P3 (Casual AI) and P4 (LanguageTool, Readability)
 built on `program/ai-plugins-2`; the owner chose F1–F7 on 2026-10-31 (§13) and set UI rules
 that changed parts of §8 (§16).
 **Decides:** ADR-077 (proposed). **Rows:** `docs/109` RM-50 (provider contract), RM-51
@@ -947,3 +947,45 @@ a suggestion.
 **Not built in P3, and why.** Image generation (F1: excluded). Ask across files and MCP tools
 (§13 #9, #10) are RM-54 with RAG and the MCP client. Drafting a new document from a prompt
 (§13 #3, second half) waits for a "new document from text" path in the editor.
+
+## 18. Built: P4, two more first-party add-ins (RM-53)
+
+**Licences checked first.** LanguageTool's server and libraries are LGPL-2.1
+(<https://github.com/languagetool-org/languagetool>); the add-in contains none of that code. It
+talks to a server over the documented HTTP API (`POST /v2/check`,
+<https://languagetool.org/http-api/>), as any client does. Mermaid
+(<https://github.com/mermaid-js/mermaid>) is MIT, so its licence is not the obstacle; the
+obstacle is that the webapp has no runtime npm dependency at all (`docs/182` records PDF.js
+being refused as "the first runtime npm dependency"), and Mermaid with its rendering
+dependencies would be several megabytes of vendored code, and a diagram can only be inserted as
+a picture, which the engine does not track as a suggestion (`insert_image` is not trackable, so
+an add-in could insert one only under a host's direct grant). **Mermaid is therefore not built;
+the owner's call** (vendoring a library and an untracked insert path). In its place:
+**Readability**, which needs no third-party code and fits the suggestion model.
+
+- **LanguageTool** (`webapp/plugins/languagetool/`): `read`, `suggest`, `network` to
+  `https://api.languagetool.org`. Off until turned on; it is the one first-party add-in with no
+  installation grant, so turning it on shows the grant prompt naming the server text goes to. An
+  administrator points it at their own server in the host catalogue (`network` and
+  `config.server`, `docs/183` §9; a person's own install cannot). The panel checks the document in
+  chunks of whole paragraphs, lists each issue with the flagged text and up to three
+  replacements, proposes one fix or all of them as tracked suggestions, and drops a match that
+  spans paragraphs or no longer matches the text (counted, never guessed).
+- **Readability** (`webapp/plugins/readability/`): `read`, `comment`; installed with the product
+  and runs entirely in its sandbox (no network permission, so the CSP lets it reach nothing).
+  The Flesch reading ease and Flesch-Kincaid grade for English, long sentences (over 25 words) in
+  any language written with spaces, and passive voice and filler words in English, each proposed
+  as a comment. The heuristics are stated in the code and the panel says when a score is
+  English-only.
+- **Signed as themselves.** An add-in's proposal is authored "<name> (add-in)", not "Casual AI":
+  a new engine export `aiPreviewFrom` (`crates/casual-doc-wasm/src/ai.rs`) takes the add-in's
+  manifest name from the editor and appends " (add-in)" itself, so no add-in can sign as a
+  person; `aiPreview` and the assistant are unchanged.
+- **Shared panel layout** in `webapp/plugins/sdk/panel.css`, tokens only.
+
+**Guards, each driven red:** the add-in author (`an_add_in_signs_as_itself_and_never_as_a_person`:
+the suffix dropped), chunk boundaries, the cross-paragraph drop, the overlap rule in fix-all, the
+English-only switch, the published formula, comments-only plans
+(`webapp/tests/plugin_firstparty.test.mjs`), and in a browser the grant prompt naming the server,
+the signed preview, and Readability making no request off the page
+(`webapp/tests/e2e/ai-addins-firstparty.spec.mjs`).
