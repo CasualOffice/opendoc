@@ -903,6 +903,7 @@
             <div class="rgroup-ctl">
               <button data-i18n-title="panelInsert.insertSpecialCharacter.title" data-i18n-label="panelInsert.insertSymbol.label" id="insertSymbolBtn" type="button" class="fmt" title="Insert a special character" aria-label="Insert symbol" aria-haspopup="region" aria-expanded="false" disabled><span class="ms" aria-hidden="true">functions</span></button>
               <button data-i18n-title="panelInsert.insertEmoji.title" data-i18n-label="panelInsert.insertEmoji.label" id="insertEmojiBtn" type="button" class="fmt" title="Insert an emoji" aria-label="Insert emoji" aria-haspopup="region" aria-expanded="false" disabled><span class="ms" aria-hidden="true">mood</span></button>
+              <button data-i18n-title="insert.nonBreakingSpace" data-i18n-label="insert.nonBreakingSpace" id="insertNbspBtn" type="button" class="fmt" title="Non-breaking space" aria-label="Non-breaking space" disabled><span class="ms" aria-hidden="true">space_bar</span></button>
             </div>
             <span data-i18n="panelInsert.symbols" class="rgroup-label">Symbols</span>
           </div>
@@ -1220,7 +1221,7 @@
                    Tracking-group dropdown of four, ONLYOFFICE's Display mode. The
                    rows live in `#reviewDisplayMenu`; `review_display.mjs` owns
                    the trigger's state because no single command is "the" picker. -->
-              <button data-i18n-title="reviewDisplay.tip" data-i18n-label="reviewDisplay.label" id="reviewDisplayBtn" type="button" class="fmt" title="Choose how tracked changes are shown" aria-label="Display for review" aria-haspopup="menu" aria-controls="reviewDisplayMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">preview</span></button>
+              <button data-i18n-title="reviewDisplay.tip" data-i18n-label="reviewDisplay.label" id="reviewDisplayBtn" data-command-family="review.displayMode." type="button" class="fmt" title="Choose how tracked changes are shown" aria-label="Display for review" aria-haspopup="menu" aria-controls="reviewDisplayMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">preview</span></button>
             </div>
             <span data-i18n="panelReview.tracking" class="rgroup-label">Tracking</span>
           </div>

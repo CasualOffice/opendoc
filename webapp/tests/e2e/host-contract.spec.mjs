@@ -394,6 +394,10 @@ test("a command the contract calls ungated really does not touch the document", 
   // document for an owner, so this test cannot pass on an editor where nothing
   // works at all.
   const edited = await page.evaluate(async () => {
+    // Back to the live document first: the sweep ran `review.displayMode.original`,
+    // which shows a read-only rejected copy (a view, so rightly ungated), and a
+    // read-only view refuses Bold.
+    await window.opendoc.execute("review.displayMode.allMarkup");
     const before = window.opendoc.ping().revision;
     await window.opendoc.execute("format.bold");
     return { before, after: window.opendoc.ping().revision };

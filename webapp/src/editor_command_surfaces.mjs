@@ -92,6 +92,8 @@ export function createCommandSurfaces(ed) {
     { command: "insert.header", buttons: [ed.insertHeaderBtn], requires: "doc", activate: () => ed.editRunningContent("header") },
     { command: "insert.footer", buttons: [ed.insertFooterBtn], requires: "doc", activate: () => ed.editRunningContent("footer") },
     { command: "insert.symbol", buttons: [ed.insertSymbolBtn], requires: "doc", activate: () => ed.openSymbolPicker() },
+    // Its ribbon face beside Symbol (the Insert menu and palette rows are the others).
+    { command: "insert.nonBreakingSpace", buttons: [document.getElementById("insertNbspBtn")].filter(Boolean), requires: "doc", activate: () => void ed.pasteText("\u00a0", "typing") },
     { command: "insert.emoji", buttons: [ed.insertEmojiBtn], requires: "doc", activate: () => ed.openEmojiPicker() },
   ];
 
