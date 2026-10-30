@@ -2221,6 +2221,15 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
  * the overflow nor the single column can come back unnoticed. */
 .shortcuts-dialog {
   width: min(var(--dialog-width-xwide), 100%);
+  /* A 0.75rem margin top and bottom instead of `.dialog-card`'s 1.5rem: this is
+     the one card whose BODY is a reference meant to be read whole, and at
+     1280x720 the keymap #918 grew ran 8px past the shared cap on CI's metrics
+     (Linux lays the same faces out about 80px taller here). The 24px this
+     returns to the body is the space the window already has. Measured locally at
+     1280x637, where macOS reaches that same cap: 7px hidden under the shared
+     cap, 0 under this one. The phone rung's `body.phone-mode .dialog-card`
+     outranks this, so the bottom sheet keeps its own height. */
+  max-height: min(45rem, calc(100vh - 1.5rem));
 }
 
 /* About is a short fact list, so it is sized by its CONTENT rather than by a

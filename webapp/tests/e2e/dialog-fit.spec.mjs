@@ -39,9 +39,7 @@ import { DIALOGS } from "./modal-roster.mjs";
 const LAPTOP = { width: 1280, height: 720 };
 
 for (const dialog of DIALOGS()) {
-  // QUARANTINED (2026-10-31), named and temporary: Keyboard shortcuts grew 8px
-  // past a 1280x720 laptop in #918; the fix removes this.
-  (dialog.id === "shortcutsDialog" ? test.fixme : test)(`${dialog.name}: the whole dialog is on the screen of a laptop`, async ({
+  test(`${dialog.name}: the whole dialog is on the screen of a laptop`, async ({
     page,
     consoleErrors,
   }) => {
