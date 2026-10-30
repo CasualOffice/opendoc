@@ -22,7 +22,26 @@ import { test, expect, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
 function radioGroupReport(page) {
   return page.evaluate(() =>
     [...document.querySelectorAll('[role="radiogroup"]')].map((group) => {
+      // Two ways to build a radio group, and both are one. A segmented control
+      // is BUTTONS that must declare `role="radio"`, `aria-checked` and a single
+      // `tabIndex = 0`, because a button has none of that natively. Native
+      // `<input type="radio">` has all of it built in: the implicit radio role,
+      // a checked state the platform exposes, and ONE Tab stop with arrow-key
+      // movement for every input that shares a `name`. So for natives the
+      // guarantee to assert is the shared name, not ARIA it cannot carry.
       const options = [...group.querySelectorAll("button")];
+      const natives = [...group.querySelectorAll('input[type="radio"]')];
+      if (natives.length && !options.length) {
+        return {
+          id: group.id || group.className || group.tagName,
+          count: natives.length,
+          nonRadio: 0,
+          stateless: 0,
+          alsoToggles: natives.filter((o) => o.hasAttribute("aria-pressed")).length,
+          // One shared name is what makes the browser give the set one stop.
+          tabStops: new Set(natives.map((o) => o.name || o)).size,
+        };
+      }
       return {
         id: group.id || group.className || group.tagName,
         count: options.length,
@@ -48,9 +67,7 @@ test("every declared radio group is one, from load, with no dialog opened", asyn
   // pass over an empty list and this file would be a decoration.
   expect(groups.length).toBeGreaterThanOrEqual(5);
 
-  // QUARANTINED (2026-10-31), named and temporary: #918's table position work
-  // left the tableWrap group without options; the fix removes this filter.
-  for (const group of groups.filter((g) => g.id !== "tableWrap")) {
+  for (const group of groups) {
     expect(group.count, `${group.id} has no options`).toBeGreaterThan(0);
     expect(
       group.nonRadio,
