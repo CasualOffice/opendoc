@@ -240,6 +240,36 @@ jobs:
       - name: Test the viewer package
         run: node --test packages/opendoc-viewer/test/*.test.mjs
 
+  # The headless SDK package (docs/176 section 12): build the wasm module, run
+  # the package's own tests (API, docx-js-style builder, templates, npm pack
+  # contents). Nothing is published.
+  sdk-package:
+    name: sdk-package
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.96.0
+          targets: wasm32-unknown-unknown
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177
+        with:
+          tool: wasm-pack@0.15.0
+          fallback: none
+      - name: Install Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Build the SDK package
+        run: ./packages/opendoc/build.sh
+      - name: Test the SDK package
+        run: node --test packages/opendoc/test/*.test.mjs
+
   # Sharded across four runners rather than crowded onto one.
   #
   # The suite is ~1,275 tests and was taking 39-55 minutes on a single runner,

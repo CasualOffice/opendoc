@@ -1989,11 +1989,14 @@ impl<'a> Writer<'a> {
                         esc(text)
                     );
                 }
-                if index + 1 == entries.len() {
-                    out.push_str(end_field);
-                }
                 out.push_str("</w:p>");
             }
+            // Word's own shape: the field ends in a paragraph after the last
+            // entry, so the field spans paragraphs and its linked entries are
+            // a field RANGE. The engine refuses a hyperlink inside a
+            // single-paragraph field's result (a field's inlines are leaves),
+            // and that refusal fails the whole open (`docs/176` §12.3).
+            let _ = write!(out, "<w:p>{end_field}</w:p>");
         }
         out.push_str(rest);
         out
