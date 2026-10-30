@@ -2411,9 +2411,31 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 /* AutoCorrect options and Set Language (RM-19, RM-42). Native `<select size>`
    list boxes, styled like the dialog's other fields, so the keyboard model and
    the screen-reader role are the platform's own. */
+/* Balanced across two columns, the Header & footer settings / Page setup flow:
+   one column of three groups held 663px in a 542px body at 1280x720, 121px of
+   the dialog below the fold (`dialog-fit.spec.mjs`). The seven as-you-type
+   switches and the two lists are roughly equal halves, and each group stays
+   whole in its column. A STATED width rather than `fit-content`, which a
+   multicol box resolves as one column. */
 .autocorrect-dialog {
-  width: fit-content;
-  max-inline-size: min(100%, 64ch);
+  width: min(38.75rem, 100%);
+  max-inline-size: min(100%, 76ch);
+}
+
+.autocorrect-body {
+  min-width: 0;
+  columns: 2;
+  column-gap: clamp(1.25rem, 2.4vw, 1.75rem);
+}
+
+.autocorrect-body > * {
+  break-inside: avoid;
+}
+
+/* The phone sheet scrolls, and two columns of list boxes at 390px are narrower
+   than their own entries. */
+body.phone-mode .autocorrect-body {
+  columns: auto;
 }
 
 .autocorrect-group {
