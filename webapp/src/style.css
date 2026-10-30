@@ -10330,13 +10330,13 @@ body.phone-mode .header-mode {
  * entirely; only the minimal top bar (brand + Open + Settings) remains, and
  * the drop card becomes the whole page. `openBytes` adds `.doc-loaded` to
  * `<body>` once a document is open, which reveals the chrome again. */
-body:not(.doc-loaded) .ribbon,
-body:not(.doc-loaded) .ribbon-nav,
-body:not(.doc-loaded) .rail,
-body:not(.doc-loaded) .footer,
-body:not(.doc-loaded) .search-trigger,
-body:not(.doc-loaded) #save,
-body:not(.doc-loaded) .save-format,
+html:not(.doc-expected) body:not(.doc-loaded) .ribbon,
+html:not(.doc-expected) body:not(.doc-loaded) .ribbon-nav,
+html:not(.doc-expected) body:not(.doc-loaded) .rail,
+html:not(.doc-expected) body:not(.doc-loaded) .footer,
+html:not(.doc-expected) body:not(.doc-loaded) .search-trigger,
+html:not(.doc-expected) body:not(.doc-loaded) #save,
+html:not(.doc-expected) body:not(.doc-loaded) .save-format,
 body:not(.doc-loaded) .compatibility-status,
 /* The state chip says what state THE DOCUMENT is in, and before one exists there
    is no state to report: the markup's resting text is "Opened", so the boot frame
@@ -10349,6 +10349,15 @@ body:not(.doc-loaded) #propertiesBtn {
 
 body:not(.doc-loaded) .drop {
   min-height: calc(100vh - var(--h-header));
+}
+
+/* A document is on its way (anything but `?blank=1`, decided in <head> before
+   the first paint): the chrome keeps its space from the first frame instead of
+   snapping in when the document lands, which moved the work area 94px and was
+   most of the editor's CLS. The drop card has no part in that frame. */
+html.doc-expected body:not(.doc-loaded) .drop {
+  visibility: hidden;
+  min-height: 0;
 }
 
 .drop {
@@ -13641,4 +13650,10 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
     max-height: 60vh;
   }
   .ai-preview-actions .dialog-button { min-height: 2.75rem; flex: 1 1 0; }
+}
+
+/* The password fields' form is structural only (credential semantics); it adds
+   no box of its own between the dialog's sections. */
+.restrict-editing-passwords {
+  display: contents;
 }

@@ -103,6 +103,9 @@
         ]
       }
     </script>
+    <!-- Before the first paint: a document is about to open unless this is the
+         bare upload screen, so the chrome takes its final layout at once (CLS). -->
+    <script>if (!/[?&]blank=1(&|$)/.test(location.search)) document.documentElement.classList.add("doc-expected");</script>
     <link rel="stylesheet" href="./src/fonts.css" />
     <script src="./src/analytics.js"></script>
     <link rel="stylesheet" href="./src/style.css" />
@@ -3013,6 +3016,10 @@
           <!-- The CURRENT password: shown only when the restriction carries a
                verifier this editor can check (`protectionPassword().verifiable`).
                Changing or stopping the restriction then needs it, as in Word. -->
+          <!-- One form around the password fields, so password managers and the
+               browser treat them as a credential form. It never submits: Enter
+               must not reload the editor and lose the document. -->
+          <form class="restrict-editing-passwords" onsubmit="return false" novalidate>
           <div class="settings-section" id="restrictEditingCurrentRow" hidden>
             <label data-i18n="protect.currentPassword" class="dialog-field">Password<input id="restrictEditingCurrentPassword" type="password" maxlength="255" autocomplete="current-password" aria-describedby="restrictEditingCurrentHint restrictEditingPasswordError" /></label>
             <small data-i18n="protect.currentPassword.hint" class="settings-note" id="restrictEditingCurrentHint">This restriction was set with a password. Enter it to change or stop the restriction.</small>
@@ -3024,6 +3031,7 @@
             <label data-i18n="protect.confirmPassword" class="dialog-field">Confirm the new password<input id="restrictEditingConfirmPassword" type="password" maxlength="255" autocomplete="new-password" aria-describedby="restrictEditingPasswordError" /></label>
             <small data-i18n="protect.newPassword.hint" class="settings-note" id="restrictEditingNewHint">Readers must enter it to change or stop the restriction, here and in Word. Leave it empty for no password.</small>
           </div>
+          </form>
           <p class="settings-note dialog-error" id="restrictEditingPasswordError" role="alert" hidden></p>
           <p data-i18n="protect.authorityPassword" class="settings-note">A password is a deterrent, not encryption. It is stored in the file the way Word stores it, and anyone who can edit the file itself can remove it.</p>
           <!-- Shown only when the file carries a verifier this editor CANNOT check
