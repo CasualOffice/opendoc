@@ -2639,6 +2639,7 @@
   "findings.feature.pdfJustification": "Uitgevulde tekst afgeleid uit regelbreedtes",
   "findings.feature.pdfPageBreaks": "Pagina-einden afgeleid uit waar pagina's eindigen",
   "findings.feature.pdfFloats": "Afbeeldingen en tekeningen zwevend naast of achter hun tekst",
+  "findings.feature.pdfDecorations": "Als vormen getekende onderstrepingen, markeringen, arceringen en randen teruggezet op hun tekst",
   "findings.feature.pdfVectorsPlaced": "Tekeningen geplaatst als vormen",
   "pdfImport.title": "{name} openen",
   "pdfImport.openFailed": "Kan {name} niet openen: {message}",

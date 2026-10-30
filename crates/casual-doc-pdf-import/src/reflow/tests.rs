@@ -1645,6 +1645,8 @@ fn line_ending_at(x1: f64, top: f64) -> super::ILine {
         baseline: top + 8.0,
         size: 10.0,
         mcid: None,
+        border_below: None,
+        shade: None,
     }
 }
 

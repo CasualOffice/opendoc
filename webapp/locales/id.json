@@ -2628,6 +2628,7 @@
   "findings.feature.pdfJustification": "Rata kiri-kanan disimpulkan dari lebar baris",
   "findings.feature.pdfPageBreaks": "Pemisah halaman disimpulkan dari akhir halaman",
   "findings.feature.pdfFloats": "Gambar dan bagan mengambang di samping atau di belakang teksnya",
+  "findings.feature.pdfDecorations": "Garis bawah, sorotan, arsiran, dan batas yang digambar sebagai bentuk dikembalikan ke teksnya",
   "findings.feature.pdfVectorsPlaced": "Gambar vektor ditempatkan sebagai bentuk",
   "pdfImport.title": "Membuka {name}",
   "pdfImport.openFailed": "Tidak dapat membuka {name}: {message}",

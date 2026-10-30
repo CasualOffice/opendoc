@@ -28,6 +28,7 @@
 //! guarded by an n-versus-2n work test (SKILL §8), and the counters are on
 //! [`Reflowed::work`].
 
+pub mod decorate;
 mod emit;
 pub mod notes;
 pub mod order;
@@ -80,6 +81,12 @@ pub struct PChar {
     pub note: Option<usize>,
     /// Comments anchored on it.
     pub comments: Vec<usize>,
+    /// Underlined (a rule under it, `decorate`).
+    pub underline: bool,
+    /// Struck through (a rule through it).
+    pub strike: bool,
+    /// Shaded (a fill tight behind its run: a highlight).
+    pub shade: Option<[u8; 3]>,
 }
 
 /// One line.
@@ -103,6 +110,12 @@ pub struct ILine {
     pub size: f64,
     /// Marked-content id.
     pub mcid: Option<i32>,
+    /// A rule under it that is its paragraph's bottom border: thickness in
+    /// points and colour (`decorate`).
+    pub border_below: Option<(f64, Option<[u8; 3]>)>,
+    /// A fill behind the whole line with room to spare: its paragraph's
+    /// shading (`decorate`).
+    pub shade: Option<[u8; 3]>,
 }
 
 impl ILine {
@@ -133,6 +146,9 @@ impl ILine {
                 link: None,
                 note: None,
                 comments: Vec::new(),
+                underline: false,
+                strike: false,
+                shade: None,
             })
             .collect();
         Self {
@@ -145,6 +161,8 @@ impl ILine {
             baseline,
             size,
             mcid,
+            border_below: None,
+            shade: None,
         }
     }
 
@@ -1135,8 +1153,62 @@ pub fn build(
         // Filled rectangles under a whitespace table's cells are its shading
         // too (a borderless table with a shaded header row).
         for table in page_tables.iter_mut().filter(|t| !t.ruled) {
+            tables::fit_to_fills(table, &page.fills, &mut work.tables);
             tables::shade(table, &page.fills, &mut work.tables);
         }
+        // Underlines, strikethroughs, highlights, paragraph shading and
+        // borders the PDF drew as paths go back on the text.
+        let taken: BTreeSet<usize> = page
+            .rules
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                grids
+                    .iter()
+                    .flat_map(|g| g.2.iter())
+                    .any(|g| g.x0 == r.x0 && g.x1 == r.x1 && g.y0 == r.y0 && g.y1 == r.y1)
+            })
+            .map(|(i, _)| i)
+            .collect();
+        let table_bounds: Vec<(f64, f64, f64, f64)> =
+            page_tables.iter().map(|t| t.bounds).collect();
+        let decorated = decorate::decorate(
+            &mut lines_only,
+            &page.rules,
+            &taken,
+            &page.fills,
+            &table_bounds,
+            page.width * page.height,
+            &mut work.paragraphs,
+        );
+        findings.record(
+            report::DECORATION_INFERRED,
+            Outcome::Mapped,
+            (decorated.rules.len() + decorated.fills.len()) as u32,
+            Some(page.index),
+        );
+        let decoration_art: BTreeSet<usize> = page
+            .vectors
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| {
+                v.paths.iter().all(|path| {
+                    path.stroke.is_none()
+                        && record::rectangles(path).is_some_and(|rects| {
+                            rects.iter().all(|b| {
+                                decorated.fills.iter().any(|&f| {
+                                    let d = page.fills[f].bounds;
+                                    (d.x0 - b.x0).abs() < 0.01
+                                        && (d.y0 - b.y0).abs() < 0.01
+                                        && (d.x1 - b.x1).abs() < 0.01
+                                        && (d.y1 - b.y1).abs() < 0.01
+                                })
+                            })
+                        })
+                })
+            })
+            .map(|(i, _)| i)
+            .collect();
         // Vector art that is only flat rectangles inside a table is that
         // table's shading (now on its cells), not a drawing of its own.
         let shading_art: BTreeSet<usize> = page
@@ -1260,7 +1332,7 @@ pub fn build(
                 page.vectors
                     .iter()
                     .enumerate()
-                    .filter(|(i, _)| !shading_art.contains(i))
+                    .filter(|(i, _)| !shading_art.contains(i) && !decoration_art.contains(i))
                     .map(|(_, v)| Graphic::Vector(v.clone())),
             );
         for graphic in graphics {

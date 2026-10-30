@@ -24,8 +24,10 @@ use casual_doc_model::v1::{
 use casual_doc_model::v1::{BorderEdge, NoteNumberRestart, NoteProperties, TableBorders};
 // Own line: cell shading from the PDF's filled rectangles.
 use casual_doc_model::v1::Shading;
+// Own line: paragraph borders from the PDF's rules.
+use casual_doc_model::v1::ParagraphBorders;
 // Own line: ruled rows keep the PDF's height.
-use casual_doc_model::v1::{HeightRule, RowHeight};
+use casual_doc_model::v1::{CellMargins, HeightRule, RowHeight};
 // Own line: floating pictures and vector art.
 use casual_doc_model::v1::{
     AnchorHorizontal, AnchorVertical, AnchoredDrawing, DrawingAnchor, HorizontalAnchor,
@@ -132,6 +134,8 @@ struct IPara {
     list_depth: u8,
     /// Pictures and vector art floated on this paragraph.
     floats: Vec<Float>,
+    /// Its shading: every line of it sits on one fill (`decorate`).
+    shade: Option<[u8; 3]>,
 }
 
 // Transient (one per paragraph, dropped at emission), so the size of the
@@ -365,6 +369,15 @@ impl Emitter<'_> {
         if c.sup {
             p.vertical_alignment = Some(VerticalAlignment::Superscript);
         }
+        if c.underline {
+            p.underline = Some(true);
+        }
+        if c.strike {
+            p.strike = Some(true);
+        }
+        if let Some([r, g, b]) = c.shade {
+            p.shading.fill = Some(RgbColor { r, g, b });
+        }
         p
     }
 
@@ -564,6 +577,23 @@ impl Emitter<'_> {
         if para.page_break {
             properties.page_break_before = Some(true);
         }
+        // Fills and rules the PDF drew for the paragraph (`decorate`).
+        if let Some([r, g, b]) = para.shade {
+            properties.shading.fill = Some(RgbColor { r, g, b });
+        }
+        if let Some((width, color)) = para.last_line.as_ref().and_then(|l| l.border_below) {
+            properties.borders = ParagraphBorders {
+                bottom: Some(BorderEdge {
+                    style: "single".to_owned(),
+                    size_eighth_points: Some(((width * 8.0).round() as u32).clamp(2, 96)),
+                    color: color.map(|[r, g, b]| RgbColor { r, g, b }),
+                    theme_color: None,
+                    space_points: Some(1),
+                }),
+                ..ParagraphBorders::default()
+            }
+            .into();
+        }
         if para.heading.is_none() && para.list.is_none() {
             properties.spacing = self.own_spacing(para);
         }
@@ -673,7 +703,7 @@ impl Emitter<'_> {
                     height: if table.ruled {
                         row_height(row)
                     } else {
-                        RowHeight::default()
+                        pitch_height(&table.rows, r)
                     },
                     ..TableRowProperties::default()
                 },
@@ -706,6 +736,19 @@ impl Emitter<'_> {
             grid_change: None,
             properties: TableProperties {
                 borders,
+                // A borderless table's text starts where the PDF's did: the
+                // columns were measured from the text, so Word's default
+                // 0.08 in either side of each cell would wrap a column whose
+                // text filled it.
+                cell_margins: if table.ruled {
+                    CellMargins::default()
+                } else {
+                    CellMargins {
+                        start_twips: Some(twips(table.pad)),
+                        end_twips: Some(0),
+                        ..CellMargins::default()
+                    }
+                },
                 ..TableProperties::default()
             },
             rows,
@@ -732,6 +775,43 @@ fn row_height(row: &[super::tables::ICell]) -> RowHeight {
         }
     } else {
         RowHeight::default()
+    }
+}
+
+/// A borderless row's height as the PDF set it, as a minimum: from its
+/// first baseline to the next row's (the last row takes the one before's).
+/// Its text's height alone packed the rows of every borderless table
+/// together. O(cells of two rows).
+fn pitch_height(rows: &[Vec<super::tables::ICell>], r: usize) -> RowHeight {
+    let baseline = |r: usize| -> Option<f64> {
+        rows.get(r)?
+            .iter()
+            .filter_map(|c| c.lines.first().map(|l| l.baseline))
+            .reduce(f64::min)
+    };
+    let step = |a: usize, b: usize| -> Option<f64> {
+        let (x, y) = (baseline(a)?, baseline(b)?);
+        (y > x).then_some(y - x)
+    };
+    let height = step(r, r + 1).or_else(|| r.checked_sub(1).and_then(|p| step(p, r)));
+    // A step of more than three of its lines (each 1.5 of its ems) is a
+    // gap the table does not own.
+    let lines = rows[r]
+        .iter()
+        .map(|c| c.lines.len().max(1))
+        .max()
+        .unwrap_or(1);
+    let em = rows[r]
+        .iter()
+        .flat_map(|c| c.lines.iter())
+        .map(|l| l.size)
+        .fold(1.0, f64::max);
+    match height {
+        Some(h) if h <= 3.0 * 1.5 * em * lines as f64 => RowHeight {
+            value_twips: Some(u32::try_from(twips(h).clamp(0, 31_680)).unwrap_or(0)),
+            rule: Some(HeightRule::AtLeast),
+        },
+        _ => RowHeight::default(),
     }
 }
 
@@ -886,7 +966,15 @@ fn shape(
     region: Option<usize>,
     page_width: f64,
 ) -> (f64, Option<f64>, f64, f64, f64, bool, bool) {
-    let first_x0 = lines.first().map_or(0.0, |l| l.x0);
+    // Where the ink starts: a line written with leading spaces (code, a
+    // typed indent) starts at its first visible character.
+    let ink = |l: &ILine| {
+        l.chars
+            .iter()
+            .find(|c| !c.text.trim().is_empty())
+            .map_or(l.x0, |c| c.x0)
+    };
+    let first_x0 = lines.first().map_or(0.0, |l| ink(l));
     let rest_x0 = (lines.len() > 1).then(|| {
         lines[1..]
             .iter()
@@ -1067,6 +1155,9 @@ pub(crate) fn emit(
                         top: refs[0].top,
                         first_bottom: refs[0].bottom,
                         first_baseline: refs[0].baseline,
+                        shade: refs[0]
+                            .shade
+                            .filter(|s| refs.iter().all(|l| l.shade == Some(*s))),
                         pitch: median(steps(&refs)),
                         steps: steps(&refs),
                         gap_above: (n == 0)

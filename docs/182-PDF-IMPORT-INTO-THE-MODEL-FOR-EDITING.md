@@ -1803,28 +1803,57 @@ driven red by the mutation named in its commit):
 | Synthesised italics | Italic text (LibreOffice and Quartz slant an upright face when the family has no italic) came out upright, in both layouts | Italic was read from the font's flags only | `casual-doc-pdf-read` reports a run whose text matrix shears its vertical 6 to 30 degrees off the baseline's perpendicular (`GlyphRunEvidence::oblique`); the fixed layout and the reflow make it italic |
 | Heading alignment | A centred title or heading came out left-aligned | Alignment was applied to body paragraphs only | A heading's or title's centring and end alignment are its own paragraph properties |
 | Headings that are sentences | A larger bold heading that ends with a full stop ("Lorem ipsum dolor sit amet, consectetur adipiscing elit.") was body text | A key's paragraphs had to avoid prose endings to be a heading level | A key larger than the body counts its brief paragraphs (≤ 3 lines, ≤ 200 characters) whatever their ending; a key only bolder than the body still must not read like prose |
+| Decorations drawn as paths | Underline and strikethrough lost; a highlight came out as a yellow box under its line; a paragraph's shading and bottom border lost, or its fill placed as a drawing above the text; a title's rule gone | Rules outside a table were dropped and fills became vector art | `reflow/decorate.rs`: a thin rule under a run (−0.05 to 0.4 em below its baseline) is its underline, one 0.12 to 0.5 em above is its strikethrough; a fill one line tall that ends where the run's glyphs do is the run's shading; a fill spanning whole lines (no taller than them plus a line) is their paragraph's shading; a rule within 1.2 em under a paragraph's last line and as wide as it is the paragraph's bottom border. Reported `pdf.import.decoration_inferred`; the paths used are not placed as drawings |
+| Borderless tables | A shaded-header table reflowed as narrow as its text, its fills placed as drawings beside it; rows packed together; a tab-leader list's last column wrapped "12 ms" onto two lines; a wide column's text wrapped | The table's extent was its text's; rows were their text's height; Word's default cell margins were added to columns measured from the text | `tables::fit_to_fills` widens the table to the fills behind its rows (its text bounds, which set the page margins, stay the text's); a row's height is the PDF's baseline pitch (`atLeast`); cell margins are the padding before the first column's text and nothing after; the last column has 12 pt of slack |
+| Indented code | Lines of a code block lost their indentation | A line's left was its first glyph, a leading space | A paragraph starts at its first visible character |
 
 **`sample.docx` through our writer, before and after** (the scorer fix applied to both):
 
 | Family | Before | After |
 | --- | --- | --- |
-| layout (alignment, line pitch, space below) | 0.512 | 0.761 |
+| layout (alignment, line pitch, space below) | 0.512 | 0.752 |
 | text, paragraphs, headings, lists, tables, header and footer, columns, page, formatting, special, pictures, notes, frames | unchanged | unchanged |
 
 Of the 110 matched paragraphs, line pitch agreed on 3 before and 60 after, the space below on
-59 before and 84 after; alignment was already right on 107.
+59 before and 81 after; alignment was already right on 107. (The space below is 84 with the
+tables' fills placed as drawings: the scorer counts the space from a paragraph to the next
+one across a table, which a drawing between them happened to fill.) The score does not see
+decorations or table geometry; the renders do: underline, strikethrough, highlight, the
+title's rule, paragraph shading and borders, the code block's shading and indent, full-width
+borderless tables with their shaded header rows and the tab-leader list now match the
+source page by page.
+
+**The corpus, before and after** (the 48 files of §18.10 whose download still matches its
+SHA-256; Wikipedia regenerates its PDFs, so 16 no longer do; 45 open in both, the same 3
+refused by the stream limit):
+
+| Measure | Before | After |
+| --- | --- | --- |
+| Paragraphs | 54,550 | 51,470 |
+| Paragraphs of three words or fewer | 13,468 | 12,482 |
+| Headings | 2,708 | 2,626 |
+| List items | 9,927 | 9,679 |
+| Files whose flowing document failed validation | 0 | 0 |
+| Files with U+FFFD | 0 | 0 |
+| Tables, files with a heading, list, header or footer | unchanged | unchanged |
+
+Read by hand: the headings removed are false ones (bold lines inside paragraphs of the ACL
+and arXiv papers, which read as Heading 2), and the list items removed are continuations
+(NIST's bold lead-in items had split into a bulleted line and an unbulleted rest).
 
 **Still weak on these files**, in the order they hurt:
 
-1. Text decorations and fills drawn as paths: underline, strikethrough and highlight come
-   out as plain text with a stray rectangle beside it; a paragraph's bottom border is lost;
-   a shaded paragraph or code block's fill is placed as a drawing above or below its text.
-2. Borderless tables whose columns are set by fills: the table is as narrow as its text, and
-   the fills of its cells are placed as drawings under it.
-3. Text inside a chart (axis labels, legend) reflows as loose one-word paragraphs beside the
+1. A table whose cells are aligned differently in one tall row (top, centre, bottom: the
+   source's "merged cells and vertical alignment" table) reads as a staircase of rows, since
+   its cells share no baseline.
+2. Text inside a chart (axis labels, legend) reflows as loose one-word paragraphs beside the
    chart's drawing.
-4. Text wrapped around a picture: the lines beside it start a new paragraph at the picture's
+3. Text wrapped around a picture: the lines beside it start a new paragraph at the picture's
    edge.
+4. A landscape section is reflowed onto the document's portrait page size.
 5. Light weights (Helvetica Neue Light and UltraLight) map to the regular face: the model has
-   bold and not a weight.
+   bold and not a weight. Letter spacing (a subtitle's expanded tracking) is not read.
 6. A scanned PDF has no text without an OCR provider; the headless tools have none.
+7. Glyphs the writer's bundled faces lack (checkboxes, Indic, CJK) are missing from our own
+   PDF of `sample.docx`, so its reflow cannot have them (`special` 0.371): the writer's font
+   fallback, not the reflow.

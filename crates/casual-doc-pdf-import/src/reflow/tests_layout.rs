@@ -379,3 +379,220 @@ fn a_centred_heading_stays_centred() {
     assert_eq!(style_name(document, title).as_deref(), Some("Title"));
     assert_eq!(title.properties.alignment, Some(Alignment::Center));
 }
+
+/// Every inline drawing or shape group in the body (none is expected where
+/// a fill or a rule became formatting).
+fn graphics(document: &Document) -> usize {
+    document
+        .body()
+        .iter()
+        .filter_map(|b| match b {
+            BlockNode::Paragraph(p) => Some(
+                p.inlines
+                    .iter()
+                    .filter(|i| {
+                        matches!(
+                            i,
+                            InlineNode::Drawing(_)
+                                | InlineNode::AnchoredDrawing(_)
+                                | InlineNode::Group(_)
+                        )
+                    })
+                    .count(),
+            ),
+            _ => None,
+        })
+        .sum()
+}
+
+fn run_with<'a>(document: &'a Document, word: &str) -> &'a casual_doc_model::v1::Run {
+    paragraphs(document)
+        .into_iter()
+        .flat_map(|p| p.inlines.iter())
+        .find_map(|i| match i {
+            InlineNode::Run(r) if r.text.contains(word) => Some(r),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("a run holding {word}"))
+}
+
+/// Courier at 11 pt advances 6.6 pt a character, so the rectangles below
+/// sit exactly under, through and behind the words they decorate.
+fn decorations_pdf() -> Vec<u8> {
+    let mut content = String::new();
+    // "HIGH" (characters 28 to 31) on a yellow fill, painted first.
+    content.push_str("1 1 0 rg 256.8 697 26.4 11 re f 0 g\n");
+    content.push_str(&text(
+        "F1",
+        11.0,
+        72.0,
+        700.0,
+        14.0,
+        &["aaaa UNDER bbbb STRIKE cccc HIGH dddd."],
+    ));
+    // "UNDER" (5 to 9) underlined 1.5 pt below the baseline; "STRIKE" (16
+    // to 21) struck 3 pt above it.
+    content.push_str("105 697.7 33 0.8 re f\n177.6 703 39.6 0.7 re f\n");
+    // A short paragraph on a pale fill as wide as the column, with a blue
+    // rule under it: its paragraph's shading and bottom border.
+    content.push_str("0.9 0.9 1 rg 66 656 474 14 re f 0 g\n");
+    content.push_str(&text("F1", 11.0, 72.0, 660.0, 14.0, &["Shaded paragraph."]));
+    content.push_str("0 0 1 rg 66 652 474 1 re f 0 g\n");
+    content.push_str(&text(
+        "F1",
+        11.0,
+        72.0,
+        620.0,
+        14.0,
+        &["A plain paragraph after it."],
+    ));
+    synth::document(&[Page::new(content)], COURIER, "")
+}
+
+#[test]
+fn rules_and_fills_drawn_beside_text_become_its_formatting() {
+    let reflowed = reflow_of(decorations_pdf());
+    let document = &reflowed.document;
+    assert_eq!(run_with(document, "UNDER").properties.underline, Some(true));
+    assert_eq!(run_with(document, "STRIKE").properties.strike, Some(true));
+    assert_eq!(
+        run_with(document, "HIGH").properties.shading.fill,
+        Some(casual_doc_model::v1::RgbColor {
+            r: 255,
+            g: 255,
+            b: 0
+        })
+    );
+    // The words between keep none of it.
+    let plain = run_with(document, "bbbb");
+    assert_eq!(plain.properties.underline, None);
+    assert_eq!(plain.properties.strike, None);
+    assert_eq!(plain.properties.shading.fill, None);
+    let shaded = paragraphs(document)
+        .into_iter()
+        .find(|p| para_text(p) == "Shaded paragraph.")
+        .expect("the shaded paragraph");
+    assert_eq!(
+        shaded.properties.shading.fill,
+        Some(casual_doc_model::v1::RgbColor {
+            r: 230,
+            g: 230,
+            b: 255
+        })
+    );
+    let border = shaded
+        .properties
+        .borders
+        .bottom
+        .clone()
+        .expect("a bottom border");
+    assert_eq!(
+        border.color,
+        Some(casual_doc_model::v1::RgbColor { r: 0, g: 0, b: 255 })
+    );
+    let after = paragraphs(document)
+        .into_iter()
+        .find(|p| para_text(p).starts_with("A plain"))
+        .expect("the paragraph after");
+    assert!(after.properties.borders.bottom.is_none());
+    assert_eq!(after.properties.shading.fill, None);
+    // None of the rectangles is placed as a drawing.
+    assert_eq!(graphics(document), 0);
+}
+
+/// A borderless table of four rows 20 pt apart, its header row on a fill
+/// that runs from 60 to 540, wider than its text (72 to 396).
+fn banded_table_pdf() -> Vec<u8> {
+    let mut content = text(
+        "F1",
+        11.0,
+        72.0,
+        720.0,
+        14.0,
+        &["A borderless table follows."],
+    );
+    content.push_str("0.9 0.9 0.9 rg 60 643 480 16 re f 0 g\n");
+    let rows = [
+        ["Name", "Kind", "Result"],
+        ["alpha", "first", "pass"],
+        ["beta", "second", "review"],
+        ["gamma", "third", "pass"],
+    ];
+    for (r, row) in rows.iter().enumerate() {
+        let y = 647.0 - 20.0 * r as f64;
+        for (c, cell) in row.iter().enumerate() {
+            content.push_str(&text("F1", 10.0, [72.0, 200.0, 330.0][c], y, 12.0, &[cell]));
+        }
+    }
+    content.push_str(&text("F1", 11.0, 72.0, 540.0, 14.0, &["After the table."]));
+    synth::document(&[Page::new(content)], COURIER, "")
+}
+
+#[test]
+fn a_borderless_table_takes_its_fills_width_and_its_rows_pitch() {
+    let reflowed = reflow_of(banded_table_pdf());
+    let document = &reflowed.document;
+    let table = document
+        .body()
+        .iter()
+        .find_map(|b| match b {
+            BlockNode::Table(t) => Some(t),
+            _ => None,
+        })
+        .expect("a table");
+    assert_eq!(table.rows.len(), 4);
+    // The text starts 12 pt into the fill, and no cell adds Word's default
+    // margins to text that was measured to its column.
+    let margins = table.properties.cell_margins;
+    assert_eq!(margins.start_twips, Some(240));
+    assert_eq!(margins.end_twips, Some(0));
+    // The last column reaches the fill's right edge, not its text's.
+    let widths: Vec<i32> = table.grid.iter().filter_map(|g| g.width_twips).collect();
+    let total: i32 = widths.iter().sum();
+    assert!(total >= twips(540.0 - 72.0) - 20, "{widths:?}");
+    // The header row carries the fill; the others none.
+    let fill = |r: usize| table.rows[r].cells[0].properties.shading.fill;
+    assert!(fill(0).is_some());
+    assert!(fill(1).is_none());
+    // Each row is the PDF's 20 pt apart, as a minimum.
+    for row in &table.rows {
+        assert_eq!(row.properties.height.rule, Some(HeightRule::AtLeast));
+        assert_eq!(row.properties.height.value_twips, Some(400));
+    }
+    assert_eq!(graphics(document), 0);
+}
+
+fn twips(points: f64) -> i32 {
+    (points * 20.0).round() as i32
+}
+
+#[test]
+fn a_line_set_with_leading_spaces_keeps_its_indent() {
+    let content = text(
+        "F1",
+        11.0,
+        72.0,
+        700.0,
+        14.0,
+        &[
+            "This paragraph sets the column: it runs to its right edge.",
+            "",
+            "fn main() {",
+            "    body();",
+            "}",
+        ],
+    );
+    let reflowed = reflow_of(synth::document(&[Page::new(content)], COURIER, ""));
+    let body = paragraphs(&reflowed.document)
+        .into_iter()
+        .find(|p| para_text(p).contains("body();"))
+        .expect("the indented line");
+    // Four Courier spaces at 11 pt: 26.4 pt.
+    let start = body
+        .properties
+        .indentation
+        .as_ref()
+        .and_then(|i| i.start_twips)
+        .unwrap_or_else(|| panic!("{:?}", body.properties));
+    assert!((start - 528).abs() <= 4, "{start}");
+}

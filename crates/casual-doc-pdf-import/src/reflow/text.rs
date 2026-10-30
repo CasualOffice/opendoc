@@ -314,6 +314,9 @@ pub fn marker_token(token: &str) -> bool {
             link: None,
             note: None,
             comments: Vec::new(),
+            underline: false,
+            strike: false,
+            shade: None,
         })
         .collect();
     chars.shrink_to_fit();
