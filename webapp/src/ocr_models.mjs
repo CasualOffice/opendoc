@@ -72,10 +72,18 @@ export function manifestFiles(manifest) {
 /** The configured manifest URL, from the page's query (`pdfOcrModels`, matched
  *  in any case like every host option, `capabilities.mjs`'s `hostParams`), or
  *  null. */
-export function ocrManifestUrl(search) {
+export function ocrManifestUrl(search, doc = globalThis.document) {
   try {
+    const base = globalThis.location?.href ?? "http://localhost/";
     const value = hostParams(search ?? "").get("pdfocrmodels");
-    return value ? new URL(value, globalThis.location?.href ?? "http://localhost/").href : null;
+    // `none` turns recognition off even where the deployment ships models.
+    if (value && value.toLowerCase() === "none") return null;
+    if (value) return new URL(value, base).href;
+    // The deployment's own models: the Pages build writes this meta tag only
+    // after it has downloaded and verified them (webapp/tools/stage-ocr-models.mjs),
+    // so a build without models has no tag and recognition stays unavailable.
+    const shipped = doc?.querySelector?.('meta[name="opendoc-ocr-manifest"]')?.getAttribute("content");
+    return shipped ? new URL(shipped, base).href : null;
   } catch {
     return null;
   }

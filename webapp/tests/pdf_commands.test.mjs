@@ -70,3 +70,12 @@ test("the host's manifest option is read in any case, like every host option", (
   assert.equal(ocrManifestUrl("?PDFOCRMODELS=https://a.example/m.json"), "https://a.example/m.json");
   assert.equal(ocrManifestUrl("?blank=1"), null);
 });
+
+test("the deployment's own models are the default; the host's option overrides them, and none turns them off", () => {
+  const withTag = { querySelector: (sel) => (sel.includes("opendoc-ocr-manifest") ? { getAttribute: () => "./ocr/manifest.json" } : null) };
+  const noTag = { querySelector: () => null };
+  assert.match(ocrManifestUrl("", withTag), /\/ocr\/manifest\.json$/);
+  assert.equal(ocrManifestUrl("", noTag), null, "a build that staged no models offers none");
+  assert.match(ocrManifestUrl("?pdfOcrModels=https://host.example/m.json", withTag), /^https:\/\/host\.example\/m\.json$/);
+  assert.equal(ocrManifestUrl("?pdfocrmodels=none", withTag), null);
+});

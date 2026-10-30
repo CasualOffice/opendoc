@@ -163,7 +163,7 @@ impl WasmDocument {
     /// Replaces the form-roles sidecar.
     ///
     /// # Errors
-    /// Malformed JSON, or what [`FormRoles::validated`] refuses.
+    /// Malformed JSON, or what `FormRoles::validated` refuses.
     #[wasm_bindgen(js_name = setFormRoles)]
     pub fn set_form_roles(&mut self, json: &str) -> Result<(), JsValue> {
         self.set_form_roles_inner(json).map_err(to_js)

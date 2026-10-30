@@ -10,3 +10,6 @@
 # Playwright run artifacts (test-results/, HTML report) — regenerated per run.
 /playwright-report/
 /test-results/
+
+# OCR models staged by tools/stage-ocr-models.mjs for the Pages build only.
+/ocr/
