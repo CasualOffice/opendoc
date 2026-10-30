@@ -268,15 +268,26 @@ fn an_image_in_a_spec_reads_back_with_its_size() {
 fn a_failed_batch_leaves_the_document_unchanged() {
     let mut doc = Document::open(SAMPLE).unwrap();
     let before = doc.text();
+    let snapshot = |doc: &Document| doc.save(Format::Json, SaveMode::Semantic).unwrap().0;
+    let model_before = snapshot(&doc);
     let error = doc
         .edit(|e| {
             e.replace_all("the", "THE")?;
-            e.insert_text("not-an-id", 0, "x")
+            let table = e.insert_table(&Position::Start, 2, 2, &[])?;
+            e.add_comment(&table, 0, 1, "never", None)
         })
         .unwrap_err();
     assert_eq!(error.code(), ErrorCode::InvalidArgument);
     assert_eq!(doc.text(), before);
+    // The whole model, not just its text: tables, comments and ids too.
+    assert!(
+        snapshot(&doc) == model_before,
+        "the failed batch left a trace"
+    );
     assert!(!doc.is_modified());
+    // And the document still edits normally afterwards.
+    doc.edit(|e| e.append_paragraph("after", None)).unwrap();
+    assert!(doc.text().ends_with("after"));
 }
 
 #[test]

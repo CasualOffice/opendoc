@@ -141,6 +141,31 @@ for (const pair of pairs) {
   }
 }
 
+// Python: the same python-docx program against python-docx and against the
+// opendoc wheel (both installed in the interpreter given by --python).
+function pythonTask(name, library, input) {
+  const result = spawnSync(python, [join(here, "python_task.py"), name, library, String(input), String(iterations)], {
+    encoding: "utf8",
+  });
+  if (result.status !== 0) return { error: (result.stderr || "").trim().split("\n").pop() };
+  return JSON.parse(result.stdout.trim().split("\n").pop());
+}
+if (python) {
+  for (const [name, inputs, label] of [
+    ["generate", [100, 1000, 5000], (n) => `${n} paragraphs + table (Python)`],
+    ["read", ["sample", "scale"], (n) => `${n} (Python)`],
+  ]) {
+    for (const input of inputs) {
+      const row = { task: `py-${name}`, input: label(input) };
+      for (const library of ["python-docx", "opendoc"]) {
+        log(`py-${name} ${input} ${library}`);
+        row[library] = pythonTask(name, library, named[input] ?? input);
+      }
+      results.speed.push(row);
+    }
+  }
+}
+
 // LibreOffice headless: DOCX to PDF, batch and single, wall time including its
 // own start-up (that is what a server pays per conversion request).
 if (soffice) {

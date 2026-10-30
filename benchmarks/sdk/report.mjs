@@ -24,13 +24,27 @@ function ratio(ours, theirs) {
   return r >= 1 ? `${r.toFixed(1)}× faster` : `${(1 / r).toFixed(1)}× slower`;
 }
 
-const COMPETITOR = { generate: "docx-js", template: "docxtemplater", html: "mammoth", text: "mammoth", pdf: "libreoffice" };
+const COMPETITOR = {
+  generate: "docx-js",
+  template: "docxtemplater",
+  html: "mammoth",
+  text: "mammoth",
+  pdf: "libreoffice",
+  "py-generate": "python-docx",
+  "py-read": "python-docx",
+  "java-generate": "poi",
+  "java-read": "poi",
+};
 const TASK = {
   generate: "Generate DOCX (the same docx-js program)",
   template: "Fill a template (the same template and data)",
   html: "DOCX to HTML",
   text: "DOCX to plain text",
   pdf: "DOCX to PDF",
+  "py-generate": "Generate DOCX (the same python-docx program)",
+  "py-read": "Open and read every paragraph (Python)",
+  "java-generate": "Generate DOCX (Java, POI-style calls)",
+  "java-read": "Open and read every paragraph (Java)",
 };
 
 export function render(results) {
