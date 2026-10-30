@@ -171,6 +171,16 @@ export function createPalette(ed) {
         run: () => ed.pasteAsText(),
       },
       {
+        id: "edit.pasteImage",
+        label: t("edit.pasteImage"),
+        group: "Clipboard",
+        kw: t("edit.pasteImage.keywords"),
+        contextMenu: true,
+        enabled: !!ed.doc && !!ed.selection,
+        disabledReason: t("paragraph.caretRequired"),
+        run: () => void ed.objectInsert.pasteAsPicture(),
+      },
+      {
         id: "edit.selectAll",
         label: "Select all",
         group: "Clipboard",
@@ -300,6 +310,7 @@ export function createPalette(ed) {
       { id: "insert.field", label: "Field…", group: "Insert", kw: "field placeholder page number of pages date time file name author auto update", enabled: ed.insertCommandEnabled("insert.field"), run: () => ed.openFieldDialog() },
       { id: "insert.dropCap", label: t("dropCap.command"), group: "Insert", kw: "initial letter dropped margin lines paragraph", enabled: ed.insertCommandEnabled("insert.dropCap"), run: () => ed.dropCapDialog.open() },
       { id: "insert.image", label: "Picture…", group: "Insert", kw: "image picture insert photo file png jpeg jpg gif paste", enabled: ed.insertCommandEnabled("insert.image"), run: () => ed.insertImageFromFile() },
+      { id: "insert.imageFromUrl", label: t("insert.imageFromUrl"), group: "Insert", kw: t("insert.imageFromUrl.keywords"), enabled: ed.insertCommandEnabled("insert.imageFromUrl"), run: () => ed.objectInsert.openPictureFromUrl() },
       { id: "insert.shape", label: "Shape…", group: "Insert", kw: "shape drawing autoshape rectangle rounded ellipse circle triangle diamond line arrow callout", enabled: ed.insertCommandEnabled("insert.shape"), run: () => ed.openShapeGallery() },
       { id: "insert.chart", label: t("insert.chart"), group: "Insert", kw: "chart graph column bar line area scatter pie doughnut plot data series", enabled: !!ed.selection, disabledReason: t("paragraph.caretRequired"), run: () => void ed.insertChartWithData() },
       // One row per chart type, the rows the Insert ▸ Chart picker offers

@@ -883,7 +883,9 @@
       "trackable": "no",
       "trackableReason": "Links, bookmarks, fields, pictures, notes and breaks cannot be suggested yet: the review lowering tracks text, paragraph marks and properties, not the insertion or removal of inline structure. Use mode `direct` under a profile that grants `edit`.",
       "uiCommands": [
-        "insert.image"
+        "insert.image",
+        "insert.imageFromUrl",
+        "edit.pasteImage"
       ]
     },
     {

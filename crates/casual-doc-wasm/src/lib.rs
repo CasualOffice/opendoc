@@ -237,6 +237,14 @@ mod toc;
 // cell shifts, nesting and text direction (`docs/153` table rows).
 mod table_tools;
 
+// Own line (anti-conflict): Paste as picture, the clipboard laid out and
+// painted by the engine (`docs/153` `text.paste-as-picture`).
+mod picture_insert;
+
+// Own line (anti-conflict): Word's Edit Points on a shape (`docs/153`
+// `object.edit-points`, `docs/109` FID-SH-02).
+mod shape_points;
+
 // Own line (anti-conflict): the Borders and Shading dialog, table text
 // wrapping and positioning, and Draw Table (`docs/153` table rows).
 mod table_layout;

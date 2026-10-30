@@ -310,6 +310,8 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("edit.copy", null),
   exact("edit.paste", "mutate"),
   exact("edit.pasteText", "mutate"),
+  // Paste as picture (`paste_picture.mjs`): the clipboard inserted as one picture.
+  exact("edit.pasteImage", "mutate"),
   exact("edit.selectAll", null),
   exact("edit.find", null),
   // The same panel on its replacement field (⌘H). Opening it changes nothing; a
@@ -388,6 +390,9 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("insert.field", "mutate"),
   exact("insert.dropCap", "mutate"),
   exact("insert.image", "mutate"),
+  // Picture from URL (`picture_url.mjs`): downloaded through the host's network
+  // policy (`?remoteImages=`) and embedded.
+  exact("insert.imageFromUrl", "mutate"),
   exact("insert.shape", "mutate"),
   exact("insert.chart", "mutate"),
   exact("insert.textbox", "mutate"),

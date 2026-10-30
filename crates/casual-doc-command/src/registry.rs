@@ -642,7 +642,10 @@ pub const COMMANDS: &[Command] = &[
         ],
         trackable: Trackable::No(INLINE_NOT_TRACKABLE),
         example: r#"{"op":"insert_image","at":{"node":"1:2","side":"after"},"data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==","content_type":"image/png","width_pt":36,"alt_text":"Company logo"}"#,
-        ui_commands: &["insert.image"],
+        // Picture from URL and Paste as picture end in this same insert: the
+        // host downloads or paints the bytes, the agent passes them (agents never
+        // fetch; `picture_url.mjs`, `paste_picture.mjs`).
+        ui_commands: &["insert.image", "insert.imageFromUrl", "edit.pasteImage"],
     },
     Command {
         id: "set_alt_text",

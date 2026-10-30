@@ -640,6 +640,7 @@ export function createContextMenu(ed) {
   const objectContextMenuHost = {
     reviewMode: () => ed.reviewMode,
     alignRows: (mutationEnabled, mutationReason) => objectAlign.rows(mutationEnabled, mutationReason),
+    editPoints: () => ed.objectInsert.editPoints.toggle(),
     changeShape: (token) => {
       const node = ed.objectSelection?.node;
       if (!node) return;

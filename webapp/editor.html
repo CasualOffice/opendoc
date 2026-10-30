@@ -795,6 +795,10 @@
           <div class="rgroup" data-group="illustrations" data-ribbon-pinned>
             <div class="rgroup-ctl">
               <button data-i18n-title="panelInsert.insertPictureFromFile.title" data-i18n-label="panelInsert.insertPicture.label" id="insertPictureBtn" type="button" class="fmt fmt-big" title="Insert a picture from a file" aria-label="Insert picture" disabled><span class="ms" aria-hidden="true">image</span><span data-i18n="insertPictureBtn.picture" class="fmt-big-label">Picture</span></button>
+              <!-- Word's Pictures ▸ Online Pictures, Docs' Image ▸ By URL, ONLYOFFICE's
+                   Image ▸ From URL (`picture_url.mjs`): the address is downloaded once
+                   and the picture EMBEDDED, through the host's network policy. -->
+              <button data-i18n-title="panelInsert.insertPictureFromUrl.title" data-i18n-label="panelInsert.insertPictureFromUrl.label" id="insertPictureUrlBtn" type="button" class="fmt" title="Insert a picture from a web address" aria-label="Picture from URL" aria-haspopup="dialog" aria-controls="pictureUrlDialog" disabled><span class="ms" aria-hidden="true">add_link</span></button>
               <button data-i18n-title="panelInsert.insertShape.title" data-i18n-label="panelInsert.insertShape.label" id="insertShapeBtn" type="button" class="fmt fmt-big" title="Insert a shape" aria-label="Insert shape" aria-haspopup="menu" aria-expanded="false" aria-controls="shapeGalleryMenu" disabled><span class="ms" aria-hidden="true">interests</span><span data-i18n="insertShapeBtn.shapes" class="fmt-big-label">Shapes</span></button>
               <button data-i18n-title="panelInsert.insertChart.title" data-i18n-label="panelInsert.insertChart.title" id="insertChartBtn" type="button" class="fmt fmt-big" title="Insert a chart" aria-label="Insert a chart" aria-haspopup="menu" disabled><span class="ms" aria-hidden="true">bar_chart</span><span data-i18n="insertChartBtn.chart" class="fmt-big-label">Chart</span></button>
               <button data-i18n-title="panelInsert.insertTextBox.title" data-i18n-label="panelInsert.insertTextBox.label" id="insertTextBoxBtn" type="button" class="fmt fmt-big" title="Insert a text box" aria-label="Insert text box" disabled><span class="ms" aria-hidden="true">text_fields</span><span data-i18n="insertTextBoxBtn.textBox" class="fmt-big-label">Text box</span></button>
@@ -2921,6 +2925,28 @@
       </section>
     </div>
 
+    <!-- Insert ▸ Picture from URL (`picture_url_dialog.mjs`). One address in,
+         a download with progress and Cancel, and the picture EMBEDDED: the
+         document never keeps a link to the site. -->
+    <div id="pictureUrlDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="pictureUrlTitle" aria-describedby="pictureUrlDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="pictureUrlDialog.title" id="pictureUrlTitle">Insert picture from URL</h2>
+              <p data-i18n="pictureUrlDialog.description" id="pictureUrlDescription">The picture is downloaded once and saved inside the document.</p>
+            </div>
+          </div>
+          <button data-i18n-title="pictureUrlDialog.close.title" data-i18n-label="pictureUrlDialog.close.label" id="pictureUrlClose" type="button" class="dialog-close" title="Close" aria-label="Close insert picture from URL dialog"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <label data-i18n="pictureUrlDialog.address" class="dialog-field field-wide">Picture address<input data-i18n-placeholder="pictureUrlDialog.address.placeholder" id="pictureUrlInput" type="url" inputmode="url" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="https://example.com/picture.png" /></label>
+          <progress id="pictureUrlProgress" class="dialog-progress" max="1" hidden></progress>
+          <p id="pictureUrlStatus" class="dialog-field-note" role="status" aria-live="polite"></p>
+        </div>
+        <footer class="dialog-foot"><span data-i18n="pictureUrlDialog.oneUndoableAction" class="dialog-note">One undoable action.</span><div class="dialog-actions"><button data-i18n="pictureUrlDialog.cancel" id="pictureUrlCancel" type="button" class="dialog-button">Cancel</button><button data-i18n="pictureUrlDialog.insert" id="pictureUrlInsert" type="button" class="dialog-button dialog-button-primary">Insert</button></div></footer>
+      </section>
+    </div>
     <div id="styleNameDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="styleNameTitle" aria-describedby="styleNameDescription">
       <section class="dialog-card dialog-card-compact">
         <header class="dialog-head">
@@ -3834,6 +3860,7 @@
       <span class="ms paste-options-icon" aria-hidden="true">content_paste</span>
       <button data-i18n-title="pasteOptions.keepPastedEmphasisBut.title" data-i18n="pasteOptions.mergeFormatting" id="pasteOptionsMerge" type="button" class="paste-options-action" title="Keep the pasted emphasis but adopt this document's formatting">Merge formatting</button>
       <button data-i18n-title="pasteOptions.keepTextOnlyV.title" data-i18n="pasteOptions.keepTextOnly" id="pasteOptionsTextOnly" type="button" class="paste-options-action" title="Keep text only (⌘⇧V)">Keep text only</button>
+      <button data-i18n-title="pasteOptions.picture.title" data-i18n="pasteOptions.picture" id="pasteOptionsPicture" type="button" class="paste-options-action" title="Paste this as a picture of how it looks">Picture</button>
       <button data-i18n-title="pasteOptions.dismiss.title" data-i18n-label="pasteOptions.dismissPasteOptions.label" id="pasteOptionsClose" type="button" class="paste-options-close" title="Dismiss" aria-label="Dismiss paste options"><span class="ms" aria-hidden="true">close</span></button>
     </div>
 
