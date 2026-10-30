@@ -3014,7 +3014,10 @@
     <!-- Table positioning (`table_position_dialog.mjs`): Word's Positioning…
          dialog, opened from Table properties when Text wrapping is Around. -->
     <div id="tablePositionDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="tablePositionTitle" aria-describedby="tablePositionDescription">
-      <section class="dialog-card dialog-card-compact">
+      <!-- The standard card, not the compact one: its rows are three and four
+           fields across (Position / Offset / Relative to, and four distances),
+           which a 380px card clipped by about 35px per field. -->
+      <section class="dialog-card">
         <header class="dialog-head">
           <div class="dialog-heading">
             <div>

@@ -313,7 +313,13 @@ export function createTablePosition(io) {
     setWrap,
     reflect,
   };
-  if (positionButton) io.onButton(positionButton, () => instance.open());
+  // A plain click, NOT `onButton`. `onButton` cancels `mousedown` so a RIBBON
+  // button never takes the caret's focus. Positioning… is a button in the table
+  // properties panel, where the keyboard already is. Suppressing its focus
+  // made the modal record whatever was focused before (the Around radio) as
+  // the control to return to, so Escape left the reader one field away from
+  // the button they pressed (`dialog-contract.spec.mjs`, focus restore).
+  positionButton?.addEventListener("click", () => instance.open());
   active = instance;
   return instance;
 }
