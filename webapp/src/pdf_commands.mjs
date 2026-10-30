@@ -12,8 +12,8 @@
 //     edit of the open one, and that document keeps no PDF.
 //   * "Recognise text in scanned pages" (`file.pdf.recogniseText`). Acrobat
 //     calls it "Recognize Text", Google Drive does it silently on upload; here
-//     it is explicit because the recognition models are downloaded, and a
-//     download the reader did not agree to, sized or not, is not ours to make.
+//     it runs on its own when a scanned PDF opens, as Drive's does, and by
+//     hand from this command, which asks before a download.
 //
 // Both import the PDF again in the PDF module, behind the same progress dialog
 // and Cancel as File ▸ Open (`pdf_import.mjs`), from the original the session
@@ -27,22 +27,21 @@
 // removed: for a document that is not a PDF, a PDF already in that layout, or
 // a PDF with nothing to recognise, it is DISABLED WITH THE REASON.
 //
-// The models: the host names a manifest (`?pdfOcrModels=`, `ocr_models.mjs`);
-// the editor bundles none and fetches none before the reader agrees to a
-// dialog naming the download's size and origin. Verified files are kept in
-// IndexedDB, so a second use, or a use offline, asks nothing and downloads
-// nothing. The loaded engine is kept for the session and reused by every
-// later recognition and by Convert to flowing document.
+// The models: the host names a manifest (`?pdfOcrModels=`, `ocr_models.mjs`),
+// or the deployment ships one. A scanned PDF is recognised on its own right
+// after it opens, downloading the models without a prompt (owner, 2026-10-30);
+// asked for by hand, the command confirms first, naming the size and origin,
+// unless the models are already loaded or kept. Verified files are kept in
+// IndexedDB, so a later use, or one offline, downloads nothing.
+//
+// Everything about recognition runs in the OCR worker (`ocr_service.mjs`,
+// `docs/182` §17a.5): the download, the check, the cache, the engine and every
+// page. The engine is kept there for the session and reused by every later
+// recognition, Keep exact page layout and Convert to flowing document; the
+// first scanned page the open reads starts it loading (`preload`).
 import { t, n } from "./i18n.mjs";
 import { hostParams } from "./capabilities.mjs";
-import {
-  fetchOcrManifest,
-  modelsStored,
-  obtainModels,
-  ocrManifestUrl,
-  openOcrStore,
-  sha256Hex,
-} from "./ocr_models.mjs";
+import { fetchOcrManifest, ocrManifestUrl } from "./ocr_models.mjs";
 
 export const CONVERT_COMMAND = "file.pdf.convertToFlowing";
 export const RECOGNISE_COMMAND = "file.pdf.recogniseText";
@@ -112,14 +111,17 @@ export function flowingName(name) {
  * @param {object} io
  * @param {object} io.pdfImport `createPdfImport`'s controller.
  * @param {Function} io.openBytes `editor_file_open.mjs`'s open, with `options.prepare`.
+ * @param {object} io.ocrService `createOcrService`'s client: the OCR worker.
  * @param {() => string} [io.search] the page's query (the host's options).
- * @param {object} [io.view] `window`: its `fetch`, `indexedDB`, `crypto` and `location`.
+ * @param {object} [io.view] `window`: its `fetch` (the manifest the consent
+ *   names) and `location`.
  */
 export function createPdfCommands(ed, io) {
   const view = io.view ?? globalThis;
   const search = io.search ?? (() => view.location?.search ?? "");
-  /** The loaded engine and the manifest it came from, kept for the session. */
-  let loaded = null;
+  /** The OCR worker's client (`ocr_service.mjs`): it owns the models, the
+   *  engine and every page's recognition, kept for the session. */
+  const ocr = io.ocrService;
 
   const state = () => ({
     pdfOrigin: Boolean(ed.doc?.pdfOrigin),
@@ -128,30 +130,8 @@ export function createPdfCommands(ed, io) {
     manifestUrl: ocrManifestUrl(search()),
   });
 
-  /** The engine, from this session's cache, or obtained behind the import
-   *  dialog: the store first, then the download the reader agreed to. */
-  function enginePreparer(url, manifest, store) {
-    return async (module, ui) => {
-      if (loaded?.url === url) return loaded.engine;
-      ui.phase(t("pdfOcr.downloading"));
-      ui.progress(0, manifest.bytes);
-      const files = await obtainModels(manifest, {
-        store,
-        fetch: (target, init) => view.fetch(target, init),
-        digest: (bytes) => sha256Hex(bytes, view.crypto?.subtle),
-        onProgress: ui.progress,
-        signal: ui.signal,
-      });
-      ui.signal.throwIfAborted?.();
-      ui.phase(t("pdfOcr.loading"));
-      await ui.painted();
-      const models = new module.PdfOcrModels(files.detection);
-      for (const pack of files.packs) models.addPack(pack.name, pack.model, pack.dictionary);
-      const engine = module.PdfOcrEngine.load(models);
-      loaded = { url, engine };
-      return engine;
-    };
-  }
+  /** What a re-import with recognition hands the dialog. */
+  const recognition = (manifestUrl) => ({ service: ocr, manifestUrl });
 
   /** Re-imports the session's PDF with text recognition and puts the result
    *  on screen in its place. */
@@ -165,19 +145,18 @@ export function createPdfCommands(ed, io) {
     const name = ed.currentName;
     if (!auto && !(await ed.confirmDiscardIfEdited())) return;
     const url = ocrManifestUrl(search());
-    let manifest;
-    let store = null;
-    try {
-      manifest = await fetchOcrManifest(url, { fetch: (target, init) => view.fetch(target, init) });
-      store = await openOcrStore({ indexedDB: view.indexedDB }).catch(() => null);
-    } catch (error) {
-      ed.setStatus(t("pdfOcr.failed", { reason: String(error?.message ?? error) }), "error");
-      return;
-    }
     // Run on its own right after a scanned PDF opens, the models download when
     // they are needed, without a prompt (owner, 2026-10-30): the import dialog
-    // shows the progress and carries Cancel. Asked for by hand, it confirms first.
-    if (!auto && loaded?.url !== url && !(store && (await modelsStored(manifest, store).catch(() => false)))) {
+    // shows the progress and carries Cancel. Asked for by hand, it confirms
+    // first unless the models are already loaded or kept in this browser.
+    if (!auto && !ocr.isWarm(url) && !(await ocr.stored(url).catch(() => false))) {
+      let manifest;
+      try {
+        manifest = await fetchOcrManifest(url, { fetch: (target, init) => view.fetch(target, init) });
+      } catch (error) {
+        ed.setStatus(t("pdfOcr.failed", { reason: String(error?.message ?? error) }), "error");
+        return;
+      }
       const agreed = await ed.confirmModal({
         title: t("pdfOcr.consentTitle"),
         message: t("pdfOcr.consentMessage", {
@@ -195,9 +174,16 @@ export function createPdfCommands(ed, io) {
     await io.openBytes(original, name, undefined, undefined, {
       origin: "pdf",
       cancelledStatus: t("pdfOcr.cancelled"),
-      prepare: () => io.pdfImport.run(original, name, { prepareOcr: enginePreparer(url, manifest, store), layout }),
+      prepare: () => io.pdfImport.run(original, name, { recognition: recognition(url), layout }),
     });
   }
+
+  /** A session whose scans were read is re-imported with recognition again,
+   *  so the new document has the text the reader already saw. */
+  const recognitionIfRead = () => {
+    const url = ocrManifestUrl(search());
+    return ocrSummaryOf(ed.doc)?.provider && url ? recognition(url) : undefined;
+  };
 
   /** Opens the session's PDF again with every page as it is drawn. */
   async function keepExactLayout() {
@@ -208,13 +194,13 @@ export function createPdfCommands(ed, io) {
     }
     const original = ed.doc.pdfOriginal();
     const name = ed.currentName;
-    const engine = ocrSummaryOf(ed.doc)?.provider && loaded ? loaded.engine : null;
+    const read = recognitionIfRead();
     if (!(await ed.confirmDiscardIfEdited())) return;
     await io.openBytes(original, name, undefined, undefined, {
       origin: "pdf",
       cancelledStatus: t("pdfFixed.cancelled", { name }),
       failedStatus: (reason) => t("pdfFixed.failed", { name, reason }),
-      prepare: () => io.pdfImport.run(original, name, { mode: "fixed", ocr: engine }),
+      prepare: () => io.pdfImport.run(original, name, { mode: "fixed", recognition: read }),
     });
   }
 
@@ -228,16 +214,14 @@ export function createPdfCommands(ed, io) {
     }
     const original = ed.doc.pdfOriginal();
     const name = ed.currentName;
-    // A session whose scans were read is converted with the same engine, so
-    // the flowing document has the text the reader already saw.
-    const engine = ocrSummaryOf(ed.doc)?.provider && loaded ? loaded.engine : null;
+    const read = recognitionIfRead();
     if (!(await ed.confirmDiscardIfEdited())) return;
     await io.openBytes(original, flowingName(name), undefined, undefined, {
       origin: "pdfReflow",
       sourceFormat: DOCX,
       cancelledStatus: t("pdfReflow.cancelled", { name }),
       failedStatus: (reason) => t("pdfReflow.failed", { name, reason }),
-      prepare: () => io.pdfImport.run(original, name, { mode: "reflow", ocr: engine }),
+      prepare: () => io.pdfImport.run(original, name, { mode: "reflow", recognition: read }),
     });
   }
 
@@ -248,6 +232,17 @@ export function createPdfCommands(ed, io) {
      *  provider and the refusal is "done", so this cannot loop. */
     autoRecognise() {
       if (recogniseRefusal(state()) === "") void recogniseText({ auto: true });
+    },
+    /** The PDF import read its first scanned page: start the models loading
+     *  in the worker now, in parallel with the rest of the import, so the
+     *  recognition `autoRecognise` starts next begins warm (`docs/182`
+     *  §17a.5). From IndexedDB when this browser kept them, else downloaded,
+     *  under the same rule as the automatic run (owner, 2026-10-30). Never
+     *  called for a document that is not a PDF or a PDF without scans; a
+     *  no-op without a host's or the deployment's models. */
+    preload() {
+      const url = ocrManifestUrl(search());
+      if (url) ocr.warm(url).catch(() => {});
     },
     convertToFlowing,
     keepExactLayout,

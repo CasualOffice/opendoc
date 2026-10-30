@@ -600,6 +600,7 @@ reviewable
 revisioned
 roadmap
 rsid
+rten
 rtf
 runnable
 rustdoc
