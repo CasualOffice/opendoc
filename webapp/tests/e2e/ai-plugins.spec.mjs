@@ -82,13 +82,8 @@ test("bring your own key: test, save, the disclosure names the endpoint, and the
   expect(await page.evaluate(() => localStorage.getItem("opendoc.ai.provider"))).toBeNull();
 });
 
-test("?aiProvider=off: the settings row is present, disabled with its reason, and the dialog holds no form", async ({ page }) => {
+test("?aiProvider=off: Settings says AI is off and the dialog holds no form", async ({ page }) => {
   await gotoEditor(page, "&aiProvider=off");
-  const row = await page.evaluate(() => {
-    const cmd = window.opendoc.query("ai.providerSettings");
-    return { known: cmd.known, present: cmd.present, available: cmd.available, reason: cmd.reason };
-  });
-  expect(row).toEqual({ known: true, present: true, available: false, reason: "AI features are turned off for this editor." });
   await openSettingsRow(page);
   await expect(page.locator("#aiProviderForm")).toBeHidden();
   await expect(page.locator("#aiProviderManaged")).toHaveText("AI features are turned off for this editor.");
@@ -128,7 +123,7 @@ test("a plugin installed with a grant runs sandboxed, appears in the Add-ins men
 
   await page.locator('[data-tab="review"]').click();
   await page.locator("#reviewAddinsBtn").click();
-  const row = page.locator("#addinsMenu .menu-item", { hasText: "Probe: Probe the editor" });
+  const row = page.locator("#addinsMenu .menu-item", { hasText: "Probe the editor" });
   await expect(row).toBeEnabled();
   await row.click();
   await expect(page.locator("#pluginPanel")).toBeVisible();

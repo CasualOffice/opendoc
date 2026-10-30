@@ -70,6 +70,17 @@
             "properties": { "command": { "type": "string" }, "when": { "enum": ["always", "selection", "caret"] } }
           }
         },
+        "selection": {
+          "type": "array",
+          "maxItems": 12,
+          "description": "Rows in the one ✦ menu of the selection toolbar: actions on the selected text, shown only while the plugin runs.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["command"],
+            "properties": { "command": { "type": "string" }, "icon": { "type": "string", "pattern": "^[a-z0-9_]{1,40}$" } }
+          }
+        },
         "palette": {
           "type": "array",
           "items": {

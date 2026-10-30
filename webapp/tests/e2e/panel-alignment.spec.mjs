@@ -125,6 +125,23 @@ const PANELS = [
     },
   },
   {
+    // A plugin's panel (`docs/183` §8): the same slot, reached the way a person
+    // reaches it — install the test fixture plugin, then Review ▸ Add-ins.
+    id: "pluginPanel",
+    name: "Add-in panel",
+    async open(page) {
+      await runPaletteCommand(page, "plugin.manage", "manage add-ins");
+      await page.locator("#pluginsInstallUrl").fill("tests/fixtures/plugins/probe/manifest.json");
+      await page.locator("#pluginsInstallBtn").click();
+      await page.locator("#pluginGrantAllow").click();
+      await page.locator("#pluginsDone").click();
+      await page.locator('[data-tab="review"]').click();
+      await expect(page.locator("#reviewAddinsBtn")).toBeVisible();
+      await page.locator("#reviewAddinsBtn").click();
+      await page.locator("#addinsMenu .menu-item").first().click();
+    },
+  },
+  {
     id: "objectInspector",
     name: "Object properties",
     selector: ".object-inspector",

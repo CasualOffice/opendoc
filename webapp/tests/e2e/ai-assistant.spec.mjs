@@ -1,0 +1,197 @@
+// Casual AI, the first-party assistant plugin (`docs/183` §13), in a real
+// browser, against a MOCK provider: a Playwright route on this test server that
+// speaks OpenAI Chat Completions with SSE streaming. No real model, no real key.
+//
+// The owner's rules (2026-10-31) are asserted, not assumed: with no provider the
+// editor shows nothing of it; once configured there are exactly three entry
+// points (the ✦ item in the selection toolbar, the panel in the side-panel slot,
+// palette rows); every change waits in the preview and lands as a suggestion;
+// streaming happens in the panel; Stop stops.
+import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD } from "./fixtures.mjs";
+
+test.describe.configure({ timeout: 120_000 });
+
+const WORD = "CASUALPROBE";
+const ASSISTANT = 'iframe[data-plugin="org.casualoffice.assistant"]';
+
+/** Configures BYOK before the page boots: the endpoint is this test server. */
+async function withProvider(page) {
+  // Init scripts run in every frame; the plugin's sandboxed one has no storage
+  // at all (its opaque origin is the point), so only the editor's frame is set.
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem(
+        "opendoc.ai.provider",
+        JSON.stringify({ preset: "custom", protocol: "openai", baseUrl: `${location.origin}/mock-ai/v1`, model: "mock-model", apiKey: "sk-test-not-real" }),
+      );
+    } catch {
+      /* the plugin frame */
+    }
+  });
+}
+
+/** The mock model. `answers` maps a phrase of the system prompt to the reply;
+ *  `hold` keeps a stream open after its first chunk (for Stop). */
+async function mockModel(page, answers, { hold = false } = {}) {
+  const seen = [];
+  await page.route("**/mock-ai/v1/chat/completions", async (route) => {
+    const body = route.request().postDataJSON();
+    seen.push(body);
+    const system = body.messages[0].content;
+    const key = Object.keys(answers).find((k) => system.includes(k)) ?? "default";
+    const text = answers[key] ?? "OK";
+    if (!body.stream) {
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ id: "x", object: "chat.completion", created: 1, model: "mock-model", choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }] }) });
+      return;
+    }
+    const pieces = text.match(/.{1,6}/gs) ?? [text];
+    const chunks = pieces.map((piece) => `data: ${JSON.stringify({ id: "x", model: "mock-model", choices: [{ index: 0, delta: { content: piece }, finish_reason: null }] })}\n\n`);
+    if (hold) {
+      // The model never answers: only the Stop button can end the wait.
+      await new Promise((resolve) => setTimeout(resolve, 60_000));
+      await route.fulfill({ contentType: "text/event-stream", body: chunks.join("") }).catch(() => {});
+      return;
+    }
+    chunks.push(`data: ${JSON.stringify({ id: "x", model: "mock-model", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`, "data: [DONE]\n\n");
+    await route.fulfill({ contentType: "text/event-stream", body: chunks.join("") });
+  });
+  return seen;
+}
+
+/** Types WORD on a new paragraph and selects it. */
+async function selectWord(page) {
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type(WORD);
+  for (let i = 0; i < WORD.length; i += 1) await page.keyboard.press("Shift+ArrowLeft");
+  await expect(page.locator("#selToolbar")).toBeVisible();
+}
+
+const assistant = (page) => page.frameLocator(ASSISTANT);
+
+async function waitForAssistant(page) {
+  await expect(page.locator(ASSISTANT)).toHaveCount(1, { timeout: 30_000 });
+  await expect(assistant(page).locator("html")).toHaveAttribute("data-ready", "1", { timeout: 30_000 });
+}
+
+test("with no AI provider the editor shows nothing of Casual AI and runs none of it", async ({ page }) => {
+  await gotoEditor(page);
+  await selectWord(page);
+  await expect(page.locator("#selAiBtn")).toBeHidden();
+  await expect(page.locator("#selAiDivider")).toBeHidden();
+  await expect(page.locator("#reviewAddinsBtn")).toBeHidden();
+  await expect(page.locator("#pluginPanel")).toBeHidden();
+  await expect(page.locator("iframe[data-plugin]")).toHaveCount(0);
+  // No palette row: the AI rows exist only while the assistant runs.
+  const rows = await page.evaluate(() => window.opendoc.describe().commands.map((c) => c.id).filter((id) => id.startsWith("plugin.") && id !== "plugin.manage"));
+  expect(rows).toEqual([]);
+  // ⌘/ does nothing visible.
+  await page.keyboard.press(`${MOD}+/`);
+  await expect(page.locator("#selAiMenu")).toBeHidden();
+  await expect(page.locator("#pluginPanel")).toBeHidden();
+});
+
+test("✦ Rewrite streams in the panel, proposes in the preview, and lands as a suggestion by Casual AI", async ({ page }) => {
+  await withProvider(page);
+  const seen = await mockModel(page, { "Reply with the replacement text only": "CASUALREWRITTEN" });
+  await gotoEditor(page);
+  await waitForAssistant(page);
+  await selectWord(page);
+  await expect(page.locator("#selAiBtn")).toBeVisible();
+  await page.locator("#selAiBtn").click();
+  const menu = page.locator("#selAiMenu");
+  await expect(menu).toBeVisible();
+  await expect(menu.locator(".menu-item > span:last-child")).toHaveText(["Rewrite", "Shorten", "Expand", "Fix grammar", "Make more formal", "Make friendlier", "Make more confident", "Translate…", "Ask Casual AI"]);
+  await menu.locator(".menu-item", { hasText: "Rewrite" }).click();
+  // The panel is the side-panel slot, titled by the product's catalogue.
+  await expect(page.locator("#pluginPanel")).toBeVisible();
+  await expect(page.locator("#pluginPanel")).toHaveClass(/side-panel/);
+  await expect(page.locator("#pluginPanelTitle")).toHaveText("Casual AI");
+  await expect(assistant(page).locator(".ca-msg-ai").first()).toContainText("CASUALREWRITTEN");
+  // The selected text went to the model data-marked, never as an instruction.
+  expect(seen[0].messages.at(-1).content).toContain(`<document_text id="selection">${WORD}</document_text>`);
+  expect(seen[0].stream).toBe(true);
+  // Nothing in the document yet: the preview waits for the person.
+  await expect(page.locator("#aiPreviewPanel")).toBeVisible();
+  const has = (word) => page.evaluate(async (w) => (await window.opendoc.ai.read({ tool: "search", query: w })).value.hits.length, word);
+  expect(await has("CASUALREWRITTEN")).toBe(0);
+  await page.locator("#aiPreviewPanel .ai-preview-accept").click();
+  await expect.poll(() => has("CASUALREWRITTEN")).toBeGreaterThan(0);
+  const authors = await page.evaluate(async () => (await window.opendoc.ai.read({ tool: "trackedChanges" })).value.trackedChanges.map((c) => c.author));
+  expect(authors.length).toBeGreaterThan(0);
+  expect(authors.every((a) => /AI/.test(a ?? ""))).toBe(true);
+});
+
+test("Stop ends a stream at once and says so", async ({ page }) => {
+  await withProvider(page);
+  await mockModel(page, { "answering questions": "The budget is" }, { hold: true });
+  await gotoEditor(page);
+  await waitForAssistant(page);
+  await page.evaluate(() => window.opendoc.execute("plugin.org.casualoffice.assistant.ask"));
+  await expect(page.locator("#pluginPanel")).toBeVisible();
+  const frame = assistant(page);
+  await frame.locator("#prompt").fill("What is the budget?");
+  await frame.locator("#prompt").press("Enter");
+  await expect(frame.locator("#stop")).toBeVisible();
+  await frame.locator("#stop").click();
+  await expect(frame.locator("#working")).toBeHidden();
+  await expect(frame.locator(".ca-msg-ai").last()).toContainText("Stopped.");
+});
+
+test("Ask answers with citation chips that jump to the paragraph, and history survives a reload until cleared", async ({ page }) => {
+  await withProvider(page);
+  await mockModel(page, { "answering questions": "It is described here [p1]." });
+  await gotoEditor(page);
+  await waitForAssistant(page);
+  await page.evaluate(() => window.opendoc.execute("plugin.org.casualoffice.assistant.ask"));
+  const frame = assistant(page);
+  await frame.locator("#prompt").fill("Where is the title?");
+  await frame.locator("#send").click();
+  const chip = frame.locator(".ca-cite").first();
+  await expect(chip).toHaveAttribute("aria-label", "Go to paragraph 1");
+  await chip.click();
+  // Focus moved to the document, at the cited paragraph.
+  await expect.poll(() => page.evaluate(() => document.activeElement?.id ?? "")).toMatch(/^(pages|editorTextInput)$/);
+
+  await page.reload();
+  await waitForAssistant(page);
+  await page.evaluate(() => window.opendoc.execute("plugin.org.casualoffice.assistant.ask"));
+  await expect(assistant(page).locator(".ca-msg-user")).toContainText(["Where is the title?"]);
+  await assistant(page).locator("#clear").click();
+  await expect(assistant(page).locator(".ca-msg-user")).toHaveCount(0);
+});
+
+test("the review pass proposes comments and suggestions in one preview", async ({ page }) => {
+  await withProvider(page);
+  await gotoEditor(page);
+  // The answer quotes the document's real first paragraph, read the way the
+  // assistant reads it, so the verifier keeps it.
+  const first = await page.evaluate(async () => {
+    const read = await window.opendoc.ai.read({ tool: "read", maxTokens: 4000 });
+    return read.value.blocks.find((b) => b.kind === "paragraph" && /\w{4,}/.test(b.text)).text.match(/\w{4,}/)[0];
+  });
+  await mockModel(page, {
+    "reviewing a document": JSON.stringify([
+      { id: "p1", quote: first, comment: "Clarify this.", replacement: first.toUpperCase() },
+      { id: "p99", quote: "nothing", comment: "invented" },
+    ]),
+  });
+  await waitForAssistant(page);
+  await page.evaluate(() => window.opendoc.execute("plugin.org.casualoffice.assistant.review"));
+  await expect(page.locator("#aiPreviewPanel")).toBeVisible();
+  await expect(assistant(page).locator(".ca-msg-ai").last()).toContainText("Comments: 1. Suggestions: 1.");
+});
+
+test("⌘/ opens the ✦ actions on a selection", async ({ page }) => {
+  await withProvider(page);
+  await mockModel(page, {});
+  await gotoEditor(page);
+  await waitForAssistant(page);
+  await selectWord(page);
+  await page.keyboard.press(`${MOD}+/`);
+  await expect(page.locator("#selAiMenu")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#selAiMenu")).toBeHidden();
+});

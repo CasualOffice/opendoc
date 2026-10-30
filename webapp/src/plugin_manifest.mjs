@@ -33,6 +33,7 @@ export const MANIFEST_BOUNDS = Object.freeze({
   commands: 32,
   ribbon: 8,
   contextMenu: 8,
+  selection: 12,
   network: 8,
   locales: 32,
   panelWidth: Object.freeze([240, 480]),
@@ -45,7 +46,7 @@ const COMMAND_ID = /^[a-z][a-zA-Z0-9-]{0,47}$/;
 const SEMVER = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 const CONTEXT_WHEN = Object.freeze(["always", "selection", "caret"]);
 const TOP_FIELDS = Object.freeze(["manifestVersion", "id", "name", "version", "description", "publisher", "entry", "icon", "permissions", "network", "contributes", "locales"]);
-const CONTRIBUTES = Object.freeze(["commands", "ribbon", "panel", "contextMenu", "palette"]);
+const CONTRIBUTES = Object.freeze(["commands", "ribbon", "panel", "contextMenu", "palette", "selection"]);
 
 const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const chars = (text) => [...String(text)].length;
@@ -164,6 +165,10 @@ export function checkManifest(raw, { manifestUrl, selfOrigin }) {
   const contextMenu = refs(contributes.contextMenu, MANIFEST_BOUNDS.contextMenu, "contributes.contextMenu", ["when"]);
   if (!contextMenu.ok) return contextMenu.problem;
   const palette = refs(contributes.palette, MANIFEST_BOUNDS.commands, "contributes.palette");
+  // Rows in the one ✦ menu of the selection toolbar (`docs/183` §8): actions on
+  // the selected text, shown only while the plugin runs.
+  const selection = refs(contributes.selection, MANIFEST_BOUNDS.selection, "contributes.selection", ["icon"]);
+  if (!selection.ok) return selection.problem;
   if (!palette.ok) return palette.problem;
   let panel = null;
   if (contributes.panel !== undefined) {
@@ -204,6 +209,7 @@ export function checkManifest(raw, { manifestUrl, selfOrigin }) {
         commands: Object.freeze(commands.map((c) => Object.freeze({ id: c.id, title: c.title.trim() }))),
         ribbon: Object.freeze(ribbon.items),
         contextMenu: Object.freeze(contextMenu.items),
+        selection: Object.freeze(selection.items),
         palette: Object.freeze(palette.items),
         panel,
       }),
