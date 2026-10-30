@@ -14,20 +14,23 @@
     "docx": "9.15.0",
     "mammoth": "1.13.0",
     "docxtemplater": "3.71.1",
-    "pizzip": "3.3.0"
+    "pizzip": "3.3.0",
+    "python-docx": "1.2.0",
+    "poi": "5.4.1",
+    "java": "openjdk version \"24.0.1\" 2025-04-15"
   },
   "speed": [
     {
       "task": "generate",
       "input": "100 paragraphs + table",
       "docx-js": {
-        "ms": 4.16,
-        "peakMB": 88.6,
-        "output": 10246
+        "ms": 4.18,
+        "peakMB": 87.9,
+        "output": 10247
       },
       "opendoc": {
-        "ms": 4.79,
-        "peakMB": 246.5,
+        "ms": 4.08,
+        "peakMB": 244.9,
         "output": 5423
       }
     },
@@ -35,13 +38,13 @@
       "task": "generate",
       "input": "1000 paragraphs + table",
       "docx-js": {
-        "ms": 17.64,
-        "peakMB": 150.6,
-        "output": 14245
+        "ms": 16.9,
+        "peakMB": 151.4,
+        "output": 14247
       },
       "opendoc": {
-        "ms": 15.78,
-        "peakMB": 270.8,
+        "ms": 14.14,
+        "peakMB": 268.3,
         "output": 9437
       }
     },
@@ -49,13 +52,13 @@
       "task": "generate",
       "input": "5000 paragraphs + table",
       "docx-js": {
-        "ms": 78.96,
-        "peakMB": 421.7,
-        "output": 31054
+        "ms": 76.58,
+        "peakMB": 410.5,
+        "output": 31056
       },
       "opendoc": {
-        "ms": 60.49,
-        "peakMB": 326.6,
+        "ms": 60.19,
+        "peakMB": 325.6,
         "output": 26814
       }
     },
@@ -63,13 +66,13 @@
       "task": "template",
       "input": "100-item loop",
       "docxtemplater": {
-        "ms": 2.71,
-        "peakMB": 92.9,
+        "ms": 2.78,
+        "peakMB": 93.3,
         "output": 42141
       },
       "opendoc": {
-        "ms": 3.78,
-        "peakMB": 291.2,
+        "ms": 4.22,
+        "peakMB": 291.5,
         "output": 31243
       }
     },
@@ -77,13 +80,13 @@
       "task": "template",
       "input": "1000-item loop",
       "docxtemplater": {
-        "ms": 9.8,
-        "peakMB": 110.1,
+        "ms": 9.39,
+        "peakMB": 114.1,
         "output": 109841
       },
       "opendoc": {
-        "ms": 12.99,
-        "peakMB": 324.5,
+        "ms": 15.84,
+        "peakMB": 323.5,
         "output": 98943
       }
     },
@@ -91,13 +94,13 @@
       "task": "html",
       "input": "sample",
       "mammoth": {
-        "ms": 33.86,
-        "peakMB": 226.6,
+        "ms": 35.2,
+        "peakMB": 230.9,
         "output": 94540
       },
       "opendoc": {
-        "ms": 16.78,
-        "peakMB": 320.8,
+        "ms": 16.24,
+        "peakMB": 316.1,
         "output": 179345
       }
     },
@@ -105,13 +108,13 @@
       "task": "html",
       "input": "scale",
       "mammoth": {
-        "ms": 55.62,
-        "peakMB": 288.3,
+        "ms": 54.13,
+        "peakMB": 288.8,
         "output": 275450
       },
       "opendoc": {
-        "ms": 23.75,
-        "peakMB": 307.7,
+        "ms": 24,
+        "peakMB": 303.2,
         "output": 331606
       }
     },
@@ -119,13 +122,13 @@
       "task": "text",
       "input": "sample",
       "mammoth": {
-        "ms": 32.15,
-        "peakMB": 228.5,
+        "ms": 31.26,
+        "peakMB": 191.8,
         "output": 12169
       },
       "opendoc": {
-        "ms": 15.57,
-        "peakMB": 311.2,
+        "ms": 12.43,
+        "peakMB": 323.2,
         "output": 11878
       }
     },
@@ -133,13 +136,13 @@
       "task": "text",
       "input": "scale",
       "mammoth": {
-        "ms": 46.46,
-        "peakMB": 275.4,
+        "ms": 41.88,
+        "peakMB": 276.3,
         "output": 233240
       },
       "opendoc": {
-        "ms": 16.36,
-        "peakMB": 320,
+        "ms": 16.15,
+        "peakMB": 315,
         "output": 230209
       }
     },
@@ -147,8 +150,8 @@
       "task": "pdf",
       "input": "sample",
       "opendoc": {
-        "ms": 57.68,
-        "peakMB": 358.1,
+        "ms": 54.51,
+        "peakMB": 358,
         "output": 156988
       }
     },
@@ -156,9 +159,135 @@
       "task": "pdf",
       "input": "scale",
       "opendoc": {
-        "ms": 272.73,
-        "peakMB": 365.8,
+        "ms": 258.65,
+        "peakMB": 355.9,
         "output": 112730
+      }
+    },
+    {
+      "task": "py-generate",
+      "input": "100 paragraphs + table (Python)",
+      "python-docx": {
+        "ms": 16.64,
+        "peakMB": 44.2,
+        "output": 37208
+      },
+      "opendoc": {
+        "ms": 2.98,
+        "peakMB": 18.6,
+        "output": 38254
+      }
+    },
+    {
+      "task": "py-generate",
+      "input": "1000 paragraphs + table (Python)",
+      "python-docx": {
+        "ms": 93.38,
+        "peakMB": 64,
+        "output": 40389
+      },
+      "opendoc": {
+        "ms": 50.1,
+        "peakMB": 21.6,
+        "output": 227254
+      }
+    },
+    {
+      "task": "py-generate",
+      "input": "5000 paragraphs + table (Python)",
+      "python-docx": {
+        "ms": 712.15,
+        "peakMB": 81.9,
+        "output": 53964
+      },
+      "opendoc": {
+        "ms": 995.79,
+        "peakMB": 33.5,
+        "output": 1071654
+      }
+    },
+    {
+      "task": "py-read",
+      "input": "sample (Python)",
+      "python-docx": {
+        "ms": 7.93,
+        "peakMB": 52.4,
+        "output": 5458
+      },
+      "opendoc": {
+        "ms": 8.77,
+        "peakMB": 26.4,
+        "output": 5468
+      }
+    },
+    {
+      "task": "py-read",
+      "input": "scale (Python)",
+      "python-docx": {
+        "ms": 94.3,
+        "peakMB": 56.5,
+        "output": 227180
+      },
+      "opendoc": {
+        "ms": 102.77,
+        "peakMB": 48,
+        "output": 227180
+      }
+    },
+    {
+      "task": "java-generate",
+      "input": "100 paragraphs + table (Java)",
+      "poi": {
+        "ms": 12.26,
+        "output": 2814,
+        "peakMB": 136.6
+      },
+      "opendoc": {
+        "ms": 16.86,
+        "output": 37988,
+        "peakMB": 109.2
+      }
+    },
+    {
+      "task": "java-generate",
+      "input": "1000 paragraphs + table (Java)",
+      "poi": {
+        "ms": 23.57,
+        "output": 5990,
+        "peakMB": 182.5
+      },
+      "opendoc": {
+        "ms": 167.83,
+        "output": 226988,
+        "peakMB": 252.9
+      }
+    },
+    {
+      "task": "java-read",
+      "input": "sample (Java)",
+      "poi": {
+        "ms": 28.34,
+        "output": 5471,
+        "peakMB": 219.5
+      },
+      "opendoc": {
+        "ms": 13.99,
+        "output": 5471,
+        "peakMB": 102.6
+      }
+    },
+    {
+      "task": "java-read",
+      "input": "scale (Java)",
+      "poi": {
+        "ms": 51.15,
+        "output": 227180,
+        "peakMB": 246.7
+      },
+      "opendoc": {
+        "ms": 63.18,
+        "output": 227180,
+        "peakMB": 226.7
       }
     }
   ],
@@ -418,7 +547,8 @@
   ],
   "notes": [
     "`scale` is 3,000 paragraphs and 30 headings written by docx-js at run time.",
+    "Java peak memory is the whole JVM process's maximum resident set (`/usr/bin/time`), for both libraries.",
     "LibreOffice was not given (--soffice), so its PDF timings and page counts are absent.",
-    "Round trip: `partsKept` counts the input's package parts present in the output; `textSame` re-opens the output with OpenDoc and compares the body text; `losses` is OpenDoc's own save report (no other library reports loss)."
+    "Round trip: an empty `docProps/custom.xml` (no properties) is not rewritten by an OpenDoc save, which `partsKept` counts as a dropped part although nothing is lost. `partsKept` counts the input's package parts present in the output; `textSame` re-opens the output with OpenDoc and compares the body text; `losses` is OpenDoc's own save report (no other library reports loss)."
   ]
 }

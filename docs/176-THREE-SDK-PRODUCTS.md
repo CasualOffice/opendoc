@@ -1,6 +1,6 @@
 # 176 — Three SDK products on one engine: Viewer, Editor, Native
 
-**Status:** Design, proposed 2026-10-23; Viewer SDK phase 1 built 2026-10-24 (§11.1).
+**Status:** Design, proposed 2026-10-23; Viewer SDK phase 1 built 2026-10-24 (§11.1); Native SDK core, JS package, CLI, Python and Java bindings built 2026-10-30 (§12), none published.
 **Decides:** ADR-071 (proposed). **Row:** `docs/109` RM-46. **Built:** the measured viewer cut
 (V0), then the Viewer SDK's stable read-only API, `crates/opendoc-viewer` (it was
 `crates/casual-doc-viewer`), and the `@casualoffice/opendoc-viewer` package
@@ -167,16 +167,16 @@ let png = doc.render_page_png(0, 150.0)?;
 
 | Family | `docs/05` | Status |
 | --- | --- | --- |
-| `Engine::new`, `create_blank` | §4 | **Existing** in `casual-doc-sdk` (Phase 0) |
-| `open` DOCX/ODT/RTF/TXT/JSON | §4 `open_docx` | **Partial**: the `casual-doc-io` registry does it; `casual-doc-sdk` opens normalized JSON only |
-| `import_report` | (none) | **Partial**: `CompatibilityReport` and `PreservationLedger` exist; no SDK accessor |
-| Read view (`body`, `runs`, `sections`, `styles`, `comments`, `revisions`) | §5 `snapshot` | **Partial**: `casual-doc-sdk` snapshots paragraphs only; the model holds all of it |
-| Modify (`edit` batch) | §5 `execute`, §7 catalog | **Partial**: `casual_doc_edit::Operation` has 67 variants with inverses. `casual-doc-sdk` exposes 4 of them (insert, delete, split, join) |
-| Save DOCX with exact/preserve/semantic modes and a report | §5 `save_docx` | **Partial**: `casual-doc-io` `ExportMode` and `CompatibilityReport` exist; no SDK accessor |
-| Save ODT, HTML, Markdown, TXT | §13 | **Partial**: `casual-doc-io` writers exist |
-| `to_pdf`, `render_page_png` | (none) | **Existing** in `casual-doc-viewer` (`pdf`) |
-| C ABI | §1 "C ABI" | **Missing** (§6) |
-| Java, Python, .NET packages | §13 | **Missing** |
+| `Engine::new`, `create_blank` | §4 | **Existing**: `opendoc::Document::create` and `from_spec` (§12.3) |
+| `open` DOCX/ODT/RTF/TXT/JSON | §4 `open_docx` | **Existing**: `opendoc::Document::open` through the `casual-doc-io` registry; PDF with `pdf-import` (§12.3) |
+| `import_report` | (none) | **Existing**: `Document::import_report`, report schema 1 (P7, §12.3) |
+| Read view (`body`, `runs`, `sections`, `styles`, `comments`, `revisions`) | §5 `snapshot` | **Existing**: `opendoc::view`, plus headers, footers, notes, media and properties (§12.3) |
+| Modify (`edit` batch) | §5 `execute`, §7 catalog | **Existing** for text, formatting, links, paragraph styles, tables, comments, suggestions, accept/reject and properties (§12.3). **Missing**: pictures, headers, footers, notes and sections by edit |
+| Save DOCX with exact/preserve/semantic modes and a report | §5 `save_docx` | **Existing**: `Document::save(Format, SaveMode)` with a `SaveReport` (§12.3) |
+| Save ODT, HTML, Markdown, TXT | §13 | **Existing**: the same `save` (§12.3) |
+| `to_pdf`, `render_page_png` | (none) | **Existing** in `opendoc` and `opendoc-viewer` |
+| C ABI | §1 "C ABI" | **Existing**: `crates/opendoc-ffi`, ABI 1 (§12.9). Not fuzzed yet |
+| Java, Python, .NET packages | §13 | **Existing, unpublished**: Python (§12.8) and Java (§12.9), plus the JS package (§12.5a). **Missing**: .NET |
 | Plugins | §11 | **Missing**, and not in this product's first cut |
 
 Deliberately **absent** from the Native SDK: selection, caret, viewport, input, events,
@@ -958,32 +958,59 @@ two disagree. To run it:
 DIR holds an `npm install` of docx, mammoth, docxtemplater and pizzip. Nothing from it is
 committed.
 
-**Read it honestly.** The table makes four points.
+**Read it honestly.** The table makes six points.
 
-- OpenDoc is faster than mammoth at HTML and text, and about level with docx-js at generation.
-  It is slower than docxtemplater at filling a template.
-- It uses more memory in most tasks, because the module carries a layout engine and every
-  bundled face. Its floor is the module itself, and docx-js passes it on the largest input.
-- docx-preview needs a DOM, so it is not measured here.
-- POI is measured from Java (§12.9) when a JDK and its jars are given (`--java-cp`, `--java-lib`). docx4j is not measured.
+- In JavaScript, OpenDoc is faster than mammoth at HTML and text, and level with or faster
+  than docx-js at generation. It is slower than docxtemplater at filling a template.
+- In JavaScript it uses more memory in most tasks, because the module carries a layout engine
+  and every bundled face. Its floor is the module itself, and docx-js passes it on the
+  largest input. The Python and Java bindings link the same engine natively and use less
+  memory than python-docx and POI.
+- **The imperative bindings are slower than they should be, and the slowdown grows with the
+  document.** Python generation beats python-docx at 100 and 1,000 paragraphs and loses at
+  5,000. Java generation is several times slower than POI at 1,000 paragraphs. The cause is
+  known: each call (`add_run`, `createRun`, `setText`) finds its paragraph with
+  `casual_doc_edit::find_paragraph_any`, a whole-document scan, several times. That is
+  O(document) per call and O(n²) per document, which SKILL §8 forbids for per-interaction
+  work. The fix is a node index on `Document`, kept across edits rather than rebuilt per
+  call, plus bindings that track their own run offsets instead of re-reading the paragraph.
+  It is the next item on `docs/109` RM-46. The declarative paths (the JS builder, templates,
+  `edit` batches) do not have the problem.
+- Reading is level with python-docx and POI, and faster than POI on the smaller file, while
+  also giving a laid-out page count and a loss report that neither has.
+- docx-preview needs a DOM, so it is not measured here. docx4j is not measured. LibreOffice
+  is in the suite (`--soffice`), but the copy on the measuring machine is a broken install,
+  so its column is empty.
+- The round-trip table shows python-docx keeping every package part, because it rewrites the
+  zip it was given. OpenDoc keeps the text in every fixture and reports what its writer
+  regenerates.
 
 <!-- sdk-bench:begin (generated by benchmarks/sdk/report.mjs from benchmarks/sdk/results.json; do not edit) -->
 
-Measured on darwin arm64 25.3.0, Apple M4 (10 cores, 16 GB), Node v24.22.1; median of 5 runs after a warm-up, each library and task in its own process. Versions: opendoc 0.0.1, docx 9.15.0, docxtemplater 3.71.1, mammoth 1.13.0.
+Measured on darwin arm64 25.3.0, Apple M4 (10 cores, 16 GB), Node v24.22.1; median of 5 runs after a warm-up, each library and task in its own process. Versions: opendoc 0.0.1, docx 9.15.0, docxtemplater 3.71.1, mammoth 1.13.0, python-docx 1.2.0.
 
 | Task | Input | OpenDoc | Competitor | OpenDoc speed | OpenDoc peak RSS | Competitor peak RSS |
 | --- | --- | ---: | ---: | --- | ---: | ---: |
-| Generate DOCX (the same docx-js program) | 100 paragraphs + table | 4.79 ms | docx-js: 4.16 ms | 1.2× slower | 246.5 MB | 88.6 MB |
-| Generate DOCX (the same docx-js program) | 1000 paragraphs + table | 15.78 ms | docx-js: 17.64 ms | 1.1× faster | 270.8 MB | 150.6 MB |
-| Generate DOCX (the same docx-js program) | 5000 paragraphs + table | 60.49 ms | docx-js: 78.96 ms | 1.3× faster | 326.6 MB | 421.7 MB |
-| Fill a template (the same template and data) | 100-item loop | 3.78 ms | docxtemplater: 2.71 ms | 1.4× slower | 291.2 MB | 92.9 MB |
-| Fill a template (the same template and data) | 1000-item loop | 12.99 ms | docxtemplater: 9.8 ms | 1.3× slower | 324.5 MB | 110.1 MB |
-| DOCX to HTML | sample | 16.78 ms | mammoth: 33.86 ms | 2.0× faster | 320.8 MB | 226.6 MB |
-| DOCX to HTML | scale | 23.75 ms | mammoth: 55.62 ms | 2.3× faster | 307.7 MB | 288.3 MB |
-| DOCX to plain text | sample | 15.57 ms | mammoth: 32.15 ms | 2.1× faster | 311.2 MB | 228.5 MB |
-| DOCX to plain text | scale | 16.36 ms | mammoth: 46.46 ms | 2.8× faster | 320 MB | 275.4 MB |
-| DOCX to PDF | sample | 57.68 ms | libreoffice: — | — | 358.1 MB | — |
-| DOCX to PDF | scale | 272.73 ms | libreoffice: — | — | 365.8 MB | — |
+| Generate DOCX (the same docx-js program) | 100 paragraphs + table | 4.08 ms | docx-js: 4.18 ms | 1.0× faster | 244.9 MB | 87.9 MB |
+| Generate DOCX (the same docx-js program) | 1000 paragraphs + table | 14.14 ms | docx-js: 16.9 ms | 1.2× faster | 268.3 MB | 151.4 MB |
+| Generate DOCX (the same docx-js program) | 5000 paragraphs + table | 60.19 ms | docx-js: 76.58 ms | 1.3× faster | 325.6 MB | 410.5 MB |
+| Fill a template (the same template and data) | 100-item loop | 4.22 ms | docxtemplater: 2.78 ms | 1.5× slower | 291.5 MB | 93.3 MB |
+| Fill a template (the same template and data) | 1000-item loop | 15.84 ms | docxtemplater: 9.39 ms | 1.7× slower | 323.5 MB | 114.1 MB |
+| DOCX to HTML | sample | 16.24 ms | mammoth: 35.2 ms | 2.2× faster | 316.1 MB | 230.9 MB |
+| DOCX to HTML | scale | 24 ms | mammoth: 54.13 ms | 2.3× faster | 303.2 MB | 288.8 MB |
+| DOCX to plain text | sample | 12.43 ms | mammoth: 31.26 ms | 2.5× faster | 323.2 MB | 191.8 MB |
+| DOCX to plain text | scale | 16.15 ms | mammoth: 41.88 ms | 2.6× faster | 315 MB | 276.3 MB |
+| DOCX to PDF | sample | 54.51 ms | libreoffice: — | — | 358 MB | — |
+| DOCX to PDF | scale | 258.65 ms | libreoffice: — | — | 355.9 MB | — |
+| Generate DOCX (the same python-docx program) | 100 paragraphs + table (Python) | 2.98 ms | python-docx: 16.64 ms | 5.6× faster | 18.6 MB | 44.2 MB |
+| Generate DOCX (the same python-docx program) | 1000 paragraphs + table (Python) | 50.1 ms | python-docx: 93.38 ms | 1.9× faster | 21.6 MB | 64 MB |
+| Generate DOCX (the same python-docx program) | 5000 paragraphs + table (Python) | 995.79 ms | python-docx: 712.15 ms | 1.4× slower | 33.5 MB | 81.9 MB |
+| Open and read every paragraph (Python) | sample (Python) | 8.77 ms | python-docx: 7.93 ms | 1.1× slower | 26.4 MB | 52.4 MB |
+| Open and read every paragraph (Python) | scale (Python) | 102.77 ms | python-docx: 94.3 ms | 1.1× slower | 48 MB | 56.5 MB |
+| Generate DOCX (Java, POI-style calls) | 100 paragraphs + table (Java) | 16.86 ms | poi: 12.26 ms | 1.4× slower | 109.2 MB | 136.6 MB |
+| Generate DOCX (Java, POI-style calls) | 1000 paragraphs + table (Java) | 167.83 ms | poi: 23.57 ms | 7.1× slower | 252.9 MB | 182.5 MB |
+| Open and read every paragraph (Java) | sample (Java) | 13.99 ms | poi: 28.34 ms | 2.0× faster | 102.6 MB | 219.5 MB |
+| Open and read every paragraph (Java) | scale (Java) | 63.18 ms | poi: 51.15 ms | 1.2× slower | 226.7 MB | 246.7 MB |
 
 **Round trip** (open, save, reopen; `kept` is input package parts present in the output, `text` whether the body text survived, `losses` OpenDoc's own report):
 
@@ -1016,8 +1043,9 @@ Measured on darwin arm64 25.3.0, Apple M4 (10 cores, 16 GB), Node v24.22.1; medi
 | synthetic-declared-family-substitution.docx | 1 |
 
 - `scale` is 3,000 paragraphs and 30 headings written by docx-js at run time.
+- Java peak memory is the whole JVM process's maximum resident set (`/usr/bin/time`), for both libraries.
 - LibreOffice was not given (--soffice), so its PDF timings and page counts are absent.
-- Round trip: `partsKept` counts the input's package parts present in the output; `textSame` re-opens the output with OpenDoc and compares the body text; `losses` is OpenDoc's own save report (no other library reports loss).
+- Round trip: an empty `docProps/custom.xml` (no properties) is not rewritten by an OpenDoc save, which `partsKept` counts as a dropped part although nothing is lost. `partsKept` counts the input's package parts present in the output; `textSame` re-opens the output with OpenDoc and compares the body text; `losses` is OpenDoc's own save report (no other library reports loss).
 
 <!-- sdk-bench:end -->
 
