@@ -2,6 +2,7 @@
 #
 #   packages/opendoc-viewer  ->  @casualoffice/opendoc-viewer
 #   packages/opendoc-embed   ->  @casualoffice/opendoc-editor
+#   packages/opendoc         ->  @casualoffice/opendoc  (the headless SDK, package=sdk)
 #
 # Manual only. Nothing here runs on a push, a pull request or a schedule: a
 # release is a decision, and the owner makes it by dispatching this workflow.
@@ -43,6 +44,7 @@ on:
           - viewer
           - editor
           - both
+          - sdk
       version:
         description: Pre-release semver to publish, for example 0.1.0-alpha.1
         type: string
@@ -88,8 +90,8 @@ jobs:
             exit 1
           fi
           case "${PACKAGE_CHOICE}" in
-            viewer | editor | both) ;;
-            *) echo "::error::package must be viewer, editor or both"; exit 1 ;;
+            viewer | editor | both | sdk) ;;
+            *) echo "::error::package must be viewer, editor, both or sdk"; exit 1 ;;
           esac
           if [[ "${DRY_RUN}" != "true" && "${GITHUB_REF}" != "refs/heads/main" ]]; then
             echo "::error::a real publish runs from main only (this run is on ${GITHUB_REF})"
@@ -130,38 +132,38 @@ jobs:
       # rust-toolchain.toml pins Rust and the wasm32 target; rustup honours it on
       # the first cargo call, so warm it explicitly (as pages.yml does).
       - name: Set up the Rust toolchain
-        if: inputs.package != 'editor'
+        if: inputs.package == 'viewer' || inputs.package == 'both'
         run: rustup show
 
       - name: Restore Cargo cache
-        if: inputs.package != 'editor'
+        if: inputs.package == 'viewer' || inputs.package == 'both'
         uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
 
       - name: Install wasm-pack
-        if: inputs.package != 'editor'
+        if: inputs.package == 'viewer' || inputs.package == 'both'
         uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177
         with:
           tool: wasm-pack@0.15.0
           fallback: none
 
       - name: Build the viewer package
-        if: inputs.package != 'editor'
+        if: inputs.package == 'viewer' || inputs.package == 'both'
         run: ./packages/opendoc-viewer/build.sh
 
       - name: Test the viewer package
-        if: inputs.package != 'editor'
+        if: inputs.package == 'viewer' || inputs.package == 'both'
         working-directory: packages/opendoc-viewer
         run: npm test
 
       - name: Set the viewer version
-        if: inputs.package != 'editor'
+        if: inputs.package == 'viewer' || inputs.package == 'both'
         working-directory: packages/opendoc-viewer
         run: npm version "${RELEASE_VERSION}" --no-git-tag-version
 
       # `files` lists pkg/, which is gitignored: a tarball without the engine
       # would pack happily and install a package that cannot open a document.
       - name: Inspect the viewer tarball
-        if: inputs.package != 'editor'
+        if: inputs.package == 'viewer' || inputs.package == 'both'
         working-directory: packages/opendoc-viewer
         shell: bash
         run: |
@@ -176,7 +178,7 @@ jobs:
           done
 
       - name: Publish the viewer package
-        if: inputs.package != 'editor'
+        if: inputs.package == 'viewer' || inputs.package == 'both'
         working-directory: packages/opendoc-viewer
         shell: bash
         env:
@@ -195,7 +197,7 @@ jobs:
       # byte-identical to a fresh generation, packs, installs into an empty
       # project and imports by its bare specifier, and carries the licence files.
       - name: Test the editor package
-        if: inputs.package != 'viewer'
+        if: inputs.package == 'editor' || inputs.package == 'both'
         run: >-
           node --test
           webapp/tests/embed_package.test.mjs
@@ -205,7 +207,7 @@ jobs:
       # manifest, so it is regenerated after the bump; the diff must then be
       # exactly those two files or the generator changed something else.
       - name: Set the editor version
-        if: inputs.package != 'viewer'
+        if: inputs.package == 'editor' || inputs.package == 'both'
         shell: bash
         run: |
           set -euo pipefail
@@ -222,12 +224,12 @@ jobs:
           grep -F "\"version\": \"${RELEASE_VERSION}\"" packages/opendoc-embed/src/release.mjs
 
       - name: Inspect the editor tarball
-        if: inputs.package != 'viewer'
+        if: inputs.package == 'editor' || inputs.package == 'both'
         working-directory: packages/opendoc-embed
         run: npm pack --dry-run
 
       - name: Publish the editor package
-        if: inputs.package != 'viewer'
+        if: inputs.package == 'editor' || inputs.package == 'both'
         working-directory: packages/opendoc-embed
         shell: bash
         env:
@@ -235,6 +237,49 @@ jobs:
         run: |
           set -euo pipefail
           echo "auth: trusted publishing (OIDC); access token present: ${HAS_NPM_TOKEN}"
+          args=(--tag next --access public --provenance)
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          npm publish "${args[@]}"
+
+      # ---- @casualoffice/opendoc (headless SDK) ----------------------------
+      - name: Set up the Rust toolchain for the SDK
+        if: inputs.package == 'sdk'
+        run: rustup show
+
+      - name: Install wasm-pack for the SDK
+        if: inputs.package == 'sdk'
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177
+        with:
+          tool: wasm-pack@0.15.0
+          fallback: none
+
+      - name: Build and test the SDK package
+        if: inputs.package == 'sdk'
+        run: |
+          set -euo pipefail
+          ./packages/opendoc/build.sh
+          node --test packages/opendoc/test/*.test.mjs
+
+      - name: Set the SDK version
+        if: inputs.package == 'sdk'
+        working-directory: packages/opendoc
+        run: npm version "${RELEASE_VERSION}" --no-git-tag-version
+
+      - name: Inspect the SDK tarball
+        if: inputs.package == 'sdk'
+        working-directory: packages/opendoc
+        run: npm pack --dry-run
+
+      - name: Publish the SDK package
+        if: inputs.package == 'sdk'
+        working-directory: packages/opendoc
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PASSWORD }}
+        run: |
+          set -euo pipefail
           args=(--tag next --access public --provenance)
           if [[ "${DRY_RUN}" == "true" ]]; then
             args+=(--dry-run)
