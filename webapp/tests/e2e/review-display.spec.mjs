@@ -7,7 +7,7 @@
 // layout's body class, and — for Original — the document text itself, which must
 // read as if the tracked insertion had been rejected while the live document
 // still holds it.
-import { test, expect, gotoEditor, clickIntoFirstPage, setReviewMode } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, menuCommandRow, setReviewMode } from "./fixtures.mjs";
 
 const INSERTED = "ZQXW_INSERTED ";
 
@@ -21,8 +21,7 @@ async function pick(page, mode) {
   await expect(menu).toBeHidden();
 }
 
-// QUARANTINED (2026-10-30): Original does not swap to the rejected copy (showVersionPreview path). Being fixed in #918.
-test.fixme("the four review displays show what Word's do, and Original is the rejected document, read-only", async ({
+test("the four review displays show what Word's do, and Original is the rejected document, read-only", async ({
   page,
   consoleErrors,
 }) => {
@@ -59,15 +58,24 @@ test.fixme("the four review displays show what Word's do, and Original is the re
   // Original: every change rejected, so the insertion is gone from what is
   // shown, and the copy refuses an edit by saying it is the original.
   // Mutation: skip `showAsOriginal()` on the copy -> the inserted text is still
-  // in the accessible mirror.
+  // in the accessible mirror. So does dropping the chrome refresh from
+  // `showVersionPreview`: the canvas swaps but the mirror reads the live copy.
   await pick(page, "original");
   await expect(page.locator("#a11yDocument")).not.toContainText(INSERTED.trim());
   await clickIntoFirstPage(page);
   await page.keyboard.press("x");
   await expect(page.locator("#a11yDocument")).not.toContainText(INSERTED.trim());
 
+  // Original is read-only, so the editor composes the READING chrome
+  // (`capabilities.mjs` READING_REGIONS, `docs/126`): the menu bar instead of the
+  // ribbon, one navigation axis. The ribbon picker is gone by design, and the way
+  // back must be the menu bar's Display for review flyout, on screen and enabled.
+  await expect(page.locator("#reviewDisplayBtn")).toBeHidden();
+  const back = await menuCommandRow(page, "review", "review.displayMode.allMarkup");
+  await expect(back).toBeEnabled();
   // Leaving Original puts the live document back, the suggestion intact.
-  await pick(page, "all");
+  await back.click();
+  await expect(page.locator("#reviewDisplayBtn")).toBeVisible();
   await expect(page.locator("#a11yDocument")).toContainText(INSERTED.trim());
   await expect(page.locator("body")).toHaveClass(/showing-changes/);
 
