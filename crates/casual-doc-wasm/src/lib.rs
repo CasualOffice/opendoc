@@ -324,6 +324,7 @@ mod sparse_raster;
 mod accessibility_check;
 mod content_controls;
 #[cfg(test)]
+#[path = "content_controls_tests.rs"]
 mod content_controls_tests;
 mod form_roles;
 

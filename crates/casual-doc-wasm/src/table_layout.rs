@@ -45,7 +45,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 
-use casual_doc_edit::table_structure::{self, normalize_vertical_merges, sync_cell_widths};
+use casual_doc_edit::table_structure::{normalize_vertical_merges, sync_cell_widths};
 use casual_doc_edit::{Operation, Pos, find_table, locate_cell, refused};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
@@ -652,15 +652,19 @@ impl WasmDocument {
                 properties: Box::new(properties),
             });
         }
-        for ((r, c), props) in edits {
-            let cell = &table.rows[r].cells[c];
-            if props != cell.properties {
-                ops.push(Operation::SetTableCellProperties {
-                    cell: cell.id,
-                    properties: Box::new(props),
-                });
-            }
-        }
+        // The cells whose properties actually change, lowered by the command
+        // crate the agent's cell-format command uses too (docs/181 G7).
+        let changed: Vec<_> = edits
+            .into_iter()
+            .filter_map(|((r, c), props)| {
+                let cell = &table.rows[r].cells[c];
+                (props != cell.properties).then_some((cell.id, props))
+            })
+            .collect();
+        ops.extend(casual_doc_command::table::set_cell_properties(
+            changed,
+            |_| {},
+        ));
         if ops.is_empty() {
             return Err(refused!(
                 "table.borders-unchanged",
@@ -1128,7 +1132,10 @@ fn split_row(
     ids: &mut dyn FnMut() -> Option<NodeId>,
 ) -> Result<(Table, Option<NodeId>), String> {
     let grid = TableGridMap::build(table);
-    let (mut out, at) = table_structure::insert_row(table, row, true, &mut *ids)?;
+    // The command crate's row insert, the one an agent's command runs (docs/181
+    // G7): its table after the edit and the new row's index.
+    let edit = casual_doc_command::table::insert_row(table, row, true, &mut *ids)?;
+    let (mut out, at) = (edit.table, edit.row);
     let template = &table.rows[row];
     let mut caret = None;
     for (c, cell) in template.cells.iter().enumerate() {
@@ -1263,29 +1270,36 @@ impl WasmDocument {
                 ids.next_id().ok()
             })?;
         for op in &mut edit.operations {
-            if let Operation::InsertTable { table, .. } = op {
-                table.properties.width = Some(TableWidth::dxa(w));
-                if let Some(row) = table.rows.first_mut() {
-                    row.properties.height = RowHeight {
-                        value_twips: u32::try_from(h).ok(),
-                        rule: Some(HeightRule::AtLeast),
-                    };
+            // A match arm, not `if let`: the G7 guard reads a pattern as a pattern
+            // only in this shape (command_parity_tests), and this changes the table
+            // the command crate built rather than lowering one itself.
+            #[allow(clippy::single_match)]
+            match op {
+                Operation::InsertTable { table, .. } => {
+                    table.properties.width = Some(TableWidth::dxa(w));
+                    if let Some(row) = table.rows.first_mut() {
+                        row.properties.height = RowHeight {
+                            value_twips: u32::try_from(h).ok(),
+                            rule: Some(HeightRule::AtLeast),
+                        };
+                    }
+                    // A table drawn in the body floats where it was drawn, as Word's
+                    // does. One drawn inside a cell is a nested table, which the
+                    // layout keeps in line (`table_float`'s recorded limit), so it
+                    // takes the drawn width and stays in the cell's flow.
+                    if container.is_none() {
+                        table.properties.float_position = Some(TableFloatPosition {
+                            horz_anchor: Some(TableAnchor::Page),
+                            vert_anchor: Some(TableAnchor::Page),
+                            tbl_px_twips: Some(x.clamp(-MAX_OFFSET, MAX_OFFSET)),
+                            tbl_py_twips: Some(y.clamp(-MAX_OFFSET, MAX_OFFSET)),
+                            left_from_text_twips: Some(DEFAULT_SIDE_DISTANCE),
+                            right_from_text_twips: Some(DEFAULT_SIDE_DISTANCE),
+                            ..TableFloatPosition::default()
+                        });
+                    }
                 }
-                // A table drawn in the body floats where it was drawn, as Word's
-                // does. One drawn inside a cell is a nested table, which the
-                // layout keeps in line (`table_float`'s recorded limit), so it
-                // takes the drawn width and stays in the cell's flow.
-                if container.is_none() {
-                    table.properties.float_position = Some(TableFloatPosition {
-                        horz_anchor: Some(TableAnchor::Page),
-                        vert_anchor: Some(TableAnchor::Page),
-                        tbl_px_twips: Some(x.clamp(-MAX_OFFSET, MAX_OFFSET)),
-                        tbl_py_twips: Some(y.clamp(-MAX_OFFSET, MAX_OFFSET)),
-                        left_from_text_twips: Some(DEFAULT_SIDE_DISTANCE),
-                        right_from_text_twips: Some(DEFAULT_SIDE_DISTANCE),
-                        ..TableFloatPosition::default()
-                    });
-                }
+                _ => {}
             }
         }
         let caret = Pos::new(edit.caret.unwrap_or(nid), 0);
