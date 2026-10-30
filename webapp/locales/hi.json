@@ -3036,5 +3036,12 @@
   "pastePicture.tooLarge": "क्लिपबोर्ड एक चित्र के रूप में चिपकाने के लिए बहुत बड़ा है।",
   "pastePicture.failed": "क्लिपबोर्ड को चित्र के रूप में नहीं चिपकाया जा सका।",
   "pastePicture.nothing": "क्लिपबोर्ड पर चित्र के रूप में चिपकाने के लिए कुछ नहीं है।",
-  "pastePicture.blocked": "ब्राउज़र ने क्लिपबोर्ड पढ़ने की अनुमति नहीं दी।"
+  "pastePicture.blocked": "ब्राउज़र ने क्लिपबोर्ड पढ़ने की अनुमति नहीं दी।",
+  "object.editPoints": "बिंदु संपादित करें",
+  "object.editPoints.hint": "रूपरेखा बदलने के लिए बिंदु खींचें · रखने के लिए Enter · रद्द करने के लिए Esc",
+  "object.editPoints.done": "आकृति की रूपरेखा बदली गई",
+  "object.editPoints.cancelled": "बिंदु नहीं बदले",
+  "object.editPoints.suggesting": "आकृति के बिंदुओं का संपादन अभी ट्रैक नहीं हो सकता; बदलने के लिए संपादन मोड पर जाएँ",
+  "object.editPoints.unavailable": "इस आकृति की रूपरेखा संपादित नहीं की जा सकती",
+  "object.editPoints.rotated": "बिंदु संपादित करने के लिए आकृति को वापस 0° पर घुमाएँ"
 }

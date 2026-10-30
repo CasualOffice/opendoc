@@ -3047,5 +3047,12 @@
   "pastePicture.tooLarge": "A área de transferência é grande demais para colar como uma única imagem.",
   "pastePicture.failed": "Não foi possível colar a área de transferência como imagem.",
   "pastePicture.nothing": "Não há nada na área de transferência para colar como imagem.",
-  "pastePicture.blocked": "O navegador não permitiu a leitura da área de transferência."
+  "pastePicture.blocked": "O navegador não permitiu a leitura da área de transferência.",
+  "object.editPoints": "Editar pontos",
+  "object.editPoints.hint": "Arraste um ponto para mudar o contorno · Enter para manter · Esc para cancelar",
+  "object.editPoints.done": "Contorno da forma alterado",
+  "object.editPoints.cancelled": "Pontos não alterados",
+  "object.editPoints.suggesting": "A edição de pontos ainda não pode ser controlada; mude para Edição para alterá-la",
+  "object.editPoints.unavailable": "Não é possível editar o contorno desta forma",
+  "object.editPoints.rotated": "Gire esta forma de volta para 0° para editar os pontos"
 }

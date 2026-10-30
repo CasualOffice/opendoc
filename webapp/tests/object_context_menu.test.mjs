@@ -466,3 +466,15 @@ test("Shape fill carries Gradient and Shape outline carries Dashes and Arrows wh
   const outline = row(shape, "object.outline", io).submenu.map((entry) => entry.id);
   assert.ok(outline.includes("object.outline.dashes") && outline.includes("object.outline.arrows"));
 });
+
+test("a shape offers Edit points when the host wires it, gated like every object edit", () => {
+  let ran = 0;
+  const io = { ...host(), editPoints: () => (ran += 1) };
+  const editPoints = row(shape, "object.editPoints", io);
+  assert.ok(editPoints, "a shape's menu has Edit points");
+  assert.equal(editPoints.enabled, true);
+  editPoints.run();
+  assert.equal(ran, 1);
+  assert.equal(row(picture, "object.editPoints", io), undefined, "a picture has no outline to edit");
+  assert.equal(row(shape, "object.editPoints", { ...host({ reviewMode: "viewing" }), editPoints: () => {} }).enabled, false);
+});

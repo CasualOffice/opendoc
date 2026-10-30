@@ -3058,5 +3058,12 @@
   "pastePicture.tooLarge": "Zawartość schowka jest zbyt duża, aby wkleić ją jako jeden obraz.",
   "pastePicture.failed": "Nie udało się wkleić schowka jako obrazu.",
   "pastePicture.nothing": "W schowku nie ma nic do wklejenia jako obraz.",
-  "pastePicture.blocked": "Przeglądarka nie zezwoliła na odczyt schowka."
+  "pastePicture.blocked": "Przeglądarka nie zezwoliła na odczyt schowka.",
+  "object.editPoints": "Edytuj punkty",
+  "object.editPoints.hint": "Przeciągnij punkt, aby zmienić kontur · Enter, aby zachować · Esc, aby anulować",
+  "object.editPoints.done": "Zmieniono kontur kształtu",
+  "object.editPoints.cancelled": "Punkty nie zostały zmienione",
+  "object.editPoints.suggesting": "Edycji punktów kształtu nie można jeszcze śledzić; przełącz na Edycję",
+  "object.editPoints.unavailable": "Nie można edytować konturu tego kształtu",
+  "object.editPoints.rotated": "Obróć kształt z powrotem do 0°, aby edytować jego punkty"
 }

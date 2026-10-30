@@ -3025,5 +3025,12 @@
   "pastePicture.tooLarge": "Papan klip terlalu besar untuk ditempel sebagai satu gambar.",
   "pastePicture.failed": "Papan klip tidak dapat ditempel sebagai gambar.",
   "pastePicture.nothing": "Tidak ada apa pun di papan klip untuk ditempel sebagai gambar.",
-  "pastePicture.blocked": "Peramban tidak mengizinkan papan klip dibaca."
+  "pastePicture.blocked": "Peramban tidak mengizinkan papan klip dibaca.",
+  "object.editPoints": "Edit titik",
+  "object.editPoints.hint": "Seret titik untuk mengubah garis bentuk · Enter untuk menyimpan · Esc untuk membatalkan",
+  "object.editPoints.done": "Garis bentuk diubah",
+  "object.editPoints.cancelled": "Titik tidak diubah",
+  "object.editPoints.suggesting": "Mengedit titik bentuk belum dapat dilacak; beralih ke Pengeditan untuk mengubahnya",
+  "object.editPoints.unavailable": "Garis bentuk ini tidak dapat diedit",
+  "object.editPoints.rotated": "Putar bentuk ini kembali ke 0° untuk mengedit titiknya"
 }

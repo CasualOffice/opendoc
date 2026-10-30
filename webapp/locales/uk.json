@@ -3058,5 +3058,12 @@
   "pastePicture.tooLarge": "Вміст буфера обміну завеликий для одного малюнка.",
   "pastePicture.failed": "Не вдалося вставити буфер обміну як малюнок.",
   "pastePicture.nothing": "У буфері обміну немає нічого, що можна вставити як малюнок.",
-  "pastePicture.blocked": "Браузер не дозволив прочитати буфер обміну."
+  "pastePicture.blocked": "Браузер не дозволив прочитати буфер обміну.",
+  "object.editPoints": "Змінити вузли",
+  "object.editPoints.hint": "Перетягніть вузол, щоб змінити контур · Enter — зберегти · Esc — скасувати",
+  "object.editPoints.done": "Контур фігури змінено",
+  "object.editPoints.cancelled": "Вузли не змінено",
+  "object.editPoints.suggesting": "Зміну вузлів фігури поки не можна відстежувати; перейдіть у режим «Редагування»",
+  "object.editPoints.unavailable": "Контур цієї фігури не можна змінити",
+  "object.editPoints.rotated": "Поверніть фігуру назад на 0°, щоб змінити її вузли"
 }

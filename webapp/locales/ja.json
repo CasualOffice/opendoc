@@ -3025,5 +3025,12 @@
   "pastePicture.tooLarge": "クリップボードの内容が大きすぎて 1 枚の画像として貼り付けられません。",
   "pastePicture.failed": "クリップボードを画像として貼り付けられませんでした。",
   "pastePicture.nothing": "クリップボードに画像として貼り付けるものがありません。",
-  "pastePicture.blocked": "ブラウザーがクリップボードの読み取りを許可しませんでした。"
+  "pastePicture.blocked": "ブラウザーがクリップボードの読み取りを許可しませんでした。",
+  "object.editPoints": "頂点の編集",
+  "object.editPoints.hint": "点をドラッグして輪郭を変更 · Enter で確定 · Esc でキャンセル",
+  "object.editPoints.done": "図形の輪郭を変更しました",
+  "object.editPoints.cancelled": "頂点は変更されていません",
+  "object.editPoints.suggesting": "図形の頂点の編集はまだ変更履歴に記録できません。編集モードに切り替えてください",
+  "object.editPoints.unavailable": "この図形の輪郭は編集できません",
+  "object.editPoints.rotated": "頂点を編集するには、図形の回転を 0° に戻してください"
 }

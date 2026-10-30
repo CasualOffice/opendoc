@@ -3047,5 +3047,12 @@
   "pastePicture.tooLarge": "El portapapeles es demasiado grande para pegarlo como una sola imagen.",
   "pastePicture.failed": "No se pudo pegar el portapapeles como imagen.",
   "pastePicture.nothing": "No hay nada en el portapapeles para pegar como imagen.",
-  "pastePicture.blocked": "El navegador no permitió leer el portapapeles."
+  "pastePicture.blocked": "El navegador no permitió leer el portapapeles.",
+  "object.editPoints": "Modificar puntos",
+  "object.editPoints.hint": "Arrastre un punto para cambiar el contorno · Intro para conservar · Esc para cancelar",
+  "object.editPoints.done": "Contorno de la forma cambiado",
+  "object.editPoints.cancelled": "Puntos sin cambios",
+  "object.editPoints.suggesting": "Todavía no se puede hacer seguimiento de la edición de puntos; cambie a Edición para modificarla",
+  "object.editPoints.unavailable": "No se puede modificar el contorno de esta forma",
+  "object.editPoints.rotated": "Gire esta forma de nuevo a 0° para modificar sus puntos"
 }

@@ -3036,5 +3036,12 @@
   "pastePicture.tooLarge": "Die Zwischenablage ist zu groß für ein einzelnes Bild.",
   "pastePicture.failed": "Die Zwischenablage konnte nicht als Bild eingefügt werden.",
   "pastePicture.nothing": "In der Zwischenablage ist nichts, das als Bild eingefügt werden kann.",
-  "pastePicture.blocked": "Der Browser hat das Lesen der Zwischenablage nicht erlaubt."
+  "pastePicture.blocked": "Der Browser hat das Lesen der Zwischenablage nicht erlaubt.",
+  "object.editPoints": "Punkte bearbeiten",
+  "object.editPoints.hint": "Ziehen Sie einen Punkt, um die Kontur zu ändern · Eingabe zum Übernehmen · Esc zum Abbrechen",
+  "object.editPoints.done": "Kontur der Form geändert",
+  "object.editPoints.cancelled": "Punkte nicht geändert",
+  "object.editPoints.suggesting": "Das Bearbeiten von Formpunkten kann noch nicht nachverfolgt werden; wechseln Sie zu „Bearbeiten“",
+  "object.editPoints.unavailable": "Die Kontur dieser Form kann nicht bearbeitet werden",
+  "object.editPoints.rotated": "Drehen Sie die Form auf 0° zurück, um ihre Punkte zu bearbeiten"
 }

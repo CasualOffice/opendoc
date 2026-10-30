@@ -3025,5 +3025,12 @@
   "pastePicture.tooLarge": "剪貼簿內容太大，無法貼上為一張圖片。",
   "pastePicture.failed": "無法將剪貼簿貼上為圖片。",
   "pastePicture.nothing": "剪貼簿中沒有可貼上為圖片的內容。",
-  "pastePicture.blocked": "瀏覽器不允許讀取剪貼簿。"
+  "pastePicture.blocked": "瀏覽器不允許讀取剪貼簿。",
+  "object.editPoints": "編輯端點",
+  "object.editPoints.hint": "拖曳端點以變更外框 · 按 Enter 保留 · 按 Esc 取消",
+  "object.editPoints.done": "已變更圖案外框",
+  "object.editPoints.cancelled": "端點未變更",
+  "object.editPoints.suggesting": "目前還無法追蹤圖案端點的編輯；請切換至「編輯」模式",
+  "object.editPoints.unavailable": "無法編輯此圖案的外框",
+  "object.editPoints.rotated": "請將此圖案旋轉回 0° 後再編輯端點"
 }

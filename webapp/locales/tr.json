@@ -3036,5 +3036,12 @@
   "pastePicture.tooLarge": "Pano tek bir resim olarak yapıştırılamayacak kadar büyük.",
   "pastePicture.failed": "Pano resim olarak yapıştırılamadı.",
   "pastePicture.nothing": "Panoda resim olarak yapıştırılacak bir şey yok.",
-  "pastePicture.blocked": "Tarayıcı panonun okunmasına izin vermedi."
+  "pastePicture.blocked": "Tarayıcı panonun okunmasına izin vermedi.",
+  "object.editPoints": "Noktaları düzenle",
+  "object.editPoints.hint": "Anahattı değiştirmek için bir noktayı sürükleyin · Korumak için Enter · İptal için Esc",
+  "object.editPoints.done": "Şeklin anahattı değiştirildi",
+  "object.editPoints.cancelled": "Noktalar değişmedi",
+  "object.editPoints.suggesting": "Şekil noktalarını düzenleme henüz izlenemiyor; değiştirmek için Düzenleme moduna geçin",
+  "object.editPoints.unavailable": "Bu şeklin anahattı düzenlenemiyor",
+  "object.editPoints.rotated": "Noktalarını düzenlemek için şekli 0°’ye geri döndürün"
 }

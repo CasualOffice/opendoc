@@ -226,6 +226,20 @@ export function buildObjectContextCommands(context, io) {
     });
   }
 
+  // Edit Points — Word's right-click on a shape (`shape_edit_points.mjs`,
+  // FID-SH-02): the outline's vertices become draggable; Enter keeps, Esc cancels.
+  if (context.kind === "shape" && typeof io.editPoints === "function") {
+    commands.push({
+      id: "object.editPoints",
+      label: io.text("object.editPoints"),
+      group: "arrange",
+      icon: "format",
+      enabled: mutationEnabled,
+      disabledReason: mutationReason,
+      run: () => io.editPoints(),
+    });
+  }
+
   // Add text — Word's and Docs' shape command. The double-click is the gesture;
   // this is the surface that tells you the gesture exists.
   if (context.kind === "shape") {

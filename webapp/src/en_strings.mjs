@@ -2417,4 +2417,12 @@ export const EN_STRINGS = Object.freeze({
   "pastePicture.failed": "The clipboard couldn’t be pasted as a picture.",
   "pastePicture.nothing": "There is nothing on the clipboard to paste as a picture.",
   "pastePicture.blocked": "The browser did not allow the clipboard to be read.",
+  // Edit Points on a shape (`shape_edit_points.mjs`).
+  "object.editPoints": "Edit points",
+  "object.editPoints.hint": "Drag a point to reshape the outline · Enter to keep · Esc to cancel",
+  "object.editPoints.done": "Shape outline changed",
+  "object.editPoints.cancelled": "Points not changed",
+  "object.editPoints.suggesting": "Editing a shape’s points cannot be tracked yet; switch to Editing to change it",
+  "object.editPoints.unavailable": "This shape’s outline can’t be edited",
+  "object.editPoints.rotated": "Rotate this shape back to 0° to edit its points",
 });

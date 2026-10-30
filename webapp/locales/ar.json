@@ -3080,5 +3080,12 @@
   "pastePicture.tooLarge": "محتوى الحافظة أكبر من أن يُلصق كصورة واحدة.",
   "pastePicture.failed": "تعذّر لصق الحافظة كصورة.",
   "pastePicture.nothing": "لا يوجد في الحافظة شيء للصقه كصورة.",
-  "pastePicture.blocked": "لم يسمح المتصفح بقراءة الحافظة."
+  "pastePicture.blocked": "لم يسمح المتصفح بقراءة الحافظة.",
+  "object.editPoints": "تحرير النقاط",
+  "object.editPoints.hint": "اسحب نقطة لتغيير المخطط · Enter للإبقاء · Esc للإلغاء",
+  "object.editPoints.done": "تم تغيير مخطط الشكل",
+  "object.editPoints.cancelled": "لم تتغير النقاط",
+  "object.editPoints.suggesting": "لا يمكن تعقّب تحرير نقاط الشكل بعد؛ انتقل إلى وضع التحرير لتغييره",
+  "object.editPoints.unavailable": "لا يمكن تحرير مخطط هذا الشكل",
+  "object.editPoints.rotated": "أعِد تدوير هذا الشكل إلى 0° لتحرير نقاطه"
 }

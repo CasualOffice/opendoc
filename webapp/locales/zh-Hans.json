@@ -3025,5 +3025,12 @@
   "pastePicture.tooLarge": "剪贴板内容太大，无法粘贴为一张图片。",
   "pastePicture.failed": "无法将剪贴板粘贴为图片。",
   "pastePicture.nothing": "剪贴板中没有可作为图片粘贴的内容。",
-  "pastePicture.blocked": "浏览器不允许读取剪贴板。"
+  "pastePicture.blocked": "浏览器不允许读取剪贴板。",
+  "object.editPoints": "编辑顶点",
+  "object.editPoints.hint": "拖动顶点以改变轮廓 · 按 Enter 保留 · 按 Esc 取消",
+  "object.editPoints.done": "已更改形状轮廓",
+  "object.editPoints.cancelled": "顶点未更改",
+  "object.editPoints.suggesting": "暂时无法修订跟踪形状顶点的编辑；请切换到“编辑”模式",
+  "object.editPoints.unavailable": "无法编辑此形状的轮廓",
+  "object.editPoints.rotated": "请将此形状旋转回 0° 后再编辑顶点"
 }

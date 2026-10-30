@@ -3025,5 +3025,12 @@
   "pastePicture.tooLarge": "클립보드 내용이 너무 커서 그림 하나로 붙여넣을 수 없습니다.",
   "pastePicture.failed": "클립보드를 그림으로 붙여넣을 수 없습니다.",
   "pastePicture.nothing": "클립보드에 그림으로 붙여넣을 내용이 없습니다.",
-  "pastePicture.blocked": "브라우저가 클립보드 읽기를 허용하지 않았습니다."
+  "pastePicture.blocked": "브라우저가 클립보드 읽기를 허용하지 않았습니다.",
+  "object.editPoints": "점 편집",
+  "object.editPoints.hint": "점을 끌어 윤곽을 바꾸세요 · Enter 키로 유지 · Esc 키로 취소",
+  "object.editPoints.done": "도형 윤곽이 변경되었습니다",
+  "object.editPoints.cancelled": "점이 변경되지 않았습니다",
+  "object.editPoints.suggesting": "도형 점 편집은 아직 변경 내용 추적이 되지 않습니다. 편집 모드로 전환하세요",
+  "object.editPoints.unavailable": "이 도형의 윤곽은 편집할 수 없습니다",
+  "object.editPoints.rotated": "점을 편집하려면 도형을 0°로 다시 회전하세요"
 }

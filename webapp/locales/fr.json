@@ -3047,5 +3047,12 @@
   "pastePicture.tooLarge": "Le presse-papiers est trop volumineux pour être collé en une seule image.",
   "pastePicture.failed": "Le presse-papiers n’a pas pu être collé comme image.",
   "pastePicture.nothing": "Le presse-papiers ne contient rien à coller comme image.",
-  "pastePicture.blocked": "Le navigateur n’a pas autorisé la lecture du presse-papiers."
+  "pastePicture.blocked": "Le navigateur n’a pas autorisé la lecture du presse-papiers.",
+  "object.editPoints": "Modifier les points",
+  "object.editPoints.hint": "Faites glisser un point pour modifier le contour · Entrée pour conserver · Échap pour annuler",
+  "object.editPoints.done": "Contour de la forme modifié",
+  "object.editPoints.cancelled": "Points inchangés",
+  "object.editPoints.suggesting": "La modification des points d’une forme ne peut pas encore être suivie ; passez en mode Édition",
+  "object.editPoints.unavailable": "Le contour de cette forme ne peut pas être modifié",
+  "object.editPoints.rotated": "Ramenez la rotation de cette forme à 0° pour modifier ses points"
 }

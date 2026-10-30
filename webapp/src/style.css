@@ -13648,3 +13648,42 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
   width: 100%;
   accent-color: var(--accent);
 }
+
+/* Edit Points (`shape_edit_points.mjs`): the live outline and its vertices,
+   over the page and above the selection overlay. The grips are the crop grips'
+   colours, with a 24px hit area so a finger can take one. */
+.shape-points-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+.shape-points-outline {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.shape-points-outline path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+.shape-points-handle {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  margin: -5px 0 0 -5px;
+  background: var(--paper-ink);
+  border: 1px solid var(--paper);
+  pointer-events: auto;
+  touch-action: none;
+  cursor: move;
+}
+.shape-points-handle::after {
+  content: "";
+  position: absolute;
+  inset: -8px;
+}

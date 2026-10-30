@@ -241,6 +241,10 @@ mod table_tools;
 // painted by the engine (`docs/153` `text.paste-as-picture`).
 mod picture_insert;
 
+// Own line (anti-conflict): Word's Edit Points on a shape (`docs/153`
+// `object.edit-points`, `docs/109` FID-SH-02).
+mod shape_points;
+
 // What each copied paragraph IS (heading, list item, table cell), so the
 // clipboard's HTML keeps structure (`docs/174` TA-12).
 mod clipboard_outline;

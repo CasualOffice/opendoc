@@ -3047,5 +3047,12 @@
   "pastePicture.tooLarge": "Gli appunti sono troppo grandi per incollarli come un’unica immagine.",
   "pastePicture.failed": "Impossibile incollare gli appunti come immagine.",
   "pastePicture.nothing": "Negli appunti non c’è nulla da incollare come immagine.",
-  "pastePicture.blocked": "Il browser non ha consentito di leggere gli appunti."
+  "pastePicture.blocked": "Il browser non ha consentito di leggere gli appunti.",
+  "object.editPoints": "Modifica punti",
+  "object.editPoints.hint": "Trascina un punto per cambiare il contorno · Invio per confermare · Esc per annullare",
+  "object.editPoints.done": "Contorno della forma modificato",
+  "object.editPoints.cancelled": "Punti non modificati",
+  "object.editPoints.suggesting": "La modifica dei punti di una forma non può ancora essere revisionata; passa a Modifica",
+  "object.editPoints.unavailable": "Il contorno di questa forma non può essere modificato",
+  "object.editPoints.rotated": "Riporta la rotazione di questa forma a 0° per modificarne i punti"
 }

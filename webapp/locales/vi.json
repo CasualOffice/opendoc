@@ -3025,5 +3025,12 @@
   "pastePicture.tooLarge": "Bảng tạm quá lớn để dán thành một ảnh.",
   "pastePicture.failed": "Không thể dán bảng tạm dưới dạng ảnh.",
   "pastePicture.nothing": "Bảng tạm không có gì để dán dưới dạng ảnh.",
-  "pastePicture.blocked": "Trình duyệt không cho phép đọc bảng tạm."
+  "pastePicture.blocked": "Trình duyệt không cho phép đọc bảng tạm.",
+  "object.editPoints": "Sửa điểm",
+  "object.editPoints.hint": "Kéo một điểm để thay đổi đường viền · Enter để giữ · Esc để hủy",
+  "object.editPoints.done": "Đã thay đổi đường viền hình",
+  "object.editPoints.cancelled": "Không thay đổi điểm",
+  "object.editPoints.suggesting": "Chưa thể theo dõi việc sửa điểm của hình; hãy chuyển sang Chỉnh sửa để thay đổi",
+  "object.editPoints.unavailable": "Không thể sửa đường viền của hình này",
+  "object.editPoints.rotated": "Hãy xoay hình về 0° để sửa các điểm"
 }

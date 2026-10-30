@@ -3036,5 +3036,12 @@
   "pastePicture.tooLarge": "Het klembord is te groot om als één afbeelding te plakken.",
   "pastePicture.failed": "Het klembord kon niet als afbeelding worden geplakt.",
   "pastePicture.nothing": "Er staat niets op het klembord om als afbeelding te plakken.",
-  "pastePicture.blocked": "De browser stond het lezen van het klembord niet toe."
+  "pastePicture.blocked": "De browser stond het lezen van het klembord niet toe.",
+  "object.editPoints": "Punten bewerken",
+  "object.editPoints.hint": "Sleep een punt om de omtrek te wijzigen · Enter om te behouden · Esc om te annuleren",
+  "object.editPoints.done": "Omtrek van de vorm gewijzigd",
+  "object.editPoints.cancelled": "Punten niet gewijzigd",
+  "object.editPoints.suggesting": "Het bewerken van punten kan nog niet worden bijgehouden; schakel over naar Bewerken",
+  "object.editPoints.unavailable": "De omtrek van deze vorm kan niet worden bewerkt",
+  "object.editPoints.rotated": "Draai deze vorm terug naar 0° om de punten te bewerken"
 }
