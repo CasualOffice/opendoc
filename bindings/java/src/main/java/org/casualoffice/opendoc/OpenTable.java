@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package org.casualoffice.opendoc;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -8,6 +9,12 @@ import java.util.Map;
 public final class OpenTable {
     private final OpenDocument document;
     private final String id;
+    /**
+     * Cells per row, read once and kept up to date by {@link #createRow()}: a
+     * POI loop ({@code getRow(r).getCell(c).setText(...)}) must not re-project
+     * the whole table per cell, which made it O(rows^2).
+     */
+    private List<Integer> shape;
 
     OpenTable(OpenDocument document, String id) {
         this.document = document;
@@ -20,26 +27,44 @@ public final class OpenTable {
 
     @SuppressWarnings("unchecked")
     List<Object> rows() {
-        return (List<Object>) document.view(id).get("rows");
+        return (List<Object>) document.tableView(id).get("rows");
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Integer> shape() {
+        if (shape == null) {
+            shape = new ArrayList<>();
+            for (Object row : rows()) {
+                shape.add(((List<Object>) ((Map<String, Object>) row).get("cells")).size());
+            }
+        }
+        return shape;
     }
 
     /** The number of rows ({@code getNumberOfRows}). */
     public int getNumberOfRows() {
-        return rows().size();
+        shape = null; // another call may have added or removed a row
+        return shape().size();
     }
 
     /** A row by index ({@code getRow}). */
     public Row getRow(int index) {
-        if (index < 0 || index >= getNumberOfRows()) {
-            throw new IndexOutOfBoundsException("row " + index);
+        if (index < 0 || index >= shape().size()) {
+            shape = null;
+            if (index < 0 || index >= shape().size()) {
+                throw new IndexOutOfBoundsException("row " + index);
+            }
         }
         return new Row(index);
     }
 
     /** Appends a row copying the last row's layout ({@code createRow}). */
     public Row createRow() {
+        List<Integer> cells = shape();
         document.edit(OpenDocument.cmd("op", "addRow", "table", id));
-        return new Row(getNumberOfRows() - 1);
+        // The engine copies the last row's layout.
+        cells.add(cells.isEmpty() ? 0 : cells.get(cells.size() - 1));
+        return new Row(cells.size() - 1);
     }
 
     /** The cells' text, tab-separated, one line per row ({@code getText}). */
@@ -66,9 +91,8 @@ public final class OpenTable {
             this.index = index;
         }
 
-        @SuppressWarnings("unchecked")
         int cellCount() {
-            return ((List<Object>) ((Map<String, Object>) rows().get(index)).get("cells")).size();
+            return shape().get(index);
         }
 
         /** A cell by index ({@code getCell}). */

@@ -522,7 +522,7 @@ impl Document {
     #[must_use]
     pub fn paragraph(&self, id: &str) -> Option<ParagraphView> {
         let id = id.parse::<NodeId>().ok()?;
-        casual_doc_edit::find_paragraph_any(&self.state.model, id)
+        crate::edit::find_paragraph(&self.state.model, id)
             .map(|p| Projector::new(&self.state.model).paragraph(p))
     }
 

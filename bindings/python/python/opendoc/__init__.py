@@ -333,6 +333,21 @@ class Document:
             self._nodes[node_id] = node
         return node
 
+    def _table(self, table_id: str) -> Dict[str, Any]:
+        # Tables are looked up as tables: trying the paragraph locator first
+        # cost every table access a cold miss that walks the document.
+        if self._nodes_version != self._version:
+            self._nodes = {}
+            self._nodes_version = self._version
+        node = self._nodes.get(table_id)
+        if node is None:
+            raw = self._native.table(table_id)
+            if raw is None:
+                raise OpenDocError("invalid-argument", f"table {table_id} is no longer in the document")
+            node = json.loads(raw)
+            self._nodes[table_id] = node
+        return node
+
     # -- read (python-docx) --
 
     @property
@@ -742,7 +757,9 @@ class Run:
 
 
 class Cell:
-    """A table cell (python-docx ``_Cell``)."""
+    """A table cell (python-docx ``_Cell``). Setting ``text`` is one engine
+    edit and reads nothing; an index outside the table is refused by the
+    engine (``OpenDocError``), as python-docx's ``IndexError`` would be."""
 
     def __init__(self, document: Document, table_id: str, row: int, column: int) -> None:
         self._document = document
@@ -751,7 +768,10 @@ class Cell:
         self._column = column
 
     def _view(self) -> Dict[str, Any]:
-        return self._document._node(self._table)["rows"][self._row]["cells"][self._column]
+        rows = self._document._table(self._table)["rows"]
+        if not (0 <= self._row < len(rows) and 0 <= self._column < len(rows[self._row]["cells"])):
+            raise IndexError("cell (%d, %d) is outside the table" % (self._row, self._column))
+        return rows[self._row]["cells"][self._column]
 
     @property
     def text(self) -> str:
@@ -767,44 +787,62 @@ class Cell:
 
 
 class Row:
-    def __init__(self, document: Document, table_id: str, index: int) -> None:
+    def __init__(self, document: Document, table_id: str, index: int, count: int) -> None:
         self._document = document
         self._table = table_id
         self._index = index
+        self._count = count
 
     @property
     def cells(self) -> List[Cell]:
-        count = len(self._document._node(self._table)["rows"][self._index]["cells"])
-        return [Cell(self._document, self._table, self._index, c) for c in range(count)]
+        return [Cell(self._document, self._table, self._index, c) for c in range(self._count)]
 
 
 class Table:
-    """A table (python-docx ``Table``)."""
+    """A table (python-docx ``Table``).
+
+    Its shape (row count, cells per row) is read once and kept up to date by
+    ``add_row``: a python-docx loop (``table.add_row().cells[0].text = ...``)
+    must not re-project the whole table per cell, which made it O(rows²).
+    """
 
     def __init__(self, document: Document, table_id: str) -> None:
         self._document = document
         self.id = table_id
+        self._shape: Optional[List[int]] = None
 
     def _view(self) -> Dict[str, Any]:
-        return self._document._node(self.id)
+        return self._document._table(self.id)
+
+    def _cells_per_row(self) -> List[int]:
+        if self._shape is None:
+            self._shape = [len(r["cells"]) for r in self._view()["rows"]]
+        return self._shape
 
     @property
     def rows(self) -> List[Row]:
-        return [Row(self._document, self.id, r) for r in range(len(self._view()["rows"]))]
+        self._shape = None  # a row may have been added or removed by another call
+        return [Row(self._document, self.id, r, n) for r, n in enumerate(self._cells_per_row())]
 
     @property
     def style(self) -> Optional[str]:
         return self._view().get("style")
 
     def cell(self, row_idx: int, col_idx: int) -> Cell:
-        rows = self._view()["rows"]
-        if not (0 <= row_idx < len(rows) and 0 <= col_idx < len(rows[row_idx]["cells"])):
-            raise IndexError("cell (%d, %d) is outside the table" % (row_idx, col_idx))
+        shape = self._cells_per_row()
+        if not (0 <= row_idx < len(shape) and 0 <= col_idx < shape[row_idx]):
+            self._shape = None
+            shape = self._cells_per_row()
+            if not (0 <= row_idx < len(shape) and 0 <= col_idx < shape[row_idx]):
+                raise IndexError("cell (%d, %d) is outside the table" % (row_idx, col_idx))
         return Cell(self._document, self.id, row_idx, col_idx)
 
     def add_row(self) -> Row:
+        shape = self._cells_per_row()
         self._document._edit({"op": "addRow", "table": self.id})
-        return Row(self._document, self.id, len(self._view()["rows"]) - 1)
+        # The engine copies the last row's layout.
+        shape.append(shape[-1] if shape else 0)
+        return Row(self._document, self.id, len(shape) - 1, shape[-1])
 
 
 @dataclass(frozen=True)

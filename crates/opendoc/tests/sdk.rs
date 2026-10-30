@@ -574,6 +574,74 @@ fn every_body_block_kind_is_projected() {
     assert!(json[0]["type"].is_string());
 }
 
+/// What one python-docx-style step costs on a document already holding `n`
+/// paragraphs, in the engine's own meters: `(whole-document scans, block
+/// visits)` for (a) appending a paragraph and a bold run to it, and (b) one
+/// more run on that same, now-known paragraph.
+fn builder_step_cost(n: usize) -> ((usize, u64), (usize, u64)) {
+    let mut doc = Document::create().unwrap();
+    doc.edit(|e| {
+        for i in 0..n {
+            e.append_paragraph(&format!("Paragraph {i}"), None)?;
+        }
+        Ok(())
+    })
+    .unwrap();
+    let measure =
+        |doc: &mut Document, step: &dyn Fn(&mut opendoc::Editor<'_>) -> opendoc::Result<()>| {
+            casual_doc_edit::reset_document_scans();
+            casual_doc_edit::reset_block_visits();
+            casual_doc_model::v1::reset_route_block_visits();
+            doc.edit(|e| step(e)).unwrap();
+            (
+                casual_doc_edit::document_scans(),
+                casual_doc_edit::block_visits() + casual_doc_model::v1::route_block_visits(),
+            )
+        };
+    let mut id = String::new();
+    let first = {
+        casual_doc_edit::reset_document_scans();
+        casual_doc_edit::reset_block_visits();
+        casual_doc_model::v1::reset_route_block_visits();
+        doc.edit(|e| {
+            id = e.append_paragraph("Step ", None)?;
+            e.append_run(&id, "bold", &RunFormat::bold())
+        })
+        .unwrap();
+        (
+            casual_doc_edit::document_scans(),
+            casual_doc_edit::block_visits() + casual_doc_model::v1::route_block_visits(),
+        )
+    };
+    let again = measure(&mut doc, &|e| {
+        e.append_run(&id, " more", &RunFormat::italic())
+    });
+    (first, again)
+}
+
+#[test]
+fn a_builder_step_costs_the_same_on_a_document_twice_as_long() {
+    // SKILL section 8: per-call work is O(1) in document size, guarded by n
+    // against 2n rather than by milliseconds. The python-docx and POI loops of
+    // the bindings are only linear if each step is constant (docs/176 12.10).
+    let ((scans_small, _), (_, again_small)) = builder_step_cost(400);
+    let ((scans_large, _), (_, again_large)) = builder_step_cost(800);
+    // The SDK itself never scans the document for a step.
+    assert_eq!(
+        (scans_small, scans_large),
+        (0, 0),
+        "a builder step scanned the whole document"
+    );
+    // Once the engine knows the paragraph, a further run is constant work.
+    assert_eq!(
+        again_small, again_large,
+        "a run on a known paragraph grew with the document: {again_small} visits at 400, {again_large} at 800"
+    );
+    // The FIRST step on a new paragraph still costs one engine walk (the cold
+    // route in `casual_doc_edit::apply`'s `paragraph_mut`); that is the
+    // engine's open item recorded in docs/176 section 12.10, not asserted here.
+}
+
 #[test]
 fn the_format_table_matches_the_engine_registry() {
     // `Format::can_open`/`can_save` are what bindings and the CLI publish; they

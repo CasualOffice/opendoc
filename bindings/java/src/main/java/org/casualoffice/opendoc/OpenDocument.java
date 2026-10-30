@@ -136,6 +136,16 @@ public final class OpenDocument implements AutoCloseable {
         throw new OpenDocException("invalid-argument", "node " + id + " is no longer in the document");
     }
 
+    /** A table's view, looked up as a table (no paragraph-locator miss first). */
+    @SuppressWarnings("unchecked")
+    Map<String, Object> tableView(String id) {
+        Object table = call("table", cmd("id", id));
+        if (table instanceof Map<?, ?>) {
+            return (Map<String, Object>) table;
+        }
+        throw new OpenDocException("invalid-argument", "table " + id + " is no longer in the document");
+    }
+
     OpenParagraph paragraph(String id) {
         return paragraphs.computeIfAbsent(id, key -> new OpenParagraph(this, key));
     }

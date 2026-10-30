@@ -284,8 +284,7 @@ impl Filler<'_, '_> {
     }
 
     fn paragraph_text(&self, id: NodeId) -> Option<String> {
-        casual_doc_edit::find_paragraph_any(self.editor.model(), id)
-            .map(|p| node_plain_text(&p.inlines))
+        crate::edit::find_paragraph(self.editor.model(), id).map(|p| node_plain_text(&p.inlines))
     }
 
     /// A paragraph that is exactly one section tag (whitespace aside).
