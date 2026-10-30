@@ -68,7 +68,7 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | --- | ---: | ---: |
 | P0 | 7 | 0 |
 | P1 | 33 | 2 |
-| P2 | 52 | 14 |
+| P2 | 52 | 13 |
 | P3 | 22 | 12 |
 | Behavioural audit — 2026-09-04 | 18 | 2 |
 | Layout-space audit — 2026-09-09 | 14 | 0 |
@@ -76,7 +76,7 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | Ribbon keyboard reachability — 2026-09-10 | 2 | 0 |
 | Paragraph-level revision mapping — 2026-09-17 | 4 | 0 |
 | Large-document admission — 2026-09-18 | 1 | 0 |
-| **Total** | **158** | **30** |
+| **Total** | **158** | **29** |
 
 "Still open" counts any status *beginning* `Open`, `Partly fixed`, or `In progress` —
 the prefix matters, because real statuses qualify themselves (`Open (owner decision)`,
@@ -96,7 +96,7 @@ by re-reading the code they cite: **HF-016**, **HF-022** and **HF-034**.)
 
 ### Progress
 
-**30 of 158 rows remain open. Every P0 is closed.** HF-030 closed with #559. (Re-derive these counts, do not edit them by hand.)
+**29 of 158 rows remain open. Every P0 is closed.** HF-030 closed with #559. (Re-derive these counts, do not edit them by hand.)
 
 **Staleness sweep, 2026-09-20.** Every P1 row of this tracker and of `105` was re-read
 against the code it cites, because `109` is now the only queue and a stale `Open` there is

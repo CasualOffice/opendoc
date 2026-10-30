@@ -2,7 +2,7 @@
 
 # The OpenDoc edit vocabulary, version 1.6
 
-73 commands in 14 families. 14 can be tracked suggestions, 56 are refused in suggest mode with the published reason, and 3 are not content edits (comments and review decisions). They are the agent-side twins of 127 editor command ids; 88 editor ids that can change a document are not exposed to agents, each with a reason (`commands.json` `uiNotExposed`).
+73 commands in 14 families. 14 can be tracked suggestions, 56 are refused in suggest mode with the published reason, and 3 are not content edits (comments and review decisions). They are the agent-side twins of 127 editor command ids; 96 editor ids that can change a document are not exposed to agents, each with a reason (`commands.json` `uiNotExposed`).
 
 | `op` | Family | Summary | Trackable | Editor twins |
 | --- | --- | --- | --- | --- |

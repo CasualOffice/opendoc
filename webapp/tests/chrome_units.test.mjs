@@ -58,6 +58,9 @@ const DOCUMENT_SUBJECT = new RegExp(
     String.raw`\.page-wrap\b`,
     String.raw`\.page-band\b`,
     String.raw`\.ruler`,
+    // Edit Points grips are drawn over the page at the document's scale, like
+    // the crop and resize grips under .overlay.
+    String.raw`\.shape-points-`,
     String.raw`\.tab-corner\b`,
     String.raw`\.tab-glyph\b`,
     String.raw`\.caret(?![\w-])`,

@@ -114,12 +114,22 @@ export function idleSlices(scope) {
  *  requires (`probe_pdf`). The extension is a hint; the bytes decide, exactly
  *  as they do for every other format the editor opens. */
 export function isPdfBytes(bytes) {
-  return (
-    bytes?.length >= 5 &&
-    bytes[0] === 0x25 &&
-    bytes[1] === 0x50 &&
-    bytes[2] === 0x44 &&
-    bytes[3] === 0x46 &&
-    bytes[4] === 0x2d
-  );
+  // ISO 32000 lets the `%PDF-` header sit anywhere in the first 1024 bytes, and
+  // real files do carry a BOM, whitespace or a mailer's junk before it. Requiring
+  // it at byte 0 sent those PDFs to the document opener, which answered "format
+  // could not be detected". O(1): at most 1024 bytes are read.
+  if (!bytes?.length) return false;
+  const end = Math.min(bytes.length - 4, 1024);
+  for (let i = 0; i < end; i += 1) {
+    if (
+      bytes[i] === 0x25 &&
+      bytes[i + 1] === 0x50 &&
+      bytes[i + 2] === 0x44 &&
+      bytes[i + 3] === 0x46 &&
+      bytes[i + 4] === 0x2d
+    ) {
+      return true;
+    }
+  }
+  return false;
 }

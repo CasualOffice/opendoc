@@ -80,6 +80,7 @@ Firefox
 Flate
 Foxit
 Frontend
+GFM
 GIF
 GPL
 GPU
@@ -684,6 +685,7 @@ unmodelled
 unmount
 unobservable
 unopenable
+unparsed
 unpassworded
 unreferenced
 unrepresentable

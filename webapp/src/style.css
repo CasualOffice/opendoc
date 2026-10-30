@@ -2261,7 +2261,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 }
 
 .a11y-check-severity {
-  font-size: var(--fs-caption, 12px);
+  font-size: var(--fs-caption, 0.75rem);
   font-weight: 600;
   color: var(--ink-2, var(--ink));
 }
@@ -2269,7 +2269,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 .a11y-check-fix,
 .a11y-check-where {
   color: var(--ink-2, var(--ink));
-  font-size: var(--fs-caption, 12px);
+  font-size: var(--fs-caption, 0.75rem);
 }
 
 /* Content controls and form roles (`109` RM-34). The lists are the parts that
@@ -2287,6 +2287,8 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 .form-role-list,
 .form-role-fields,
 .control-fill-list {
+  /* A chrome scroller contains its own overscroll (style_tokens). */
+  overscroll-behavior: contain;
   list-style: none;
   margin: 0;
   padding: 0;
@@ -4443,7 +4445,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
   display: grid;
   /* Pairs (Top/Bottom, Left/Right) stay side by side wherever two will fit,
      and the cells are as wide as their content rather than half the dialog.
-     The old `@media (max-width: 620px) { 1fr }` override made phones WORSE by
+     The old `@media (max-width: 38.75em) { 1fr }` override made phones WORSE by
      stacking two 5-character fields into one 302px-wide column each; Word and
      Docs keep those pairs paired at phone widths. */
   grid-template-columns: repeat(auto-fit, minmax(clamp(7rem, 20vw, 9rem), max-content));
@@ -13883,7 +13885,7 @@ body[data-table-draw] .page-wrap * {
 
 .table-borders-preview .tbp-cells span {
   margin: 0.5rem;
-  background: repeating-linear-gradient(to bottom, var(--line) 0 2px, transparent 2px 7px);
+  background: repeating-linear-gradient(to bottom, var(--line) 0 0.125rem, transparent 0.125rem 0.4375rem);
   opacity: 0.7;
 }
 
@@ -13975,7 +13977,7 @@ body[data-table-draw] .page-wrap * {
   grid-template-columns: repeat(4, 1fr);
 }
 
-@media (max-width: 620px) {
+@media (max-width: 38.75em) {
   .table-borders-layout,
   .table-position-row,
   .table-position-distances {

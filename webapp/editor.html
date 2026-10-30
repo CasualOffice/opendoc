@@ -3387,7 +3387,7 @@
           <!-- One form around the password fields, so password managers and the
                browser treat them as a credential form. It never submits: Enter
                must not reload the editor and lose the document. -->
-          <form class="restrict-editing-passwords" onsubmit="return false" novalidate>
+          <form class="restrict-editing-passwords" id="restrictEditingPasswordForm" novalidate>
           <div class="settings-section" id="restrictEditingCurrentRow" hidden>
             <label data-i18n="protect.currentPassword" class="dialog-field">Password<input id="restrictEditingCurrentPassword" type="password" maxlength="255" autocomplete="current-password" aria-describedby="restrictEditingCurrentHint restrictEditingPasswordError" /></label>
             <small data-i18n="protect.currentPassword.hint" class="settings-note" id="restrictEditingCurrentHint">This restriction was set with a password. Enter it to change or stop the restriction.</small>

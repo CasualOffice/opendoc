@@ -259,6 +259,16 @@ export const CURSOR_TARGETS = [
     why: "Eight grips, eight axis cursors — the mapping every editor shares.",
   },
   {
+    id: "shape-points-handle",
+    cursor: "move",
+    owner: "css",
+    selector: ".shape-points-handle",
+    gesture: "Dragging a vertex in Edit Points",
+    why:
+      "A vertex moves in two dimensions, so it promises `move`, as ONLYOFFICE's " +
+      "edit-points grips and Word's do.",
+  },
+  {
     id: "review-change-bar",
     cursor: "pointer",
     owner: "css",
