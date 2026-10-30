@@ -318,6 +318,43 @@ pub enum ShapeGeometry {
     },
 }
 
+impl ShapeGeometry {
+    /// The same geometry moved by `(dx, dy)` twips — how a backend that cannot
+    /// offset a whole draw places a [`PaintItem::Shadow`]'s silhouette. O(c) in
+    /// a path's commands.
+    #[must_use]
+    pub fn translated(&self, dx: Twip, dy: Twip) -> Self {
+        let shift = |point: Point| {
+            Point::new(
+                Twip(point.x.raw().saturating_add(dx.raw())),
+                Twip(point.y.raw().saturating_add(dy.raw())),
+            )
+        };
+        let moved = |rect: Rect| Rect::new(shift(rect.origin), rect.size);
+        match self {
+            Self::Rect { rect } => Self::Rect { rect: moved(*rect) },
+            Self::Ellipse { rect } => Self::Ellipse { rect: moved(*rect) },
+            Self::RoundedRect { rect, radius } => Self::RoundedRect {
+                rect: moved(*rect),
+                radius: *radius,
+            },
+            Self::Path {
+                commands,
+                closed,
+                fill_rule,
+            } => Self::Path {
+                commands: commands.iter().map(|command| command.map(shift)).collect(),
+                closed: *closed,
+                fill_rule: *fill_rule,
+            },
+            Self::Line { from, to } => Self::Line {
+                from: shift(*from),
+                to: shift(*to),
+            },
+        }
+    }
+}
+
 /// An affine transform applied to a [`PaintItem::Shape`] or [`PaintItem::Image`]
 /// about the object's own center: a clockwise rotation and/or axis flips
 /// (`a:xfrm@rot` / `@flipH` / `@flipV`).
@@ -447,6 +484,38 @@ pub enum PaintItem {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tail_end: Option<LineEnd>,
         /// The rotation/flip applied about the shape's center (`a:xfrm`), if any.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        transform: Option<ShapeTransform>,
+    },
+    /// A drop shadow (`a:effectLst/a:outerShdw`, `docs/153` `object.shape-shadow`):
+    /// the silhouette of a shape's `geometry`, painted in `color`, moved by
+    /// `offset` and blurred by `blur`. Layout emits one immediately BEFORE each
+    /// [`PaintItem::Shape`] it shadows, so painter's order puts the shadow
+    /// behind its shape.
+    ///
+    /// A separate item rather than a field on `Shape` because a shadow is not
+    /// part of how a shape paints: a backend that cannot blur (the PDF writer)
+    /// still paints it, unblurred, and one that cannot paint it at all can skip
+    /// it without misdrawing the shape.
+    Shadow {
+        /// The geometry whose silhouette casts the shadow, in the same
+        /// device-scaled twips as a `Shape`'s.
+        geometry: ShapeGeometry,
+        /// Whether the interior casts (the shape is filled).
+        #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+        filled: bool,
+        /// The outline width in device pixels, when the outline casts too.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stroke_width: Option<f32>,
+        /// The shadow colour; its alpha is the shadow's opacity.
+        color: Color,
+        /// How far the silhouette moves, in page-space twips (`y` down).
+        offset: Point,
+        /// The blur radius in twips (`@blurRad`); zero is a hard shadow.
+        blur: Twip,
+        /// The shape's rotation/flip, applied to the silhouette before the
+        /// offset (the offset is already turned when the shadow turns with the
+        /// shape).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         transform: Option<ShapeTransform>,
     },

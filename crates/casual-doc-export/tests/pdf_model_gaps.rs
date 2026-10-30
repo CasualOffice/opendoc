@@ -349,6 +349,7 @@ fn shape_document(geometry: CustomGeometry) -> Document {
         flip_h: false,
         flip_v: false,
         rotation: None,
+        shadow: None,
     });
     let group = InlineNode::Group(Box::new(WordprocessingGroup {
         hyperlink: None,
@@ -367,6 +368,7 @@ fn shape_document(geometry: CustomGeometry) -> Document {
             wrap_distances: Default::default(),
             wrap_polygon: None,
             behind_doc: false,
+            allow_overlap: true,
         }),
         relative_height: Some(1),
         extent,

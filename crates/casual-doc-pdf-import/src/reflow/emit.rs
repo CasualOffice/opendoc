@@ -78,6 +78,7 @@ fn float_anchor(dx: f64, dy: f64, wrap: Option<FloatWrap>) -> DrawingAnchor {
         },
         wrap_polygon: None,
         behind_doc: wrap == Some(FloatWrap::Behind),
+        allow_overlap: true,
     }
 }
 

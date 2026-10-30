@@ -3693,6 +3693,81 @@
       </section>
     </div>
 
+    <!-- Layout ▸ More layout options (`docs/153` object.advanced-layout-options).
+         Word's Layout dialog, Text Wrapping and Position tabs, reduced to the
+         three things the wrap gallery and the position gallery cannot say: the
+         distance text keeps from the object, "Move object with text" and
+         "Allow overlap" — the two switches ONLYOFFICE puts beside the distances
+         (`ImageSettingsAdvanced.js`, `chMove` / `chOverlap`). The rules are
+         `object_layout_options.mjs`. -->
+    <div id="objectLayoutDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="objectLayoutTitle" aria-describedby="objectLayoutDescription">
+      <section class="dialog-card dialog-card-compact object-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="objectLayoutDialog.title" id="objectLayoutTitle">Layout options</h2>
+              <p data-i18n="objectLayoutDialog.description" id="objectLayoutDescription">How far text keeps from this object, and whether it moves with its paragraph.</p>
+            </div>
+          </div>
+          <button data-i18n-title="altTextDialog.close.title" data-i18n-label="objectLayoutDialog.close.label" id="objectLayoutClose" type="button" class="dialog-close" title="Close" aria-label="Close layout options"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <form id="objectLayoutForm" class="dialog-body object-dialog-body">
+          <p data-i18n="objectLayoutDialog.distance" class="caption-preview-label">Distance from text (pt)</p>
+          <div class="caption-pair">
+            <label data-i18n="pageBordersDialog.top" class="dialog-field">Top<input id="objectLayoutTop" type="number" min="0" max="1584" step="0.5" inputmode="decimal" /></label>
+            <label data-i18n="pageBordersDialog.bottom" class="dialog-field">Bottom<input id="objectLayoutBottom" type="number" min="0" max="1584" step="0.5" inputmode="decimal" /></label>
+            <label data-i18n="pageBordersDialog.left" class="dialog-field">Left<input id="objectLayoutLeft" type="number" min="0" max="1584" step="0.5" inputmode="decimal" /></label>
+            <label data-i18n="pageBordersDialog.right" class="dialog-field">Right<input id="objectLayoutRight" type="number" min="0" max="1584" step="0.5" inputmode="decimal" /></label>
+          </div>
+          <label class="dialog-check"><input id="objectLayoutMove" type="checkbox" /><span data-i18n="objectLayoutDialog.moveWithText">Move object with text</span></label>
+          <label class="dialog-check"><input id="objectLayoutOverlap" type="checkbox" /><span data-i18n="objectLayoutDialog.allowOverlap">Allow overlap</span></label>
+          <p id="objectLayoutNote" class="dialog-field-note" role="status" aria-live="polite"></p>
+        </form>
+        <footer class="dialog-foot">
+          <span data-i18n="altTextDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="altTextDialog.cancel" id="objectLayoutCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="altTextDialog.apply" id="objectLayoutApply" type="submit" form="objectLayoutForm" class="dialog-button dialog-button-primary">Apply</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <!-- Shape Format ▸ Shape Effects ▸ Shadow ▸ Shadow Options (`docs/153`
+         object.shape-shadow). Word's pane for an outer shadow: colour,
+         transparency, angle, distance and blur — ONLYOFFICE's shape shadow
+         carries the same five. The rules are `shape_shadow.mjs`. -->
+    <div id="shapeShadowDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="shapeShadowTitle" aria-describedby="shapeShadowDescription">
+      <section class="dialog-card dialog-card-compact object-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="shapeShadowDialog.title" id="shapeShadowTitle">Shadow options</h2>
+              <p data-i18n="shapeShadowDialog.description" id="shapeShadowDescription">An outer shadow cast behind the shape.</p>
+            </div>
+          </div>
+          <button data-i18n-title="altTextDialog.close.title" data-i18n-label="shapeShadowDialog.close.label" id="shapeShadowClose" type="button" class="dialog-close" title="Close" aria-label="Close shadow options"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <form id="shapeShadowForm" class="dialog-body object-dialog-body">
+          <div class="caption-pair">
+            <label data-i18n="watermarkDialog.color" class="dialog-field">Color<input id="shapeShadowColor" type="color" value="#000000" /></label>
+            <label data-i18n="shapeShadowDialog.transparency" class="dialog-field">Transparency (%)<input id="shapeShadowTransparency" type="number" min="0" max="100" step="1" inputmode="numeric" /></label>
+            <label data-i18n="shapeShadowDialog.angle" class="dialog-field">Angle (°)<input id="shapeShadowAngle" type="number" min="0" max="359" step="1" inputmode="numeric" /></label>
+            <label data-i18n="shapeShadowDialog.distance" class="dialog-field">Distance (pt)<input id="shapeShadowDistance" type="number" min="0" max="200" step="0.5" inputmode="decimal" /></label>
+            <label data-i18n="shapeShadowDialog.blur" class="dialog-field">Blur (pt)<input id="shapeShadowBlur" type="number" min="0" max="100" step="0.5" inputmode="decimal" /></label>
+          </div>
+          <p id="shapeShadowNote" class="dialog-field-note" role="status" aria-live="polite"></p>
+        </form>
+        <footer class="dialog-foot">
+          <span data-i18n="altTextDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="altTextDialog.cancel" id="shapeShadowCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="altTextDialog.apply" id="shapeShadowApply" type="submit" form="shapeShadowForm" class="dialog-button dialog-button-primary">Apply</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
 
     <div id="cmdPalette" class="cmd-overlay" hidden>
       <div data-i18n-label="cmdPalette.commandPalette.label" class="cmd-box" role="dialog" aria-label="Command palette" aria-modal="true">

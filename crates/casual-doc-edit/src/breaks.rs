@@ -1117,6 +1117,7 @@ mod tests {
                 border: None,
                 body_properties: Default::default(),
                 blocks: vec![para(930, "in a text box")],
+                shadow: None,
             }))],
         });
 
@@ -1197,6 +1198,7 @@ mod tests {
                         border: None,
                         body_properties: Default::default(),
                         blocks: vec![para(30, "deep")],
+                        shadow: None,
                     }))],
                 }))],
             })],

@@ -51,6 +51,7 @@ fn document(direction: TextBoxVerticalText) -> Document {
             wrap_distances: Default::default(),
             wrap_polygon: None,
             behind_doc: false,
+            allow_overlap: true,
         }),
         relative_height: Some(1),
         extent: Some(Extent {
@@ -78,6 +79,7 @@ fn document(direction: TextBoxVerticalText) -> Document {
                 text: "HHHHHHHHHH".to_owned(),
             })],
         })],
+        shadow: None,
     }));
     Document::new(
         node(1),

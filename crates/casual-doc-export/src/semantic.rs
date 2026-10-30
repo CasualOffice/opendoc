@@ -51,6 +51,8 @@ use casual_doc_model::v1::PasswordVerifier;
 use casual_doc_model::v1::LEGACY_COMPAT_OPTIONS;
 // Own line (anti-conflict): the float's `@wrapText` side selector.
 use casual_doc_model::v1::WrapSide;
+// Own line (anti-conflict): the outer shadow (`object.shape-shadow`).
+use casual_doc_model::v1::ShapeShadow;
 // Own line (anti-conflict): `w:view`, FID-AT-01.
 use casual_doc_model::v1::DocumentView;
 use casual_doc_model::v1::{
@@ -7840,7 +7842,7 @@ fn write_anchored_drawing(
     el.push_attribute(("behindDoc", if anchor.behind_doc { "1" } else { "0" }));
     el.push_attribute(("locked", "0"));
     el.push_attribute(("layoutInCell", "1"));
-    el.push_attribute(("allowOverlap", "1"));
+    push_allow_overlap(&mut el, anchor.allow_overlap);
     w.write_event(Event::Start(el)).map_err(pkg)?;
     // `simplePos` is a required child; `simplePos="0"` above means it is ignored
     // (the positionH/V pair drives placement), so a zero point suffices.
@@ -7938,7 +7940,7 @@ fn write_group(
     ));
     el.push_attribute(("locked", "0"));
     el.push_attribute(("layoutInCell", "1"));
-    el.push_attribute(("allowOverlap", "1"));
+    push_allow_overlap(&mut el, anchor.is_none_or(|a| a.allow_overlap));
     w.write_event(Event::Start(el)).map_err(pkg)?;
     let mut simple_pos = start("wp:simplePos");
     simple_pos.push_attribute(("x", "0"));
@@ -8295,6 +8297,7 @@ fn write_group_shape(
         write_fill(w, fill)?;
     }
     write_outline(w, shape.stroke)?;
+    write_effect_list(w, shape.shadow.as_ref())?;
     w.write_event(Event::End(BytesEnd::new("wps:spPr")))
         .map_err(pkg)?;
     w.write_event(Event::Empty(start("wps:bodyPr")))
@@ -8359,6 +8362,7 @@ fn write_group_text_box(
             .map_err(pkg)?;
     }
     write_outline(w, text_box.border)?;
+    write_effect_list(w, text_box.shadow.as_ref())?;
     w.write_event(Event::End(BytesEnd::new("wps:spPr")))
         .map_err(pkg)?;
     w.write_event(Event::Start(start("wps:txbx")))
@@ -8778,6 +8782,59 @@ fn write_outline(
                 .map_err(pkg)?;
         }
     }
+    Ok(())
+}
+
+/// Writes `wp:anchor@allowOverlap` from the model (Word's "Allow overlap"):
+/// `1`, the long-standing value and Word's default, or `0`. O(1).
+fn push_allow_overlap(el: &mut BytesStart<'_>, allow: bool) {
+    el.push_attribute(("allowOverlap", if allow { "1" } else { "0" }));
+}
+
+/// Emits a shape's `a:effectLst` holding its outer shadow, after `a:ln` in
+/// `CT_ShapeProperties` order, or nothing when the shape has no shadow.
+///
+/// Every attribute the model carries is written back, and only those the
+/// source wrote: an absent `@algn`/`@rotWithShape`/scale/skew stays absent,
+/// so a round trip writes the shadow it read. The colour is the resolved
+/// `a:srgbClr` with its alpha as `a:alpha` (omitted when opaque) — a scheme
+/// colour is folded at import exactly as a fill's is. O(1).
+fn write_effect_list(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    shadow: Option<&ShapeShadow>,
+) -> Result<(), ExportError> {
+    let Some(shadow) = shadow else {
+        return Ok(());
+    };
+    w.write_event(Event::Start(start("a:effectLst")))
+        .map_err(pkg)?;
+    let mut el = start("a:outerShdw");
+    // Schema attribute order is irrelevant to readers; this is Word's.
+    el.push_attribute(("blurRad", shadow.blur_rad_emu.to_string().as_str()));
+    el.push_attribute(("dist", shadow.dist_emu.to_string().as_str()));
+    el.push_attribute(("dir", shadow.dir.to_string().as_str()));
+    for (name, value) in [
+        ("sx", shadow.sx),
+        ("sy", shadow.sy),
+        ("kx", shadow.kx),
+        ("ky", shadow.ky),
+    ] {
+        if let Some(value) = value {
+            el.push_attribute((name, value.to_string().as_str()));
+        }
+    }
+    if let Some(alignment) = shadow.alignment {
+        el.push_attribute(("algn", alignment.token()));
+    }
+    if let Some(rotate) = shadow.rot_with_shape {
+        el.push_attribute(("rotWithShape", if rotate { "1" } else { "0" }));
+    }
+    w.write_event(Event::Start(el)).map_err(pkg)?;
+    write_srgb_color(w, shadow.color)?;
+    w.write_event(Event::End(BytesEnd::new("a:outerShdw")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:effectLst")))
+        .map_err(pkg)?;
     Ok(())
 }
 
@@ -9205,7 +9262,7 @@ fn write_graphic_object(
         el.push_attribute(("behindDoc", if anchor.behind_doc { "1" } else { "0" }));
         el.push_attribute(("locked", "0"));
         el.push_attribute(("layoutInCell", "1"));
-        el.push_attribute(("allowOverlap", "1"));
+        push_allow_overlap(&mut el, anchor.allow_overlap);
         w.write_event(Event::Start(el)).map_err(pkg)?;
         let mut simple_pos = start("wp:simplePos");
         simple_pos.push_attribute(("x", "0"));
@@ -9341,7 +9398,7 @@ fn write_text_box(
         frame.push_attribute(("behindDoc", if anchor.behind_doc { "1" } else { "0" }));
         frame.push_attribute(("locked", "0"));
         frame.push_attribute(("layoutInCell", "1"));
-        frame.push_attribute(("allowOverlap", "1"));
+        push_allow_overlap(&mut frame, anchor.allow_overlap);
         w.write_event(Event::Start(frame)).map_err(pkg)?;
 
         let mut simple_pos = start("wp:simplePos");
@@ -9426,6 +9483,7 @@ fn write_text_box(
         write_fill(w, fill)?;
     }
     write_outline(w, text_box.border)?;
+    write_effect_list(w, text_box.shadow.as_ref())?;
     w.write_event(Event::End(BytesEnd::new("wps:spPr")))
         .map_err(pkg)?;
     w.write_event(Event::Start(start("wps:txbx")))

@@ -1648,6 +1648,30 @@ export const EN_STRINGS = Object.freeze({
   "shape.gradient.linearLeft": "Linear left",
   "shape.gradient.linearDiagonal": "Linear diagonal",
   "shape.gradient.fromCenter": "From center",
+  // Shape Effects ▸ Shadow (`shape_shadow.mjs`, `docs/153` object.shape-shadow):
+  // Word's outer presets, named by where the shadow falls.
+  "shape.shadow": "Shadow",
+  "shape.shadow.none": "No shadow",
+  "shape.shadow.bottomRight": "Offset: bottom right",
+  "shape.shadow.bottom": "Offset: bottom",
+  "shape.shadow.bottomLeft": "Offset: bottom left",
+  "shape.shadow.right": "Offset: right",
+  "shape.shadow.center": "Offset: center",
+  "shape.shadow.left": "Offset: left",
+  "shape.shadow.topRight": "Offset: top right",
+  "shape.shadow.top": "Offset: top",
+  "shape.shadow.topLeft": "Offset: top left",
+  "shape.shadow.options": "Shadow options…",
+  "shape.shadow.bad.color": "Choose a colour for the shadow.",
+  "shape.shadow.bad.transparency": "Transparency is a percentage from 0 to 100.",
+  "shape.shadow.bad.angle": "Enter the angle in degrees.",
+  "shape.shadow.bad.distance": "Distance is from 0 to 200 pt.",
+  "shape.shadow.bad.blur": "Blur is from 0 to 100 pt.",
+  // Layout ▸ More layout options (`object_layout_options.mjs`, `docs/153`
+  // object.advanced-layout-options).
+  "object.layoutOptions": "More layout options…",
+  "object.layoutOptions.inline": "Choose a text wrapping other than In line first",
+  "object.layoutOptions.badDistance": "Distance from text is from 0 to 1584 pt.",
   // Wrap. “In line” is the mode an inserted picture STARTS in, so it leads the
   // row — Google Docs puts it first for the same reason.
   "object.wrap.inline": "In line",

@@ -858,6 +858,7 @@ fn compose_emphasis_marks(
 /// content, offset into the box by the internal margin, exactly like an inline
 /// text box).
 fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor, marks: &mut MarkLayer) {
+    push_shadow_items(list, anchor);
     match &anchor.content {
         AnchorContent::Image {
             media,
@@ -1000,6 +1001,96 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor, marks: &mut Mar
                 anchor.rect.size.width,
                 marks,
             );
+        }
+    }
+}
+
+/// Paints a float's outer shadow (`a:outerShdw`) BEFORE the float itself: one
+/// [`PaintItem::Shadow`] per shape item the float paints, carrying that item's
+/// geometry, so the shadow is the silhouette Word casts — an ellipse's shadow is
+/// an ellipse, a callout's includes its tail, a text box's is its box.
+///
+/// What casts: a filled interior, and an outline. A shape with neither casts
+/// nothing. Deliberately different from Word: an UNFILLED text box in Word
+/// shadows its text glyphs; here it shadows only its outline, because the
+/// glyph silhouette is not a shape item.
+///
+/// The offset is `dist` along `dir` in page space; when the shadow turns with
+/// the shape (`rotWithShape`, default on) the offset turns by the shape's
+/// rotation too. `sx`/`sy`/`kx`/`ky` (scale/skew) are carried by the model and
+/// written back, but not painted.
+///
+/// Complexity: O(c) in the float's resolved path commands.
+fn push_shadow_items(list: &mut DisplayList, anchor: &PlacedAnchor) {
+    let Some(shadow) = anchor.shadow.as_ref() else {
+        return;
+    };
+    let mut silhouettes = DisplayList::new();
+    match &anchor.content {
+        AnchorContent::TextBox {
+            fill,
+            border,
+            backdrop,
+            ..
+        } => {
+            if let Some(content) = backdrop.as_deref() {
+                push_shape_items(&mut silhouettes, content, anchor.rect, anchor.transform);
+            } else if fill.is_some() || border.is_some() {
+                silhouettes.push(PaintItem::Shape {
+                    geometry: ShapeGeometry::Rect { rect: anchor.rect },
+                    fill: fill.as_ref().map(fill_to_display),
+                    stroke: border.as_ref().map(|border| ShapeOutline {
+                        color: rgba(border.color),
+                        width: stroke_px(border.width),
+                        dash: casual_doc_model::v1::DashStyle::Solid,
+                    }),
+                    head_end: None,
+                    tail_end: None,
+                    transform: anchor.transform,
+                });
+            }
+        }
+        other => push_shape_items(&mut silhouettes, other, anchor.rect, anchor.transform),
+    }
+    let (mut dx, mut dy) = shadow.offset_emu();
+    if shadow.rotates_with_shape()
+        && let Some(transform) = anchor.transform
+        && transform.rotation != 0
+    {
+        let turn = (f64::from(transform.rotation) / 60_000.0).to_radians();
+        let (sin, cos) = turn.sin_cos();
+        (dx, dy) = (dx * cos - dy * sin, dx * sin + dy * cos);
+    }
+    let offset = Point::new(
+        crate::units::emu_to_twip_rounded(dx),
+        crate::units::emu_to_twip_rounded(dy),
+    );
+    let blur = crate::units::emu_to_twip_extent(shadow.blur_rad_emu);
+    let color = rgba([
+        shadow.color.r,
+        shadow.color.g,
+        shadow.color.b,
+        shadow.color.a,
+    ]);
+    for item in silhouettes.items {
+        if let PaintItem::Shape {
+            geometry,
+            fill,
+            stroke,
+            transform,
+            ..
+        } = item
+            && (fill.is_some() || stroke.is_some())
+        {
+            list.push(PaintItem::Shadow {
+                geometry,
+                filled: fill.is_some(),
+                stroke_width: stroke.map(|outline| outline.width),
+                color,
+                offset,
+                blur,
+                transform,
+            });
         }
     }
 }
@@ -2792,6 +2883,7 @@ mod tests {
             },
             descr: None,
             transform: None,
+            shadow: None,
         }
     }
 
