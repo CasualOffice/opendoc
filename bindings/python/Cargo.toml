@@ -1,0 +1,30 @@
+[package]
+name = "opendoc-python"
+description = "Python bindings (PyO3) for the OpenDoc Native SDK"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.88.0"
+license = "Apache-2.0"
+repository = "https://github.com/CasualOffice/opendoc"
+publish = false
+
+# docs/176 section 12.8 (S4). Its own workspace and lockfile, deliberately
+# outside the main one: PyO3 links against a Python interpreter, and the main
+# workspace's `cargo test --workspace --all-features` must not need one. The
+# wheel is built with maturin (pyproject.toml); nothing is published.
+[workspace]
+
+[lib]
+name = "_opendoc"
+crate-type = ["cdylib"]
+
+[dependencies]
+opendoc = { path = "../../crates/opendoc" }
+pyo3 = { version = "0.30.1", features = ["extension-module", "abi3-py39"] }
+serde = "1.0.229"
+serde_json = "1.0.145"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"

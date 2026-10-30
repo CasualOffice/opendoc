@@ -831,6 +831,62 @@ common: --system-fonts  --font FILE  --author NAME
   template, diff and the exit codes. Mutation: the usage exit code changed from 2 to 1 turned
   `usage_errors_exit_2_and_document_errors_exit_1` red (`left: Some(1) right: Some(2)`).
 
+### 12.6a The core's edit cost
+
+A batch used to run on a copy of the whole model, so it could be all or nothing. That makes
+a python-docx-style loop quadratic, because each `add_paragraph` is one batch and copied
+the document. `Document::edit` now applies to the live model and, on a refusal, rolls back
+through the inverses `casual_doc_edit::apply` returned. That is the engine's own exact
+undo, so a batch costs O(the batch) and not O(document). `Document::paragraph(id)` and
+`table(id)` project one node, so a binding does not re-project the body per call.
+
+- **Guard.** `a_failed_batch_leaves_the_document_unchanged` compares the whole model's JSON
+  snapshot before and after a refused batch that had replaced text and inserted a table.
+- **Mutation.** With the rollback skipped, that test went red: the text still read `THE`.
+
+### 12.8 Python (S4)
+
+`bindings/python` is PyO3 0.30 under maturin: an abi3 wheel for Python 3.9 and later. It is
+its own Cargo workspace whose lockfile starts from the main one (same engine versions),
+because PyO3 links a Python interpreter, which the main workspace's
+`cargo test --workspace` must not need. It is built locally only; nothing goes to PyPI.
+The local wheel (`opendoc-0.1.0-cp39-abi3-macosx_11_0_arm64.whl`) is 17.1 MB on
+2026-10-30, measured by `ls`. This figure appears nowhere else.
+
+- **API: python-docx's.**
+  - `Document()` and `Document(path | bytes | file)`.
+  - `add_heading`, `add_paragraph(text, style)`, `p.add_run(text).bold = True`.
+  - `run.font.size = Pt(12)`, `run.font.color.rgb = RGBColor(…)`, `run.font.name`.
+  - `p.style`, `p.alignment` and `p.text`, each readable and settable;
+    `insert_paragraph_before`.
+  - `add_table(rows, cols)`, `table.rows[i].cells`, `table.cell(r, c).text = …`,
+    `table.add_row()`.
+  - `add_page_break`, `core_properties` (readable and settable), `sections` (page size,
+    margins, `header`/`footer` paragraphs), `comments`, and python-docx 1.2's
+    `add_comment(runs, text, author)`.
+  - `save(path | stream)`, with the format taken from the extension.
+- **Added.**
+  - `save` to PDF, ODT, HTML, Markdown, TXT and JSON, returning a `SaveReport`; `to_bytes`;
+    `import_report`.
+  - `page_count`, `page_text`, `render_page_png`, `render_page` and `to_pdf`.
+  - `render(context)` for templates, plus the `Template` class.
+  - `replace`, `accept_all_revisions`/`reject_all_revisions`, `revisions`, `compare`.
+  - `edit([...])`, the shared JSON command vocabulary.
+  - `opendoc.build(spec)`, the docx-js-shaped spec, and `opendoc.convert(src, dst)`.
+- **Typed.** The package code is annotated, and `_opendoc.pyi` stubs the native module.
+  `py.typed` ships, and `mypy python/opendoc` reports no issues.
+- **Errors.** `OpenDocError.code` is the stable code. `TemplateError.errors` lists every
+  issue, in docxtemplater's ids.
+- **Not built.** `add_picture` into an existing document raises with the reason. Character
+  styles on runs and table styles other than Table Grid cannot be set. Headers and footers
+  are read-only.
+- **Guards.** `bindings/python/tests/test_opendoc.py` has 9 tests. One is python-docx's
+  quickstart, run unchanged apart from `add_picture`, then reopened and checked run by run.
+  - **Mutation.** `core_properties.author` mapped to `subject` turned
+    `test_core_properties_read_and_write` red: `('Sub', 'Sub') == ('Lin', 'Sub')`. The first
+    version of that test set and read through one mapping, so it stayed green under the same
+    mutation. It now reads the file's own fields.
+
 ### 12.7 Benchmark and conformance suite
 
 `benchmarks/sdk/run.mjs` runs the same inputs through OpenDoc and through the permissive

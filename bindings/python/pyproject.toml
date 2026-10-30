@@ -1,0 +1,28 @@
+[build-system]
+requires = ["maturin>=1.8,<2"]
+build-backend = "maturin"
+
+[project]
+name = "opendoc"
+version = "0.1.0"
+description = "OpenDoc for Python: create, read, modify, template, convert and render DOCX/ODT with a python-docx-style API, its own page layout, real-text PDF and a loss report."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.9"
+authors = [{ name = "The CasualOffice Team" }]
+keywords = ["docx", "word", "odt", "pdf", "document", "template", "python-docx"]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Office/Business :: Office Suites",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Repository = "https://github.com/CasualOffice/opendoc"
+
+[tool.maturin]
+python-source = "python"
+module-name = "opendoc._opendoc"
+features = ["pyo3/extension-module"]

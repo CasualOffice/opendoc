@@ -482,8 +482,11 @@ impl Document {
 
     /// Applies a batch of edits, all or nothing, and returns the undo.
     ///
-    /// The batch runs on a copy of the model (**O(document)** to copy), so a
-    /// refusal anywhere leaves the document unchanged.
+    /// The batch applies to the live model; a refusal anywhere rolls back what
+    /// it already applied, through the engine's exact inverses, so the
+    /// document is unchanged. Cost: **O(the batch)** plus the engine's own
+    /// per-operation cost. It was a whole-model copy per batch, which made a
+    /// python-docx-style loop (one `add_paragraph` per batch) quadratic.
     ///
     /// # Errors
     ///
@@ -492,20 +495,51 @@ impl Document {
         &mut self,
         batch: impl FnOnce(&mut Editor<'_>) -> Result<T>,
     ) -> Result<(T, Undo)> {
-        let mut state = EditState {
-            model: self.state.model.clone(),
-            ids: self.state.ids.clone(),
-            revisions: self.state.revisions.clone(),
-        };
-        let mut editor = Editor::new(&mut state, self.author.clone());
-        let value = batch(&mut editor)?;
-        let undo = editor.finish();
-        if !undo.is_empty() {
-            self.state = state;
-            self.changed = true;
-            self.layout = OnceCell::new();
+        let saved_ids = self.state.ids.clone();
+        let saved_revisions = self.state.revisions.clone();
+        let mut editor = Editor::new(&mut self.state, self.author.clone());
+        match batch(&mut editor) {
+            Ok(value) => {
+                let undo = editor.finish();
+                if !undo.is_empty() {
+                    self.changed = true;
+                    self.layout = OnceCell::new();
+                }
+                Ok((value, undo))
+            }
+            Err(error) => {
+                editor.rollback()?;
+                self.state.ids = saved_ids;
+                self.state.revisions = saved_revisions;
+                Err(error)
+            }
         }
-        Ok((value, undo))
+    }
+
+    /// One paragraph's view, on any surface (body, cells, headers, notes,
+    /// comments, text boxes). **O(document)** to find it, without projecting
+    /// anything else.
+    #[must_use]
+    pub fn paragraph(&self, id: &str) -> Option<ParagraphView> {
+        let id = id.parse::<NodeId>().ok()?;
+        casual_doc_edit::find_paragraph_any(&self.state.model, id)
+            .map(|p| Projector::new(&self.state.model).paragraph(p))
+    }
+
+    /// One table's view. **O(document)** to find it.
+    #[must_use]
+    pub fn table(&self, id: &str) -> Option<TableView> {
+        let id = id.parse::<NodeId>().ok()?;
+        let table = casual_doc_edit::find_table(&self.state.model, id)?;
+        match Projector::new(&self.state.model)
+            .blocks(std::slice::from_ref(
+                &casual_doc_model::v1::BlockNode::Table(Box::new(table.clone())),
+            ))
+            .pop()
+        {
+            Some(Block::Table(view)) => Some(view),
+            _ => None,
+        }
     }
 
     /// Runs [`EditCommand`]s as one batch; returns each command's result.

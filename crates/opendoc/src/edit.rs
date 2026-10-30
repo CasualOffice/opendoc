@@ -230,6 +230,26 @@ impl<'a> Editor<'a> {
         }
     }
 
+    /// Undoes everything this batch applied, newest first, with the inverses
+    /// `casual_doc_edit::apply` returned (the engine's exact undo). **O(the
+    /// batch)**, not O(document): this is why a batch needs no copy of the
+    /// model to be all or nothing.
+    pub(crate) fn rollback(mut self) -> Result<()> {
+        let inverses = std::mem::take(&mut self.inverses);
+        for inverse in inverses.into_iter().rev() {
+            let mint = Mint::reserve(&mut self.state.ids, 1).ok_or_else(|| {
+                Error::new(ErrorCode::Exhausted, "the document's id space is exhausted")
+            })?;
+            casual_doc_edit::apply(&mut self.state.model, mint, &inverse).map_err(|error| {
+                Error::edit(format!(
+                    "rolling back a refused batch failed: {}",
+                    error.reason().unwrap_or("an inverse did not apply")
+                ))
+            })?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn finish(mut self) -> Undo {
         self.inverses.reverse();
         Undo {
