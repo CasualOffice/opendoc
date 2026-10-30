@@ -2,7 +2,8 @@
 // document), `openBytes` (parse first, swap only once it parsed), and the
 // header's rename. Moved out of `main.js` unchanged (docs/177); it reaches
 // the rest of the editor only through the context `ed`.
-import init, { open, openAs } from "../pkg/casual_doc_wasm.js";
+import init, { bundledFace, open, openAs } from "../pkg/casual_doc_wasm.js";
+import { bundledFaces, createOcrService } from "./ocr_service.mjs";
 import { importFormatForName } from "./format_io.mjs";
 import { populateSaveFormats } from "./save_formats.mjs";
 import { openingZoomMode } from "./view_zoom.mjs";
@@ -18,11 +19,22 @@ import { hostParams } from "./capabilities.mjs";
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
 export function createFileOpen(ed) {
   // The PDF progress dialog (`docs/182` P2). Built now, worded at open.
-  const pdfImport = createPdfImport({ fallbackFocus: () => ed.pagesEl });
+  // The first scanned page an open reads starts the OCR models loading in
+  // their worker (`docs/182` §17a.5); the wheel over the dialog scrolls the
+  // document behind it.
+  const pdfImport = createPdfImport({
+    fallbackFocus: () => ed.pagesEl,
+    onScans: () => ed.pdfCommands?.preload(),
+    scrollTarget: () => ed.viewportEl,
+  });
+  // Text recognition, every part of it in a dedicated worker: spawned the
+  // first time a scanned page is read or recognition is asked for, never for
+  // a document without scans.
+  const ocrService = createOcrService({ faces: () => bundledFaces(bundledFace) });
   // Convert to flowing document and Recognise text (`docs/182` §17a): both
   // import the session's PDF again through the same dialog, and open the
   // result through `openBytes` below. Installed on `ed` for the palette.
-  const pdfCommands = createPdfCommands(ed, { pdfImport, openBytes: (...args) => openBytes(...args) });
+  const pdfCommands = createPdfCommands(ed, { pdfImport, ocrService, openBytes: (...args) => openBytes(...args) });
   ed.pdfCommands = pdfCommands;
 
   async function boot() {

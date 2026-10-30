@@ -918,12 +918,14 @@ not, and `casual-doc-io/pdf-ocr` stays off in its build.
   exists, so the HTTP cache keeps it like any stamped asset.
 - **Recognise text in scanned pages** (`pdf_commands.mjs`, `ocr_models.mjs`). The host
   names a manifest with `?pdfOcrModels=<url>` (any case, like every host option): each
-  file's URL, size and SHA-256. The editor bundles and fetches nothing before the reader
-  agrees to a dialog that names the size and the origin. Files are verified against the
+  file's URL, size and SHA-256. A scanned PDF is recognised on its own after it opens,
+  downloading without a prompt (owner, 2026-10-30); asked for by hand, the command first
+  confirms in a dialog that names the size and the origin. Files are verified against the
   manifest, kept in IndexedDB (`opendoc-ocr-models`, the proofing store's pattern), and a
-  later use asks nothing and downloads nothing. The import runs again with the engine in
-  the PDF module; the engine is kept for the session. With no manifest the summary says
-  the scans' text is missing and why, and the command is disabled with that reason.
+  later use asks nothing and downloads nothing. All of it, and the import with the engine,
+  runs in a dedicated worker whose engine is kept for the session (§17a.5). With no
+  manifest the summary says the scans' text is missing and why, and the command is
+  disabled with that reason.
 - **Convert to flowing document**: enabled for a PDF-origin session (`pdfOrigin`),
   disabled with the reason otherwise, opened as a new document named
   `<name> (flowing).docx` that saves as DOCX by default, and summarised with its own
@@ -965,8 +967,95 @@ binary holds no `hayro` crate path, while the PDF module's does.
 - CMaps: the dialog fetches predefined CMaps from a host source when given one, but no host option feeds it yet, so a page needing one is refused naming it.
 - Recognise text replaces the fixed-layout session (through the discard prompt) rather
   than adding a text layer to the open one.
-- A real model has not run in the browser: rten's wasm32 numerics and its speed on a
-  phone are unmeasured (§20.6).
+- A real model has now run in the browser (§17a.5): the committed PP-OCRv5 models read a
+  printed scanned page in desktop Chromium; its speed on a phone is still unmeasured
+  (§20.6).
+
+### 17a.5 Recognition in a worker, and the models loaded before they are needed (HF-414)
+
+**Owner report, 2026-10-31:** *"OCR is freezing the tab. Make it async, and load the OCR
+weights beforehand."* #918 made a scanned PDF recognise on its own right after it opens,
+and the run went through the PDF module on the main thread. Two calls there cannot be
+sliced from outside: `PdfOcrEngine.load` (rten compiling the detection and recognition
+graphs) and a page's `PdfImportJob.step` (rasterise, detect, recognise every line), each
+one synchronous wasm call. The import's scheduler (`pdf_import_scheduler.mjs`) bounds work
+*between* pages, so it could not help. Measured with the committed models on one printed
+scanned page, desktop Chromium: **one main-thread task of 66,430 ms** (90,505 ms in a later run).
+
+**The pattern: a dedicated worker with a message protocol and transferable buffers.**
+
+- `webapp/src/ocr_worker.js` is the entry (dynamic, stamped imports and a queue for early
+  messages, the two rules `proof_worker.js` documents); `ocr_worker_core.mjs` is the
+  handler, with every browser API injected so node tests its protocol
+  (`tests/ocr_worker_core.test.mjs`); `ocr_service.mjs` is the main thread's client
+  (`tests/ocr_service.test.mjs`).
+- **In the worker:** the manifest fetch, the model fetch and its SHA-256 check, the
+  IndexedDB cache (`opendoc-ocr-models`), its own instance of the PDF module (the wasm is
+  fetched at the worker's stamp, as `pdf_module.mjs` does), the engine load, and the whole
+  import with recognition: begin, CMaps, every page, and the finish into the package. The
+  standard-14 faces the PDF module draws with are the main module's Liberation faces,
+  copied out once per worker and transferred.
+- **On the main thread:** the PDF's bytes go over as a transferred copy (the session keeps
+  its own original); the dialog paints the worker's progress (model bytes, "Preparing text
+  recognition", "Page n of m"); the package comes back transferred and the main module
+  opens it (`openPdfReflow` / `openPdfImport`). The layout checkbox is still read when the
+  pages are done: the worker asks, the dialog answers.
+- **One thread in the worker.** rten runs single-threaded on wasm32-unknown-unknown, and
+  wasm threads need SharedArrayBuffer, which needs the page cross-origin isolated
+  (COOP/COEP), a header an embeddable editor cannot demand of its host. The worker is the
+  parallelism that matters: the main thread is free for the whole run.
+- **Cancel terminates the worker.** A page's recognition is one wasm call nothing can
+  interrupt from outside; terminating frees the job, the engine and their memory at once.
+  The next use spawns a new worker, which loads the models from IndexedDB.
+- **Usable while it runs.** The dialog stays (no new chrome); the wheel over its backdrop
+  scrolls the document behind it, while focus stays in the dialog, so the pages can be
+  read but not edited into a state the finished import would replace.
+
+**The preload.** `PdfImportJob.scannedPages` (new, O(pages read)) counts the pages read so
+far that need optical recognition. The open's own import, still sliced on the main thread
+and with no recognition, reports the first one through `onScans`, once, and
+`pdf_commands.mjs`'s `preload` starts the models loading in the worker at that moment, in
+parallel with the rest of the PDF. The automatic run that follows joins the load already
+under way, or finds the engine ready. A later session loads them from IndexedDB, without
+the network. Nothing is preloaded for a document that is not a PDF, a PDF with no scans, or
+a deployment with no models.
+
+**Consent.** Unchanged from the owner's 2026-10-30 rule: the automatic run downloads
+without asking; "Recognise text in scanned pages" asked for by hand still confirms first,
+naming size and origin, unless the models are loaded in the worker or kept in IndexedDB
+(the worker owns the store, so the check never deserialises a model on the main thread).
+
+**Guards, each driven red (SKILL §4):**
+
+| Guard | Mutation | Red output |
+| --- | --- | --- |
+| `e2e/ocr-main-thread.spec.mjs`: no long task from the release of the real models to `opendoc:pdf-ocr:end` | the same core run in-process on the main thread | `a main-thread task over 50 ms ran while the scan was recognised`: `{"duration":90505}` (66,430 ms in an earlier run) |
+| `e2e/pdf-module.spec.mjs`: the preload starts while the PDF is still read; a DOCX and a text PDF ask nothing | drop the `onScans` call in `pdf_import.mjs` | `the preload never started` |
+| `e2e/pdf-module.spec.mjs`: the automatic run downloads without asking; by hand it asks until the models are kept | ask consent in the automatic run too | the dialog never reaches `data-mode="ocr"` (the consent prompt is up instead) |
+| `ocr_service.test.mjs`: Cancel terminates the worker | drop `reset` from the abort handler | `the page in flight is stopped by terminating its worker` |
+| `casual-doc-pdf-import` `scanned_pages_counts_scans_as_each_step_reads_them` | count only native pages | not run locally (no local cargo test, owner rule 2026-10-22); its first run is CI's, and the red is still owed |
+
+**Measured after:** zero long tasks in the run's window over three runs of 70-90 s. The
+spec holds the model files until the editor has settled after the open (a second with no
+long task, fonts ready) and counts from their release: the open's own tail (its first
+layout and paint, the web-font re-render, 60-160 ms tasks) lands in the first moments of
+the automatic run and is the open's cost, with or without scans. Two more things are
+deliberately not the run's: the task that sets the end mark goes on to open the finished
+document in the main module (50-95 ms here), the open's cost with or without recognition;
+and the repaint of the spec's own wheel scroll (one run measured 71 ms for it), the
+editor's cost of scrolling, which `main-thread-budget.spec.mjs` holds to its own budget.
+
+The same work found a false red in `pdf-import.spec.mjs`'s slice guard: it split tasks at
+the finish mark by start time, but the mark is set inside the finish's task, so whenever
+the two landed in different 0.1 ms ticks (task 9467.1, mark 9467.2) the 1.4-2.7 s finish
+was counted as a slice. A slice is now a task that ENDS before the mark; with the slices
+mutated into one task (`SLICE_BUDGET_MS = 1e9`) it still fails, at 1,582 ms.
+
+**Not built, and the next lever.** Recognition is slow: ~50-90 s for one page in desktop
+Chromium, because rten runs scalar and single-threaded on wasm32. The tab no longer
+freezes, but a ten-page scan is still minutes of waiting. `simd128` for the PDF module is
+the next lever (the same build decision `109` RM-14 records for the renderer); its size and
+browser floor need measuring first.
 
 ## 20. P5/P6 built: OCR and optional ML layout (headless)
 

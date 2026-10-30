@@ -4,10 +4,12 @@
 // plans), text recognition's consent with a host's models and without any,
 // and Convert to flowing document.
 //
-// The OCR specs never use a real model: the host's manifest is served by the
-// spec with files of the right size and SHA-256 that are not models, so the
-// consent, the download, the verification and the offline cache are what is
-// exercised, and the engine's refusal to load them is the expected ending.
+// The OCR specs here never use a real model: the host's manifest is served by
+// the spec with files of the right size and SHA-256 that are not models, so the
+// consent, the download, the verification, the offline cache and the preload
+// are what is exercised, and the engine's refusal to load them is the expected
+// ending. A real model, and the main thread while it runs, is
+// `ocr-main-thread.spec.mjs`.
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import {
@@ -20,7 +22,7 @@ import {
   test,
   useCompactChrome,
 } from "./fixtures.mjs";
-import { PDF_FIXTURE } from "./pdf-import-helpers.mjs";
+import { PDF_FIXTURE, scanPdf } from "./pdf-import-helpers.mjs";
 
 const PDF_WASM = /casual_doc_wasm_pdf_bg\.wasm/;
 const findings = (page) => page.locator("#compatibilityFindingsDialog");
@@ -53,45 +55,11 @@ async function download(page, commandId) {
   return { name: saved.suggestedFilename(), bytes: await readFile(await saved.path()) };
 }
 
-/** A one-page PDF that is only a picture: a scan with nothing native on it
- *  (`casual-doc-io`'s `blank_scan`). */
-function scanPdf() {
-  const content = Buffer.from("q 612 0 0 792 0 0 cm /Im0 Do Q", "latin1");
-  const objects = [
-    Buffer.from("<< /Type /Catalog /Pages 2 0 R >>", "latin1"),
-    Buffer.from("<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "latin1"),
-    Buffer.from(
-      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>",
-      "latin1",
-    ),
-    Buffer.concat([
-      Buffer.from(
-        "<< /Type /XObject /Subtype /Image /Width 8 /Height 8 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 64 >>\nstream\n",
-        "latin1",
-      ),
-      Buffer.alloc(64, 255),
-      Buffer.from("\nendstream", "latin1"),
-    ]),
-    Buffer.concat([Buffer.from(`<< /Length ${content.length} >>\nstream\n`, "latin1"), content, Buffer.from("\nendstream", "latin1")]),
-  ];
-  const parts = [Buffer.from("%PDF-1.7\n", "latin1")];
-  let length = parts[0].length;
-  const offsets = [];
-  objects.forEach((body, i) => {
-    offsets.push(length);
-    const chunk = Buffer.concat([Buffer.from(`${i + 1} 0 obj\n`, "latin1"), body, Buffer.from("\nendobj\n", "latin1")]);
-    parts.push(chunk);
-    length += chunk.length;
-  });
-  let tail = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  for (const offset of offsets) tail += `${String(offset).padStart(10, "0")} 00000 n \n`;
-  tail += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${length}\n%%EOF\n`;
-  parts.push(Buffer.from(tail, "latin1"));
-  return Buffer.concat(parts);
-}
-
 /** Serves a host's OCR manifest whose three files are the right size and hash
- *  but are not models; returns the count of model-file requests. */
+ *  but are not models. Returns what was asked for: `manifest` and `files`
+ *  count requests, `hold()` keeps the next model-file response back until
+ *  `release()`. Routed on the CONTEXT, not the page: the OCR worker fetches
+ *  the manifest and the models, and a worker's requests are the context's. */
 async function serveFakeModels(page) {
   const files = {
     "det.onnx": Buffer.alloc(150_000, 1),
@@ -101,21 +69,37 @@ async function serveFakeModels(page) {
   const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
   const entry = (name) => ({ url: name, sha256: sha(files[name]), bytes: files[name].length });
   const manifest = { name: "fake", detection: entry("det.onnx"), packs: [{ name: "latin", model: entry("rec.onnx"), dictionary: entry("dict.txt") }] };
-  const fetched = { count: 0 };
+  const seen = { manifest: 0, files: 0, gate: null };
+  seen.hold = () => {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    seen.gate = gate;
+    seen.release = () => {
+      seen.gate = null;
+      release();
+    };
+  };
   // Matched on the PATH, never by a glob over the whole URL: the editor's own
   // address carries `?pdfOcrModels=/ocr-test/manifest.json`, and a `**/...`
   // glob matched the page navigation itself and answered it with the
   // manifest, so the editor never booted (the quarantine of c418f74c).
-  await page.route(
+  await page.context().route(
     (url) => url.pathname === "/ocr-test/manifest.json",
-    (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify(manifest) }),
+    (route) => {
+      seen.manifest += 1;
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify(manifest) });
+    },
   );
-  await page.route((url) => /^\/ocr-test\/[^/]+\.(onnx|txt)$/.test(url.pathname), (route) => {
-    fetched.count += 1;
+  await page.context().route((url) => /^\/ocr-test\/[^/]+\.(onnx|txt)$/.test(url.pathname), async (route) => {
+    seen.files += 1;
+    if (seen.gate) await seen.gate;
     const name = new URL(route.request().url()).pathname.split("/").pop();
-    return route.fulfill({ contentType: "application/octet-stream", body: files[name] });
+    // A cancelled run terminated the worker that asked: nothing to answer.
+    await route.fulfill({ contentType: "application/octet-stream", body: files[name] }).catch(() => {});
   });
-  return fetched;
+  return seen;
 }
 
 test.describe("the lazily loaded PDF module", () => {
@@ -224,41 +208,116 @@ test.describe("the lazily loaded PDF module", () => {
     await expect(convert).toHaveAttribute("title", "This PDF is already open as a flowing document.");
   });
 
-  // QUARANTINED (2026-10-31): auto-recognition on open no longer asks; the OCR
-  // worker change (fix/ocr-off-main-thread) rewrites this to the new contract.
-  test.fixme("with a host's models, recognition asks first, naming the size, then downloads, verifies and keeps them", async ({
+  // The contract since auto-recognition (owner, 2026-10-30): a scanned PDF is
+  // recognised on its own, downloading the models WITHOUT a prompt, behind the
+  // import dialog's progress and Cancel; "Recognise text" asked for by hand
+  // still confirms first, naming the size and the origin, until the models
+  // are kept in this browser.
+  test("with a host's models, a scan is recognised on its own without asking; by hand, recognition asks until the models are kept", async ({
     page,
   }) => {
-    const fetched = await serveFakeModels(page);
+    const seen = await serveFakeModels(page);
     await gotoEditor(page, "&pdfOcrModels=/ocr-test/manifest.json");
+    // Held, so the automatic run can be seen downloading and cancelled there.
+    seen.hold();
     await openBuffer(page, "scan.pdf", scanPdf());
-    await expect(findings(page)).toBeVisible();
-    const action = findings(page).locator('[data-action="file.pdf.recogniseText"]');
-    await expect(action).toBeEnabled();
 
-    // Declined: nothing is downloaded.
-    await action.click();
+    // Automatic: no consent prompt, the download shows in the import dialog.
+    await expect(dialog(page)).toHaveAttribute("data-mode", "ocr");
+    await expect(page.locator("#pdfImportDialogPhase")).toHaveText("Downloading recognition models…");
+    await expect(page.locator("#confirmDialog")).toBeHidden();
+    await expect.poll(() => seen.files, { message: "the automatic run downloads without asking" }).toBeGreaterThan(0);
+
+    // Cancel terminates the worker: nothing is kept, the document stays.
+    await page.locator("#pdfImportDialogCancel").click();
+    await expect(dialog(page)).toBeHidden();
+    await expect(page.locator("#status")).toHaveText("Text recognition was cancelled — the document is unchanged");
+    await expect(page.locator("#docTitle")).toHaveValue("scan.pdf");
+    seen.release();
+    if (await findings(page).isVisible()) await closeFindings(page);
+    const before = seen.files;
+
+    // By hand, with nothing kept: it asks first. Declined: nothing is downloaded.
+    await runAppMenuCommand(page, "file", "file.pdf.recogniseText");
     await expect(page.locator("#confirmDialog")).toBeVisible();
     await expect(page.locator("#confirmTitle")).toHaveText("Download text recognition?");
     await expect(page.locator("#confirmDescription")).toContainText("0.4 MB");
     await expect(page.locator("#confirmDescription")).toContainText(new URL(page.url()).host);
     await page.locator("#confirmCancel").click();
     await expect(page.locator("#confirmDialog")).toBeHidden();
-    expect(fetched.count, "a model was fetched before the reader agreed").toBe(0);
+    expect(seen.files, "a model was fetched before the reader agreed").toBe(before);
 
     // Agreed: the three files are fetched and verified; they are not models,
     // so the engine refuses them, said in words, and the document stays.
     await runAppMenuCommand(page, "file", "file.pdf.recogniseText");
     await page.locator("#confirmAccept").click();
     await expect(page.locator("#status")).toContainText("Text recognition failed", { timeout: 60_000 });
-    expect(fetched.count).toBe(3);
+    expect(seen.files).toBe(before + 3);
     await expect(page.locator("#docTitle")).toHaveValue("scan.pdf");
 
-    // Kept: a second use asks nothing and downloads nothing.
+    // Kept: by hand again, it asks nothing and downloads nothing.
+    await page.evaluate(() => {
+      document.getElementById("status").textContent = "";
+    });
     await runAppMenuCommand(page, "file", "file.pdf.recogniseText");
     await expect(page.locator("#status")).toContainText("Text recognition failed", { timeout: 60_000 });
     await expect(page.locator("#confirmDialog")).toBeHidden();
-    expect(fetched.count, "the verified models were downloaded again").toBe(3);
+    expect(seen.files, "the verified models were downloaded again").toBe(before + 3);
+  });
+
+  // The preload (`docs/182` §17a.5): the first scanned page the open reads
+  // starts the models loading in the OCR worker, while the rest of the PDF is
+  // still being read, so the automatic run starts warm. A DOCX and a PDF with
+  // no scans never ask for them. Mutation: drop the `onScans` call in
+  // `pdf_import.mjs` and the first poll times out with the manifest unasked.
+  test("a scanned PDF starts loading the models while it is still being read; a DOCX and a text PDF never ask", async ({
+    page,
+  }) => {
+    // Every idle slice after the first is held once `__holdAfterFirst` is set:
+    // the import stops after its first slice, with pages still to read.
+    await page.addInitScript(() => {
+      const real = window.requestIdleCallback?.bind(window);
+      if (!real) return;
+      const held = [];
+      window.__holdAfterFirst = false;
+      let ran = 0;
+      window.requestIdleCallback = (callback, options) => {
+        if (window.__holdAfterFirst && ran++ >= 1) {
+          held.push([callback, options]);
+          return 0;
+        }
+        return real(callback, options);
+      };
+      window.__releaseHeld = () => {
+        window.__holdAfterFirst = false;
+        for (const [callback, options] of held.splice(0)) real(callback, options);
+      };
+    });
+    const seen = await serveFakeModels(page);
+    await gotoEditor(page, "&pdfOcrModels=/ocr-test/manifest.json");
+    expect(seen.manifest + seen.files, "a DOCX asked for the OCR models").toBe(0);
+
+    await page.locator("#file").setInputFiles(PDF_FIXTURE);
+    await expect.poll(() => page.locator("#docTitle").inputValue(), { timeout: 60_000 }).toBe("synthetic-prose.pdf");
+    await closeFindings(page);
+    expect(seen.manifest + seen.files, "a PDF with no scans asked for the OCR models").toBe(0);
+
+    await page.evaluate(() => {
+      window.__holdAfterFirst = true;
+    });
+    await page.locator("#file").setInputFiles({ name: "long-scan.pdf", mimeType: "application/pdf", buffer: scanPdf({ pages: 400 }) });
+    await expect(dialog(page)).toHaveAttribute("data-mode", "import");
+    // Still reading the PDF, and the models are already on their way.
+    await expect.poll(() => seen.manifest, { message: "the preload never started" }).toBeGreaterThan(0);
+    await expect.poll(() => seen.files).toBe(3);
+    await expect(dialog(page)).toHaveAttribute("data-mode", "import");
+    await expect(page.locator("#docTitle")).toHaveValue("synthetic-prose.pdf");
+
+    await page.evaluate(() => window.__releaseHeld());
+    // The automatic run that follows uses what the preload kept: no second
+    // download (these files are not models, so it ends refused, in words).
+    await expect(page.locator("#status")).toContainText("Text recognition failed", { timeout: 60_000 });
+    expect(seen.files, "the automatic run downloaded the models again").toBe(3);
   });
 
   test("Convert to flowing document opens the PDF rebuilt as a new document and says what it inferred", async ({

@@ -173,6 +173,19 @@ impl PdfImportJob {
         self.state.as_str().to_owned()
     }
 
+    /// Pages read so far that need optical recognition (scans, and pages
+    /// that mix native text with a picture of text). Read between steps: the
+    /// editor starts loading its recognition models in its OCR worker the
+    /// first time this is non-zero, while the rest of the import runs
+    /// (`docs/182` §17a.5). O(pages read).
+    #[wasm_bindgen(getter, js_name = scannedPages)]
+    #[must_use]
+    pub fn scanned_pages(&self) -> u32 {
+        self.job.as_ref().map_or(0, |job| {
+            u32::try_from(job.scanned_pages()).unwrap_or(u32::MAX)
+        })
+    }
+
     /// The predefined CMaps the file names that no source has: a host fetches
     /// these ([`provide_cmap`]) before the first step, or after a finish that
     /// failed for want of one ([`Self::needed_cmaps`]). O(fonts).
@@ -498,6 +511,7 @@ mod tests {
         assert_eq!((job.page_count(), job.pages_done()), (2, 0));
         assert_eq!(job.step(1), "pending");
         assert_eq!(job.step(1), "done");
+        assert_eq!(job.scanned_pages(), 0, "a born-digital PDF has no scans");
         let package = wire::ImportPackage::decode(&job.finish_package().expect("finish")).unwrap();
         assert_eq!(package.original_len, PROSE.len() as u64);
         assert_eq!(package.original_hash, wire::fnv1a64(PROSE));
