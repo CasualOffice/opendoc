@@ -550,6 +550,33 @@ pub struct DrawingAnchor {
     /// i.e. its z-order relative to the flow. Only meaningful for
     /// [`WrapMode::None`].
     pub behind_doc: bool,
+    /// Whether this float may overlap another float (`wp:anchor@allowOverlap`,
+    /// Word's Layout ▸ Position ▸ "Allow overlap").
+    ///
+    /// `true` is Word's default and what every new object gets, so it is the
+    /// serde default and is not serialized: a snapshot written before this field
+    /// existed reads back as `true`, which is what the writer always emitted.
+    /// The schema makes the attribute required, so there is no "absent" state to
+    /// preserve; a source that wrote `0` round-trips as `0`.
+    ///
+    /// Word uses `false` to push one float clear of another that it would
+    /// otherwise overlap. `casual-doc-layout` has no drawing-float collision
+    /// avoidance (floats are placed independently and may overlap), so layout
+    /// does not read this yet; the model carries it so the choice survives a
+    /// save and the Layout dialog can show and change it.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub allow_overlap: bool,
+}
+
+/// `serde` default for a flag whose OOXML default is on. O(1).
+const fn default_true() -> bool {
+    true
+}
+
+/// `serde` skip predicate for a flag left at its default of `true`. O(1).
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde passes the field by reference
+const fn is_true(value: &bool) -> bool {
+    *value
 }
 
 impl DrawingAnchor {
@@ -755,6 +782,141 @@ pub struct ShapeStroke {
     /// The line's end decoration (`a:ln > a:tailEnd`), if authored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tail_end: Option<LineEnd>,
+}
+
+/// Which point of the shape an outer shadow's scale and skew are anchored to
+/// (`a:outerShdw@algn`, `ST_RectAlignment`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ShadowAlignment {
+    /// Top left (`tl`).
+    TopLeft,
+    /// Top (`t`).
+    Top,
+    /// Top right (`tr`).
+    TopRight,
+    /// Left (`l`).
+    Left,
+    /// Center (`ctr`).
+    Center,
+    /// Right (`r`).
+    Right,
+    /// Bottom left (`bl`).
+    BottomLeft,
+    /// Bottom (`b`).
+    Bottom,
+    /// Bottom right (`br`).
+    BottomRight,
+}
+
+impl ShadowAlignment {
+    /// The `ST_RectAlignment` token. O(1).
+    #[must_use]
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::TopLeft => "tl",
+            Self::Top => "t",
+            Self::TopRight => "tr",
+            Self::Left => "l",
+            Self::Center => "ctr",
+            Self::Right => "r",
+            Self::BottomLeft => "bl",
+            Self::Bottom => "b",
+            Self::BottomRight => "br",
+        }
+    }
+
+    /// Parses an `ST_RectAlignment` token. O(1).
+    #[must_use]
+    pub fn from_token(token: &str) -> Option<Self> {
+        Some(match token {
+            "tl" => Self::TopLeft,
+            "t" => Self::Top,
+            "tr" => Self::TopRight,
+            "l" => Self::Left,
+            "ctr" => Self::Center,
+            "r" => Self::Right,
+            "bl" => Self::BottomLeft,
+            "b" => Self::Bottom,
+            "br" => Self::BottomRight,
+            _ => return None,
+        })
+    }
+}
+
+/// One full turn in DrawingML angle units (60000ths of a degree): the
+/// exclusive upper bound of [`ShapeShadow::dir`].
+pub const SHADOW_FULL_TURN: i32 = 21_600_000;
+
+/// An outer drop shadow (`a:spPr/a:effectLst/a:outerShdw`): Word's Shape
+/// Format ▸ Shape Effects ▸ Shadow ▸ Outer, and ONLYOFFICE's shape shadow.
+///
+/// The shadow is the shape's silhouette, painted in [`color`](Self::color)
+/// behind the shape, blurred by [`blur_rad_emu`](Self::blur_rad_emu) and moved
+/// [`dist_emu`](Self::dist_emu) along [`dir`](Self::dir). The colour is resolved
+/// at import exactly like a shape fill (scheme colours and their modifiers are
+/// folded against the theme), and its alpha channel is the shadow's opacity —
+/// Word's Transparency is `1 - a / 255`.
+///
+/// The four scale/skew attributes (`sx`, `sy`, `kx`, `ky`) are carried as
+/// authored so a perspective shadow survives a save; layout paints the shadow
+/// at the shape's own size and does not apply them (a stated limit, not a
+/// silent one — the attributes are written back).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ShapeShadow {
+    /// The resolved shadow colour; `a` is its opacity.
+    pub color: Rgba,
+    /// The blur radius (`@blurRad`, EMU, `0..=MAX_EMU`).
+    #[serde(default)]
+    pub blur_rad_emu: i64,
+    /// How far the shadow is offset from the shape (`@dist`, EMU, `0..=MAX_EMU`).
+    #[serde(default)]
+    pub dist_emu: i64,
+    /// The direction of the offset (`@dir`), in 60000ths of a degree clockwise
+    /// from the positive x-axis, `0..SHADOW_FULL_TURN`.
+    #[serde(default)]
+    pub dir: i32,
+    /// The scale/skew anchor (`@algn`). `None` is the schema default, bottom
+    /// (`b`), left unwritten so a source that omitted it is written back as it
+    /// was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alignment: Option<ShadowAlignment>,
+    /// Whether the shadow turns with the shape (`@rotWithShape`). `None` is the
+    /// schema default (`true`), left unwritten.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rot_with_shape: Option<bool>,
+    /// Horizontal scale (`@sx`, 1000ths of a percent), as authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sx: Option<i32>,
+    /// Vertical scale (`@sy`, 1000ths of a percent), as authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sy: Option<i32>,
+    /// Horizontal skew (`@kx`, 60000ths of a degree), as authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kx: Option<i32>,
+    /// Vertical skew (`@ky`, 60000ths of a degree), as authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ky: Option<i32>,
+}
+
+impl ShapeShadow {
+    /// Whether the shadow turns with its shape, with the schema default
+    /// (`true`) applied. O(1).
+    #[must_use]
+    pub fn rotates_with_shape(&self) -> bool {
+        self.rot_with_shape.unwrap_or(true)
+    }
+
+    /// The offset `(dx, dy)` in EMU the shadow is moved by, `y` growing
+    /// downwards (page space). O(1).
+    #[must_use]
+    pub fn offset_emu(&self) -> (f64, f64) {
+        #[allow(clippy::cast_precision_loss)] // bounded to MAX_EMU, far below 2^53
+        let dist = self.dist_emu as f64;
+        let radians = (f64::from(self.dir) / 60_000.0).to_radians();
+        (dist * radians.cos(), dist * radians.sin())
+    }
 }
 
 /// A preset line dash pattern (`a:prstDash@val`, `ST_PresetLineDashVal`). An
@@ -1405,6 +1567,9 @@ pub struct GroupTextBox {
     /// The box outline (`a:ln`), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border: Option<ShapeStroke>,
+    /// The box's outer drop shadow (`a:effectLst/a:outerShdw`), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<ShapeShadow>,
     /// Internal margins, vertical anchoring, overflow, and autofit (`wps:bodyPr`).
     #[serde(default, skip_serializing_if = "TextBoxBodyProperties::is_default")]
     pub body_properties: TextBoxBodyProperties,
@@ -1466,6 +1631,9 @@ pub struct GroupShape {
     /// The outline (`a:ln`), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stroke: Option<ShapeStroke>,
+    /// The outer drop shadow (`a:effectLst/a:outerShdw`), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<ShapeShadow>,
     /// Horizontal flip (`a:xfrm@flipH`): mirror the shape across its vertical
     /// axis.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
@@ -2268,6 +2436,9 @@ pub struct TextBox {
     /// The box outline (`a:ln`), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border: Option<ShapeStroke>,
+    /// The box's outer drop shadow (`a:effectLst/a:outerShdw`), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<ShapeShadow>,
     /// Internal margins, vertical anchoring, overflow, and autofit (`wps:bodyPr`).
     #[serde(default, skip_serializing_if = "TextBoxBodyProperties::is_default")]
     pub body_properties: TextBoxBodyProperties,

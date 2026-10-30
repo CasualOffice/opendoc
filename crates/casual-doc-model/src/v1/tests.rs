@@ -2401,6 +2401,7 @@ fn text_box_with_block_content_validates_and_round_trips_json() {
             vertical_text: crate::v1::TextBoxVerticalText::Vertical270,
         },
         blocks: vec![paragraph_block(tid(11))],
+        shadow: None,
     };
     let document = table_document(vec![textbox_paragraph(tid(1), text_box)]).unwrap();
     let json = document.to_json().unwrap();
@@ -2434,6 +2435,7 @@ fn invalid_text_box_normal_autofit_percentage_is_rejected() {
             ..TextBoxBodyProperties::default()
         },
         blocks: vec![paragraph_block(tid(11))],
+        shadow: None,
     };
     assert!(matches!(
         table_document(vec![textbox_paragraph(tid(1), text_box)]),
@@ -2451,6 +2453,7 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
         PointEmu, Rgba, ShapeAdjustment, ShapeGeometry, ShapeStroke, VerticalAnchor,
         VerticalPosition, WordprocessingGroup, WrapMode, WrapSide,
     };
+    use crate::v1::{ShadowAlignment, ShapeShadow};
     let ident = GroupTransform {
         offset: PointEmu { x_emu: 0, y_emu: 0 },
         extent: Extent {
@@ -2492,6 +2495,9 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
                 PointEmu { x_emu: 0, y_emu: 0 },
             ]),
             behind_doc: false,
+            // Word's "Allow overlap" turned off, so the round trip exercises the
+            // one value that is serialized.
+            allow_overlap: false,
         }),
         relative_height: Some(251_659_264),
         extent: Extent {
@@ -2536,6 +2542,24 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
                 flip_h: false,
                 flip_v: false,
                 rotation: None,
+                // Every shadow attribute set, so the round trip proves each.
+                shadow: Some(ShapeShadow {
+                    color: Rgba {
+                        r: 0,
+                        g: 0,
+                        b: 0,
+                        a: 102,
+                    },
+                    blur_rad_emu: 50_800,
+                    dist_emu: 38_100,
+                    dir: 2_700_000,
+                    alignment: Some(ShadowAlignment::TopLeft),
+                    rot_with_shape: Some(false),
+                    sx: Some(90_000),
+                    sy: Some(-23_000),
+                    kx: Some(1_200_000),
+                    ky: Some(0),
+                }),
             }),
             GroupChild::TextBox(GroupTextBox {
                 hyperlink: None,
@@ -2589,6 +2613,7 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
                 flip_h: false,
                 flip_v: false,
                 rotation: None,
+                shadow: None,
             }),
         ],
     };
@@ -2599,8 +2624,51 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
     });
     let document = table_document(vec![paragraph]).unwrap();
     let json = document.to_json().unwrap();
+    let text = String::from_utf8(json.clone()).unwrap();
+    assert!(text.contains(r#""allowOverlap":false"#), "{text}");
     let reloaded = Document::from_json(&json, SnapshotLimits::default()).unwrap();
     assert_eq!(document, reloaded, "the group survives a JSON round trip");
+
+    // Word's defaults are not serialized, so a snapshot written before the two
+    // fields existed is byte-identical: overlap allowed, no shadow.
+    let mut defaults = document.clone();
+    let BlockNode::Paragraph(paragraph) = &mut defaults.body_mut()[0] else {
+        panic!("expected a paragraph");
+    };
+    let InlineNode::Group(group) = &mut paragraph.inlines[0] else {
+        panic!("expected a group");
+    };
+    group.anchor.as_mut().unwrap().allow_overlap = true;
+    let GroupChild::Shape(shape) = &mut group.children[0] else {
+        panic!("expected a shape");
+    };
+    shape.shadow = None;
+    let text = String::from_utf8(defaults.to_json().unwrap()).unwrap();
+    assert!(
+        !text.contains("allowOverlap") && !text.contains("shadow"),
+        "{text}"
+    );
+
+    // A shadow outside the schema's ranges is refused, like any drawing length.
+    let mut bad = document;
+    let BlockNode::Paragraph(paragraph) = &mut bad.body_mut()[0] else {
+        panic!("expected a paragraph");
+    };
+    let InlineNode::Group(group) = &mut paragraph.inlines[0] else {
+        panic!("expected a group");
+    };
+    let GroupChild::Shape(shape) = &mut group.children[0] else {
+        panic!("expected a shape");
+    };
+    if let Some(shadow) = shape.shadow.as_mut() {
+        shadow.dir = 21_600_000;
+    }
+    assert!(matches!(
+        bad.validate(),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "group.shape.shadow"
+        })
+    ));
 }
 
 fn first_group_shape_mut(document: &mut Document) -> &mut GroupShape {
@@ -2669,6 +2737,7 @@ fn retained_shape_preset_and_adjustment_bounds_are_validated() {
                 flip_h: false,
                 flip_v: false,
                 rotation: None,
+                shadow: None,
             })],
         })));
     document.validate().unwrap();
@@ -3027,6 +3096,7 @@ fn shape_path_document(path: ShapePath) -> Document {
                 flip_h: false,
                 flip_v: false,
                 rotation: None,
+                shadow: None,
             })],
         })));
     document
@@ -3044,6 +3114,7 @@ fn empty_text_box_is_rejected() {
         border: None,
         body_properties: TextBoxBodyProperties::default(),
         blocks: Vec::new(),
+        shadow: None,
     };
     assert!(matches!(
         table_document(vec![textbox_paragraph(tid(1), text_box)]),
@@ -3062,7 +3133,8 @@ fn duplicate_id_inside_a_text_box_is_rejected() {
         fill: None,
         border: None,
         body_properties: TextBoxBodyProperties::default(),
-        blocks: vec![paragraph_block(tid(10))], // inner paragraph id collides
+        blocks: vec![paragraph_block(tid(10))], // inner paragraph id collides,
+        shadow: None,
     };
     assert!(matches!(
         table_document(vec![textbox_paragraph(tid(1), text_box)]),
@@ -3093,6 +3165,7 @@ fn wrap_in_textboxes(depth: u32, counter: &mut u64) -> BlockNode {
             border: None,
             body_properties: TextBoxBodyProperties::default(),
             blocks: vec![inner],
+            shadow: None,
         }))],
     })
 }
@@ -5968,6 +6041,7 @@ fn r2_an_unbalanced_field_range_inside_a_text_box_is_rejected() {
         border: None,
         body_properties: TextBoxBodyProperties::default(),
         blocks: vec![bookmark_paragraph(tid(21), vec![range_start(22, field)])],
+        shadow: None,
     };
     let document = Document::new(
         tid(99),

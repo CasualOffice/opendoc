@@ -11007,6 +11007,7 @@ fn build_group_children(
                     flip_h: shape.flip_h,
                     flip_v: shape.flip_v,
                     rotation: None,
+                    shadow: None,
                 }));
             }
             GroupChildDraft::Picture(picture) => {
@@ -11241,6 +11242,7 @@ fn build_inlines(
                         },
                         wrap_polygon: None,
                         behind_doc: draft.behind_doc,
+                        allow_overlap: true,
                     },
                     descr: draft.descr.clone(),
                     relative_height: draft.relative_height,
@@ -11292,6 +11294,7 @@ fn build_inlines(
                         wrap_distances: WrapDistances::default(),
                         wrap_polygon: None,
                         behind_doc: draft.behind_doc,
+                        allow_overlap: true,
                     }),
                     relative_height: draft.relative_height,
                     extent,
@@ -11327,6 +11330,7 @@ fn build_inlines(
                         flip_h: draft.flip_h,
                         flip_v: draft.flip_v,
                         rotation: None,
+                        shadow: None,
                     })],
                 }))
             }
@@ -11377,6 +11381,7 @@ fn build_inlines(
                         wrap_distances: WrapDistances::default(),
                         wrap_polygon: None,
                         behind_doc: draft.behind_doc,
+                        allow_overlap: true,
                     }),
                     relative_height: draft.relative_height,
                     extent,
@@ -11439,6 +11444,7 @@ fn build_inlines(
                         properties: ParagraphProperties::default().into(),
                         inlines,
                     })],
+                    shadow: None,
                 }))
             }
             InlineDraft::FormField(control) => {

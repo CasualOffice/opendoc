@@ -10358,11 +10358,15 @@ fn a_shape_that_loses_nothing_reports_none_of_this_class() {
 #[test]
 fn the_same_markup_carrying_something_is_still_reported() {
     for (from, to, feature) in [
-        // A populated effect list is a shadow or a glow this model does not paint.
+        // A populated effect list holding an effect this model does not carry
+        // reports that effect by name. (An outer shadow alone used to be this
+        // row; since `docs/153` object.shape-shadow it is modelled and written
+        // back, and `shape_shadow_and_overlap_round_trip` in
+        // `casual-doc-export` holds that instead.)
         (
             "<a:effectLst/>",
-            r#"<a:effectLst><a:outerShdw blurRad="50800"/></a:effectLst>"#,
-            "effectLst",
+            r#"<a:effectLst><a:glow rad="63500"><a:srgbClr val="FF0000"/></a:glow></a:effectLst>"#,
+            "glow",
         ),
         // (A lock that locks something used to be a row here. Since `109`
         // FID-AT-09 it is modelled and written back, so it is carried rather

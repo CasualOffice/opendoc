@@ -58,6 +58,9 @@
 //   `moveInText()`         Word's F2, "Move to where?" — move an in-line object
 //                          to another place in the text by keyboard
 //   `changeShape(token)`   Change Shape to the `a:prstGeom` preset `token`
+//   `shadowCommands(enabled, reason)` Shape Effects ▸ Shadow (`shape_shadow.mjs`)
+//   `layoutOptionsCommand(enabled, reason)` More layout options…
+//                          (`object_layout_options.mjs`)
 import { SHAPE_GROUPS } from "./shape_catalogue.mjs";
 
 export function buildObjectContextCommands(context, io) {
@@ -134,6 +137,12 @@ export function buildObjectContextCommands(context, io) {
         run: () => io.applyPosition(preset),
       })),
     });
+
+    // More layout options… — Word's Layout dialog behind Layout Options ▸ "See
+    // more": distance from text, Move object with text, Allow overlap.
+    if (typeof io.layoutOptionsCommand === "function") {
+      commands.push(io.layoutOptionsCommand(mutationEnabled, mutationReason));
+    }
 
     // Arrange — the four stacking commands, then Group and Ungroup. Every
     // disabled row carries the ENGINE's own reason, which is the whole point of
@@ -346,6 +355,12 @@ export function buildObjectContextCommands(context, io) {
         ],
       });
     }
+  }
+
+  // Shape Effects ▸ Shadow — a shape's or a text box's outer shadow; a picture's
+  // is not modelled, so it is not offered there.
+  if ((context.kind === "shape" || context.kind === "textbox") && typeof io.shadowCommands === "function") {
+    commands.push(io.shadowCommands(mutationEnabled, mutationReason));
   }
 
   // Crop — picture-only; a text box has no source rectangle to crop.

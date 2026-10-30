@@ -16,6 +16,9 @@
 
 #![forbid(unsafe_code)]
 
+// The drop-shadow raster (`object.shape-shadow`).
+mod shadow;
+
 use std::collections::HashMap;
 use std::io::Cursor;
 
@@ -269,6 +272,28 @@ pub fn render(
                     object_transform(transform.as_ref(), dpi),
                 );
             }
+            PaintItem::Shadow {
+                geometry,
+                filled,
+                stroke_width,
+                color,
+                offset,
+                blur,
+                transform,
+            } => shadow::render_shadow(
+                surface,
+                &shadow::ShadowPaint {
+                    geometry,
+                    filled: *filled,
+                    stroke_width: *stroke_width,
+                    color: *color,
+                    offset: *offset,
+                    blur: *blur,
+                    transform: transform.as_ref(),
+                },
+                dpi,
+                clip_stack.last(),
+            ),
             PaintItem::Glyphs { run } => {
                 render_glyph_run(run, surface, dpi, fonts, clip_stack.last());
             }

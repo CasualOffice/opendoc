@@ -452,6 +452,32 @@ test("Align sits in the arrange block, and the picture tools follow Crop on a pi
   assert.ok(!ids(shape, io).includes("object.resetSize"));
 });
 
+test("Shadow is a shape's and a text box's, never a picture's, and gets the review-mode gate", () => {
+  const seen = [];
+  const io = {
+    ...host(),
+    shadowCommands: (enabled, reason) => {
+      seen.push([enabled, reason]);
+      return { id: "object.shadow", label: "Shadow", submenu: [] };
+    },
+  };
+  assert.ok(ids(shape, io).includes("object.shadow"));
+  assert.ok(ids(textBox, io).includes("object.shadow"));
+  assert.ok(!ids(picture, io).includes("object.shadow"), "a picture's shadow is not modelled");
+  ids(shape, { ...io, reviewMode: () => "viewing" });
+  assert.deepEqual(seen.at(-1), [false, "Turn on Editing to change this object"]);
+});
+
+test("More layout options follows Position in the arrange block", () => {
+  const io = {
+    ...host(),
+    layoutOptionsCommand: (enabled) => ({ id: "object.layoutOptions", label: "More layout options…", enabled }),
+  };
+  const list = ids(picture, io);
+  assert.equal(list[list.indexOf("object.position") + 1], "object.layoutOptions");
+  assert.ok(!ids(picture).includes("object.layoutOptions"), "absent when the host offers none");
+});
+
 test("Shape fill carries Gradient and Shape outline carries Dashes and Arrows when the host offers them", () => {
   const io = {
     ...host(),

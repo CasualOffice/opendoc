@@ -272,7 +272,9 @@ impl Encoder<'_> {
                     self.glyph_run(run);
                 }
             }
-            PaintItem::Image { .. } => self.fallback(item),
+            // The blur is the reference renderer's (`casual_doc_render`'s
+            // shadow raster), through the same per-item tile an image takes.
+            PaintItem::Image { .. } | PaintItem::Shadow { .. } => self.fallback(item),
         }
     }
 

@@ -10192,6 +10192,7 @@ mod tests {
             wrap_distances: WrapDistances::default(),
             wrap_polygon: None,
             behind_doc: false,
+            allow_overlap: true,
         };
         let extent = Extent {
             width_emu: 2000 * 635,
@@ -10288,6 +10289,7 @@ mod tests {
                 wrap_distances: WrapDistances::default(),
                 wrap_polygon: None,
                 behind_doc: false,
+                allow_overlap: true,
             },
             descr: None,
             relative_height: None,
@@ -10409,6 +10411,7 @@ mod tests {
                 wrap_distances: WrapDistances::default(),
                 wrap_polygon: None,
                 behind_doc: false,
+                allow_overlap: true,
             },
             descr: None,
             relative_height: None,
@@ -12275,6 +12278,7 @@ mod tests {
             wrap_distances: WrapDistances::default(),
             behind_doc: false,
             wrap_polygon: None,
+            allow_overlap: true,
         });
         let items = collected_items(&definitions, &inlines);
         assert!(
@@ -14028,6 +14032,7 @@ mod tests {
                 708,
                 vec![run_node(709, "boxed", RunProperties::default())],
             )],
+            shadow: None,
         }));
         let widthless_box = InlineNode::TextBox(Box::new(TextBox {
             hyperlink: None,
@@ -14054,6 +14059,7 @@ mod tests {
                     RunProperties::default(),
                 )],
             )],
+            shadow: None,
         }));
 
         assert!(measure(&definitions, vec![picture]).0 >= 3_000);
@@ -16499,6 +16505,7 @@ mod tests {
                 21,
                 vec![run_node(22, "boxed", RunProperties::default())],
             )],
+            shadow: None,
         }));
         let shaper = ParleyShaper::new();
         let galley = build_galley(
@@ -16600,6 +16607,7 @@ mod tests {
             border: None,
             body_properties: TextBoxBodyProperties::default(),
             blocks: vec![table],
+            shadow: None,
         }));
         let shaper = ParleyShaper::new();
         let galley = build_galley(
@@ -16694,6 +16702,7 @@ mod tests {
                 border: None,
                 body_properties: TextBoxBodyProperties::default(),
                 blocks: vec![inner_para],
+                shadow: None,
             }))],
         });
         let doc =
@@ -16766,6 +16775,7 @@ mod tests {
                 ..TextBoxBodyProperties::default()
             },
             blocks: inner.clone(),
+            shadow: None,
         }));
         let shaper = ParleyShaper::new();
         let galley = build_galley(
@@ -16893,6 +16903,7 @@ mod tests {
                 31,
                 vec![run_node(32, "cell box", RunProperties::default())],
             )],
+            shadow: None,
         }));
         let table = BlockNode::Table(Box::new(Table {
             id: NodeId::from_parts(40, 1).unwrap(),
@@ -17535,6 +17546,7 @@ mod tests {
             },
             wrap_polygon: None,
             behind_doc: false,
+            allow_overlap: true,
         };
         let items = float_flow_items(
             &anchor,
