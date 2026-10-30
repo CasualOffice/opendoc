@@ -65,7 +65,7 @@ export function checkCatalogue(raw, catalogueUrl, { source }) {
   const entries = [];
   for (const item of raw.plugins) {
     if (!isObject(item) || typeof item.manifest !== "string") return { ok: false, reason: "no-manifest-url" };
-    for (const key of Object.keys(item)) if (!["manifest", "grant", "enabled", "when"].includes(key)) return { ok: false, reason: "unknown-field", field: key };
+    for (const key of Object.keys(item)) if (!["manifest", "grant", "enabled", "when", "network", "config"].includes(key)) return { ok: false, reason: "unknown-field", field: key };
     // `when: "ai"`: the plugin exists only while an AI provider is configured, so with
     // none the editor shows nothing of it (owner rule, 2026-10-31).
     if (item.when !== undefined && item.when !== "ai") return { ok: false, reason: "unknown-when" };
@@ -79,7 +79,14 @@ export function checkCatalogue(raw, catalogueUrl, { source }) {
     // A host and the installation (first party) are both administrators: what they
     // grant needs no prompt. A person's own installs always do.
     const trusted = source === "host" || source === "first-party";
-    entries.push(Object.freeze({ manifestUrl, source, hostGrant: trusted && grant ? Object.freeze(grant) : null, enabled: source === "first-party" ? item.enabled === true : item.enabled !== false, when: item.when ?? null }));
+    // An administrator may also point a plugin at ITS OWN server (`network`, which
+    // replaces the manifest's origins, and `config`, which the plugin reads at
+    // `initialize`): a self-hosted LanguageTool, say (`docs/183` §9). Never from a
+    // person's own install.
+    const network = trusted && Array.isArray(item.network) ? item.network.filter((origin) => typeof origin === "string") : null;
+    const config = trusted && item.config && typeof item.config === "object" && !Array.isArray(item.config) ? item.config : null;
+    if (config && JSON.stringify(config).length > 4096) return { ok: false, reason: "config-too-large" };
+    entries.push(Object.freeze({ manifestUrl, source, hostGrant: trusted && grant ? Object.freeze(grant) : null, enabled: source === "first-party" ? item.enabled === true : item.enabled !== false, when: item.when ?? null, network: network ? Object.freeze(network) : null, config: config ? Object.freeze({ ...config }) : null }));
   }
   return { ok: true, entries, allowInstall: raw.allowInstall === true, allowFirstParty: raw.allowFirstParty === true };
 }

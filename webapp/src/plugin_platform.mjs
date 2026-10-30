@@ -22,8 +22,9 @@
 //
 // Every plugin command is `plugin.<pluginId>.<commandId>` in the one registry,
 // so it reaches the palette and the host contract (the `plugin.` family) like
-// any other command. An installed plugin that is turned off keeps its rows,
-// disabled with the reason (SKILL §10); an AI-gated one has none.
+// any other command. A plugin that is turned off has no rows at all (Manage
+// add-ins turns it on); one that is on but not running yet keeps its rows,
+// disabled with the reason (SKILL §10).
 //
 // Complexity: O(plugins) per registry build; nothing here reads the document.
 import { t, has, activeLocale, direction } from "./i18n.mjs";
@@ -355,6 +356,10 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
         direction: () => direction(activeLocale()),
         theme,
         tokens,
+        config: () => record.entry.config ?? {},
+        // Who its proposals are signed by: the product's own assistant signs as
+        // "Casual AI"; every other add-in as "<name> (add-in)".
+        addInName: () => (record.entry.source === "first-party" && record.entry.when === "ai" ? "" : nameOf(record.manifest)),
         storage: storageFor(record.manifest.id),
         fetchEntry: (url) => fetchText(url, MANIFEST_BOUNDS.entryBytes),
         onClosed: (reason) => {
@@ -498,8 +503,10 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
 
   async function admit(entry) {
     let manifest;
+    let raw;
     try {
-      const checked = checkManifest(await fetchJson(entry.manifestUrl), { manifestUrl: entry.manifestUrl, selfOrigin: view.location.origin });
+      raw = await fetchJson(entry.manifestUrl);
+      const checked = checkManifest(raw, { manifestUrl: entry.manifestUrl, selfOrigin: view.location.origin });
       if (!checked.ok) return { ok: false, reason: checked.reason };
       manifest = checked.manifest;
     } catch {
@@ -514,6 +521,13 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
     if (entry.source === "host") enabled = entry.enabled;
     else if (entry.source === "first-party" && entry.hostGrant) enabled = stored ? stored.enabled : entry.enabled;
     else enabled = stored?.enabled === true && covered;
+    // An administrator's own origins replace the manifest's (checked as the
+    // manifest's are: exact https origins, and only with the network permission).
+    if (entry.network) {
+      const checked = checkManifest({ ...raw, network: entry.network }, { manifestUrl: entry.manifestUrl, selfOrigin: view.location.origin });
+      if (!checked.ok) return { ok: false, reason: checked.reason };
+      manifest = checked.manifest;
+    }
     const record = { manifest, entry, running: null, enabled };
     plugins.set(manifest.id, record);
     run(record);
@@ -753,7 +767,10 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
       if ((record.enabled && present(record) && !record.running) || (record.running && !present(record))) changed = true;
     }
     if (changed) refresh();
-    const visible = [...plugins.values()].filter(present);
+    // Only an add-in that is turned on contributes rows (disabled with the reason
+    // while it loads or after it stopped); one that is off adds nothing to the
+    // palette — Manage add-ins is where it is turned on (owner rule, 2026-10-31).
+    const visible = [...plugins.values()].filter((record) => present(record) && record.enabled);
     return pluginCommands({
       plugins: visible.map((record) => ({
         manifest: record.manifest,

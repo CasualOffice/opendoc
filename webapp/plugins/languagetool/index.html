@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LanguageTool</title>
+<link rel="stylesheet" href="../sdk/plugin.css">
+<link rel="stylesheet" href="../sdk/panel.css">
+</head>
+<body>
+<!-- LanguageTool's panel (`docs/183` §18). Words come from the editor's
+     catalogue once connected; the page stays hidden until then. -->
+<main class="pp">
+  <p id="disclosure" class="note"></p>
+  <div class="pp-row">
+    <label for="language" id="languageLabel" class="sr-only"></label>
+    <select id="language" class="field"></select>
+    <button id="check" type="button" class="btn btn-primary"></button>
+  </div>
+  <p id="status" class="note" role="status" aria-live="polite"></p>
+  <ul id="issues" class="pp-list"></ul>
+  <div class="pp-row pp-foot">
+    <button id="fixAll" type="button" class="btn" hidden></button>
+  </div>
+</main>
+<script src="../sdk/opendoc-plugin.js"></script>
+<script src="languagetool_core.js"></script>
+<script src="languagetool.js"></script>
+</body>
+</html>
