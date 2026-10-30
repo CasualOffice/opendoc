@@ -68,6 +68,18 @@ const POINTER_UNSAFE = new Map([
  *  in, so an activation can be examined as one event rather than as a state
  *  difference (a surface that opens and closes leaves no difference at all). */
 const startRecording = () => {
+  // Each element is keyed by IDENTITY, not by its name. A name is only a label
+  // for the failure message: two id-less elements share one (`SPAN`, `.dialog-field`),
+  // and a dialog that switches modes on open — Table of figures hides the
+  // contents-mode `<span>` and shows the figures-mode `<span>` beside it — then
+  // read as one surface opened and closed again, a dead control that was never
+  // dead.
+  const keys = new WeakMap();
+  let nextKey = 0;
+  const keyOf = (el) => {
+    if (!keys.has(el)) keys.set(el, (nextKey += 1));
+    return keys.get(el);
+  };
   window.__activation = { records: [], batch: 0 };
   const observer = new MutationObserver((records) => {
     const batch = window.__activation.batch++;
@@ -91,6 +103,7 @@ const startRecording = () => {
         record.attributeName === "data-tip-title";
       window.__activation.records.push({
         batch,
+        key: keyOf(el),
         attribute: record.attributeName ?? null,
         name,
         wasHidden: record.attributeName === "hidden" ? record.oldValue !== null : null,
@@ -119,8 +132,8 @@ function selfClosedSurfaces(records) {
   const dead = [];
   for (const record of records) {
     if (record.attribute !== "hidden" || record.ignored) continue;
-    if (record.wasHidden && !record.isHidden) openedIn.set(record.name, record.batch);
-    else if (!record.wasHidden && record.isHidden && openedIn.has(record.name)) {
+    if (record.wasHidden && !record.isHidden) openedIn.set(record.key, record.batch);
+    else if (!record.wasHidden && record.isHidden && openedIn.has(record.key)) {
       dead.push(`${record.name} (opened and closed again in the same activation)`);
     }
   }
@@ -199,11 +212,6 @@ async function enabledMenuIds(page, prepare) {
   return ids;
 }
 
-// QUARANTINED, named and temporary (2026-10-30): Table of figures opens its dialog
-// and closes it again in the same activation from the menu and the ribbon (#917's
-// TOC lane). Being fixed in #918; remove this entry with that fix.
-const QUARANTINED = new Set(["reference.tableOfFigures", "refTableOfFiguresBtn"]);
-
 test.describe("every menu-bar command acts or explains itself", () => {
   for (const menu of MENUS) {
     test(`the ${menu} menu has no dead or inert row`, async ({ page }) => {
@@ -231,7 +239,7 @@ test.describe("every menu-bar command acts or explains itself", () => {
           expect(row.reason, `${row.id} is greyed out and must give a reason`).not.toBe("");
           continue;
         }
-        if (POINTER_UNSAFE.has(row.id) || QUARANTINED.has(row.id)) continue;
+        if (POINTER_UNSAFE.has(row.id)) continue;
 
         // A fresh document per row: this asks what ONE activation does, and the
         // row before it may have rewritten the document it acts on.
@@ -347,7 +355,7 @@ test.describe("every ribbon control acts or explains itself", () => {
       }
 
       for (const button of buttons) {
-        if (button.disabled || POINTER_UNSAFE.has(button.id) || QUARANTINED.has(button.id)) continue;
+        if (button.disabled || POINTER_UNSAFE.has(button.id)) continue;
 
         await page.reload();
         await loadEditorForTab(page, tab);
