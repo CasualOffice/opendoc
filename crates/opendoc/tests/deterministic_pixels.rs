@@ -68,9 +68,11 @@ fn pages_render_the_same_pixels_on_every_platform() {
         std::fs::write(path, &actual).expect("writes the golden");
         return;
     }
+    // A CRLF checkout (Windows, `core.autocrlf`) must not read as a pixel change;
+    // `.gitattributes` keeps it LF, and this keeps the comparison honest anyway.
     assert_eq!(
         actual,
-        GOLDEN,
+        GOLDEN.replace("\r\n", "\n"),
         "page pixels differ from the golden on {} {}",
         std::env::consts::OS,
         std::env::consts::ARCH

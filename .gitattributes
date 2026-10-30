@@ -16,3 +16,6 @@ webapp/generated/** text eol=lf
 *.pdf binary
 # Compared against a fresh measurement run (docs/182 P0).
 fixtures/pdf/measurement.json text eol=lf
+
+# The SDK's pixel golden is compared as text; keep it LF on every platform.
+crates/opendoc/tests/*.golden text eol=lf

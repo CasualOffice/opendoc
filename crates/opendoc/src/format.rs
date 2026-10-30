@@ -105,8 +105,10 @@ impl Format {
     pub const fn can_open(self) -> bool {
         match self {
             Self::Docx | Self::Odt | Self::Rtf | Self::Txt | Self::Json => true,
+            // HTML and Markdown import are registered (RM-47).
+            Self::Html | Self::Markdown => true,
             Self::Pdf => cfg!(feature = "pdf-import"),
-            Self::Dotx | Self::Html | Self::Markdown => false,
+            Self::Dotx => false,
         }
     }
 
