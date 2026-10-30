@@ -985,8 +985,25 @@ committed.
   Both bindings now look tables up as tables and keep the table's shape, which `createRow`
   and `add_row` update. The core's step cost is guarded by
   `a_builder_step_costs_the_same_on_a_document_twice_as_long` (n against 2n, SKILL §8).
-  What is left is linear in the document: `casual_doc_edit::find_table`, and the engine's
-  cold route for a newly inserted paragraph. That cost is engine-side and on `docs/109` RM-46.
+  The two costs that were left, both engine-side, are now O(1) in document size
+  (2026-10-31), by the route-cache pattern `casual_doc_model::v1::locate` already used for
+  paragraphs (memoization validated on use, `docs/109` HF-184):
+  - **A table by id.** `Document::table`/`table_mut` keep a direct-mapped cache of table
+    routes, validated on every use. `casual_doc_edit::find_table` and the six row, column and
+    table-property operations that walked twice (`blocks_owning_mut`, then `find_table_mut`)
+    use it.
+  - **The first edit to a block just inserted.** `InsertBlocks` into the body records the
+    route of each block it placed (`Document::hint_body_block`), and the SDK's
+    `set_cell_text` reaches the cell's paragraph through its table's route
+    (`Document::hint_cell_paragraph`). A stale hint is a miss, never a wrong answer.
+
+  Guard: `a_new_paragraphs_first_edit_and_a_table_lookup_cost_the_same_at_n_and_2n` puts a
+  table after n and 2n paragraphs and compares the engine's block-visit meter for a new
+  paragraph's first run, and for two `set_cell_text` calls and an `add_row`. Its control, a
+  lookup of an id that is not a table, must double, so equal numbers cannot come from a meter
+  that counts nothing. Mutations, each red: the insert's hint removed (512 visits at n, 1,012
+  at 2n); the table hint disabled (4,039 against 8,039); the cell-paragraph hint removed
+  (1,021 against 2,021).
 - docx-preview needs a DOM, so it is not measured here. docx4j is not measured. LibreOffice
   is in the suite (`--soffice`), but the copy on the measuring machine is a broken install,
   so its column is empty. The round-trip table shows python-docx keeping every package part,

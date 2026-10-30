@@ -1988,8 +1988,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             })
         }
         Operation::InsertRow { table, index, row } => {
-            let t = find_table_mut(blocks_owning_mut(doc, *table)?, *table)
-                .ok_or(EditError::NodeNotFound)?;
+            let t = doc.table_mut(*table).ok_or(EditError::NodeNotFound)?;
             let idx = *index as usize;
             if idx > t.rows.len() {
                 return Err(EditError::OffsetOutOfRange);
@@ -2001,8 +2000,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             })
         }
         Operation::DeleteRow { table, index } => {
-            let t = find_table_mut(blocks_owning_mut(doc, *table)?, *table)
-                .ok_or(EditError::NodeNotFound)?;
+            let t = doc.table_mut(*table).ok_or(EditError::NodeNotFound)?;
             let idx = *index as usize;
             if idx >= t.rows.len() {
                 return Err(EditError::OffsetOutOfRange);
@@ -2025,8 +2023,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             width,
             cells,
         } => {
-            let t = find_table_mut(blocks_owning_mut(doc, *table)?, *table)
-                .ok_or(EditError::NodeNotFound)?;
+            let t = doc.table_mut(*table).ok_or(EditError::NodeNotFound)?;
             ensure_regular_table(t)?;
             let idx = *index as usize;
             if idx > t.grid.len() {
@@ -2050,8 +2047,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             })
         }
         Operation::DeleteColumn { table, index } => {
-            let t = find_table_mut(blocks_owning_mut(doc, *table)?, *table)
-                .ok_or(EditError::NodeNotFound)?;
+            let t = doc.table_mut(*table).ok_or(EditError::NodeNotFound)?;
             ensure_regular_table(t)?;
             let idx = *index as usize;
             if idx >= t.grid.len() {
@@ -2132,6 +2128,14 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             }
             for (offset, block) in to_insert.iter().enumerate() {
                 blocks.insert(idx + offset, block.clone());
+            }
+            // The insert knows where each new block is, so the first edit to it
+            // need not walk the document to find it (`docs/176` §12.10): a hint per
+            // body block, O(1) each and validated on use.
+            if container.is_none() {
+                for offset in 0..to_insert.len() {
+                    doc.hint_body_block(idx + offset);
+                }
             }
             Ok(Operation::DeleteBlocks {
                 container: *container,
@@ -2294,8 +2298,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             })
         }
         Operation::SetTableProperties { table, properties } => {
-            let t = find_table_mut(blocks_owning_mut(doc, *table)?, *table)
-                .ok_or(EditError::NodeNotFound)?;
+            let t = doc.table_mut(*table).ok_or(EditError::NodeNotFound)?;
             let previous = std::mem::replace(&mut t.properties, (**properties).clone());
             Ok(Operation::SetTableProperties {
                 table: *table,
@@ -2306,8 +2309,7 @@ pub fn apply(doc: &mut Document, mint: Mint, op: &Operation) -> Result<Operation
             if replacement.id != *table {
                 return Err(EditError::Unsupported);
             }
-            let t = find_table_mut(blocks_owning_mut(doc, *table)?, *table)
-                .ok_or(EditError::NodeNotFound)?;
+            let t = doc.table_mut(*table).ok_or(EditError::NodeNotFound)?;
             let previous = std::mem::replace(t, (**replacement).clone());
             Ok(Operation::ReplaceTable {
                 table: *table,
@@ -5014,43 +5016,6 @@ fn ensure_regular_table(table: &Table) -> Result<(), EditError> {
     Ok(())
 }
 
-/// The table with id `table`, searching the body recursively (a table can nest in
-/// a cell or content control).
-fn find_table_mut(blocks: &mut [BlockNode], table: NodeId) -> Option<&mut Table> {
-    // First pass: a top-level table match at this level (a returned borrow in a
-    // loop that also recurses trips the borrow checker, so keep the passes apart).
-    if blocks
-        .iter()
-        .any(|b| matches!(b, BlockNode::Table(t) if t.id == table))
-    {
-        return blocks.iter_mut().find_map(|b| match b {
-            BlockNode::Table(t) if t.id == table => Some(&mut **t),
-            _ => None,
-        });
-    }
-    // Second pass: recurse into nested tables / content controls.
-    for block in blocks.iter_mut() {
-        match block {
-            BlockNode::Table(t) => {
-                for row in &mut t.rows {
-                    for cell in &mut row.cells {
-                        if let Some(found) = find_table_mut(&mut cell.blocks, table) {
-                            return Some(found);
-                        }
-                    }
-                }
-            }
-            BlockNode::Sdt(sdt) => {
-                if let Some(found) = find_table_mut(&mut sdt.blocks, table) {
-                    return Some(found);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
 /// The cell with id `cell` (mutable), searching the body recursively (including
 /// nested tables). Two passes so a returned borrow never collides with the
 /// recursion, matching [`find_table_mut`].
@@ -5163,37 +5128,17 @@ pub fn cell_properties(document: &Document, cell: NodeId) -> Option<TableCellPro
         .find_map(|blocks| walk(blocks, cell))
 }
 
-/// The table with id `table` (read-only), searching the body recursively — a host
-/// query for reading a table's current rows (e.g. to place the caret after a
-/// row edit). `None` if no such table exists.
+/// The table with id `table` (read-only), wherever it lives — a host query for
+/// reading a table's current rows (e.g. to place the caret after a row edit).
+/// `None` if no such table exists.
+///
+/// **O(1) in document size** for a table this thread has resolved or inserted
+/// before, O(document) the first time (`Document::table`'s route cache,
+/// `casual_doc_model::v1::locate`). It was a body walk on every call, which made
+/// a binding's `cell(r, c).text = …` loop linear per cell (`docs/176` §12.10).
 #[must_use]
 pub fn find_table(document: &Document, table: NodeId) -> Option<&Table> {
-    fn walk(blocks: &[BlockNode], table: NodeId) -> Option<&Table> {
-        for block in blocks {
-            match block {
-                BlockNode::Table(t) if t.id == table => return Some(t),
-                BlockNode::Table(t) => {
-                    for row in &t.rows {
-                        for cell in &row.cells {
-                            if let Some(found) = walk(&cell.blocks, table) {
-                                return Some(found);
-                            }
-                        }
-                    }
-                }
-                BlockNode::Sdt(sdt) => {
-                    if let Some(found) = walk(&sdt.blocks, table) {
-                        return Some(found);
-                    }
-                }
-                _ => {}
-            }
-        }
-        None
-    }
-    surface_block_lists(document)
-        .into_iter()
-        .find_map(|blocks| walk(blocks, table))
+    document.table(table)
 }
 
 /// Locates the table row that (recursively) contains paragraph `node`: the table's

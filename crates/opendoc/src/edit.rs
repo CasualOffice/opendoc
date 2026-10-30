@@ -868,6 +868,13 @@ impl<'a> Editor<'a> {
         }
         match blocks.first() {
             Some(BlockNode::Paragraph(p)) => {
+                // The cell's paragraph is reached through its table's route, so
+                // the edits below do not walk the document to find it (`docs/176`
+                // §12.10). O(1); a stale hint is only a miss.
+                let _ = self
+                    .state
+                    .model
+                    .hint_cell_paragraph(table_id, row, column, 0);
                 let id = p.id.to_string();
                 let length = node_plain_text(&p.inlines).chars().count();
                 if length > 0 {

@@ -637,9 +637,72 @@ fn a_builder_step_costs_the_same_on_a_document_twice_as_long() {
         again_small, again_large,
         "a run on a known paragraph grew with the document: {again_small} visits at 400, {again_large} at 800"
     );
-    // The FIRST step on a new paragraph still costs one engine walk (the cold
-    // route in `casual_doc_edit::apply`'s `paragraph_mut`); that is the
-    // engine's open item recorded in docs/176 section 12.10, not asserted here.
+}
+
+/// Block visits (the engine's complexity meter) for one batch.
+fn visits(
+    doc: &mut Document,
+    batch: impl FnOnce(&mut opendoc::Editor<'_>) -> opendoc::Result<()>,
+) -> u64 {
+    casual_doc_edit::reset_document_scans();
+    casual_doc_edit::reset_block_visits();
+    let _ = doc.edit(batch);
+    casual_doc_edit::block_visits()
+}
+
+/// `(first edit to a new paragraph, cell text + a row on an existing table,
+/// a lookup of a table that does not exist)` on a document of `n` paragraphs
+/// with the table at the END, so any walk to it crosses all `n`.
+fn per_call_costs(n: usize) -> (u64, u64, u64) {
+    let mut doc = Document::create().unwrap();
+    doc.edit(|e| {
+        for i in 0..n {
+            e.append_paragraph(&format!("Paragraph {i}"), None)?;
+        }
+        Ok(())
+    })
+    .unwrap();
+    let ((table, _), _) = doc
+        .edit(|e| Ok((e.insert_table(&Position::End, 3, 3, &[])?, ())))
+        .unwrap();
+    let new_paragraph = visits(&mut doc, |e| {
+        let p = e.append_paragraph("Step ", None)?;
+        e.append_run(&p, "bold", &RunFormat::bold())
+    });
+    let table_calls = visits(&mut doc, |e| {
+        e.set_cell_text(&table, 1, 1, "x")?;
+        e.add_row(&table, &["a".to_owned()])?;
+        e.set_cell_text(&table, 3, 0, "y")
+    });
+    // A paragraph's id is not a table's: the lookup misses and walks everything.
+    let not_a_table = doc.paragraphs()[0].id.clone();
+    let missing = visits(&mut doc, |e| e.set_cell_text(&not_a_table, 0, 0, "z"));
+    (new_paragraph, table_calls, missing)
+}
+
+#[test]
+fn a_new_paragraphs_first_edit_and_a_table_lookup_cost_the_same_at_n_and_2n() {
+    // docs/176 §12.10's two remaining per-call costs that grew with the
+    // document: the first edit to a just-inserted paragraph (a cold route) and
+    // finding a table by id (a walk per call, two per row op). n against 2n,
+    // in the engine's own block-visit meter (SKILL §8).
+    let (paragraph_n, table_n, missing_n) = per_call_costs(500);
+    let (paragraph_2n, table_2n, missing_2n) = per_call_costs(1_000);
+    // The control: a table that is not there is a full walk, and the meter sees
+    // it double. Without this, equal numbers could mean a meter that counts
+    // nothing.
+    assert!(
+        missing_2n >= missing_n + 400,
+        "the meter cannot see a walk: {missing_n} visits at n, {missing_2n} at 2n"
+    );
+    assert_eq!(
+        paragraph_n, paragraph_2n,
+        "the first edit to a new paragraph grew with the document: {paragraph_n} at n, {paragraph_2n} at 2n"
+    );
+    assert_eq!(
+        table_n, table_2n,
+        "a table lookup grew with the document: {table_n} at n, {table_2n} at 2n"
+    );
 }
 
 #[test]
