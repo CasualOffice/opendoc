@@ -1,0 +1,12 @@
+PP-OCRv5 mobile text detection and recognition models, converted to ONNX for
+OpenDoc's OCR (crates/casual-doc-ocr, docs/182 §19-§20).
+
+Source models (Apache License 2.0), by PaddlePaddle / PaddleOCR:
+  https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det        -> det.onnx
+  https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec        -> rec.onnx, rec.dict.txt
+  https://huggingface.co/PaddlePaddle/latin_PP-OCRv5_mobile_rec  -> latin_rec.onnx, latin_rec.dict.txt
+  https://github.com/PaddlePaddle/PaddleOCR
+
+Modification: converted from Paddle inference format to ONNX; weights unchanged.
+Numerics verified against onnxruntime 1.19.2 (docs/182 §20.2).
+Licence: Apache License 2.0, see LICENSE-Apache-2.0.txt. Committed here so the Pages build can serve them same-origin (webapp/tools/stage-ocr-models.mjs).

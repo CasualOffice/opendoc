@@ -253,6 +253,43 @@ impl<'a> Transcriber<'a> {
                     tail_end.as_ref(),
                 );
             }
+            // A content stream has no blur, so a shadow exports hard-edged at its
+            // opacity: the silhouette moved by the offset, painted before the
+            // shape the way the display list orders it. Deliberately not a
+            // rasterised soft shadow, which would turn vector art into pixels.
+            PaintItem::Shadow {
+                geometry,
+                filled,
+                stroke_width,
+                color,
+                offset,
+                transform,
+                ..
+            } => {
+                let moved = geometry.translated(offset.x, offset.y);
+                let turned = transform.map(|transform| ShapeTransform {
+                    center: Point::new(
+                        Twip(transform.center.x.raw().saturating_add(offset.x.raw())),
+                        Twip(transform.center.y.raw().saturating_add(offset.y.raw())),
+                    ),
+                    ..transform
+                });
+                let fill = filled.then_some(Fill::Solid(*color));
+                let outline = stroke_width.map(|width| ShapeOutline {
+                    color: *color,
+                    width,
+                    dash: casual_doc_model::v1::DashStyle::Solid,
+                });
+                self.shape(
+                    out,
+                    &moved,
+                    fill.as_ref(),
+                    outline.as_ref(),
+                    turned.as_ref(),
+                    None,
+                    None,
+                );
+            }
             PaintItem::PushClip(rect) => {
                 out.op("q");
                 out.path_rect(*rect);

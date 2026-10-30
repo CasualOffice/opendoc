@@ -50,6 +50,7 @@ Clippy
 Cmd
 Collabora
 Commenter
+CommonMark
 Ctrl
 DAI
 DOCX
@@ -79,6 +80,7 @@ Firefox
 Flate
 Foxit
 Frontend
+GFM
 GIF
 GPL
 GPU
@@ -552,6 +554,7 @@ radiogroup
 rastered
 rasterised
 rasteriser
+rasterises
 rasterization
 rasterized
 rasterizer
@@ -682,6 +685,7 @@ unmodelled
 unmount
 unobservable
 unopenable
+unparsed
 unpassworded
 unreferenced
 unrepresentable

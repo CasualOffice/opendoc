@@ -419,6 +419,63 @@ export const MODALS = [
       await page.locator("#pageBordersBtn").click();
     },
   },
+  // Content controls and form roles (`109` RM-34). Each opens from the Insert
+  // band's Controls dropdown, whose button is where focus returns.
+  {
+    id: "controlPropsDialog",
+    name: "Content control properties",
+    opener: "#insertControlsBtn",
+    focus: "#controlPropsTitle",
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="insert"]').click();
+      await page.locator("#insertControlsBtn").click();
+      await page.locator('#insertControlsMenu [data-command="controls.insert.plainText"]').click();
+      await page.locator("#insertControlsBtn").click();
+      await page.locator('#insertControlsMenu [data-command="controls.properties"]').click();
+    },
+  },
+  {
+    id: "controlFillDialog",
+    name: "Choose a value",
+    opener: "#insertControlsBtn",
+    focus: "#controlFillDate",
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="insert"]').click();
+      await page.locator("#insertControlsBtn").click();
+      await page.locator('#insertControlsMenu [data-command="controls.insert.date"]').click();
+      await page.locator("#insertControlsBtn").click();
+      await page.locator('#insertControlsMenu [data-command="controls.fill"]').click();
+    },
+  },
+  {
+    id: "formRolesDialog",
+    name: "Form roles",
+    opener: "#insertControlsBtn",
+    focus: "#formRolesAdd",
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="insert"]').click();
+      await page.locator("#insertControlsBtn").click();
+      await page.locator('#insertControlsMenu [data-command="forms.roles"]').click();
+    },
+  },
+  {
+    id: "a11yCheckDialog",
+    name: "Accessibility check",
+    // HF-064. Opened from its Review-band button, which is where focus returns.
+    opener: "#reviewA11yCheckBtn",
+    focus: "#a11yCheckDialog [data-a11y-initial]",
+    async open(page) {
+      await gotoEditor(page);
+      await page.locator('[data-tab="review"]').click();
+      await page.locator("#reviewA11yCheckBtn").click();
+    },
+  },
   {
     id: "wordCountDialog",
     name: "Word count",

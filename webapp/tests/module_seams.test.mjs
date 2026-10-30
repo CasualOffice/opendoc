@@ -474,7 +474,21 @@ const SRC = new URL("../src/", import.meta.url);
 // 2985 -> 2988 with the note commands (`docs/153` page.note.*, RM-24): the menu
 // and both dialogs are `note_commands.mjs`; `main.js` pays its import, its
 // construction and its context getter. MEASURED with `wc -l`.
-const MAIN_JS_LINE_CEILING = 2988;
+// 2988 -> 2990 with content controls and forms (`109` RM-34): the domain is
+// `editor_forms.mjs`; `main.js` pays its import and its construction, and the two
+// context getters and the reflect share existing lines. MEASURED with `wc -l`.
+// 2988 -> 2991 with Picture from URL and Paste as picture (`docs/153`
+// object.insert-image-url, text.paste-as-picture): both are `object_insert.mjs`;
+// `main.js` pays one import, one construction and one getter. MEASURED.
+// 2988 -> 2991 with the view and text extras (`docs/153` shell.dark-document,
+// shell.multiple-pages-view, shell.print-selection,
+// review.personal-dictionary-manage, text.unicode-code-toggle,
+// page.textFromFile): six capabilities in one module, `editor_view_text.mjs`;
+// `main.js` pays its import, its construction and its context getter.
+// MEASURED with `wc -l`.
+// With all three round-3 lanes merged (forms, object insert, view and text
+// extras) the file measures 2996. MEASURED with `wc -l` on the merged tree.
+const MAIN_JS_LINE_CEILING = 2996;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

@@ -2,7 +2,8 @@
 // document), `openBytes` (parse first, swap only once it parsed), and the
 // header's rename. Moved out of `main.js` unchanged (docs/177); it reaches
 // the rest of the editor only through the context `ed`.
-import init, { open } from "../pkg/casual_doc_wasm.js";
+import init, { open, openAs } from "../pkg/casual_doc_wasm.js";
+import { importFormatForName } from "./format_io.mjs";
 import { populateSaveFormats } from "./save_formats.mjs";
 import { openingZoomMode } from "./view_zoom.mjs";
 import { BLANK_DOCX_PARTS, UNTITLED_DOCUMENT_NAME, zipStore } from "./blank_document.mjs";
@@ -228,7 +229,10 @@ export function createFileOpen(ed) {
         }
         next = imported.doc;
       } else {
-        next = open(bytes);
+        // Markdown and HTML carry no evidence of their own in their bytes, so
+        // their NAME selects the reader; every other format is detected.
+        const named = importFormatForName(name);
+        next = named ? openAs(bytes, named) : open(bytes);
       }
       // Parse BEFORE anything on screen is touched. Freeing the open document
       // first and parsing second meant any file the engine rejected — a corrupt
@@ -358,6 +362,8 @@ export function createFileOpen(ed) {
         ocr: origin === "pdf" ? ocrSummaryOf(ed.doc) : null,
         actions: origin ? () => pdfCommands.summaryActions() : null,
       });
+      // A scanned PDF is recognised straight away, downloading the models on first use.
+      if (origin === "pdf") queueMicrotask(() => pdfCommands.autoRecognise());
       ed.railOutline.disabled = ed.railPages.disabled = false;
       ed.reflowView.setEnabled();
       // The reader's formatting-mark preference, replayed onto the new handle: the

@@ -19,6 +19,10 @@ casual-doc-ooxml.workspace = true
 # The real-text PDF backend behind the export-only `application.pdf` adapter.
 casual-doc-pdf.workspace = true
 casual-doc-rtf.workspace = true
+# The CommonMark + GFM parser behind Markdown import (`docs/153`
+# `shell.import-markdown`). MIT; default features off, so neither its HTML
+# renderer nor its command-line `getopts` is linked: only the pull parser.
+pulldown-cmark = { version = "0.13.5", default-features = false }
 # PDF import (docs/182 P1), behind `pdf-import`: off by default so the editor's
 # WASM build neither compiles hayro nor offers PDF in File -> Open until P2.
 casual-doc-pdf-import = { workspace = true, optional = true }

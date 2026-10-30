@@ -245,6 +245,29 @@ fn bytes_that_are_not_a_package_open_as_plain_text() {
     assert_eq!(doc.plain_text(), "not a document\n");
 }
 
+/// A `.md` NAME opens the bytes as Markdown (`shell.import-markdown`): the
+/// heading is in the outline and its hashes are not in the text. The same
+/// bytes with no name stay plain text, which is the half that proves the name
+/// did the selecting.
+#[cfg(feature = "formats")]
+#[test]
+fn a_markdown_name_opens_markdown_and_no_name_opens_text() {
+    let bytes = b"# Release notes\n\nBody text.\n";
+    let named =
+        ViewerDocument::open_with(bytes, &ViewerOptions::default().with_file_name("notes.md"))
+            .expect("markdown");
+    let outline = named.outline();
+    assert_eq!(outline.len(), 1, "{outline:?}");
+    assert_eq!(
+        (outline[0].level, outline[0].text.as_str()),
+        (1, "Release notes")
+    );
+    assert!(!named.plain_text().contains('#'), "{}", named.plain_text());
+    let unnamed = ViewerDocument::open(bytes).expect("plain text");
+    assert!(unnamed.plain_text().starts_with("# Release notes"));
+    assert!(unnamed.outline().is_empty());
+}
+
 /// Liberation Mono with its family renamed to `OpendocTestFace` (same
 /// length, every `name` record), so it is a face no build bundles, under a
 /// name with no class hint (`Serif`, `Mono`) that would make the substitute

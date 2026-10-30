@@ -11,6 +11,7 @@ import { followExternalTarget } from "./link_targets.mjs";
 import { createPointerHover } from "./pointer_hover.mjs";
 import { createTableChrome } from "./table_chrome.mjs";
 import { createTableGutter } from "./table_gutter.mjs";
+import { tableDrawMode } from "./table_draw_mode.mjs";
 import { installViewportFocusGuard } from "./viewport_focus.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
@@ -243,6 +244,8 @@ export function createPointer(ed) {
     // An armed shape owns the gesture: this press is the first corner of the
     // rectangle being drawn, not a caret placement.
     if (ed.shapeDrawMode.tryBeginDraw(page, event)) return;
+    // Draw table's pencil owns the gesture the same way (`table_draw_mode.mjs`).
+    if (tableDrawMode.tryBegin(page, event)) return;
     // A pointerdown that reaches the page during a crop (a crop handle's own
     // pointerdown stops propagation) is a click-away → commit the crop, exactly as
     // Word/Docs do. This click is consumed by the commit; the next click interacts.
@@ -382,6 +385,12 @@ export function createPointer(ed) {
     // difference between the owner's Medical Incident Report Form being a form
     // and being a picture of one: eight controls, none of them tickable.
     if (ed.toggleFormCheckboxAt(anchor.node, anchor.offset)) {
+      event.preventDefault();
+      return;
+    }
+    // A press in a drop-down, date or picture content control opens its chooser,
+    // as in Word: those are chosen, not typed (`content_controls.mjs`).
+    if (event.button === 0 && !event.shiftKey && ed.contentControls.pressAt(anchor)) {
       event.preventDefault();
       return;
     }
@@ -570,6 +579,7 @@ export function createPointer(ed) {
     ed.refusedObjectDrag.end();
     if (ed.objectTextDrag.finish(event)) return;
     if (ed.shapeDrawMode.finish()) return;
+    if (tableDrawMode.finish()) return;
     if (ed.finishObjectMove(event)) return;
     if (ed.objectRotate.finish(event)) return;
     if (ed.objectResize.finish(event)) return;
@@ -718,6 +728,10 @@ export function createPointer(ed) {
     if (ed.objectTextDrag.move(e)) return; // an in-line object follows the drop caret (UX-OB-02)
     if (ed.shapeDrawMode.dragging()) {
       ed.shapeDrawMode.update(e);
+      return;
+    }
+    if (tableDrawMode.dragging()) {
+      tableDrawMode.update(e);
       return;
     }
     if (ed.objectMoveDrag) {

@@ -12,6 +12,9 @@ import {
   formatInfo,
   formatLabel,
   isKnownFormat,
+  OPENABLE_EXTENSIONS,
+  importFormatForName,
+  isOpenableName,
 } from "../src/format_io.mjs";
 import { EN_STRINGS } from "../src/en_strings.mjs";
 import { setCatalogue, setLocale } from "../src/i18n.mjs";
@@ -222,4 +225,36 @@ test("RTF is a named format, and a .rtf name is rewritten rather than appended t
   assert.equal(downloadNameForFormat("report.rtf", "docx"), "report.docx");
   assert.equal(downloadNameForFormat("report.rtf", "odt"), "report.odt");
   assert.equal(ensureDocumentExtension("report.rtf", "docx"), "report.rtf");
+});
+
+// File > Open's `accept` list is hand-written HTML; `OPENABLE_EXTENSIONS` is
+// what the picker's pre-filter and `openBytes` read. They must name the same
+// extensions, in both directions: an extension accepted by the dialog and
+// refused by the pre-filter is a file the user picks and then cannot open, and
+// the reverse is a format nobody can find (`shell.import-markdown`).
+test("the Open picker's accept list and the openable table agree", () => {
+  const html = readFileSync(join(REPO, "webapp", "editor.html"), "utf8");
+  const accept = /<input id="file" type="file" accept="([^"]+)"/.exec(html)?.[1];
+  assert.ok(accept, "editor.html has the #file input");
+  const extensions = accept
+    .split(",")
+    .filter((entry) => entry.startsWith("."))
+    .map((entry) => entry.slice(1))
+    .sort();
+  assert.deepEqual(extensions, Object.keys(OPENABLE_EXTENSIONS).sort());
+});
+
+test("Markdown and HTML are opened by name; every other format is detected", () => {
+  assert.equal(importFormatForName("README.md"), "text.markdown");
+  assert.equal(importFormatForName("notes.MARKDOWN"), "text.markdown");
+  assert.equal(importFormatForName("page.html"), "text.html");
+  assert.equal(importFormatForName("page.htm"), "text.html");
+  // `null` is "let the engine detect it", which is what DOCX/ODT/RTF/PDF/TXT
+  // have always done: a `.txt` that begins with `#` must stay plain text.
+  for (const name of ["a.docx", "a.odt", "a.rtf", "a.pdf", "a.json", "a.txt", "a.dotx", "noext"]) {
+    assert.equal(importFormatForName(name), null, name);
+  }
+  assert.equal(isOpenableName("a.md"), true);
+  assert.equal(isOpenableName("a.dotx"), false);
+  assert.equal(isOpenableName("a.exe"), false);
 });

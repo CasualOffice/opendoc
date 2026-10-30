@@ -170,6 +170,9 @@ export function createDocumentProtection(io) {
   const currentInput = el("restrictEditingCurrentPassword");
   const newRow = el("restrictEditingNewRow");
   const newInput = el("restrictEditingNewPassword");
+  // The password fields sit in a form for credential semantics only: it never
+  // submits, so Enter cannot reload the editor and lose the document.
+  el("restrictEditingPasswordForm")?.addEventListener("submit", (event) => event.preventDefault());
   const confirmInput = el("restrictEditingConfirmPassword");
   const passwordError = el("restrictEditingPasswordError");
   const stopBtn = el("restrictEditingStop");

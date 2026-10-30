@@ -82,6 +82,15 @@ impl WasmViewer {
             .map_err(to_js)
     }
 
+    /// Opens `bytes` named `name`: with the `formats` feature the name selects
+    /// Markdown or HTML, whose bytes carry no evidence of their own.
+    #[wasm_bindgen(js_name = openNamed)]
+    pub fn open_named(bytes: &[u8], name: &str) -> Result<WasmViewer, JsValue> {
+        ViewerDocument::open_with(bytes, &ViewerOptions::default().with_file_name(name))
+            .map(|inner| Self { inner })
+            .map_err(to_js)
+    }
+
     /// Opens `bytes` with faces registered BEFORE the first layout (one
     /// pagination instead of two).
     #[wasm_bindgen(js_name = openWithFonts)]

@@ -5,6 +5,8 @@
 import { matchWithinScope, positionComparator } from "./find_scope.mjs";
 import { createFindSession } from "./find_session.mjs";
 import { byteOffsetToStringIndex, isWholeWordAt } from "./text_rules.mjs";
+import { compileFindPattern, expandReplacement, regexMatches } from "./find_regex.mjs";
+import { t } from "./i18n.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -17,7 +19,17 @@ export function createFind(ed) {
   const findCase = document.getElementById("findCase");
   const findWholeWord = document.getElementById("findWholeWord");
   const findSelection = document.getElementById("findSelection");
+  // `docs/153` shell.find-regex: the pattern runs in the page over the engine's
+  // paragraph text (`find_regex.mjs`); the literal path below is unchanged.
+  const findRegex = document.getElementById("findRegex");
   let findScope = null;
+  /** The searchable text, parsed once per document state: a scan is
+   *  O(document) and typing a pattern rescans on every keystroke. */
+  let searchable = { key: null, paragraphs: [] };
+  /** The last pattern the scan compiled, for Replace to expand groups with. */
+  let lastPattern = null;
+  /** Why the current pattern does not compile, or null. */
+  let patternError = null;
   const findSession = createFindSession({
     getDoc: () => ed.doc,
     getSelection: () => ed.selection,
@@ -113,6 +125,7 @@ export function createFind(ed) {
   function scanAllMatches(query, matchCase, wholeWord = false) {
     const matches = [];
     if (!ed.doc || !query) return matches;
+    if (findRegex?.checked) return scanRegexMatches(query, matchCase, wholeWord);
     const first = ed.doc.firstPosition();
     let node = first.node;
     let offset = first.offset;
@@ -146,12 +159,46 @@ export function createFind(ed) {
     return matches;
   }
 
+  /** The regular-expression scan (`docs/153` shell.find-regex). An invalid
+   *  pattern is shown inline (`aria-invalid` on the field, the reason in the
+   *  status line) and finds nothing; it never throws while the person is still
+   *  typing it. The selection scope applies exactly as it does to a literal. */
+  function scanRegexMatches(query, matchCase, wholeWord) {
+    const compiled = compileFindPattern(query, { matchCase, wholeWord });
+    if (!compiled.regex) {
+      lastPattern = null;
+      findInput.setAttribute("aria-invalid", "true");
+      patternError = compiled.error;
+      return [];
+    }
+    findInput.removeAttribute("aria-invalid");
+    patternError = null;
+    lastPattern = compiled.regex;
+    const key = `${ed.documentEpoch}:${ed.currentRevision}`;
+    if (searchable.key !== key) {
+      searchable = { key, paragraphs: JSON.parse(ed.doc.searchableText()) };
+    }
+    return regexMatches(searchable.paragraphs, compiled.regex, FIND_SCAN_CAP).filter(matchInFindSelection);
+  }
+
+  /** The text the current match is replaced with: the field as typed, or, for
+   *  a pattern, with its groups expanded for THIS match. */
+  function replacementFor(match) {
+    if (!findRegex?.checked || !lastPattern || !match?.text) return replaceInput.value;
+    return expandReplacement(lastPattern, match, replaceInput.value);
+  }
+
   /** Publishes the match list to the highlight and states "n of N". An untouched
    *  load-time caret is not a place the user searched from, so a document whose
    *  first characters are the query reports "N matches", not "1 of N". */
   function updateFindStatus(matches = scanAllMatches(findInput.value, findCase.checked, findWholeWord.checked)) {
     const idx = findSession.show(matches);
+    if (!findRegex?.checked) {
+      findInput.removeAttribute("aria-invalid");
+      patternError = null;
+    }
     if (!findInput.value) setFindStatus("");
+    else if (patternError !== null) setFindStatus(t("findPanel.regexInvalid", { reason: patternError }), true);
     else if (!matches.length) setFindStatus("No match", true);
     else setFindStatus(matches.length === 1 ? "1 match" : idx >= 0 ? `${idx + 1} of ${matches.length}` : `${matches.length} matches`);
   }
@@ -166,6 +213,7 @@ export function createFind(ed) {
   function queryMatchesSelection() {
     const query = findInput.value;
     if (!query) return false;
+    if (findRegex?.checked) return currentRegexMatch() !== null;
     const selected = selectedPlainText();
     if (!selected.includes("\n")) {
       return findCase.checked
@@ -173,6 +221,20 @@ export function createFind(ed) {
         : selected.toLocaleLowerCase() === query.toLocaleLowerCase();
     }
     return false;
+  }
+
+  /** The pattern match the selection is exactly on, or null. */
+  function currentRegexMatch() {
+    if (!ed.selection) return null;
+    const { anchor, focus } = ed.selection;
+    const matches = scanAllMatches(findInput.value, findCase.checked, findWholeWord.checked);
+    return (
+      matches.find(
+        (m) =>
+          m.startNode === anchor.node && m.startOffset === anchor.offset &&
+          m.endNode === focus.node && m.endOffset === focus.offset,
+      ) ?? null
+    );
   }
 
   function selectTextMatch(match, matches) {
@@ -215,8 +277,9 @@ export function createFind(ed) {
       return;
     }
     const { anchor, focus } = ed.selection;
+    const text = findRegex?.checked ? replacementFor(currentRegexMatch()) : replaceInput.value;
     await ed.runEdit(() =>
-      ed.doc.replaceSelection(anchor.node, anchor.offset, focus.node, focus.offset, replaceInput.value),
+      ed.doc.replaceSelection(anchor.node, anchor.offset, focus.node, focus.offset, text),
     );
     findFromSelection(true);
   }
@@ -241,6 +304,21 @@ export function createFind(ed) {
       return;
     }
     const ordered = matches.slice().reverse();
+    // A pattern's replacement differs per match (a group reference), so each
+    // range carries its own text, still as ONE undoable action.
+    if (findRegex?.checked) {
+      await ed.runEdit(() =>
+        ed.doc.replaceRangesEach(
+          ordered.map((m) => m.startNode),
+          ordered.map((m) => m.startOffset),
+          ordered.map((m) => m.endNode),
+          ordered.map((m) => m.endOffset),
+          ordered.map((m) => replacementFor(m)),
+        ),
+      );
+      setFindStatus(`Replaced ${matches.length}`);
+      return;
+    }
     await ed.runEdit(() =>
       ed.doc.replaceRanges(
         ordered.map((m) => m.startNode),
@@ -279,6 +357,7 @@ export function createFind(ed) {
   findInput.addEventListener("focus", () => findSession.anchorHere());
   findCase.addEventListener("change", () => updateFindStatus());
   findWholeWord.addEventListener("change", () => updateFindStatus());
+  findRegex?.addEventListener("change", () => updateFindStatus());
   findSelection.addEventListener("change", () => {
     if (findSelection.checked) {
       findScope = captureFindScope();

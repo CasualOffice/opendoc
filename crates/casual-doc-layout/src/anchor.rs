@@ -811,6 +811,7 @@ fn collect_inlines(
                             drawing.flip_v,
                             drawing.rotation,
                         ),
+                        shadow: None,
                     },
                 );
             }
@@ -842,6 +843,7 @@ fn collect_inlines(
                         z,
                         descr: None,
                         transform: None,
+                        shadow: None,
                     },
                 );
             }
@@ -893,6 +895,7 @@ fn collect_inlines(
                         // The frame of a lone text box is never turned: its
                         // `wps:bodyPr@rot`/`@vert` turn only the text.
                         transform: None,
+                        shadow: text_box.shadow,
                     },
                 );
             }
@@ -1030,6 +1033,7 @@ fn place_group_children(
                         z,
                         descr: picture.descr.clone(),
                         transform: shape_transform(rect, flip_h, flip_v, rotation),
+                        shadow: None,
                     },
                 );
             }
@@ -1088,6 +1092,7 @@ fn place_group_children(
                         z,
                         descr: None,
                         transform: shape_transform(rect, flip_h, flip_v, rotation),
+                        shadow: text_box.shadow,
                     },
                 );
             }
@@ -1117,6 +1122,7 @@ fn place_group_children(
                         z,
                         descr: None,
                         transform: shape_transform(rect, flip_h, flip_v, rotation),
+                        shadow: shape.shadow,
                     },
                 );
             }
@@ -1986,6 +1992,35 @@ fn locate(
     (0, fallback, fallback)
 }
 
+/// The page index and page-local box of the body paragraph `paragraph`: the
+/// reference a float anchored in it with `relativeFrom="paragraph"` (or
+/// `"line"`) resolves its vertical offset against. `None` when the paragraph is
+/// not placed on a body page (a header or footer paragraph, or one outside the
+/// laid-out window).
+///
+/// A host converting a float between page- and paragraph-relative placement
+/// (Word's "Move object with text") needs exactly this box to keep the object
+/// where it is; resolving it here keeps the two from disagreeing about where a
+/// paragraph starts.
+///
+/// O(placed fragments) — one walk of the laid-out pages.
+#[must_use]
+pub fn paragraph_anchor_box(layout: &PaginatedLayout, paragraph: NodeId) -> Option<(usize, Rect)> {
+    for (index, page) in layout.pages.iter().enumerate() {
+        for placed in &page.placed {
+            if let Some(rect) = find_paragraph_rect(
+                &placed.fragment,
+                placed.rect.origin,
+                placed.rect.size.width,
+                paragraph,
+            ) {
+                return Some((index, rect));
+            }
+        }
+    }
+    None
+}
+
 /// Finds one paragraph's page-local box inside a placed fragment tree. Geometry
 /// mirrors composition: table-cell offsets and margins, vertical alignment, and
 /// nested block stacking are applied once at every level.
@@ -2428,6 +2463,7 @@ mod tests {
             wrap_distances: Default::default(),
             wrap_polygon: None,
             behind_doc: false,
+            allow_overlap: true,
         }
     }
 

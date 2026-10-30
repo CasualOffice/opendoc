@@ -279,6 +279,9 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("file.export.text", "download"),
   exact("file.export.json", "download"),
   exact("file.print", "print"),
+  // Print ▸ Selection (`docs/153` shell.print-selection): a throwaway copy of the
+  // selection through the same print path, so the same grant.
+  exact("file.printSelection", "print"),
   // Reading the metadata is not a grant: the document is already on screen.
   exact("file.properties", null),
   // Opening the compatibility findings reads a report the open already produced;
@@ -317,6 +320,8 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("edit.copy", null),
   exact("edit.paste", "mutate"),
   exact("edit.pasteText", "mutate"),
+  // Paste as picture (`paste_picture.mjs`): the clipboard inserted as one picture.
+  exact("edit.pasteImage", "mutate"),
   exact("edit.selectAll", null),
   exact("edit.find", null),
   // The same panel on its replacement field (⌘H). Opening it changes nothing; a
@@ -395,6 +400,9 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("insert.field", "mutate"),
   exact("insert.dropCap", "mutate"),
   exact("insert.image", "mutate"),
+  // Picture from URL (`picture_url.mjs`): downloaded through the host's network
+  // policy (`?remoteImages=`) and embedded.
+  exact("insert.imageFromUrl", "mutate"),
   exact("insert.shape", "mutate"),
   exact("insert.chart", "mutate"),
   exact("insert.textbox", "mutate"),
@@ -402,11 +410,18 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("insert.emoji", "mutate"),
   // Ctrl/Cmd+Shift+Space types U+00A0, an insert like any other (RM-19).
   exact("insert.nonBreakingSpace", "mutate"),
+  // Alt+X (`docs/153` text.unicode-code-toggle) and Insert ▸ Text from file
+  // (page.textFromFile): both change the document.
+  exact("insert.symbolByCode", "mutate"),
+  exact("insert.textFromFile", "mutate"),
   exact("insert.table", "mutate"),
   // Insert Table by a typed size, and Convert Text to Table (`table_tools.mjs`).
   // Both write: one inserts a table, the other replaces paragraphs with one.
   exact("insert.tableDialog", "mutate"),
   exact("insert.textToTable", "mutate"),
+  // Draw Table's pencil (`table_draw_mode.mjs`): a drawn outline inserts a
+  // table, a drawn line splits cells, so the mode exists to write.
+  exact("insert.drawTable", "mutate"),
   exact("insert.header", "mutate"),
   exact("insert.footer", "mutate"),
   // Per band, because linkage and removal are per band (`docs/85` §8d Q7): a
@@ -644,6 +659,9 @@ export const COMMAND_CONTRACT = Object.freeze([
   // Declared because a capability the editor offers and this file does not name
   // is invisible to a host, which is the one audience this file has.
   exact("tools.languages", null),
+  // The personal dictionary (`docs/153` review.personal-dictionary-manage): the
+  // reader's own words, kept in their browser, never in the document.
+  exact("tools.personalDictionary", null),
   exact("tools.grammarCheck", null),
   exact("tools.smartQuotes", null),
   // The AutoCorrect switches (TA-05/06): preferences, not document state.
@@ -656,11 +674,26 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("tools.autoCorrectOptions", null),
   // Word count reads the document and changes nothing (HF-051).
   exact("tools.wordCount", null),
+  // The accessibility check reads the document and changes nothing (HF-064).
+  exact("tools.checkAccessibility", null),
+  // Content controls (`109` RM-34): the three that act on the control at the
+  // caret. The seven insert commands are the `controls.insert.` family below.
+  exact("controls.properties", "mutate"),
+  exact("controls.remove", "mutate"),
+  exact("controls.fill", "mutate"),
+  // Protect form is the editing restriction, and form roles are policy too, so
+  // both need the edit grant that Restrict Editing needs.
+  exact("review.protectForm", "edit"),
+  exact("forms.roles", "edit"),
   exact("view.outline", null),
   // `view.pages` is a panel toggle and changes no document state, so it requires
   // nothing — the same shape as `view.outline`, which the taxonomy already puts
   // beside it because the two are the same kind of thing.
   exact("view.pages", null),
+  // Dark document and Multiple pages (`docs/153` shell.dark-document,
+  // shell.multiple-pages-view): how the page is shown, never what it holds.
+  exact("view.darkDocument", null),
+  exact("view.multiplePages", null),
   exact("view.settings", null),
   exact("view.showChanges", null),
   // F6 / Shift+F6 move the keyboard between the window's regions. Focus is not
@@ -801,6 +834,9 @@ export const COMMAND_FAMILIES = Object.freeze([
   // Insert ▸ Chart's per-type rows (`insert.chart.<kind>`, HF-258), generated
   // from the chart-type table the ribbon's picker reads.
   family("insert.chart.", "mutate", "always"),
+  // Insert ▸ Controls' seven kinds (`controls.insert.<kind>`, `109` RM-34),
+  // generated from `CONTROL_KINDS` in `content_control_model.mjs`.
+  family("controls.insert.", "mutate", "always"),
   // References ▸ Add text's rows (`reference.addText.none`, `.1`..`.9`):
   // list the selected paragraphs at a contents level, or keep them out of it.
   family("reference.addText.", "mutate", "always"),

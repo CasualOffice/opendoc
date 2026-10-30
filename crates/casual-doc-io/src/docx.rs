@@ -528,15 +528,26 @@ pub fn builtin_registry_with_format_limits(
     // `shell.export-markdown`. ONLYOFFICE's Download-as grid offers `MD`; ours
     // did not. Registered here rather than behind an opt-in so the capability is
     // reachable in every host rather than in the ones that remembered.
+    // Both ways since `shell.import-markdown`: the importer's probe is
+    // name-only, so a `.txt` still opens as plain text.
+    let adapter = Arc::new(crate::MarkdownAdapter::default());
     registry
-        .register_exporter(Arc::new(crate::MarkdownAdapter::default()))
+        .register_importer(adapter.clone())
+        .expect("built-in Markdown importer registration is unique");
+    registry
+        .register_exporter(adapter)
         .expect("built-in Markdown exporter registration is unique");
     // Export only, built in for the same reason: `docs/153` `shell.export-html`.
     // Theirs is a zip of markup plus sibling image files; ours is one file with
     // the pictures inside it, which is the local-first argument applied to an
     // export.
+    // Both ways since `shell.import-html`, name-only like Markdown.
+    let adapter = Arc::new(crate::HtmlAdapter::default());
     registry
-        .register_exporter(Arc::new(crate::HtmlAdapter::default()))
+        .register_importer(adapter.clone())
+        .expect("built-in HTML importer registration is unique");
+    registry
+        .register_exporter(adapter)
         .expect("built-in HTML exporter registration is unique");
     // Export only, built in for the same reason: `docs/153` `shell.export-dotx`.
     registry

@@ -2238,6 +2238,100 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 
 /* Two columns: term and value on one line, the way a properties sheet reads.
    `auto auto` so neither column is wider than the text it holds. */
+/* Accessibility check (HF-064): Word's checker pane, as a list of findings. */
+.a11y-check-dialog {
+  width: min(100%, 60ch);
+}
+
+.a11y-check-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.a11y-check-item {
+  border-inline-start: 3px solid var(--line-strong);
+  padding-inline-start: var(--space-3);
+}
+
+.a11y-check-item p {
+  margin: 0 0 var(--space-1);
+}
+
+.a11y-check-severity {
+  font-size: var(--fs-caption, 0.75rem);
+  font-weight: 600;
+  color: var(--ink-2, var(--ink));
+}
+
+.a11y-check-fix,
+.a11y-check-where {
+  color: var(--ink-2, var(--ink));
+  font-size: var(--fs-caption, 0.75rem);
+}
+
+/* Content controls and form roles (`109` RM-34). The lists are the parts that
+   grow, so they scroll inside the card rather than pushing it past 720px. */
+.control-props-dialog,
+.form-roles-dialog {
+  width: min(100%, 56ch);
+}
+
+.control-fill-dialog {
+  width: min(100%, 40ch);
+}
+
+.control-item-list,
+.form-role-list,
+.form-role-fields,
+.control-fill-list {
+  /* A chrome scroller contains its own overscroll (style_tokens). */
+  overscroll-behavior: contain;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+  max-block-size: 12rem;
+  overflow-y: auto;
+}
+
+.control-item-row,
+.form-role-row,
+.form-role-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.control-item-row input,
+.form-role-row .form-role-name {
+  flex: 1 1 0;
+  min-inline-size: 0;
+}
+
+.form-role-field span {
+  flex: 1 1 auto;
+}
+
+.control-fill-option {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.control-fill-option[aria-selected="true"] {
+  background: var(--accent-soft, var(--line));
+  font-weight: 600;
+}
+
+.control-fill-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 /* Page borders (HF-193): the four edges read across, as Word's preview buttons
    sit around one page. */
 .page-borders-dialog {
@@ -4351,7 +4445,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
   display: grid;
   /* Pairs (Top/Bottom, Left/Right) stay side by side wherever two will fit,
      and the cells are as wide as their content rather than half the dialog.
-     The old `@media (max-width: 620px) { 1fr }` override made phones WORSE by
+     The old `@media (max-width: 38.75em) { 1fr }` override made phones WORSE by
      stacking two 5-character fields into one 302px-wide column each; Word and
      Docs keep those pairs paired at phone widths. */
   grid-template-columns: repeat(auto-fit, minmax(clamp(7rem, 20vw, 9rem), max-content));
@@ -8394,6 +8488,21 @@ body.is-format-painting .page-wrap * {
   line-height: 0;
 }
 
+/* DARK DOCUMENT (`docs/153` shell.dark-document; `editor_view_text.mjs`): the
+   page's raster inverted with its hue turned back, so black on white reads light
+   on near-black and a red stays red. A paint-time filter on the canvas only: the
+   caret and selection overlay above it keep their own colours, and the file, the
+   export and the print never see it. */
+.viewport.dark-document .page-wrap canvas {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+/* The personal dictionary's word list (`docs/153` review.personal-dictionary-manage). */
+.dictionary-add { display: flex; gap: 0.5rem; align-items: flex-end; }
+.dictionary-add .dialog-field { flex: 1 1 auto; }
+.dictionary-words { list-style: none; margin: 0.75rem 0 0; padding: 0; max-height: 16rem; overflow-y: auto; overscroll-behavior: contain; }
+.dictionary-word { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.25rem 0; border-bottom: 1px solid var(--border, transparent); }
+
 /* REFLOW (docs/151 §6.2, corrected here; ADR-046): there is no
    page, so there is no desk either.
    -------------------------------------------------------------------------
@@ -10330,13 +10439,13 @@ body.phone-mode .header-mode {
  * entirely; only the minimal top bar (brand + Open + Settings) remains, and
  * the drop card becomes the whole page. `openBytes` adds `.doc-loaded` to
  * `<body>` once a document is open, which reveals the chrome again. */
-body:not(.doc-loaded) .ribbon,
-body:not(.doc-loaded) .ribbon-nav,
-body:not(.doc-loaded) .rail,
-body:not(.doc-loaded) .footer,
-body:not(.doc-loaded) .search-trigger,
-body:not(.doc-loaded) #save,
-body:not(.doc-loaded) .save-format,
+html:not(.doc-expected) body:not(.doc-loaded) .ribbon,
+html:not(.doc-expected) body:not(.doc-loaded) .ribbon-nav,
+html:not(.doc-expected) body:not(.doc-loaded) .rail,
+html:not(.doc-expected) body:not(.doc-loaded) .footer,
+html:not(.doc-expected) body:not(.doc-loaded) .search-trigger,
+html:not(.doc-expected) body:not(.doc-loaded) #save,
+html:not(.doc-expected) body:not(.doc-loaded) .save-format,
 body:not(.doc-loaded) .compatibility-status,
 /* The state chip says what state THE DOCUMENT is in, and before one exists there
    is no state to report: the markup's resting text is "Opened", so the boot frame
@@ -10349,6 +10458,15 @@ body:not(.doc-loaded) #propertiesBtn {
 
 body:not(.doc-loaded) .drop {
   min-height: calc(100vh - var(--h-header));
+}
+
+/* A document is on its way (anything but `?blank=1`, decided in <head> before
+   the first paint): the chrome keeps its space from the first frame instead of
+   snapping in when the document lands, which moved the work area 94px and was
+   most of the editor's CLS. The drop card has no part in that frame. */
+html.doc-expected body:not(.doc-loaded) .drop {
+  visibility: hidden;
+  min-height: 0;
 }
 
 .drop {
@@ -13641,4 +13759,228 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
     max-height: 60vh;
   }
   .ai-preview-actions .dialog-button { min-height: 2.75rem; flex: 1 1 0; }
+}
+
+/* The password fields' form is structural only (credential semantics); it adds
+   no box of its own between the dialog's sections. */
+.restrict-editing-passwords {
+  display: contents;
+}
+
+/* Insert ▸ Picture from URL: the download's progress (`picture_url_dialog.mjs`). */
+.dialog-progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+/* Edit Points (`shape_edit_points.mjs`): the live outline and its vertices,
+   over the page and above the selection overlay. The grips are the crop grips'
+   colours, with a 24px hit area so a finger can take one. */
+.shape-points-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+.shape-points-outline {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.shape-points-outline path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+.shape-points-handle {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  margin: -5px 0 0 -5px;
+  background: var(--paper-ink);
+  border: 1px solid var(--paper);
+  pointer-events: auto;
+  touch-action: none;
+  cursor: move;
+}
+.shape-points-handle::after {
+  content: "";
+  position: absolute;
+  inset: -8px;
+}
+
+/* ---- Draw table: the pencil (`table_draw_mode.mjs`) ----------------------- */
+.table-draw-preview {
+  position: absolute;
+  pointer-events: none;
+  outline: 1px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.table-draw-line {
+  position: absolute;
+  pointer-events: none;
+  background: var(--accent);
+  min-width: 1px;
+  min-height: 1px;
+}
+
+body[data-table-draw] .page-wrap,
+body[data-table-draw] .page-wrap * {
+  cursor: crosshair;
+}
+
+#tableDrawBtn[aria-pressed="true"],
+#insertTableDrawBtn[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.grid-draw {
+  width: 100%;
+  margin-top: var(--space-1);
+  justify-content: center;
+}
+
+/* ---- Borders and shading (`table_borders_dialog.mjs`) --------------------- */
+.table-borders-presets {
+  margin-bottom: var(--space-2);
+}
+
+.table-borders-presets [aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.table-borders-layout {
+  display: grid;
+  grid-template-columns: 9.5rem 1fr;
+  gap: var(--space-3);
+  align-items: start;
+  margin-bottom: var(--space-2);
+}
+
+/* The preview: a 2 x 2 sketch of cells, and six line buttons laid over its
+   edges. Each button is a generous hit target; the line it draws is its child. */
+.table-borders-preview {
+  position: relative;
+  width: 9.5rem;
+  height: 7.5rem;
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.table-borders-preview .tbp-cells {
+  position: absolute;
+  inset: 0.75rem;
+  display: grid;
+  grid-template: 1fr 1fr / 1fr 1fr;
+  background: var(--table-borders-fill, transparent);
+}
+
+.table-borders-preview .tbp-cells span {
+  margin: 0.5rem;
+  background: repeating-linear-gradient(to bottom, var(--line) 0 0.125rem, transparent 0.125rem 0.4375rem);
+  opacity: 0.7;
+}
+
+.tbp-edge {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+}
+
+.tbp-edge:hover,
+.tbp-edge:focus-visible {
+  background: var(--accent-soft);
+}
+
+.tbp-edge:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+.tbp-edge > span {
+  display: block;
+  box-sizing: border-box;
+}
+
+/* An "off" line shows where it would go, faintly, so it can be found. */
+.tbp-edge > span[data-state="off"] {
+  outline: 1px dotted var(--faint);
+}
+
+.tbp-edge > span[data-state="mixed"] {
+  opacity: 0.45;
+}
+
+.tbp-top,
+.tbp-bottom,
+.tbp-inside-h {
+  left: 0.75rem;
+  right: 0.75rem;
+  height: 1.25rem;
+}
+
+.tbp-top > span,
+.tbp-bottom > span,
+.tbp-inside-h > span {
+  width: 100%;
+  height: 0;
+}
+
+.tbp-top { top: 0.125rem; }
+.tbp-bottom { bottom: 0.125rem; }
+.tbp-inside-h { top: calc(50% - 0.625rem); }
+
+.tbp-left,
+.tbp-right,
+.tbp-inside-v {
+  top: 0.75rem;
+  bottom: 0.75rem;
+  width: 1.25rem;
+}
+
+.tbp-left > span,
+.tbp-right > span,
+.tbp-inside-v > span {
+  width: 0;
+  height: 100%;
+}
+
+.tbp-left { left: 0.125rem; }
+.tbp-right { right: 0.125rem; }
+.tbp-inside-v { left: calc(50% - 0.625rem); }
+
+.table-borders-pen {
+  display: grid;
+  gap: var(--space-1);
+}
+
+/* ---- Table positioning (`table_position_dialog.mjs`) ---------------------- */
+.table-position-row {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.table-position-distances {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+@media (max-width: 38.75em) {
+  .table-borders-layout,
+  .table-position-row,
+  .table-position-distances {
+    grid-template-columns: 1fr 1fr;
+  }
 }

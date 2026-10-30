@@ -136,12 +136,17 @@ const WASM = fileURLToPath(new URL("../pkg/casual_doc_wasm_bg.wasm", import.meta
 // notes settings and conversion, review display and Word-compatible protection
 // hashing, AutoCorrect, selection language). MEASURED at 27,331,721 B; the
 // ceiling is that plus ~128 KiB.
-const MAX_TOTAL_BYTES = 27_465_000;
+// 27,465,000 -> 28,110,000 with round 3 (#918: Markdown and HTML import with
+// pulldown-cmark, content controls and forms, table layout and borders, shape
+// effects, picture insert, find/view extras). MEASURED by CI at 27,978,452 B;
+// the ceiling is that plus ~128 KiB.
+const MAX_TOTAL_BYTES = 28_110_000;
 /** What the browser then compiles. Measured: 10,594,266 B (#805); 11,585,101 B
  *  after §19; 12,349,976 B with HF-360, whose opt-level-3 build is 14,144,617 B,
  *  so a dropped `z` still lands far outside this. */
 // 13,170,000 -> 13,465,000 for the same work: MEASURED at 13,331,393 B, plus ~128 KiB.
-const MAX_CODE_BYTES = 13_465_000;
+// 13,465,000 -> 14,020,000 for the same work: MEASURED by CI at 13,887,605 B, plus ~128 KiB.
+const MAX_CODE_BYTES = 14_020_000;
 /** The engine is actually in here: a stub or a truncated file must not pass. */
 const MIN_CODE_BYTES = 3_000_000;
 

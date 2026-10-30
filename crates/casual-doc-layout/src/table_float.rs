@@ -318,6 +318,7 @@ pub(crate) fn place_floating_tables(
             },
             descr: None,
             transform: None,
+            shadow: None,
         });
     }
 }
@@ -395,6 +396,7 @@ fn table_float_anchor(position: &TableFloatPosition) -> DrawingAnchor {
         },
         wrap_polygon: None,
         behind_doc: false,
+        allow_overlap: true,
     }
 }
 

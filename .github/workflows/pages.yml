@@ -77,6 +77,13 @@ jobs:
       # page against the old script for hours (the Table menu opened empty in
       # production after #546). Version every script, stylesheet, module import
       # and the wasm binary with this commit, so they can only change together.
+      # Scanned-PDF recognition on the deployed editor: the PP-OCRv5 models
+      # (Apache-2.0) come from a GitHub release, verified by SHA-256 against
+      # tools/ocr-models.json, and are served same-origin under /ocr/. A missing
+      # release leaves the editor without models instead of failing the deploy.
+      - name: Stage the OCR models
+        run: node webapp/tools/stage-ocr-models.mjs
+
       - name: Version the site's assets with this commit
         run: ./webapp/stamp-assets.py webapp "${GITHUB_SHA::12}"
 

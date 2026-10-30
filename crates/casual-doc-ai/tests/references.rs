@@ -310,3 +310,137 @@ fn a_one_entry_table_of_contents_still_updates_after_a_docx_round_trip() {
     assert_eq!(lines(&reopened)[0], "Scope\t1");
     assert_eq!(toc_ranges(&reopened), 1, "the updated contents is a range");
 }
+
+/// `reference.removeToc`'s agent twin: the table and every entry go, and the
+/// body reads as it did before the insert. Mutation: return no operations from
+/// the plan's `RemoveTableOfContents` arm and the plan is refused as "changed
+/// nothing".
+#[test]
+fn an_agent_removes_the_table_of_contents_it_inserted() {
+    let body = format!(
+        "{}{}{}",
+        plain("Preface"),
+        heading("Heading1", "Scope"),
+        heading("Heading2", "Detail"),
+    );
+    let mut session = open(&word_file(&body, ""));
+    let before = lines(&session);
+    let preface = id_of(&session, "Preface");
+    apply(
+        &mut session,
+        "direct",
+        json!([{ "op": "insert_table_of_contents", "before": { "node": preface } }]),
+    )
+    .expect("the contents inserts");
+    assert_ne!(
+        lines(&session),
+        before,
+        "the premise: the table added entries"
+    );
+    apply(
+        &mut session,
+        "direct",
+        json!([{ "op": "remove_table_of_contents" }]),
+    )
+    .expect("the contents is removed");
+    assert_eq!(lines(&session), before);
+    let refused = apply(
+        &mut session,
+        "direct",
+        json!([{ "op": "remove_table_of_contents" }]),
+    )
+    .expect_err("nothing left to remove");
+    assert!(
+        format!("{refused:?}").contains("no table of contents to remove"),
+        "{refused:?}"
+    );
+}
+
+/// `reference.tableOfFigures`'s agent twin lists the captions of one label,
+/// with the label (default) or without it. Mutation: pass `include_label`
+/// inverted to the lowering, and the first entry starts ": Wiring".
+#[test]
+fn an_agent_table_of_figures_lists_each_caption_of_the_label() {
+    let body = format!(
+        "{}{}{}",
+        plain("Preface"),
+        plain("The wiring diagram"),
+        plain("The floor plan"),
+    );
+    let mut session = open(&word_file(&body, ""));
+    for (target, text) in [
+        ("The wiring diagram", ": Wiring"),
+        ("The floor plan", ": Floor"),
+    ] {
+        let target = id_of(&session, target);
+        apply(
+            &mut session,
+            "direct",
+            json!([{ "op": "insert_caption", "target": target, "label": "Figure", "text": text }]),
+        )
+        .expect("the caption inserts");
+    }
+    let preface = id_of(&session, "Preface");
+    apply(
+        &mut session,
+        "direct",
+        json!([{ "op": "insert_table_of_figures", "before": { "node": preface }, "label": "Figure" }]),
+    )
+    .expect("the table of figures inserts");
+    let all = lines(&session);
+    assert_eq!(
+        &all[..2],
+        ["Figure 1: Wiring\t1", "Figure 2: Floor\t1"],
+        "{all:?}"
+    );
+
+    let missing = apply(
+        &mut session,
+        "direct",
+        json!([{ "op": "insert_table_of_figures", "before": { "node": preface }, "label": "Equation" }]),
+    )
+    .expect_err("no equation captions");
+    assert!(
+        format!("{missing:?}").contains("no captions with that label"),
+        "{missing:?}"
+    );
+}
+
+/// `reference.addText.<level>`'s agent twin lists a body paragraph at a level
+/// without restyling it, and level 0 keeps a heading out. Mutation: map level
+/// 0 to `Some(0)` in the plan arm, and the edit is refused (levels are 1..=9).
+#[test]
+fn an_agent_sets_which_paragraphs_the_contents_lists() {
+    let body = format!(
+        "{}{}{}{}",
+        plain("Preface"),
+        heading("Heading1", "Scope"),
+        plain("Key finding"),
+        heading("Heading1", "Appendix"),
+    );
+    let mut session = open(&word_file(&body, ""));
+    let finding = id_of(&session, "Key finding");
+    let appendix = id_of(&session, "Appendix");
+    apply(
+        &mut session,
+        "direct",
+        json!([
+            { "op": "set_contents_level", "paragraphs": [finding], "level": 2 },
+            { "op": "set_contents_level", "paragraphs": [appendix], "level": 0 },
+        ]),
+    )
+    .expect("the levels are set");
+    let preface = id_of(&session, "Preface");
+    apply(
+        &mut session,
+        "direct",
+        json!([{ "op": "insert_table_of_contents", "before": { "node": preface } }]),
+    )
+    .expect("the contents inserts");
+    let all = lines(&session);
+    assert_eq!(&all[..2], ["Scope\t1", "Key finding\t1"], "{all:?}");
+    assert!(
+        !all[..3].iter().any(|line| line.starts_with("Appendix\t")),
+        "the appendix is kept out: {all:?}"
+    );
+}

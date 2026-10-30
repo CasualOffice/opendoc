@@ -22,6 +22,7 @@ import { APPLE_PLATFORM, STANDARD_PLATFORM, matchesShortcut, parseShortcut } fro
 import { APP_SCOPE, EDITOR_SCOPE, KEYMAP, chordCommand, chordTitle, shortcutForCommand } from "../src/keymap.mjs";
 import { QUICK_STYLES } from "../src/quick_styles.mjs";
 import { REGION_COMMAND_IDS } from "../src/region_focus.mjs";
+import { VIEW_TEXT_COMMAND_IDS } from "../src/editor_view_text.mjs";
 
 // `main.js` and the domain modules split out of it (docs/177): the editor page's code.
 const MAIN_JS = editorSource(fileURLToPath(new URL("../src/", import.meta.url)));
@@ -297,6 +298,9 @@ test("every chord names a command the registry actually returns", () => {
     ...FORMATTING_MARK_COMMAND_IDS,
     ...QUICK_STYLE_COMMAND_IDS,
     ...REGION_IDS,
+    // Dark document, Multiple pages, Print selection, the dictionary, Alt+X and
+    // Text from file: palette rows built in `editor_view_text.mjs`.
+    ...VIEW_TEXT_COMMAND_IDS,
   ]);
   assert.ok(registered.size > 80, `only ${registered.size} commands found; the scan has drifted`);
   const missing = [...new Set(KEYMAP.map((row) => row.command))].filter((id) => !registered.has(id));

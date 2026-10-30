@@ -8,6 +8,10 @@ import { pictureToolCommands } from "./picture_tools.mjs";
 import { createObjectAlign } from "./object_align.mjs";
 import { outlineStyleCommands, readOutlineStyle } from "./shape_outline_style.mjs";
 import { gradientCommands } from "./shape_gradient.mjs";
+// Own line (anti-conflict): Shadow and More layout options (`docs/153`).
+import { createShadowOptionsDialog, readShadow, shadowCommands } from "./shape_shadow.mjs";
+import { createLayoutOptionsDialog, layoutOptionsCommand, readLayoutOptions } from "./object_layout_options.mjs";
+import { registerModal } from "./modal.mjs";
 import { downloadBytes } from "./save_formats.mjs";
 import { editRefusalMessage } from "./edit_errors.mjs";
 import { formatShortcut } from "./keyboard.mjs";
@@ -17,6 +21,7 @@ import { POSITION_PRESETS, ROTATE_CHOICES, WRAP_CHOICES, Z_ORDER_CHOICES, active
 import { t } from "./i18n.mjs";
 import { followExternalTarget } from "./link_targets.mjs";
 import { tableToolCommands as buildTableToolCommands } from "./table_commands.mjs";
+import { tableBordersDialog } from "./table_borders_dialog.mjs";
 import { tableTools } from "./table_tools.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
@@ -223,17 +228,17 @@ export function createContextMenu(ed) {
     runEdit: (thunk, options) => ed.runEdit(thunk, options),
     selectTableContext,
     openSplitCellDialog: () => ed.toggleSplitCellDialog(true),
-    // `focus` names a control INSIDE the popover to land on, which is how
-    // `table.borderStyle` reaches the line-style pen from the Table menu and the
-    // palette without a second copy of the control: the same shape `layout.indent`
-    // uses to reach the indent field. Focus is taken after the click, because the
-    // popover is hidden until then and `.focus()` on a hidden element is a no-op.
+    // `focus` names a control INSIDE the popover to land on (the shape
+    // `layout.indent` uses to reach the indent field). Focus is taken after the
+    // click, because the popover is hidden until then and `.focus()` on a hidden
+    // element is a no-op.
     openCellFormat: (focus) => {
       ed.selectRibbonTab("table");
       ed.tableBtn.click();
       if (focus) document.getElementById(focus)?.focus();
     },
     openTableProperties: () => ed.toggleTableProperties(true),
+    openBordersDialog: () => tableBordersDialog.open(),
     stepTableBand: (axis, sign) => ed.tableChrome.stepCaretBand(ed.selection?.focus?.node, ed.pages, axis, sign),
     moveTableBand: (axis, sign) => ed.tableGutter.moveBand(ed.selection?.focus?.node, axis, sign),
     // The table tools (`table_tools.mjs`): the dialogs, Split Table, the style
@@ -427,6 +432,16 @@ export function createContextMenu(ed) {
         run: () => ed.editSelectionLink(),
       });
     }
+    // A content control under the caret: Word's right-click Properties and
+    // Remove Content Control, and the chooser (`content_controls.mjs`).
+    const control = ed.contentControls.atCaret();
+    if (control) {
+      annotate.push(
+        { id: "controls.fill", label: t("controls.fillCommand"), group: "annotate", enabled: !context.suggesting, disabledReason: t("controls.notInSuggesting"), run: () => ed.contentControls.openFill() },
+        { id: "controls.properties", label: t("controls.propertiesCommand"), group: "annotate", enabled: !context.suggesting, disabledReason: t("controls.notInSuggesting"), run: () => ed.contentControls.openProperties() },
+        { id: "controls.remove", label: t("controls.removeCommand"), group: "annotate", enabled: !context.suggesting, disabledReason: t("controls.notInSuggesting"), run: () => void ed.contentControls.remove() },
+      );
+    }
     if (context.comment) {
       annotate.push({
         id: "comment.open",
@@ -542,6 +557,8 @@ export function createContextMenu(ed) {
       return [
         ...commands.filter((row) => row.id === "edit.copy" || row.id === "edit.selectAll"),
         pick("edit.find", { group: "clipboard" }),
+        // Printing reads the document, so a read-only container offers it too.
+        context.hasRange ? pick("file.printSelection", { group: "clipboard" }) : null,
         ...annotate.filter((row) => row.id === "link.open" || row.id === "reference.goToHeading"),
       ].filter(Boolean);
     }
@@ -549,6 +566,10 @@ export function createContextMenu(ed) {
     if (!inTable) {
       // Prose menu: annotations, then the text-arrangement rows.
       commands.push(...annotate);
+      // Print selection, where ONLYOFFICE puts it: on the text menu, over a
+      // selection (`DocumentHolder.js` `txtPrintSelection`, `docs/153`
+      // shell.print-selection). The Print dialog's own choice is the File menu row.
+      if (context.hasRange) commands.push(pick("file.printSelection", { group: "annotate" }));
       commands.push({
         id: "format.menu",
         label: "Format text",
@@ -600,6 +621,29 @@ export function createContextMenu(ed) {
   // test (`tests/object_context_menu.test.mjs`).
   /** Arrange ▸ Align and Distribute (`object_align.mjs`, RM-28). One instance,
    *  so the target the reader picks stays chosen, as Word's does. */
+  // Shape Effects ▸ Shadow and Layout ▸ More layout options (`docs/153`
+  // object.shape-shadow, object.advanced-layout-options): one dialog each,
+  // adopted from `editor.html`, opened from the rows below and the palette.
+  const shadowNode = () => ed.objectSelection?.node ?? null;
+  const applyShadow = (node, request) =>
+    ed.runEdit(() => ed.doc.setShapeShadow(node, request ? JSON.stringify(request) : undefined), { gate: true });
+  const shadowOptions = createShadowOptionsDialog({
+    registerModal,
+    fallbackFocus: () => ed.pagesEl,
+    node: shadowNode,
+    read: (node) => ed.doc?.shapeShadow?.(node) ?? "",
+    apply: applyShadow,
+    t,
+  });
+  const layoutOptions = createLayoutOptionsDialog({
+    registerModal,
+    fallbackFocus: () => ed.pagesEl,
+    // The position belongs to the top-level object, never to a group member.
+    node: () => ed.objectSelection?.ref?.root ?? null,
+    read: (root) => ed.doc?.objectPosition?.(root) ?? "",
+    apply: (root, payload) => ed.runEdit(() => ed.doc.setObjectPosition(root, JSON.stringify(payload)), { gate: true }),
+    t,
+  });
   const objectAlign = createObjectAlign({
     doc: () => ed.doc,
     nodes: () => ed.objectArrange.candidates(),
@@ -612,6 +656,7 @@ export function createContextMenu(ed) {
   const objectContextMenuHost = {
     reviewMode: () => ed.reviewMode,
     alignRows: (mutationEnabled, mutationReason) => objectAlign.rows(mutationEnabled, mutationReason),
+    editPoints: () => ed.objectInsert.editPoints.toggle(),
     changeShape: (token) => {
       const node = ed.objectSelection?.node;
       if (!node) return;
@@ -648,6 +693,24 @@ export function createContextMenu(ed) {
           void ed.runEdit(() => ed.doc.setShapeOutlineStyle(node, dash, head, tail), { gate: true }).then(() => ed.reflectShapeSwatches());
         },
       });
+    },
+    shadowCommands: (mutationEnabled, mutationReason) => {
+      const node = shadowNode();
+      return shadowCommands({
+        shadow: node ? readShadow(ed.doc?.shapeShadow?.(node) ?? "") : undefined,
+        mutationEnabled,
+        mutationReason,
+        t,
+        apply: (request) => {
+          if (node) void applyShadow(node, request);
+        },
+        openOptions: () => shadowOptions.open(),
+      });
+    },
+    layoutOptionsCommand: (mutationEnabled, mutationReason) => {
+      const state = ed.arrangeState();
+      const read = readLayoutOptions(state?.read?.position ? JSON.stringify(state.read.position) : "");
+      return layoutOptionsCommand(read, { mutationEnabled, mutationReason, t, open: () => layoutOptions.open() });
     },
     readOnlyReason: () => ed.readOnlyReason,
     wrapModes: () => WRAP_CHOICES.map((choice) => [choice.value, t(choice.key)]),

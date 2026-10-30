@@ -113,6 +113,7 @@ fn page_anchor(x: f64, y: f64) -> DrawingAnchor {
         wrap_distances: WrapDistances::default(),
         wrap_polygon: None,
         behind_doc: false,
+        allow_overlap: true,
     }
 }
 
@@ -976,6 +977,7 @@ impl Builder {
                 border: None,
                 body_properties,
                 blocks,
+                shadow: None,
             })));
             return Ok(());
         };
@@ -1005,6 +1007,7 @@ impl Builder {
             flip_h: false,
             flip_v: false,
             rotation: Some((degrees * 60_000.0).round() as i32),
+            shadow: None,
         };
         inlines.push(InlineNode::Group(Box::new(WordprocessingGroup {
             id: self.id()?,
@@ -1241,6 +1244,7 @@ impl Builder {
                 ..TextBoxBodyProperties::default()
             },
             blocks: vec![BlockNode::Paragraph(paragraph)],
+            shadow: None,
         })));
         Ok(())
     }
@@ -1637,6 +1641,7 @@ fn shape(
         flip_v: false,
         rotation: None,
         hyperlink: None,
+        shadow: None,
     }
 }
 

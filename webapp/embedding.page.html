@@ -196,7 +196,7 @@
           <code data-claim="package-name">@casualoffice/opendoc-editor</code>
           version <span data-claim="package-version">0.1.0</span>:
           <span data-claim="package-file-count">12</span> files,
-          <span data-claim="package-unpacked-kb">250 kB</span> unpacked,
+          <span data-claim="package-unpacked-kb">255 kB</span> unpacked,
           <span data-claim="package-dependencies">0</span> runtime dependencies.
           <b data-i18n="site.embedding.prereleasesOnlyNextTag">Only pre-releases are published, under npm's next tag</b>, by a
           workflow the owner dispatches by hand (<code>docs/176</code> §8.3), so from a checkout a host installs
@@ -269,7 +269,7 @@ npm install /path/to/casualoffice-opendoc-editor-0.1.0.tgz</code></pre>
 
         <h2 id="mount" class="doc-h2" data-i18n="site.embedding.mount">Mount it</h2>
         <p class="doc-body" data-i18n="site.embedding.elementTakes">
-          The element takes <span data-claim="attribute-count">11</span>
+          The element takes <span data-claim="attribute-count">12</span>
           attributes. <code>mode</code> names a role; <code>can</code> and
           <code>chrome</code> narrow it, per capability and per region, so the role
           never has to be the unit of what a host can express; <code>prefs</code>
@@ -727,7 +727,7 @@ docker compose run --rm relay inspect /var/lib/opendoc-relay/room.journal</code>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>print</code></div>
-            <div class="disp-cell"><code>file.print</code></div>
+            <div class="disp-cell">—</div>
             <div class="disp-cell" data-i18n="site.chrome.print">File ▸ Print is present and disabled, with the reason as its title.</div>
           </div>
           <div class="disp-row">
@@ -767,8 +767,8 @@ docker compose run --rm relay inspect /var/lib/opendoc-relay/room.journal</code>
           and it is the same contract whether they hold a reference to the editor
           or are talking to it across an iframe boundary. Contract version
           <span data-claim="contract-version">1</span>:
-          <span data-claim="command-count">252</span> commands by name and
-          <span data-claim="family-count">13</span> families of value commands,
+          <span data-claim="command-count">267</span> commands by name and
+          <span data-claim="family-count">14</span> families of value commands,
           <span data-claim="event-count">10</span> events,
           <span data-claim="refusal-code-count">9</span> refusal codes and
           <span data-claim="verb-count">8</span> verbs
@@ -1504,7 +1504,7 @@ brand.json was refused:
           </li>
           <li>
             <b data-i18n="site.embedding.noWayHandYour">No way to hand it your document.</b> The element's
-            <span data-claim="attribute-count">11</span> attributes configure what
+            <span data-claim="attribute-count">12</span> attributes configure what
             the editor <em>is</em> — the role, the two withhold lists, the opening
             positions, a competitor's configuration block, the editor's language,
             where the editor lives and the frame's accessible name — and none of
@@ -1516,7 +1516,7 @@ brand.json was refused:
             selectable and every one of the
             <span data-claim="region-count">25</span> chrome regions can be
             withheld, but the groups <em>inside</em> a band are not addressable:
-            <span data-claim="unnamed-group-count">59</span> of them carry no
+            <span data-claim="unnamed-group-count">60</span> of them carry no
             <code>data-group</code> attribute at all, so a per-group roster would
             be half expressible. The honest grain for a host is the band.
           </li>

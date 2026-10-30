@@ -3,6 +3,7 @@
 // main.js, which hands it out at boot. Moved out of `main.js` unchanged
 // (docs/177); it reaches the rest of the editor only through the context `ed`.
 import { PAGE_WINDOW_OVERSCAN_PX, pageClientRect, pageRangeAt, scrollToDoc } from "./page_scroll.mjs";
+import { pageBandLeft } from "./page_scroll.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -92,7 +93,7 @@ export function createPaint(ed) {
     wrap.dataset.pageNumber = String(index + 1);
     wrap.style.width = `${ed.pageBandModel.widths[index]}px`;
     wrap.style.height = `${ed.pageBandModel.heights[index]}px`;
-    wrap.style.left = `${Math.round((ed.pageBandModel.width - ed.pageBandModel.widths[index]) / 2)}px`;
+    wrap.style.left = `${pageBandLeft(ed.pageBandModel, index)}px`; // a grid column in Multiple pages
     wrap.style.top = `${pageBandTop(index)}px`;
     wrap.__pageIndex = index;
 

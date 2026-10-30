@@ -442,6 +442,7 @@ fn a_floating_chart_keeps_its_anchor_through_a_save() {
         },
         behind_doc: false,
         wrap_polygon: None,
+        allow_overlap: true,
     };
     let before = projection(
         id(3),

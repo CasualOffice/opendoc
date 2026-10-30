@@ -173,6 +173,7 @@ fn fixture() -> (WasmDocument, Ids) {
                     border: None,
                     body_properties: TextBoxBodyProperties::default(),
                     blocks: vec![paragraph(51, vec![run(53, "Inside")])],
+                    shadow: None,
                 })),
             ],
         ),

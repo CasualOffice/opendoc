@@ -2,6 +2,7 @@
 // registry of real editor actions the palette, the menus and the ribbon read.
 // Moved out of `main.js` unchanged (docs/177); it reaches the rest of the
 // editor only through the context `ed`.
+import { openAccessibilityCheck } from "./accessibility_checker.mjs";
 import { narrowDecisionsToContainer } from "./review_authority.mjs";
 import { exportCommands } from "./export_commands.mjs";
 import { mutationBlockedMessage } from "./edit_errors.mjs";
@@ -18,6 +19,7 @@ import { flattenCommandTree, tableCommandLabel, tableMenuPlaceholders } from "./
 import { FIELD_KINDS } from "./field_kinds.mjs";
 import { insertChartTypeCommands } from "./chart_insert.mjs";
 import { tableTools } from "./table_tools.mjs";
+import { tableDrawMode } from "./table_draw_mode.mjs";
 import { revealOnSettings } from "./surface_reveal.mjs";
 import { quickStyleCommands } from "./quick_styles.mjs";
 
@@ -170,6 +172,16 @@ export function createPalette(ed) {
         run: () => ed.pasteAsText(),
       },
       {
+        id: "edit.pasteImage",
+        label: t("edit.pasteImage"),
+        group: "Clipboard",
+        kw: t("edit.pasteImage.keywords"),
+        contextMenu: true,
+        enabled: !!ed.doc && !!ed.selection,
+        disabledReason: t("paragraph.caretRequired"),
+        run: () => void ed.objectInsert.pasteAsPicture(),
+      },
+      {
         id: "edit.selectAll",
         label: "Select all",
         group: "Clipboard",
@@ -263,6 +275,15 @@ export function createPalette(ed) {
         enabled: ed.insertCommandEnabled("insert.tableDialog"),
         run: () => tableTools.openDialog("insertTable"),
       },
+      // Draw Table: toggles the pencil (`table_draw_mode.mjs`).
+      {
+        id: "insert.drawTable",
+        label: t("tableDraw.command"),
+        group: "Insert",
+        kw: "draw table pencil pen lines split cells outline",
+        enabled: ed.insertCommandEnabled("insert.drawTable"),
+        run: () => tableDrawMode.toggle(),
+      },
       {
         id: "insert.textToTable",
         label: t("table.tools.textToTableCommand"),
@@ -290,6 +311,7 @@ export function createPalette(ed) {
       { id: "insert.field", label: "Field…", group: "Insert", kw: "field placeholder page number of pages date time file name author auto update", enabled: ed.insertCommandEnabled("insert.field"), run: () => ed.openFieldDialog() },
       { id: "insert.dropCap", label: t("dropCap.command"), group: "Insert", kw: "initial letter dropped margin lines paragraph", enabled: ed.insertCommandEnabled("insert.dropCap"), run: () => ed.dropCapDialog.open() },
       { id: "insert.image", label: "Picture…", group: "Insert", kw: "image picture insert photo file png jpeg jpg gif paste", enabled: ed.insertCommandEnabled("insert.image"), run: () => ed.insertImageFromFile() },
+      { id: "insert.imageFromUrl", label: t("insert.imageFromUrl"), group: "Insert", kw: t("insert.imageFromUrl.keywords"), enabled: ed.insertCommandEnabled("insert.imageFromUrl"), run: () => ed.objectInsert.openPictureFromUrl() },
       { id: "insert.shape", label: "Shape…", group: "Insert", kw: "shape drawing autoshape rectangle rounded ellipse circle triangle diamond line arrow callout", enabled: ed.insertCommandEnabled("insert.shape"), run: () => ed.openShapeGallery() },
       { id: "insert.chart", label: t("insert.chart"), group: "Insert", kw: "chart graph column bar line area scatter pie doughnut plot data series", enabled: !!ed.selection, disabledReason: t("paragraph.caretRequired"), run: () => void ed.insertChartWithData() },
       // One row per chart type, the rows the Insert ▸ Chart picker offers
@@ -382,7 +404,7 @@ export function createPalette(ed) {
       ...ed.LAYOUT_SURFACE.filter((entry) => entry.label).map((entry) => ({
         id: entry.command,
         label: entry.label,
-        group: "Layout",
+        group: entry.group ?? "Layout",
         kw: entry.kw,
         enabled: ed.ribbonSurfaceEnabled(entry),
         disabledReason: ed.ribbonSurfaceReason(entry),
@@ -430,9 +452,15 @@ export function createPalette(ed) {
       // from the same place it was set (SKILL.md §10).
       { id: "tools.spellCheck", label: `Spell check: ${ed.settings.spellCheck === false ? "off" : "on"}`, group: "Tools", kw: "spelling spell check squiggle dictionary misspelled proofing language red underline glossary", noDoc: true, run: () => ed.setSpellCheckEnabled(ed.settings.spellCheck === false) },
       { id: "tools.grammarCheck", label: `Grammar check: ${ed.settings.grammarCheck === false ? "off" : "on"}`, group: "Tools", kw: "grammar check agreement doubled word article a an punctuation capitalisation capitalization proofing blue underline", noDoc: true, run: () => ed.setGrammarCheckEnabled(ed.settings.grammarCheck === false) },
+      // HF-064. Word's Review ▸ Accessibility ▸ Check Accessibility; the one
+      // opener `editor_command_surfaces.mjs` installed.
+      { id: "tools.checkAccessibility", label: t("a11yCheck.command"), group: "Tools", kw: "accessibility check checker alt text screen reader headings table header a11y wcag", enabled: !!ed.doc, disabledReason: t("command.needsDocument"), run: () => openAccessibilityCheck() },
       // HF-051. Word's Review ▸ Proofing ▸ Word Count, and its ⌘⇧G.
       { id: "tools.wordCount", label: t("wordCount.command"), group: "Tools", kw: "word count words characters paragraphs pages statistics length how many", enabled: !!ed.doc, disabledReason: t("command.needsDocument"), run: () => ed.wordCount.open() },
       { id: "tools.languages", label: t("proofLanguages.command"), group: "Tools", kw: "language pack proofing spelling dictionary install download offline locale manage languages", noDoc: true, run: () => ed.proofing.openLanguages() },
+      // Dark document, Multiple pages, Print selection, the personal dictionary,
+      // Alt+X and Insert text from file (`editor_view_text.mjs`, `docs/153`).
+      ...ed.viewText.paletteRows(),
       { id: "review.toggle", label: "Toggle comments & suggestions", group: "Review", kw: "sidebar review panel", run: () => ed.toggleReview() },
       { id: "review.compare", label: t("compare.command"), group: "Review", kw: "compare diff difference changes two documents review merge", enabled: !!ed.doc, disabledReason: t("compare.needsDocument"), run: () => ed.comparePanel.open() },
       // ⌘⇧E worked before this row and was advertised NOWHERE — no palette row, no

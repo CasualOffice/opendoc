@@ -103,6 +103,9 @@
         ]
       }
     </script>
+    <!-- Before the first paint: a document is about to open unless this is the
+         bare upload screen, so the chrome takes its final layout at once (CLS). -->
+    <script>if (!/[?&]blank=1(&|$)/.test(location.search)) document.documentElement.classList.add("doc-expected");</script>
     <link rel="stylesheet" href="./src/fonts.css" />
     <script src="./src/analytics.js"></script>
     <link rel="stylesheet" href="./src/style.css" />
@@ -310,7 +313,7 @@
             <button data-i18n="ui.ribbon" type="button" id="modeRibbon" class="chrome-mode-btn" role="radio"
                     data-chrome-mode="ribbon" aria-checked="true" tabindex="0">Ribbon</button>
           </div>
-          <input id="file" type="file" accept=".docx,.odt,.rtf,.pdf,.json,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/rtf,text/rtf,application/pdf,application/json,text/plain" hidden />
+          <input id="file" type="file" accept=".docx,.odt,.rtf,.pdf,.json,.txt,.md,.markdown,.html,.htm,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/rtf,text/rtf,application/pdf,application/json,text/plain,text/markdown,text/html" hidden />
           <select data-i18n-title="ui.saveFormat.title" data-i18n-label="ui.saveFormat.label" id="saveFormat" class="save-format" aria-label="Save format" title="Save format" disabled hidden></select>
           <button data-i18n-title="ui.documentProperties.title" data-i18n-label="ui.documentProperties.label" id="propertiesBtn" type="button" class="btn icon-only" title="Document properties" aria-label="Document properties" aria-haspopup="dialog" aria-expanded="false" disabled>
             <span class="ms" aria-hidden="true">info</span>
@@ -795,6 +798,10 @@
           <div class="rgroup" data-group="illustrations" data-ribbon-pinned>
             <div class="rgroup-ctl">
               <button data-i18n-title="panelInsert.insertPictureFromFile.title" data-i18n-label="panelInsert.insertPicture.label" id="insertPictureBtn" type="button" class="fmt fmt-big" title="Insert a picture from a file" aria-label="Insert picture" disabled><span class="ms" aria-hidden="true">image</span><span data-i18n="insertPictureBtn.picture" class="fmt-big-label">Picture</span></button>
+              <!-- Word's Pictures ▸ Online Pictures, Docs' Image ▸ By URL, ONLYOFFICE's
+                   Image ▸ From URL (`picture_url.mjs`): the address is downloaded once
+                   and the picture EMBEDDED, through the host's network policy. -->
+              <button data-i18n-title="panelInsert.insertPictureFromUrl.title" data-i18n-label="panelInsert.insertPictureFromUrl.label" id="insertPictureUrlBtn" type="button" class="fmt" title="Insert a picture from a web address" aria-label="Picture from URL" aria-haspopup="dialog" aria-controls="pictureUrlDialog" disabled><span class="ms" aria-hidden="true">add_link</span></button>
               <button data-i18n-title="panelInsert.insertShape.title" data-i18n-label="panelInsert.insertShape.label" id="insertShapeBtn" type="button" class="fmt fmt-big" title="Insert a shape" aria-label="Insert shape" aria-haspopup="menu" aria-expanded="false" aria-controls="shapeGalleryMenu" disabled><span class="ms" aria-hidden="true">interests</span><span data-i18n="insertShapeBtn.shapes" class="fmt-big-label">Shapes</span></button>
               <button data-i18n-title="panelInsert.insertChart.title" data-i18n-label="panelInsert.insertChart.title" id="insertChartBtn" type="button" class="fmt fmt-big" title="Insert a chart" aria-label="Insert a chart" aria-haspopup="menu" disabled><span class="ms" aria-hidden="true">bar_chart</span><span data-i18n="insertChartBtn.chart" class="fmt-big-label">Chart</span></button>
               <button data-i18n-title="panelInsert.insertTextBox.title" data-i18n-label="panelInsert.insertTextBox.label" id="insertTextBoxBtn" type="button" class="fmt fmt-big" title="Insert a text box" aria-label="Insert text box" disabled><span class="ms" aria-hidden="true">text_fields</span><span data-i18n="insertTextBoxBtn.textBox" class="fmt-big-label">Text box</span></button>
@@ -839,6 +846,16 @@
               <button data-i18n-title="panelInsert.insertDateField.title" data-i18n-label="fieldList.date" id="insertDateBtn" type="button" class="fmt" title="Insert today’s date as a field" aria-label="Date" disabled><span class="ms" aria-hidden="true">calendar_today</span></button>
             </div>
             <span data-i18n="panelInsert.text" class="rgroup-label">Text</span>
+          </div>
+          <!-- Controls (`109` RM-34): Word's Developer ▸ Controls as ONE dropdown, which
+               is ONLYOFFICE's Insert ▸ Content Controls (`btnContentControls`) —
+               seven band buttons would spend the band's remaining width on a
+               group most documents never open. `content_controls.mjs`. -->
+          <div class="rgroup" data-group="insert-controls">
+            <div class="rgroup-ctl">
+              <button data-i18n-title="panelInsert.contentControls.title" data-i18n-label="panelInsert.contentControls.label" id="insertControlsBtn" type="button" class="fmt" title="Insert a content control: text, picture, check box, list or date" aria-label="Content controls" aria-haspopup="menu" aria-controls="insertControlsMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">check_box</span></button>
+            </div>
+            <span data-i18n="panelInsert.controls" class="rgroup-label">Controls</span>
           </div>
           <!-- Footnote and Endnote moved to References ▸ Notes, which is where
                Word keeps them and the only place it keeps them. They are still
@@ -1078,6 +1095,7 @@
           </div>
           <div class="rgroup">
             <div class="rgroup-ctl">
+              <button data-i18n-title="panelTable.drawTable.title" data-i18n-label="panelTable.drawTable.label" type="button" class="fmt" id="tableDrawBtn" title="Draw table: drag to draw a table, or across a table to split its cells" aria-label="Draw table" aria-pressed="false" disabled><span class="ms" aria-hidden="true">draw</span></button>
               <button data-i18n-title="panelTable.splitTable.title" data-i18n-label="panelTable.splitTable.label" type="button" class="fmt" id="tableSplitBtn" title="Split the table so this row starts a new one" aria-label="Split table" disabled><span class="ms" aria-hidden="true">horizontal_split</span></button>
               <button data-i18n-title="panelTable.insertCells.title" data-i18n-label="panelTable.insertCells.label" type="button" class="fmt" id="tableInsertCellsBtn" title="Insert cells and shift the others" aria-label="Insert cells" aria-haspopup="dialog" aria-controls="tableInsertCellsDialog" disabled><span class="ms" aria-hidden="true">add_box</span></button>
               <button data-i18n-title="panelTable.deleteCells.title" data-i18n-label="panelTable.deleteCells.label" type="button" class="fmt table-danger" id="tableDeleteCellsBtn" title="Delete cells and shift the others" aria-label="Delete cells" aria-haspopup="dialog" aria-controls="tableDeleteCellsDialog" disabled><span class="ms" aria-hidden="true">indeterminate_check_box</span></button>
@@ -1088,6 +1106,7 @@
           <div class="rgroup">
             <div class="rgroup-ctl">
               <button data-i18n-title="panelTable.cellShadingAlignmentBorders.title" data-i18n-label="panelTable.cellBorderFormatting.label" id="tableBtn" type="button" class="fmt" title="Cell shading, alignment, and borders" aria-label="Cell and border formatting" aria-haspopup="dialog" aria-expanded="false" disabled><span class="ms" aria-hidden="true">format_color_fill</span></button>
+              <button data-i18n-title="panelTable.bordersShading.title" data-i18n-label="panelTable.bordersShading.label" id="tableBordersBtn" type="button" class="fmt" title="Borders and shading" aria-label="Borders and shading" aria-haspopup="dialog" aria-controls="tableBordersDialog" disabled><span class="ms" aria-hidden="true">border_all</span></button>
               <button data-i18n-title="panelTable.textDirection.title" data-i18n-label="panelTable.textDirection.label" id="tableTextDirectionBtn" type="button" class="fmt" title="Text direction in the selected cells" aria-label="Text direction" aria-haspopup="menu" aria-controls="tableTextDirectionMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">text_rotate_vertical</span></button>
             </div>
             <span data-i18n="panelTable.cellFormat" class="rgroup-label">Cell format</span>
@@ -1276,6 +1295,8 @@
               <button data-i18n-title="panelReview.proofingLanguages.title" data-i18n-label="panelReview.proofingLanguages.label" id="reviewProofLanguagesBtn" type="button" class="fmt" title="Install proofing for another language" aria-label="Proofing languages" aria-haspopup="dialog"><span class="ms" aria-hidden="true">language</span></button>
               <!-- Word count (HF-051): Word's Review ▸ Proofing ▸ Word Count. -->
               <button data-i18n-title="panelReview.wordCount.title" data-i18n-label="panelReview.wordCount.label" id="reviewWordCountBtn" type="button" class="fmt" title="Count words, characters and paragraphs" aria-label="Word count" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">match_word</span></button>
+              <!-- Check accessibility (HF-064): Word's Review ▸ Accessibility. -->
+              <button data-i18n-title="panelReview.checkAccessibility.title" data-i18n-label="panelReview.checkAccessibility.label" id="reviewA11yCheckBtn" type="button" class="fmt" title="Check the document for accessibility problems" aria-label="Check accessibility" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">accessibility_new</span></button>
             </div>
             <span data-i18n="panelReview.proofing" class="rgroup-label">Proofing</span>
           </div>
@@ -1460,6 +1481,141 @@
          crate manifest) rather than typed here, so it cannot drift. -->
     <!-- Word count (HF-051). Word's dialog: the document's figures, and the
          selection's beside them whenever there is one. `word_count.mjs`. -->
+    <!-- Check accessibility (HF-064). `accessibility_checker.mjs`: the rules,
+         the projection they read, and what is not checked. -->
+    <div id="a11yCheckDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="a11yCheckTitle" aria-describedby="a11yCheckSummary">
+      <section class="dialog-card a11y-check-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="a11yCheckDialog.title" id="a11yCheckTitle">Accessibility check</h2>
+              <p data-i18n="a11yCheckDialog.description">What a screen-reader user will meet in this document, and how to fix it.</p>
+            </div>
+          </div>
+          <button data-i18n-title="a11yCheckDialog.close.title" data-i18n-label="a11yCheckDialog.close.label" id="a11yCheckClose" type="button" class="dialog-close" title="Close" aria-label="Close accessibility check">
+            <span class="ms" aria-hidden="true">close</span>
+          </button>
+        </header>
+        <div class="dialog-body">
+          <p id="a11yCheckSummary" class="a11y-check-summary" role="status"></p>
+          <p data-i18n="a11yCheckDialog.foldNote" id="a11yCheckFoldNote" class="dialog-note" hidden>Collapsed headings are not checked. Expand all to check everything.</p>
+          <p data-i18n="a11yCheckDialog.scopeNote" class="dialog-note">Link text, theme and automatic text colours, and text outside the body are not checked yet.</p>
+          <ul id="a11yCheckList" class="a11y-check-list"></ul>
+        </div>
+        <footer class="dialog-foot">
+          <div class="dialog-actions">
+            <button data-i18n="a11yCheckDialog.done" id="a11yCheckDone" type="button" class="dialog-button dialog-button-primary">Close</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <!-- Content control properties (`content_controls.mjs`, `109` RM-34): Word's
+         Content Control Properties dialog, with ONLYOFFICE's placeholder field. -->
+    <div id="controlPropsDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="controlPropsHeading" aria-describedby="controlPropsKind">
+      <section class="dialog-card control-props-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="controls.props.title" id="controlPropsHeading">Content control properties</h2>
+              <p id="controlPropsKind"></p>
+            </div>
+          </div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="controls.props.close" id="controlPropsClose" type="button" class="dialog-close" title="Close" aria-label="Close content control properties"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body control-props-body">
+          <div class="dialog-field-grid">
+            <label data-i18n="controls.props.titleField" class="dialog-field">Title<input id="controlPropsTitle" type="text" maxlength="255" /></label>
+            <label data-i18n="controls.props.tag" class="dialog-field">Tag<input id="controlPropsTag" type="text" maxlength="255" /></label>
+          </div>
+          <div class="dialog-field-grid">
+            <label class="dialog-check"><input id="controlPropsUseColor" type="checkbox" /><span data-i18n="controls.props.useColor">Colour</span></label>
+            <input data-i18n-label="controls.props.color" id="controlPropsColor" type="color" value="#3355c4" aria-label="Control colour" />
+            <label data-i18n="controls.props.role" class="dialog-field">Filled by<select id="controlPropsRole" class="dialog-select"></select></label>
+          </div>
+          <label id="controlPropsPlaceholderRow" data-i18n="controls.props.placeholder" class="dialog-field">Placeholder text<input id="controlPropsPlaceholder" type="text" maxlength="255" /></label>
+          <label class="dialog-check"><input id="controlPropsTemporary" type="checkbox" /><span data-i18n="controls.props.temporary">Remove content control when contents are edited</span></label>
+          <fieldset class="dialog-group">
+            <legend data-i18n="controls.props.locking">Locking</legend>
+            <label class="dialog-check"><input id="controlPropsLockControl" type="checkbox" /><span data-i18n="controls.props.lockControl">Content control cannot be deleted</span></label>
+            <label class="dialog-check"><input id="controlPropsLockContent" type="checkbox" /><span data-i18n="controls.props.lockContent">Contents cannot be edited</span></label>
+          </fieldset>
+          <fieldset id="controlPropsListRow" class="dialog-group" hidden>
+            <legend data-i18n="controls.props.list">List entries (display name, value)</legend>
+            <ul id="controlPropsList" class="control-item-list"></ul>
+            <button data-i18n="controls.props.addItem" id="controlPropsAddItem" type="button" class="dialog-button">Add entry</button>
+          </fieldset>
+          <fieldset id="controlPropsDateRow" class="dialog-group" hidden>
+            <legend data-i18n="controls.props.dateFormat">Display the date like this</legend>
+            <input data-i18n-label="controls.props.dateFormat" id="controlPropsDateFormat" type="text" maxlength="255" list="controlPropsDateFormats" aria-label="Display the date like this" />
+            <datalist id="controlPropsDateFormats"></datalist>
+            <small id="controlPropsDatePreview" class="settings-note"></small>
+          </fieldset>
+        </div>
+        <footer class="dialog-foot">
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" id="controlPropsCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="controls.props.ok" id="controlPropsOk" type="button" class="dialog-button dialog-button-primary">OK</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <!-- Choose a value: a drop-down's or combo box's entries, or a date
+         (`content_controls.mjs`). A dialog rather than Word's in-place list, so it is
+         keyboard- and screen-reader-operable on every surface, a phone included. -->
+    <div id="controlFillDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="controlFillTitle">
+      <section class="dialog-card control-fill-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 id="controlFillTitle"></h2>
+            </div>
+          </div>
+        </header>
+        <div class="dialog-body">
+          <ul data-i18n-label="controls.fill.list" id="controlFillList" class="control-fill-list" role="listbox" aria-label="Entries"></ul>
+          <label id="controlFillTextRow" data-i18n="controls.fill.text" class="dialog-field" hidden>Or type a value<input id="controlFillText" type="text" maxlength="255" /></label>
+          <label id="controlFillDateRow" data-i18n="controls.fill.date" class="dialog-field" hidden>Date<input id="controlFillDate" type="date" /></label>
+        </div>
+        <footer class="dialog-foot">
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" id="controlFillCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="controls.props.ok" id="controlFillOk" type="button" class="dialog-button dialog-button-primary">OK</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <!-- Form roles (`form_roles.mjs`, `docs/153` shell.form-roles): ONLYOFFICE's
+         roles manager and "View form as". Kept beside the document, not in it. -->
+    <div id="formRolesDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="formRolesTitle" aria-describedby="formRolesDescription">
+      <section class="dialog-card form-roles-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="formRoles.title" id="formRolesTitle">Form roles</h2>
+              <p data-i18n="formRoles.description" id="formRolesDescription">Who fills which field. Roles are kept by this editor beside the document; they are not saved inside the .docx.</p>
+            </div>
+          </div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="formRoles.close" id="formRolesClose" type="button" class="dialog-close" title="Close" aria-label="Close form roles"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body form-roles-body">
+          <ul id="formRolesList" class="form-role-list"></ul>
+          <button data-i18n="formRoles.add" id="formRolesAdd" type="button" class="dialog-button">Add role</button>
+          <label data-i18n="formRoles.fillAs" class="dialog-field">Fill the form as<select id="formRolesFillAs" class="dialog-select"></select></label>
+          <label data-i18n="formRoles.showFields" class="dialog-field">Show the fields for<select id="formRolesFilter" class="dialog-select"></select></label>
+          <ul id="formRolesFields" class="form-role-fields"></ul>
+        </div>
+        <footer class="dialog-foot">
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" id="formRolesCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="formRoles.save" id="formRolesSave" type="button" class="dialog-button dialog-button-primary">Save</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
     <div id="wordCountDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="wordCountTitle" aria-describedby="wordCountScope">
       <section class="dialog-card word-count-dialog">
         <header class="dialog-head">
@@ -1494,6 +1650,40 @@
         </footer>
       </section>
     </div>
+    <!-- Personal dictionary (`docs/153` review.personal-dictionary-manage;
+         `editor_view_text.mjs`). Word's Custom Dictionaries ▸ Edit Word List:
+         the words, Add, Delete, Delete all. Changes apply at once. -->
+    <div id="dictionaryDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="dictionaryTitle" aria-describedby="dictionaryDescription">
+      <section class="dialog-card dialog-card-compact dictionary-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="dictionaryDialog.title" id="dictionaryTitle">Personal dictionary</h2>
+              <p data-i18n="dictionaryDialog.description" id="dictionaryDescription">Words you added are never marked as misspelled. They are kept in this browser only.</p>
+            </div>
+          </div>
+          <button data-dictionary-dismiss data-i18n-title="dictionaryDialog.close.title" data-i18n-label="dictionaryDialog.close.label" id="dictionaryClose" type="button" class="dialog-close" title="Close" aria-label="Close personal dictionary"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <form id="dictionaryAddForm" class="dictionary-add">
+            <label class="dialog-field"><span data-i18n="dictionaryDialog.word">Word</span><input id="dictionaryWord" type="text" autocomplete="off" spellcheck="false" maxlength="64" /></label>
+            <button data-i18n="dictionaryDialog.add" id="dictionaryAdd" type="submit" class="dialog-button">Add</button>
+          </form>
+          <ul data-i18n-label="dictionaryDialog.list.label" id="dictionaryWords" class="dictionary-words" aria-label="Words in your dictionary"></ul>
+          <p data-i18n="dictionaryDialog.empty" id="dictionaryEmpty" class="dialog-note" hidden>Your dictionary is empty. Right-click a flagged word and choose Add to dictionary, or type one above.</p>
+          <p id="dictionaryStatus" class="dialog-note" role="status"></p>
+        </div>
+        <footer class="dialog-foot">
+          <div class="dialog-actions">
+            <button data-i18n="dictionaryDialog.clear" id="dictionaryClear" type="button" class="dialog-button">Delete all</button>
+            <button data-dictionary-dismiss data-i18n="dictionaryDialog.done" id="dictionaryDone" type="button" class="dialog-button dialog-button-primary">Close</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+    <!-- Insert ▸ Text from file (`docs/153` page.textFromFile): the picker the
+         command opens. Word's list: Word, OpenDocument, Rich Text, text, Markdown. -->
+    <input id="insertFromFileInput" type="file" accept=".docx,.odt,.rtf,.txt,.md,.markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/rtf,text/plain,text/markdown" hidden />
     <!-- AutoCorrect options (RM-19; `autocorrect_dialog.mjs`): Word's AutoCorrect
          and AutoFormat As You Type switches, the replace table and the
          first-letter exceptions, both lists per language. Changes apply at once,
@@ -2231,6 +2421,25 @@
     <!-- References ▸ Add text: rows built when it opens, so the current level
          is checked (`toc_commands.mjs`). -->
     <div data-i18n-label="panelReferences.addText.label" id="refAddTextMenu" class="context-menu" hidden role="menu" aria-label="Add text"></div>
+    <!-- The Controls dropdown (`content_controls.mjs`, `109` RM-34): Word's seven
+         kinds in Word's order, the three that act on the control at the caret,
+         and the two form commands. Each row carries the command it runs. -->
+    <div data-i18n-label="panelInsert.contentControls.label" id="insertControlsMenu" class="context-menu" hidden role="menu" aria-label="Content controls">
+      <button data-i18n="controls.kind.richText" type="button" role="menuitem" class="menu-item" data-command="controls.insert.richText">Rich text</button>
+      <button data-i18n="controls.kind.plainText" type="button" role="menuitem" class="menu-item" data-command="controls.insert.plainText">Plain text</button>
+      <button data-i18n="controls.kind.picture" type="button" role="menuitem" class="menu-item" data-command="controls.insert.picture">Picture</button>
+      <button data-i18n="controls.kind.checkbox" type="button" role="menuitem" class="menu-item" data-command="controls.insert.checkbox">Check box</button>
+      <button data-i18n="controls.kind.comboBox" type="button" role="menuitem" class="menu-item" data-command="controls.insert.comboBox">Combo box</button>
+      <button data-i18n="controls.kind.dropDownList" type="button" role="menuitem" class="menu-item" data-command="controls.insert.dropDownList">Drop-down list</button>
+      <button data-i18n="controls.kind.date" type="button" role="menuitem" class="menu-item" data-command="controls.insert.date">Date picker</button>
+      <div class="menu-divider"></div>
+      <button data-i18n="controls.fillCommand" type="button" role="menuitem" class="menu-item" data-command="controls.fill">Choose a value…</button>
+      <button data-i18n="controls.propertiesCommand" type="button" role="menuitem" class="menu-item" data-command="controls.properties">Content control properties…</button>
+      <button data-i18n="controls.removeCommand" type="button" role="menuitem" class="menu-item" data-command="controls.remove">Remove content control</button>
+      <div class="menu-divider"></div>
+      <button data-i18n="forms.protectCommand" type="button" role="menuitem" class="menu-item" data-command="review.protectForm">Protect form</button>
+      <button data-i18n="formRoles.command" type="button" role="menuitem" class="menu-item" data-command="forms.roles">Form roles…</button>
+    </div>
     <div data-i18n-label="panelInsert.breaks.label" id="insertBreaksMenu" class="context-menu" hidden role="menu" aria-label="Breaks">
       <button data-i18n="break.blankPage" type="button" role="menuitem" class="menu-item" data-command="layout.blankPage">Blank page</button>
       <button data-i18n="break.page" type="button" role="menuitem" class="menu-item" data-command="layout.break.page">Page break</button>
@@ -2310,6 +2519,7 @@
     <div data-i18n-label="ui.insertTable.label" id="insertTableMenu" class="context-menu grid-picker" hidden role="dialog" aria-label="Insert table">
       <div id="gridPicker" class="grid-cells"></div>
       <div data-i18n="insertTableMenu.insertTable" id="gridLabel" class="grid-label">Insert table</div>
+      <button data-i18n="insertTableMenu.drawTable" id="insertTableDrawBtn" type="button" class="menu-item grid-draw" aria-pressed="false">Draw table</button>
     </div>
     <div data-i18n-label="ui.tableStyles.label" id="tableStyleMenu" class="context-menu table-style-menu" hidden role="menu" aria-label="Table styles"></div>
     <div data-i18n-label="panelTable.styleOptions.label" id="tableLookMenu" class="context-menu" hidden role="menu" aria-label="Table style options"></div>
@@ -2738,6 +2948,145 @@
       </section>
     </div>
 
+    <!-- Borders and shading (`table_borders_dialog.mjs`): Word's dialog in one
+         card. The preview's six lines are buttons — click one to draw or remove
+         it; the pen draws what is on. -->
+    <div id="tableBordersDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="tableBordersTitle" aria-describedby="tableBordersDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="tableBordersDialog.title" id="tableBordersTitle">Borders and shading</h2>
+              <p data-i18n="tableBordersDialog.description" id="tableBordersDescription">Click a line in the preview to draw or remove it, or choose a preset.</p>
+            </div>
+          </div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="tableBordersDialog.close.label" type="button" class="dialog-close" data-dialog-cancel title="Close" aria-label="Close borders and shading"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <div data-i18n-label="tableBordersDialog.presets.label" class="chip-row table-borders-presets" role="group" aria-label="Presets">
+            <button data-i18n="tableBordersDialog.preset.none" type="button" class="chip-btn" data-border-preset="none" aria-pressed="false">None</button>
+            <button data-i18n="tableBordersDialog.preset.box" type="button" class="chip-btn" data-border-preset="box" aria-pressed="false">Box</button>
+            <button data-i18n="tableBordersDialog.preset.all" type="button" class="chip-btn" data-border-preset="all" aria-pressed="false">All</button>
+            <button data-i18n="tableBordersDialog.preset.inside" type="button" class="chip-btn" data-border-preset="inside" aria-pressed="false">Inside</button>
+          </div>
+          <div class="table-borders-layout">
+            <div data-i18n-label="tableBordersDialog.preview.label" id="tableBordersPreview" class="table-borders-preview" role="group" aria-label="Preview">
+              <span class="tbp-cells" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
+              <button data-i18n-label="tableBordersDialog.line.top" type="button" class="tbp-edge tbp-top" data-border-line="top" aria-label="Top border" aria-pressed="false"><span></span></button>
+              <button data-i18n-label="tableBordersDialog.line.bottom" type="button" class="tbp-edge tbp-bottom" data-border-line="bottom" aria-label="Bottom border" aria-pressed="false"><span></span></button>
+              <button data-i18n-label="tableBordersDialog.line.left" type="button" class="tbp-edge tbp-left" data-border-line="left" aria-label="Left border" aria-pressed="false"><span></span></button>
+              <button data-i18n-label="tableBordersDialog.line.right" type="button" class="tbp-edge tbp-right" data-border-line="right" aria-label="Right border" aria-pressed="false"><span></span></button>
+              <button data-i18n-label="tableBordersDialog.line.insideH" type="button" class="tbp-edge tbp-inside-h" data-border-line="insideH" aria-label="Inside horizontal border" aria-pressed="false"><span></span></button>
+              <button data-i18n-label="tableBordersDialog.line.insideV" type="button" class="tbp-edge tbp-inside-v" data-border-line="insideV" aria-label="Inside vertical border" aria-pressed="false"><span></span></button>
+            </div>
+            <div class="table-borders-pen">
+              <label data-i18n="tableBordersDialog.style" class="dialog-field">Style<select id="tableBordersStyle" class="dialog-select">
+                <option data-i18n="borderStyle.single" value="single">Solid</option>
+                <option data-i18n="borderStyle.double" value="double">Double</option>
+                <option data-i18n="borderStyle.dotted" value="dotted">Dotted</option>
+                <option data-i18n="borderStyle.dashed" value="dashed">Dashed</option>
+                <option data-i18n="borderStyle.dotDash" value="dotDash">Dash-dot</option>
+                <option data-i18n="borderStyle.dotDotDash" value="dotDotDash">Dash-dot-dot</option>
+              </select></label>
+              <label data-i18n="tableBordersDialog.width" class="dialog-field">Width<select id="tableBordersWidth" class="dialog-select"></select></label>
+              <label data-i18n="tableBordersDialog.color" class="dialog-field">Color<input id="tableBordersColor" type="color" value="#000000" /></label>
+              <label data-i18n="tableBordersDialog.applyTo" class="dialog-field">Apply to<select id="tableBordersScope" class="dialog-select">
+                <option data-i18n="tableBordersDialog.scope.table" value="table">Table</option>
+                <option data-i18n="tableBordersDialog.scope.cells" value="cells">Selected cells</option>
+              </select></label>
+            </div>
+          </div>
+          <div class="dialog-field-grid">
+            <label data-i18n="tableBordersDialog.shading" class="dialog-field">Shading<input id="tableBordersFill" type="color" value="#ffffff" /></label>
+            <label class="dialog-check"><input id="tableBordersNoFill" type="checkbox" checked /><span data-i18n="tableBordersDialog.noFill">No fill</span></label>
+          </div>
+        </div>
+        <footer class="dialog-foot">
+          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" type="button" class="dialog-button" data-dialog-cancel>Cancel</button>
+            <button data-i18n="tableBordersDialog.apply" type="button" class="dialog-button dialog-button-primary" data-dialog-apply>Apply</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <!-- Table positioning (`table_position_dialog.mjs`): Word's Positioning…
+         dialog, opened from Table properties when Text wrapping is Around. -->
+    <div id="tablePositionDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="tablePositionTitle" aria-describedby="tablePositionDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="tablePositionDialog.title" id="tablePositionTitle">Table positioning</h2>
+              <p data-i18n="tablePositionDialog.description" id="tablePositionDescription">Where the table sits on the page while text wraps around it.</p>
+            </div>
+          </div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="tablePositionDialog.close.label" type="button" class="dialog-close" data-dialog-cancel title="Close" aria-label="Close table positioning"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <fieldset class="dialog-group">
+            <legend data-i18n="tablePositionDialog.horizontal">Horizontal</legend>
+            <div class="dialog-field-grid table-position-row">
+              <label data-i18n="tablePositionDialog.position" class="dialog-field">Position<select id="tablePositionHAlign" class="dialog-select">
+                <option data-i18n="tablePositionDialog.align.left" value="left">Left</option>
+                <option data-i18n="tablePositionDialog.align.center" value="center">Center</option>
+                <option data-i18n="tablePositionDialog.align.right" value="right">Right</option>
+                <option data-i18n="tablePositionDialog.align.inside" value="inside">Inside</option>
+                <option data-i18n="tablePositionDialog.align.outside" value="outside">Outside</option>
+                <option data-i18n="tablePositionDialog.align.offset" value="offset">Offset</option>
+              </select></label>
+              <label data-i18n="tablePositionDialog.offset" class="dialog-field">Offset<span class="number-control"><input id="tablePositionHOffset" type="number" min="-22" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+              <label data-i18n="tablePositionDialog.relativeTo" class="dialog-field">Relative to<select id="tablePositionHRelative" class="dialog-select">
+                <option data-i18n="tablePositionDialog.relative.column" value="column">Column</option>
+                <option data-i18n="tablePositionDialog.relative.margin" value="margin">Margin</option>
+                <option data-i18n="tablePositionDialog.relative.page" value="page">Page</option>
+              </select></label>
+            </div>
+          </fieldset>
+          <fieldset class="dialog-group">
+            <legend data-i18n="tablePositionDialog.vertical">Vertical</legend>
+            <div class="dialog-field-grid table-position-row">
+              <label data-i18n="tablePositionDialog.position" class="dialog-field">Position<select id="tablePositionVAlign" class="dialog-select">
+                <option data-i18n="tablePositionDialog.align.top" value="top">Top</option>
+                <option data-i18n="tablePositionDialog.align.center" value="center">Center</option>
+                <option data-i18n="tablePositionDialog.align.bottom" value="bottom">Bottom</option>
+                <option data-i18n="tablePositionDialog.align.inside" value="inside">Inside</option>
+                <option data-i18n="tablePositionDialog.align.outside" value="outside">Outside</option>
+                <option data-i18n="tablePositionDialog.align.offset" value="offset">Offset</option>
+              </select></label>
+              <label data-i18n="tablePositionDialog.offset" class="dialog-field">Offset<span class="number-control"><input id="tablePositionVOffset" type="number" min="-22" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+              <label data-i18n="tablePositionDialog.relativeTo" class="dialog-field">Relative to<select id="tablePositionVRelative" class="dialog-select">
+                <option data-i18n="tablePositionDialog.relative.paragraph" value="paragraph">Paragraph</option>
+                <option data-i18n="tablePositionDialog.relative.margin" value="margin">Margin</option>
+                <option data-i18n="tablePositionDialog.relative.page" value="page">Page</option>
+              </select></label>
+            </div>
+          </fieldset>
+          <fieldset class="dialog-group">
+            <legend data-i18n="tablePositionDialog.distance">Distance from surrounding text</legend>
+            <div class="dialog-field-grid table-position-distances">
+              <label data-i18n="tablePositionDialog.top" class="dialog-field">Top<span class="number-control"><input id="tablePositionTop" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+              <label data-i18n="tablePositionDialog.bottom" class="dialog-field">Bottom<span class="number-control"><input id="tablePositionBottom" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+              <label data-i18n="tablePositionDialog.left" class="dialog-field">Left<span class="number-control"><input id="tablePositionLeft" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+              <label data-i18n="tablePositionDialog.right" class="dialog-field">Right<span class="number-control"><input id="tablePositionRight" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+            </div>
+          </fieldset>
+          <div class="dialog-field-grid">
+            <label class="dialog-check"><input id="tablePositionMoveWithText" type="checkbox" /><span data-i18n="tablePositionDialog.moveWithText">Move with text</span></label>
+            <label class="dialog-check"><input id="tablePositionOverlap" type="checkbox" /><span data-i18n="tablePositionDialog.allowOverlap">Allow overlap</span></label>
+          </div>
+        </div>
+        <footer class="dialog-foot">
+          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" type="button" class="dialog-button" data-dialog-cancel>Cancel</button>
+            <button data-i18n="tablePositionDialog.apply" type="button" class="dialog-button dialog-button-primary" data-dialog-apply>Apply</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
     <div id="splitCellDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="splitCellTitle" aria-describedby="splitCellDescription">
       <section class="dialog-card dialog-card-compact">
         <header class="dialog-head">
@@ -2780,6 +3129,28 @@
       </section>
     </div>
 
+    <!-- Insert ▸ Picture from URL (`picture_url_dialog.mjs`). One address in,
+         a download with progress and Cancel, and the picture EMBEDDED: the
+         document never keeps a link to the site. -->
+    <div id="pictureUrlDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="pictureUrlTitle" aria-describedby="pictureUrlDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="pictureUrlDialog.title" id="pictureUrlTitle">Insert picture from URL</h2>
+              <p data-i18n="pictureUrlDialog.description" id="pictureUrlDescription">The picture is downloaded once and saved inside the document.</p>
+            </div>
+          </div>
+          <button data-i18n-title="pictureUrlDialog.close.title" data-i18n-label="pictureUrlDialog.close.label" id="pictureUrlClose" type="button" class="dialog-close" title="Close" aria-label="Close insert picture from URL dialog"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <label data-i18n="pictureUrlDialog.address" class="dialog-field field-wide">Picture address<input data-i18n-placeholder="pictureUrlDialog.address.placeholder" id="pictureUrlInput" type="url" inputmode="url" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="https://example.com/picture.png" /></label>
+          <progress id="pictureUrlProgress" class="dialog-progress" max="1" hidden></progress>
+          <p id="pictureUrlStatus" class="dialog-field-note" role="status" aria-live="polite"></p>
+        </div>
+        <footer class="dialog-foot"><span data-i18n="pictureUrlDialog.oneUndoableAction" class="dialog-note">One undoable action.</span><div class="dialog-actions"><button data-i18n="pictureUrlDialog.cancel" id="pictureUrlCancel" type="button" class="dialog-button">Cancel</button><button data-i18n="pictureUrlDialog.insert" id="pictureUrlInsert" type="button" class="dialog-button dialog-button-primary">Insert</button></div></footer>
+      </section>
+    </div>
     <div id="styleNameDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="styleNameTitle" aria-describedby="styleNameDescription">
       <section class="dialog-card dialog-card-compact">
         <header class="dialog-head">
@@ -3014,6 +3385,10 @@
           <!-- The CURRENT password: shown only when the restriction carries a
                verifier this editor can check (`protectionPassword().verifiable`).
                Changing or stopping the restriction then needs it, as in Word. -->
+          <!-- One form around the password fields, so password managers and the
+               browser treat them as a credential form. It never submits: Enter
+               must not reload the editor and lose the document. -->
+          <form class="restrict-editing-passwords" id="restrictEditingPasswordForm" novalidate>
           <div class="settings-section" id="restrictEditingCurrentRow" hidden>
             <label data-i18n="protect.currentPassword" class="dialog-field">Password<input id="restrictEditingCurrentPassword" type="password" maxlength="255" autocomplete="current-password" aria-describedby="restrictEditingCurrentHint restrictEditingPasswordError" /></label>
             <small data-i18n="protect.currentPassword.hint" class="settings-note" id="restrictEditingCurrentHint">This restriction was set with a password. Enter it to change or stop the restriction.</small>
@@ -3025,6 +3400,7 @@
             <label data-i18n="protect.confirmPassword" class="dialog-field">Confirm the new password<input id="restrictEditingConfirmPassword" type="password" maxlength="255" autocomplete="new-password" aria-describedby="restrictEditingPasswordError" /></label>
             <small data-i18n="protect.newPassword.hint" class="settings-note" id="restrictEditingNewHint">Readers must enter it to change or stop the restriction, here and in Word. Leave it empty for no password.</small>
           </div>
+          </form>
           <p class="settings-note dialog-error" id="restrictEditingPasswordError" role="alert" hidden></p>
           <p data-i18n="protect.authorityPassword" class="settings-note">A password is a deterrent, not encryption. It is stored in the file the way Word stores it, and anyone who can edit the file itself can remove it.</p>
           <!-- Shown only when the file carries a verifier this editor CANNOT check
@@ -3552,6 +3928,81 @@
       </section>
     </div>
 
+    <!-- Layout ▸ More layout options (`docs/153` object.advanced-layout-options).
+         Word's Layout dialog, Text Wrapping and Position tabs, reduced to the
+         three things the wrap gallery and the position gallery cannot say: the
+         distance text keeps from the object, "Move object with text" and
+         "Allow overlap" — the two switches ONLYOFFICE puts beside the distances
+         (`ImageSettingsAdvanced.js`, `chMove` / `chOverlap`). The rules are
+         `object_layout_options.mjs`. -->
+    <div id="objectLayoutDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="objectLayoutTitle" aria-describedby="objectLayoutDescription">
+      <section class="dialog-card dialog-card-compact object-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="objectLayoutDialog.title" id="objectLayoutTitle">Layout options</h2>
+              <p data-i18n="objectLayoutDialog.description" id="objectLayoutDescription">How far text keeps from this object, and whether it moves with its paragraph.</p>
+            </div>
+          </div>
+          <button data-i18n-title="altTextDialog.close.title" data-i18n-label="objectLayoutDialog.close.label" id="objectLayoutClose" type="button" class="dialog-close" title="Close" aria-label="Close layout options"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <form id="objectLayoutForm" class="dialog-body object-dialog-body">
+          <p data-i18n="objectLayoutDialog.distance" class="caption-preview-label">Distance from text (pt)</p>
+          <div class="caption-pair">
+            <label data-i18n="pageBordersDialog.top" class="dialog-field">Top<input id="objectLayoutTop" type="number" min="0" max="1584" step="0.5" inputmode="decimal" /></label>
+            <label data-i18n="pageBordersDialog.bottom" class="dialog-field">Bottom<input id="objectLayoutBottom" type="number" min="0" max="1584" step="0.5" inputmode="decimal" /></label>
+            <label data-i18n="pageBordersDialog.left" class="dialog-field">Left<input id="objectLayoutLeft" type="number" min="0" max="1584" step="0.5" inputmode="decimal" /></label>
+            <label data-i18n="pageBordersDialog.right" class="dialog-field">Right<input id="objectLayoutRight" type="number" min="0" max="1584" step="0.5" inputmode="decimal" /></label>
+          </div>
+          <label class="dialog-check"><input id="objectLayoutMove" type="checkbox" /><span data-i18n="objectLayoutDialog.moveWithText">Move object with text</span></label>
+          <label class="dialog-check"><input id="objectLayoutOverlap" type="checkbox" /><span data-i18n="objectLayoutDialog.allowOverlap">Allow overlap</span></label>
+          <p id="objectLayoutNote" class="dialog-field-note" role="status" aria-live="polite"></p>
+        </form>
+        <footer class="dialog-foot">
+          <span data-i18n="altTextDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="altTextDialog.cancel" id="objectLayoutCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="altTextDialog.apply" id="objectLayoutApply" type="submit" form="objectLayoutForm" class="dialog-button dialog-button-primary">Apply</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <!-- Shape Format ▸ Shape Effects ▸ Shadow ▸ Shadow Options (`docs/153`
+         object.shape-shadow). Word's pane for an outer shadow: colour,
+         transparency, angle, distance and blur — ONLYOFFICE's shape shadow
+         carries the same five. The rules are `shape_shadow.mjs`. -->
+    <div id="shapeShadowDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="shapeShadowTitle" aria-describedby="shapeShadowDescription">
+      <section class="dialog-card dialog-card-compact object-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="shapeShadowDialog.title" id="shapeShadowTitle">Shadow options</h2>
+              <p data-i18n="shapeShadowDialog.description" id="shapeShadowDescription">An outer shadow cast behind the shape.</p>
+            </div>
+          </div>
+          <button data-i18n-title="altTextDialog.close.title" data-i18n-label="shapeShadowDialog.close.label" id="shapeShadowClose" type="button" class="dialog-close" title="Close" aria-label="Close shadow options"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <form id="shapeShadowForm" class="dialog-body object-dialog-body">
+          <div class="caption-pair">
+            <label data-i18n="watermarkDialog.color" class="dialog-field">Color<input id="shapeShadowColor" type="color" value="#000000" /></label>
+            <label data-i18n="shapeShadowDialog.transparency" class="dialog-field">Transparency (%)<input id="shapeShadowTransparency" type="number" min="0" max="100" step="1" inputmode="numeric" /></label>
+            <label data-i18n="shapeShadowDialog.angle" class="dialog-field">Angle (°)<input id="shapeShadowAngle" type="number" min="0" max="359" step="1" inputmode="numeric" /></label>
+            <label data-i18n="shapeShadowDialog.distance" class="dialog-field">Distance (pt)<input id="shapeShadowDistance" type="number" min="0" max="200" step="0.5" inputmode="decimal" /></label>
+            <label data-i18n="shapeShadowDialog.blur" class="dialog-field">Blur (pt)<input id="shapeShadowBlur" type="number" min="0" max="100" step="0.5" inputmode="decimal" /></label>
+          </div>
+          <p id="shapeShadowNote" class="dialog-field-note" role="status" aria-live="polite"></p>
+        </form>
+        <footer class="dialog-foot">
+          <span data-i18n="altTextDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="altTextDialog.cancel" id="shapeShadowCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="altTextDialog.apply" id="shapeShadowApply" type="submit" form="shapeShadowForm" class="dialog-button dialog-button-primary">Apply</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
 
     <div id="cmdPalette" class="cmd-overlay" hidden>
       <div data-i18n-label="cmdPalette.commandPalette.label" class="cmd-box" role="dialog" aria-label="Command palette" aria-modal="true">
@@ -3587,6 +4038,7 @@
           <label class="find-option"><input id="findCase" type="checkbox" /> Match case</label>
           <label class="find-option"><input id="findWholeWord" type="checkbox" /> Whole words</label>
           <label class="find-option"><input id="findSelection" type="checkbox" /> Selection only</label>
+          <label class="find-option"><input id="findRegex" type="checkbox" /> <span data-i18n="findPanel.regex">Regular expression</span></label>
         </div>
         <input data-i18n-label="findPanel.replace.label" data-i18n-placeholder="findPanel.replace.placeholder" id="replaceInput" class="find-replacement" type="text" placeholder="Replace with" autocomplete="off" spellcheck="false" aria-label="Replace with" />
         <div class="find-actions">
@@ -3618,6 +4070,7 @@
       <span class="ms paste-options-icon" aria-hidden="true">content_paste</span>
       <button data-i18n-title="pasteOptions.keepPastedEmphasisBut.title" data-i18n="pasteOptions.mergeFormatting" id="pasteOptionsMerge" type="button" class="paste-options-action" title="Keep the pasted emphasis but adopt this document's formatting">Merge formatting</button>
       <button data-i18n-title="pasteOptions.keepTextOnlyV.title" data-i18n="pasteOptions.keepTextOnly" id="pasteOptionsTextOnly" type="button" class="paste-options-action" title="Keep text only (⌘⇧V)">Keep text only</button>
+      <button data-i18n-title="pasteOptions.picture.title" data-i18n="pasteOptions.picture" id="pasteOptionsPicture" type="button" class="paste-options-action" title="Paste this as a picture of how it looks">Picture</button>
       <button data-i18n-title="pasteOptions.dismiss.title" data-i18n-label="pasteOptions.dismissPasteOptions.label" id="pasteOptionsClose" type="button" class="paste-options-close" title="Dismiss" aria-label="Dismiss paste options"><span class="ms" aria-hidden="true">close</span></button>
     </div>
 
@@ -4112,6 +4565,19 @@
                 <label data-i18n="tablePropertiesPanel.indentFromLeft" class="dialog-field">Indent from left<span class="number-control"><input id="tableIndent" type="number" min="-22" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
               </div>
               <label class="dialog-check"><input id="tableFixedLayout" type="checkbox" /><span><strong data-i18n="tablePropertiesPanel.fixedColumnWidths">Fixed column widths</strong><small data-i18n="tablePropertiesPanel.turnOffAutofitStyle">Turn off for AutoFit-style layout.</small></span></label>
+            </fieldset>
+
+            <!-- Word's Table tab: Text wrapping None / Around, and Positioning…
+                 beside it (`table_position_dialog.mjs`). Commits on change, like
+                 the rest of the panel, as one undo step. -->
+            <fieldset class="dialog-group table-property-section">
+              <legend data-i18n="tablePropertiesPanel.textWrapping">Text wrapping</legend>
+              <div data-i18n-label="tablePropertiesPanel.textWrapping.label" id="tableWrap" class="dialog-field-grid" role="radiogroup" aria-label="Text wrapping">
+                <label class="dialog-check"><input type="radio" name="tableWrap" value="none" /><span data-i18n="tablePropertiesPanel.wrapNone">None</span></label>
+                <label class="dialog-check"><input type="radio" name="tableWrap" value="around" /><span data-i18n="tablePropertiesPanel.wrapAround">Around</span></label>
+              </div>
+              <button data-i18n="tablePropertiesPanel.positioning" id="tablePositionBtn" type="button" class="dialog-button" aria-haspopup="dialog" aria-controls="tablePositionDialog" disabled>Positioning…</button>
+              <p data-i18n="tablePropertiesPanel.wrapNested" id="tableWrapNote" class="dialog-field-note" hidden>Text wraps around a table in the body of the document, not one inside another table.</p>
             </fieldset>
 
             <fieldset class="dialog-group table-property-section">

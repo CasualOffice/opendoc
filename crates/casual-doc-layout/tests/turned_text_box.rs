@@ -56,6 +56,7 @@ fn anchor() -> DrawingAnchor {
         wrap_distances: Default::default(),
         wrap_polygon: None,
         behind_doc: false,
+        allow_overlap: true,
     }
 }
 
@@ -115,6 +116,7 @@ fn lone(properties: TextBoxBodyProperties) -> Document {
         border: None,
         body_properties: body(properties),
         blocks: content(),
+        shadow: None,
     })))
 }
 
@@ -151,6 +153,7 @@ fn grouped(rotation: i32) -> Document {
             flip_h: false,
             flip_v: false,
             rotation: Some(rotation),
+            shadow: None,
         })],
     })))
 }

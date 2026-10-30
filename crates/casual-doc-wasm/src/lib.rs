@@ -237,6 +237,21 @@ mod toc;
 // cell shifts, nesting and text direction (`docs/153` table rows).
 mod table_tools;
 
+// Own line (anti-conflict): Paste as picture, the clipboard laid out and
+// painted by the engine (`docs/153` `text.paste-as-picture`).
+mod picture_insert;
+
+// Own line (anti-conflict): Word's Edit Points on a shape (`docs/153`
+// `object.edit-points`, `docs/109` FID-SH-02).
+mod shape_points;
+
+// Own line (anti-conflict): the Borders and Shading dialog, table text
+// wrapping and positioning, and Draw Table (`docs/153` table rows).
+mod table_layout;
+// Own line (anti-conflict): shape effects — the outer shadow (`docs/153`
+// `object.shape-shadow`).
+mod object_effects;
+
 // What each copied paragraph IS (heading, list item, table cell), so the
 // clipboard's HTML keeps structure (`docs/174` TA-12).
 mod clipboard_outline;
@@ -305,6 +320,22 @@ mod ai; // `editor.ai`: the in-page assistant's reads and private preview (`docs
 // with `renderPage`'s contract, compiled only with the `sparse-raster` feature.
 #[cfg(feature = "sparse-raster")]
 mod sparse_raster;
+// Content controls, form roles and the accessibility checker's contrast rule (`109` RM-34, HF-064).
+mod accessibility_check;
+mod content_controls;
+#[cfg(test)]
+#[path = "content_controls_tests.rs"]
+mod content_controls_tests;
+mod form_roles;
+
+// Regular-expression Find & Replace (`docs/153` shell.find-regex).
+mod find_text;
+
+// Print ▸ Selection: a throwaway copy holding only the selection (`docs/153` shell.print-selection).
+mod print_selection;
+
+// Insert ▸ Text from file: another document merged at the caret (`docs/153` page.textFromFile).
+mod insert_file;
 
 use window::BodyLayout;
 use window::WindowedBody;
@@ -691,6 +722,8 @@ pub struct WasmDocument {
     /// operations would be the wrong axis — the same `SetInlines` is legitimate
     /// inside a field and forbidden outside one.
     editing_a_form_field: bool,
+    /// Who fills which content control: a sidecar, not the document (`form_roles.rs`).
+    form_roles: form_roles::FormRoles,
     /// What **this participant** is allowed to do — `152` §10 Q4's host-signed grant,
     /// as the engine sees it after the host has verified the token.
     ///
@@ -3298,6 +3331,7 @@ impl WasmDocument {
                 properties: ParagraphProperties::default().into(),
                 inlines: Vec::new(),
             })],
+            shadow: None,
         };
         self.apply_action_caret_as(
             vec![Operation::InsertInlineObject {
@@ -3399,6 +3433,7 @@ impl WasmDocument {
             flip_h: false,
             flip_v: false,
             rotation: None,
+            shadow: None,
         };
         let group = WordprocessingGroup {
             hyperlink: None,
@@ -15285,6 +15320,8 @@ impl WasmDocument {
             self.capabilities,
         )
         .map_err(|refusal| refusal.reason().to_owned())?;
+        // A content control's `w:lock` binds every reader, form fillers included.
+        content_controls::refuse_if_locked(&self.document, ops)?;
         if self.editing_a_form_field {
             return Ok(());
         }
@@ -15319,7 +15356,9 @@ impl WasmDocument {
             if self.forms_leave_open(op) {
                 continue;
             }
-            if !self.op_is_inside_a_form_field(op) {
+            if !self.op_is_inside_a_form_field(op)
+                && !content_controls::fills_a_control(&self.document, &self.form_roles, op)
+            {
                 return Err(refused!(
                     "document.protected-forms-only",
                     "This document is protected: only its form fields can be edited."
@@ -22905,6 +22944,7 @@ fn session_from_import(
         next_transaction: 0,
         typing_history: None,
         editing_a_form_field: false,
+        form_roles: form_roles::FormRoles::default(),
         capabilities: Capabilities::local(),
         host_ceiling: Capabilities::local(),
         revision_ids,
@@ -23156,6 +23196,7 @@ fn new_object_anchor() -> DrawingAnchor {
         wrap_distances: casual_doc_model::v1::WrapDistances::default(),
         behind_doc: false,
         wrap_polygon: None,
+        allow_overlap: true,
     }
 }
 
@@ -28163,6 +28204,7 @@ mod tests {
                 flip_h: false,
                 flip_v: false,
                 rotation: None,
+                shadow: None,
             })],
         };
         let mut inlines = vec![InlineNode::Group(Box::new(group))];
@@ -31810,6 +31852,7 @@ mod tests {
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let mut d = WasmDocument {
             editing_a_form_field: false,
+            form_roles: form_roles::FormRoles::default(),
             capabilities: Capabilities::local(),
             host_ceiling: Capabilities::local(),
             edit_context: EditContext::Body,
@@ -32266,6 +32309,7 @@ mod tests {
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let d = WasmDocument {
             editing_a_form_field: false,
+            form_roles: form_roles::FormRoles::default(),
             capabilities: Capabilities::local(),
             host_ceiling: Capabilities::local(),
             edit_context: EditContext::Body,
@@ -32582,6 +32626,7 @@ mod tests {
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let mut d = WasmDocument {
             editing_a_form_field: false,
+            form_roles: form_roles::FormRoles::default(),
             capabilities: Capabilities::local(),
             host_ceiling: Capabilities::local(),
             edit_context: EditContext::Body,
@@ -36660,6 +36705,7 @@ mod tests {
         let revision_ids = RevisionIdAllocator::from_document(&document);
         WasmDocument {
             editing_a_form_field: false,
+            form_roles: form_roles::FormRoles::default(),
             capabilities: Capabilities::local(),
             host_ceiling: Capabilities::local(),
             edit_context: EditContext::Body,
@@ -36762,6 +36808,7 @@ mod tests {
             wrap_distances: casual_doc_model::v1::WrapDistances::default(),
             wrap_polygon: None,
             behind_doc: false,
+            allow_overlap: true,
         }
     }
 
@@ -36836,6 +36883,7 @@ mod tests {
                         flip_h: false,
                         flip_v: false,
                         rotation: None,
+                        shadow: None,
                     })],
                 }))],
             })],
@@ -38047,6 +38095,7 @@ mod tests {
         let revision_ids = RevisionIdAllocator::from_document(&document);
         WasmDocument {
             editing_a_form_field: false,
+            form_roles: form_roles::FormRoles::default(),
             capabilities: Capabilities::local(),
             host_ceiling: Capabilities::local(),
             edit_context: EditContext::Body,
@@ -39547,6 +39596,7 @@ mod tests {
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let handle = WasmDocument {
             editing_a_form_field: false,
+            form_roles: form_roles::FormRoles::default(),
             capabilities: Capabilities::local(),
             host_ceiling: Capabilities::local(),
             edit_context: EditContext::Body,
@@ -42423,6 +42473,7 @@ mod tests {
             wrap_distances: WrapDistances::default(),
             wrap_polygon: None,
             behind_doc: false,
+            allow_overlap: true,
         };
         let extent = Extent {
             width_emu: 914_400,
@@ -42517,6 +42568,7 @@ mod tests {
                 border: None,
                 body_properties: TextBoxBodyProperties::default(),
                 blocks: vec![paragraph(id(), vec![run(id(), "in a box")])],
+                shadow: None,
             })),
             InlineNode::Group(Box::new(WordprocessingGroup {
                 id: id(),
@@ -42573,6 +42625,7 @@ mod tests {
                         flip_h: false,
                         flip_v: false,
                         rotation: None,
+                        shadow: None,
                     }),
                 ],
             })),
@@ -45002,6 +45055,7 @@ mod tests {
                     properties: ParagraphProperties::default().into(),
                     inlines: vec![run(run_id, text)],
                 })],
+                shadow: None,
             }))
         };
         let first = id();
@@ -45608,6 +45662,7 @@ mod tests {
                     properties: ParagraphProperties::default().into(),
                     inlines: vec![run],
                 })],
+                shadow: None,
             }))
         }
 

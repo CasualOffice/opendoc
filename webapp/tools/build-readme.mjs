@@ -186,6 +186,16 @@ const NOTES = {
   ],
   DOCX: () => ["Unedited files save back byte for byte."],
   RTF: () => ["Opens; there is no RTF writer."],
+  MARKDOWN: () => [
+    anchor(`${IO_DIR}/markdown_import.rs`, "Options::ENABLE_TABLES") &&
+      anchor("webapp/src/format_io.mjs", 'md: "text.markdown"') &&
+      "Opens CommonMark with GFM tables, task lists, strikethrough and footnotes as headings, real lists, tables, code, quotes and footnotes; a `.md` name selects it. Raw HTML is reported, not run; a remote picture is reported, never fetched.",
+  ],
+  HTML: () => [
+    anchor(`${IO_DIR}/html/import.rs`, "const RAW_TEXT") &&
+      anchor("webapp/src/format_io.mjs", 'html: "text.html"') &&
+      "Opens through the paste path's mapping (headings, lists, tables, emphasis, links, code, quotes); scripts and styles are skipped unparsed, nothing is fetched. Saves as one self-contained file.",
+  ],
 };
 
 const FORMAT_ORDER = ["DOCX", "DOTX", "ODT", "RTF", "PDF", "HTML", "MARKDOWN", "TEXT", "NORMALIZED_JSON"];

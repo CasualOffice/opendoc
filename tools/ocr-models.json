@@ -1,0 +1,13 @@
+{
+  "release": "ocr-models-ppocrv5-1",
+  "repository": "CasualOffice/opendoc",
+  "name": "PP-OCRv5 mobile (Apache-2.0)",
+  "detection": { "file": "det.onnx", "sha256": "d5de5df358366210d16419b9636a2fc1efa5d7a20688f38a7869ec7b1a4f4f7d", "bytes": 4819576 },
+  "packs": [
+    {
+      "name": "latin",
+      "model": { "file": "latin_rec.onnx", "sha256": "995b0f5f28d2073896a78c03b5b863eae6af3744bafa0245b8522beea6994927", "bytes": 8064539 },
+      "dictionary": { "file": "latin_rec.dict.txt", "sha256": "ccbcc45730b3fbbd9050c5bc74db6a99067141ef1035e3d14889a84a6b9b1aff", "bytes": 2616 }
+    }
+  ]
+}

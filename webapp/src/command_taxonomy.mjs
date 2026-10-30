@@ -99,7 +99,9 @@ export const FILE_SURFACE = [
   // Page setup was under Tools, which is where nobody looks for paper size —
   // Docs files it under File and Word under Layout. It is on the Layout ribbon
   // too; this gives it a File home that matches the competition.
-  { nameKey: "menuGroup.print", ids: ["layout.pageSetup", "file.print"] },
+  // Print selection beside Print (`docs/153` shell.print-selection), as Word's
+  // Print dialog offers "Print Selection" beside "Print All Pages".
+  { nameKey: "menuGroup.print", ids: ["layout.pageSetup", "file.print", "file.printSelection"] },
   // Compatibility findings beside the document's properties: Word's File ▸ Info
   // is where both live (Properties, and Check for Issues ▸ Check Compatibility).
   // It is the second surface the header chip's report needed — the chip is
@@ -250,7 +252,7 @@ export const APP_MENU_SECTIONS = {
   // that this row is not a member of the band above it.
   edit: [
     band("menuGroup.undo", "edit.undo", "edit.redo"),
-    band("menuGroup.clipboard", "edit.cut", "edit.copy", "edit.paste", "edit.pasteText"),
+    band("menuGroup.clipboard", "edit.cut", "edit.copy", "edit.paste", "edit.pasteText", "edit.pasteImage"),
     band("menuGroup.selection", "edit.selectAll"),
     band("menuGroup.find", "edit.find"),
   ],
@@ -362,6 +364,10 @@ export const APP_MENU_SECTIONS = {
       "view.textWidth.full",
     ),
     band("menuGroup.zoom", "view.zoomIn", "view.zoomOut"),
+    // How the page itself is shown (`docs/153` shell.multiple-pages-view,
+    // shell.dark-document): ONLYOFFICE's View tab keeps both together. A
+    // flyout, so the two cost this menu one row.
+    sub("menuGroup.pageDisplay", "view.multiplePages", "view.darkDocument"),
   ],
   // Word's Insert TAB group order, which ONLYOFFICE's Insert tab also follows:
   // Tables | Illustrations | Links | Comments | Header & footer | Text |
@@ -384,7 +390,7 @@ export const APP_MENU_SECTIONS = {
   // and outvoted a third time by our ribbon, which had the notes on References
   // while the menu had them on Insert.
   insert: [
-    band("menuGroup.table", "insert.table", "insert.tableDialog", "insert.textToTable"),
+    band("menuGroup.table", "insert.table", "insert.tableDialog", "insert.textToTable", "insert.drawTable"),
     // Breaks. A SUBMENU, because six rows of "… break" would make this menu long
     // for a group nobody opens twice in a paragraph — the same argument the
     // Export band makes on the File surface, and the shape ONLYOFFICE uses for
@@ -407,7 +413,22 @@ export const APP_MENU_SECTIONS = {
       "layout.break.section.evenPage",
       "layout.break.section.oddPage",
     ),
-    band("menuGroup.illustrations", "insert.image", "insert.shape", "insert.chart"),
+    band("menuGroup.illustrations", "insert.image", "insert.imageFromUrl", "insert.shape", "insert.chart"),
+    // Content controls (`109` RM-34): Word's Developer ▸ Controls, as a submenu
+    // for the same reason Breaks is one — seven kinds and three actions.
+    sub(
+      "menuGroup.contentControls",
+      "controls.insert.richText",
+      "controls.insert.plainText",
+      "controls.insert.picture",
+      "controls.insert.checkbox",
+      "controls.insert.comboBox",
+      "controls.insert.dropDownList",
+      "controls.insert.date",
+      "controls.fill",
+      "controls.properties",
+      "controls.remove",
+    ),
     band("menuGroup.links", "insert.link", "insert.bookmark"),
     band("menuGroup.comments", "review.comment"),
     sub(
@@ -437,10 +458,13 @@ export const APP_MENU_SECTIONS = {
       "layout.pageNumber.bottomRight",
       "layout.pageNumber.pageOfTotal",
     ),
-    band("menuGroup.text", "insert.textbox", "insert.dropCap"),
+    // Text from file (`docs/153` page.textFromFile): Word's Insert ▸ Text ▸ Object ▸
+    // Text from File, in the Text group.
+    band("menuGroup.text", "insert.textbox", "insert.dropCap", "insert.textFromFile"),
     sub("menuGroup.fields", "insert.field", "insert.field.page", "insert.field.date"),
     // RM-19: Word keeps the non-breaking space beside Symbol, under Special Characters.
-    sub("menuGroup.symbols", "insert.symbol", "insert.emoji", "insert.nonBreakingSpace"),
+    // Alt+X (`docs/153` text.unicode-code-toggle) beside Symbol: the other way to type a character by its code.
+    sub("menuGroup.symbols", "insert.symbol", "insert.emoji", "insert.nonBreakingSpace", "insert.symbolByCode"),
   ],
   // The References menu, which the compact chrome did not have at all.
   //
@@ -687,10 +711,14 @@ export const APP_MENU_SECTIONS = {
       "tools.autoFormatHyperlink",
       "tools.autoCorrectOptions",
       "tools.languages",
+      // Word's Custom Dictionaries ▸ Edit Word List (`docs/153` review.personal-dictionary-manage).
+      "tools.personalDictionary",
       // RM-42: Word's Review ▸ Language ▸ Set Proofing Language.
       "format.language",
       // HF-051: Word's Review ▸ Proofing ▸ Word Count.
       "tools.wordCount",
+      // HF-064: Word's Review ▸ Accessibility ▸ Check Accessibility.
+      "tools.checkAccessibility",
     ),
     band("menuGroup.comments", "review.comment.resolve", "review.comment.delete"),
     band("menuGroup.tracking", "review.toggle"),
@@ -730,7 +758,7 @@ export const APP_MENU_SECTIONS = {
     // for. A band of its own would have cost a new `menuGroup.*` key in
     // nineteen catalogues to separate two rows nobody is looking for
     // separately.
-    band("menuGroup.protect", "review.restrictEditing", "review.manageAccess", "collab.recover", "collab.downloadRetained"),
+    band("menuGroup.protect", "review.restrictEditing", "review.protectForm", "forms.roles", "review.manageAccess", "collab.recover", "collab.downloadRetained"),
   ],
 };
 
@@ -768,9 +796,8 @@ export const TABLE_MENU_LABELS = new Map([
   ["table.row.grow", "Taller row"],
   ["table.row.shrink", "Shorter row"],
   ["table.cellFormat", "Cell formatting…"],
-  // Word's own wording in Table Design, and an ellipsis because the row opens
-  // the cell-format popover with the pen focused rather than applying a style.
-  ["table.borderStyle", "Border line style…"],
+  // Word's own wording, and an ellipsis because the row opens a dialog.
+  ["table.borderStyle", "Borders and shading…"],
   ["table.properties", "Table properties…"],
   ["table.style.none", "No table style"],
   // The table tools (`table_tools.mjs`). Their menu words are also catalogue
@@ -794,6 +821,7 @@ export const TABLE_MENU_LABELS = new Map([
 /** The catalogue key for a Table menu row whose words are routed. Only the table
  *  tools have one; the older rows are English debt this map does not add to. */
 export const TABLE_MENU_LABEL_KEYS = new Map([
+  ["table.borderStyle", "table.bordersShadingCommand"],
   ["table.insertCells", "table.tools.insertCellsCommand"],
   ["table.deleteCells", "table.tools.deleteCellsCommand"],
   ["table.splitTable", "table.tools.splitTableCommand"],
@@ -930,7 +958,7 @@ export function tableMenuPlaceholders(disabledReason) {
     id,
     label,
     group: "Table",
-    kw: `table ${label}`.toLowerCase(),
+    kw: `table ${tableMenuLabel(id)}`.toLowerCase(),
     enabled: false,
     disabledReason,
     run: () => {},

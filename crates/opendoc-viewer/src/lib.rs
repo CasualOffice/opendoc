@@ -176,6 +176,12 @@ pub struct ViewerOptions {
     /// Faces registered before the first layout, so a host that already knows
     /// its fonts pays for one pagination instead of two.
     pub fonts: Vec<Vec<u8>>,
+    /// The file's name, when the host has one. With the `formats` feature it
+    /// selects a reader whose bytes carry no evidence of their own: a `.md`
+    /// opens as Markdown and a `.html` as a web page, where without a name both
+    /// are plain text (`shell.import-markdown`). Never overrides a format the
+    /// bytes prove (a DOCX named `.md` is still a DOCX).
+    pub file_name: Option<String>,
     /// OCR for scanned PDF pages (`docs/182` §20a); `None` (the default)
     /// runs none and a scan opens as its picture, reported
     /// `pdf.import.ocr_unavailable`.
@@ -213,6 +219,14 @@ impl ViewerOptions {
     #[must_use]
     pub fn with_system_fonts(mut self, on: bool) -> Self {
         self.system_fonts = on;
+        self
+    }
+
+    /// The options naming the file the bytes came from: see
+    /// [`ViewerOptions::file_name`].
+    #[must_use]
+    pub fn with_file_name(mut self, name: impl Into<String>) -> Self {
+        self.file_name = Some(name.into());
         self
     }
 
@@ -873,7 +887,6 @@ fn import(bytes: &[u8], _options: &ViewerOptions) -> Result<(Document, Media), V
 
 /// Every format the editor opens, detected through the io registry.
 #[cfg(feature = "formats")]
-#[cfg_attr(not(feature = "pdf-import"), allow(unused_variables))]
 fn import(bytes: &[u8], options: &ViewerOptions) -> Result<(Document, Media), ViewerError> {
     use casual_doc_io::{
         DetectionRequest, FormatSelection, PlainTextLimits, builtin_registry_with_limits,
@@ -899,7 +912,7 @@ fn import(bytes: &[u8], options: &ViewerOptions) -> Result<(Document, Media), Vi
             DetectionRequest {
                 bytes,
                 selection: FormatSelection::Auto,
-                file_name_hint: None,
+                file_name_hint: options.file_name.as_deref(),
                 mime_hint: None,
             },
             false,

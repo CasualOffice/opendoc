@@ -804,6 +804,7 @@ fn a_float_in_a_folded_paragraph_does_not_paint_on_page_one() {
                     wrap_distances: Default::default(),
                     wrap_polygon: None,
                     behind_doc: false,
+                    allow_overlap: true,
                 },
                 descr: Some("A floating logo".to_owned()),
                 relative_height: None,

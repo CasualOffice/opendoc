@@ -57,8 +57,27 @@ const AVATARS = "avatars";
  *  `AWAIT_IDENTITY`'s reason: the package does not ship the editor's page modules. */
 const AI_TOOLS = "aiTools";
 const WEBMCP = "webmcp";
+/** The network policy for Insert ▸ Picture from URL (`picture_url.mjs`'s
+ *  `REMOTE_IMAGES_PARAM`), spelled here for `AWAIT_IDENTITY`'s reason. */
+const REMOTE_IMAGES = "remoteImages";
 /** The preferences a host identity supersedes: both name the person (§3.1). */
 const IDENTITY_PREFERENCES = Object.freeze(["user", "initials"]);
+
+/** `remote-images` normalised (`"direct"`, `"deny"` or a proxy template), or null
+ *  when it is none of them. The frame re-reads it through `picture_url.mjs`'s
+ *  `resolveRemoteImagePolicy`, which agrees and also fails closed. O(value). */
+function remoteImagesPolicy(value) {
+  const text = String(value ?? "").trim();
+  const lower = text.toLowerCase();
+  if (lower === "direct" || lower === "deny") return lower;
+  if (!text.includes("{url}")) return null;
+  try {
+    const parsed = new URL(text.replace("{url}", "x"));
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? text : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Where the editor lives relative to the host page, when the host does not say. */
 export const DEFAULT_EDITOR_SRC = "./editor.html";
@@ -88,6 +107,7 @@ const MOUNT_ATTRIBUTES = Object.freeze([
   "identity",
   "avatars",
   "ai-tools",
+  "remote-images",
 ]);
 
 /** The two NARROWING attributes, each read against the authority's own vocabulary.
@@ -192,6 +212,16 @@ const SHADOW_STYLE = `
  *    `editorConfig.user`. A change remounts.
  *  * `avatars` — `"fetch"` is the host's consent to load participants' avatar
  *    URLs (`docs/175` §8.1). Absent, nothing is fetched and chips show initials.
+ *  * `remote-images` — the host's network policy for Insert ▸ Picture from URL
+ *    (`picture_url.mjs`). `"direct"` (the default when absent): the frame downloads
+ *    the address the person typed itself, with no credentials and no referrer.
+ *    `"deny"`: the command refuses, saying the host does not allow it. A URL
+ *    containing `{url}` (`"https://host.example/fetch?u={url}"`): every download
+ *    goes to the HOST's proxy with the address percent-encoded in its place, sent
+ *    `credentials: "same-origin"`, so the host applies its own allow-list, scan
+ *    and size cap. However fetched, the picture is EMBEDDED in the document, never
+ *    linked. Any other value is dropped and reported, and the frame then refuses
+ *    (fails closed). Becomes `?remoteImages=`.
  *  * `ai-tools` — `"webmcp"` offers the in-page assistant's tools (`editor.ai`) to a
  *    browser agent through WebMCP (`docs/178` §9). Off when absent. The tools are
  *    registered in the FRAME's document, so this page cannot call them; they are
@@ -518,6 +548,22 @@ export class OpenDocEditorElement extends ElementBase {
     else if (aiTools !== null) {
       url.searchParams.delete(AI_TOOLS);
       notes.push(Object.freeze({ option: "ai-tools", code: "unknown", message: `ai-tools takes "${WEBMCP}" only.` }));
+    }
+    // The picture-download policy. Absent, `editor-src`'s own query stands. A value
+    // that is none of the three spellings is REPORTED and lowered to "deny": a host
+    // that meant to restrict the network and misspelled it must not get the open
+    // default.
+    const remoteImages = this.getAttribute("remote-images");
+    if (remoteImages !== null) {
+      const policy = remoteImagesPolicy(remoteImages);
+      url.searchParams.set(REMOTE_IMAGES, policy ?? "deny");
+      if (policy === null) {
+        notes.push(Object.freeze({
+          option: "remote-images",
+          code: "unknown",
+          message: 'remote-images takes "direct", "deny" or an http(s) URL containing {url}; downloads are denied.',
+        }));
+      }
     }
     return { url, notes: Object.freeze(notes) };
   }

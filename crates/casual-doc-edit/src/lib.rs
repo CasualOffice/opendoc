@@ -6928,6 +6928,35 @@ fn text_form_field_at(inlines: &[InlineNode], offset: u32) -> Option<(usize, u32
     None
 }
 
+/// The top-level text-taking content control that ENDS at `offset` and holds
+/// text, with the offset local to it. **O(inlines)**.
+fn text_control_ending_at(inlines: &[InlineNode], offset: u32) -> Option<(usize, u32)> {
+    use casual_doc_model::v1::SdtControlKind;
+    let mut cum = 0u32;
+    for (idx, inline) in inlines.iter().enumerate() {
+        let len = inline_text_len(inline);
+        let start = cum;
+        let end = start.saturating_add(len);
+        cum = end;
+        if let InlineNode::Sdt(sdt) = inline
+            && len > 0
+            && offset == end
+            && matches!(
+                sdt.properties.control_kind,
+                None | Some(
+                    SdtControlKind::RichText
+                        | SdtControlKind::PlainText
+                        | SdtControlKind::ComboBox
+                        | SdtControlKind::Date
+                )
+            )
+        {
+            return Some((idx, offset - start));
+        }
+    }
+    None
+}
+
 /// [`transparent_children`] for a walk that MUTATES what it finds. One policy
 /// ([`editing_transparent`]) and one container set
 /// (`containers::contained_inlines_mut`), so the read and write faces cannot
@@ -7148,6 +7177,19 @@ fn insert_text(
             return Err(EditError::Unsupported);
         };
         return insert_text(&mut field.inlines, local, text, ids);
+    }
+
+    // The same rule for a text-taking content control (`w:sdt` rich text, plain
+    // text, combo box or date), at its END: the caret sits there after every
+    // character typed into it, and without this the second character of a name
+    // typed into a control landed after the control (`109` RM-34). Its START
+    // still resolves outside, so text typed just before a control stays before
+    // it.
+    if let Some((idx, local)) = text_control_ending_at(inlines, offset) {
+        let InlineNode::Sdt(sdt) = &mut inlines[idx] else {
+            return Err(EditError::Unsupported);
+        };
+        return insert_text(&mut sdt.inlines, local, text, ids);
     }
 
     // An offset STRICTLY inside a field whose result is not editable in place —
@@ -8669,6 +8711,7 @@ mod tests {
             wrap_distances: WrapDistances::default(),
             wrap_polygon: None,
             behind_doc: false,
+            allow_overlap: true,
         };
         let mut definitions = Definitions::default();
         definitions.media.insert(
@@ -8726,6 +8769,7 @@ mod tests {
             wrap_distances: WrapDistances::default(),
             wrap_polygon: None,
             behind_doc: true,
+            allow_overlap: true,
         };
         let inverse = apply(
             &mut d,
@@ -9350,6 +9394,7 @@ mod tests {
                 wrap_distances: WrapDistances::default(),
                 wrap_polygon: None,
                 behind_doc: true,
+                allow_overlap: true,
             },
             descr: None,
             relative_height: None,
@@ -10737,6 +10782,7 @@ mod tests {
                         properties: ParagraphProperties::default().into(),
                         inlines: vec![run(962, "Caption")],
                     })],
+                    shadow: None,
                 })),
             ],
         })]);
@@ -11145,6 +11191,7 @@ mod tests {
                     flip_h: false,
                     flip_v: false,
                     rotation: None,
+                    shadow: None,
                 })],
             }))],
         })
@@ -14239,6 +14286,7 @@ mod tests {
             border: None,
             body_properties: TextBoxBodyProperties::default(),
             blocks: vec![para(inner, vec![run(text_id, "boxed")])],
+            shadow: None,
         };
 
         let mut definitions = Definitions::default();
@@ -14310,6 +14358,7 @@ mod tests {
                             flip_h: false,
                             flip_v: false,
                             rotation: None,
+                            shadow: None,
                         })],
                     })),
                 ],
@@ -14611,6 +14660,7 @@ mod tests {
             flip_h: false,
             flip_v: false,
             rotation: None,
+            shadow: None,
         }
     }
 
@@ -14627,6 +14677,7 @@ mod tests {
             border: None,
             body_properties: TextBoxBodyProperties::default(),
             blocks,
+            shadow: None,
         })
     }
 

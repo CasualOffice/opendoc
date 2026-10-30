@@ -614,6 +614,9 @@ export const PARTICIPANT_GATED_COMMANDS = Object.freeze({
   "review.accept": "review",
   "review.reject": "review",
   "review.restrictEditing": "manageProtection",
+  // Protect form is the same restriction, and who fills which field is policy too.
+  "review.protectForm": "manageProtection",
+  "forms.roles": "manageProtection",
   "review.manageAccess": "manageAccess",
 });
 

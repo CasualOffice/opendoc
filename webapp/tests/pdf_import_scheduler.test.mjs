@@ -141,3 +141,14 @@ test("PDF bytes are told by their header, not their name", () => {
   assert.equal(isPdfBytes(new TextEncoder().encode("%PDF")), false);
   assert.equal(isPdfBytes(null), false);
 });
+
+test("a PDF whose header is not at byte 0 is still a PDF, as ISO 32000 allows", () => {
+  const enc = (text) => new TextEncoder().encode(text);
+  // A BOM, whitespace and mailer junk before the header: real files carry these.
+  assert.equal(isPdfBytes(enc("﻿%PDF-1.7\n")), true);
+  assert.equal(isPdfBytes(enc("\r\n  junk from a mailer\r\n%PDF-1.4\n")), true);
+  // Past the first 1024 bytes the header no longer counts, and a DOCX is never a PDF.
+  assert.equal(isPdfBytes(enc(`${" ".repeat(1100)}%PDF-1.4`)), false);
+  assert.equal(isPdfBytes(enc("PK\u0003\u0004word/document.xml")), false);
+  assert.equal(isPdfBytes(new Uint8Array()), false);
+});

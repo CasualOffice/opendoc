@@ -1,4 +1,5 @@
-//! Built-in deterministic CommonMark exporter.
+//! Built-in deterministic CommonMark exporter, and the adapter that also
+//! imports Markdown (the reader is `markdown_import`).
 //!
 //! # Why this exists, and what it is
 //!
@@ -18,20 +19,19 @@
 //! writes. Nothing outside it is emitted: no HTML fallback, no reference links,
 //! no setext headings, no front matter.
 //!
-//! # Export only, deliberately
+//! # Both ways
 //!
-//! There is no Markdown importer, and this crate does not pretend otherwise:
-//! the descriptor says `can_import: false`, so the registry never offers
-//! Markdown as something to open, and `detect` never probes it. Reading
-//! Markdown needs a CommonMark parser, which is a separate piece of work with
-//! its own security envelope. Declaring an importer we do not have would be the
-//! "built is not reachable" defect in reverse — a promise the registry cannot
-//! keep.
+//! The adapter imports too (`docs/153` `shell.import-markdown`): the reader is
+//! `markdown_import`, over the MIT `pulldown-cmark` parser, and it builds
+//! through the same `flow_builder` the HTML reader uses. Its probe is
+//! [`ProbeResult::name_only`]: any UTF-8 text is acceptable Markdown, so only a
+//! `.md` / `.markdown` name (or `text/markdown`) selects it, and a `.txt` still
+//! opens as plain text.
 //!
-//! `exact_if_unchanged` is likewise `false`. A document is never *opened* as
-//! Markdown, so there are no original bytes to hand back; asking for that mode
-//! is refused with a sentence rather than answered with a semantic export that
-//! quietly is not the same thing.
+//! `exact_if_unchanged` stays `false`: a Markdown file round-trips through the
+//! model, not byte for byte, and asking for that mode is refused with a
+//! sentence rather than answered with a semantic export that quietly is not
+//! the same thing.
 //!
 //! # No silent loss
 //!
@@ -55,12 +55,21 @@ use casual_doc_model::v1::{
     NumberFormat, Paragraph, ParagraphProperties, RevisionKind, RunProperties, Table,
     WordprocessingGroup,
 };
+// Own line, kept out of any sorted block (the repo's parallel-PR rule).
+use casual_doc_model::v1::{Alignment, NoteId, NoteKind, SdtControlData};
 
 use crate::{
     AdapterError, CompatibilityEntry, CompatibilityReport, ExportArtifact, ExportMode,
     ExportRequest, FeatureLocation, FormatDescriptor, FormatExporter, FormatId, FormatProfile,
     ModelOutcome, RetentionOutcome, formats,
 };
+// Own lines, kept out of any sorted block (the repo's parallel-PR rule).
+use crate::markdown_import::LocalImageResolver;
+use crate::{
+    FormatImporter, ImportArtifact, ImportRequest, ProbeRequest, ProbeResult, RecoveryReport,
+    SourceEnvelope,
+};
+use std::sync::Arc;
 
 /// The media type registered for Markdown, and the one the artifact carries.
 ///
@@ -78,6 +87,8 @@ pub const MARKDOWN_MIME: &str = "text/markdown";
 /// is the failure that actually reaches a browser here.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MarkdownLimits {
+    /// Maximum bytes of Markdown source an import reads.
+    pub max_input_bytes: usize,
     /// Maximum bytes of emitted Markdown.
     pub max_output_bytes: usize,
     /// Maximum block-nesting depth followed before the walk refuses.
@@ -85,6 +96,8 @@ pub struct MarkdownLimits {
 }
 
 impl MarkdownLimits {
+    /// Hard maximum source bytes.
+    pub const HARD_MAX_INPUT_BYTES: usize = 256 * 1024 * 1024;
     /// Hard maximum emitted bytes.
     pub const HARD_MAX_OUTPUT_BYTES: usize = 256 * 1024 * 1024;
     /// Hard maximum nesting depth.
@@ -92,6 +105,11 @@ impl MarkdownLimits {
 
     fn validate(self) -> Result<(), AdapterError> {
         for (name, value, ceiling) in [
+            (
+                "markdown_input_bytes",
+                self.max_input_bytes,
+                Self::HARD_MAX_INPUT_BYTES,
+            ),
             (
                 "markdown_output_bytes",
                 self.max_output_bytes,
@@ -116,18 +134,39 @@ impl MarkdownLimits {
 impl Default for MarkdownLimits {
     fn default() -> Self {
         Self {
+            // A Markdown file of 16 MB is a book; the model it opens to is many
+            // times that on a 32-bit browser host (`docs/104` HF-158).
+            max_input_bytes: 16 * 1024 * 1024,
             max_output_bytes: 64 * 1024 * 1024,
             max_nesting_depth: 32,
         }
     }
 }
 
-/// Built-in bounded CommonMark exporter.
-#[derive(Clone, Debug)]
+/// Built-in bounded CommonMark exporter and CommonMark + GFM importer.
+#[derive(Clone)]
 pub struct MarkdownAdapter {
     descriptor: FormatDescriptor,
     limits: MarkdownLimits,
+    images: Option<Arc<LocalImageResolver>>,
 }
+
+impl std::fmt::Debug for MarkdownAdapter {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MarkdownAdapter")
+            .field("descriptor", &self.descriptor)
+            .field("limits", &self.limits)
+            .field("images", &self.images.is_some())
+            .finish()
+    }
+}
+
+/// What a Markdown import keeps about its source: nothing. The file is never
+/// handed back byte for byte (`exact_if_unchanged` is false), so retaining it
+/// would hold a copy nothing reads.
+#[derive(Debug)]
+struct MarkdownSourceState;
 
 impl MarkdownAdapter {
     /// Creates an exporter with explicit Markdown limits.
@@ -139,13 +178,77 @@ impl MarkdownAdapter {
                 display_name: "Markdown".to_owned(),
                 mime_types: vec![MARKDOWN_MIME.to_owned()],
                 extensions: vec!["md".to_owned(), "markdown".to_owned()],
-                can_import: false,
+                can_import: true,
                 can_export: true,
                 exact_if_unchanged: false,
                 preserve_when_safe: false,
             },
             limits,
+            images: None,
         }
+    }
+
+    /// The adapter with a host's lookup for pictures a file names by a
+    /// relative path. Without one such a picture is reported
+    /// (`markdown.import.image_unresolved`) and its alt text kept as a link.
+    #[must_use]
+    pub fn with_local_images(mut self, resolver: Arc<LocalImageResolver>) -> Self {
+        self.images = Some(resolver);
+        self
+    }
+
+    /// The source text: UTF-8 with an optional BOM, within the input limit.
+    fn source<'a>(&self, bytes: &'a [u8]) -> Result<&'a str, AdapterError> {
+        enforce(
+            "markdown_input_bytes",
+            bytes.len(),
+            self.limits.max_input_bytes,
+        )?;
+        let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
+        std::str::from_utf8(bytes)
+            .map_err(|error| AdapterError::new(format!("markdown is not UTF-8: {error}")))
+    }
+}
+
+impl FormatImporter for MarkdownAdapter {
+    fn descriptor(&self) -> &FormatDescriptor {
+        &self.descriptor
+    }
+
+    fn probe(&self, request: ProbeRequest<'_>) -> ProbeResult {
+        if self.limits.validate().is_ok() && self.source(request.bytes).is_ok() {
+            ProbeResult::name_only("markdown.utf8-text")
+        } else {
+            ProbeResult::no_match("markdown.invalid-or-over-limit")
+        }
+    }
+
+    fn import(&self, request: ImportRequest<'_>) -> Result<ImportArtifact, AdapterError> {
+        self.limits.validate()?;
+        let text = self.source(request.bytes)?;
+        let (document, resources, findings) = crate::markdown_import::import_markdown(
+            text,
+            self.limits,
+            self.images.as_deref(),
+            crate::flow_builder::namespace_of(request.bytes),
+        )?;
+        Ok(ImportArtifact {
+            document,
+            resources,
+            source: SourceEnvelope::new(
+                self.descriptor.id.clone(),
+                env!("CARGO_PKG_VERSION").to_owned(),
+                MarkdownSourceState,
+            ),
+            report: findings.finish(),
+            // Markdown has no damaged form to recover from: every byte
+            // sequence that is UTF-8 is a document.
+            recovery: RecoveryReport::default(),
+            format: FormatProfile {
+                format: self.descriptor.id.clone(),
+                version: Some("commonmark+gfm".to_owned()),
+            },
+        })
     }
 }
 
@@ -168,8 +271,8 @@ impl FormatExporter for MarkdownAdapter {
             .map_err(|error| AdapterError::new(format!("normalized model: {error}")))?;
         if request.mode == ExportMode::ExactIfUnchanged {
             return Err(AdapterError::new(
-                "markdown has no importer, so there are no retained source bytes to return \
-                 exactly; ask for the semantic mode",
+                "markdown round-trips through the model, not byte for byte, so there are \
+                 no retained source bytes to return exactly; ask for the semantic mode",
             ));
         }
 
@@ -223,6 +326,12 @@ struct Writer {
     /// Blank lines owed before the next block is written. `usize::MAX` is the
     /// document start, where none are owed and none may be emitted.
     pending: Option<usize>,
+    /// The last block written was a list item: the next non-list block owes
+    /// a blank line, or CommonMark reads it as the item's lazy continuation.
+    after_list: bool,
+    /// Footnotes in the order their first reference was written; the number
+    /// a reference prints is its index plus one.
+    notes: Vec<NoteId>,
 }
 
 impl Writer {
@@ -232,6 +341,8 @@ impl Writer {
             max_bytes: limits.max_output_bytes,
             max_depth: limits.max_nesting_depth,
             pending: None,
+            after_list: false,
+            notes: Vec::new(),
         }
     }
 
@@ -285,7 +396,42 @@ impl Writer {
             max_depth: self.max_depth,
             in_table_cell: false,
         };
-        self.blocks(document.body(), &context, losses)
+        self.blocks(document.body(), &context, losses)?;
+        self.footnote_definitions(document, &context, losses)
+    }
+
+    /// `[^n]: text` for every footnote a reference was written for, in
+    /// reference order, after the body (GFM's footnote extension).
+    fn footnote_definitions(
+        &mut self,
+        document: &Document,
+        context: &Context<'_>,
+        losses: &mut Losses,
+    ) -> Result<(), AdapterError> {
+        let mut index = 0;
+        while index < self.notes.len() {
+            let id = self.notes[index];
+            index += 1;
+            let Some(note) = document.definitions().footnotes.get(&id) else {
+                continue;
+            };
+            self.open_block(1)?;
+            self.push_str(&format!("[^{index}]: "))?;
+            let mut first = true;
+            for block in &note.blocks {
+                let BlockNode::Paragraph(paragraph) = block else {
+                    losses.record("markdown.note_block", ModelOutcome::Degraded);
+                    continue;
+                };
+                if !first {
+                    self.push_str("\n\n    ")?;
+                }
+                first = false;
+                self.inlines(&paragraph.inlines, context, losses)?;
+            }
+            self.close_block(1);
+        }
+        Ok(())
     }
 
     fn blocks(
@@ -294,8 +440,57 @@ impl Writer {
         context: &Context<'_>,
         losses: &mut Losses,
     ) -> Result<(), AdapterError> {
+        let mut index = 0;
+        while index < blocks.len() {
+            if is_code_paragraph(&blocks[index], context.definitions) {
+                let end = blocks[index..]
+                    .iter()
+                    .position(|block| !is_code_paragraph(block, context.definitions))
+                    .map_or(blocks.len(), |offset| index + offset);
+                self.code_fence(&blocks[index..end])?;
+                index = end;
+                continue;
+            }
+            self.block(&blocks[index], context, losses)?;
+            index += 1;
+        }
+        Ok(())
+    }
+
+    /// Consecutive "HTML Preformatted" paragraphs as one fenced code block,
+    /// their text verbatim (a fence is the one place nothing is escaped). The
+    /// fence is one backtick longer than the longest run inside it.
+    fn code_fence(&mut self, blocks: &[BlockNode]) -> Result<(), AdapterError> {
+        let mut lines = Vec::with_capacity(blocks.len());
         for block in blocks {
-            self.block(block, context, losses)?;
+            if let BlockNode::Paragraph(paragraph) = block {
+                lines.push(code_text(&paragraph.inlines));
+            }
+        }
+        let longest = lines
+            .iter()
+            .map(|line| longest_run(line, '`'))
+            .max()
+            .unwrap_or(0);
+        let fence = "`".repeat((longest + 1).max(3));
+        self.settle_list()?;
+        self.open_block(0)?;
+        self.push_str(&fence)?;
+        for line in &lines {
+            self.push('\n')?;
+            self.push_str(line)?;
+        }
+        self.push('\n')?;
+        self.push_str(&fence)?;
+        self.close_block(1);
+        Ok(())
+    }
+
+    /// Owes a blank line after a list before a block that is not an item.
+    fn settle_list(&mut self) -> Result<(), AdapterError> {
+        if self.after_list {
+            self.after_list = false;
+            self.close_block(1);
         }
         Ok(())
     }
@@ -328,6 +523,26 @@ impl Writer {
     ) -> Result<(), AdapterError> {
         let heading = heading_level(paragraph, context.definitions);
         let marker = list_marker(paragraph, context.definitions);
+        if marker.is_none() {
+            self.settle_list()?;
+        }
+
+        // A thematic break is an empty paragraph whose bottom border is the
+        // rule: what Word draws for `---` and what the importer builds.
+        if heading.is_none()
+            && marker.is_none()
+            && paragraph.inlines.is_empty()
+            && paragraph.properties.borders.bottom.is_some()
+            && paragraph.properties.style_ref.is_none()
+        {
+            self.open_block(0)?;
+            self.push_str("---")?;
+            self.close_block(1);
+            return Ok(());
+        }
+        let quote = heading.is_none()
+            && style_name(paragraph, context.definitions)
+                .is_some_and(|name| matches!(name, "Quote" | "Intense Quote"));
 
         // An empty paragraph is a blank line in Word and nothing at all in
         // Markdown, where a blank line is punctuation rather than content. Owing
@@ -340,12 +555,22 @@ impl Writer {
             return Ok(());
         }
 
-        report_paragraph_formatting(paragraph, heading.is_some(), marker.is_some(), losses);
+        report_paragraph_formatting(
+            paragraph,
+            heading.is_some() || quote,
+            marker.is_some(),
+            losses,
+        );
 
         self.open_block(0)?;
         let indent = marker.as_ref().map_or(0, |m| m.level);
+        // Four spaces a level: past the content column of both `- ` and
+        // `1. `, so a nested item stays nested under either kind of parent.
         for _ in 0..indent {
-            self.push_str("  ")?;
+            self.push_str("    ")?;
+        }
+        if quote {
+            self.push_str("> ")?;
         }
         if let Some(level) = heading {
             for _ in 0..level {
@@ -360,6 +585,7 @@ impl Writer {
         // A list item owes no blank line: a tight list is what a word processor
         // draws, and a blank line between items makes CommonMark render every
         // item as its own paragraph.
+        self.after_list = marker.is_some();
         self.close_block(usize::from(marker.is_none()));
         Ok(())
     }
@@ -389,6 +615,7 @@ impl Writer {
         };
 
         losses.record("markdown.table_formatting", ModelOutcome::Omitted);
+        self.settle_list()?;
         self.open_block(0)?;
         for (index, row) in table.rows.iter().enumerate() {
             if index != 0 {
@@ -412,7 +639,16 @@ impl Writer {
             // becomes the header: that is the only shape the format has.
             if index == 0 {
                 self.push('\n')?;
-                for _ in 0..columns {
+                for cell in &row.cells {
+                    let delimiter = match cell_alignment(cell) {
+                        Some(Alignment::Center) => "| :---: ",
+                        Some(Alignment::End) => "| ---: ",
+                        Some(Alignment::Start) => "| :--- ",
+                        _ => "| --- ",
+                    };
+                    self.push_str(delimiter)?;
+                }
+                for _ in row.cells.len()..columns {
                     self.push_str("| --- ")?;
                 }
                 self.push('|')?;
@@ -446,6 +682,12 @@ impl Writer {
                 report_run_formatting(&run.properties, emphasis, losses);
                 if run.text.is_empty() {
                     return Ok(());
+                }
+                if run_is_code(&run.properties, context.definitions) {
+                    let span = code_span(&run.text);
+                    self.push_str(emphasis.opening())?;
+                    self.push_str(&span)?;
+                    return self.push_str(emphasis.closing());
                 }
                 self.push_str(emphasis.opening())?;
                 let escaped = escape_text(&run.text, context.in_table_cell);
@@ -533,6 +775,11 @@ impl Writer {
                 Ok(())
             }
             InlineNode::Sdt(sdt) => {
+                // A checkbox control is GFM's task box: `[x]` / `[ ]`. The
+                // run after it carries the space.
+                if let Some(SdtControlData::Checkbox(checkbox)) = &sdt.properties.data {
+                    return self.push_str(if checkbox.checked { "[x]" } else { "[ ]" });
+                }
                 losses.record("markdown.content_control", ModelOutcome::Degraded);
                 self.inlines(&sdt.inlines, context, losses)
             }
@@ -561,10 +808,20 @@ impl Writer {
                 losses.record("markdown.embedded_object", ModelOutcome::Omitted);
                 Ok(())
             }
+            InlineNode::NoteReference(reference) if reference.kind == NoteKind::Footnote => {
+                // GFM's footnote: `[^n]` here, `[^n]: body` after the body.
+                let number = match self.notes.iter().position(|id| *id == reference.note) {
+                    Some(index) => index + 1,
+                    None => {
+                        self.notes.push(reference.note);
+                        self.notes.len()
+                    }
+                };
+                self.push_str(&format!("[^{number}]"))
+            }
             InlineNode::NoteReference(_) => {
-                // CommonMark has no footnotes; GFM's are an extension this
-                // exporter does not emit, and the note BODY lives in
-                // `definitions`, which is not walked.
+                // An endnote: Markdown has one kind of note, and writing an
+                // endnote as a footnote would move it to a different place.
                 losses.record("markdown.note_reference", ModelOutcome::Omitted);
                 Ok(())
             }
@@ -573,7 +830,7 @@ impl Writer {
                 Ok(())
             }
             InlineNode::NoteNumberMark(_) => {
-                losses.record("markdown.note_number_mark", ModelOutcome::Omitted);
+                // The `[^n]:` label IS the number mark.
                 Ok(())
             }
             InlineNode::CommentReference(_)
@@ -844,6 +1101,77 @@ fn list_marker(paragraph: &Paragraph, definitions: &Definitions) -> Option<Marke
     })
 }
 
+/// A paragraph's style name, resolved through the definitions. O(log styles).
+fn style_name<'a>(paragraph: &Paragraph, definitions: &'a Definitions) -> Option<&'a str> {
+    let id = paragraph.properties.style_ref?;
+    definitions.styles.get(&id)?.name.as_deref()
+}
+
+/// Whether a block is a code-block line: Word's "HTML Preformatted", the style
+/// it gives `<pre>` and the one the Markdown importer builds a fence with.
+fn is_code_paragraph(block: &BlockNode, definitions: &Definitions) -> bool {
+    matches!(block, BlockNode::Paragraph(paragraph)
+        if paragraph.properties.numbering.is_none()
+            && style_name(paragraph, definitions) == Some("HTML Preformatted"))
+}
+
+/// Whether a run is inline code: the "HTML Code" character style.
+fn run_is_code(properties: &RunProperties, definitions: &Definitions) -> bool {
+    properties
+        .style_ref
+        .and_then(|id| definitions.styles.get(&id))
+        .and_then(|style| style.name.as_deref())
+        == Some("HTML Code")
+}
+
+/// A code span that holds `text` verbatim: delimited by one more backtick
+/// than the longest run inside, padded when the text touches a backtick.
+fn code_span(text: &str) -> String {
+    let ticks = "`".repeat(longest_run(text, '`') + 1);
+    let pad = text.starts_with('`') || text.ends_with('`');
+    if pad {
+        format!("{ticks} {text} {ticks}")
+    } else {
+        format!("{ticks}{text}{ticks}")
+    }
+}
+
+fn longest_run(text: &str, character: char) -> usize {
+    let mut longest = 0;
+    let mut current = 0;
+    for c in text.chars() {
+        if c == character {
+            current += 1;
+            longest = longest.max(current);
+        } else {
+            current = 0;
+        }
+    }
+    longest
+}
+
+/// A code line's text: runs verbatim, a tab as a tab.
+fn code_text(inlines: &[InlineNode]) -> String {
+    let mut out = String::new();
+    for inline in inlines {
+        match inline {
+            InlineNode::Run(run) => out.push_str(&run.text),
+            InlineNode::Tab(_) => out.push('\t'),
+            InlineNode::Hyperlink(link) => out.push_str(&code_text(&link.inlines)),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// A cell's alignment, read from its one paragraph.
+fn cell_alignment(cell: &casual_doc_model::v1::TableCell) -> Option<Alignment> {
+    match cell.blocks.first() {
+        Some(BlockNode::Paragraph(paragraph)) => paragraph.properties.alignment,
+        _ => None,
+    }
+}
+
 fn paragraph_is_empty(paragraph: &Paragraph) -> bool {
     paragraph.inlines.iter().all(|inline| match inline {
         InlineNode::Run(run) => run.text.is_empty(),
@@ -952,7 +1280,7 @@ const FEATURES: &[&str] = &[
     "markdown.hyperlink_tooltip",
     "markdown.line_break_in_table",
     "markdown.math_markup",
-    "markdown.note_number_mark",
+    "markdown.note_block",
     "markdown.note_reference",
     "markdown.page_background",
     "markdown.page_or_column_break",
@@ -1132,7 +1460,7 @@ mod tests {
         let (text, report) = markdown(&document_with_styles(&[
             ("heading 1", None, "Title"),
             ("Heading 3", None, "Deeper"),
-            ("Quote", None, "Not a heading"),
+            ("Body Text", None, "Not a heading"),
         ]));
         assert_eq!(text, "# Title\n\n### Deeper\n\nNot a heading\n");
         assert!(
@@ -1439,13 +1767,13 @@ mod tests {
             })
             .expect_err("markdown has no source bytes to return");
         assert!(
-            format!("{error}").contains("no importer"),
+            format!("{error}").contains("not byte for byte"),
             "the refusal must say why: {error}"
         );
     }
 
     #[test]
-    fn the_builtin_registry_offers_markdown_to_save_and_never_to_open() {
+    fn the_builtin_registry_offers_markdown_to_save_and_to_open() {
         let registry = builtin_registry();
         let exports: Vec<&str> = registry
             .export_formats()
@@ -1462,8 +1790,8 @@ mod tests {
             .find(|descriptor| descriptor.id.as_str() == formats::MARKDOWN)
             .expect("the Markdown descriptor is registered");
         assert!(
-            !descriptor.can_import,
-            "there is no Markdown parser, so the picker must never offer it to open"
+            descriptor.can_import,
+            "Markdown opens (`shell.import-markdown`), so the picker offers it"
         );
         assert!(!descriptor.exact_if_unchanged);
         assert_eq!(descriptor.display_name, "Markdown");

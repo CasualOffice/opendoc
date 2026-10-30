@@ -452,6 +452,32 @@ test("Align sits in the arrange block, and the picture tools follow Crop on a pi
   assert.ok(!ids(shape, io).includes("object.resetSize"));
 });
 
+test("Shadow is a shape's and a text box's, never a picture's, and gets the review-mode gate", () => {
+  const seen = [];
+  const io = {
+    ...host(),
+    shadowCommands: (enabled, reason) => {
+      seen.push([enabled, reason]);
+      return { id: "object.shadow", label: "Shadow", submenu: [] };
+    },
+  };
+  assert.ok(ids(shape, io).includes("object.shadow"));
+  assert.ok(ids(textBox, io).includes("object.shadow"));
+  assert.ok(!ids(picture, io).includes("object.shadow"), "a picture's shadow is not modelled");
+  ids(shape, { ...io, reviewMode: () => "viewing" });
+  assert.deepEqual(seen.at(-1), [false, "Turn on Editing to change this object"]);
+});
+
+test("More layout options follows Position in the arrange block", () => {
+  const io = {
+    ...host(),
+    layoutOptionsCommand: (enabled) => ({ id: "object.layoutOptions", label: "More layout options…", enabled }),
+  };
+  const list = ids(picture, io);
+  assert.equal(list[list.indexOf("object.position") + 1], "object.layoutOptions");
+  assert.ok(!ids(picture).includes("object.layoutOptions"), "absent when the host offers none");
+});
+
 test("Shape fill carries Gradient and Shape outline carries Dashes and Arrows when the host offers them", () => {
   const io = {
     ...host(),
@@ -465,4 +491,16 @@ test("Shape fill carries Gradient and Shape outline carries Dashes and Arrows wh
   assert.ok(fill.includes("object.fill.gradient"));
   const outline = row(shape, "object.outline", io).submenu.map((entry) => entry.id);
   assert.ok(outline.includes("object.outline.dashes") && outline.includes("object.outline.arrows"));
+});
+
+test("a shape offers Edit points when the host wires it, gated like every object edit", () => {
+  let ran = 0;
+  const io = { ...host(), editPoints: () => (ran += 1) };
+  const editPoints = row(shape, "object.editPoints", io);
+  assert.ok(editPoints, "a shape's menu has Edit points");
+  assert.equal(editPoints.enabled, true);
+  editPoints.run();
+  assert.equal(ran, 1);
+  assert.equal(row(picture, "object.editPoints", io), undefined, "a picture has no outline to edit");
+  assert.equal(row(shape, "object.editPoints", { ...host({ reviewMode: "viewing" }), editPoints: () => {} }).enabled, false);
 });

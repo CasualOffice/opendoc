@@ -2,16 +2,19 @@
 // per command, read by the ribbon, the menus and the palette alike. Moved out
 // of `main.js` unchanged (docs/177); it reaches the rest of the editor only
 // through the context `ed`.
+import { createAccessibilityChecker } from "./accessibility_checker.mjs";
 import { createPageBorders } from "./page_borders.mjs";
 import { t } from "./i18n.mjs";
 import { reviewDecisionRefusal } from "./review_authority.mjs";
 import { breakSurfaceRows } from "./break_commands.mjs";
+import { contentControlSurfaceRows } from "./content_controls.mjs";
 import { noteSurfaceRows } from "./note_commands.mjs";
 import { objectMenuRows } from "./reference_commands.mjs";
 import { ribbonSurfaceEnabled as surfaceEnabled, ribbonSurfaceReason as surfaceReason } from "./ribbon_surface.mjs";
 import { arrangeSurfaceRows } from "./object_arrange_commands.mjs";
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
 import { tableTools } from "./table_tools.mjs";
+import { tableDrawMode } from "./table_draw_mode.mjs";
 import { tocSurfaceRows } from "./toc_commands.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
@@ -53,7 +56,13 @@ export function createCommandSurfaces(ed) {
     // both in the Table dropdown). The two dialogs are `table_tools.mjs`'s.
     { command: "insert.tableDialog", buttons: [document.getElementById("insertTableDialogBtn")].filter(Boolean), requires: "doc", activate: () => tableTools.openDialog("insertTable") },
     { command: "insert.textToTable", buttons: [document.getElementById("textToTableBtn")].filter(Boolean), requires: "doc", activate: () => tableTools.openDialog("textToTable") },
+    // Draw Table (`table_draw_mode.mjs`): the Table band's pencil toggles the mode;
+    // the Insert table popover's own row is wired by `editor_table_props.mjs`,
+    // because a row inside a popover is not a ribbon face.
+    { command: "insert.drawTable", buttons: [document.getElementById("tableDrawBtn")].filter(Boolean), requires: "doc", activate: () => tableDrawMode.toggle() },
     { command: "insert.image", buttons: [ed.insertPictureBtn], requires: "doc", activate: () => ed.insertImageFromFile() },
+    // Word's Online Pictures / Docs' Image > By URL, beside the file route.
+    { command: "insert.imageFromUrl", buttons: [document.getElementById("insertPictureUrlBtn")].filter(Boolean), requires: "doc", activate: () => ed.objectInsert.openPictureFromUrl() },
     // Link is the one Insert command that genuinely needs a range: it hyperlinks
     // selected text. A cross-paragraph range still enables the button and is
     // answered by `editSelectionLink`'s "Links must stay within one paragraph",
@@ -121,6 +130,24 @@ export function createCommandSurfaces(ed) {
     setStatus: (text, kind) => ed.setStatus(text, kind),
     fallbackFocus: () => document.getElementById("pageBordersBtn") ?? ed.pagesEl,
   });
+  // Check accessibility (HF-064). Go to puts the caret at a block that can hold
+  // one; `caretRect` is empty for anything that cannot (a table's own id).
+  const accessibilityChecker = createAccessibilityChecker({
+    getDoc: () => ed.doc,
+    goTo: (block, offset = 0) => {
+      // A table or a block control holds no caret of its own: its first paragraph does.
+      const node = ed.doc?.firstParagraphIn?.(block) ?? block;
+      if (!ed.doc || !(ed.doc.caretRect(node, offset)?.length > 0)) return false;
+      ed.selection = { anchor: { node, offset }, focus: { node, offset } };
+      ed.drawSelection();
+      ed.scrollCaretIntoView();
+      ed.updateToolbar();
+      ed.focusEditorSurface();
+      return true;
+    },
+    setStatus: (text, kind) => ed.setStatus(text, kind),
+    fallbackFocus: () => document.getElementById("reviewA11yCheckBtn") ?? ed.pagesEl,
+  });
   const LAYOUT_SURFACE = [
     // Page setup: one dialog, four fieldsets. Word's four buttons are four routes
     // into the same section geometry; each one opens the dialog with its own
@@ -170,6 +197,14 @@ export function createCommandSurfaces(ed) {
     { command: "layout.arrange.wrap", label: "Wrap text around object", kw: "wrap text square tight through behind front object image shape arrange", buttons: () => [ed.layoutWrapBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-inspector-wrap-select]") },
     { command: "layout.arrange.position", label: "Object position and size", kw: "position size move object image shape arrange exact geometry", buttons: () => [ed.layoutPositionBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-prop=left]") },
     ...breakSurfaceRows(BREAK_IO),
+    // Content controls (`109` RM-34): the Insert band's Controls dropdown, one row
+    // per kind plus Properties, Remove and Choose a value, which need a control at
+    // the caret. `group` puts their palette rows under Insert.
+    ...contentControlSurfaceRows(() => ed.contentControls),
+    // Protect form and Form roles (`docs/153` review.protect-form, shell.form-roles):
+    // rows at the foot of the same dropdown, in the Review menu and the palette.
+    { command: "review.protectForm", group: "Review", get label() { return t("forms.protectCommand"); }, kw: "protect form filling in forms lock fields only restrict editing", buttons: () => [], requires: "doc", run: () => void ed.formRoles.protectForm() },
+    { command: "forms.roles", group: "Review", get label() { return t("formRoles.command"); }, kw: "form roles who fills fields assign role fill as view form as manager employee", buttons: () => [], requires: "doc", run: () => ed.formRoles.open() },
     // Link to Previous, Remove and the six page-number positions (HF-192, RM-23):
     // palette and Insert-menu rows from `editor_header_footer.mjs`, whose band
     // bar is their in-place face.
@@ -285,6 +320,8 @@ export function createCommandSurfaces(ed) {
       tocFields: ed.tocCommands.fields.count,
       onTocEntry:
         entry.requires === "tocEntry" && !!ed.selection && !!ed.tocEntryTargetAt(ed.selection.focus.node),
+      // O(the caret paragraph's inlines), cached per revision and caret.
+      inControl: entry.requires === "control" && !!ed.contentControls.atCaret(),
     };
   }
 
@@ -359,6 +396,8 @@ export function createCommandSurfaces(ed) {
     { command: "tools.spellCheck", buttons: () => [ed.reviewSpellCheckBtn], requires: "always", pressed: () => ed.settings.spellCheck !== false, run: () => ed.setSpellCheckEnabled(ed.settings.spellCheck === false) },
     { command: "tools.grammarCheck", buttons: () => [ed.reviewGrammarCheckBtn], requires: "always", pressed: () => ed.settings.grammarCheck !== false, run: () => ed.setGrammarCheckEnabled(ed.settings.grammarCheck === false) },
     { command: "tools.smartQuotes", buttons: () => [ed.reviewSmartQuotesBtn], requires: "always", pressed: () => ed.autoCorrect.enabled("smartQuotes"), run: () => ed.autoCorrect.toggle("smartQuotes") },
+    // Check accessibility (HF-064): reads the document, so it needs one.
+    { command: "tools.checkAccessibility", buttons: () => [document.getElementById("reviewA11yCheckBtn")].filter(Boolean), requires: "doc", reasonKey: "command.needsDocument", run: () => accessibilityChecker.open() },
     // Word count (HF-051): a document fact, so it needs a document and nothing else.
     { command: "tools.wordCount", buttons: () => [document.getElementById("reviewWordCountBtn")].filter(Boolean), requires: "doc", reasonKey: "command.needsDocument", run: () => ed.wordCount.open() },
     { command: "tools.languages", buttons: () => [ed.reviewProofLanguagesBtn], requires: "always", run: () => ed.proofing.openLanguages() },

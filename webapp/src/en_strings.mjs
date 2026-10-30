@@ -161,6 +161,68 @@ export const EN_STRINGS = Object.freeze({
   "pageBorders.noSection": "This document has no page setup to carry a border.",
   "pageBorders.applied": "Page borders applied",
   "pageBorders.removed": "Page borders removed",
+  // Check accessibility (HF-064): the command, the summary, and each rule's
+  // title and fix, written as Word's checker words them.
+  "a11yCheck.command": "Check accessibility…",
+  "a11yCheck.summary": "Errors: {errors} · Warnings: {warnings}",
+  "a11yCheck.none": "No accessibility issues found.",
+  "a11yCheck.severity.error": "Error",
+  "a11yCheck.severity.warning": "Warning",
+  "a11yCheck.goTo": "Go to",
+  "a11yCheck.goToNamed": "Go to: {name}",
+  "a11yCheck.goToUnavailable": "That item cannot hold the cursor.",
+  "a11yCheck.where.picture": "Picture {n}",
+  "a11yCheck.where.table": "Table {n}",
+  "a11yCheck.where.levels": "level {from} to level {to}",
+  "a11yCheck.rule.missingAlt": "Missing alternative text",
+  "a11yCheck.fix.missingAlt": "Describe the picture in its properties, so a screen reader can say what it shows.",
+  "a11yCheck.rule.tableHeader": "Missing table header",
+  "a11yCheck.fix.tableHeader": "Mark the first row as a header row in Table properties, so each cell is announced with its column.",
+  "a11yCheck.rule.headingSkip": "Skipped heading level",
+  "a11yCheck.fix.headingSkip": "Use heading levels in order, so the outline reads as a structure.",
+  "a11yCheck.rule.mergedCells": "Merged cells",
+  "a11yCheck.fix.mergedCells": "Merged cells are hard to follow with a screen reader; keep the grid regular where you can.",
+  "a11yCheck.rule.emptyRow": "Blank table row",
+  "a11yCheck.fix.emptyRow": "Remove empty rows used for spacing; a screen reader announces each one.",
+  "a11yCheck.rule.lowContrast": "Hard-to-read text contrast",
+  "a11yCheck.fix.lowContrast": "Darken the text or lighten what is behind it, so it reaches 4.5:1 (3:1 for large text).",
+  "a11yCheck.where.contrast": "“{text}” — contrast {ratio}:1",
+  // Content controls (`109` RM-34, `content_controls.mjs`). The kind names and
+  // the command labels are the Controls dropdown's markup; these are the rest.
+  // The three placeholders are Word's own prompts, which a new empty control holds.
+  "controls.placeholder.text": "Click or tap here to enter text.",
+  "controls.placeholder.choose": "Choose an item.",
+  "controls.placeholder.date": "Click or tap to enter a date.",
+  "controls.insertCommand": "Insert content control: {kind}",
+  "controls.inserted": "Content control inserted",
+  "controls.removed": "Content control removed; its contents stay",
+  "controls.filled": "Picture placed",
+  "controls.propertiesApplied": "Content control properties changed",
+  "controls.oneParagraph": "A content control wraps text in one paragraph. Select within one paragraph.",
+  "controls.pictureFailed": "The placeholder picture could not be drawn in this browser.",
+  "controls.notInControl": "Place the caret in a content control",
+  "controls.notFillable": "This field is locked, or it is for another role to fill.",
+  "controls.notInSuggesting": "Content controls cannot be changed in Suggesting mode",
+  "controls.typeToFill": "Type in this content control to fill it.",
+  "controls.chooseItem": "Choose an entry, or type one.",
+  "controls.chooseDate": "Choose a date.",
+  "controls.noEntries": "This list has no entries yet. Add them in its properties.",
+  "controls.props.itemDisplay": "Display name",
+  "controls.props.itemValue": "Value",
+  "controls.props.removeItem": "Remove",
+  "controls.props.datePreview": "For example: {example}",
+  // Protect form and form roles (`form_roles.mjs`).
+  "forms.protected": "Form protected: only its fields can be filled",
+  "forms.unprotected": "Form protection removed",
+  "formRoles.anyone": "Anyone",
+  "formRoles.allFields": "Every field",
+  "formRoles.colour": "Role colour",
+  "formRoles.name": "Role name",
+  "formRoles.remove": "Remove",
+  "formRoles.newRole": "Role {n}",
+  "formRoles.noFields": "No fields.",
+  "formRoles.saved": "Form roles saved",
+  "formRoles.fillingAs": "Filling the form as {role}",
   // The Word count command's label on the palette and the Review menu (HF-051).
   "wordCount.command": "Word count…",
   // Reassigned from script on every render, so the markup sweep never sees it.
@@ -692,6 +754,7 @@ export const EN_STRINGS = Object.freeze({
   "break.inserted.column": "Column break inserted",
   "break.inserted.section": "Section break inserted",
   "menuGroup.breaks": "Breaks",
+  "menuGroup.contentControls": "Content controls",
   "filePane.export.label": "Export",
   // ---- Format names ---------------------------------------------------------
   //
@@ -890,9 +953,9 @@ export const EN_STRINGS = Object.freeze({
   "findings.feature.pdfOriginalWrittenBack": "The original PDF, written back unchanged",
   "findings.feature.pdfPreserveFallback": "Edits that could not be added to the original PDF, so the PDF was regenerated",
   // The open path's status lines (`editor_file_open.mjs`, `editor_file_pick.mjs`).
-  "fileOpen.ready": "Ready — open a .docx, .odt, .rtf, .pdf, .json or .txt",
+  "fileOpen.ready": "Ready — open a .docx, .odt, .rtf, .pdf, .md, .html, .json or .txt",
   "fileOpen.opening": "Opening {name}…",
-  "filePick.unsupported": "Please choose a .docx, .odt, .rtf, .pdf, .json or .txt file",
+  "filePick.unsupported": "Please choose a .docx, .odt, .rtf, .pdf, .md, .html, .json or .txt file",
   "findings.close": "Close",
   "findings.closeLabel": "Close compatibility findings",
   // What each finding IS, in words a reader shares (`109` FID-AT-05,
@@ -1648,6 +1711,30 @@ export const EN_STRINGS = Object.freeze({
   "shape.gradient.linearLeft": "Linear left",
   "shape.gradient.linearDiagonal": "Linear diagonal",
   "shape.gradient.fromCenter": "From center",
+  // Shape Effects ▸ Shadow (`shape_shadow.mjs`, `docs/153` object.shape-shadow):
+  // Word's outer presets, named by where the shadow falls.
+  "shape.shadow": "Shadow",
+  "shape.shadow.none": "No shadow",
+  "shape.shadow.bottomRight": "Offset: bottom right",
+  "shape.shadow.bottom": "Offset: bottom",
+  "shape.shadow.bottomLeft": "Offset: bottom left",
+  "shape.shadow.right": "Offset: right",
+  "shape.shadow.center": "Offset: center",
+  "shape.shadow.left": "Offset: left",
+  "shape.shadow.topRight": "Offset: top right",
+  "shape.shadow.top": "Offset: top",
+  "shape.shadow.topLeft": "Offset: top left",
+  "shape.shadow.options": "Shadow options…",
+  "shape.shadow.bad.color": "Choose a colour for the shadow.",
+  "shape.shadow.bad.transparency": "Transparency is a percentage from 0 to 100.",
+  "shape.shadow.bad.angle": "Enter the angle in degrees.",
+  "shape.shadow.bad.distance": "Distance is from 0 to 200 pt.",
+  "shape.shadow.bad.blur": "Blur is from 0 to 100 pt.",
+  // Layout ▸ More layout options (`object_layout_options.mjs`, `docs/153`
+  // object.advanced-layout-options).
+  "object.layoutOptions": "More layout options…",
+  "object.layoutOptions.inline": "Choose a text wrapping other than In line first",
+  "object.layoutOptions.badDistance": "Distance from text is from 0 to 1584 pt.",
   // Wrap. “In line” is the mode an inserted picture STARTS in, so it leads the
   // row — Google Docs puts it first for the same reason.
   "object.wrap.inline": "In line",
@@ -1932,9 +2019,25 @@ export const EN_STRINGS = Object.freeze({
   "units.refused.outOfRange": "{field}: “{value}” is too large for a measurement.",
   "units.refused.unreadable": "{field}: “{value}” could not be read as a measurement.",
 
-  // The border line style's palette and context-menu row. The ellipsis is this
-  // chrome's convention for a row that opens a control rather than acting.
-  "table.borderStyleCommand": "Border line style\u2026",
+  // Borders and shading (`table_borders_dialog.mjs`): the Table menu, palette
+  // and context-menu row (the ellipsis: it opens a dialog), and what the status
+  // line says once it applies.
+  "table.bordersShadingCommand": "Borders and shading\u2026",
+  "tableBorders.applied": "Borders and shading applied",
+
+  // Text wrapping and Positioning (`table_position_dialog.mjs`).
+  "tablePosition.wrapAround": "Text now wraps around the table",
+  "tablePosition.wrapNone": "The table is back in line with the text",
+  "tablePosition.applied": "Table position updated",
+  "tablePosition.needsAround": "Set Text wrapping to Around to position the table",
+  "tablePosition.invalid": "Enter a measurement of no more than 22 inches",
+
+  // Draw table (`table_draw_mode.mjs`): the command row and the status line.
+  "tableDraw.command": "Draw table",
+  "tableDraw.armed": "Draw table: drag on the page to draw a table, or across a table to split its cells. Press Esc to stop.",
+  "tableDraw.off": "Draw table off",
+  "tableDraw.drawn": "Table drawn",
+  "tableDraw.split": "Cells split",
 
   // Restrict Editing. The dialog's own strings are markup; these are the command
   // row, the two things the status bar says, and the one disabled reason.
@@ -2393,4 +2496,71 @@ export const EN_STRINGS = Object.freeze({
   "ai.refusal.gone": "This suggestion is no longer open.",
   "ai.refusal.noDocument": "Open a document first.",
   "ai.refusal.generic": "This change can’t be applied.",
+  // Picture from URL and Paste as picture (`picture_url_dialog.mjs`, `paste_picture.mjs`).
+  "insert.imageFromUrl": "Picture from URL…",
+  "insert.imageFromUrl.keywords": "image picture online web address link url download internet",
+  "edit.pasteImage": "Paste as picture",
+  "edit.pasteImage.keywords": "paste special image snapshot screenshot picture rasterize",
+  "pictureUrl.downloading": "Downloading the picture…",
+  "pictureUrl.received": "Downloaded {size}…",
+  "pictureUrl.sizeMb": "{size} MB",
+  "pictureUrl.sizeKb": "{size} KB",
+  "pictureUrl.error.invalid": "Enter a web address that starts with http:// or https://.",
+  "pictureUrl.error.credentials": "Remove the user name and password from the address.",
+  "pictureUrl.error.denied": "This editor’s host does not allow pictures to be downloaded from the web.",
+  "pictureUrl.error.network": "The picture couldn’t be downloaded. The site may be unreachable, or it may not let other sites use its pictures.",
+  "pictureUrl.error.http": "The site answered with error {status}; no picture was downloaded.",
+  "pictureUrl.error.notImage": "That address is not a picture.",
+  "pictureUrl.error.unsupported": "That picture’s format can’t be used. Use a PNG, JPEG, GIF, BMP, TIFF or WebP picture.",
+  "pictureUrl.error.tooLarge": "That picture is larger than 20 MB.",
+  "pictureUrl.error.empty": "The site sent an empty file.",
+  "pictureUrl.error.aborted": "The download was cancelled.",
+  "pastePicture.empty": "There is nothing visible on the clipboard to paste as a picture.",
+  "pastePicture.tooLarge": "The clipboard is too large to paste as one picture.",
+  "pastePicture.failed": "The clipboard couldn’t be pasted as a picture.",
+  "pastePicture.nothing": "There is nothing on the clipboard to paste as a picture.",
+  "pastePicture.blocked": "The browser did not allow the clipboard to be read.",
+  // Edit Points on a shape (`shape_edit_points.mjs`).
+  "object.editPoints": "Edit points",
+  "object.editPoints.hint": "Drag a point to reshape the outline · Enter to keep · Esc to cancel",
+  "object.editPoints.done": "Shape outline changed",
+  "object.editPoints.cancelled": "Points not changed",
+  "object.editPoints.suggesting": "Editing a shape’s points cannot be tracked yet; switch to Editing to change it",
+  "object.editPoints.unavailable": "This shape’s outline can’t be edited",
+  "object.editPoints.rotated": "Rotate this shape back to 0° to edit its points",
+  // ---- View and text extras (`editor_view_text.mjs`, `docs/153`) -------------
+  // Find with a regular expression: the pattern's own error, inline.
+  "findPanel.regexInvalid": "Not a valid pattern: {reason}",
+  // Dark document and Multiple pages: view switches, never the file.
+  "darkDocument.commandOn": "Dark document: on",
+  "darkDocument.commandOff": "Dark document: off",
+  "darkDocument.on": "Dark document on — the file is unchanged",
+  "darkDocument.off": "Dark document off",
+  "multiplePages.commandOn": "Multiple pages: on",
+  "multiplePages.commandOff": "Multiple pages: off",
+  "multiplePages.on": "Multiple pages on",
+  "multiplePages.off": "Multiple pages off",
+  "multiplePages.reflow": "Reflow has no pages to show side by side",
+  "menuGroup.pageDisplay": "Page display",
+  // Print selection.
+  "printSelection.command": "Print selection",
+  "printSelection.needsRange": "Select the text to print first",
+  // The personal dictionary.
+  "dictionaryDialog.command": "Personal dictionary…",
+  "dictionaryDialog.remove": "Remove",
+  "dictionaryDialog.removeWord": "Remove “{word}” from your dictionary",
+  "dictionaryDialog.added": "Added “{word}”",
+  "dictionaryDialog.removed": "Removed “{word}” — it is checked again",
+  "dictionaryDialog.cleared": "Your dictionary is empty",
+  "dictionaryDialog.notSaved": "Changed for this session only — your dictionary could not be saved",
+  "dictionaryDialog.oneWord": "Type one word, with no spaces",
+  // Alt+X.
+  "unicodeToggle.command": "Toggle character code",
+  "unicodeToggle.nothing": "Nothing before the insertion point to convert",
+  // Insert text from file.
+  "insertFile.command": "Text from file…",
+  "insertFile.done": "Inserted the content of {name}",
+  "insertFile.loss": "Inserted {name}, without {items} — those belong to the other document.",
+  "paste.loss.sectionBreak": "section breaks",
+  "paste.loss.embeddedObject": "embedded objects and charts",
 });

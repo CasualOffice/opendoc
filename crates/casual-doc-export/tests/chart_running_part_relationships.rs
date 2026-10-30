@@ -777,6 +777,7 @@ fn a_chart_inside_a_grouped_text_box_declares_its_relationship() {
             body_properties: Default::default(),
             hyperlink: None,
             blocks: vec![chart_paragraph(410, Vec::new())],
+            shadow: None,
         })],
     };
     let mut definitions = with_projection(projection(chart_anchor(), ChartCoverage::Complete));

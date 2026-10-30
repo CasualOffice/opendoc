@@ -138,10 +138,17 @@ export async function openDocument(bytes, options = {}) {
   await init({ wasm: options.wasm });
   const data = toBytes(bytes, "the document");
   const preload = (options.fonts ?? []).map((face, index) => toBytes(face, `fonts[${index}]`));
-  const engine = preload.length
-    ? WasmViewer.openWithFonts(data, ...packFaces(preload))
-    : WasmViewer.open(data);
+  // The name selects a reader whose bytes carry no evidence of their own
+  // (`.md`, `.html`, with the engine built with `formats`); fonts and a name
+  // together register the fonts after the open, at the cost of a second layout.
+  const named = typeof options.name === "string" && options.name;
+  const engine = named
+    ? WasmViewer.openNamed(data, options.name)
+    : preload.length
+      ? WasmViewer.openWithFonts(data, ...packFaces(preload))
+      : WasmViewer.open(data);
   const doc = new ViewerDocument(engine);
+  if (named && preload.length) doc.registerFonts(preload);
   if (typeof options.fontProvider === "function") {
     const needs = doc.fontNeeds();
     const answers = await Promise.all(needs.map((need) => options.fontProvider(need)));
