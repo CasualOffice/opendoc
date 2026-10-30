@@ -20,6 +20,7 @@ import { insertChartTypeCommands } from "./chart_insert.mjs";
 import { tableTools } from "./table_tools.mjs";
 import { revealOnSettings } from "./surface_reveal.mjs";
 import { quickStyleCommands } from "./quick_styles.mjs";
+import { contributedCommands } from "./plugin_command_sources.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -695,7 +696,7 @@ export function createPalette(ed) {
     // the compact bar's tooltip and the shortcut reference all read
     // `command.shortcut`, and the only thing that can set it is the table the
     // dispatcher matches against.
-    cmds.push(...ed.compatFindings.commands(), ...(ed.pdfCommands?.commands() ?? []), ...ed.regionCycle.commands());
+    cmds.push(...ed.compatFindings.commands(), ...(ed.pdfCommands?.commands() ?? []), ...ed.regionCycle.commands(), ...contributedCommands(context));
     for (const command of cmds) command.shortcut = shortcutForCommand(command.id, ed.EDITOR_KEYBOARD_PLATFORM);
     // Narrowed to the ROOM's grant HERE, once, for every surface this registry
     // feeds — palette, menu bar, compact bar, context menus — rather than by a

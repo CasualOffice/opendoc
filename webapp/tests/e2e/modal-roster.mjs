@@ -602,6 +602,49 @@ export const MODALS = [
     },
   },
   {
+    id: "aiProviderDialog",
+    name: "AI provider",
+    // Bring your own key (`docs/183` §3.9). Its durable surface is Settings ▸ AI
+    // provider; the palette is the second, and the one this row drives because it
+    // leaves no opener on screen, like About's.
+    opener: null,
+    restore: EDITOR_SURFACE,
+    focus: "#aiProviderPreset",
+    async open(page) {
+      await gotoEditor(page);
+      await runFromPalette(page, "ai provider", "AI provider settings");
+    },
+  },
+  {
+    id: "pluginsDialog",
+    name: "Manage add-ins",
+    // `docs/183` §6.5. Review ▸ Proofing ▸ Add-ins ▸ Manage add-ins… is the ribbon
+    // surface; the palette row is the second.
+    opener: null,
+    restore: EDITOR_SURFACE,
+    focus: "#pluginsClose",
+    async open(page) {
+      await gotoEditor(page);
+      await runFromPalette(page, "manage add-ins", "Manage add-ins");
+    },
+  },
+  {
+    id: "pluginGrantDialog",
+    name: "Allow an add-in",
+    // The grant prompt (`docs/183` §6.1), reached the way a person reaches it:
+    // installing a manifest from Manage add-ins. The test fixture plugin is served
+    // from this site, so nothing leaves the test server. Escape is "Don't allow",
+    // and focus goes back to Install in the manager, which is still open.
+    opener: "#pluginsInstallBtn",
+    focus: "#pluginGrantDeny",
+    async open(page) {
+      await gotoEditor(page);
+      await runFromPalette(page, "manage add-ins", "Manage add-ins");
+      await page.locator("#pluginsInstallUrl").fill("tests/fixtures/plugins/probe/manifest.json");
+      await page.locator("#pluginsInstallBtn").click();
+    },
+  },
+  {
     id: "confirmDialog",
     name: "Discard confirmation",
     opener: null,

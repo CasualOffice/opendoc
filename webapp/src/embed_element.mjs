@@ -57,6 +57,10 @@ const AVATARS = "avatars";
  *  `AWAIT_IDENTITY`'s reason: the package does not ship the editor's page modules. */
 const AI_TOOLS = "aiTools";
 const WEBMCP = "webmcp";
+/** The AI provider parameter (`ai_provider_channel.mjs`'s `AI_PROVIDER_PARAM`) and
+ *  its two values, spelled here for the same reason (`docs/183` §3.8). */
+const AI_PROVIDER = "aiProvider";
+const AI_PROVIDER_VALUES = Object.freeze({ host: "host", off: "off" });
 /** The preferences a host identity supersedes: both name the person (§3.1). */
 const IDENTITY_PREFERENCES = Object.freeze(["user", "initials"]);
 
@@ -88,6 +92,8 @@ const MOUNT_ATTRIBUTES = Object.freeze([
   "identity",
   "avatars",
   "ai-tools",
+  "ai-provider",
+  "plugins",
 ]);
 
 /** The two NARROWING attributes, each read against the authority's own vocabulary.
@@ -197,6 +203,16 @@ const SHADOW_STYLE = `
  *    registered in the FRAME's document, so this page cannot call them; they are
  *    filtered by the same grant as `editor.ai`, and every edit is a private
  *    proposal the person accepts or discards. Becomes `?aiTools=webmcp`.
+ *  * `ai-provider` — `"off"` withdraws every AI feature in the frame, bring-your-own
+ *    key included (`docs/183` §3.8). To serve the host's own model, set the
+ *    `aiProvider` PROPERTY to `async (request, {signal, onChunk, purpose}) =>
+ *    response`, with OpenAI Chat Completions JSON both ways; the frame is told
+ *    `?aiProvider=host` and its requests arrive as `ai-provider` events, which this
+ *    element answers from the property. The key stays on the host's side.
+ *  * `plugins` — the URL of the host's plugin catalogue (`docs/183` §9): OpenDoc
+ *    manifests with the permissions the host grants each, run in sandboxed frames.
+ *    `"none"` removes every plugin, first-party ones included. Absent, a framed
+ *    editor runs none. Becomes `?plugins=`.
  *
  * Properties: `mode`, `identity`, `capabilities`, `regions`, `editingMode`,
  * `sandbox`, `frame`, `can(name)`. `can` and `chrome` have no reflecting
@@ -226,6 +242,23 @@ export class OpenDocEditorElement extends ElementBase {
   #directory = null;
   /** The client serving it to the frame, and how to stop. */
   #directoryServer = null;
+  /** The host's model, `async (request, {signal, onChunk, purpose}) => response`. */
+  #aiProvider = null;
+  /** The client serving it to the frame, and how to stop. */
+  #aiProviderServer = null;
+
+  /** The host's model (`docs/183` §3.8), OpenAI Chat Completions JSON in and out.
+   *  A property, because functions cannot be attributes. Remounts, so the frame
+   *  is told (`?aiProvider=host`) to send its requests here; with none set and no
+   *  `ai-provider` attribute, a framed editor has no AI and sends nothing. */
+  get aiProvider() {
+    return this.#aiProvider;
+  }
+
+  set aiProvider(value) {
+    this.#aiProvider = typeof value === "function" ? value : null;
+    if (this.isConnected && this.#root) this.#queueRemount();
+  }
 
   /** The host directory for @mention (`docs/175` §7.2): `{ search(query, {limit,
    *  signal}), notify?(notice) }`. A property, because functions cannot be
@@ -392,9 +425,16 @@ export class OpenDocEditorElement extends ElementBase {
     // is served over the frame's message channel once it has loaded.
     if (this.#directory) url.searchParams.set("directory", "1");
     else url.searchParams.delete("directory");
+    if (this.#aiProvider && url.searchParams.get(AI_PROVIDER) !== AI_PROVIDER_VALUES.off) url.searchParams.set(AI_PROVIDER, AI_PROVIDER_VALUES.host);
     frame.src = url.href;
     this.#directoryServer?.();
     this.#directoryServer = null;
+    this.#aiProviderServer?.();
+    this.#aiProviderServer = null;
+    if (this.#aiProvider && url.searchParams.get(AI_PROVIDER) === AI_PROVIDER_VALUES.host) {
+      const provider = this.#aiProvider;
+      frame.addEventListener("load", () => this.#serveAiProvider(frame, url.origin, provider), { once: true });
+    }
     if (this.#directory) {
       const directory = this.#directory;
       frame.addEventListener("load", () => this.#serveDirectory(frame, url.origin, directory), { once: true });
@@ -519,6 +559,18 @@ export class OpenDocEditorElement extends ElementBase {
       url.searchParams.delete(AI_TOOLS);
       notes.push(Object.freeze({ option: "ai-tools", code: "unknown", message: `ai-tools takes "${WEBMCP}" only.` }));
     }
+    // The plugin catalogue is passed through as written: the editor resolves it
+    // against its own URL and checks it (`plugin_catalogue.mjs`).
+    const plugins = this.getAttribute("plugins");
+    if (plugins !== null && plugins.trim()) url.searchParams.set("plugins", plugins.trim());
+    // `ai-provider="off"` is the one attribute value; `host` is written by the
+    // `aiProvider` property at frame creation. Anything else is reported.
+    const aiProvider = this.getAttribute("ai-provider");
+    if (aiProvider === AI_PROVIDER_VALUES.off) url.searchParams.set(AI_PROVIDER, AI_PROVIDER_VALUES.off);
+    else if (aiProvider !== null) {
+      url.searchParams.delete(AI_PROVIDER);
+      notes.push(Object.freeze({ option: "ai-provider", code: "unknown", message: `ai-provider takes "${AI_PROVIDER_VALUES.off}" only; set the aiProvider property to serve a model.` }));
+    }
     return { url, notes: Object.freeze(notes) };
   }
 
@@ -578,6 +630,20 @@ export class OpenDocEditorElement extends ElementBase {
     this.#directoryServer = () => { stop(); client.dispose(); };
   }
 
+  /** Answers the frame's `ai-provider` requests from the host's `aiProvider`, for
+   *  as long as this frame is the mounted one. */
+  #serveAiProvider(frame, origin, provider) {
+    if (this.#frame !== frame) return;
+    let client;
+    try {
+      client = createHostClient({ frame, editorOrigin: origin, view: window });
+    } catch {
+      return;
+    }
+    const stop = client.serveAiProvider(provider);
+    this.#aiProviderServer = () => { stop(); client.dispose(); };
+  }
+
   /** Hands the identity to the frame in the one-shot `identify` request. A
    *  refusal (a frame that already decided, or one that is not ours) is said
    *  once in the console with its code, never with the identity. */
@@ -619,6 +685,8 @@ export class OpenDocEditorElement extends ElementBase {
     this.#identifier = null;
     this.#directoryServer?.();
     this.#directoryServer = null;
+    this.#aiProviderServer?.();
+    this.#aiProviderServer = null;
     if (this.#frame) {
       try {
         this.#frame.src = "about:blank";

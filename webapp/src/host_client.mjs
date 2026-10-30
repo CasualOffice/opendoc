@@ -186,7 +186,9 @@ export function createHostClient({ frame, editorOrigin, view = globalThis, timeo
                 ? (qid, status) => send(type, { qid, status })
                 : type === "ai"
                   ? (method, ...args) => send("ai", { method, args })
-                  : () => send(type);
+                  : type === "ai-provider.answer"
+                    ? (message) => send(type, { ...message })
+                    : () => send(type);
   }
   // `client.ai.preview(plan)` as well as `client.ai("preview", plan)`: the same
   // spelling the in-process session offers, from the same method list.
@@ -221,6 +223,49 @@ export function createHostClient({ frame, editorOrigin, view = globalThis, timeo
       void client["mention.answer"](detail.qid, status).catch(() => {});
     });
     return () => { current?.abort(); offQuery(); offMention(); };
+  };
+  /** Serves the host's model (`docs/183` §3.8) over this client: every
+   *  `ai-provider` request is passed to `provider(request, {signal, onChunk,
+   *  purpose})`, an async function taking and returning OpenAI Chat Completions
+   *  JSON, and its chunks, result or error are sent back by `qid`; a `cancel`
+   *  aborts the call. What the `<opendoc-editor>` element does with its
+   *  `aiProvider` property. The key stays wherever `provider` keeps it: nothing
+   *  here sees one. Returns a function that stops serving. */
+  client.serveAiProvider = (provider) => {
+    /** qid -> AbortController, for the calls in flight. */
+    const running = new Map();
+    const answer = (message) => void client["ai-provider.answer"](message).catch(() => {});
+    const off = client.on("ai-provider", async ({ detail }) => {
+      const { qid } = detail;
+      if (detail.kind === "cancel") {
+        running.get(qid)?.abort();
+        running.delete(qid);
+        return;
+      }
+      const controller = new AbortController();
+      running.set(qid, controller);
+      try {
+        const response = await provider(detail.request, {
+          signal: controller.signal,
+          purpose: detail.purpose,
+          onChunk: (chunk) => {
+            if (!controller.signal.aborted) answer({ qid, chunk });
+          },
+        });
+        if (controller.signal.aborted) return;
+        if (response?.error) answer({ qid, error: response.error, status: response.status ?? 0 });
+        else answer({ qid, response: response ?? null });
+      } catch (err) {
+        if (!controller.signal.aborted) answer({ qid, error: { message: String(err?.message ?? err) } });
+      } finally {
+        running.delete(qid);
+      }
+    });
+    return () => {
+      for (const controller of running.values()) controller.abort();
+      running.clear();
+      off();
+    };
   };
   return client;
 }

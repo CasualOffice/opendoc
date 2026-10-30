@@ -951,6 +951,14 @@ export function hostConfig(view = globalThis) {
     // The host's opt-in to WebMCP (`?aiTools=webmcp`, `docs/178` §9 item 2): register
     // `editor.ai`'s tools with a browser agent. Off when absent; `ai_webmcp.mjs`.
     aiTools: get("aiTools"),
+    // Which model AI features use (`?aiProvider=host` or `off`, `docs/183` §3.8):
+    // `host` sends requests to the host over `postMessage`, `off` withdraws AI,
+    // bring-your-own key included. Absent: the in-process host's, or BYOK when
+    // standalone, or none. `ai_provider_channel.mjs` resolves it.
+    aiProvider: get("aiProvider"),
+    // The host's plugin catalogue (`?plugins=<URL>` or `none`, `docs/183` §9).
+    // `plugin_catalogue.mjs` reads it.
+    plugins: get("plugins"),
     framed,
   };
 }
