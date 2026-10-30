@@ -17,6 +17,7 @@
 // the wrong reason.
 import {
   MOD,
+  clickIntoFirstPage,
   expect,
   gotoEditor,
   setReviewMode,
@@ -200,7 +201,11 @@ test.describe("the pointer says what the thing under it will do", () => {
 
     // Find the control by keyboard so no pixel is guessed: the caret the editor
     // paints at the start of the control's paragraph sits on the glyph.
-    await page.locator("#pages").click({ position: { x: 300, y: 40 } });
+    // Into the BODY, then to its start by keyboard. A raw point in #pages was 40px
+    // down, which is inside page 1's top-margin band: the "+ Header" marker
+    // appears under a pointer resting there, and once #918 moved the sheet the
+    // click landed on it and opened header editing, hiding the Home band.
+    await clickIntoFirstPage(page);
     await page.keyboard.press(`${MOD}+Home`);
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Home");
@@ -219,9 +224,7 @@ test.describe("the pointer says what the thing under it will do", () => {
     expect(consoleErrors).toEqual([]);
   });
 
-  // QUARANTINED (2026-10-30): #formatPainter is not clickable in this state (60s
-  // timeout). Being fixed in #918.
-  test.fixme("a hyperlink offers the hand, and the format painter keeps its brush", async ({
+  test("a hyperlink offers the hand, and the format painter keeps its brush", async ({
     page,
     consoleErrors,
   }) => {
@@ -230,7 +233,11 @@ test.describe("the pointer says what the thing under it will do", () => {
 
     // Make a link rather than hunt for one, so the point under the pointer is
     // known exactly: select the first word and apply a web address.
-    await page.locator("#pages").click({ position: { x: 300, y: 40 } });
+    // Into the BODY, then to its start by keyboard. A raw point in #pages was 40px
+    // down, which is inside page 1's top-margin band: the "+ Header" marker
+    // appears under a pointer resting there, and once #918 moved the sheet the
+    // click landed on it and opened header editing, hiding the Home band.
+    await clickIntoFirstPage(page);
     await page.keyboard.press(`${MOD}+Home`);
     for (let i = 0; i < 6; i += 1) await page.keyboard.press("Shift+ArrowRight");
     const highlight = await stableBox(page.locator(".overlay .highlight").first());
