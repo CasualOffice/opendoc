@@ -1,0 +1,16 @@
+{
+  "manifestVersion": 1,
+  "id": "org.opendoc.test.probe",
+  "name": "Probe",
+  "version": "1.0.0",
+  "description": "A test plugin: it exposes its editor client to the test as window.probe.",
+  "publisher": "OpenDoc tests",
+  "entry": "index.html",
+  "permissions": ["read", "suggest"],
+  "contributes": {
+    "commands": [{ "id": "probe", "title": "Probe the editor" }],
+    "ribbon": [{ "command": "probe", "icon": "science" }],
+    "panel": { "title": "Probe", "width": 300 },
+    "contextMenu": [{ "command": "probe", "when": "always" }]
+  }
+}

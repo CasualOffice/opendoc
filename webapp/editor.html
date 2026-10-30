@@ -520,6 +520,14 @@
         </label>
         <p data-i18n="settingsPanel.checkingHappensBrowserDictionary" class="settings-note">Checking happens in this browser: the dictionary is downloaded once from this site and your text is never sent anywhere. Words you add are stored in this browser only, and can currently be removed only by clearing this site's data.</p>
       </div>
+      <!-- AI provider (docs/183 §3.9). Bring your own key, standalone only; the
+           note says, before anything is sent, which endpoint receives text, and
+           that nothing is sent at all until a provider is set up. -->
+      <div class="settings-section">
+        <div data-i18n="settingsPanel.aiProvider" class="settings-label">AI provider</div>
+        <p data-i18n="settingsPanel.aiProviderNote" id="aiProviderSummary" class="settings-note">No AI provider is set up, so no text is sent anywhere.</p>
+        <button data-i18n="settingsPanel.aiProviderSetUp" type="button" id="aiProviderSettingsBtn" class="dialog-button">AI provider settings…</button>
+      </div>
       <!-- AutoCorrect (docs/174 TA-05, TA-06): Word's "AutoFormat As You Type"
            switches. Each is also a command-palette switch; `autocorrect.mjs`
            owns all three. -->
@@ -1297,6 +1305,12 @@
               <button data-i18n-title="panelReview.wordCount.title" data-i18n-label="panelReview.wordCount.label" id="reviewWordCountBtn" type="button" class="fmt" title="Count words, characters and paragraphs" aria-label="Word count" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">match_word</span></button>
               <!-- Check accessibility (HF-064): Word's Review ▸ Accessibility. -->
               <button data-i18n-title="panelReview.checkAccessibility.title" data-i18n-label="panelReview.checkAccessibility.label" id="reviewA11yCheckBtn" type="button" class="fmt" title="Check the document for accessibility problems" aria-label="Check accessibility" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">accessibility_new</span></button>
+              <!-- Add-ins (docs/183 §8): ONE fixed-width menu button whatever the
+                   number of plugins, as Word's Add-ins button and Docs' Extensions
+                   menu are. In Proofing rather than a new group, because the
+                   first-party plugins planned are proofing and review work and a
+                   new `rgroup` would move `review-surface.spec.mjs`'s labels. -->
+              <button data-i18n-title="panelReview.addins.title" data-i18n-label="panelReview.addins.label" id="reviewAddinsBtn" type="button" class="fmt" title="Add-ins: tools that run in a sandbox and do only what you allow" aria-label="Add-ins" aria-haspopup="menu" aria-controls="addinsMenu" aria-expanded="false"><span class="ms" aria-hidden="true">extension</span></button>
             </div>
             <span data-i18n="panelReview.proofing" class="rgroup-label">Proofing</span>
           </div>
@@ -2460,6 +2474,10 @@
       <button data-i18n="notes.settingsCommand" type="button" role="menuitem" class="menu-item" data-command="reference.noteSettings">Note settings…</button>
       <button data-i18n="notes.convertCommand" type="button" role="menuitem" class="menu-item" data-command="reference.convertNotes">Convert notes…</button>
     </div>
+    <div data-i18n-label="addinsMenu.label" id="addinsMenu" class="context-menu" hidden role="menu" aria-label="Add-ins">
+      <div id="addinsMenuItems" role="none"></div>
+      <button data-i18n="addinsMenu.manage" type="button" role="menuitem" class="menu-item" id="addinsManage">Manage add-ins…</button>
+    </div>
     <div data-i18n-label="reviewDisplay.label" id="reviewDisplayMenu" class="context-menu" hidden role="menu" aria-label="Display for review">
       <button type="button" role="menuitemradio" aria-checked="false" class="menu-item review-display-row" data-display-mode="simple" data-command="review.displayMode.simpleMarkup"><span class="menu-check" aria-hidden="true"></span><span data-i18n="reviewDisplay.simpleMarkup">Simple markup</span></button>
       <button type="button" role="menuitemradio" aria-checked="false" class="menu-item review-display-row" data-display-mode="all" data-command="review.displayMode.allMarkup"><span class="menu-check" aria-hidden="true"></span><span data-i18n="reviewDisplay.allMarkup">All markup</span></button>
@@ -3151,6 +3169,113 @@
         <footer class="dialog-foot"><span data-i18n="pictureUrlDialog.oneUndoableAction" class="dialog-note">One undoable action.</span><div class="dialog-actions"><button data-i18n="pictureUrlDialog.cancel" id="pictureUrlCancel" type="button" class="dialog-button">Cancel</button><button data-i18n="pictureUrlDialog.insert" id="pictureUrlInsert" type="button" class="dialog-button dialog-button-primary">Insert</button></div></footer>
       </section>
     </div>
+    <!-- AI provider settings (docs/183 §3.9): bring your own key. Opened from
+         Settings and from the palette ("AI provider settings"). The disclosure
+         names the endpoint that will receive text; the key is never written back
+         into the form. In a framed editor the form is hidden and the dialog says
+         who manages AI instead. -->
+    <!-- Manage add-ins (docs/183 §6.5): every plugin this page may run, where it
+         came from, what it asks for, and Turn on / Turn off / Remove. Installing
+         from a manifest URL is offered only standalone or where the host allows
+         it. Code belongs to the installation, never to a document. -->
+    <div id="pluginsDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="pluginsTitle" aria-describedby="pluginsDescription">
+      <section class="dialog-card">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="pluginsDialog.title" id="pluginsTitle">Add-ins</h2>
+              <p data-i18n="pluginsDialog.description" id="pluginsDescription">Add-ins run in a sandbox and can do only what you allow. Every change they propose waits for you to accept it.</p>
+            </div>
+          </div>
+          <button data-i18n-title="pluginsDialog.close.title" data-i18n-label="pluginsDialog.closeAddinsDialog.label" id="pluginsClose" type="button" class="dialog-close" title="Close" aria-label="Close add-ins dialog"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <p data-i18n="pluginsDialog.managed" id="pluginsManaged" class="dialog-field-note" hidden>The add-ins here were chosen by the application you opened this editor in.</p>
+          <ul id="pluginsList" class="plugins-list"></ul>
+          <div id="pluginsInstall" class="plugins-install" hidden>
+            <label data-i18n="pluginsDialog.installUrl" class="dialog-field field-wide">Install from a manifest URL<input id="pluginsInstallUrl" type="url" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="https://" /></label>
+            <button data-i18n="pluginsDialog.install" id="pluginsInstallBtn" type="button" class="dialog-button">Install</button>
+          </div>
+          <p id="pluginsStatus" class="dialog-field-note" role="status" aria-live="polite"></p>
+        </div>
+        <footer class="dialog-foot"><span data-i18n="pluginsDialog.codeNote" class="dialog-note">Add-ins belong to this browser, never to a document.</span><div class="dialog-actions"><button data-i18n="bookmarkDialog.done" id="pluginsDone" type="button" class="dialog-button">Done</button></div></footer>
+      </section>
+    </div>
+    <!-- The grant prompt (docs/183 §6.1): editor chrome, outside the plugin's
+         frame, so a plugin cannot draw over it. Names where the code comes from
+         and each permission in a sentence; reading says plainly that what is read
+         could be sent elsewhere (§10 T2). -->
+    <div id="pluginGrantDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="pluginGrantTitle" aria-describedby="pluginGrantFrom">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="pluginGrantDialog.title" id="pluginGrantTitle">Allow this add-in?</h2>
+              <p id="pluginGrantFrom"></p>
+            </div>
+          </div>
+        </header>
+        <div class="dialog-body">
+          <p data-i18n="pluginGrantDialog.asks" class="dialog-field-note">It asks to:</p>
+          <ul id="pluginGrantList" class="plugin-grant-list"></ul>
+          <p data-i18n="pluginGrantDialog.readWarning" id="pluginGrantWarning" class="dialog-field-note">An add-in that can read this document could send what it reads elsewhere. Allow only add-ins you trust.</p>
+        </div>
+        <footer class="dialog-foot"><span></span><div class="dialog-actions"><button data-i18n="pluginGrantDialog.deny" id="pluginGrantDeny" type="button" class="dialog-button">Don’t allow</button><button data-i18n="pluginGrantDialog.allow" id="pluginGrantAllow" type="button" class="dialog-button dialog-button-primary">Allow</button></div></footer>
+      </section>
+    </div>
+    <!-- One plugin's side panel at a time (docs/183 §8). Every running plugin's
+         frame lives here from its start, shown only while its panel is open:
+         moving an iframe reloads it, which the platform reads as the plugin
+         navigating away. -->
+    <aside id="pluginPanel" class="plugin-panel" hidden aria-labelledby="pluginPanelTitle">
+      <header class="plugin-panel-head">
+        <h2 id="pluginPanelTitle" class="plugin-panel-title"></h2>
+        <button data-i18n-title="pluginPanel.close.title" data-i18n-label="pluginPanel.close.label" id="pluginPanelClose" type="button" class="dialog-close" title="Close" aria-label="Close add-in panel"><span class="ms" aria-hidden="true">close</span></button>
+      </header>
+      <div id="pluginPanelBody" class="plugin-panel-body"></div>
+    </aside>
+    <div id="aiProviderDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="aiProviderTitle" aria-describedby="aiProviderDescription">
+      <section class="dialog-card">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="aiProviderDialog.title" id="aiProviderTitle">AI provider</h2>
+              <p data-i18n="aiProviderDialog.description" id="aiProviderDescription">AI features send text only to the service you choose here, and only when you ask them to. Your key stays on this device.</p>
+            </div>
+          </div>
+          <button data-i18n-title="aiProviderDialog.close.title" data-i18n-label="aiProviderDialog.closeAiProviderDialog.label" id="aiProviderClose" type="button" class="dialog-close" title="Close" aria-label="Close AI provider dialog"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <p id="aiProviderManaged" class="dialog-field-note" hidden></p>
+          <div id="aiProviderForm">
+            <label data-i18n="aiProviderDialog.service" class="dialog-field field-wide">Service<select id="aiProviderPreset" class="dialog-select">
+              <option data-i18n="aiProviderDialog.preset.openai" value="openai">OpenAI</option>
+              <option data-i18n="aiProviderDialog.preset.azure" value="azure">Azure OpenAI</option>
+              <option data-i18n="aiProviderDialog.preset.anthropic" value="anthropic">Anthropic</option>
+              <option data-i18n="aiProviderDialog.preset.gemini" value="gemini">Google Gemini</option>
+              <option data-i18n="aiProviderDialog.preset.mistral" value="mistral">Mistral</option>
+              <option data-i18n="aiProviderDialog.preset.openrouter" value="openrouter">OpenRouter</option>
+              <option data-i18n="aiProviderDialog.preset.ollama" value="ollama">Ollama (this computer)</option>
+              <option data-i18n="aiProviderDialog.preset.lmstudio" value="lmstudio">LM Studio (this computer)</option>
+              <option data-i18n="aiProviderDialog.preset.vllm" value="vllm">vLLM (this computer)</option>
+              <option data-i18n="aiProviderDialog.preset.custom" value="custom">Other OpenAI-compatible service</option>
+            </select></label>
+            <label data-i18n="aiProviderDialog.endpoint" class="dialog-field field-wide">Endpoint URL<input id="aiProviderUrl" type="url" maxlength="2048" autocomplete="off" spellcheck="false" /></label>
+            <label data-i18n="aiProviderDialog.model" class="dialog-field field-wide">Model<input data-i18n-placeholder="aiProviderDialog.model.placeholder" id="aiProviderModel" type="text" maxlength="256" autocomplete="off" spellcheck="false" placeholder="The model name your service uses" /></label>
+            <label data-i18n="aiProviderDialog.key" class="dialog-field field-wide">API key<input id="aiProviderKey" type="password" maxlength="4096" autocomplete="off" spellcheck="false" aria-describedby="aiProviderKeyNote" /></label>
+            <p id="aiProviderKeyNote" class="dialog-field-note"></p>
+            <label class="dialog-check">
+              <input id="aiProviderLegacy" type="checkbox" />
+              <span><strong data-i18n="aiProviderDialog.legacy">Send max_tokens instead of max_completion_tokens</strong><small data-i18n="aiProviderDialog.legacyNote">Only for an older or local server that refuses the newer field name.</small></span>
+            </label>
+          </div>
+          <p id="aiProviderDisclosure" class="dialog-field-note"></p>
+          <p id="aiProviderStatus" class="dialog-field-note" role="status" aria-live="polite"></p>
+        </div>
+        <footer class="dialog-foot"><button data-i18n="aiProviderDialog.forget" id="aiProviderForget" type="button" class="dialog-button">Forget</button><div class="dialog-actions"><button data-i18n="aiProviderDialog.test" id="aiProviderTest" type="button" class="dialog-button">Test connection</button><button data-i18n="aiProviderDialog.save" id="aiProviderSave" type="button" class="dialog-button dialog-button-primary">Save</button></div></footer>
+      </section>
+    </div>
+
     <div id="styleNameDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="styleNameTitle" aria-describedby="styleNameDescription">
       <section class="dialog-card dialog-card-compact">
         <header class="dialog-head">

@@ -119,6 +119,15 @@ does not carry the engine.
 | `editor-src` | Where `editor.html` is. May carry your own query (`?blank=1`); `mode` is merged into it rather than appended twice, and `can`/`chrome` are unioned with any the query already carries. |
 | `frame-title` | The frame's accessible name, in **your** page's language. |
 | `ai-tools` | `"webmcp"` offers the in-page assistant's tools to a browser agent through [WebMCP](https://webmachinelearning.github.io/webmcp/). Off when absent; any other value is dropped and reported on `opendoc-capabilities`. |
+| `ai-provider` | `"off"` withdraws every AI feature in the frame. To serve **your own model**, set the `aiProvider` property instead (below). Any other value is dropped and reported. |
+| `plugins` | The URL of your plugin catalogue (`{catalogueVersion: 1, plugins: [{manifest, grant}]}`), or `"none"` to remove every plugin. Absent, a framed editor runs none. See `docs/183`. |
+
+**Your own model** (`docs/183` §3.8): set `element.aiProvider = async (request, {signal,
+onChunk, purpose}) => response`, where `request` is an OpenAI Chat Completions body and
+`response` a Chat Completions response (or `{error: {message}}`). Call `onChunk` with
+`chat.completion.chunk` objects to stream; `signal` aborts when the person presses Stop.
+Proxy it to your backend: no key ever reaches the browser. Without it, a framed editor has
+no AI and sends nothing anywhere.
 
 **WebMCP** (a Community Group draft, not a standard) is off by default and
 feature-detected: with no `document.modelContext` nothing is registered, no

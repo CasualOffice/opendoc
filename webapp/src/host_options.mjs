@@ -360,9 +360,10 @@ export const OPTIONS = Object.freeze([
     code: "unsupported",
     via: null,
     note:
-      "Deliberately after the command surface (docs/126): a plugin API built before the " +
-      "command contract stabilises is a second addressing scheme. `host_contract.mjs` is that " +
-      "surface, and a plugin registry layers on it.",
+      "Their `pluginsData` list of ONLYOFFICE plugin configs (in-page code on their `asc_*` API) " +
+      "is not read. Ours is `?plugins=<catalogue URL>` (the element's `plugins` attribute): OpenDoc " +
+      "manifests, each with the permissions the host grants it, run as sandboxed iframes over the " +
+      "capability registry (docs/183, ADR-077). A host lists its plugins once in that form.",
   }),
   Object.freeze({
     option: "editorConfig.wopi",
@@ -603,7 +604,9 @@ export const OPTIONS = Object.freeze([
     ours: null,
     code: "unsupported",
     via: null,
-    note: "No plugin surface yet; see `editorConfig.plugins`.",
+    note:
+      "Plugins appear in one Add-ins menu on the Review band, never as toolbar buttons of their " +
+      "own (docs/183 §8); `?plugins=none` removes them. See `editorConfig.plugins`.",
   }),
   Object.freeze({
     option: "customization.layout.header",
@@ -847,7 +850,7 @@ export const OPTIONS = Object.freeze([
     ours: null,
     code: "unsupported",
     via: null,
-    note: "See `editorConfig.plugins`.",
+    note: "Their on/off switch for their plugin system. Ours is `?plugins=none`; see `editorConfig.plugins`.",
   }),
   Object.freeze({
     option: "customization.mentionShare",
