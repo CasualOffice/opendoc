@@ -1,0 +1,15 @@
+{
+  "manifestVersion": 1,
+  "id": "org.casualoffice.readability",
+  "name": "Readability",
+  "version": "1.0.0",
+  "description": "A reading-ease score, and long sentences, passive voice and filler words proposed as comments. Runs on this device; nothing is sent anywhere.",
+  "publisher": "Casual Office",
+  "entry": "index.html",
+  "permissions": ["read", "comment"],
+  "contributes": {
+    "commands": [{ "id": "check", "title": "Check readability" }],
+    "ribbon": [{ "command": "check", "icon": "menu_book" }],
+    "panel": { "title": "Readability" }
+  }
+}

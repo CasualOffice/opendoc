@@ -312,7 +312,7 @@ export function createAssistant(ed, { onDecision = () => {} } = {}) {
     });
   }
 
-  function compile(method, plan) {
+  function compile(method, plan, addIn = "") {
     const { access: level, direct } = access();
     if (level === "none") return refused(method, "capability-withheld", t("ai.refusal.access"));
     let text;
@@ -321,7 +321,12 @@ export function createAssistant(ed, { onDecision = () => {} } = {}) {
     } catch {
       return refused(method, "invalid-argument", t("ai.refusal.generic"));
     }
-    return engineAnswer(method, ed.doc.aiPreview(text, level, direct, isoNow()));
+    // An add-in's proposal is signed "<name> (add-in)" by the engine
+    // (`aiPreviewFrom`, `docs/183` §17); the assistant's own is "Casual AI".
+    const answer = addIn && typeof ed.doc.aiPreviewFrom === "function"
+      ? ed.doc.aiPreviewFrom(text, level, direct, isoNow(), addIn)
+      : ed.doc.aiPreview(text, level, direct, isoNow());
+    return engineAnswer(method, answer);
   }
 
   /** Commits the preview `previewId`; the engine refuses anything stale. */
@@ -356,11 +361,17 @@ export function createAssistant(ed, { onDecision = () => {} } = {}) {
      *  with the preview; the decision arrives as the `ai-decision` event (and as
      *  `accept`/`discard`'s own results). O(document) for the compile. */
     preview(plan) {
+      return assistant.previewFrom(plan, "");
+    },
+
+    /** `preview`, signed by an add-in (`plugin_host.mjs`). Not on the host
+     *  contract: `AI_METHODS` is the host's list, and a host signs as itself. */
+    previewFrom(plan, addIn) {
       if (!ed.doc) return noDocument("preview");
       // One proposal at a time, as Docs and Word show one card: a new one
       // replaces the last, which is reported discarded.
       withdraw();
-      const compiled = compile("preview", plan);
+      const compiled = compile("preview", plan, String(addIn ?? ""));
       if (!compiled.ok) {
         ed.setStatus(compiled.refusal.message, "error");
         return compiled;

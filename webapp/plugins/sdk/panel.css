@@ -1,0 +1,15 @@
+/* SPDX-License-Identifier: Apache-2.0
+   The layout first-party add-in panels share (`docs/183` §8): a column of
+   rows, a list of findings, a footer. Tokens only, as `plugin.css`. */
+.pp { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: var(--space-2); box-sizing: border-box; }
+.pp-row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.pp-row .field { flex: 1 1 8rem; }
+.pp-list { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-2); }
+.pp-item { padding: var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: var(--space-1); }
+.pp-item-text { margin: 0; line-height: 1.45; overflow-wrap: anywhere; }
+.pp-item-quote { margin: 0; color: var(--muted); font-size: var(--fs-small); overflow-wrap: anywhere; }
+.pp-item-quote mark { background: var(--accent-soft); color: var(--ink); border-radius: var(--radius-sm); padding: 0 0.125rem; }
+.pp-item-actions { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.pp-item-actions .btn, .pp-foot .btn { min-height: var(--h-control); padding: 0 var(--space-2); font-weight: 500; }
+.pp-score { margin: 0; font-size: var(--fs-body); font-weight: 600; }
+@media (pointer: coarse) { .btn, select.field { min-height: 2.75rem; } }

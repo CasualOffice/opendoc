@@ -6,6 +6,15 @@
       "grant": ["read", "comment", "suggest", "ai"],
       "enabled": true,
       "when": "ai"
+    },
+    {
+      "manifest": "languagetool/manifest.json",
+      "enabled": false
+    },
+    {
+      "manifest": "readability/manifest.json",
+      "grant": ["read", "comment"],
+      "enabled": false
     }
   ]
 }

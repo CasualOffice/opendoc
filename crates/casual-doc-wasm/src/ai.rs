@@ -138,6 +138,20 @@ fn profile_for(access: &str, direct: bool, plan: Option<&EditPlan>) -> Result<Pr
     })
 }
 
+/// The author an add-in's changes carry: its name, cleaned and bounded, with
+/// " (add-in)" appended by the engine. `None` for an empty name (the assistant's
+/// own author then applies). O(name).
+fn add_in_author(name: &str) -> Option<String> {
+    let clean: String = name
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(48)
+        .collect::<String>()
+        .trim()
+        .to_owned();
+    (!clean.is_empty()).then(|| format!("{clean} (add-in)"))
+}
+
 impl WasmDocument {
     /// The author an assistant's suggestions carry: `casual_doc_ai::AI_AUTHOR`,
     /// never the plan's say and never the person's name (owner, 2026-10-29).
@@ -149,6 +163,11 @@ impl WasmDocument {
     /// A `casual-doc-ai` session over this editor's document and allocators.
     /// **O(document)**: one clone, which a compile needs anyway.
     fn ai_session(&self, profile: Profile, date: &str) -> Session {
+        self.ai_session_as(profile, date, self.ai_author())
+    }
+
+    /// The same session, authored as `author`.
+    fn ai_session_as(&self, profile: Profile, date: &str, author: String) -> Session {
         let clock = if date.is_empty() {
             // `SystemTime` has no clock on wasm32; the host always passes one,
             // and a native caller that does not gets a fixed, honest epoch.
@@ -162,7 +181,7 @@ impl WasmDocument {
             self.revision_ids.clone(),
             self.log.head().get(),
             SessionConfig {
-                author: self.ai_author(),
+                author,
                 profile,
                 clock,
                 limits: Limits::default(),
@@ -225,11 +244,15 @@ impl WasmDocument {
         access: &str,
         direct: bool,
         date: &str,
+        add_in: &str,
     ) -> Result<Value, AiError> {
         let plan: EditPlan = serde_json::from_str(plan)
             .map_err(|error| AiError::invalid(format!("The plan is malformed: {error}.")))?;
         let profile = profile_for(access, direct, Some(&plan))?;
-        let session = self.ai_session(profile, date);
+        let session = match add_in_author(add_in) {
+            Some(author) => self.ai_session_as(profile, date, author),
+            None => self.ai_session(profile, date),
+        };
         let compiled = casual_doc_ai::editor::compile(&session, &plan)?;
         let mut preview = compiled.preview;
         // The compile judged the plan against the assistant's profile. This
@@ -367,7 +390,26 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = aiPreview)]
     #[must_use]
     pub fn ai_preview(&self, plan: &str, access: &str, direct: bool, date: &str) -> String {
-        answer(self.ai_preview_value(plan, access, direct, date))
+        answer(self.ai_preview_value(plan, access, direct, date, ""))
+    }
+
+    /// `aiPreview` for an ADD-IN (`docs/183` §17): the same compile, authored
+    /// "<add-in name> (add-in)" rather than "Casual AI", so a reviewer can tell
+    /// LanguageTool's suggestion from the assistant's. The editor passes the name
+    /// from the add-in's manifest; the engine adds the suffix itself, so no add-in
+    /// can sign its changes as a person. An empty name is "Casual AI".
+    /// **O(document)**, as `aiPreview`.
+    #[wasm_bindgen(js_name = aiPreviewFrom)]
+    #[must_use]
+    pub fn ai_preview_from(
+        &self,
+        plan: &str,
+        access: &str,
+        direct: bool,
+        date: &str,
+        add_in: &str,
+    ) -> String {
+        answer(self.ai_preview_value(plan, access, direct, date, add_in))
     }
 
     /// Accepts the preview `id`: commits exactly its operations as one undo
@@ -474,6 +516,21 @@ mod tests {
         assert_eq!(content(&d), before, "the document is untouched");
         assert_eq!(d.log.head(), head, "no revision");
         assert_eq!(d.log.undo_depth(), undo, "nothing to undo");
+    }
+
+    #[test]
+    fn an_add_in_signs_as_itself_and_never_as_a_person() {
+        let d = editor();
+        let preview =
+            value(&d.ai_preview_from(&suggestion(&d), "suggest", false, DATE, "LanguageTool"));
+        assert_eq!(preview["author"], "LanguageTool (add-in)");
+        // A name that tries to pass for a person still says what it is.
+        let sneaky =
+            value(&d.ai_preview_from(&suggestion(&d), "suggest", false, DATE, "Ada Lovelace\n"));
+        assert_eq!(sneaky["author"], "Ada Lovelace (add-in)");
+        // No name: the assistant's own author.
+        let plain = value(&d.ai_preview_from(&suggestion(&d), "suggest", false, DATE, "  "));
+        assert_eq!(plain["author"], casual_doc_ai::AI_AUTHOR);
     }
 
     #[test]
