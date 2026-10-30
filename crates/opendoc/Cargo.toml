@@ -38,6 +38,7 @@ pdf-import = ["casual-doc-io/pdf-import", "opendoc-viewer/pdf-import"]
 wasm-opt = ['-Oz', '--enable-bulk-memory', '--enable-sign-ext', '--enable-nontrapping-float-to-int']
 
 [dependencies]
+casual-doc-diff.workspace = true
 casual-doc-edit.workspace = true
 casual-doc-io.workspace = true
 casual-doc-model.workspace = true

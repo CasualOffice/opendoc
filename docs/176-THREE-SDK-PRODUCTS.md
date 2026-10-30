@@ -740,9 +740,20 @@ returned `"noted "` for a comment on `" noted"` after a footnote. `Document::com
 `revisions` now map anchors through both length functions (`ParagraphSpace`). The engine-side
 disagreement is the one recorded on `casual_doc_review::body::inline_anchor_len`.
 
+**An engine limit the builder found (open for the import lane).** A complex field whose
+begin and end sit in **one** paragraph, with a hyperlink in its cached result, fails the
+whole DOCX open. Model validation refuses a hyperlink inside a `Field`'s inlines (a field's
+result is leaf-only), and the importer turns that into "a fault in the document engine".
+A one-entry linked table of contents written that way is a valid file. The builder now
+writes Word's own shape: the field's end goes in a paragraph after the last entry, so the
+TOC is a field range (`a_linked_table_of_contents_opens_and_lists_each_heading`). The
+importer still refuses the single-paragraph shape from any other producer. The fix belongs
+in `casual-doc-import`: degrade the field, as its result text, instead of failing the
+document. It is `docs/109` RM-46's open item.
+
 ### 12.4 Guards (S1)
 
-`crates/opendoc/tests/sdk.rs` (17 tests) and `tests/deterministic_pixels.rs`. These run in
+`crates/opendoc/tests/sdk.rs` (19 tests) and `tests/deterministic_pixels.rs`. These run in
 CI's `test` job (Linux) and `platform` job (macOS arm64, Windows x64). Builder and template
 unit tests are in the crate.
 
@@ -761,6 +772,149 @@ for one built document, at 72 dpi with the bundled faces. It is written by
 blessed on macOS arm64. CI's Linux `test` job and the Windows `platform` job are its first
 cross-platform check, and a red on one platform alone is exactly the finding the gate exists
 to make.
+
+### 12.5a The JavaScript package (S2), as built
+
+`packages/opendoc`, npm name `@casualoffice/opendoc` (proposed; the owner decides it with the
+other registry names, §10 Q1). It is the wasm build of `crates/opendoc` (feature `wasm`, no
+DOM, no `web-sys`) and is not published.
+
+- **Entry points.** `.` resolves to `src/node.js` under Node, which loads the module from disk
+  with a top-level await, so every call is synchronous. Elsewhere it resolves to
+  `src/index.js`; call `await init()` first. `./docx` is the docx-js-familiar builder.
+  `./node` adds `openFile` and `saveFile`.
+- **Surfaces.**
+  - The `Document` class: reads, python-docx-like edits, `edit(commands)` batches with undo,
+    `render(data)` templates, `save(format, { mode })` with its report, and render, PDF and
+    page text.
+  - `Template`, docxtemplater's facade.
+  - `convertToHtml`, `extractRawText` and `convertToMarkdown`, in mammoth's `{ value,
+    messages }` shape.
+  - `convert`, `formats` and `version`.
+  - `OpenDocError`, with a stable `code`; template errors also carry docxtemplater's
+    `multi_error` shape.
+- **Types.** `types/index.d.ts`, `node.d.ts` and `docx.d.ts`. `examples/typescript` is
+  type-checked with `tsc --noEmit` against an installed tarball.
+- **Fonts.** Every bundled face is embedded, so a headless render does not depend on the
+  machine. The cost is the download (`npm pack`: 12.7 MB packed, 27.1 MB unpacked on
+  2026-10-30). This number is not published elsewhere: P3's host-served faces apply to this
+  package as they do to the Viewer.
+- **Guards.** `packages/opendoc/test/` runs in the new CI job `sdk-package`. It covers the API,
+  docx-js's README example unchanged, every builder construct read back, templates and their
+  errors, the `npm pack` contents and export paths, and the benchmark record (§12.7).
+
+### 12.6 The CLI (S3): `opendoc`, also the server preview engine
+
+`tools/opendoc-cli` builds one binary, `opendoc`, over `crates/opendoc` with PDF import on:
+
+```text
+opendoc convert  IN OUT [--to FMT] [--mode exact|preserve|semantic] [--report FILE] [--strict-loss]
+opendoc render   IN [--out DIR] [--format png|pdf] [--dpi N] [--pages 1-3,5]
+opendoc info     IN [--json]
+opendoc diff     OLD NEW [--json]          # the editor's Compare (casual-doc-diff), as JSON or a summary
+opendoc template TEMPLATE DATA.json OUT [--delimiters "[[,]]"] [--strict] [--null TEXT]
+opendoc build    SPEC.json OUT [--media FILE]...
+opendoc formats
+common: --system-fonts  --font FILE  --author NAME
+```
+
+- **Exit codes.** 0 is success. 1 is a document or engine error, and the message starts with
+  its stable code (`open:`, `template:`, …). 2 is a usage error. 3 means
+  `convert --strict-loss` refused a save that would lose content.
+- **As a preview server.** `render` lays out with the bundled faces only, unless
+  `--system-fonts` is given. The same document then gives the same PNG bytes on every run;
+  `render_writes_deterministic_pngs_for_the_pages_asked` checks that within one machine. The
+  cross-platform half of V2 is the pixel golden of §12.5: the CLI draws through the same
+  `Document::render_page_png`.
+- **Guards.** `tools/opendoc-cli/tests/cli.rs` runs the binary end to end for convert (every
+  format, an exact save byte-identical to the input, a JSON report), render, info, build,
+  template, diff and the exit codes. Mutation: the usage exit code changed from 2 to 1 turned
+  `usage_errors_exit_2_and_document_errors_exit_1` red (`left: Some(1) right: Some(2)`).
+
+### 12.7 Benchmark and conformance suite
+
+`benchmarks/sdk/run.mjs` runs the same inputs through OpenDoc and through the permissive
+competitors installed on the machine, each library and task in its own process:
+
+| Task | OpenDoc is measured against |
+| --- | --- |
+| Generation | docx-js, running the same program |
+| Templating | docxtemplater, with the same template |
+| DOCX to HTML and to text | mammoth |
+| DOCX to PDF | LibreOffice headless, when installed |
+| Round trip | python-docx, when given |
+
+The suite measures time, peak memory, page counts, and round-trip survival (package parts
+kept, body text unchanged, OpenDoc's own loss report). It writes
+`benchmarks/sdk/results.json`. The table below is rendered from that file by
+`benchmarks/sdk/report.mjs`, and `packages/opendoc/test/bench_record.test.mjs` fails if the
+two disagree. To run it:
+`node benchmarks/sdk/run.mjs --deps DIR [--python PY] [--soffice PATH]`, on an idle machine.
+DIR holds an `npm install` of docx, mammoth, docxtemplater and pizzip. Nothing from it is
+committed.
+
+**Read it honestly.** The table makes four points.
+
+- OpenDoc is faster than mammoth at HTML and text, and about level with docx-js at generation.
+  It is slower than docxtemplater at filling a template.
+- It uses more memory in most tasks, because the module carries a layout engine and every
+  bundled face. Its floor is the module itself, and docx-js passes it on the largest input.
+- docx-preview needs a DOM, so it is not measured here.
+- POI and docx4j are measured from Java (§12.9) when a JDK and their jars are present.
+
+<!-- sdk-bench:begin (generated by benchmarks/sdk/report.mjs from benchmarks/sdk/results.json; do not edit) -->
+
+Measured on darwin arm64 25.3.0, Apple M4 (10 cores, 16 GB), Node v24.22.1; median of 5 runs after a warm-up, each library and task in its own process. Versions: opendoc 0.0.1, docx 9.15.0, docxtemplater 3.71.1, mammoth 1.13.0.
+
+| Task | Input | OpenDoc | Competitor | OpenDoc speed | OpenDoc peak RSS | Competitor peak RSS |
+| --- | --- | ---: | ---: | --- | ---: | ---: |
+| Generate DOCX (the same docx-js program) | 100 paragraphs + table | 4.79 ms | docx-js: 4.16 ms | 1.2× slower | 246.5 MB | 88.6 MB |
+| Generate DOCX (the same docx-js program) | 1000 paragraphs + table | 15.78 ms | docx-js: 17.64 ms | 1.1× faster | 270.8 MB | 150.6 MB |
+| Generate DOCX (the same docx-js program) | 5000 paragraphs + table | 60.49 ms | docx-js: 78.96 ms | 1.3× faster | 326.6 MB | 421.7 MB |
+| Fill a template (the same template and data) | 100-item loop | 3.78 ms | docxtemplater: 2.71 ms | 1.4× slower | 291.2 MB | 92.9 MB |
+| Fill a template (the same template and data) | 1000-item loop | 12.99 ms | docxtemplater: 9.8 ms | 1.3× slower | 324.5 MB | 110.1 MB |
+| DOCX to HTML | sample | 16.78 ms | mammoth: 33.86 ms | 2.0× faster | 320.8 MB | 226.6 MB |
+| DOCX to HTML | scale | 23.75 ms | mammoth: 55.62 ms | 2.3× faster | 307.7 MB | 288.3 MB |
+| DOCX to plain text | sample | 15.57 ms | mammoth: 32.15 ms | 2.1× faster | 311.2 MB | 228.5 MB |
+| DOCX to plain text | scale | 16.36 ms | mammoth: 46.46 ms | 2.8× faster | 320 MB | 275.4 MB |
+| DOCX to PDF | sample | 57.68 ms | libreoffice: — | — | 358.1 MB | — |
+| DOCX to PDF | scale | 272.73 ms | libreoffice: — | — | 365.8 MB | — |
+
+**Round trip** (open, save, reopen; `kept` is input package parts present in the output, `text` whether the body text survived, `losses` OpenDoc's own report):
+
+| Fixture | Parts | OpenDoc preserve: kept / text / losses | OpenDoc semantic: kept / text / losses | python-docx: kept / text |
+| --- | ---: | --- | --- | --- |
+| sample.docx | 24 | 24 / same / 1 | 18 / same / 5 | 24 / same |
+| real-producer-footnotes.docx | 12 | 11 / same / 0 | 11 / same / 0 | 12 / same |
+| real-producer-header-footer.docx | 13 | 12 / same / 0 | 12 / same / 0 | 13 / same |
+| real-producer-hyperlinks.docx | 9 | 9 / same / 0 | 9 / same / 0 | 9 / same |
+| real-producer-libreoffice.docx | 9 | 9 / same / 0 | 9 / same / 0 | 9 / same |
+| real-producer-rich.docx | 10 | 10 / same / 0 | 10 / same / 0 | 10 / same |
+| real-producer-table-list.docx | 10 | 10 / same / 0 | 10 / same / 0 | 10 / same |
+| real-producer-table-merges.docx | 9 | 9 / same / 0 | 9 / same / 0 | 9 / same |
+| synthetic-rich-metadata.docx | 7 | 7 / same / 0 | 7 / same / 0 | 6 / same |
+| synthetic-declared-family-substitution.docx | 6 | 6 / same / 0 | 6 / same / 0 | 6 / same |
+
+**Pages** (OpenDoc's layout):
+
+| Fixture | OpenDoc pages |
+| --- | ---: |
+| sample.docx | 14 |
+| real-producer-footnotes.docx | 1 |
+| real-producer-header-footer.docx | 1 |
+| real-producer-hyperlinks.docx | 1 |
+| real-producer-libreoffice.docx | 1 |
+| real-producer-rich.docx | 1 |
+| real-producer-table-list.docx | 1 |
+| real-producer-table-merges.docx | 1 |
+| synthetic-rich-metadata.docx | 1 |
+| synthetic-declared-family-substitution.docx | 1 |
+
+- `scale` is 3,000 paragraphs and 30 headings written by docx-js at run time.
+- LibreOffice was not given (--soffice), so its PDF timings and page counts are absent.
+- Round trip: `partsKept` counts the input's package parts present in the output; `textSame` re-opens the output with OpenDoc and compares the body text; `losses` is OpenDoc's own save report (no other library reports loss).
+
+<!-- sdk-bench:end -->
 
 [poi]: https://poi.apache.org/components/document/
 [pydocx]: https://python-docx.readthedocs.io/en/latest/api/text.html

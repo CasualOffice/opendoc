@@ -1,0 +1,424 @@
+{
+  "schema": 1,
+  "generatedBy": "benchmarks/sdk/run.mjs",
+  "environment": {
+    "platform": "darwin arm64 25.3.0",
+    "cpu": "Apple M4",
+    "cores": 10,
+    "memoryGB": 16,
+    "node": "v24.22.1",
+    "iterations": 5
+  },
+  "versions": {
+    "opendoc": "0.0.1",
+    "docx": "9.15.0",
+    "mammoth": "1.13.0",
+    "docxtemplater": "3.71.1",
+    "pizzip": "3.3.0"
+  },
+  "speed": [
+    {
+      "task": "generate",
+      "input": "100 paragraphs + table",
+      "docx-js": {
+        "ms": 4.16,
+        "peakMB": 88.6,
+        "output": 10246
+      },
+      "opendoc": {
+        "ms": 4.79,
+        "peakMB": 246.5,
+        "output": 5423
+      }
+    },
+    {
+      "task": "generate",
+      "input": "1000 paragraphs + table",
+      "docx-js": {
+        "ms": 17.64,
+        "peakMB": 150.6,
+        "output": 14245
+      },
+      "opendoc": {
+        "ms": 15.78,
+        "peakMB": 270.8,
+        "output": 9437
+      }
+    },
+    {
+      "task": "generate",
+      "input": "5000 paragraphs + table",
+      "docx-js": {
+        "ms": 78.96,
+        "peakMB": 421.7,
+        "output": 31054
+      },
+      "opendoc": {
+        "ms": 60.49,
+        "peakMB": 326.6,
+        "output": 26814
+      }
+    },
+    {
+      "task": "template",
+      "input": "100-item loop",
+      "docxtemplater": {
+        "ms": 2.71,
+        "peakMB": 92.9,
+        "output": 42141
+      },
+      "opendoc": {
+        "ms": 3.78,
+        "peakMB": 291.2,
+        "output": 31243
+      }
+    },
+    {
+      "task": "template",
+      "input": "1000-item loop",
+      "docxtemplater": {
+        "ms": 9.8,
+        "peakMB": 110.1,
+        "output": 109841
+      },
+      "opendoc": {
+        "ms": 12.99,
+        "peakMB": 324.5,
+        "output": 98943
+      }
+    },
+    {
+      "task": "html",
+      "input": "sample",
+      "mammoth": {
+        "ms": 33.86,
+        "peakMB": 226.6,
+        "output": 94540
+      },
+      "opendoc": {
+        "ms": 16.78,
+        "peakMB": 320.8,
+        "output": 179345
+      }
+    },
+    {
+      "task": "html",
+      "input": "scale",
+      "mammoth": {
+        "ms": 55.62,
+        "peakMB": 288.3,
+        "output": 275450
+      },
+      "opendoc": {
+        "ms": 23.75,
+        "peakMB": 307.7,
+        "output": 331606
+      }
+    },
+    {
+      "task": "text",
+      "input": "sample",
+      "mammoth": {
+        "ms": 32.15,
+        "peakMB": 228.5,
+        "output": 12169
+      },
+      "opendoc": {
+        "ms": 15.57,
+        "peakMB": 311.2,
+        "output": 11878
+      }
+    },
+    {
+      "task": "text",
+      "input": "scale",
+      "mammoth": {
+        "ms": 46.46,
+        "peakMB": 275.4,
+        "output": 233240
+      },
+      "opendoc": {
+        "ms": 16.36,
+        "peakMB": 320,
+        "output": 230209
+      }
+    },
+    {
+      "task": "pdf",
+      "input": "sample",
+      "opendoc": {
+        "ms": 57.68,
+        "peakMB": 358.1,
+        "output": 156988
+      }
+    },
+    {
+      "task": "pdf",
+      "input": "scale",
+      "opendoc": {
+        "ms": 272.73,
+        "peakMB": 365.8,
+        "output": 112730
+      }
+    }
+  ],
+  "fidelity": [
+    {
+      "fixture": "sample.docx",
+      "opendocPages": 14
+    },
+    {
+      "fixture": "real-producer-footnotes.docx",
+      "opendocPages": 1
+    },
+    {
+      "fixture": "real-producer-header-footer.docx",
+      "opendocPages": 1
+    },
+    {
+      "fixture": "real-producer-hyperlinks.docx",
+      "opendocPages": 1
+    },
+    {
+      "fixture": "real-producer-libreoffice.docx",
+      "opendocPages": 1
+    },
+    {
+      "fixture": "real-producer-rich.docx",
+      "opendocPages": 1
+    },
+    {
+      "fixture": "real-producer-table-list.docx",
+      "opendocPages": 1
+    },
+    {
+      "fixture": "real-producer-table-merges.docx",
+      "opendocPages": 1
+    },
+    {
+      "fixture": "synthetic-rich-metadata.docx",
+      "opendocPages": 1
+    },
+    {
+      "fixture": "synthetic-declared-family-substitution.docx",
+      "opendocPages": 1
+    }
+  ],
+  "roundTrip": [
+    {
+      "fixture": "sample.docx",
+      "parts": 24,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 24,
+          "losses": 1,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 18,
+          "losses": 5,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 24,
+        "losses": null,
+        "textSame": true
+      }
+    },
+    {
+      "fixture": "real-producer-footnotes.docx",
+      "parts": 12,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 11,
+          "losses": 0,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 11,
+          "losses": 0,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 12,
+        "losses": null,
+        "textSame": true
+      }
+    },
+    {
+      "fixture": "real-producer-header-footer.docx",
+      "parts": 13,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 12,
+          "losses": 0,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 12,
+          "losses": 0,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 13,
+        "losses": null,
+        "textSame": true
+      }
+    },
+    {
+      "fixture": "real-producer-hyperlinks.docx",
+      "parts": 9,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 9,
+          "losses": 0,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 9,
+          "losses": 0,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 9,
+        "losses": null,
+        "textSame": true
+      }
+    },
+    {
+      "fixture": "real-producer-libreoffice.docx",
+      "parts": 9,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 9,
+          "losses": 0,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 9,
+          "losses": 0,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 9,
+        "losses": null,
+        "textSame": true
+      }
+    },
+    {
+      "fixture": "real-producer-rich.docx",
+      "parts": 10,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 10,
+          "losses": 0,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 10,
+          "losses": 0,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 10,
+        "losses": null,
+        "textSame": true
+      }
+    },
+    {
+      "fixture": "real-producer-table-list.docx",
+      "parts": 10,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 10,
+          "losses": 0,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 10,
+          "losses": 0,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 10,
+        "losses": null,
+        "textSame": true
+      }
+    },
+    {
+      "fixture": "real-producer-table-merges.docx",
+      "parts": 9,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 9,
+          "losses": 0,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 9,
+          "losses": 0,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 9,
+        "losses": null,
+        "textSame": true
+      }
+    },
+    {
+      "fixture": "synthetic-rich-metadata.docx",
+      "parts": 7,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 7,
+          "losses": 0,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 7,
+          "losses": 0,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 6,
+        "losses": null,
+        "textSame": true
+      }
+    },
+    {
+      "fixture": "synthetic-declared-family-substitution.docx",
+      "parts": 6,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 6,
+          "losses": 0,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 6,
+          "losses": 0,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 6,
+        "losses": null,
+        "textSame": true
+      }
+    }
+  ],
+  "notes": [
+    "`scale` is 3,000 paragraphs and 30 headings written by docx-js at run time.",
+    "LibreOffice was not given (--soffice), so its PDF timings and page counts are absent.",
+    "Round trip: `partsKept` counts the input's package parts present in the output; `textSame` re-opens the output with OpenDoc and compares the body text; `losses` is OpenDoc's own save report (no other library reports loss)."
+  ]
+}
