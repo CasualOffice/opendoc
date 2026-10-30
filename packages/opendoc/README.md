@@ -126,8 +126,8 @@ await writeFile("invoice.pdf", t.toPdf());
 | OpenDocument Text | yes | yes | — |
 | Rich Text Format | yes | — | Opens; there is no RTF writer. |
 | PDF | — | yes | Saved from the engine's own layout, with real, selectable text. Opening a PDF needs the `pdf-import` feature (the `opendoc` CLI); this package does not compile it. |
-| Web Page | — | yes | — |
-| Markdown | — | yes | — |
+| Web Page | yes | yes | — |
+| Markdown | yes | yes | — |
 | Plain Text | yes | yes | — |
 | OpenDoc Normalized JSON | yes | yes | — |
 <!-- @end sdk-formats -->
