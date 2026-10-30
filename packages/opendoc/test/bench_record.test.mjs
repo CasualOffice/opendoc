@@ -1,4 +1,4 @@
-// The published benchmark table in docs/176 section 12.7 is rendered from the
+// The published benchmark table in docs/176 section 12.10 is rendered from the
 // committed benchmarks/sdk/results.json, never typed (SKILL section 9).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

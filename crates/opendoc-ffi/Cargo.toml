@@ -1,0 +1,42 @@
+[package]
+name = "opendoc-ffi"
+description = "The OpenDoc Native SDK's C ABI: opaque handles, byte buffers and JSON, for Java (FFM), .NET, C and C++"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+# docs/176 section 6 and section 12.9 (S5): one handle-based C ABI as the
+# single native contract; `bindings/java` calls it through the Foreign
+# Function & Memory API (JDK 22+), with no JNI glue.
+#
+# THE RECORDED `unsafe` EXCEPTION (docs/176 P4, risk R5). The workspace forbids
+# `unsafe_code`; a C ABI cannot exist without `#[unsafe(no_mangle)]` and raw
+# pointers, so this crate, and only this crate, sets its lints itself instead
+# of `workspace = true`. Every other workspace lint is copied unchanged below.
+# The unsafe surface is the boundary only: each exported function checks its
+# pointers, copies the input into owned Rust values at once, and hands back
+# owned boxes the caller frees with `opendoc_free` / `opendoc_buffer_free`.
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+opendoc = { workspace = true, features = ["pdf-import"] }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints.rust]
+missing_debug_implementations = "warn"
+unsafe_code = "allow"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "deny"
+print_stderr = "warn"
+print_stdout = "warn"
+todo = "deny"
+unimplemented = "deny"
