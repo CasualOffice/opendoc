@@ -937,6 +937,26 @@ mod tests {
     use crate::profile::Profile;
     use casual_doc_edit::{Operation, Pos};
 
+    /// MCP's `open_document` opens a `.md` as Markdown (`shell.import-markdown`):
+    /// the name it is given is the registry's hint, so the heading is a
+    /// heading. The same bytes named `.txt` stay text.
+    #[test]
+    fn open_document_reads_a_markdown_name_as_markdown() {
+        let style_of_first = |name: &str| {
+            let session =
+                Session::open(b"# Plan\n\nBody.\n", name, SessionConfig::default()).expect("open");
+            let document = session.document();
+            let (paragraph, _) = crate::structure::body_paragraphs(document)[0];
+            paragraph
+                .properties
+                .style_ref
+                .and_then(|id| document.definitions().styles.get(&id))
+                .and_then(|style| style.name.clone())
+        };
+        assert_eq!(style_of_first("plan.md").as_deref(), Some("Heading 1"));
+        assert_eq!(style_of_first("plan.txt"), None);
+    }
+
     /// `docs/178` §8 M2's exit gate: a suggest-profile session is refused a
     /// direct edit **by the engine**, with the adapter's own check out of the
     /// way. This drives the choke point directly, as a buggy adapter would.

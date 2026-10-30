@@ -557,6 +557,8 @@ export function createContextMenu(ed) {
       return [
         ...commands.filter((row) => row.id === "edit.copy" || row.id === "edit.selectAll"),
         pick("edit.find", { group: "clipboard" }),
+        // Printing reads the document, so a read-only container offers it too.
+        context.hasRange ? pick("file.printSelection", { group: "clipboard" }) : null,
         ...annotate.filter((row) => row.id === "link.open" || row.id === "reference.goToHeading"),
       ].filter(Boolean);
     }
@@ -564,6 +566,10 @@ export function createContextMenu(ed) {
     if (!inTable) {
       // Prose menu: annotations, then the text-arrangement rows.
       commands.push(...annotate);
+      // Print selection, where ONLYOFFICE puts it: on the text menu, over a
+      // selection (`DocumentHolder.js` `txtPrintSelection`, `docs/153`
+      // shell.print-selection). The Print dialog's own choice is the File menu row.
+      if (context.hasRange) commands.push(pick("file.printSelection", { group: "annotate" }));
       commands.push({
         id: "format.menu",
         label: "Format text",

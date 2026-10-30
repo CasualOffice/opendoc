@@ -246,6 +246,13 @@ does) and `set_contents_level` (the `reference.addText.` family, level 0 being "
 Two operations became agent-reached with them, so `coverage::NOT_EXPOSED_CEILING` falls
 18 → **16**: `SetTableProperties` and `RemoveFieldRange`. The vocabulary is **1.6** (nine
 commands added, none changed; 73 in all).
+**Raised again (2026-10-30):** `UI_NOT_EXPOSED_CEILING` 102 → 104 with the editor commands
+`insert.symbolByCode` (Alt+X, `docs/153` text.unicode-code-toggle) and `insert.textFromFile`
+(Insert ▸ Text from file, `docs/153` page.textFromFile). Neither adds an `Operation`: Alt+X is
+`replaceSelection`'s delete-and-insert, and Text from file is structured paste's
+`InsertBlocks` with the definition operations (`SetStyleDefinition`, `SetAbstractNumbering`,
+`SetNumberingInstance`, `SetMediaReference`) that already exist. An agent writes a character
+with `insert_text`, and does not hold another file's bytes, so neither has an agent twin yet.
 
 **What "a feature inherits MCP" therefore means, concretely.** A developer adding, say,
 footnote insertion writes `InsertFootnote: Command` with its `lower()` (moved out of

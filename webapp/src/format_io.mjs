@@ -66,12 +66,11 @@ export const FORMAT_CATALOG = Object.freeze({
     extension: "rtf",
     mime: "application/rtf",
   }),
-  // The three that shipped in the engine with no name. All three are EXPORT
-  // ONLY and the engine's descriptors say so (`can_import: false`): writing
-  // Markdown or HTML is a serializer and reading either needs a parser, and a
-  // `.dotx` would import perfectly well as a document but deliberately does
-  // not. So none of them may ever appear in the Open picker, which is what
-  // `multi-format-io.spec.mjs` holds.
+  // Markdown and HTML open as well as save (`shell.import-markdown`,
+  // `shell.import-html`): the engine's probe for both is name-only, so the
+  // file's NAME selects the reader (`importFormatForName` below) and a `.txt`
+  // that starts with `#` still opens as plain text. `.dotx` stays export
+  // only: it would import as a document but deliberately does not.
   "text.markdown": Object.freeze({
     labelKey: "format.markdown",
     extension: "md",
@@ -107,6 +106,44 @@ export const FORMAT_CATALOG = Object.freeze({
 // file can arrive under. It is what tells `downloadNameForFormat` that
 // `report.md` becomes `report.docx` rather than `report.md.docx`.
 const DOCUMENT_EXTENSION = /\.(docx|dotx|odt|rtf|pdf|json|txt|md|markdown|html|htm)$/i;
+
+/** The extensions File > Open and drag-drop accept, and the format id the
+ *  engine must be TOLD for the ones whose bytes carry no evidence of their own
+ *  (`null`: the engine's detection decides).
+ *
+ *  ONE table, read by the picker's pre-filter (`editor_file_pick.mjs`), by
+ *  `openBytes` (`editor_file_open.mjs`) and by the `accept` list
+ *  `format_io.test.mjs` holds `editor.html` to. */
+export const OPENABLE_EXTENSIONS = Object.freeze({
+  docx: null,
+  odt: null,
+  rtf: null,
+  pdf: null,
+  json: null,
+  txt: null,
+  md: "text.markdown",
+  markdown: "text.markdown",
+  html: "text.html",
+  htm: "text.html",
+});
+
+/** The lower-cased extension of `name`, or "". O(name). */
+function extensionOf(name) {
+  const match = /\.([a-z0-9]+)$/i.exec(String(name || ""));
+  return match ? match[1].toLowerCase() : "";
+}
+
+/** Whether a file named `name` is one the editor opens. O(1). */
+export function isOpenableName(name) {
+  return Object.hasOwn(OPENABLE_EXTENSIONS, extensionOf(name));
+}
+
+/** The engine format to open `name` as when its name must decide (Markdown,
+ *  HTML), or `null` to let the engine detect it from the bytes. O(1). */
+export function importFormatForName(name) {
+  const extension = extensionOf(name);
+  return Object.hasOwn(OPENABLE_EXTENSIONS, extension) ? OPENABLE_EXTENSIONS[extension] : null;
+}
 
 /** A format's NAME in the active locale, or the raw id when this build cannot
  *  name it.

@@ -8486,6 +8486,21 @@ body.is-format-painting .page-wrap * {
   line-height: 0;
 }
 
+/* DARK DOCUMENT (`docs/153` shell.dark-document; `editor_view_text.mjs`): the
+   page's raster inverted with its hue turned back, so black on white reads light
+   on near-black and a red stays red. A paint-time filter on the canvas only: the
+   caret and selection overlay above it keep their own colours, and the file, the
+   export and the print never see it. */
+.viewport.dark-document .page-wrap canvas {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+/* The personal dictionary's word list (`docs/153` review.personal-dictionary-manage). */
+.dictionary-add { display: flex; gap: 0.5rem; align-items: flex-end; }
+.dictionary-add .dialog-field { flex: 1 1 auto; }
+.dictionary-words { list-style: none; margin: 0.75rem 0 0; padding: 0; max-height: 16rem; overflow-y: auto; overscroll-behavior: contain; }
+.dictionary-word { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.25rem 0; border-bottom: 1px solid var(--border, transparent); }
+
 /* REFLOW (docs/151 §6.2, corrected here; ADR-046): there is no
    page, so there is no desk either.
    -------------------------------------------------------------------------

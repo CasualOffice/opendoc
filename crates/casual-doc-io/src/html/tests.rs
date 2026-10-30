@@ -302,11 +302,11 @@ fn the_exact_mode_is_refused_with_a_sentence() {
             mode: ExportMode::ExactIfUnchanged,
         })
         .expect_err("html has no source bytes to return");
-    assert!(format!("{error}").contains("no importer"), "{error}");
+    assert!(format!("{error}").contains("not byte for byte"), "{error}");
 }
 
 #[test]
-fn the_builtin_registry_offers_html_to_save_and_never_to_open() {
+fn the_builtin_registry_offers_html_to_save_and_to_open() {
     let registry = builtin_registry();
     let exports: Vec<&str> = registry
         .export_formats()
@@ -320,8 +320,8 @@ fn the_builtin_registry_offers_html_to_save_and_never_to_open() {
         .find(|descriptor| descriptor.id.as_str() == formats::HTML)
         .expect("the HTML descriptor is registered");
     assert!(
-        !descriptor.can_import,
-        "there is no HTML parser or sanitiser, so the picker must never offer it to open"
+        descriptor.can_import,
+        "HTML opens (`shell.import-html`), so the picker offers it"
     );
     assert!(!descriptor.exact_if_unchanged);
     assert_eq!(descriptor.extensions, ["html", "htm"]);

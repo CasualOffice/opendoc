@@ -218,22 +218,38 @@ test("an export whose format has no writer is disabled carrying the reason", asy
 
 // The asymmetry, held from the webapp side.
 //
-// All three new formats are EXPORT ONLY, and the Open picker's `accept` list is a
-// separate hand-written string from the engine's importer registry — so the two
-// can drift, and the drift that matters is offering to open a file this build
-// cannot read. A `.md` in the Open dialog is a file chooser that accepts a
-// document and then refuses it, which is worse than not offering it.
-test("the Open picker never offers a format the engine cannot import", async ({ page }) => {
+// The Open picker's `accept` list is hand-written HTML beside the engine's
+// importer registry, so the two can drift. Markdown and HTML now import
+// (`shell.import-markdown`, `shell.import-html`) and must be offered; `.dotx`
+// still has no importer and must not be: a file chooser that accepts a document
+// and then refuses it is worse than not offering it.
+test("the Open picker offers exactly the formats the engine imports", async ({ page }) => {
   await gotoEditor(page);
   const accept = await page.locator("#file").getAttribute("accept");
-  for (const extension of [".md", ".markdown", ".html", ".htm", ".dotx"]) {
-    expect(accept, `${extension} has no importer and must not be offered to open`).not.toContain(
-      extension,
-    );
+  expect(accept, ".dotx has no importer and must not be offered to open").not.toContain(".dotx");
+  for (const extension of [".docx", ".odt", ".rtf", ".pdf", ".md", ".markdown", ".html", ".htm"]) {
+    expect(accept, `${extension} imports and must be offered`).toContain(extension);
   }
-  expect(accept, "the formats that DO import must still be offered").toContain(".docx");
-  expect(accept).toContain(".odt");
-  expect(accept).toContain(".rtf");
-  // PDF imports through the staged job (`docs/182` P2).
-  expect(accept).toContain(".pdf");
 });
+
+// The EFFECT of opening a `.md`: a heading is a heading and a list item is a
+// list item, which only happens if the NAME selected the Markdown reader — the
+// engine's probe alone opens the same bytes as plain text, hashes and all.
+test("a .md file opens as a structured document, not as text", async ({ page, consoleErrors }) => {
+  await page.goto("/editor.html?blank=1");
+  await expect(page.locator("#file")).toBeEnabled();
+  await page.locator("#file").setInputFiles({
+    name: "readme.md",
+    mimeType: "text/markdown",
+    buffer: Buffer.from("# Project title\n\n- first item\n- second item\n", "utf8"),
+  });
+  await waitForOpenedDocument(page, "readme.md");
+  // The canvas paints pixels; the structure a reader can check is the
+  // off-screen accessibility mirror, built from the engine's own projection.
+  const mirror = page.locator("#a11yDocument");
+  await expect(mirror.locator("h1")).toHaveText("Project title");
+  await expect(mirror.locator("li")).toHaveText(["first item", "second item"]);
+  await expect(mirror, "the hashes are markup, not content").not.toContainText("# Project");
+  expect(consoleErrors).toEqual([]);
+});
+

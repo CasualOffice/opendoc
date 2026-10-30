@@ -1081,6 +1081,44 @@ export function createSpellChecker(io) {
       }
     },
 
+    /** Takes a word back out of the personal dictionary (`docs/153`
+     *  review.personal-dictionary-manage): Word's Custom Dictionaries ▸ Edit
+     *  Word List ▸ Delete. The word is flagged again at once. Resolves to true
+     *  when the store agreed, false when storage refused — said, not hidden. */
+    async removeFromDictionary(word) {
+      personal.delete(word);
+      settingsCounter += 1;
+      sendResources({});
+      scheduler.flush();
+      try {
+        personalStore ??= await io.openWords?.();
+        if (!personalStore) return false;
+        await personalStore.remove(word);
+        return true;
+      } catch (error) {
+        console.warn("personal dictionary", error?.message ?? error);
+        return false;
+      }
+    },
+
+    /** Empties the personal dictionary: Word's Delete all, ONLYOFFICE's
+     *  `asc_spellCheckClearDictionary`. Same contract as `removeFromDictionary`. */
+    async clearDictionary() {
+      personal = new Set();
+      settingsCounter += 1;
+      sendResources({});
+      scheduler.flush();
+      try {
+        personalStore ??= await io.openWords?.();
+        if (!personalStore) return false;
+        await personalStore.clear();
+        return true;
+      } catch (error) {
+        console.warn("personal dictionary", error?.message ?? error);
+        return false;
+      }
+    },
+
     /** Reads the personal dictionary at boot. Failure is not fatal: the checker
      *  runs without it, and the words the user adds this session still work in
      *  memory. */

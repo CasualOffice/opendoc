@@ -327,6 +327,15 @@ mod content_controls;
 mod content_controls_tests;
 mod form_roles;
 
+// Regular-expression Find & Replace (`docs/153` shell.find-regex).
+mod find_text;
+
+// Print ▸ Selection: a throwaway copy holding only the selection (`docs/153` shell.print-selection).
+mod print_selection;
+
+// Insert ▸ Text from file: another document merged at the caret (`docs/153` page.textFromFile).
+mod insert_file;
+
 use window::BodyLayout;
 use window::WindowedBody;
 

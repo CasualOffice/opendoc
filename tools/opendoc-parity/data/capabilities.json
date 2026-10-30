@@ -1835,15 +1835,13 @@
       "area": "page",
       "title": "Insert text from file",
       "ours": {
-        "absent": [
-          "insert.textFromFile"
-        ]
+        "command": "insert.textFromFile"
       },
       "theirs": {
         "control": "btnTextFromFile"
       },
       "rank": 4,
-      "note": "We can open a document but not merge one into the caret's position."
+      "note": "Insert ▸ Text ▸ Text from file… and the palette merge a DOCX, ODT, RTF, TXT or Markdown file's body at the caret as one undoable action (`insertDocumentFile`): styles matched by name or copied in, each list its own numbering, pictures carried with their bytes. Section breaks and embedded objects are dropped and said so."
     },
     {
       "id": "page.thumbnails",
@@ -3542,15 +3540,13 @@
       "area": "review",
       "title": "Manage or clear the personal dictionary",
       "ours": {
-        "absent": [
-          "tools.personalDictionary"
-        ]
+        "command": "tools.personalDictionary"
       },
       "theirs": {
         "api": "asc_docs_api.asc_spellCheckClearDictionary"
       },
       "rank": 3,
-      "note": "Words can be added on both sides, but only theirs can be cleared; ours has no list and no removal."
+      "note": "Review ▸ Proofing ▸ Personal dictionary… and the palette open Word's Edit Word List: every word added, Add, Remove and Delete all, applied at once; a removed word is flagged again. A store that refuses is said, not hidden."
     },
     {
       "id": "review.proofing-language-document",
@@ -4008,15 +4004,13 @@
       "area": "shell",
       "title": "Dark document (invert the page, not just the chrome)",
       "ours": {
-        "absent": [
-          "view.darkDocument"
-        ]
+        "command": "view.darkDocument"
       },
       "theirs": {
         "control": "btnDarkDocument"
       },
       "rank": 3,
-      "note": "We have a dark interface theme but the page itself stays white. Reading a long document at night is the case this covers."
+      "note": "View ▸ Page display ▸ Dark document and the palette invert the page raster with the hue turned back; a view preference that never reaches the file, the export or the print. Pictures invert with the page, because the raster does not separate them. Unlike ONLYOFFICE (controller/ViewTab.js:281), it is not locked to the dark interface theme."
     },
     {
       "id": "shell.direct-ooxml",
@@ -4260,6 +4254,48 @@
       "note": "Their TXT row is FileMenuPanels.js:65."
     },
     {
+      "id": "shell.import-html",
+      "area": "shell",
+      "title": "Open an HTML file as a document",
+      "ours": {
+        "anchor": {
+          "file": "crates/casual-doc-io/src/html/import.rs",
+          "literal": "const RAW_TEXT"
+        }
+      },
+      "theirs": {
+        "gated": {
+          "evidence": {
+            "localeKey": "DE.Views.FileMenu.btnFileOpenCaption"
+          },
+          "option": "isDesktopApp"
+        }
+      },
+      "rank": 3,
+      "note": "Theirs converts HTML on the document server (x2t) when a host hands one over; Open itself is desktop-only (FileMenu.js:511). Ours is a bounded tokenizer in the engine over the paste path's mapping (clipboard.mjs htmlToStructured), so a .html opens offline, in the editor, MCP open_document, the viewer and the SDK; scripts and styles are skipped unparsed and nothing is fetched."
+    },
+    {
+      "id": "shell.import-markdown",
+      "area": "shell",
+      "title": "Open a Markdown file as a document",
+      "ours": {
+        "anchor": {
+          "file": "crates/casual-doc-io/src/markdown_import.rs",
+          "literal": "Options::ENABLE_TABLES"
+        }
+      },
+      "theirs": {
+        "gated": {
+          "evidence": {
+            "localeKey": "DE.Views.FileMenu.btnFileOpenCaption"
+          },
+          "option": "isDesktopApp"
+        }
+      },
+      "rank": 3,
+      "note": "Their Markdown is the MD row of the Download-as grid (FileMenuPanels.js:63, c_oAscFileType.MD in sdkjs/common/commonDefines.js:497) and a server-side conversion on open. Ours reads CommonMark + GFM (pulldown-cmark, MIT) in the engine: headings, real lists with levels, task boxes as checkbox controls, tables with header row and alignment, code, quotes, rules, links, data: pictures and footnotes; raw HTML and remote pictures are reported, never run or fetched. MD -> model -> MD -> model is a tested fixed point."
+    },
+    {
       "id": "shell.find",
       "area": "shell",
       "title": "Find text",
@@ -4309,15 +4345,16 @@
       "area": "shell",
       "title": "Search with a regular expression",
       "ours": {
-        "absent": [
-          "edit.find.regex"
-        ]
+        "anchor": {
+          "file": "webapp/editor.html",
+          "literal": "id=\"findRegex\""
+        }
       },
       "theirs": {
         "localeKey": "Common.Views.SearchPanel.textMatchUsingRegExp"
       },
       "rank": 3,
-      "note": "Our scan is literal with case and whole-word options only (main.js scanAllMatches)."
+      "note": "A Regular expression switch in Find and replace runs the browser's own RegExp (u flag) over the engine's paragraph text (`searchableText`), composes with Match case, Whole words and Selection only, expands $1, $<name> and $& per match, and shows an invalid pattern's reason inline with aria-invalid. Replace all is one undoable action (`replaceRangesEach`). A pattern never spans paragraphs, as in Word and Docs."
     },
     {
       "id": "shell.find-whole-words",
@@ -4527,15 +4564,13 @@
       "area": "shell",
       "title": "Show several pages side by side",
       "ours": {
-        "absent": [
-          "view.multiplePages"
-        ]
+        "command": "view.multiplePages"
       },
       "theirs": {
         "control": "btnMultiplePages"
       },
       "rank": 3,
-      "note": "Theirs lays out two or more pages across the viewport. Ours paints one column of pages at every zoom."
+      "note": "View ▸ Page display ▸ Multiple pages and the palette set as many pages across as fit the window, in rows, zooming out until two fit; the row width follows the window. A view preference kept in the browser, as ONLYOFFICE keeps theirs (controller/ViewTab.js:302-309). Reflow has no pages, so the switch is withheld there with the reason."
     },
     {
       "id": "shell.navigation-pane",
@@ -4709,15 +4744,13 @@
       "area": "shell",
       "title": "Print the selection only",
       "ours": {
-        "absent": [
-          "file.printSelection"
-        ]
+        "command": "file.printSelection"
       },
       "theirs": {
         "localeKey": "DE.Views.DocumentHolder.txtPrintSelection"
       },
       "rank": 4,
-      "note": "Theirs is a context-menu entry that sets Asc.c_oAscPrintType.Selection. Ours always prints every page."
+      "note": "File ▸ Print selection, the text context menu over a selection (where ONLYOFFICE puts txtPrintSelection) and the palette print a throwaway copy of the document holding only the selection (`selectionDocument`) through the same print path as Print, with the document's page setup, headers and footers."
     },
     {
       "id": "shell.proofing-packs-offline",
@@ -6730,15 +6763,13 @@
       "area": "text",
       "title": "Type a code point and turn it into the character (Alt+X)",
       "ours": {
-        "absent": [
-          "insert.symbolByCode"
-        ]
+        "command": "insert.symbolByCode"
       },
       "theirs": {
         "localeKey": "Common.Controllers.Shortcuts.txtDescriptionReplaceUnicodeToSymbol"
       },
       "rank": 4,
-      "note": "Word's Alt+X. Theirs is bound and documented in the shortcuts sheet."
+      "note": "Alt+X off Apple and Cmd+Option+X on a Mac (ONLYOFFICE's own chords, sdkjs/word/Editor/Shortcuts.js:311 and :228), Insert ▸ Symbols and the palette: up to six hex digits (optionally U+) before the caret become the character, otherwise the character becomes its code, and a selection toggles whole."
     }
   ]
 }

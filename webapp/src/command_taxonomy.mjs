@@ -99,7 +99,9 @@ export const FILE_SURFACE = [
   // Page setup was under Tools, which is where nobody looks for paper size —
   // Docs files it under File and Word under Layout. It is on the Layout ribbon
   // too; this gives it a File home that matches the competition.
-  { nameKey: "menuGroup.print", ids: ["layout.pageSetup", "file.print"] },
+  // Print selection beside Print (`docs/153` shell.print-selection), as Word's
+  // Print dialog offers "Print Selection" beside "Print All Pages".
+  { nameKey: "menuGroup.print", ids: ["layout.pageSetup", "file.print", "file.printSelection"] },
   // Compatibility findings beside the document's properties: Word's File ▸ Info
   // is where both live (Properties, and Check for Issues ▸ Check Compatibility).
   // It is the second surface the header chip's report needed — the chip is
@@ -362,6 +364,10 @@ export const APP_MENU_SECTIONS = {
       "view.textWidth.full",
     ),
     band("menuGroup.zoom", "view.zoomIn", "view.zoomOut"),
+    // How the page itself is shown (`docs/153` shell.multiple-pages-view,
+    // shell.dark-document): ONLYOFFICE's View tab keeps both together. A
+    // flyout, so the two cost this menu one row.
+    sub("menuGroup.pageDisplay", "view.multiplePages", "view.darkDocument"),
   ],
   // Word's Insert TAB group order, which ONLYOFFICE's Insert tab also follows:
   // Tables | Illustrations | Links | Comments | Header & footer | Text |
@@ -452,10 +458,13 @@ export const APP_MENU_SECTIONS = {
       "layout.pageNumber.bottomRight",
       "layout.pageNumber.pageOfTotal",
     ),
-    band("menuGroup.text", "insert.textbox", "insert.dropCap"),
+    // Text from file (`docs/153` page.textFromFile): Word's Insert ▸ Text ▸ Object ▸
+    // Text from File, in the Text group.
+    band("menuGroup.text", "insert.textbox", "insert.dropCap", "insert.textFromFile"),
     sub("menuGroup.fields", "insert.field", "insert.field.page", "insert.field.date"),
     // RM-19: Word keeps the non-breaking space beside Symbol, under Special Characters.
-    sub("menuGroup.symbols", "insert.symbol", "insert.emoji", "insert.nonBreakingSpace"),
+    // Alt+X (`docs/153` text.unicode-code-toggle) beside Symbol: the other way to type a character by its code.
+    sub("menuGroup.symbols", "insert.symbol", "insert.emoji", "insert.nonBreakingSpace", "insert.symbolByCode"),
   ],
   // The References menu, which the compact chrome did not have at all.
   //
@@ -694,6 +703,8 @@ export const APP_MENU_SECTIONS = {
       "tools.autoFormatHyperlink",
       "tools.autoCorrectOptions",
       "tools.languages",
+      // Word's Custom Dictionaries ▸ Edit Word List (`docs/153` review.personal-dictionary-manage).
+      "tools.personalDictionary",
       // RM-42: Word's Review ▸ Language ▸ Set Proofing Language.
       "format.language",
       // HF-051: Word's Review ▸ Proofing ▸ Word Count.

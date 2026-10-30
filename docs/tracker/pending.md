@@ -156,7 +156,6 @@ currently assigned. Rows stay in their queue order.
 | 173 | RM-02 | — | Consolidate the editor-proven commands and errors into a versioned public SDK boundary | Open |
 | 174 | RM-03 | — | Host storage contract, in the opencalc shape | Open |
 | 175 | RM-05 | — | Complete ODT beyond the current bounded subset | Open |
-| 176 | RM-06 | — | HTML, Markdown, EPUB and FB2 import/export; DOTX/OTT templates | Open |
 | 177 | RM-07 | — | Tagged PDF and PDF/A | Open |
 | 179 | FOLD-003 | P2 | A windowed body cannot be folded at all, so folding is withheld on exactly the documents an outline matters most for | Open |
 | 180 | FOLD-005 | P2 | RTF import drops every heading's identity, so the outline panel, folding, the TOC field and Go-to-heading are all empty on an imported `.rtf` | Open |

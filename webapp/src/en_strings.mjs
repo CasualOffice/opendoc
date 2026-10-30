@@ -953,9 +953,9 @@ export const EN_STRINGS = Object.freeze({
   "findings.feature.pdfOriginalWrittenBack": "The original PDF, written back unchanged",
   "findings.feature.pdfPreserveFallback": "Edits that could not be added to the original PDF, so the PDF was regenerated",
   // The open path's status lines (`editor_file_open.mjs`, `editor_file_pick.mjs`).
-  "fileOpen.ready": "Ready — open a .docx, .odt, .rtf, .pdf, .json or .txt",
+  "fileOpen.ready": "Ready — open a .docx, .odt, .rtf, .pdf, .md, .html, .json or .txt",
   "fileOpen.opening": "Opening {name}…",
-  "filePick.unsupported": "Please choose a .docx, .odt, .rtf, .pdf, .json or .txt file",
+  "filePick.unsupported": "Please choose a .docx, .odt, .rtf, .pdf, .md, .html, .json or .txt file",
   "findings.close": "Close",
   "findings.closeLabel": "Close compatibility findings",
   // What each finding IS, in words a reader shares (`109` FID-AT-05,
@@ -2528,4 +2528,39 @@ export const EN_STRINGS = Object.freeze({
   "object.editPoints.suggesting": "Editing a shape’s points cannot be tracked yet; switch to Editing to change it",
   "object.editPoints.unavailable": "This shape’s outline can’t be edited",
   "object.editPoints.rotated": "Rotate this shape back to 0° to edit its points",
+  // ---- View and text extras (`editor_view_text.mjs`, `docs/153`) -------------
+  // Find with a regular expression: the pattern's own error, inline.
+  "findPanel.regexInvalid": "Not a valid pattern: {reason}",
+  // Dark document and Multiple pages: view switches, never the file.
+  "darkDocument.commandOn": "Dark document: on",
+  "darkDocument.commandOff": "Dark document: off",
+  "darkDocument.on": "Dark document on — the file is unchanged",
+  "darkDocument.off": "Dark document off",
+  "multiplePages.commandOn": "Multiple pages: on",
+  "multiplePages.commandOff": "Multiple pages: off",
+  "multiplePages.on": "Multiple pages on",
+  "multiplePages.off": "Multiple pages off",
+  "multiplePages.reflow": "Reflow has no pages to show side by side",
+  "menuGroup.pageDisplay": "Page display",
+  // Print selection.
+  "printSelection.command": "Print selection",
+  "printSelection.needsRange": "Select the text to print first",
+  // The personal dictionary.
+  "dictionaryDialog.command": "Personal dictionary…",
+  "dictionaryDialog.remove": "Remove",
+  "dictionaryDialog.removeWord": "Remove “{word}” from your dictionary",
+  "dictionaryDialog.added": "Added “{word}”",
+  "dictionaryDialog.removed": "Removed “{word}” — it is checked again",
+  "dictionaryDialog.cleared": "Your dictionary is empty",
+  "dictionaryDialog.notSaved": "Changed for this session only — your dictionary could not be saved",
+  "dictionaryDialog.oneWord": "Type one word, with no spaces",
+  // Alt+X.
+  "unicodeToggle.command": "Toggle character code",
+  "unicodeToggle.nothing": "Nothing before the insertion point to convert",
+  // Insert text from file.
+  "insertFile.command": "Text from file…",
+  "insertFile.done": "Inserted the content of {name}",
+  "insertFile.loss": "Inserted {name}, without {items} — those belong to the other document.",
+  "paste.loss.sectionBreak": "section breaks",
+  "paste.loss.embeddedObject": "embedded objects and charts",
 });

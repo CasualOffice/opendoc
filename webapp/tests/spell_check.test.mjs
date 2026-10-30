@@ -1128,3 +1128,53 @@ test("a scan and its paint cost one engine call each, whatever the window holds"
   assert.equal(small.caretRects, 0, "a scan never asks caretRect per paragraph");
   assert.deepEqual([small.scans, small.batches], [1, 1], JSON.stringify(small));
 });
+
+// ---- Managing the personal dictionary (`docs/153` review.personal-dictionary-manage)
+
+test("a removed word is flagged again, and Clear empties the store", async () => {
+  const engine = fakeEngine(1);
+  engine.paragraphs[1].text = "This word qzxmine and qzxtwo are both fine";
+  const stored = new Set();
+  const store = {
+    list: async () => [...stored],
+    add: async (word) => void stored.add(word),
+    remove: async (word) => void stored.delete(word),
+    clear: async () => stored.clear(),
+  };
+  const h = harness(engine, { openWords: async () => store });
+  h.setWindow(1, 1);
+  await settle(h);
+  await h.checker.addToDictionary("qzxmine");
+  await h.checker.addToDictionary("qzxtwo");
+  await settle(h);
+  assert.deepEqual(h.flags(), []);
+
+  assert.equal(await h.checker.removeFromDictionary("qzxmine"), true, "the store agreed");
+  await settle(h);
+  assert.deepEqual(h.flags(), ["qzxmine"], "the removed word is a misspelling again");
+  assert.deepEqual([...stored], ["qzxtwo"], "and it left the store, not just memory");
+
+  assert.equal(await h.checker.clearDictionary(), true);
+  await settle(h);
+  assert.deepEqual(h.flags(), ["qzxmine", "qzxtwo"]);
+  assert.deepEqual(h.checker.personalWords(), []);
+  assert.equal(stored.size, 0);
+});
+
+test("a store that refuses a removal is reported, not hidden", async () => {
+  const engine = fakeEngine(1);
+  const h = harness(engine, {
+    openWords: async () => ({
+      list: async () => [],
+      add: async () => {},
+      remove: async () => {
+        throw new Error("quota");
+      },
+      clear: async () => {
+        throw new Error("quota");
+      },
+    }),
+  });
+  assert.equal(await h.checker.removeFromDictionary("x"), false);
+  assert.equal(await h.checker.clearDictionary(), false);
+});
