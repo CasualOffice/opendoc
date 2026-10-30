@@ -135,6 +135,7 @@ import { createShapeGallery } from "./editor_shape_gallery.mjs";
 import { createParagraphInspector } from "./editor_paragraph_inspector.mjs";
 import { createTableFormat } from "./editor_table_format.mjs";
 import { createDocTools } from "./editor_doc_tools.mjs";
+import { createForms } from "./editor_forms.mjs";
 import { createTableProps } from "./editor_table_props.mjs";
 import { createFilePage } from "./editor_file_page.mjs";
 import { createRibbon } from "./editor_ribbon.mjs";
@@ -249,7 +250,7 @@ const ed = {
   get commitComposedText() { return commitComposedText; },
   get commitCrop() { return commitCrop; },
   get compactToolbarUi() { return compactToolbarUi; }, set compactToolbarUi(v) { compactToolbarUi = v; },
-  get comparePanel() { return comparePanel; },
+  get comparePanel() { return comparePanel; }, get contentControls() { return contentControls; }, get formRoles() { return formRoles; },
   get compatFindings() { return compatFindings; },
   get composingText() { return composingText; }, set composingText(v) { composingText = v; },
   get computeFitZoom() { return computeFitZoom; },
@@ -2290,6 +2291,7 @@ const {
   BREAK_IO, INSERT_SURFACE, LAYOUT_SURFACE, REFERENCE_SURFACE, REVIEW_SURFACE, insertCommandEnabled,
   referenceObjectMenuRows, reviewCommentActions, ribbonSurfaceEnabled, ribbonSurfaceReason,
 } = createCommandSurfaces(ed);
+const { contentControls, formRoles } = createForms(ed); // RM-34: content controls, Protect form, form roles
 const {
   repaintPage, scrollCaretIntoView, scrollFindMatchIntoView, scrollModelRectIntoView,
   scrollOverlayIntoView, scrollReviewSelectionIntoView, selectionModelRect,
@@ -2645,7 +2647,7 @@ for (const entry of INSERT_SURFACE) {
   // The ¶ control owns both of its halves and its popover's five checkmarks, so
   // it reflects itself rather than being swept here: its state is the ENGINE's
   // `any`, not a local flag, and nothing else on the band knows how to read it.
-  formattingMarks.reflect(); wordCount.reflect(); languageSelection?.reflect(); // HF-051: "x of y words"; RM-42: the text language
+  formattingMarks.reflect(); wordCount.reflect(); formRoles.reflect(); languageSelection?.reflect(); // HF-051: "x of y words"; RM-42: the text language
   // Ribbon: undo/redo/view controls need a document; the Table tab is contextual.
   undoBtn.disabled = !doc || !doc.canUndo;
   redoBtn.disabled = !doc || !doc.canRedo;

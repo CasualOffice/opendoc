@@ -40,6 +40,9 @@ export function createClipboard(ed) {
     if (!ed.doc || !ed.selection) return;
     if (!text) return;
     const { anchor, focus } = ed.selection;
+    // A soft keyboard or an IME typing over a content control's placeholder
+    // replaces it, as a desktop keystroke does (`content_controls.mjs`).
+    if (actionKind === "typing" && !ed.hasRange() && !text.includes("\n") && (await ed.contentControls.typeIntoPlaceholder(text))) return;
     const sameParagraph = anchor.node === focus.node && !text.includes("\n");
     if (ed.reviewMode === "suggesting" && sameParagraph) {
       const start = Math.min(anchor.offset, focus.offset);

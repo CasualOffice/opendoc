@@ -656,6 +656,17 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("tools.autoCorrectOptions", null),
   // Word count reads the document and changes nothing (HF-051).
   exact("tools.wordCount", null),
+  // The accessibility check reads the document and changes nothing (HF-064).
+  exact("tools.checkAccessibility", null),
+  // Content controls (`109` RM-34): the three that act on the control at the
+  // caret. The seven insert commands are the `controls.insert.` family below.
+  exact("controls.properties", "mutate"),
+  exact("controls.remove", "mutate"),
+  exact("controls.fill", "mutate"),
+  // Protect form is the editing restriction, and form roles are policy too, so
+  // both need the edit grant that Restrict Editing needs.
+  exact("review.protectForm", "edit"),
+  exact("forms.roles", "edit"),
   exact("view.outline", null),
   // `view.pages` is a panel toggle and changes no document state, so it requires
   // nothing — the same shape as `view.outline`, which the taxonomy already puts
@@ -801,6 +812,9 @@ export const COMMAND_FAMILIES = Object.freeze([
   // Insert ▸ Chart's per-type rows (`insert.chart.<kind>`, HF-258), generated
   // from the chart-type table the ribbon's picker reads.
   family("insert.chart.", "mutate", "always"),
+  // Insert ▸ Controls' seven kinds (`controls.insert.<kind>`, `109` RM-34),
+  // generated from `CONTROL_KINDS` in `content_control_model.mjs`.
+  family("controls.insert.", "mutate", "always"),
   // References ▸ Add text's rows (`reference.addText.none`, `.1`..`.9`):
   // list the selected paragraphs at a contents level, or keep them out of it.
   family("reference.addText.", "mutate", "always"),

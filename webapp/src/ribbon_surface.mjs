@@ -38,6 +38,8 @@ export function ribbonSurfaceEnabled(entry, state) {
   if (entry.requires === "tocField") return state.tocFields > 0;
   if (entry.requires === "caret") return state.hasCaret;
   if (entry.requires === "tocEntry") return state.hasCaret && state.onTocEntry;
+  // A content control at the caret (`content_controls.mjs`).
+  if (entry.requires === "control") return state.hasCaret && !!state.inControl;
   return true;
 }
 
@@ -54,6 +56,7 @@ export function ribbonSurfaceReason(entry, state) {
   if (entry.requires === "tocField") return t("toc.noneToUpdate");
   if (entry.requires === "bodyCaret" && state.hasCaret) return t("caption.bodyOnly");
   if (entry.requires === "tocEntry") return t("toc.notAnEntry");
+  if (entry.requires === "control") return t("controls.notInControl");
   if (entry.requires === "caret" || entry.requires === "bodyCaret") {
     return "Place the caret in a paragraph";
   }

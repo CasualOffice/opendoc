@@ -2,6 +2,7 @@
 // registry of real editor actions the palette, the menus and the ribbon read.
 // Moved out of `main.js` unchanged (docs/177); it reaches the rest of the
 // editor only through the context `ed`.
+import { openAccessibilityCheck } from "./accessibility_checker.mjs";
 import { narrowDecisionsToContainer } from "./review_authority.mjs";
 import { exportCommands } from "./export_commands.mjs";
 import { mutationBlockedMessage } from "./edit_errors.mjs";
@@ -382,7 +383,7 @@ export function createPalette(ed) {
       ...ed.LAYOUT_SURFACE.filter((entry) => entry.label).map((entry) => ({
         id: entry.command,
         label: entry.label,
-        group: "Layout",
+        group: entry.group ?? "Layout",
         kw: entry.kw,
         enabled: ed.ribbonSurfaceEnabled(entry),
         disabledReason: ed.ribbonSurfaceReason(entry),
@@ -430,6 +431,9 @@ export function createPalette(ed) {
       // from the same place it was set (SKILL.md §10).
       { id: "tools.spellCheck", label: `Spell check: ${ed.settings.spellCheck === false ? "off" : "on"}`, group: "Tools", kw: "spelling spell check squiggle dictionary misspelled proofing language red underline glossary", noDoc: true, run: () => ed.setSpellCheckEnabled(ed.settings.spellCheck === false) },
       { id: "tools.grammarCheck", label: `Grammar check: ${ed.settings.grammarCheck === false ? "off" : "on"}`, group: "Tools", kw: "grammar check agreement doubled word article a an punctuation capitalisation capitalization proofing blue underline", noDoc: true, run: () => ed.setGrammarCheckEnabled(ed.settings.grammarCheck === false) },
+      // HF-064. Word's Review ▸ Accessibility ▸ Check Accessibility; the one
+      // opener `editor_command_surfaces.mjs` installed.
+      { id: "tools.checkAccessibility", label: t("a11yCheck.command"), group: "Tools", kw: "accessibility check checker alt text screen reader headings table header a11y wcag", enabled: !!ed.doc, disabledReason: t("command.needsDocument"), run: () => openAccessibilityCheck() },
       // HF-051. Word's Review ▸ Proofing ▸ Word Count, and its ⌘⇧G.
       { id: "tools.wordCount", label: t("wordCount.command"), group: "Tools", kw: "word count words characters paragraphs pages statistics length how many", enabled: !!ed.doc, disabledReason: t("command.needsDocument"), run: () => ed.wordCount.open() },
       { id: "tools.languages", label: t("proofLanguages.command"), group: "Tools", kw: "language pack proofing spelling dictionary install download offline locale manage languages", noDoc: true, run: () => ed.proofing.openLanguages() },

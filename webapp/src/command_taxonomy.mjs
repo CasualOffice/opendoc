@@ -408,6 +408,21 @@ export const APP_MENU_SECTIONS = {
       "layout.break.section.oddPage",
     ),
     band("menuGroup.illustrations", "insert.image", "insert.shape", "insert.chart"),
+    // Content controls (`109` RM-34): Word's Developer ▸ Controls, as a submenu
+    // for the same reason Breaks is one — seven kinds and three actions.
+    sub(
+      "menuGroup.contentControls",
+      "controls.insert.richText",
+      "controls.insert.plainText",
+      "controls.insert.picture",
+      "controls.insert.checkbox",
+      "controls.insert.comboBox",
+      "controls.insert.dropDownList",
+      "controls.insert.date",
+      "controls.fill",
+      "controls.properties",
+      "controls.remove",
+    ),
     band("menuGroup.links", "insert.link", "insert.bookmark"),
     band("menuGroup.comments", "review.comment"),
     sub(
@@ -683,6 +698,8 @@ export const APP_MENU_SECTIONS = {
       "format.language",
       // HF-051: Word's Review ▸ Proofing ▸ Word Count.
       "tools.wordCount",
+      // HF-064: Word's Review ▸ Accessibility ▸ Check Accessibility.
+      "tools.checkAccessibility",
     ),
     band("menuGroup.comments", "review.comment.resolve", "review.comment.delete"),
     band("menuGroup.tracking", "review.toggle"),
@@ -722,7 +739,7 @@ export const APP_MENU_SECTIONS = {
     // for. A band of its own would have cost a new `menuGroup.*` key in
     // nineteen catalogues to separate two rows nobody is looking for
     // separately.
-    band("menuGroup.protect", "review.restrictEditing", "review.manageAccess", "collab.recover", "collab.downloadRetained"),
+    band("menuGroup.protect", "review.restrictEditing", "review.protectForm", "forms.roles", "review.manageAccess", "collab.recover", "collab.downloadRetained"),
   ],
 };
 

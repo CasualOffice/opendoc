@@ -960,6 +960,7 @@ const UI_STYLE_DEFINITIONS: &str = "Redefining a style changes every paragraph t
 const UI_OBJECTS: &str = "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are.";
 const UI_OBJECT_MENU: &str = "The object menus are one contract family; its members that change a picture or shape (object.altText, object.crop, object.delete, object.fill, object.outline, object.wrap) are named by the objects commands, the rest are arrangement.";
 const UI_NOTE_SETTINGS: &str = "Footnote and endnote options are a person's layout choice in the Footnote and Endnote dialog; no agent command offers them yet (docs/181 §3).";
+const UI_CONTENT_CONTROLS: &str = "Content controls are authored, configured and filled through the editor's content-control methods (casual-doc-wasm content_controls.rs); no agent command offers them yet (docs/181 §3).";
 const UI_NOTE_CONVERT: &str = "Converting footnotes to endnotes is a person's editorial decision; an agent inserts the kind of note it means with insert_note.";
 const UI_PAGE_BORDERS: &str = "Page borders are a person's design choice in the Page Borders dialog; no agent command offers them yet (docs/181 §3).";
 const UI_HEADER_FOOTER_SETTINGS: &str = "The Header & Footer options dialog also writes the header and footer distances, which agents are not offered; its toggles and page numbering are (set_different_first_page, set_different_odd_even, set_page_numbering).";
@@ -1082,6 +1083,12 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
     ("review.mode.editing", UI_MODE),
     ("review.mode.suggesting", UI_MODE),
     ("review.restrictEditing", UI_PROTECTION),
+    ("review.protectForm", UI_PROTECTION),
+    ("forms.roles", UI_PROTECTION),
+    ("controls.insert.", UI_CONTENT_CONTROLS),
+    ("controls.properties", UI_CONTENT_CONTROLS),
+    ("controls.remove", UI_CONTENT_CONTROLS),
+    ("controls.fill", UI_CONTENT_CONTROLS),
     ("review.comment.delete", UI_COMMENT_DELETE),
     ("reference.removeToc", UI_CONTENTS),
     ("reference.tableOfFigures", UI_CONTENTS),
@@ -1096,5 +1103,8 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
 /// `reference.removeToc`, `reference.tableOfFigures` and `reference.addText.`
 /// (`109` RM-25), 99 -> 101 with `reference.noteSettings` and
 /// `reference.convertNotes` (`109` RM-24), and 101 -> 102 with `format.language`
-/// (`109` RM-42), each recorded in `docs/181` §3.
-pub const UI_NOT_EXPOSED_CEILING: usize = 102;
+/// (`109` RM-42), each recorded in `docs/181` §3. 102 -> 108 with the content
+/// controls and forms (`109` RM-34): the `controls.insert.` family,
+/// `controls.properties`, `controls.remove`, `controls.fill`,
+/// `review.protectForm` and `forms.roles`, recorded in `docs/181` §3.
+pub const UI_NOT_EXPOSED_CEILING: usize = 108;

@@ -2238,6 +2238,98 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 
 /* Two columns: term and value on one line, the way a properties sheet reads.
    `auto auto` so neither column is wider than the text it holds. */
+/* Accessibility check (HF-064): Word's checker pane, as a list of findings. */
+.a11y-check-dialog {
+  width: min(100%, 60ch);
+}
+
+.a11y-check-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.a11y-check-item {
+  border-inline-start: 3px solid var(--line-strong);
+  padding-inline-start: var(--space-3);
+}
+
+.a11y-check-item p {
+  margin: 0 0 var(--space-1);
+}
+
+.a11y-check-severity {
+  font-size: var(--fs-caption, 12px);
+  font-weight: 600;
+  color: var(--ink-2, var(--ink));
+}
+
+.a11y-check-fix,
+.a11y-check-where {
+  color: var(--ink-2, var(--ink));
+  font-size: var(--fs-caption, 12px);
+}
+
+/* Content controls and form roles (`109` RM-34). The lists are the parts that
+   grow, so they scroll inside the card rather than pushing it past 720px. */
+.control-props-dialog,
+.form-roles-dialog {
+  width: min(100%, 56ch);
+}
+
+.control-fill-dialog {
+  width: min(100%, 40ch);
+}
+
+.control-item-list,
+.form-role-list,
+.form-role-fields,
+.control-fill-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+  max-block-size: 12rem;
+  overflow-y: auto;
+}
+
+.control-item-row,
+.form-role-row,
+.form-role-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.control-item-row input,
+.form-role-row .form-role-name {
+  flex: 1 1 0;
+  min-inline-size: 0;
+}
+
+.form-role-field span {
+  flex: 1 1 auto;
+}
+
+.control-fill-option {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.control-fill-option[aria-selected="true"] {
+  background: var(--accent-soft, var(--line));
+  font-weight: 600;
+}
+
+.control-fill-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 /* Page borders (HF-193): the four edges read across, as Word's preview buttons
    sit around one page. */
 .page-borders-dialog {

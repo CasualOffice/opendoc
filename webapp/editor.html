@@ -843,6 +843,16 @@
             </div>
             <span data-i18n="panelInsert.text" class="rgroup-label">Text</span>
           </div>
+          <!-- Controls (`109` RM-34): Word's Developer ▸ Controls as ONE dropdown, which
+               is ONLYOFFICE's Insert ▸ Content Controls (`btnContentControls`) —
+               seven band buttons would spend the band's remaining width on a
+               group most documents never open. `content_controls.mjs`. -->
+          <div class="rgroup" data-group="insert-controls">
+            <div class="rgroup-ctl">
+              <button data-i18n-title="panelInsert.contentControls.title" data-i18n-label="panelInsert.contentControls.label" id="insertControlsBtn" type="button" class="fmt" title="Insert a content control: text, picture, check box, list or date" aria-label="Content controls" aria-haspopup="menu" aria-controls="insertControlsMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">check_box</span></button>
+            </div>
+            <span data-i18n="panelInsert.controls" class="rgroup-label">Controls</span>
+          </div>
           <!-- Footnote and Endnote moved to References ▸ Notes, which is where
                Word keeps them and the only place it keeps them. They are still
                in the Insert app menu and the palette, so the command set the
@@ -1278,6 +1288,8 @@
               <button data-i18n-title="panelReview.proofingLanguages.title" data-i18n-label="panelReview.proofingLanguages.label" id="reviewProofLanguagesBtn" type="button" class="fmt" title="Install proofing for another language" aria-label="Proofing languages" aria-haspopup="dialog"><span class="ms" aria-hidden="true">language</span></button>
               <!-- Word count (HF-051): Word's Review ▸ Proofing ▸ Word Count. -->
               <button data-i18n-title="panelReview.wordCount.title" data-i18n-label="panelReview.wordCount.label" id="reviewWordCountBtn" type="button" class="fmt" title="Count words, characters and paragraphs" aria-label="Word count" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">match_word</span></button>
+              <!-- Check accessibility (HF-064): Word's Review ▸ Accessibility. -->
+              <button data-i18n-title="panelReview.checkAccessibility.title" data-i18n-label="panelReview.checkAccessibility.label" id="reviewA11yCheckBtn" type="button" class="fmt" title="Check the document for accessibility problems" aria-label="Check accessibility" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">accessibility_new</span></button>
             </div>
             <span data-i18n="panelReview.proofing" class="rgroup-label">Proofing</span>
           </div>
@@ -1462,6 +1474,141 @@
          crate manifest) rather than typed here, so it cannot drift. -->
     <!-- Word count (HF-051). Word's dialog: the document's figures, and the
          selection's beside them whenever there is one. `word_count.mjs`. -->
+    <!-- Check accessibility (HF-064). `accessibility_checker.mjs`: the rules,
+         the projection they read, and what is not checked. -->
+    <div id="a11yCheckDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="a11yCheckTitle" aria-describedby="a11yCheckSummary">
+      <section class="dialog-card a11y-check-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="a11yCheckDialog.title" id="a11yCheckTitle">Accessibility check</h2>
+              <p data-i18n="a11yCheckDialog.description">What a screen-reader user will meet in this document, and how to fix it.</p>
+            </div>
+          </div>
+          <button data-i18n-title="a11yCheckDialog.close.title" data-i18n-label="a11yCheckDialog.close.label" id="a11yCheckClose" type="button" class="dialog-close" title="Close" aria-label="Close accessibility check">
+            <span class="ms" aria-hidden="true">close</span>
+          </button>
+        </header>
+        <div class="dialog-body">
+          <p id="a11yCheckSummary" class="a11y-check-summary" role="status"></p>
+          <p data-i18n="a11yCheckDialog.foldNote" id="a11yCheckFoldNote" class="dialog-note" hidden>Collapsed headings are not checked. Expand all to check everything.</p>
+          <p data-i18n="a11yCheckDialog.scopeNote" class="dialog-note">Link text, theme and automatic text colours, and text outside the body are not checked yet.</p>
+          <ul id="a11yCheckList" class="a11y-check-list"></ul>
+        </div>
+        <footer class="dialog-foot">
+          <div class="dialog-actions">
+            <button data-i18n="a11yCheckDialog.done" id="a11yCheckDone" type="button" class="dialog-button dialog-button-primary">Close</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <!-- Content control properties (`content_controls.mjs`, `109` RM-34): Word's
+         Content Control Properties dialog, with ONLYOFFICE's placeholder field. -->
+    <div id="controlPropsDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="controlPropsHeading" aria-describedby="controlPropsKind">
+      <section class="dialog-card control-props-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="controls.props.title" id="controlPropsHeading">Content control properties</h2>
+              <p id="controlPropsKind"></p>
+            </div>
+          </div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="controls.props.close" id="controlPropsClose" type="button" class="dialog-close" title="Close" aria-label="Close content control properties"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body control-props-body">
+          <div class="dialog-field-grid">
+            <label data-i18n="controls.props.titleField" class="dialog-field">Title<input id="controlPropsTitle" type="text" maxlength="255" /></label>
+            <label data-i18n="controls.props.tag" class="dialog-field">Tag<input id="controlPropsTag" type="text" maxlength="255" /></label>
+          </div>
+          <div class="dialog-field-grid">
+            <label class="dialog-check"><input id="controlPropsUseColor" type="checkbox" /><span data-i18n="controls.props.useColor">Colour</span></label>
+            <input data-i18n-label="controls.props.color" id="controlPropsColor" type="color" value="#3355c4" aria-label="Control colour" />
+            <label data-i18n="controls.props.role" class="dialog-field">Filled by<select id="controlPropsRole" class="dialog-select"></select></label>
+          </div>
+          <label id="controlPropsPlaceholderRow" data-i18n="controls.props.placeholder" class="dialog-field">Placeholder text<input id="controlPropsPlaceholder" type="text" maxlength="255" /></label>
+          <label class="dialog-check"><input id="controlPropsTemporary" type="checkbox" /><span data-i18n="controls.props.temporary">Remove content control when contents are edited</span></label>
+          <fieldset class="dialog-group">
+            <legend data-i18n="controls.props.locking">Locking</legend>
+            <label class="dialog-check"><input id="controlPropsLockControl" type="checkbox" /><span data-i18n="controls.props.lockControl">Content control cannot be deleted</span></label>
+            <label class="dialog-check"><input id="controlPropsLockContent" type="checkbox" /><span data-i18n="controls.props.lockContent">Contents cannot be edited</span></label>
+          </fieldset>
+          <fieldset id="controlPropsListRow" class="dialog-group" hidden>
+            <legend data-i18n="controls.props.list">List entries (display name, value)</legend>
+            <ul id="controlPropsList" class="control-item-list"></ul>
+            <button data-i18n="controls.props.addItem" id="controlPropsAddItem" type="button" class="dialog-button">Add entry</button>
+          </fieldset>
+          <fieldset id="controlPropsDateRow" class="dialog-group" hidden>
+            <legend data-i18n="controls.props.dateFormat">Display the date like this</legend>
+            <input data-i18n-label="controls.props.dateFormat" id="controlPropsDateFormat" type="text" maxlength="255" list="controlPropsDateFormats" aria-label="Display the date like this" />
+            <datalist id="controlPropsDateFormats"></datalist>
+            <small id="controlPropsDatePreview" class="settings-note"></small>
+          </fieldset>
+        </div>
+        <footer class="dialog-foot">
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" id="controlPropsCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="controls.props.ok" id="controlPropsOk" type="button" class="dialog-button dialog-button-primary">OK</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <!-- Choose a value: a drop-down's or combo box's entries, or a date
+         (`content_controls.mjs`). A dialog rather than Word's in-place list, so it is
+         keyboard- and screen-reader-operable on every surface, a phone included. -->
+    <div id="controlFillDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="controlFillTitle">
+      <section class="dialog-card control-fill-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 id="controlFillTitle"></h2>
+            </div>
+          </div>
+        </header>
+        <div class="dialog-body">
+          <ul data-i18n-label="controls.fill.list" id="controlFillList" class="control-fill-list" role="listbox" aria-label="Entries"></ul>
+          <label id="controlFillTextRow" data-i18n="controls.fill.text" class="dialog-field" hidden>Or type a value<input id="controlFillText" type="text" maxlength="255" /></label>
+          <label id="controlFillDateRow" data-i18n="controls.fill.date" class="dialog-field" hidden>Date<input id="controlFillDate" type="date" /></label>
+        </div>
+        <footer class="dialog-foot">
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" id="controlFillCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="controls.props.ok" id="controlFillOk" type="button" class="dialog-button dialog-button-primary">OK</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <!-- Form roles (`form_roles.mjs`, `docs/153` shell.form-roles): ONLYOFFICE's
+         roles manager and "View form as". Kept beside the document, not in it. -->
+    <div id="formRolesDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="formRolesTitle" aria-describedby="formRolesDescription">
+      <section class="dialog-card form-roles-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <div>
+              <h2 data-i18n="formRoles.title" id="formRolesTitle">Form roles</h2>
+              <p data-i18n="formRoles.description" id="formRolesDescription">Who fills which field. Roles are kept by this editor beside the document; they are not saved inside the .docx.</p>
+            </div>
+          </div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="formRoles.close" id="formRolesClose" type="button" class="dialog-close" title="Close" aria-label="Close form roles"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body form-roles-body">
+          <ul id="formRolesList" class="form-role-list"></ul>
+          <button data-i18n="formRoles.add" id="formRolesAdd" type="button" class="dialog-button">Add role</button>
+          <label data-i18n="formRoles.fillAs" class="dialog-field">Fill the form as<select id="formRolesFillAs" class="dialog-select"></select></label>
+          <label data-i18n="formRoles.showFields" class="dialog-field">Show the fields for<select id="formRolesFilter" class="dialog-select"></select></label>
+          <ul id="formRolesFields" class="form-role-fields"></ul>
+        </div>
+        <footer class="dialog-foot">
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" id="formRolesCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="formRoles.save" id="formRolesSave" type="button" class="dialog-button dialog-button-primary">Save</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
     <div id="wordCountDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="wordCountTitle" aria-describedby="wordCountScope">
       <section class="dialog-card word-count-dialog">
         <header class="dialog-head">
@@ -2233,6 +2380,25 @@
     <!-- References ▸ Add text: rows built when it opens, so the current level
          is checked (`toc_commands.mjs`). -->
     <div data-i18n-label="panelReferences.addText.label" id="refAddTextMenu" class="context-menu" hidden role="menu" aria-label="Add text"></div>
+    <!-- The Controls dropdown (`content_controls.mjs`, `109` RM-34): Word's seven
+         kinds in Word's order, the three that act on the control at the caret,
+         and the two form commands. Each row carries the command it runs. -->
+    <div data-i18n-label="panelInsert.contentControls.label" id="insertControlsMenu" class="context-menu" hidden role="menu" aria-label="Content controls">
+      <button data-i18n="controls.kind.richText" type="button" role="menuitem" class="menu-item" data-command="controls.insert.richText">Rich text</button>
+      <button data-i18n="controls.kind.plainText" type="button" role="menuitem" class="menu-item" data-command="controls.insert.plainText">Plain text</button>
+      <button data-i18n="controls.kind.picture" type="button" role="menuitem" class="menu-item" data-command="controls.insert.picture">Picture</button>
+      <button data-i18n="controls.kind.checkbox" type="button" role="menuitem" class="menu-item" data-command="controls.insert.checkbox">Check box</button>
+      <button data-i18n="controls.kind.comboBox" type="button" role="menuitem" class="menu-item" data-command="controls.insert.comboBox">Combo box</button>
+      <button data-i18n="controls.kind.dropDownList" type="button" role="menuitem" class="menu-item" data-command="controls.insert.dropDownList">Drop-down list</button>
+      <button data-i18n="controls.kind.date" type="button" role="menuitem" class="menu-item" data-command="controls.insert.date">Date picker</button>
+      <div class="menu-divider"></div>
+      <button data-i18n="controls.fillCommand" type="button" role="menuitem" class="menu-item" data-command="controls.fill">Choose a value…</button>
+      <button data-i18n="controls.propertiesCommand" type="button" role="menuitem" class="menu-item" data-command="controls.properties">Content control properties…</button>
+      <button data-i18n="controls.removeCommand" type="button" role="menuitem" class="menu-item" data-command="controls.remove">Remove content control</button>
+      <div class="menu-divider"></div>
+      <button data-i18n="forms.protectCommand" type="button" role="menuitem" class="menu-item" data-command="review.protectForm">Protect form</button>
+      <button data-i18n="formRoles.command" type="button" role="menuitem" class="menu-item" data-command="forms.roles">Form roles…</button>
+    </div>
     <div data-i18n-label="panelInsert.breaks.label" id="insertBreaksMenu" class="context-menu" hidden role="menu" aria-label="Breaks">
       <button data-i18n="break.blankPage" type="button" role="menuitem" class="menu-item" data-command="layout.blankPage">Blank page</button>
       <button data-i18n="break.page" type="button" role="menuitem" class="menu-item" data-command="layout.break.page">Page break</button>

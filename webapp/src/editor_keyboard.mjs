@@ -109,6 +109,13 @@ export function createKeyboard(ed) {
     // no modifier only: Ctrl+Space is Clear Formatting (a keymap row now, claimed
     // by the dispatcher), and a Space over a selection is a replacement, not a
     // toggle.
+    // Alt+Down opens a content control's chooser — its list, its date or its
+    // picture — as in Word (`content_controls.mjs`, `109` RM-34).
+    if (key === "ArrowDown" && e.altKey && !e.ctrlKey && !e.metaKey && ed.selection && ed.contentControls.atCaret()) {
+      e.preventDefault();
+      ed.contentControls.openFill();
+      return;
+    }
     if (key === " " && !e.ctrlKey && !e.metaKey && !e.altKey && !ed.hasRange() && ed.selection) {
       if (ed.toggleFormCheckboxAt(ed.selection.focus.node, ed.selection.focus.offset)) {
         e.preventDefault();
@@ -418,6 +425,8 @@ export function createKeyboard(ed) {
     // Named keys ("Enter", "F1", "Tab") are still longer than one code point.
     if ([...key].length === 1) {
       e.preventDefault();
+      // Typing over a content control's placeholder replaces it, as in Word.
+      if (!ed.hasRange() && (await ed.contentControls.typeIntoPlaceholder(key))) return;
       const session = ed.typingSessionForKey();
       // Straight quotes become typographic ones, decided from what precedes the
       // insertion point — the start of the replaced range when there is a
