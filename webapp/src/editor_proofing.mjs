@@ -36,6 +36,7 @@ export function createProofing(ed) {
     reflect: () => ed.updateToolbar(),
     openWords: () => openWordStore({}),
     runEdit: ed.runEdit,
+    reviewMode: () => ed.reviewMode,
     registerModal,
     fallbackFocus: () => ed.pagesEl,
     activeLocale: () => activeLocale(),

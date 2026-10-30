@@ -200,6 +200,13 @@ export function startPlugin({ manifest, granted, env, container }) {
       const keys = Array.isArray(params?.keys) ? params.keys.map(String) : [];
       return { strings: env.strings?.(keys) ?? {} };
     },
+    /** Writing issues for paragraphs the host sent in `proofing/check`
+     *  (`docs/183` §19). The host verifies and draws them; nothing here edits. */
+    "proofing/report"(params) {
+      need("read");
+      if (!manifest.contributes.proofing) throw new RpcRefusal("bad-request", "This add-in declares no proofing contribution.");
+      return env.proofingReport?.(params) ?? { accepted: 0, dropped: 0 };
+    },
     "ui/notify"(params) {
       const message = truncate(params?.message, PLUGIN_LIMITS.notifyChars);
       if (!message) throw new RpcRefusal("bad-request", "ui/notify needs a message.");
@@ -305,6 +312,13 @@ export function startPlugin({ manifest, granted, env, container }) {
     invoke(command, context = {}) {
       if (state !== "running") return false;
       rpc?.notify("contribution/invoked", { command, context });
+      return true;
+    },
+    /** Asks a proofing add-in to check `paragraphs` (`[{node, text, language}]`).
+     *  Only while it holds `read`. */
+    proofingCheck(paragraphs) {
+      if (state !== "running" || !manifest.contributes.proofing || !grant().permissions.includes("read")) return false;
+      rpc?.notify("proofing/check", { paragraphs });
       return true;
     },
     /** Tells the plugin something changed, within what its grant may know. */

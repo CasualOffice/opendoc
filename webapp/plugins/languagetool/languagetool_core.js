@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// LanguageTool for OpenDoc: the logic, with no DOM and no network (`docs/183` §18).
+// LanguageTool for OpenDoc: the logic, with no DOM and no network (`docs/183` §18, §19).
 //
 // LanguageTool (<https://languagetool.org>, LGPL-2.1) is a SERVER this add-in
 // talks to over its documented HTTP API (`POST /v2/check`,
@@ -7,9 +7,9 @@
 // By default that server is LanguageTool's public API; an administrator points
 // the add-in at their own (`config.server` and `network` in the catalogue).
 //
-// Document text is sent in chunks of whole paragraphs; every match is mapped
-// back to its paragraph and turned into a suggestion anchored on the exact text
-// the server flagged. A match that spans two paragraphs, or whose text is no
+// The editor sends the paragraphs that changed; they go to the server in chunks
+// of whole paragraphs, and every match is mapped back to its paragraph as a
+// writing issue the EDITOR draws in the text and offers in its own card. A match that spans two paragraphs, or whose text is no
 // longer what the paragraph holds, is dropped and counted rather than guessed.
 (function (root) {
   "use strict";
@@ -93,34 +93,57 @@
         replacements: (m.replacements || []).slice(0, 5).map(function (r) { return String(r && r.value != null ? r.value : ""); }).filter(function (v) { return v !== exact; }),
         rule: String((m.rule && m.rule.id) || ""),
         category: String((m.rule && m.rule.category && m.rule.category.name) || ""),
+        categoryId: String((m.rule && m.rule.category && m.rule.category.id) || ""),
         issueType: String((m.rule && m.rule.issueType) || ""),
       });
     });
     return { issues: issues, dropped: dropped };
   }
 
-  /** One suggestion: replace the flagged text with `replacement`. */
-  function editFor(issue, replacement) {
-    return { op: "replace_text", target: { node: issue.node, exact: issue.exact, occurrence: issue.occurrence }, text: String(replacement) };
+  /**
+   * The editor's category for a LanguageTool match (`docs/183` §19): spelling,
+   * punctuation, style or grammar, from the rule's documented `issueType` and
+   * category id (<https://languagetool.org/http-api/>).
+   */
+  var STYLE_TYPES = ["style", "register", "duplication", "locale-violation", "inconsistency"];
+  var STYLE_CATEGORIES = ["STYLE", "REDUNDANCY", "PLAIN_ENGLISH", "COLLOQUIALISMS", "REPETITIONS_STYLE", "WIKIPEDIA"];
+  function categoryOf(issueType, categoryId) {
+    var type = String(issueType || "").toLowerCase();
+    var id = String(categoryId || "").toUpperCase();
+    if (type === "misspelling" || id === "TYPOS") return "spelling";
+    if (type === "typographical" || type === "whitespace" || id === "PUNCTUATION" || id === "TYPOGRAPHY") return "punctuation";
+    if (STYLE_TYPES.indexOf(type) >= 0 || STYLE_CATEGORIES.indexOf(id) >= 0) return "style";
+    return "grammar";
   }
 
   /**
-   * Every issue with a replacement, as suggestions, at most `max`, never two on
-   * overlapping text of one paragraph (the second would anchor on text the
-   * first changed).
+   * What the add-in reports for the paragraphs it was sent: one result per
+   * paragraph (an empty list clears its marks), each match in the editor's
+   * shape with UTF-16 offsets into the paragraph's text.
    */
-  function planForAll(issues, revision, max) {
-    var edits = [];
-    var taken = {};
+  function resultsFor(paragraphs, issues) {
+    var byNode = {};
+    (paragraphs || []).forEach(function (p) { byNode[p.node] = { node: p.node, text: p.text, matches: [] }; });
     (issues || []).forEach(function (issue) {
-      if (edits.length >= (max || 100) || !issue.replacements.length) return;
-      var spans = taken[issue.node] || (taken[issue.node] = []);
-      var overlaps = spans.some(function (s) { return issue.offset < s[1] && s[0] < issue.offset + issue.length; });
-      if (overlaps) return;
-      spans.push([issue.offset, issue.offset + issue.length]);
-      edits.push(editFor(issue, issue.replacements[0]));
+      var result = byNode[issue.node];
+      if (!result) return;
+      result.matches.push({
+        start: issue.offset,
+        end: issue.offset + issue.length,
+        exact: issue.exact,
+        category: categoryOf(issue.issueType, issue.categoryId),
+        message: issue.message || issue.short,
+        replacements: issue.replacements.slice(0, 3),
+        rule: issue.rule,
+      });
     });
-    return edits.length ? { ok: true, plan: { base_revision: revision, edits: edits } } : { ok: false, reason: "nothing" };
+    return Object.keys(byNode).map(function (k) { return byNode[k]; });
+  }
+
+  /** The server's language code for a paragraph's `w:lang`, or "auto". */
+  function languageFor(tag) {
+    var t = String(tag || "");
+    return /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/.test(t) ? t : "auto";
   }
 
   root.LanguageToolCore = Object.freeze({
@@ -129,7 +152,8 @@
     requestBody: requestBody,
     checkUrl: checkUrl,
     issuesFrom: issuesFrom,
-    editFor: editFor,
-    planForAll: planForAll,
+    categoryOf: categoryOf,
+    resultsFor: resultsFor,
+    languageFor: languageFor,
   });
 })(typeof self !== "undefined" ? self : globalThis);

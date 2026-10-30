@@ -2,7 +2,8 @@
 
 **Status:** Designed 2026-10-30. P1 (provider contract), P2 (plugin runtime), P3 (Casual AI) and P4 (LanguageTool, Readability)
 built on `program/ai-plugins-2`; the owner chose F1–F7 on 2026-10-31 (§13) and set UI rules
-that changed parts of §8 (§16).
+that changed parts of §8 (§16). Proofing add-ins redone as writing issues in the text (§19), and
+Casual AI corrected against Google Docs and Notion (§20), on `program/ai-main`.
 **Decides:** ADR-077 (proposed). **Rows:** `docs/109` RM-50 (provider contract), RM-51
 (plugin platform), RM-52 (assistant plugin), RM-53 (further first-party plugins), RM-54 (RAG,
 MCP client and the agent loop).
@@ -989,3 +990,176 @@ English-only switch, the published formula, comments-only plans
 (`webapp/tests/plugin_firstparty.test.mjs`), and in a browser the grant prompt naming the server,
 the signed preview, and Readability making no request off the page
 (`webapp/tests/e2e/ai-addins-firstparty.spec.mjs`).
+
+**Superseded in part by §19 (2026-10-31):** the panel lists described above are gone. Both
+add-ins now report writing issues, and the editor draws them in the text.
+
+## 19. Writing issues in the text: the owner's rejection, the survey, and the design (RM-53)
+
+On seeing the §18 screenshots the owner rejected the design: "Is this UX industry-proven?
+Have you ever seen how LanguageTool behaves?" §18 listed issues in a side panel, and no
+product people know works that way. This section records what those products actually do,
+then the design that replaced the panel.
+
+### 19.1 What the products do (cited; surveyed 2026-10-31)
+
+Every claim cites the vendor's own page. Where a vendor documents nothing, the table says
+so rather than guessing.
+
+| | LanguageTool add-on | Grammarly | Google Docs spelling and grammar | Hemingway |
+| --- | --- | --- | --- | --- |
+| Where issues show | Underlined in the field as you write: style, spelling and grammar ([add-on](https://languagetool.org/insights/post/add-on)) | Underlined in the field ([extension guide](https://support.grammarly.com/hc/en-us/articles/115000091592-Grammarly-s-browser-extension-user-guide)) | Underlined in the document ([57859](https://support.google.com/docs/answer/57859)) | Highlighted in the text ([highlighted issues](https://hemingwayapp.com/help/docs/highlighted-issues)) |
+| Colour by category | Red for spelling, yellow for grammar, blue for style ([LT Insights](https://languagetool.org/insights/?p=98994)) | Red for correctness, blue for clarity, green for engagement, purple for delivery ([Grammarly blog](https://www.grammarly.com/blog/product/better-writing-with-grammarly/)) | Red for spelling, blue for grammar ([57859](https://support.google.com/docs/answer/57859)) | Yellow and red for hard-to-read sentences, blue for weakeners (adverbs, passive voice, qualifiers), purple for simpler words ([highlighted issues](https://hemingwayapp.com/help/docs/highlighted-issues)) |
+| On the word | A card with Ignore and "Turn off rule everywhere" ([rules](https://languagetool.org/insights/post/enabling-and-disabling-rules)) | Hovering shows the suggestion and a click accepts it; the card has Dismiss and a book icon that adds the word to the dictionary ([guide](https://support.grammarly.com/hc/en-us/articles/115000091592-Grammarly-s-browser-extension-user-guide)) | Clicking the word shows the fix, with Add to dictionary and Ignore ([14701081](https://support.google.com/docs/answer/14701081)); right-clicking offers the same ([57859](https://support.google.com/docs/answer/57859)) | Clicking opens a popup with "Use suggestion", or the synonym to apply ([highlighted issues](https://hemingwayapp.com/help/docs/highlighted-issues)) |
+| Count | A circled red number opens an overview ([add-on](https://languagetool.org/insights/post/add-on)) | The corner icon spins while checking, then shows the number of suggestions ([guide](https://support.grammarly.com/hc/en-us/articles/115000091592-Grammarly-s-browser-extension-user-guide)) | Not documented | A grade in the sidebar ([readability](https://hemingwayapp.com/help/docs/readability)) |
+| Keyboard | Not documented | Not documented (only "Edit shortcuts") | Next misspelling ⌘' / Ctrl+', previous ⌘; / Ctrl+; ([179738](https://support.google.com/docs/answer/179738)) | Not documented |
+| List or panel | Only an overview, opened from the count | An optional sidebar, opened from the count ([Docs sidebar](https://www.grammarly.com/blog/product/grammarly-google-docs-sidebar/)) | A separate "Spelling and grammar check" tool, Ctrl+Alt+X ([57859](https://support.google.com/docs/answer/57859)) | A sidebar of counts |
+
+**What all of them share:** the issue is shown where it is, and fixed where it is. A list is
+at most optional, opened from a count, and never the default.
+
+**Not documented anywhere we found, so not claimed:**
+
+- how long LanguageTool waits after typing before it checks;
+- whether Google Docs' card has a tick and an X;
+- what accepting a Docs suggestion does in Suggesting mode.
+
+### 19.2 The design
+
+- **The add-in supplies matches; the host draws them.** A manifest declares
+  `contributes.proofing: {}`, which requires `read`.
+  - The host sends `proofing/check` with the paragraphs that changed:
+    `[{node, text, language}]`.
+  - The add-in answers with `proofing/report`:
+    `{results: [{node, text, matches: [{start, end, category, message, replacements, rule}]}], summary}`.
+  - Offsets are UTF-16, into the text the add-in was sent.
+- **It reuses the built-in spell check rather than a second mechanism.** `spell_check.mjs`
+  gained one hook, `setExternal(layer)`. Through it, add-in marks get the same:
+  - window scan: only the pages in view are checked, never the whole document;
+  - debounce: 400 ms after an edit, 90 ms after a scroll;
+  - `decorationRectsOnPages` batch: one engine call for every mark on screen;
+  - overlay classes: `.spell-error` or `.grammar-error` for an underline.
+
+  With no proofreading add-in running the hook is null, and the checker behaves exactly as
+  it did before.
+- **Only changed paragraphs are checked again.** The host remembers what it sent each
+  add-in. Answers are cached by text, so an undo brings its marks back at once without a new
+  request (`addin_proofing.mjs`).
+- **Answers are verified, not believed.** The host drops:
+  - a result about text the paragraph no longer holds;
+  - a match whose quoted text is not what sits at its offsets;
+  - a match with an unknown category;
+  - a match outside the paragraph.
+
+  `LIMITS` bounds every report, paragraph, message and replacement.
+- **Colour encodes the category, and every colour is an existing paper token.** No new
+  colour exists. Tints have no border, so they never read as a comment range.
+
+  | Category | Drawn as | Token |
+  | --- | --- | --- |
+  | Spelling | Squiggle | `--paper-spelling` (red, as the built-in squiggle) |
+  | Grammar and punctuation | Squiggle | `--paper-grammar` (blue, as the built-in squiggle and Docs) |
+  | Style | Squiggle | `--paper-comment` (amber) |
+  | Readability: long sentences | Hemingway-style tint, no border | `--paper-comment` |
+  | Readability: passive voice | Tint | `--paper-insert` |
+  | Readability: filler words | Tint | `--paper-grammar` |
+- **One underline per word.** When an add-in underlines a span, the built-in squiggle is
+  withheld there (`covers`), and so is the built-in context-menu row.
+- **The card** is the existing inline card at the word (`.review-inline-card`, the one
+  tracked changes use). It shows:
+  - the category, with its colour dot;
+  - the add-in's name and the message;
+  - up to three replacement chips;
+  - Ignore;
+  - for spelling, Add to dictionary. This writes to the editor's own personal dictionary,
+    the one the built-in checker uses.
+
+  A click that leaves the caret in a mark opens the card. With no add-in running, a click
+  does what it did before.
+- **Applying a fix** goes through the built-in spell check's path: `replaceMisspelling`, which
+  is `doc.replaceRanges` inside `runEdit`.
+  - It is one undo step.
+  - In Suggesting mode it lands as a tracked suggestion; in Editing mode it is a direct
+    edit.
+  - In Viewing mode the chips are disabled, with the reason.
+
+  The mark goes at once. After a tracked replacement the deleted word is still in the
+  paragraph; it is held back on that text and not underlined again. An undo back to the old
+  text brings the mark back.
+- **Keyboard and screen reader.** These commands (`plugin.proofing.*`) exist only while a
+  proofreading add-in runs:
+  - ⌘' / Ctrl+' and ⌘; / Ctrl+; go to the next and previous issue, Google Docs' own chords.
+    Each one selects the word, opens its card with focus on the first fix, and announces
+    "Issue n of m: category. message" in the review live region.
+  - ⌥⏎ / Alt+Enter opens the card at the caret.
+  - Escape closes the card and returns focus to the text.
+
+  All three are palette rows too.
+- **The count** is in the existing status bar, styled like the compatibility count
+  (`#addinIssuesStatus`). It is hidden unless a proofreading add-in runs. A click goes to the
+  next issue. Its tooltip names the add-ins and gives Readability's reading-ease score.
+- **No panel.** Both add-ins dropped their panel, ribbon row and commands, and their pages
+  have no interface at all.
+- **Off by default.** The grant prompt is unchanged. LanguageTool still asks for `read`,
+  `suggest` and `network` to api.languagetool.org, and names the server. Readability needs no
+  prompt.
+
+### 19.3 An add-in can never edit without the person's click
+
+No RPC applies anything. `proofing/report` only describes issues, and
+`tests/addin_proofing.test.mjs` asserts that no plugin method matches apply, replace or
+accept. The host applies a replacement only when all four of these hold:
+
+1. **The person acted in the host's own card.** The click or key press reached the card, and
+   `apply` returns unless `event.isTrusted`, so a synthetic event cannot apply anything.
+2. **The replacement is one the host holds.** It is one of the verified replacement strings
+   the host keeps for that mark.
+3. **The text is still there.** The host re-reads the span from the document at that moment
+   (`copyText`). If the text has changed, nothing is replaced and the person is told.
+4. **The add-in holds `suggest` (or `edit`).** Without it, the card shows the message and
+   Ignore but no chips. That is why Readability, which holds `read` and `comment`, offers no
+   fix.
+
+This is the narrow, host-mediated permission the owner asked for: "apply a text replacement
+the person clicked". It adds no new permission word. `suggest` already means "may propose
+changes the person reviews", and a chip in the host's card is that review. The edit is then
+the person's own, exactly as when they accept a built-in spell-check correction.
+
+### 19.4 Not built, and why
+
+- **"Turn off this rule everywhere"** (LanguageTool's card). Ignore covers one occurrence; a
+  per-rule switch needs a place to manage rules, and none exists yet.
+- **An opt-in issue list.** The brief allowed one from the palette. Next, Previous and the
+  count already reach every issue, so none was needed. If one is ever wanted it is a palette
+  row, as the brief said.
+- **Checking pages outside the view.** The check is windowed, like the built-in checker. The
+  count covers the paragraphs that have been in view, as Word's own checker does while it
+  scans.
+
+## 20. Casual AI compared with Google Docs Help me write, the Gemini panel and Notion AI
+
+Compared on 2026-10-31 against the vendors' own pages: Google's
+[13951448](https://support.google.com/docs/answer/13951448) and
+[14206696](https://support.google.com/docs/answer/14206696), the
+[April 2026 Workspace update](https://workspaceupdates.googleblog.com/2026/04/new-gemini-capabilities-in-google-docs-help-you-go-from-blank-page-to-brilliance.html),
+and Notion's [notion-ai-faqs](https://www.notion.com/help/notion-ai-faqs) and
+[notion-ai-for-docs](https://www.notion.com/help/guides/notion-ai-for-docs).
+
+| Deviation | Established practice | Now |
+| --- | --- | --- |
+| A ✦ action on a selection opened the side panel and streamed into its log | Docs' Refine on the floating bar and Notion's Edit with AI work at the selection. In Docs the result is a suggestion only the person sees until they approve it | **Fixed.** A selection action leaves the panel closed. Progress goes to the status line ("Casual AI: Rewrite…") and the result opens directly in the private preview, our counterpart of Docs' approve step. Ask and Translate still open the panel because they need input there (`plugin_platform.mjs` `invoke`) |
+| An Ask answer had no actions | Gemini's side panel offers Insert, Retry, Copy and thumbs on each response | **Fixed.** Every answer now has Insert and Try again; Insert goes through the preview as a suggestion. Copy is not offered: the sandbox holds no clipboard permission, and the text can be selected. Thumbs are not offered: there is no feedback channel, and nothing is sent anywhere |
+| The disclosure named the endpoint but not that the model can be wrong | Gemini warns that it is still learning and may not support a request | **Fixed.** The disclosure adds "AI can make mistakes: check what it writes before you accept it." |
+| — | Gemini summarises the document automatically when its panel opens | **Deliberately not copied.** It sends the whole document to a model without a request, against owner decision 1 ("only on a person's request"). Summarise is one chip away |
+| — | Notion opens the prompt on Space on an empty line; Docs shows a margin button | **Not copied.** Space must type a space, and a margin button would be new chrome. ⌘/ with no selection opens the panel's prompt, and the palette has every command |
+| — | Docs' Refine offers Bulletize and Summarize on a selection | **Not yet built.** A bulleted answer has to become list paragraphs, which needs the multi-paragraph `rewrite_block` path for a single selection. Recorded under RM-52 |
+| Stopping a selection action | In Notion, Escape discards while it writes | **Partly met.** Stop and Escape work in the panel. A selection action running while the panel is closed is stopped by opening it (⌘/ with no selection) |
+
+Kept as they were, because they already match established practice:
+
+- the private preview before anything reaches the document, which is Docs' "visible only to
+  you until you approve";
+- tracked suggestions signed "Casual AI";
+- citation chips that move the caret to the paragraph;
+- Clear history;
+- Enter to send and Shift+Enter for a new line.

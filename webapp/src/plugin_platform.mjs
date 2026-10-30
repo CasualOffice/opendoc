@@ -34,6 +34,7 @@ import { commandContract } from "./host_contract.mjs";
 import { fetchVocabulary } from "./ai_webmcp.mjs";
 import { MANIFEST_BOUNDS, addedPermissions, checkManifest, localised } from "./plugin_manifest.mjs";
 import { startPlugin } from "./plugin_host.mjs";
+import { createAddinProofing } from "./addin_proofing.mjs";
 import { addCommandSource, shown } from "./plugin_command_sources.mjs";
 import {
   addInstalled,
@@ -51,6 +52,25 @@ export const MANAGE_COMMAND = "plugin.manage";
  *  with none. ONLYOFFICE's own chord for its AI panel. Present only while such a
  *  plugin runs. */
 export const ACTIONS_COMMAND = "plugin.actions";
+
+/** Next, Previous and Show issue over an add-in's writing issues (`docs/183`
+ *  §19): ⌘' and ⌘; as in Google Docs, ⌥⏎ for the card at the caret. Present only
+ *  while an add-in that proofreads runs. */
+export const PROOFING_NEXT_COMMAND = "plugin.proofing.next";
+export const PROOFING_PREVIOUS_COMMAND = "plugin.proofing.previous";
+export const PROOFING_OPEN_COMMAND = "plugin.proofing.open";
+
+/** The palette rows for add-in proofing, or none. Pure over `proofing`. */
+export function proofingCommands(proofing) {
+  if (!proofing?.running()) return [];
+  const none = proofing.count() === 0;
+  const reason = t("proofing.addin.none");
+  return [
+    { id: PROOFING_NEXT_COMMAND, label: t("proofing.addin.next"), group: "Review", kw: "next spelling grammar issue mistake languagetool readability", noDoc: false, enabled: !none, disabledReason: reason, run: () => proofing.next() },
+    { id: PROOFING_PREVIOUS_COMMAND, label: t("proofing.addin.previous"), group: "Review", kw: "previous spelling grammar issue mistake languagetool readability", noDoc: false, enabled: !none, disabledReason: reason, run: () => proofing.previous() },
+    { id: PROOFING_OPEN_COMMAND, label: t("proofing.addin.open"), group: "Review", kw: "show issue suggestion card spelling grammar", noDoc: false, enabled: !none, disabledReason: reason, run: () => proofing.openAtCaret() },
+  ];
+}
 
 /** A plugin command's registry id. */
 export const pluginCommandId = (pluginId, commandId) => `plugin.${pluginId}.${commandId}`;
@@ -193,6 +213,28 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
   let catalogue = { mode: "none", entries: [], allowInstall: false, problems: [] };
   let activePanel = null;
   const session = () => ed.hostSession ?? null;
+  // Writing issues in the text (`docs/183` §19): drawn by the host through the
+  // built-in spell check's overlay, counted in the status bar.
+  const proofing = createAddinProofing(ed, { view });
+  const issuesChip = doc.getElementById("addinIssuesStatus");
+  function reflectIssues() {
+    if (!issuesChip) return;
+    if (!proofing.running()) {
+      issuesChip.hidden = true;
+      return;
+    }
+    const count = proofing.count();
+    const summaries = proofing.summaries();
+    issuesChip.hidden = false;
+    issuesChip.textContent = t("proofing.addin.count", { count });
+    const lines = [t("proofing.addin.countTitle", { names: summaries.map((p) => p.name).join(", ") })];
+    for (const { name, summary } of summaries) if (summary) lines.push(`${name}: ${summary}`);
+    issuesChip.title = lines.join("\n");
+  }
+  proofing.subscribe(reflectIssues);
+  issuesChip?.addEventListener("click", () => {
+    if (proofing.count()) proofing.next();
+  });
 
   const fetchText = async (url, maxBytes) => {
     const response = await view.fetch(url, { credentials: "omit", referrerPolicy: "no-referrer" });
@@ -362,7 +404,9 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
         addInName: () => (record.entry.source === "first-party" && record.entry.when === "ai" ? "" : nameOf(record.manifest)),
         storage: storageFor(record.manifest.id),
         fetchEntry: (url) => fetchText(url, MANIFEST_BOUNDS.entryBytes),
+        proofingReport: (params) => proofing.report(record.manifest.id, params),
         onClosed: (reason) => {
+          proofing.unregister(record.manifest.id);
           if (activePanel === record) showPanel(record, false);
           record.running = null;
           reflectChrome();
@@ -372,7 +416,19 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
       },
     });
     // The frame connects asynchronously; the chrome follows once it is running.
-    void waitRunning(record).then(reflectChrome);
+    void waitRunning(record).then(() => {
+      const running = record.running;
+      if (running?.state === "running" && record.manifest.contributes.proofing) {
+        const held = running.grant().permissions;
+        proofing.register({
+          id: record.manifest.id,
+          name: nameOf(record.manifest),
+          canReplace: held.includes("suggest") || held.includes("edit"),
+          send: (paragraphs) => record.running?.proofingCheck(paragraphs),
+        });
+      }
+      reflectChrome();
+    });
   }
 
   async function waitRunning(record, tries = 100) {
@@ -382,6 +438,7 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
   }
 
   function stop(record, reason = "disabled") {
+    proofing.unregister(record.manifest.id);
     if (activePanel === record) showPanel(record, false);
     record.running?.close(reason);
     record.running = null;
@@ -400,7 +457,11 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
 
   async function invoke(record, command) {
     if (!isRunning(record)) return;
-    if (record.manifest.contributes.panel) showPanel(record, true);
+    // An action on the selection works where the selection is, as Google Docs'
+    // Refine and Notion's Edit with AI do: it does not open the side panel. The
+    // add-in opens it itself (`ui/panel`) when the action needs input there.
+    const onSelection = record.manifest.contributes.selection.some((item) => item.command === command.id);
+    if (record.manifest.contributes.panel && !onSelection) showPanel(record, true);
     record.running.invoke(command.id, { hasRange: ed.hasRange?.() ?? false });
   }
 
@@ -771,7 +832,7 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
     // while it loads or after it stopped); one that is off adds nothing to the
     // palette — Manage add-ins is where it is turned on (owner rule, 2026-10-31).
     const visible = [...plugins.values()].filter((record) => present(record) && record.enabled);
-    return pluginCommands({
+    return [...proofingCommands(proofing), ...pluginCommands({
       plugins: visible.map((record) => ({
         manifest: record.manifest,
         running: isRunning(record),
@@ -783,7 +844,7 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
       openManager,
       invoke: (plugin, command) => void invoke(plugins.get(plugin.manifest.id), command),
       actions: contributed("selection").length ? actions : null,
-    });
+    })];
   });
 
   // Everything stops when the page goes: a plugin must not outlive its editor.
@@ -796,6 +857,7 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
     openManager,
     refresh,
     actions,
+    proofing,
     install: async (manifestUrl) => {
       const admitted = await admit({ manifestUrl, source: "installed", hostGrant: null, enabled: false, when: null });
       if (!admitted.ok) return admitted;

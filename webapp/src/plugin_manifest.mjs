@@ -46,7 +46,7 @@ const COMMAND_ID = /^[a-z][a-zA-Z0-9-]{0,47}$/;
 const SEMVER = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 const CONTEXT_WHEN = Object.freeze(["always", "selection", "caret"]);
 const TOP_FIELDS = Object.freeze(["manifestVersion", "id", "name", "version", "description", "publisher", "entry", "icon", "permissions", "network", "contributes", "locales"]);
-const CONTRIBUTES = Object.freeze(["commands", "ribbon", "panel", "contextMenu", "palette", "selection"]);
+const CONTRIBUTES = Object.freeze(["commands", "ribbon", "panel", "contextMenu", "palette", "selection", "proofing"]);
 
 const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const chars = (text) => [...String(text)].length;
@@ -182,6 +182,16 @@ export function checkManifest(raw, { manifestUrl, selfOrigin }) {
     if (!Number.isInteger(width) || width < min || width > max) return fail(`contributes.panel.width must be ${min} to ${max}`, "contributes.panel.width");
     panel = Object.freeze({ title: contributes.panel.title, width });
   }
+  // Writing issues drawn in the text by the host (`docs/183` §19). Reading the
+  // paragraphs to check is reading the document, so it needs `read`.
+  let proofing = null;
+  if (contributes.proofing !== undefined) {
+    if (!isObject(contributes.proofing)) return fail("contributes.proofing must be an object", "contributes.proofing");
+    const unknownKey = unknownField(contributes.proofing, [], "contributes.proofing.");
+    if (unknownKey) return unknownKey;
+    if (!permissions.includes("read")) return fail("contributes.proofing needs the read permission", "contributes.proofing");
+    proofing = Object.freeze({});
+  }
   const locales = raw.locales ?? {};
   if (!isObject(locales) || Object.keys(locales).length > MANIFEST_BOUNDS.locales) return fail("locales must be an object of at most 32 tags", "locales");
   for (const [tag, table] of Object.entries(locales)) {
@@ -212,6 +222,7 @@ export function checkManifest(raw, { manifestUrl, selfOrigin }) {
         selection: Object.freeze(selection.items),
         palette: Object.freeze(palette.items),
         panel,
+        proofing,
       }),
       locales: Object.freeze(locales),
     }),

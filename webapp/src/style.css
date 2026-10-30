@@ -8790,6 +8790,37 @@ body.is-format-painting .page-wrap * {
   background-position: 0 100%, 2px 100%;
 }
 
+/* An add-in's writing issues (docs/183 §19). Underlines ARE the squiggle above
+   (same classes, same geometry); style issues only change its paper token.
+   Readability's findings are Hemingway-style highlights: a tint of a paper
+   token behind the words, no border, so they never read as a comment range.
+   The mark whose card is open is drawn a step stronger. */
+.overlay .addin-style {
+  --proofing-mark: var(--paper-comment);
+}
+.overlay .addin-highlight {
+  --addin-tint: var(--paper-comment);
+  position: absolute;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--addin-tint) 16%, transparent);
+  border-radius: 1px;
+}
+.overlay .addin-highlight-passive { --addin-tint: var(--paper-insert); }
+.overlay .addin-highlight-filler { --addin-tint: var(--paper-grammar); }
+.overlay .addin-highlight.addin-mark-current {
+  background: color-mix(in srgb, var(--addin-tint) 30%, transparent);
+}
+.overlay .spell-error.addin-mark-current::after,
+.overlay .grammar-error.addin-mark-current::after {
+  height: 4px;
+}
+/* The card reuses the inline review card; its chips wrap on a narrow phone. */
+.addin-card .addin-card-bar { flex-wrap: wrap; }
+.addin-card .addin-card-bar button:disabled { opacity: 0.5; cursor: default; }
+@media (pointer: coarse) {
+  .addin-card .addin-card-bar button { min-height: 2.75rem; }
+}
+
 /* Comment range marker: interaction-only highlight over the fixed canvas.
  * `--review-author-color` (set per marker, docs/81 REVIEW-GAP-015) tints it to
  * the comment author's stable palette color; the amber default keeps a comment

@@ -20,7 +20,7 @@
     "chip.keyPoints", "chip.actions", "chip.review", "chip.replies", "working", "reading", "stopped", "proposed",
     "reviewProposed", "dropped", "citation", "insert", "truncated", "noSelection", "noCaret", "unchanged", "unparsable",
     "translateTo", "translateGo", "noComments", "draftReply", "historyNote", "error.generic", "error.auth", "error.rate",
-    "error.network", "error.timeout", "error.budget", "error.tooLong", "error.refused", "replyFor",
+    "error.network", "error.timeout", "error.budget", "error.tooLong", "error.refused", "replyFor", "caveat", "workingOn", "retry",
   ].concat(
     ["ask", "rewrite", "shorten", "expand", "grammar", "formal", "friendly", "confident", "translate", "summarise", "review", "draft"].map(function (id) { return "command." + id; }),
   ).map(function (k) { return NS + k; });
@@ -197,6 +197,9 @@
         return null;
       }
       var title = actionTitle(action);
+      // The panel stays closed (Docs' Refine, Notion's Edit with AI): progress is
+      // said in the editor's status line and the result opens in the preview.
+      void editor.ui.notify(s("workingOn", { action: title })).catch(function () {});
       bubble("user", title + ": “" + (sel.text.length > 160 ? sel.text.slice(0, 159) + "…" : sel.text) + "”");
       var out = bubble("ai", "");
       if (sel.anchor && sel.focus && sel.anchor.node === sel.focus.node) {
@@ -224,7 +227,10 @@
           return propose(Core.planForParagraphs(answer, paras, value.revision));
         });
       });
-    }).catch(function (err) { fail(err); });
+    }).catch(function (err) {
+      fail(err);
+      void editor.ui.notify(errorText(err), "error").catch(function () {});
+    });
   }
 
   function actionTitle(action) {
@@ -274,6 +280,25 @@
     }).catch(function () {});
   }
 
+  /** Insert and Try again under an answer, as Gemini's side panel offers. */
+  function answerActions(out, text, again) {
+    var actions = document.createElement("div");
+    actions.className = "ca-msg-actions";
+    var insert = document.createElement("button");
+    insert.type = "button";
+    insert.className = "btn btn-quiet";
+    insert.textContent = s("insert");
+    insert.addEventListener("click", function () { void insertAtCaret(text.replace(/\s*\[p\d+(?:\s*,\s*p\d+)*\]/g, "")); });
+    var retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "btn btn-quiet";
+    retry.textContent = s("retry");
+    retry.addEventListener("click", function () { if (!running) void again(); });
+    actions.append(insert, retry);
+    out.root.append(actions);
+    $("log").scrollTop = $("log").scrollHeight;
+  }
+
   function ask(question) {
     bubble("user", question);
     var out = bubble("ai", "");
@@ -283,6 +308,7 @@
       var prior = Core.trimHistory(history, 12);
       return complete(Core.askRequest(question, context, prior), out).then(function (answer) {
         renderAnswer(out, answer, context.ids);
+        answerActions(out, answer, function () { return ask(question); });
         if (context.truncated) bubble("ai", s("truncated"));
         history.push({ role: "user", content: question }, { role: "assistant", content: answer.replace(/\[p\d+(?:\s*,\s*p\d+)*\]/g, "") });
         persist();
@@ -299,16 +325,8 @@
       var context = Core.selectContext(doc.blocks, "", CONTEXT_BUDGET);
       return complete(Core.summaryRequest(kind, context), out).then(function (answer) {
         renderAnswer(out, answer, context.ids);
+        answerActions(out, answer, function () { return summarise(kind); });
         if (context.truncated) bubble("ai", s("truncated"));
-        var actions = document.createElement("div");
-        actions.className = "ca-msg-actions";
-        var insert = document.createElement("button");
-        insert.type = "button";
-        insert.className = "btn btn-quiet";
-        insert.textContent = s("insert");
-        insert.addEventListener("click", function () { void insertAtCaret(answer.replace(/\s*\[p\d+(?:\s*,\s*p\d+)*\]/g, "")); });
-        actions.append(insert);
-        out.root.append(actions);
       });
     }).catch(function (err) { setWorking(""); fail(err, out); });
   }
@@ -459,7 +477,7 @@
     $("translateGo").textContent = s("translateGo");
     Array.prototype.forEach.call(document.querySelectorAll("[data-chip]"), function (b) { b.textContent = s("chip." + b.dataset.chip); });
     var p = info.provider || {};
-    $("disclosure").textContent = p.kind === "host" || p.kind === "mcp-sampling" || !p.endpoint ? s("disclosure.host") : s("disclosure.endpoint", { endpoint: p.endpoint });
+    $("disclosure").textContent = (p.kind === "host" || p.kind === "mcp-sampling" || !p.endpoint ? s("disclosure.host") : s("disclosure.endpoint", { endpoint: p.endpoint })) + " " + s("caveat");
   }
 
   function restore() {
@@ -485,6 +503,9 @@
     }).then(function () {
       editor.on("contribution/invoked", function (params) {
         var command = params && params.command;
+        // Ask and Translate need the panel; the host opens it for everything that
+        // is not a selection action, so these two open it themselves.
+        if (command === "ask" || command === "translate") void editor.ui.panel(true).catch(function () {});
         if (command === "ask" || command === "panel") $("prompt").focus();
         else if (command === "summarise") void summarise("summary");
         else if (command === "review") void review();

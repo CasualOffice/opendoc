@@ -4,24 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Readability</title>
-<link rel="stylesheet" href="../sdk/plugin.css">
-<link rel="stylesheet" href="../sdk/panel.css">
 </head>
 <body>
-<!-- Readability's panel (`docs/183` §18): runs in this sandbox only; nothing
-     leaves the device. -->
-<main class="pp">
-  <p id="about" class="note"></p>
-  <div class="pp-row">
-    <button id="check" type="button" class="btn btn-primary"></button>
-  </div>
-  <p id="score" class="pp-score" role="status" aria-live="polite"></p>
-  <p id="status" class="note"></p>
-  <ul id="findings" class="pp-list"></ul>
-  <div class="pp-row pp-foot">
-    <button id="commentAll" type="button" class="btn" hidden></button>
-  </div>
-</main>
+<!-- Readability in the text (`docs/183` §19). No interface of its own: the
+     editor highlights what it reports and owns the card. Nothing leaves the
+     device. -->
 <script src="../sdk/opendoc-plugin.js"></script>
 <script src="readability_core.js"></script>
 <script src="readability.js"></script>

@@ -127,6 +127,15 @@
           return request("ai/complete", { request: body }).finally(function () { if (off) off(); });
         },
       },
+      // Writing issues drawn in the text by the editor (`docs/183` §19). The
+      // editor sends the paragraphs that changed; answer each with its matches
+      // ({start, end, category, message, replacements, rule}, UTF-16 offsets into
+      // the text you were sent). The editor verifies them, draws them and applies
+      // a replacement only when the person clicks it in the editor's own card.
+      proofing: {
+        onCheck: function (fn) { return on("proofing/check", function (params) { fn(params.paragraphs || []); }); },
+        report: function (results, summary) { return request("proofing/report", { results: results, summary: summary || "" }); },
+      },
       ui: {
         notify: function (message, kind) { return request("ui/notify", { message: message, kind: kind || "info" }); },
         panel: function (open) { return request("ui/panel", { open: open !== false }); },

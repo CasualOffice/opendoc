@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
-// Readability's panel (`docs/183` §18): the document's reading-ease score and
-// its long sentences, passive voice and filler words, each proposable as a
-// comment through the editor's private preview. Signed "Readability (add-in)".
+// Readability in the text (`docs/183` §19): long sentences, passive voice and
+// filler words found in the paragraphs the editor sends, reported back as
+// writing issues the EDITOR highlights in the text, Hemingway-style. The
+// reading-ease score rides along as the report's summary (the status count's
+// tooltip). Runs entirely in this sandbox; nothing leaves the device.
 (function () {
   "use strict";
   var Core = window.ReadabilityCore;
-  var $ = function (id) { return document.getElementById(id); };
   var NS = "plugins.readability.";
-  var KEYS = ["about", "check", "checking", "score", "scoreOther", "none", "found", "commentAll", "comment", "goTo", "proposed",
-    "kind.long", "kind.passive", "kind.filler", "note.long", "note.passive", "note.filler", "error.read"].map(function (k) { return NS + k; });
+  var KEYS = ["score", "note.long", "note.passive", "note.filler"].map(function (k) { return NS + k; });
 
   var editor = null;
   var info = null;
   var strings = {};
-  var list = [];
-  var revision = 0;
+  /** node → text, every paragraph seen, for the document's score. */
+  var texts = new Map();
 
   function s(key, params) {
     var text = strings[NS + key] || "";
@@ -22,95 +22,48 @@
     return text;
   }
 
-  function note(f) {
-    return f.kind === "long" ? s("note.long", { count: f.words }) : s("note." + f.kind, { text: f.exact });
+  function englishFor(tag) {
+    return /^en\b/i.test(String(tag || (info && info.locale) || "en"));
   }
 
-  function propose(items) {
-    var result = Core.planForComments(items, revision, note, 50);
-    if (!result.ok) return Promise.resolve();
-    return editor.tools.call("propose_edits", result.plan).then(function () { $("status").textContent = s("proposed"); });
+  function message(match, text) {
+    if (match.kind === "long") return s("note.long", { count: match.words });
+    return s("note." + match.kind, { text: text.slice(match.start, match.end) });
   }
 
-  function render() {
-    var ul = $("findings");
-    ul.replaceChildren();
-    list.forEach(function (f) {
-      var item = document.createElement("li");
-      item.className = "pp-item";
-      var kind = document.createElement("p");
-      kind.className = "pp-item-text";
-      kind.textContent = s("kind." + f.kind) + (f.words ? " · " + f.words : "");
-      var quote = document.createElement("p");
-      quote.className = "pp-item-quote";
-      var mark = document.createElement("mark");
-      mark.textContent = f.exact;
-      quote.append(mark, document.createTextNode(f.kind === "long" ? "…" : ""));
-      var actions = document.createElement("div");
-      actions.className = "pp-item-actions";
-      var comment = document.createElement("button");
-      comment.type = "button";
-      comment.className = "btn";
-      comment.textContent = s("comment");
-      comment.addEventListener("click", function () { void propose([f]); });
-      var go = document.createElement("button");
-      go.type = "button";
-      go.className = "btn btn-quiet";
-      go.textContent = s("goTo");
-      go.addEventListener("click", function () { void editor.reveal(f.node); });
-      actions.append(comment, go);
-      item.append(kind, quote, actions);
-      ul.append(item);
+  function summary() {
+    var all = Array.from(texts.values());
+    if (!all.length) return "";
+    var sc = Core.scores(all);
+    return sc ? s("score", { ease: sc.ease, grade: sc.grade }) : "";
+  }
+
+  function onCheck(paragraphs) {
+    var results = paragraphs.map(function (p) {
+      var english = englishFor(p.language);
+      if (english) texts.set(p.node, p.text);
+      else texts.delete(p.node);
+      while (texts.size > 4000) texts.delete(texts.keys().next().value);
+      return {
+        node: p.node,
+        text: p.text,
+        matches: Core.matchesIn(p.text, { english: english }).map(function (m) {
+          return { start: m.start, end: m.end, category: m.kind, message: message(m, p.text), rule: "readability." + m.kind };
+        }),
+      };
     });
-    $("commentAll").hidden = list.length === 0;
-    $("status").textContent = list.length ? s("found", { count: list.length }) : s("none");
+    void editor.proofing.report(results, summary());
   }
 
-  function check() {
-    $("check").disabled = true;
-    $("status").textContent = s("checking");
-    var blocks = [];
-    function page(cursor) {
-      var args = { maxTokens: 8000, format: "json" };
-      if (cursor) args.cursor = cursor;
-      return editor.tools.call("read_blocks", args).then(function (answer) {
-        if (!answer || !answer.ok) throw new Error("read");
-        revision = answer.value.revision;
-        blocks = blocks.concat(answer.value.blocks || []);
-        return answer.value.nextCursor && blocks.length < 4000 ? page(answer.value.nextCursor) : blocks;
-      });
-    }
-    page(null).then(function (all) {
-      var english = /^en\b/i.test(String((info && info.locale) || "en"));
-      list = Core.findings(all, { english: english });
-      var texts = all.filter(function (b) { return b.kind === "paragraph" && !b.headingLevel && b.text; }).map(function (b) { return b.text; });
-      var sc = english ? Core.scores(texts) : null;
-      $("score").textContent = sc ? s("score", { ease: sc.ease, grade: sc.grade }) : s("scoreOther");
-      render();
-    }).catch(function () {
-      $("status").textContent = s("error.read");
-    }).finally(function () {
-      $("check").disabled = false;
-    });
-  }
-
-  $("check").addEventListener("click", check);
-  $("commentAll").addEventListener("click", function () { void propose(list); });
-
+  var ready = null;
   window.OpenDocPlugin.connect().then(function (client) {
     editor = client;
-    return editor.initialize().then(function (initial) {
+    editor.proofing.onCheck(function (paragraphs) { void ready.then(function () { onCheck(paragraphs); }); });
+    ready = editor.initialize().then(function (initial) {
       info = initial;
       return editor.strings(KEYS);
     }).then(function (table) {
       strings = table || {};
-      $("about").textContent = s("about");
-      $("check").textContent = s("check");
-      $("commentAll").textContent = s("commentAll");
-      editor.on("contribution/invoked", function (params) {
-        if (params && params.command === "check") check();
-      });
-      window.readabilityPanel = { check: check };
     });
   });
 })();

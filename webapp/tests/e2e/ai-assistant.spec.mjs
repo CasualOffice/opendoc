@@ -93,7 +93,7 @@ test("with no AI provider the editor shows nothing of Casual AI and runs none of
   await expect(page.locator("#pluginPanel")).toBeHidden();
 });
 
-test("✦ Rewrite streams in the panel, proposes in the preview, and lands as a suggestion by Casual AI", async ({ page }) => {
+test("✦ Rewrite works at the selection, proposes in the preview, and lands as a suggestion by Casual AI", async ({ page }) => {
   await withProvider(page);
   const seen = await mockModel(page, { "Reply with the replacement text only": "CASUALREWRITTEN" });
   await gotoEditor(page);
@@ -105,10 +105,11 @@ test("✦ Rewrite streams in the panel, proposes in the preview, and lands as a 
   await expect(menu).toBeVisible();
   await expect(menu.locator(".menu-item > span:last-child")).toHaveText(["Rewrite", "Shorten", "Expand", "Fix grammar", "Make more formal", "Make friendlier", "Make more confident", "Translate…", "Ask Casual AI"]);
   await menu.locator(".menu-item", { hasText: "Rewrite" }).click();
-  // The panel is the side-panel slot, titled by the product's catalogue.
-  await expect(page.locator("#pluginPanel")).toBeVisible();
-  await expect(page.locator("#pluginPanel")).toHaveClass(/side-panel/);
-  await expect(page.locator("#pluginPanelTitle")).toHaveText("Casual AI");
+  // As Google Docs' Refine and Notion's Edit with AI: the action works where the
+  // selection is. The side panel stays closed; the result opens in the preview.
+  await expect(page.locator("#aiPreviewPanel")).toBeVisible();
+  await expect(page.locator("#pluginPanel")).toBeHidden();
+  // The exchange is still in the panel's history for whoever opens it.
   await expect(assistant(page).locator(".ca-msg-ai").first()).toContainText("CASUALREWRITTEN");
   // The selected text went to the model data-marked, never as an instruction.
   expect(seen[0].messages.at(-1).content).toContain(`<document_text id="selection">${WORD}</document_text>`);
@@ -130,7 +131,10 @@ test("Stop ends a stream at once and says so", async ({ page }) => {
   await gotoEditor(page);
   await waitForAssistant(page);
   await page.evaluate(() => window.opendoc.execute("plugin.org.casualoffice.assistant.ask"));
+  // Ask opens the panel in the side-panel slot, titled by the product's catalogue.
   await expect(page.locator("#pluginPanel")).toBeVisible();
+  await expect(page.locator("#pluginPanel")).toHaveClass(/side-panel/);
+  await expect(page.locator("#pluginPanelTitle")).toHaveText("Casual AI");
   const frame = assistant(page);
   await frame.locator("#prompt").fill("What is the budget?");
   await frame.locator("#prompt").press("Enter");
@@ -151,6 +155,10 @@ test("Ask answers with citation chips that jump to the paragraph, and history su
   await frame.locator("#send").click();
   const chip = frame.locator(".ca-cite").first();
   await expect(chip).toHaveAttribute("aria-label", "Go to paragraph 1");
+  // Under every answer: Insert and Try again (Gemini's side panel), and the
+  // disclosure says the model can be wrong.
+  await expect(frame.locator(".ca-msg-actions").last().locator("button")).toHaveText(["Insert at the cursor", "Try again"]);
+  await expect(frame.locator("#disclosure")).toContainText("AI can make mistakes");
   await chip.click();
   // Focus moved to the document, at the cited paragraph.
   await expect.poll(() => page.evaluate(() => document.activeElement?.id ?? "")).toMatch(/^(pages|editorTextInput)$/);

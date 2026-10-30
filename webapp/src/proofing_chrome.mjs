@@ -68,6 +68,7 @@ async function sha256Hex(bytes) {
  *   `reflect()`           "state changed, re-reflect every surface"
  *   `openWords()`         resolves the personal-dictionary store
  *   `runEdit(thunk, o)`   the editor's one undoable-edit path
+ *   `reviewMode()`        "editing" | "suggesting" | "viewing"
  *   `registerModal(el,o)` the modal registry
  *   `fallbackFocus()`     where focus goes when a dialog's opener has gone
  *   `activeLocale()`      the reader's locale, for language names
@@ -210,6 +211,15 @@ export function createProofingChrome(io) {
     replaceMisspelling(flagged, word) {
       const doc = io.getDoc();
       if (!doc) return;
+      // In Suggesting a correction is a tracked replacement, as typing over the
+      // word would be (`editor_clipboard.mjs` uses the same call). It used to go
+      // through `replaceRanges` with the Suggesting gate, which REFUSED it ("cannot
+      // be tracked yet") although a finding is always inside one paragraph and so
+      // always trackable (`docs/183` §19).
+      if (io.reviewMode?.() === "suggesting") {
+        void io.runEdit(() => doc.suggestReplace(flagged.node, flagged.start, flagged.end, word, undefined, new Date().toISOString()));
+        return;
+      }
       void io.runEdit(
         () => doc.replaceRanges([flagged.node], [flagged.start], [flagged.node], [flagged.end], word),
         { gate: true },

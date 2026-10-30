@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Readability for OpenDoc: the logic (`docs/183` §18). Runs entirely in the
-// add-in's sandbox — no network, no model — and proposes its findings as
-// comments the person accepts or discards.
+// add-in's sandbox — no network, no model. Its findings are drawn by the editor
+// as highlights in the text (`docs/183` §19); the comment plan is kept for hosts
+// that call it.
 //
 // What it measures, stated plainly so it is not read as more:
 //   * LONG SENTENCES, in any language that separates words with spaces: more
@@ -128,7 +129,37 @@
     return edits.length ? { ok: true, plan: { base_revision: revision, edits: edits } } : { ok: false, reason: "nothing" };
   }
 
+  /**
+   * Readability's writing issues in one paragraph's text, as the editor draws
+   * them (`docs/183` §19): `[{kind, start, end, words?}]`, UTF-16 offsets. A long
+   * sentence is marked whole, as Hemingway marks it; passive voice and filler
+   * words are marked where they are, English only.
+   */
+  function matchesIn(text, options) {
+    var o = options || {};
+    var longWords = o.longWords || 25;
+    var english = o.english !== false;
+    var out = [];
+    var t = String(text || "");
+    if (!t.trim()) return out;
+    if (!CJK.test(t)) {
+      sentences(t).forEach(function (s) {
+        var n = words(s.text).length;
+        if (n > longWords) out.push({ kind: "long", start: s.start, end: s.start + s.text.length, words: n });
+      });
+    }
+    if (english) {
+      var m;
+      PASSIVE.lastIndex = 0;
+      while ((m = PASSIVE.exec(t))) out.push({ kind: "passive", start: m.index, end: m.index + m[0].length });
+      FILLER.lastIndex = 0;
+      while ((m = FILLER.exec(t))) out.push({ kind: "filler", start: m.index, end: m.index + m[0].length });
+    }
+    return out;
+  }
+
   root.ReadabilityCore = Object.freeze({
+    matchesIn: matchesIn,
     sentences: sentences,
     words: words,
     syllables: syllables,

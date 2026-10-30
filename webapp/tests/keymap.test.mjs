@@ -297,7 +297,13 @@ const PLUGIN_COMMAND_IDS = (() => {
   const source = readFileSync(new URL("../src/plugin_platform.mjs", import.meta.url), "utf8");
   const id = /export const ACTIONS_COMMAND = "([\w.]+)";/.exec(source);
   assert.ok(id && /id: ACTIONS_COMMAND/.test(source), "plugin_platform.mjs no longer contributes the ⌘/ row");
-  return [id[1]];
+  // The add-in proofing rows (⌘' ⌘; ⌥⏎), contributed by `proofingCommands`.
+  const proofing = ["NEXT", "PREVIOUS", "OPEN"].map((name) => {
+    const found = new RegExp(`export const PROOFING_${name}_COMMAND = "([\\w.]+)";`).exec(source);
+    assert.ok(found && new RegExp(`id: PROOFING_${name}_COMMAND`).test(source), `plugin_platform.mjs no longer contributes the ${name} proofing row`);
+    return found[1];
+  });
+  return [id[1], ...proofing];
 })();
 
 test("every chord names a command the registry actually returns", () => {

@@ -1,4 +1,4 @@
-// The first-party add-ins' logic (`docs/183` §18): LanguageTool's mapping of a
+// The first-party add-ins' logic (`docs/183` §18, §19): LanguageTool's mapping of a
 // server's matches back to paragraphs, and Readability's findings. Both run in
 // a VM, as the add-ins' classic scripts run in their sandboxes.
 import assert from "node:assert/strict";
@@ -87,14 +87,30 @@ test("matches map back to their paragraph and the exact occurrence", () => {
   assert.deepEqual(out.issues.map((i) => [i.node, i.exact, i.occurrence, i.replacements[0]]), [["a", "Their", 1, "There"], ["c", "This are", 2, "This is"]]);
 });
 
-test("fix-all proposes suggestions only, never two on overlapping text", () => {
-  const issues = [
-    { node: "a", offset: 0, length: 5, exact: "Their", occurrence: 1, replacements: ["There"] },
-    { node: "a", offset: 2, length: 4, exact: "eir ", occurrence: 1, replacements: ["x"] },
-    { node: "c", offset: 0, length: 8, exact: "This are", occurrence: 1, replacements: [] },
-  ];
-  const out = LT.planForAll(issues, 7, 100);
-  assert.deepEqual(out.plan, { base_revision: 7, edits: [{ op: "replace_text", target: { node: "a", exact: "Their", occurrence: 1 }, text: "There" }] });
+test("each match gets the editor's category, from the documented issueType and category id", () => {
+  assert.equal(LT.categoryOf("misspelling", "TYPOS"), "spelling");
+  assert.equal(LT.categoryOf("", "TYPOS"), "spelling");
+  assert.equal(LT.categoryOf("typographical", "PUNCTUATION"), "punctuation");
+  assert.equal(LT.categoryOf("whitespace", ""), "punctuation");
+  assert.equal(LT.categoryOf("style", "STYLE"), "style");
+  assert.equal(LT.categoryOf("uncategorized", "REDUNDANCY"), "style");
+  assert.equal(LT.categoryOf("grammar", "GRAMMAR"), "grammar");
+  assert.equal(LT.categoryOf("", ""), "grammar");
+});
+
+test("the report has one result per paragraph sent, so a clean paragraph clears its marks", () => {
+  const paragraphs = [{ node: "a", text: "Their is a problem here." }, { node: "c", text: "Fine." }];
+  const out = LT.resultsFor(paragraphs, [
+    { node: "a", offset: 0, length: 5, exact: "Their", message: "Did you mean “There”?", short: "", replacements: ["There", "They’re", "Theirs", "x"], rule: "THEIR_IS", issueType: "grammar", categoryId: "GRAMMAR" },
+    { node: "zzz", offset: 0, length: 1, exact: "x", message: "", short: "", replacements: [], rule: "", issueType: "", categoryId: "" },
+  ]);
+  assert.deepEqual(out, [
+    { node: "a", text: "Their is a problem here.", matches: [{ start: 0, end: 5, exact: "Their", category: "grammar", message: "Did you mean “There”?", replacements: ["There", "They’re", "Theirs"], rule: "THEIR_IS" }] },
+    { node: "c", text: "Fine.", matches: [] },
+  ]);
+  assert.equal(LT.languageFor("en-US"), "en-US");
+  assert.equal(LT.languageFor(""), "auto");
+  assert.equal(LT.languageFor("x-weird tag"), "auto");
 });
 
 test("the request is the documented form body; the URL is the server's /v2/check", () => {
@@ -132,6 +148,18 @@ test("the reading-ease score follows the published formula", () => {
   // 6 words, 1 sentence, 6 syllables: 206.835 - 1.015*6 - 84.6*1 = 116.145
   assert.equal(sc.ease, 116);
   assert.equal(sc.sentences, 1);
+});
+
+test("in the text: a long sentence is marked whole, passive voice and fillers where they are", () => {
+  const long = "This sentence keeps going and going with clause after clause so that nobody reading it could possibly hold all of its many parts in mind at once.";
+  const text = `${long} The report was written by the team. It is very clear.`;
+  const out = RD.matchesIn(text, { english: true });
+  const at = (kind) => out.find((m) => m.kind === kind);
+  assert.deepEqual([at("long").start, at("long").end], [0, long.length]);
+  assert.equal(text.slice(at("passive").start, at("passive").end), "was written");
+  assert.equal(text.slice(at("filler").start, at("filler").end), "very");
+  assert.deepEqual(RD.matchesIn("The report was written very quickly.", { english: false }), []);
+  assert.deepEqual(RD.matchesIn("これはとても長い文です。".repeat(10), { english: false }), []);
 });
 
 test("findings become comments only", () => {

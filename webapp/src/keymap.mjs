@@ -272,6 +272,13 @@ export const KEYMAP = [
   // downloads and its console. The row exists only while an AI plugin runs, so
   // with no provider the chord does nothing and offers nothing.
   { chord: "⌘/", command: "plugin.actions", scope: EDITOR_SCOPE },
+  // An add-in's writing issues (`docs/183` §19): Google Docs' own chords for the
+  // next and previous misspelling (support.google.com/docs/answer/179738), and
+  // ⌥⏎ for the card at the caret. The rows exist only while an add-in that
+  // proofreads runs, so with none these chords do nothing and offer nothing.
+  { chord: "⌘'", command: "plugin.proofing.next", scope: EDITOR_SCOPE },
+  { chord: "⌘;", command: "plugin.proofing.previous", scope: EDITOR_SCOPE },
+  { chord: "⌥⏎", command: "plugin.proofing.open", scope: EDITOR_SCOPE },
   { chord: "⌘⌥⏎", command: "review.acceptNext", scope: EDITOR_SCOPE },
   { chord: "⌘⌥⌫", command: "review.rejectNext", scope: EDITOR_SCOPE },
 ];

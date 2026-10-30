@@ -4808,6 +4808,13 @@
         <span id="draftStatus" class="draft-status" data-status-priority="3" hidden></span>
       </span>
       <span class="foot-right">
+        <!-- An add-in's writing issues (`docs/183` §19): the count Grammarly and
+             LanguageTool show at the bottom corner of the field, as a status chip
+             in the style the compatibility count already uses. In `.foot-right`
+             with no priority, so it is still there at phone width. Hidden unless
+             an add-in that proofreads is running; a click goes to the next issue.
+             Its words are written by `plugin_platform.mjs` when it is shown. -->
+        <button id="addinIssuesStatus" class="compatibility-status addin-issues-status" type="button" hidden></button>
         <!-- The editing-mode switch. Word puts its view switcher at the right
              end of the status bar, immediately before zoom, as a GROUP of
              adjacent toggles with no caption of its own; this is that control,
