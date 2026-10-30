@@ -249,8 +249,14 @@ export function createMenuBar({ bar, popover, sectionsFor, registry, formatShort
   const openFlyout = () => popover.querySelector(".app-menu-item-flyout:not([hidden])");
 
   /** Opens or closes one submenu. Closing returns focus to its parent row, which
-   *  is what Left and Escape owe a reader who opened it by keyboard. */
-  function setSubmenu(parent, open, { focusParent = false } = {}) {
+   *  is what Left and Escape owe a reader who opened it by keyboard.
+   *
+   *  `focusInto: false` is the HOVER open: the flyout shows, the keyboard stays
+   *  where it is. A pointer at rest fires `pointerover` again whenever a menu is
+   *  re-rendered under it, so a hover open that took focus stole the first row
+   *  from a reader arriving by ArrowRight: Insert opened on Insert table… and
+   *  then jumped into a submenu under the parked mouse, onto Blank page. */
+  function setSubmenu(parent, open, { focusParent = false, focusInto = true } = {}) {
     const flyout = parent?.parentElement?.querySelector(".app-menu-item-flyout");
     if (!flyout) return false;
     if (open) {
@@ -264,7 +270,7 @@ export function createMenuBar({ bar, popover, sectionsFor, registry, formatShort
     parent.setAttribute("aria-expanded", open ? "true" : "false");
     if (open) {
       placeFlyout(parent, flyout);
-      flyout.querySelector(".app-menu-item:not(:disabled)")?.focus();
+      if (focusInto) flyout.querySelector(".app-menu-item:not(:disabled)")?.focus();
     } else {
       flyout.style.left = "";
       flyout.style.top = "";
@@ -382,7 +388,7 @@ export function createMenuBar({ bar, popover, sectionsFor, registry, formatShort
   popover.addEventListener("pointerover", (event) => {
     const row = event.target.closest?.(".app-menu-item, .app-menu-item-parent");
     if (!row || !popover.contains(row)) return;
-    if (row.classList.contains("app-menu-item-parent")) setSubmenu(row, true);
+    if (row.classList.contains("app-menu-item-parent")) setSubmenu(row, true, { focusInto: false });
     else if (!row.closest(".app-menu-item-flyout")) {
       const other = openFlyout();
       if (other) {
