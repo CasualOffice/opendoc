@@ -35,17 +35,16 @@
       "area": "object",
       "title": "Distance from text, move with text, allow overlap",
       "ours": {
-        "absent": [
-          "layout.arrange.distanceFromText",
-          "layout.arrange.moveWithText",
-          "layout.arrange.allowOverlap"
-        ]
+        "anchor": {
+          "file": "webapp/editor.html",
+          "literal": "id=\"objectLayoutDialog\""
+        }
       },
       "theirs": {
         "api": "ApiDrawing.SetDistances"
       },
       "rank": 4,
-      "note": "DE.Views.ImageSettingsAdvanced.textOverlap and textMove are the two switches beside the distances in their advanced position tab. We author none of the three."
+      "note": "A Layout options dialog (right-click menu and palette) sets distance from text, Move object with text (the vertical reference switches between paragraph and page with the offset converted, so the object stays put) and Allow overlap. `allowOverlap` is now modelled and round-tripped instead of being rewritten to 1; layout has no float-collision avoidance, so it does not change placement yet."
     },
     {
       "id": "object.align-objects",
@@ -279,15 +278,21 @@
       "area": "object",
       "title": "Edit a shape's points",
       "ours": {
-        "absent": [
-          "shape.editPoints"
-        ]
+        "partial": {
+          "evidence": {
+            "anchor": {
+              "file": "crates/casual-doc-wasm/src/shape_points.rs",
+              "literal": "setShapeEditPoints"
+            }
+          },
+          "missing": "adding and deleting points, changing a segment between straight and curved, dragging control handles, refitting the box, and rotated shapes"
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.DocumentHolder.textEditPoints"
       },
       "rank": 4,
-      "note": "Custom geometry is typed now — guides, every path command, adjust handles (docs/119) — and every preset's own definition is available to convert, so there is something to move; the gesture itself is not built (docs/109 FID-SH-02)."
+      "note": "Right-click a shape > Edit points converts it to literal points and shows its vertices as grips; dragging a vertex moves it with its control points, and Enter or clicking away saves one undoable step (Esc cancels). Adding or deleting points and segment types are not built yet."
     },
     {
       "id": "object.edit-smartart-structure",
@@ -433,15 +438,13 @@
       "area": "object",
       "title": "Insert a picture from a URL",
       "ours": {
-        "absent": [
-          "insert.imageFromUrl"
-        ]
+        "command": "insert.imageFromUrl"
       },
       "theirs": {
         "api": "asc_docs_api.AddImageUrlAction"
       },
       "rank": 3,
-      "note": "They ship a URL dialog beside the file picker; we have only the file, clipboard and drop routes."
+      "note": "Insert picture from a web address (Insert band, Insert menu, palette). It fetches through the host's policy (`remote-images`: direct with no credentials by default, deny, or a host proxy), requires an image content type AND recognised image bytes, caps the size, and embeds the picture in the document, never as a link."
     },
     {
       "id": "object.insert-shape",
@@ -852,15 +855,16 @@
       "area": "object",
       "title": "Shape shadow",
       "ours": {
-        "absent": [
-          "shape.shadow"
-        ]
+        "anchor": {
+          "file": "crates/casual-doc-wasm/src/object_effects.rs",
+          "literal": "setShapeShadow"
+        }
       },
       "theirs": {
         "control": "btnShadowShape"
       },
       "rank": 4,
-      "note": "They have a shadow toggle plus an adjust dialog for angle, distance, size and transparency."
+      "note": "Outer shadow on shapes and text boxes: No shadow, Word's nine outer presets and a Shadow options dialog (colour, transparency, angle, distance, blur), from the right-click menu and palette. `a:outerShdw` is imported, exported as authored and painted blurred (hard-edged in PDF). Inner and perspective shadows, and shadows on pictures, are not offered."
     },
     {
       "id": "object.shape-text",
@@ -5147,15 +5151,16 @@
       "area": "table",
       "title": "Borders and background dialog with a preview",
       "ours": {
-        "absent": [
-          "table.borders.dialog"
-        ]
+        "anchor": {
+          "file": "webapp/editor.html",
+          "literal": "id=\"tableBordersDialog\""
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.TableSettingsAdvanced.textBordersBackgroung"
       },
       "rank": 3,
-      "note": "Theirs has a dedicated tab with a clickable border-diagram preview that shows which edges are set. Ours is a flat row of preset buttons in a popover with no preview."
+      "note": "Word's Borders and Shading dialog: a clickable preview of the six lines (outer edges and inside horizontal/vertical), None/Box/All/Inside presets, line style, width, colour, cell shading and Apply to table or selected cells. It opens on the borders actually painted (on, off or mixed per line) and applies in one undo step (`applyTableBorders`). Reached from the Table band, the Table menu, the right-click menu and the palette (`table.borderStyle`)."
     },
     {
       "id": "table.caption",
@@ -5421,15 +5426,13 @@
       "area": "table",
       "title": "Draw table (freehand grid tool)",
       "ours": {
-        "absent": [
-          "table.draw"
-        ]
+        "command": "insert.drawTable"
       },
       "theirs": {
         "localeKey": "DE.Views.Toolbar.mniDrawTable"
       },
       "rank": 4,
-      "note": "A pointer mode that draws a table outline and then its interior gridlines. We have no equivalent mode."
+      "note": "A Draw table pencil mode (Insert menu, Insert table popover, Table band, palette): drag on the page for a floating table at the drawn rectangle, or across a table to split rows and columns at the line, with cells the line does not cross kept whole; Esc leaves the mode. Inside a cell the drawn table nests in line, because layout floats only body tables."
     },
     {
       "id": "table.erase-borders",
@@ -5685,15 +5688,16 @@
       "area": "table",
       "title": "Table position dialog",
       "ours": {
-        "absent": [
-          "table.position"
-        ]
+        "anchor": {
+          "file": "webapp/editor.html",
+          "literal": "id=\"tablePositionDialog\""
+        }
       },
       "theirs": {
         "localeKey": "DE.Views.TableSettingsAdvanced.textTablePosition"
       },
       "rank": 4,
-      "note": "Horizontal and vertical position relative to margin, page, column or paragraph, plus distance from surrounding text and a move-with-text / allow-overlap pair. None of it is authorable here."
+      "note": "Word's Table Positioning dialog, opened from Table properties: horizontal and vertical position (alignment or offset) relative to column/margin/page and paragraph/margin/page, the four distances from text, Move with text and Allow overlap, written as `w:tblpPr` and `w:tblOverlap` and round-tripped through DOCX."
     },
     {
       "id": "table.preferred-width",
@@ -5941,15 +5945,16 @@
       "area": "table",
       "title": "Text wrapping around a table",
       "ours": {
-        "absent": [
-          "table.wrap"
-        ]
+        "anchor": {
+          "file": "webapp/editor.html",
+          "literal": "name=\"tableWrap\""
+        }
       },
       "theirs": {
         "control": "btnWrapParallel"
       },
       "rank": 3,
-      "note": "Our importer and layout do place a w:tblpPr table on the float layer and wrap body text beside it, but nothing in the editor authors or changes that — the properties inspector has no wrapping control."
+      "note": "Table properties sets Text wrapping None or Around, authoring or removing `w:tblpPr` (`setTableFloatPosition`); layout already floats the table and wraps text around it. A nested table refuses Around with a reason, since layout floats only body tables."
     },
     {
       "id": "table.unmerge-cells",
@@ -6489,15 +6494,13 @@
       "area": "text",
       "title": "Paste as picture",
       "ours": {
-        "absent": [
-          "edit.pasteImage"
-        ]
+        "command": "edit.pasteImage"
       },
       "theirs": {
         "localeKey": "DE.Views.DocumentHolder.txtPastePicture"
       },
       "rank": 4,
-      "note": "Their special-paste badge offers Picture, which flattens the pasted content into an image."
+      "note": "Paste as picture (Edit menu, right-click menu, palette and the Paste Options chip): the engine lays the clipboard out at the column width with the document's own styles and fonts and inserts a PNG cropped to its ink as one undoable picture; a clipboard picture is pasted as itself."
     },
     {
       "id": "text.paste-loss-report",

@@ -958,6 +958,10 @@ export function hostConfig(view = globalThis) {
     // The host's opt-in to WebMCP (`?aiTools=webmcp`, `docs/178` §9 item 2): register
     // `editor.ai`'s tools with a browser agent. Off when absent; `ai_webmcp.mjs`.
     aiTools: get("aiTools"),
+    // The host's network policy for Insert ▸ Picture from URL (`?remoteImages=`,
+    // `direct` | `deny` | a proxy URL with `{url}`). Verbatim here; read by
+    // `picture_url.mjs`'s `resolveRemoteImagePolicy`, which fails closed.
+    remoteImages: get("remoteImages"),
     framed,
   };
 }
