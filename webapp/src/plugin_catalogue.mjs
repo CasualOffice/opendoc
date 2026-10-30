@@ -65,7 +65,10 @@ export function checkCatalogue(raw, catalogueUrl, { source }) {
   const entries = [];
   for (const item of raw.plugins) {
     if (!isObject(item) || typeof item.manifest !== "string") return { ok: false, reason: "no-manifest-url" };
-    for (const key of Object.keys(item)) if (!["manifest", "grant", "enabled"].includes(key)) return { ok: false, reason: "unknown-field", field: key };
+    for (const key of Object.keys(item)) if (!["manifest", "grant", "enabled", "when"].includes(key)) return { ok: false, reason: "unknown-field", field: key };
+    // `when: "ai"`: the plugin exists only while an AI provider is configured, so with
+    // none the editor shows nothing of it (owner rule, 2026-10-31).
+    if (item.when !== undefined && item.when !== "ai") return { ok: false, reason: "unknown-when" };
     let manifestUrl;
     try {
       manifestUrl = new URL(item.manifest, catalogueUrl).href;
@@ -73,7 +76,10 @@ export function checkCatalogue(raw, catalogueUrl, { source }) {
       return { ok: false, reason: "bad-manifest-url" };
     }
     const grant = Array.isArray(item.grant) ? item.grant.filter((p) => typeof p === "string") : null;
-    entries.push(Object.freeze({ manifestUrl, source, hostGrant: source === "host" ? Object.freeze(grant ?? []) : null, enabled: item.enabled !== false }));
+    // A host and the installation (first party) are both administrators: what they
+    // grant needs no prompt. A person's own installs always do.
+    const trusted = source === "host" || source === "first-party";
+    entries.push(Object.freeze({ manifestUrl, source, hostGrant: trusted && grant ? Object.freeze(grant) : null, enabled: source === "first-party" ? item.enabled === true : item.enabled !== false, when: item.when ?? null }));
   }
   return { ok: true, entries, allowInstall: raw.allowInstall === true, allowFirstParty: raw.allowFirstParty === true };
 }
@@ -121,7 +127,7 @@ export async function loadCatalogues({ config, baseUrl, fetchJson, view = global
     const firstUrl = new URL(FIRST_PARTY_CATALOGUE, baseUrl).href;
     try {
       const checked = checkCatalogue(await fetchJson(firstUrl), firstUrl, { source: "first-party" });
-      if (checked.ok) entries.push(...checked.entries.map((entry) => Object.freeze({ ...entry, enabled: false })));
+      if (checked.ok) entries.push(...checked.entries);
       else problems.push({ source: "first-party", reason: checked.reason });
     } catch {
       problems.push({ source: "first-party", reason: "catalogue-unavailable" });

@@ -1,9 +1,8 @@
 # 183 — The AI provider contract and the plugin platform
 
-**Status:** Designed 2026-10-30; P1 (provider contract and adapters) and P2 (plugin runtime)
-built on `program/ai-plugins`. P3 onward (the assistant and the first-party plugins) waits
-for the owner's review of §11–§13 (owner instruction, 2026-10-30: "research what users
-generally get" and discuss the features and the UI before they are built).
+**Status:** Designed 2026-10-30. P1 (provider contract), P2 (plugin runtime) and P3 (Casual AI)
+built on `program/ai-plugins-2`; the owner chose F1–F7 on 2026-10-31 (§13) and set UI rules
+that changed parts of §8 (§16).
 **Decides:** ADR-077 (proposed). **Rows:** `docs/109` RM-50 (provider contract), RM-51
 (plugin platform), RM-52 (assistant plugin), RM-53 (further first-party plugins), RM-54 (RAG,
 MCP client and the agent loop).
@@ -776,6 +775,12 @@ No provider configured (every AI entry point)
 - **F6.** MCP sampling: ship the adapter given its deprecation (§3.7), or drop it?
 - **F7.** The eval set in CI with the mock provider only (as proposed), never a real model?
 
+**Owner decisions, 2026-10-31 (build it):** F1 the ranking as is, no image generation; F2 one ✦
+item in the selection toolbar; F3 a chord for the actions and the panel (built as ⌘/, see §16);
+F4 chat history per document, on this device only, with Clear; F5 the review pass writes
+comments plus tracked suggestions; F6 MCP sampling stays a mapping only, marked deprecated;
+F7 evals in CI against the mock provider only.
+
 ## 14. Phases
 
 | Phase | Delivers | Exit gate |
@@ -860,15 +865,85 @@ No provider configured (every AI entry point)
 
 ### 15.4 Not built, and why
 
-- **P3 onward** waits on the owner's review of §11–§13 (owner instruction, 2026-10-30).
-- **The first-party catalogue is empty:** its first entries are the P3/P4 plugins.
-- **The side panel overlaps the assistant's card** at the right edge; docking both in one
-  column is a P3 design question, because the assistant becomes a plugin panel there.
-- **No streaming UI and no Stop button yet:** both belong to the P3 surfaces; the contract,
-  the adapters and the plugin RPC carry streaming and cancellation today.
-- **MCP sampling has no transport in the editor yet:** the adapter is a mapping behind
-  `useSampling(requester)`; nothing in the product supplies a requester (§3.7, owner F6).
+- **MCP sampling has no transport in the editor:** the adapter is a mapping behind
+  `useSampling(requester)`, marked deprecated with MCP 2026-07-28; nothing in the product
+  supplies a requester (§3.7, owner F6: keep it as a mapping only).
 - **ONLYOFFICE's `pluginsData` format is not read** (`docs/149`): a host lists OpenDoc
   manifests.
 - **Residual T2** (a frame navigating itself can carry data out before it is closed) stands
   as §10 records it.
+
+## 16. The owner's UI rules (2026-10-31), and what changed to meet them
+
+The owner's rule: AI must not degrade the product's UI or UX. Nothing is visible until a
+provider is configured; then at most three entry points, all in existing chrome; existing
+tokens and components only; every output reviewable and undoable; streaming in the panel,
+never in the document. Where the earlier design conflicted, the rule won:
+
+| Was (P2, §8, §13) | Now | Why |
+| --- | --- | --- |
+| A floating plugin panel at the right edge | An ordinary `.side-panel` in the workarea (the outline's slot: same frame, head, close button, inset and width; a bottom sheet on a phone). One side panel at a time | "Docks in the existing side-panel slot"; `panel-alignment.spec.mjs` holds it like the others |
+| The Add-ins button always on the Review band | Hidden until a running add-in contributes a ribbon row; Manage add-ins lives in Settings ▸ Add-ins | With nothing installed the chrome must be identical to today |
+| A palette row "AI provider settings…" | Removed; Settings ▸ AI provider is its one home | "No menu rows" before a provider is configured |
+| Context-menu rows for the assistant (§13 #1) | Not offered | Not one of the three entry points |
+| ⌘J / ⌘⇧J (F3) | **⌘/** (Ctrl+/) | ⌘J is Justify, as in Word; ⌘⇧J and ⌘⌥J are Chrome's downloads and console. Ctrl+/ is ONLYOFFICE's own AI chord |
+| Plugin pages styled by the plugin | `plugins/sdk/plugin.css` draws the editor's components from the editor's own tokens, sent at `initialize` and on every theme change; Inter and Material Symbols are the self-hosted faces | "Reuse, never invent"; both themes and a white-label `brand.css` follow |
+| Plugin strings from the manifest | A first-party plugin's words come from the product's catalogue (`plugins.<name>.*`, 19 locales) through `ui/strings`; third-party plugins keep manifest `locales` | Localised like the rest of the chrome |
+
+**Verified identical with AI off.** Screenshots of the editor and of its Review band at
+1280×800, light and dark, are byte-identical to `origin/features/round3`'s (the comparison
+swaps in round 3's `src/`, `editor.html` and locales on the same build).
+
+## 17. Built: P3, Casual AI (RM-52)
+
+A first-party plugin (`webapp/plugins/assistant/`) on the public API, listed in the first-party
+catalogue with `when: "ai"`: it exists only while an AI provider is configured, and the
+installation grants it `read`, `comment`, `suggest` and `ai` (no prompt for the product's own
+add-in; the person can turn it off in Manage add-ins). It never holds `edit`: every change is
+a suggestion.
+
+- **Entry points (exactly three):** the ✦ item in the selection toolbar (Rewrite, Shorten,
+  Expand, Fix grammar, More formal, Friendlier, More confident, Translate…, Ask), the Casual
+  AI panel in the side-panel slot, and palette rows (one per command, plus "AI actions on the
+  selection" on ⌘/).
+- **The panel:** the disclosure ("Text you send goes to api.openai.com"), a conversation log
+  (`role="log"`), streaming answers with a **Stop** button (Escape in the prompt too),
+  Summarise / Key points / Action items / Review document / Reply to comments, an Ask or Draft
+  composer, and Clear history. History is kept per document on this device only (F4), keyed by
+  an opaque document key, at most 20 turns per document and 30 documents.
+- **Every change** is a `propose_edits` plan: the private preview opens, nothing reaches the
+  document until Accept, and Accept lands tracked suggestions by "Casual AI" in one undo step.
+  Selection actions replace exactly the selection (`replace_text` anchored on the quote nearest
+  the selection); across paragraphs, each touched paragraph is rewritten (`rewrite_block`). The
+  review pass writes comments plus tracked suggestions (F5). Drafts insert paragraphs after the
+  caret's paragraph. Replies land on their thread.
+- **Answers cite** paragraphs as chips (¶2) that move the caret to the paragraph.
+- **`assistant_core.js`** holds every prompt, the data marking, the BM25 context selection to a
+  token budget, the output verification (only the action's own operations, only on paragraphs
+  sent, only on quotes that occur; the rest dropped and counted) and the plan builders. The UI
+  and the eval set use the same file.
+- **Evals (F7):** `webapp/tests/ai_evals.test.mjs`, 31 tasks with expected outcomes, in the unit
+  lane against a mock provider; includes an obeyed injection that still cannot leave the
+  action's edits.
+- **Platform additions it needed, all generic:** the `selection` contribution (the ✦ menu),
+  `ui/reveal`, `ui/strings` (first-party only), design tokens and a document key at
+  `initialize`, `theme/changed` with tokens, `document/opened`, `when: "ai"` and
+  installation grants in the first-party catalogue.
+
+**Guards, each driven red:**
+
+| Guard | Mutation | Red |
+| --- | --- | --- |
+| No AI chrome without a provider (e2e) | the `when: "ai"` gate removed | "with no AI provider the editor shows nothing of Casual AI" |
+| Stop stops (e2e) | the Stop handler does nothing | "Stop ends a stream at once and says so" |
+| Changes wait in the preview (e2e) | `propose` replaced by a command | "✦ Rewrite streams in the panel, proposes in the preview…" |
+| A closing tag cannot end a data block | the neutralisation removed | "a closing tag inside the document cannot end its data block" |
+| Review quotes are verified | the quote check removed | "the review writes comments and tracked suggestions on real quotes only" |
+| Citations are verified | unsent ids kept | "a citation to a paragraph that was not sent is dropped and counted" |
+| Multi-paragraph edits stay inside the selection | unknown ids accepted | "a multi-paragraph rewrite touches only the paragraphs sent" |
+| Document text never in the system prompt | context appended to the system prompt | "document text never enters the system prompt" |
+| Context respects its budget | the budget check disabled | "a long document is cut to the budget by relevance…" |
+
+**Not built in P3, and why.** Image generation (F1: excluded). Ask across files and MCP tools
+(§13 #9, #10) are RM-54 with RAG and the MCP client. Drafting a new document from a prompt
+(§13 #3, second half) waits for a "new document from text" path in the editor.

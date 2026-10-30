@@ -289,8 +289,20 @@ const REGION_IDS = (() => {
   return [...REGION_COMMAND_IDS];
 })();
 
+// The plugin platform's ⌘/ row (`docs/183` §13) is contributed through
+// `plugin_command_sources.mjs`, which `editorCommands()` spreads; the row itself
+// is a literal in `plugin_platform.mjs`. Both ends asserted, as above.
+const PLUGIN_COMMAND_IDS = (() => {
+  assert.match(EDITOR_COMMANDS_SOURCE, /contributedCommands\(context\)/, "editorCommands() no longer spreads the contributed commands; ⌘/ is dead");
+  const source = readFileSync(new URL("../src/plugin_platform.mjs", import.meta.url), "utf8");
+  const id = /export const ACTIONS_COMMAND = "([\w.]+)";/.exec(source);
+  assert.ok(id && /id: ACTIONS_COMMAND/.test(source), "plugin_platform.mjs no longer contributes the ⌘/ row");
+  return [id[1]];
+})();
+
 test("every chord names a command the registry actually returns", () => {
   const registered = new Set([
+    ...PLUGIN_COMMAND_IDS,
     ...[...EDITOR_COMMANDS_SOURCE.matchAll(/id: "([\w.]+)"/g)].map((match) => match[1]),
     ...TABLE_COMMAND_IDS,
     ...SPACING_COMMAND_IDS,

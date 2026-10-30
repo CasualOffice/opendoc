@@ -661,15 +661,15 @@ export const MODALS = [
   {
     id: "aiProviderDialog",
     name: "AI provider",
-    // Bring your own key (`docs/183` §3.9). Its durable surface is Settings ▸ AI
-    // provider; the palette is the second, and the one this row drives because it
-    // leaves no opener on screen, like About's.
-    opener: null,
-    restore: EDITOR_SURFACE,
+    // Bring your own key (`docs/183` §3.9). Settings ▸ AI provider is its one
+    // home: the owner's rule is that with no provider configured nothing about AI
+    // appears anywhere else. Opened over Settings, so Escape returns to its row.
+    opener: "#aiProviderSettingsBtn",
     focus: "#aiProviderPreset",
     async open(page) {
       await gotoEditor(page);
-      await runFromPalette(page, "ai provider", "AI provider settings");
+      await page.locator("#settingsBtn").click();
+      await page.locator("#aiProviderSettingsBtn").click();
     },
   },
   {

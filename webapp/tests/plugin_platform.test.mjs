@@ -154,7 +154,7 @@ test("commands by id: no file, session, plugin or AI commands; mutations need ed
   assert.equal(commandPermission("file.save", commandContract("file.save")), null);
   assert.equal(commandPermission("file.print", commandContract("file.print")), null);
   assert.equal(commandPermission("plugin.manage", commandContract("plugin.manage")), null);
-  assert.equal(commandPermission("ai.providerSettings", commandContract("ai.providerSettings")), null);
+  assert.equal(commandPermission("ai.anything", { requires: null }), null);
   assert.equal(commandPermission("format.bold", commandContract("format.bold")), "edit");
   assert.equal(commandPermission("view.outline", commandContract("view.outline")), "none");
   assert.equal(grantAdmits("edit", ["read", "suggest"]), false);

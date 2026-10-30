@@ -685,9 +685,6 @@ export const COMMAND_CONTRACT = Object.freeze([
   // both need the edit grant that Restrict Editing needs.
   exact("review.protectForm", "edit"),
   exact("forms.roles", "edit"),
-  // The bring-your-own-key dialog (`docs/183` §3.9): application state on this
-  // device, never document state, and disabled with its reason in a frame.
-  exact("ai.providerSettings", null),
   exact("view.outline", null),
   // `view.pages` is a panel toggle and changes no document state, so it requires
   // nothing — the same shape as `view.outline`, which the taxonomy already puts

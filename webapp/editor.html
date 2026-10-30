@@ -528,6 +528,14 @@
         <p data-i18n="settingsPanel.aiProviderNote" id="aiProviderSummary" class="settings-note">No AI provider is set up, so no text is sent anywhere.</p>
         <button data-i18n="settingsPanel.aiProviderSetUp" type="button" id="aiProviderSettingsBtn" class="dialog-button">AI provider settings…</button>
       </div>
+      <!-- Add-ins (docs/183 §6.5): Manage add-ins' durable home. The Review band's
+           Add-ins button appears only once an add-in contributes a row, so with
+           none the editor's chrome is unchanged (owner rule, 2026-10-31). -->
+      <div class="settings-section">
+        <div data-i18n="settingsPanel.addins" class="settings-label">Add-ins</div>
+        <p data-i18n="settingsPanel.addinsNote" class="settings-note">Add-ins belong to this browser, never to a document.</p>
+        <button data-i18n="settingsPanel.addinsManage" type="button" id="settingsAddinsBtn" class="dialog-button">Manage add-ins…</button>
+      </div>
       <!-- AutoCorrect (docs/174 TA-05, TA-06): Word's "AutoFormat As You Type"
            switches. Each is also a command-palette switch; `autocorrect.mjs`
            owns all three. -->
@@ -1310,7 +1318,7 @@
                    menu are. In Proofing rather than a new group, because the
                    first-party plugins planned are proofing and review work and a
                    new `rgroup` would move `review-surface.spec.mjs`'s labels. -->
-              <button data-i18n-title="panelReview.addins.title" data-i18n-label="panelReview.addins.label" id="reviewAddinsBtn" type="button" class="fmt" title="Add-ins: tools that run in a sandbox and do only what you allow" aria-label="Add-ins" aria-haspopup="menu" aria-controls="addinsMenu" aria-expanded="false"><span class="ms" aria-hidden="true">extension</span></button>
+              <button data-i18n-title="panelReview.addins.title" data-i18n-label="panelReview.addins.label" id="reviewAddinsBtn" type="button" class="fmt" hidden title="Add-ins: tools that run in a sandbox and do only what you allow" aria-label="Add-ins" aria-haspopup="menu" aria-controls="addinsMenu" aria-expanded="false"><span class="ms" aria-hidden="true">extension</span></button>
             </div>
             <span data-i18n="panelReview.proofing" class="rgroup-label">Proofing</span>
           </div>
@@ -2474,6 +2482,7 @@
       <button data-i18n="notes.settingsCommand" type="button" role="menuitem" class="menu-item" data-command="reference.noteSettings">Note settings…</button>
       <button data-i18n="notes.convertCommand" type="button" role="menuitem" class="menu-item" data-command="reference.convertNotes">Convert notes…</button>
     </div>
+    <div data-i18n-label="selToolbar.aiActions.label" id="selAiMenu" class="context-menu" hidden role="menu" aria-label="Casual AI actions"></div>
     <div data-i18n-label="addinsMenu.label" id="addinsMenu" class="context-menu" hidden role="menu" aria-label="Add-ins">
       <div id="addinsMenuItems" role="none"></div>
       <button data-i18n="addinsMenu.manage" type="button" role="menuitem" class="menu-item" id="addinsManage">Manage add-ins…</button>
@@ -3223,17 +3232,6 @@
         <footer class="dialog-foot"><span></span><div class="dialog-actions"><button data-i18n="pluginGrantDialog.deny" id="pluginGrantDeny" type="button" class="dialog-button">Don’t allow</button><button data-i18n="pluginGrantDialog.allow" id="pluginGrantAllow" type="button" class="dialog-button dialog-button-primary">Allow</button></div></footer>
       </section>
     </div>
-    <!-- One plugin's side panel at a time (docs/183 §8). Every running plugin's
-         frame lives here from its start, shown only while its panel is open:
-         moving an iframe reloads it, which the platform reads as the plugin
-         navigating away. -->
-    <aside id="pluginPanel" class="plugin-panel" hidden aria-labelledby="pluginPanelTitle">
-      <header class="plugin-panel-head">
-        <h2 id="pluginPanelTitle" class="plugin-panel-title"></h2>
-        <button data-i18n-title="pluginPanel.close.title" data-i18n-label="pluginPanel.close.label" id="pluginPanelClose" type="button" class="dialog-close" title="Close" aria-label="Close add-in panel"><span class="ms" aria-hidden="true">close</span></button>
-      </header>
-      <div id="pluginPanelBody" class="plugin-panel-body"></div>
-    </aside>
     <div id="aiProviderDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="aiProviderTitle" aria-describedby="aiProviderDescription">
       <section class="dialog-card">
         <header class="dialog-head">
@@ -4189,6 +4187,12 @@
       </button>
       <span class="sel-divider"></span>
       <button data-i18n-title="selToolbar.addComment.title" data-i18n-label="selToolbar.addComment.label" id="selComment" type="button" class="fmt" title="Add comment" aria-label="Add comment"><span class="ms" aria-hidden="true">add_comment</span></button>
+      <!-- ✦ (docs/183 §8): the selection actions of running plugins — the
+           assistant's Rewrite, Shorten, … — in one menu, as Docs' Refine bar and
+           Word's mini-toolbar Copilot are. Hidden until a running plugin
+           contributes one, so with no AI provider the bar is unchanged. -->
+      <span id="selAiDivider" class="sel-divider" hidden></span>
+      <button data-i18n-title="selToolbar.aiActions.title" data-i18n-label="selToolbar.aiActions.label" id="selAiBtn" type="button" class="fmt" hidden title="Casual AI actions (⌘/)" aria-label="Casual AI actions" aria-haspopup="menu" aria-controls="selAiMenu" aria-expanded="false"><span class="format-glyph" aria-hidden="true">✦</span></button>
     </div>
 
     <div data-i18n-label="ui.pasteOptions.label" id="pasteOptions" class="paste-options" role="dialog" aria-label="Paste options" hidden>
@@ -4332,6 +4336,19 @@
         </div>
         <div id="compareBody" class="panel-body compare-body"></div>
         <input id="compareFile" type="file" accept=".docx,.odt,.rtf,.json,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/rtf,text/rtf,application/json,text/plain" hidden />
+      </aside>
+      <!-- A plugin's panel (docs/183 §8): the SAME side-panel slot as the outline,
+           pages and compare panels — frame, head, close button and width — and
+           hidden until a running plugin opens it. Every running plugin's frame
+           lives in its body from its start, shown only while its panel is open:
+           moving an iframe reloads it, which the platform reads as the plugin
+           navigating away. -->
+      <aside id="pluginPanel" class="side-panel plugin-panel" hidden aria-labelledby="pluginPanelTitle">
+        <div class="panel-head">
+          <span id="pluginPanelTitle" class="panel-title"></span>
+          <button data-i18n-title="pluginPanel.close.title" data-i18n-label="pluginPanel.close.label" id="pluginPanelClose" type="button" class="panel-close" title="Close" aria-label="Close add-in panel"><span class="ms" aria-hidden="true">close</span></button>
+        </div>
+        <div id="pluginPanelBody" class="panel-body plugin-panel-body"></div>
       </aside>
       <main id="viewport" class="viewport">
         <div id="drop" class="drop">
