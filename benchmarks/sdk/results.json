@@ -1,0 +1,554 @@
+{
+  "schema": 1,
+  "generatedBy": "benchmarks/sdk/run.mjs",
+  "environment": {
+    "platform": "darwin arm64 25.3.0",
+    "cpu": "Apple M4",
+    "cores": 10,
+    "memoryGB": 16,
+    "node": "v24.22.1",
+    "iterations": 5
+  },
+  "versions": {
+    "opendoc": "0.0.1",
+    "docx": "9.15.0",
+    "mammoth": "1.13.0",
+    "docxtemplater": "3.71.1",
+    "pizzip": "3.3.0",
+    "python-docx": "1.2.0",
+    "poi": "5.4.1",
+    "java": "openjdk version \"24.0.1\" 2025-04-15"
+  },
+  "speed": [
+    {
+      "task": "generate",
+      "input": "100 paragraphs + table",
+      "docx-js": {
+        "ms": 4.26,
+        "peakMB": 87.8,
+        "output": 10247
+      },
+      "opendoc": {
+        "ms": 4.04,
+        "peakMB": 234.4,
+        "output": 5423
+      }
+    },
+    {
+      "task": "generate",
+      "input": "1000 paragraphs + table",
+      "docx-js": {
+        "ms": 17.28,
+        "peakMB": 150.8,
+        "output": 14246
+      },
+      "opendoc": {
+        "ms": 18.09,
+        "peakMB": 278.8,
+        "output": 9437
+      }
+    },
+    {
+      "task": "generate",
+      "input": "5000 paragraphs + table",
+      "docx-js": {
+        "ms": 75.47,
+        "peakMB": 410.7,
+        "output": 31056
+      },
+      "opendoc": {
+        "ms": 60.24,
+        "peakMB": 332.2,
+        "output": 26814
+      }
+    },
+    {
+      "task": "template",
+      "input": "100-item loop",
+      "docxtemplater": {
+        "ms": 2.53,
+        "peakMB": 93.2,
+        "output": 42141
+      },
+      "opendoc": {
+        "ms": 2.57,
+        "peakMB": 271.4,
+        "output": 31243
+      }
+    },
+    {
+      "task": "template",
+      "input": "1000-item loop",
+      "docxtemplater": {
+        "ms": 10.34,
+        "peakMB": 111,
+        "output": 109841
+      },
+      "opendoc": {
+        "ms": 17.68,
+        "peakMB": 319.1,
+        "output": 98943
+      }
+    },
+    {
+      "task": "html",
+      "input": "sample",
+      "mammoth": {
+        "ms": 34.99,
+        "peakMB": 231,
+        "output": 94540
+      },
+      "opendoc": {
+        "ms": 16.42,
+        "peakMB": 335.7,
+        "output": 179345
+      }
+    },
+    {
+      "task": "html",
+      "input": "scale",
+      "mammoth": {
+        "ms": 53.78,
+        "peakMB": 288.4,
+        "output": 275450
+      },
+      "opendoc": {
+        "ms": 26.1,
+        "peakMB": 310.1,
+        "output": 331606
+      }
+    },
+    {
+      "task": "text",
+      "input": "sample",
+      "mammoth": {
+        "ms": 30.58,
+        "peakMB": 228.7,
+        "output": 12169
+      },
+      "opendoc": {
+        "ms": 12.53,
+        "peakMB": 332,
+        "output": 11878
+      }
+    },
+    {
+      "task": "text",
+      "input": "scale",
+      "mammoth": {
+        "ms": 41.51,
+        "peakMB": 273.9,
+        "output": 233240
+      },
+      "opendoc": {
+        "ms": 17.24,
+        "peakMB": 317.6,
+        "output": 230209
+      }
+    },
+    {
+      "task": "pdf",
+      "input": "sample",
+      "opendoc": {
+        "ms": 55.21,
+        "peakMB": 362.2,
+        "output": 156988
+      }
+    },
+    {
+      "task": "pdf",
+      "input": "scale",
+      "opendoc": {
+        "ms": 261.39,
+        "peakMB": 362,
+        "output": 112730
+      }
+    },
+    {
+      "task": "py-generate",
+      "input": "100 paragraphs + table (Python)",
+      "python-docx": {
+        "ms": 16.2,
+        "peakMB": 44.2,
+        "output": 37208
+      },
+      "opendoc": {
+        "ms": 2.6,
+        "peakMB": 18.4,
+        "output": 38254
+      }
+    },
+    {
+      "task": "py-generate",
+      "input": "1000 paragraphs + table (Python)",
+      "python-docx": {
+        "ms": 92.43,
+        "peakMB": 63.8,
+        "output": 40389
+      },
+      "opendoc": {
+        "ms": 24.39,
+        "peakMB": 19.8,
+        "output": 227254
+      }
+    },
+    {
+      "task": "py-generate",
+      "input": "5000 paragraphs + table (Python)",
+      "python-docx": {
+        "ms": 667.32,
+        "peakMB": 81,
+        "output": 53964
+      },
+      "opendoc": {
+        "ms": 187.96,
+        "peakMB": 26.8,
+        "output": 1071654
+      }
+    },
+    {
+      "task": "py-read",
+      "input": "sample (Python)",
+      "python-docx": {
+        "ms": 7.2,
+        "peakMB": 52.3,
+        "output": 5458
+      },
+      "opendoc": {
+        "ms": 7.17,
+        "peakMB": 26.4,
+        "output": 5468
+      }
+    },
+    {
+      "task": "py-read",
+      "input": "scale (Python)",
+      "python-docx": {
+        "ms": 66.88,
+        "peakMB": 56.2,
+        "output": 227180
+      },
+      "opendoc": {
+        "ms": 43.26,
+        "peakMB": 44.1,
+        "output": 227180
+      }
+    },
+    {
+      "task": "java-generate",
+      "input": "100 paragraphs + table (Java)",
+      "poi": {
+        "ms": 10.15,
+        "output": 2812,
+        "peakMB": 142.5
+      },
+      "opendoc": {
+        "ms": 4.94,
+        "output": 37988,
+        "peakMB": 98.6
+      }
+    },
+    {
+      "task": "java-generate",
+      "input": "1000 paragraphs + table (Java)",
+      "poi": {
+        "ms": 20.85,
+        "output": 5990,
+        "peakMB": 186.7
+      },
+      "opendoc": {
+        "ms": 30.9,
+        "output": 226988,
+        "peakMB": 200.4
+      }
+    },
+    {
+      "task": "java-read",
+      "input": "sample (Java)",
+      "poi": {
+        "ms": 34.9,
+        "output": 5471,
+        "peakMB": 217.1
+      },
+      "opendoc": {
+        "ms": 14.59,
+        "output": 5471,
+        "peakMB": 103.8
+      }
+    },
+    {
+      "task": "java-read",
+      "input": "scale (Java)",
+      "poi": {
+        "ms": 92.45,
+        "output": 227180,
+        "peakMB": 242.7
+      },
+      "opendoc": {
+        "ms": 96.38,
+        "output": 227180,
+        "peakMB": 217.4
+      }
+    }
+  ],
+  "fidelity": [
+    {
+      "fixture": "sample.docx",
+      "opendocPages": 14
+    },
+    {
+      "fixture": "real-producer-footnotes.docx",
+      "opendocPages": 1
+    },
+    {
+      "fixture": "real-producer-header-footer.docx",
+      "opendocPages": 1
+    },
+    {
+      "fixture": "real-producer-hyperlinks.docx",
+      "opendocPages": 1
+    },
+    {
+      "fixture": "real-producer-libreoffice.docx",
+      "opendocPages": 1
+    },
+    {
+      "fixture": "real-producer-rich.docx",
+      "opendocPages": 1
+    },
+    {
+      "fixture": "real-producer-table-list.docx",
+      "opendocPages": 1
+    },
+    {
+      "fixture": "real-producer-table-merges.docx",
+      "opendocPages": 1
+    },
+    {
+      "fixture": "synthetic-rich-metadata.docx",
+      "opendocPages": 1
+    },
+    {
+      "fixture": "synthetic-declared-family-substitution.docx",
+      "opendocPages": 1
+    }
+  ],
+  "roundTrip": [
+    {
+      "fixture": "sample.docx",
+      "parts": 24,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 24,
+          "losses": 1,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 18,
+          "losses": 5,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 24,
+        "losses": null,
+        "textSame": true
+      }
+    },
+    {
+      "fixture": "real-producer-footnotes.docx",
+      "parts": 12,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 11,
+          "losses": 0,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 11,
+          "losses": 0,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 12,
+        "losses": null,
+        "textSame": true
+      }
+    },
+    {
+      "fixture": "real-producer-header-footer.docx",
+      "parts": 13,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 12,
+          "losses": 0,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 12,
+          "losses": 0,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 13,
+        "losses": null,
+        "textSame": true
+      }
+    },
+    {
+      "fixture": "real-producer-hyperlinks.docx",
+      "parts": 9,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 9,
+          "losses": 0,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 9,
+          "losses": 0,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 9,
+        "losses": null,
+        "textSame": true
+      }
+    },
+    {
+      "fixture": "real-producer-libreoffice.docx",
+      "parts": 9,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 9,
+          "losses": 0,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 9,
+          "losses": 0,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 9,
+        "losses": null,
+        "textSame": true
+      }
+    },
+    {
+      "fixture": "real-producer-rich.docx",
+      "parts": 10,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 10,
+          "losses": 0,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 10,
+          "losses": 0,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 10,
+        "losses": null,
+        "textSame": true
+      }
+    },
+    {
+      "fixture": "real-producer-table-list.docx",
+      "parts": 10,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 10,
+          "losses": 0,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 10,
+          "losses": 0,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 10,
+        "losses": null,
+        "textSame": true
+      }
+    },
+    {
+      "fixture": "real-producer-table-merges.docx",
+      "parts": 9,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 9,
+          "losses": 0,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 9,
+          "losses": 0,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 9,
+        "losses": null,
+        "textSame": true
+      }
+    },
+    {
+      "fixture": "synthetic-rich-metadata.docx",
+      "parts": 7,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 7,
+          "losses": 0,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 7,
+          "losses": 0,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 6,
+        "losses": null,
+        "textSame": true
+      }
+    },
+    {
+      "fixture": "synthetic-declared-family-substitution.docx",
+      "parts": 6,
+      "opendoc": {
+        "preserve": {
+          "partsKept": 6,
+          "losses": 0,
+          "textSame": true
+        },
+        "semantic": {
+          "partsKept": 6,
+          "losses": 0,
+          "textSame": true
+        }
+      },
+      "python-docx": {
+        "partsKept": 6,
+        "losses": null,
+        "textSame": true
+      }
+    }
+  ],
+  "notes": [
+    "`scale` is 3,000 paragraphs and 30 headings written by docx-js at run time.",
+    "Java peak memory is the whole JVM process's maximum resident set (`/usr/bin/time`), for both libraries.",
+    "LibreOffice was not given (--soffice), so its PDF timings and page counts are absent.",
+    "Round trip: an empty `docProps/custom.xml` (no properties) is not rewritten by an OpenDoc save, which `partsKept` counts as a dropped part although nothing is lost. `partsKept` counts the input's package parts present in the output; `textSame` re-opens the output with OpenDoc and compares the body text; `losses` is OpenDoc's own save report (no other library reports loss)."
+  ]
+}

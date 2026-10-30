@@ -1976,6 +1976,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "opendoc"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-diff",
+ "casual-doc-edit",
+ "casual-doc-io",
+ "casual-doc-model",
+ "casual-doc-ooxml",
+ "casual-doc-review",
+ "opendoc-viewer",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "zip",
+]
+
+[[package]]
 name = "opendoc-benchmark"
 version = "0.0.1"
 dependencies = [
@@ -1983,6 +2000,23 @@ dependencies = [
  "casual-doc-model",
  "casual-doc-ooxml",
  "casual-doc-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "opendoc-cli"
+version = "0.0.1"
+dependencies = [
+ "opendoc",
+ "serde_json",
+]
+
+[[package]]
+name = "opendoc-ffi"
+version = "0.0.1"
+dependencies = [
+ "opendoc",
  "serde",
  "serde_json",
 ]

@@ -241,8 +241,13 @@ test.describe("PDF import in the editor", () => {
               const mark = performance.getEntriesByName("opendoc:pdf-import:finish")[0]?.startTime ?? Infinity;
               const tasks = window.__tasks ?? [];
               resolve({
-                sliced: tasks.filter(([start]) => start < mark).map(([, duration]) => duration),
-                finish: tasks.filter(([start]) => start >= mark).map(([, duration]) => duration),
+                // The mark is set INSIDE the task that runs the finish, so that
+                // task starts at or a hair before it: partitioned by start
+                // alone, the finish was counted as a slice whenever the two
+                // fell in different 0.1 ms ticks (measured: task 9467.1, mark
+                // 9467.2). A slice is a task over before the mark.
+                sliced: tasks.filter(([start, duration]) => start + duration <= mark).map(([, duration]) => duration),
+                finish: tasks.filter(([start, duration]) => start + duration > mark).map(([, duration]) => duration),
                 slices: mark,
               });
             }, 300),

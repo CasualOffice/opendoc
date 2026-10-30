@@ -1,0 +1,7 @@
+# Built by maturin; never committed.
+target/
+python/opendoc/*.so
+python/opendoc/*.pyd
+__pycache__/
+*.egg-info/
+.pytest_cache/

@@ -1,0 +1,26 @@
+[package]
+name = "opendoc-cli"
+description = "The opendoc command line: convert, render, info, diff, template and build documents with the OpenDoc engine; the server-side preview engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+# docs/176 section 12.6 (S3). One binary, `opendoc`, over the Native SDK
+# facade (`crates/opendoc`) with PDF import on. Pages render with the bundled
+# faces only unless `--system-fonts` is passed, which is what makes the PNGs of
+# one document byte-identical on Linux, macOS and Windows (docs/176 V2).
+
+[[bin]]
+name = "opendoc"
+path = "src/main.rs"
+
+[dependencies]
+opendoc = { workspace = true, features = ["pdf-import"] }
+serde_json.workspace = true
+
+[lints]
+workspace = true

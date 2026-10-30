@@ -391,6 +391,21 @@ impl ImportJob {
         self.source.missing_cmaps()
     }
 
+    /// Pages read so far that have something to read optically: scans and
+    /// pages that mix native text with a picture of text
+    /// ([`PageClass::Raster`], [`PageClass::Hybrid`]). A host reads this
+    /// between steps to start loading its recognition models while the rest
+    /// of the import runs (`docs/182` §17a.5). O(pages read).
+    #[must_use]
+    pub fn scanned_pages(&self) -> usize {
+        self.ocr
+            .summary
+            .classes
+            .iter()
+            .filter(|class| matches!(class, Some(PageClass::Raster | PageClass::Hybrid)))
+            .count()
+    }
+
     /// Does at most `budget` pages (at least one). O(budget pages).
     pub fn step(&mut self, budget: usize) -> Progress {
         match self.state {

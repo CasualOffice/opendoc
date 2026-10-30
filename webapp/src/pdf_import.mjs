@@ -42,9 +42,21 @@
 // again (`pdf_commands.mjs`): "Convert to flowing document" (`mode:
 // "reflow"`, finished by the job's `finishReflowed` and opened by the main
 // module's `openPdfReflow` as a NEW document) and "Recognise text in scanned
-// pages" (`prepareOcr`: after the module loads, the recognition models are
-// obtained and loaded behind the same bar and the same Cancel, then the
-// import runs with them).
+// pages" (`recognition`). An import WITH recognition never runs here: it runs
+// in the OCR worker (`ocr_service.mjs`, `docs/182` §17a.5), models, engine,
+// pages and finish, and this dialog only paints what the worker reports and
+// terminates it on Cancel. A page's recognition is seconds inside one wasm
+// call, which no slicing between pages can bound, so on this thread it froze
+// the tab. Only the main module's open of the finished package runs here.
+//
+// PRELOAD. The import without recognition (the first open) reports the first
+// scanned page it reads through `onScans`, once, so the models start loading
+// in the worker while the rest of the PDF is read (`pdf_commands.mjs`).
+//
+// The document behind the dialog stays scrollable: the wheel over the
+// backdrop scrolls it (`scrollTarget`), while focus stays in the dialog, so
+// it can be read during a long run but not edited into a state the finished
+// import would replace.
 //
 // Escape, the backdrop and the close button all cancel, through the one modal
 // contract (`modal.mjs`): a dialog whose only safe dismissal is Cancel says so
@@ -67,6 +79,12 @@ const ID = "pdfImportDialog";
 /** Marks the end of the sliced phase, for the main-thread guard: tasks before
  *  it are the import's slices, the task after it is the finish and layout. */
 export const FINISH_MARK = "opendoc:pdf-import:finish";
+
+/** Bracket a recognition run, for the OCR main-thread guard
+ *  (`ocr-main-thread.spec.mjs`): every task between them is this thread's
+ *  while the worker recognises, and none may be a long task. */
+export const OCR_START_MARK = "opendoc:pdf-ocr:start";
+export const OCR_END_MARK = "opendoc:pdf-ocr:end";
 
 function buildDialog(view) {
   const make = (tag, props = {}) => Object.assign(view.createElement(tag), props);
@@ -170,6 +188,10 @@ async function provideCMaps(module, names, source, signal) {
  * @param {() => string|null} [io.cmapSource] the host's CMap base URL, or null.
  * @param {() => "flowing"|"fixed"} [io.layout] the host's default layout
  *   (`hostPdfLayout` of the page's query).
+ * @param {() => void} [io.onScans] called once per import, the first time a
+ *   page it read is a scan: the preload's trigger.
+ * @param {() => HTMLElement|null} [io.scrollTarget] what the wheel over the
+ *   dialog's backdrop scrolls (the editor's viewport).
  */
 export function createPdfImport(io = {}) {
   const view = io.view ?? globalThis.document;
@@ -272,11 +294,13 @@ export function createPdfImport(io = {}) {
     }
   }
 
-  /** One staged import; `null` when the reader cancelled. */
-  async function importOnce(module, bytes, engine, mode) {
+  /** One staged import without recognition, sliced on this thread; `null`
+   *  when the reader cancelled. */
+  async function importOnce(module, bytes, mode) {
     let job = null;
+    let scansNoted = false;
     try {
-      job = engine ? module.beginPdfImportWithOcr(bytes, engine) : module.beginPdfImport(bytes);
+      job = module.beginPdfImport(bytes);
       await provideCMaps(module, job.missingCMaps, cmapSource(), active.abort.signal);
       if (active.cancelRequested) return null;
       paintProgress(0, job.pageCount);
@@ -286,7 +310,19 @@ export function createPdfImport(io = {}) {
         nextSlice: idleSlices(scope),
         now: () => clock.now(),
         cancelled: () => active.cancelRequested,
-        onProgress: paintProgress,
+        onProgress: (done, total) => {
+          paintProgress(done, total);
+          // The first scan read starts the models loading in the worker, in
+          // parallel with the pages still to read (`docs/182` §17a.5).
+          if (!scansNoted && (job.scannedPages ?? 0) > 0) {
+            scansNoted = true;
+            try {
+              io.onScans?.();
+            } catch {
+              // A preload that cannot start is the recognition run's to report.
+            }
+          }
+        },
       });
       if (result.status === "cancelled") return null;
       parts.phase.textContent = t("pdfImport.finishing");
@@ -315,17 +351,64 @@ export function createPdfImport(io = {}) {
     }
   }
 
+  /** One import WITH recognition, in the OCR worker; `null` when the reader
+   *  cancelled. Nothing of it runs on this thread but painting the progress
+   *  the worker reports (`ocr_service.mjs`). */
+  async function recogniseOnce(bytes, mode, recognition) {
+    const clock = scope.performance ?? globalThis.performance;
+    parts.bar.dataset.phase = "models";
+    parts.phase.textContent = t("pdfOcr.loading");
+    clock.mark?.(OCR_START_MARK);
+    try {
+      const result = await recognition.service.recognise(bytes, {
+        manifestUrl: recognition.manifestUrl,
+        mode,
+        cmapSource: cmapSource(),
+        signal: active.abort.signal,
+        onModels: (done, total) => {
+          parts.bar.dataset.phase = "models";
+          parts.phase.textContent = t("pdfOcr.downloading");
+          paintModule(done, total);
+        },
+        onLoading: () => {
+          parts.bar.dataset.phase = "models";
+          parts.phase.textContent = t("pdfOcr.loading");
+          paintProgress(0, 0);
+        },
+        onPages: (done, total) => {
+          delete parts.bar.dataset.phase;
+          parts.phase.textContent = t("pdfImport.reading");
+          paintProgress(done, total);
+        },
+        onRead: () => {
+          parts.phase.textContent = t("pdfImport.finishing");
+        },
+        // The layout is decided when the pages are read: the reader may have
+        // ticked "Keep exact page layout" while they were.
+        layout: () => {
+          parts.keep.disabled = true;
+          return layoutOf(mode);
+        },
+      });
+      clock.mark?.(OCR_END_MARK);
+      return result;
+    } catch (error) {
+      if (active.cancelRequested || error?.name === "AbortError") return null;
+      throw new Error(t("pdfOcr.failed", { reason: String(error?.message ?? error) }));
+    } finally {
+      delete parts.bar.dataset.phase;
+    }
+  }
+
   /**
    * Imports `bytes` behind the dialog.
    *
    * @param {Uint8Array} bytes
    * @param {string} name
    * @param {object} [options]
-   * @param {object} [options.ocr] a loaded `PdfOcrEngine`: recognise text in
-   *   scanned pages.
-   * @param {(module: object, ui: object) => Promise<object>} [options.prepareOcr]
-   *   obtains and loads the engine after the module, behind this dialog: `ui`
-   *   is `{ progress(received, total), phase(text), signal, painted() }`.
+   * @param {{service: object, manifestUrl: string}} [options.recognition]
+   *   recognise text in scanned pages, in the OCR worker (`ocr_service.mjs`'s
+   *   service and the host's manifest).
    * @param {"import"|"fixed"|"reflow"|"ocr"} [options.mode] what the dialog
    *   says and how the job finishes: `import` and `ocr` in the layout the
    *   dialog's checkbox ends on, `fixed` in the exact page layout, `reflow`
@@ -340,7 +423,8 @@ export function createPdfImport(io = {}) {
   async function run(bytes, name, options = {}) {
     if (active) throw new Error(t("pdfImport.busy"));
     active = { cancelRequested: false, abort: new AbortController() };
-    const mode = options.mode ?? (options.prepareOcr ? "ocr" : "import");
+    const recognition = options.recognition ?? null;
+    const mode = options.mode ?? (recognition ? "ocr" : "import");
     renderOpen(name, mode, options.layout ?? hostLayout());
     modal.open();
     try {
@@ -348,43 +432,29 @@ export function createPdfImport(io = {}) {
       if (active.cancelRequested) return { cancelled: true };
       let module;
       try {
+        // Loaded here even for a run in the worker: a fixed-layout session's
+        // byte-preserving save asks this thread's PDF module for its plan.
         module = await ensureModule();
       } catch (error) {
         if (active.cancelRequested || error?.name === "AbortError") return { cancelled: true };
         throw new Error(t("pdfImport.moduleFailed", { reason: String(error?.message ?? error) }));
       }
       if (active.cancelRequested) return { cancelled: true };
-      let engine = options.ocr ?? null;
-      if (options.prepareOcr) {
-        parts.bar.dataset.phase = "models";
-        try {
-          engine = await options.prepareOcr(module, {
-            progress: paintModule,
-            phase: (text) => {
-              parts.phase.textContent = text;
-            },
-            signal: active.abort.signal,
-            painted,
-          });
-        } catch (error) {
-          if (active.cancelRequested || error?.name === "AbortError") return { cancelled: true };
-          throw new Error(t("pdfOcr.failed", { reason: String(error?.message ?? error) }));
-        } finally {
-          delete parts.bar.dataset.phase;
-        }
-        if (active.cancelRequested) return { cancelled: true };
-      }
       let imported;
-      try {
-        imported = await importOnce(module, bytes, engine, mode);
-      } catch (error) {
-        const source = cmapSource();
-        if (!source || !error.neededCMaps?.length) throw error;
-        await provideCMaps(module, error.neededCMaps, source, active.abort.signal);
-        parts.cancel.disabled = false;
-        imported = await importOnce(module, bytes, engine, mode);
+      if (recognition) {
+        imported = await recogniseOnce(bytes, mode, recognition);
+      } else {
+        try {
+          imported = await importOnce(module, bytes, mode);
+        } catch (error) {
+          const source = cmapSource();
+          if (!source || !error.neededCMaps?.length) throw error;
+          await provideCMaps(module, error.neededCMaps, source, active.abort.signal);
+          parts.cancel.disabled = false;
+          imported = await importOnce(module, bytes, mode);
+        }
       }
-      if (!imported) return { cancelled: true };
+      if (!imported || active.cancelRequested) return { cancelled: true };
       // A flowing document keeps the PDF it was rebuilt from, so it can be
       // opened again in its exact layout or with OCR; a conversion from an
       // open fixed-layout PDF is a new document and keeps none.
@@ -392,7 +462,7 @@ export function createPdfImport(io = {}) {
         imported.layout === "fixed"
           ? openImport(imported.pkg, bytes)
           : openReflow(imported.pkg, mode === "reflow" ? undefined : bytes);
-      return { doc, ocr: imported.ocr, engine, layout: imported.layout };
+      return { doc, ocr: imported.ocr, layout: imported.layout };
     } finally {
       active = null;
       if (modal.isOpen) modal.close("done");
@@ -410,6 +480,20 @@ export function createPdfImport(io = {}) {
 
   parts.cancel.addEventListener("click", requestCancel);
   parts.close.addEventListener("click", () => modal.close("cancel"));
+  // The wheel over the backdrop scrolls the document behind it, so a long
+  // recognition run can be spent reading the pages. Focus stays in the
+  // dialog: reading, not editing, a document the import is about to replace.
+  parts.overlay.addEventListener(
+    "wheel",
+    (event) => {
+      if (!active || parts.overlay.firstChild?.contains(event.target)) return;
+      const target = io.scrollTarget?.();
+      if (!target) return;
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? target.clientHeight : 1;
+      target.scrollBy({ top: event.deltaY * unit, left: event.deltaX * unit });
+    },
+    { passive: true },
+  );
 
   return {
     run,

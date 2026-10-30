@@ -315,6 +315,28 @@ fn with_no_model_a_scan_reports_ocr_unavailable_and_still_imports() {
     assert!(text_of(&imported.document).is_empty());
 }
 
+// The editor starts loading its recognition models the moment a step reads a
+// scan (`docs/182` §17a.5), so the count must move page by page, before
+// `finish`. Mutation: count only `PageClass::Native` and every assertion on a
+// scan reads 0.
+#[test]
+fn scanned_pages_counts_scans_as_each_step_reads_them() {
+    let mut job = ImportJob::begin(blank_scan(2, ""), PdfReadLimits::default()).unwrap();
+    assert_eq!(job.scanned_pages(), 0, "nothing is read before a step");
+    assert!(matches!(job.step(1), Progress::Pending { .. }));
+    assert_eq!(
+        job.scanned_pages(),
+        1,
+        "the first scan is known after its step"
+    );
+    assert_eq!(job.step(1), Progress::Done);
+    assert_eq!(job.scanned_pages(), 2);
+    let mut native =
+        ImportJob::begin(fixture("synthetic-prose.pdf"), PdfReadLimits::default()).unwrap();
+    assert_eq!(native.step(usize::MAX), Progress::Done);
+    assert_eq!(native.scanned_pages(), 0, "a born-digital PDF has none");
+}
+
 #[test]
 fn a_born_digital_page_is_native_and_never_rasterised() {
     let scripted = Arc::new(Scripted::new(vec![(

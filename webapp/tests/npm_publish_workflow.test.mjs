@@ -113,7 +113,7 @@ test("the version check accepts pre-releases only", () => {
 
 test("every publish is next-tagged, public and provenanced, and latest is never named", () => {
   const publishing = STEPS.filter((s) => /npm publish/.test(s));
-  assert.equal(publishing.length, 2, "one publish step per package");
+  assert.equal(publishing.length, 3, "one publish step per package");
   for (const step of publishing) {
     assert.match(step, /args=\(--tag next --access public --provenance\)/);
     assert.match(step, /if \[\[ "\$\{DRY_RUN\}" == "true" \]\]; then\n\s+args\+=\(--dry-run\)/);
@@ -148,7 +148,13 @@ test("each package is version-bumped, packed and tested before it publishes", ()
   for (const step of STEPS.filter((s) => /npm version/.test(s))) {
     assert.match(step, /npm version "\$\{RELEASE_VERSION\}" --no-git-tag-version/);
   }
-  assert.equal(STEPS.filter((s) => /npm pack --dry-run/.test(s)).length, 2);
+  order([
+    "./packages/opendoc/build.sh",
+    "name: Set the SDK version",
+    "name: Inspect the SDK tarball",
+    "name: Publish the SDK package",
+  ]);
+  assert.equal(STEPS.filter((s) => /npm pack --dry-run/.test(s)).length, 3);
 });
 
 test("the npm token reaches the publish steps only, and nothing prints it", () => {

@@ -405,6 +405,8 @@ the workspace's crates.
 | `casual-doc-render-gpu` | Opt-in GPU backend for the display list (`vello_hybrid` on `wgpu`); the CPU raster stays the default and the reference |
 | `casual-doc-sdk` | Host-facing engine and document-session facade |
 | `opendoc-viewer` | Viewer SDK: open, paginate once, render pages, page text, outline, font hook, PDF; no editing crates (`docs/176`) |
+| `opendoc` | Native SDK facade: open, read view, edit batches over the operation set, docx-js-shaped builder, docxtemplater-style templates, loss-reported save and convert, page PNG and PDF (`docs/176` §12) |
+| `opendoc-ffi` | The Native SDK's C ABI (opaque handles, byte buffers, JSON) for Java FFM, .NET, C and C++; the one crate with a recorded `unsafe` exception (`docs/176` §6, §12.9) |
 | `casual-doc-wasm` | WebAssembly bridge: the document session, edit operations and page raster the editor drives |
 | `casual-doc-wasm-pdf` | The editor's lazily loaded PDF module: the reader, the importer and OCR behind a staged job, and the reading half of the byte-preserving save |
 | `opendoc-relay` | (`server/`) Optional collaboration relay that orders and forwards changes and holds no document |

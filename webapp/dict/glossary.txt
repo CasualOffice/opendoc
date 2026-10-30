@@ -337,6 +337,7 @@ checkmark
 checksums
 ciphertext
 cjk
+cli
 clippy
 cmap
 codebase
@@ -382,6 +383,7 @@ docProps
 docprops
 documentProtection
 docx
+docxtemplater
 dpi
 draggable
 drawSelection
@@ -406,6 +408,7 @@ etc
 fallbacks
 façade
 ffData
+ffi
 filesystem
 findable
 fitText
@@ -547,6 +550,7 @@ premultiplied
 preprocessing
 prev
 quantised
+quickstart
 quiesce
 rAF
 rPr
@@ -596,6 +600,7 @@ reviewable
 revisioned
 roadmap
 rsid
+rten
 rtf
 runnable
 rustdoc

@@ -98,6 +98,9 @@ function thirdPartyLicenceFiles() {
     "packages/opendoc-embed/NOTICE",
     "packages/opendoc-viewer/LICENSE",
     "packages/opendoc-viewer/NOTICE",
+    // The headless SDK package ships the repository's own licence and notice.
+    "packages/opendoc/LICENSE",
+    "packages/opendoc/NOTICE",
   ]);
   const found = [];
   for (const path of filesUnder(REPO)) {
