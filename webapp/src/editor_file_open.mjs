@@ -362,6 +362,8 @@ export function createFileOpen(ed) {
         ocr: origin === "pdf" ? ocrSummaryOf(ed.doc) : null,
         actions: origin ? () => pdfCommands.summaryActions() : null,
       });
+      // A scanned PDF is recognised straight away, downloading the models on first use.
+      if (origin === "pdf") queueMicrotask(() => pdfCommands.autoRecognise());
       ed.railOutline.disabled = ed.railPages.disabled = false;
       ed.reflowView.setEnabled();
       // The reader's formatting-mark preference, replayed onto the new handle: the

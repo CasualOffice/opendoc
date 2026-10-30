@@ -155,7 +155,7 @@ export function createPdfCommands(ed, io) {
 
   /** Re-imports the session's PDF with text recognition and puts the result
    *  on screen in its place. */
-  async function recogniseText() {
+  async function recogniseText({ auto = false } = {}) {
     const refusal = recogniseRefusal(state());
     if (refusal) {
       ed.setStatus(t(refusal), "error");
@@ -163,7 +163,7 @@ export function createPdfCommands(ed, io) {
     }
     const original = ed.doc.pdfOriginal();
     const name = ed.currentName;
-    if (!(await ed.confirmDiscardIfEdited())) return;
+    if (!auto && !(await ed.confirmDiscardIfEdited())) return;
     const url = ocrManifestUrl(search());
     let manifest;
     let store = null;
@@ -174,7 +174,10 @@ export function createPdfCommands(ed, io) {
       ed.setStatus(t("pdfOcr.failed", { reason: String(error?.message ?? error) }), "error");
       return;
     }
-    if (loaded?.url !== url && !(store && (await modelsStored(manifest, store).catch(() => false)))) {
+    // Run on its own right after a scanned PDF opens, the models download when
+    // they are needed, without a prompt (owner, 2026-10-30): the import dialog
+    // shows the progress and carries Cancel. Asked for by hand, it confirms first.
+    if (!auto && loaded?.url !== url && !(store && (await modelsStored(manifest, store).catch(() => false)))) {
       const agreed = await ed.confirmModal({
         title: t("pdfOcr.consentTitle"),
         message: t("pdfOcr.consentMessage", {
@@ -240,6 +243,12 @@ export function createPdfCommands(ed, io) {
 
   return {
     recogniseText,
+    /** Recognises a just-opened PDF's scanned pages on its own when models are
+     *  served; a no-op otherwise. Once OCR has run, the summary names its
+     *  provider and the refusal is "done", so this cannot loop. */
+    autoRecognise() {
+      if (recogniseRefusal(state()) === "") void recogniseText({ auto: true });
+    },
     convertToFlowing,
     keepExactLayout,
     /** The summary dialog's actions: the same two commands, as buttons. */
