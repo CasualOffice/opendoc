@@ -90,8 +90,8 @@ report.
 | OpenDocument Text | `.odt` | yes | yes | — |
 | Rich Text Format | `.rtf` | yes | — | Opens; there is no RTF writer. |
 | PDF | `.pdf` | yes | yes | Opens as fixed-layout pages (each page a section of page-anchored text boxes, pictures and shapes), through a PDF module the editor loads the first time a PDF is opened (`docs/182`); headless hosts register it with `enable_pdf_import`. File ▸ Convert to flowing document rebuilds it as paragraphs, headings, lists, tables and columns, as a new document. Scanned pages: text recognition (PaddleOCR on `rten`) runs only when the host names a model manifest (`?pdfOcrModels=`) and the reader agrees to the download. An unedited PDF saves back byte for byte; an edited one is written as an incremental update that keeps the original bytes, falling back to a regenerated PDF where an edit cannot be expressed that way (the save says so). Export: real, selectable text with embedded subset fonts (`docs/98`). |
-| Web Page | `.html`, `.htm` | — | yes | — |
-| Markdown | `.md`, `.markdown` | — | yes | — |
+| Web Page | `.html`, `.htm` | yes | yes | Opens through the paste path's mapping (headings, lists, tables, emphasis, links, code, quotes); scripts and styles are skipped unparsed, nothing is fetched. Saves as one self-contained file. |
+| Markdown | `.md`, `.markdown` | yes | yes | Opens CommonMark with GFM tables, task lists, strikethrough and footnotes as headings, real lists, tables, code, quotes and footnotes; a `.md` name selects it. Raw HTML is reported, not run; a remote picture is reported, never fetched. |
 | Plain Text | `.txt`, `.text` | yes | yes | — |
 | OpenDoc Normalized JSON | `.json` | yes | yes | — |
 <!-- @end support-formats -->

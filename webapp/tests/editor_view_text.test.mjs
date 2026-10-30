@@ -36,6 +36,7 @@ test("a Markdown file is inserted as Markdown; anything else is detected from it
   assert.equal(insertFormatFor("README.MARKDOWN"), "text.markdown");
   assert.equal(insertFormatFor("report.docx"), "");
   assert.equal(insertFormatFor("plain.txt"), "");
+  assert.equal(insertFormatFor("page.html"), "text.html");
 });
 
 test("the exported command ids are exactly the palette rows the module declares", () => {

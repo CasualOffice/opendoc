@@ -13,6 +13,7 @@
 // menu (`command_taxonomy.mjs`); Print selection is on the text context menu as
 // well, where ONLYOFFICE puts it, and Alt+X is a chord (`keymap.mjs`).
 import { t } from "./i18n.mjs";
+import { importFormatForName } from "./format_io.mjs";
 import { editRefusalMessage } from "./edit_errors.mjs";
 import { registerModal } from "./modal.mjs";
 import { loadPrefObject, savePrefObject } from "./prefs.mjs";
@@ -49,11 +50,11 @@ export function rowWidthFor(viewportWidth) {
   return Math.max(0, viewportWidth - ROW_MARGIN_PX);
 }
 
-/** The format id `insertDocumentFile` is asked to read a file as: Markdown by
- *  its name (Markdown is plain text, so the bytes cannot say), anything else
- *  detected from the bytes as Open does. */
+/** The format id `insertDocumentFile` is asked to read a file as: Markdown or
+ *  HTML by its name (their bytes cannot say), anything else detected from the
+ *  bytes as Open does. The same table Open reads (`format_io.mjs`). */
 export function insertFormatFor(name) {
-  return /\.(md|markdown)$/i.test(String(name ?? "")) ? "text.markdown" : "";
+  return importFormatForName(name) ?? "";
 }
 
 /** The command ids `paletteRows` declares, in its order. A test reads the

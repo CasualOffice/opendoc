@@ -50,6 +50,7 @@ Clippy
 Cmd
 Collabora
 Commenter
+CommonMark
 Ctrl
 DAI
 DOCX
