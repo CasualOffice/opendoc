@@ -710,7 +710,9 @@ fn the_quickstart_example_the_site_quotes_runs() {
     }
     let docx = Document::open(&std::fs::read(out.join("report.docx")).unwrap()).unwrap();
     assert!(
-        docx.paragraphs().iter().any(|p| p.text == "Revenue grew 12%"),
+        docx.paragraphs()
+            .iter()
+            .any(|p| p.text == "Revenue grew 12%"),
         "the example's paragraph is in the DOCX it wrote"
     );
     std::fs::remove_dir_all(&out).ok();

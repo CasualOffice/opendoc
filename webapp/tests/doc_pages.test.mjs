@@ -578,14 +578,15 @@ test("how much English the reference pages put on the site, measured and publish
   // assertion's failure output: 1,313 on the new page, and the rest is the new
   // rail entry, "Three SDK products", which every reference page carries. Any
   // edit to docs/176 moves this figure; re-measure it then.
+  // 4013 -> 4016: docs/176 §12.3 records the importer fix (RM-46). MEASURED.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    4013,
-    `the fourteen reference pages carry ${total} unrouted English strings (was 4013). That ` +
+    4016,
+    `the fourteen reference pages carry ${total} unrouted English strings (was 4016). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose, or a page was published. Regenerate the pages, then MEASURE and record ` +
       `the new figure here — do not calculate it. Per page: ` +

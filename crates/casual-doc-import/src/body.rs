@@ -8501,9 +8501,24 @@ impl BodyParser<'_> {
             // Drop the field's wrapper marker (it is the innermost) before routing
             // so its committed segment lands in the enclosing wrapper.
             self.pop_wrapper(WrapperKind::Field);
-            if field.instruction.is_empty() || field.instruction.len() > MAX_FIELD_INSTRUCTION_BYTES
+            // A cached result holding a hyperlink (or a field) cannot be a `Field`:
+            // the model's field result is leaf-only (`InlineWrapper::Field`). Word
+            // writes a linked table of contents as a field RANGE, which is legal,
+            // but other producers write a one-entry TOC whose begin and end sit in
+            // ONE paragraph, around the entry's `w:hyperlink`; that failed the whole
+            // document open (`docs/109` RM-46, `docs/176` §12.3). The field
+            // degrades to its result instead: the entry, its link and its text are
+            // kept, and the dropped instruction is reported.
+            let result_fits = segments_are_field_leaves(&field.segments);
+            if field.instruction.is_empty()
+                || field.instruction.len() > MAX_FIELD_INSTRUCTION_BYTES
+                || !result_fits
             {
-                self.reporter.report(b"fldChar");
+                self.reporter.report(if field.simple {
+                    b"fldSimple"
+                } else {
+                    b"fldChar"
+                });
                 for segment in field.segments {
                     self.push_segment(segment);
                 }
@@ -10265,6 +10280,20 @@ fn is_object_scaffolding(local: &[u8]) -> bool {
             | b"h"
             | b"wrap"
     )
+}
+
+/// Whether a field's cached result can sit inside an `InlineNode::Field`: the
+/// model admits leaf inlines only there, so a hyperlink or a further field
+/// anywhere inside (through the transparent revision and content-control
+/// wrappers, which pass the rule through) means it cannot. **O(segments)**.
+fn segments_are_field_leaves(segments: &[Segment]) -> bool {
+    segments.iter().all(|segment| match segment {
+        Segment::Hyperlink { .. } | Segment::Field { .. } => false,
+        Segment::Revision { children, .. } | Segment::Sdt { children, .. } => {
+            segments_are_field_leaves(children)
+        }
+        _ => true,
+    })
 }
 
 fn normalize_segments(segments: Vec<Segment>) -> Vec<Segment> {

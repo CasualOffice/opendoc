@@ -740,16 +740,18 @@ returned `"noted "` for a comment on `" noted"` after a footnote. `Document::com
 `revisions` now map anchors through both length functions (`ParagraphSpace`). The engine-side
 disagreement is the one recorded on `casual_doc_review::body::inline_anchor_len`.
 
-**An engine limit the builder found (open for the import lane).** A complex field whose
-begin and end sit in **one** paragraph, with a hyperlink in its cached result, fails the
-whole DOCX open. Model validation refuses a hyperlink inside a `Field`'s inlines (a field's
-result is leaf-only), and the importer turns that into "a fault in the document engine".
-A one-entry linked table of contents written that way is a valid file. The builder now
-writes Word's own shape: the field's end goes in a paragraph after the last entry, so the
-TOC is a field range (`a_linked_table_of_contents_opens_and_lists_each_heading`). The
-importer still refuses the single-paragraph shape from any other producer. The fix belongs
-in `casual-doc-import`: degrade the field, as its result text, instead of failing the
-document. It is `docs/109` RM-46's open item.
+**An engine limit the builder found, now fixed in the importer.** A complex field whose
+begin and end sit in **one** paragraph, with a hyperlink in its cached result, failed the
+whole DOCX open: model validation refuses a hyperlink inside a `Field`'s inlines (a field's
+result is leaf-only), and the importer turned that into "a fault in the document engine".
+A one-entry linked table of contents written that way is a valid file. The builder writes
+Word's own shape, a field range (`a_linked_table_of_contents_opens_and_lists_each_heading`).
+`casual-doc-import` now degrades such a field to its result (`commit_field`,
+`segments_are_field_leaves`): the entry, its hyperlink and its text are kept, and the dropped
+instruction is reported as `fldChar` or `fldSimple`. Guard:
+`a_single_paragraph_field_around_a_hyperlink_degrades_to_its_result`, for both encodings.
+Mutation: with the leaf check forced true, the open failed again with
+`Model(NestedHyperlink(..))`.
 
 ### 12.4 Guards (S1)
 

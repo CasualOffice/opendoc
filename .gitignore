@@ -59,7 +59,10 @@ node_modules
 # Clone with:
 #   git clone --depth 1 https://github.com/ONLYOFFICE/sdkjs reference/sdkjs
 #   git clone --depth 1 https://github.com/ONLYOFFICE/web-apps reference/web-apps
-reference/
+# Anchored to the root: unanchored, it also matched `webapp/reference/`, the
+# generated reference pages, so a newly published page was left out of the
+# commit while `build-doc-pages --check` expected it.
+/reference/
 
 # The wasm render bench is outside the workspace; its lock is local only (docs/179 §2).
 /benchmarks/render-wasm/Cargo.lock
