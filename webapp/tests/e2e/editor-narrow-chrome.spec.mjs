@@ -165,8 +165,7 @@ test("a narrow window spends nothing on rail captions, and loses no destination 
   expect(RAIL).toHaveLength(4);
 });
 
-// QUARANTINED (2026-10-30): a 36px toast covers the drawer's footer band. Being fixed in #918.
-test.fixme("a status toast never covers the footer action of an open drawer", async ({ page }) => {
+test("a status toast never covers the footer action of an open drawer", async ({ page }) => {
   // A phone window: the side panel is a drawer pinned to the right edge, the
   // footer's informational half is gone, and the toast is therefore the ONLY
   // visible channel — which is exactly why it must not land on the one control
@@ -198,10 +197,17 @@ test.fixme("a status toast never covers the footer action of an open drawer", as
       onTheAction: intersects(card, rect("#versionClearBtn")),
       onTheDrawer: intersects(card, rect("#versionPanel")),
       toastHeight: Math.round(card.height),
-      band: Number.parseInt(
-        getComputedStyle(document.documentElement).getPropertyValue("--h-toast-band"),
-        10,
-      ),
+      // The token RESOLVED to pixels, by laying it out: it is authored in rem
+      // (`3.5rem`), and parsing the declared text read that as 3, which made a
+      // 36px toast look taller than a 56px band.
+      band: (() => {
+        const probe = document.createElement("div");
+        probe.style.cssText = "position:absolute;visibility:hidden;height:var(--h-toast-band)";
+        document.body.append(probe);
+        const px = Math.round(probe.getBoundingClientRect().height);
+        probe.remove();
+        return px;
+      })(),
     };
   });
   // The guarantee HF-233 names: the drawer's pinned action stays readable.
