@@ -1762,3 +1762,69 @@ Every fix has a regression test in `reflow/tests.rs`, `casual-doc-pdf-read`'s `t
 6. Time: `irs-p17.pdf` (300 pages) takes 19 to 26 s on the measuring machine, which was busy
    with other jobs; the reflow's doubling guards hold, but the absolute figure needs a quiet
    machine.
+
+### 18.11 What a person sees: reflowed pages next to the originals (2026-10-31)
+
+The owner (2026-10-30): "Layout on reflow for PDF has many issues … the mapping is not
+good", then "even the reflow of the PDF version of our own `sample.docx` is broken." The
+method is now to look: every original page (rasterised) beside the reflowed document's page
+(the flowing DOCX through `opendoc-render`), defects listed per page, ranked by how often
+they appear and how bad they look, fixed at the root, and looked at again.
+
+**The instrument, extended.** `tools/opendoc-reflow-score`:
+
+- `docx <file.pdf> <out.docx>` writes the flowing document as DOCX, so `opendoc-render`
+  draws exactly what a host opens.
+- A **layout** family on the matched paragraphs: alignment, line pitch (within 12%) and the
+  space down to the next paragraph (after plus the next one's before, within 3 pt or a
+  quarter). Every earlier family scored the structure only, so a reflow that ran every
+  paragraph together at single spacing scored as well as one set like the source.
+- A scorer fix: a paragraph that names no style takes the document's default paragraph style
+  (Normal). The scorer had read Normal's run formatting and spacing as absent, so
+  `formatting` was 0.852 on `sample.docx` for a reflow whose sizes were right; it is 1.000
+  for the same reflow. The §18.10 `formatting` figures understated by that much.
+
+**The files looked at.** `sample.docx` through our own writer; three PDFs the owner supplied
+(a one-page Quartz "Pages" export in Helvetica Neue Light, a 30-page LibreOffice Writer
+export with tables, a chart, pictures and synthesised italics, and an 8-page scanned letter
+with no text layer). The owner's files stay on the owner's machine: nothing of their
+content is in the repository; only the defect families are recorded here.
+
+**Families fixed** (each with a synthetic regression test in `reflow/tests_layout.rs`, each
+driven red by the mutation named in its commit):
+
+| Family | What a person saw | Root cause | Fix |
+| --- | --- | --- | --- |
+| Emphasis split paragraphs | A bold or italic phrase that filled most of a line ended the paragraph there, and the emphasised piece became a false Heading 2 | `segment` and `continues` broke on any change of the line's dominant font key | A change of weight, slant or family alone breaks only after a line that stopped short of the column (`text::restyled`); a change of size still breaks |
+| Rhythm | Every reflow was dense: single line spacing and a fixed 0.6 em after each paragraph, whatever the PDF set | No measurement | `emit::rhythm` measures the body's baseline pitch (Normal's `auto` percentage against a 1.15 em single line), the space between paragraphs in a column (Normal's after, each heading level's before and after, list items'), and per paragraph its own leading and space where they differ clearly from Normal's (a title, a subtitle, a caption, a 10 pt block in an 11 pt document) |
+| Bevelled table borders | LibreOffice tables reflowed as loose lines with stray strokes through the text | Each border is a filled six-cornered bar with bevelled ends; `record::rectangles` accepted four corners at most | A polygon of any corners within a rule's thickness of one axis is a bar (`thin_polygon`) |
+| Ruled rows and the space under a table | Rows a third shorter than the PDF's; the paragraph under a table touched it | Row height was the text's; nothing carried the gap below a table, picture or drawing | Ruled rows keep the PDF's height as `atLeast`; cell paragraphs have no space after; the paragraph under a table, picture or drawing carries the measured gap as space before |
+| Oversized pictures | A scanned page reflowed as two: the picture cut off on the right, then a blank page | The picture kept the page's size inside a column with margins | An inline picture is scaled, aspect kept, to the column's width and the body's height (`emit::fit`), as Word and Google Docs fit a pasted picture |
+| Synthesised italics | Italic text (LibreOffice and Quartz slant an upright face when the family has no italic) came out upright, in both layouts | Italic was read from the font's flags only | `casual-doc-pdf-read` reports a run whose text matrix shears its vertical 6 to 30 degrees off the baseline's perpendicular (`GlyphRunEvidence::oblique`); the fixed layout and the reflow make it italic |
+| Heading alignment | A centred title or heading came out left-aligned | Alignment was applied to body paragraphs only | A heading's or title's centring and end alignment are its own paragraph properties |
+| Headings that are sentences | A larger bold heading that ends with a full stop ("Lorem ipsum dolor sit amet, consectetur adipiscing elit.") was body text | A key's paragraphs had to avoid prose endings to be a heading level | A key larger than the body counts its brief paragraphs (≤ 3 lines, ≤ 200 characters) whatever their ending; a key only bolder than the body still must not read like prose |
+
+**`sample.docx` through our writer, before and after** (the scorer fix applied to both):
+
+| Family | Before | After |
+| --- | --- | --- |
+| layout (alignment, line pitch, space below) | 0.512 | 0.761 |
+| text, paragraphs, headings, lists, tables, header and footer, columns, page, formatting, special, pictures, notes, frames | unchanged | unchanged |
+
+Of the 110 matched paragraphs, line pitch agreed on 3 before and 60 after, the space below on
+59 before and 84 after; alignment was already right on 107.
+
+**Still weak on these files**, in the order they hurt:
+
+1. Text decorations and fills drawn as paths: underline, strikethrough and highlight come
+   out as plain text with a stray rectangle beside it; a paragraph's bottom border is lost;
+   a shaded paragraph or code block's fill is placed as a drawing above or below its text.
+2. Borderless tables whose columns are set by fills: the table is as narrow as its text, and
+   the fills of its cells are placed as drawings under it.
+3. Text inside a chart (axis labels, legend) reflows as loose one-word paragraphs beside the
+   chart's drawing.
+4. Text wrapped around a picture: the lines beside it start a new paragraph at the picture's
+   edge.
+5. Light weights (Helvetica Neue Light and UltraLight) map to the regular face: the model has
+   bold and not a weight.
+6. A scanned PDF has no text without an OCR provider; the headless tools have none.

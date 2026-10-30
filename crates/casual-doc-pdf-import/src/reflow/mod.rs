@@ -593,7 +593,7 @@ pub(crate) fn key_of(state: &PdfSourceState) -> impl Fn(&PChar) -> FontKey + '_ 
             family,
             half_points: c.style.half_points,
             bold,
-            italic,
+            italic: italic || c.style.oblique,
         }
     }
 }
@@ -1501,3 +1501,5 @@ fn annotation_target(annotation: &AnnotationEvidence) -> LinkTarget {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_layout;

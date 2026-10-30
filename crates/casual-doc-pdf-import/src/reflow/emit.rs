@@ -24,6 +24,8 @@ use casual_doc_model::v1::{
 use casual_doc_model::v1::{BorderEdge, NoteNumberRestart, NoteProperties, TableBorders};
 // Own line: cell shading from the PDF's filled rectangles.
 use casual_doc_model::v1::Shading;
+// Own line: ruled rows keep the PDF's height.
+use casual_doc_model::v1::{HeightRule, RowHeight};
 // Own line: floating pictures and vector art.
 use casual_doc_model::v1::{
     AnchorHorizontal, AnchorVertical, AnchoredDrawing, DrawingAnchor, HorizontalAnchor,
@@ -91,6 +93,21 @@ struct IPara {
     /// The first line's top (floats are placed from it).
     top: f64,
     first_bottom: f64,
+    /// The first line's baseline (the space above it is measured from it).
+    first_baseline: f64,
+    /// The median distance from one baseline to the next inside it, when it
+    /// has two lines on one page.
+    pitch: Option<f64>,
+    /// Every baseline-to-baseline step inside it, its joined pieces'
+    /// included (a producer that writes each line as its own text object
+    /// leaves every paragraph in one-line pieces).
+    steps: Vec<f64>,
+    /// The space between a table, picture or drawing above it on its page
+    /// and its first line.
+    gap_above: Option<f64>,
+    /// The space between its last line and the paragraph under it in the
+    /// same column (`rhythm`).
+    gap_below: Option<f64>,
     first_x0: f64,
     rest_x0: Option<f64>,
     column_left: f64,
@@ -158,6 +175,9 @@ struct Emitter<'a> {
     notes: Vec<Option<NoteId>>,
     /// The last float's stacking key (paint order).
     z: u32,
+    /// The measured vertical rhythm (line pitch, the space between
+    /// paragraphs).
+    rhythm: Rhythm,
     /// Vector paths a clip cut into, and paths split over the command bound.
     vector_clipped: u32,
     vector_split: u32,
@@ -255,6 +275,51 @@ impl Emitter<'_> {
             }
         }
         Ok(out)
+    }
+
+    /// A body paragraph's own spacing where it is not Normal's: set in
+    /// another size (a title or subtitle the sheet did not make a style, a
+    /// caption, a note), its lines are single, or its own measured pitch;
+    /// and the space under it, where the PDF left clearly more or less than
+    /// Normal's (a block set apart, an address packed tight). Small
+    /// differences are Normal's: a position rounding is not a choice. O(1).
+    fn own_spacing(&self, para: &IPara) -> Option<Spacing> {
+        let r = &self.rhythm;
+        let size = size_of(para)?;
+        let mut spacing = Spacing::default();
+        let mut set = false;
+        // Its own leading: its lines' pitch, else the pitch the document
+        // sets its size at; where that is not what Normal's spacing gives it,
+        // its own percentage (a 10 pt block in an 11 pt document set at the
+        // same 14.5 pt is 126%, not Normal's single).
+        let inherited = f64::from(r.line_percent.unwrap_or(100)) / 100.0;
+        let half = (size * 2.0).round() as u32;
+        let own = para
+            .pitch
+            .map(|p| p / size)
+            .or_else(|| r.ratio_by_size.get(&half).copied())
+            .filter(|ratio| (0.8..=3.5).contains(ratio))
+            .map(|ratio| ratio / SINGLE_LINE_EMS);
+        let wanted = match own {
+            Some(f) => Some(f),
+            // Not measured: a size other than the body's sets single lines.
+            None if (size - r.body_size).abs() > 0.5 => Some(1.0),
+            None => None,
+        };
+        if let Some(f) = wanted
+            && (f - inherited).abs() > SINGLE_TOLERANCE
+        {
+            spacing.line_percent = Some((f * 100.0).round().clamp(80.0, 300.0) as u16);
+            set = true;
+        }
+        let normal = r.body_after.unwrap_or(r.body_size * 0.6);
+        if let Some(gap) = para.gap_below
+            && (gap - normal).abs() > (0.25 * r.body_size).max(3.0)
+        {
+            spacing.after_twips = Some(twips(gap));
+            set = true;
+        }
+        set.then_some(spacing)
     }
 
     fn style_key(&self, para: &IPara) -> Option<FontKey> {
@@ -454,6 +519,16 @@ impl Emitter<'_> {
         };
         if let Some((instance, level)) = para.list {
             properties.numbering = Some(NumberingRef { instance, level });
+            // The space the PDF left between items, where it differs from
+            // Normal's (a list set apart item by item, or packed tight).
+            if let Some(after) = self.rhythm.list_after
+                && (after - self.rhythm.body_after.unwrap_or(after)).abs() > 1.0
+            {
+                properties.spacing = Some(Spacing {
+                    after_twips: Some(twips(after)),
+                    ..Spacing::default()
+                });
+            }
         } else if para.heading.is_none() {
             let start = para.rest_x0.unwrap_or(para.first_x0) - para.column_left;
             let first = para.rest_x0.map(|rest| para.first_x0 - rest);
@@ -479,9 +554,27 @@ impl Emitter<'_> {
             if para.floats.iter().any(|f| f.wrap == FloatWrap::Beside) {
                 properties.indentation = None;
             }
+        } else if para.centred {
+            // A centred heading or title stays centred (its style is the
+            // document's, its alignment is the paragraph's own).
+            properties.alignment = Some(Alignment::Center);
+        } else if para.end_aligned {
+            properties.alignment = Some(Alignment::End);
         }
         if para.page_break {
             properties.page_break_before = Some(true);
+        }
+        if para.heading.is_none() && para.list.is_none() {
+            properties.spacing = self.own_spacing(para);
+        }
+        // Below a table, a picture or a drawing, the space the PDF left
+        // (nothing in Word's model puts space after a table: the paragraph
+        // under it carries it, as Word's own users do).
+        if let Some(gap) = para.gap_above.filter(|g| *g > 1.0) {
+            properties.spacing = Some(Spacing {
+                before_twips: Some(twips(gap)),
+                ..properties.spacing.unwrap_or_default()
+            });
         }
         let chars = &para.chars[para.marker_len.min(para.chars.len())..];
         let start = chars
@@ -537,7 +630,7 @@ impl Emitter<'_> {
                         let inlines = self.inlines(&chars, body.as_ref())?;
                         blocks.push(BlockNode::Paragraph(Paragraph {
                             id,
-                            properties: ParagraphProperties::default().into(),
+                            properties: cell_paragraph(),
                             inlines,
                         }));
                     }
@@ -577,6 +670,11 @@ impl Emitter<'_> {
                 id: self.id()?,
                 properties: TableRowProperties {
                     header: r < table.header_rows,
+                    height: if table.ruled {
+                        row_height(row)
+                    } else {
+                        RowHeight::default()
+                    },
                     ..TableRowProperties::default()
                 },
                 cells,
@@ -613,6 +711,42 @@ impl Emitter<'_> {
             rows,
         })
     }
+}
+
+/// A ruled row's height as the PDF drew it, as a minimum (`atLeast`, so
+/// text the substitute face sets wider can still grow it): the shortest of
+/// its cells that start in it and span no other row. A row reflowed at its
+/// text's height was a third shorter than the PDF's (LibreOffice and Word
+/// pad cells) and the table read as cramped. O(cells).
+fn row_height(row: &[super::tables::ICell]) -> RowHeight {
+    let height = row
+        .iter()
+        .filter(|c| c.vmerge.is_none())
+        .map(|c| c.y1 - c.y0)
+        .filter(|h| *h > 0.0)
+        .fold(f64::INFINITY, f64::min);
+    if height.is_finite() {
+        RowHeight {
+            value_twips: Some(u32::try_from(twips(height).clamp(0, 31_680)).unwrap_or(0)),
+            rule: Some(HeightRule::AtLeast),
+        }
+    } else {
+        RowHeight::default()
+    }
+}
+
+/// A cell paragraph's properties: no space after it (the row's height, or
+/// the cell's padding, is the space; Normal's measured space between body
+/// paragraphs inside every cell made each row a line taller). O(1).
+fn cell_paragraph() -> casual_doc_model::v1::SharedParagraphProperties {
+    ParagraphProperties {
+        spacing: Some(Spacing {
+            after_twips: Some(0),
+            ..Spacing::default()
+        }),
+        ..ParagraphProperties::default()
+    }
+    .into()
 }
 
 /// A table grid column's width in twips, inside the model's domain: a
@@ -823,6 +957,8 @@ pub(crate) fn emit(
     let mut page_breaks = 0;
     let mut justified_count = 0;
     let (_, body_top, _, body_bottom) = flow.body;
+    // The bottom of the last table, picture or drawing placed, and its page.
+    let mut object_bottom: Option<(usize, f64)> = None;
     for element in &flow.elements {
         // A page whose content stopped well above the body's bottom ended
         // in a break: the next page's first new paragraph starts a page.
@@ -880,6 +1016,12 @@ pub(crate) fn emit(
                             };
                             prev.chars = glued;
                             prev.lines += refs.len() - usize::from(same_line);
+                            if !same_line && let Some(last) = prev.last_line.as_ref() {
+                                let mut more = steps(&[last, refs[0]]);
+                                more.extend(steps(&refs));
+                                prev.steps.extend(more);
+                                prev.pitch = median(prev.steps.clone());
+                            }
                             let start = prev.last_line.as_ref().map(|l| l.x0);
                             prev.last_line = refs.last().map(|l| {
                                 let mut line = (*l).clone();
@@ -924,6 +1066,21 @@ pub(crate) fn emit(
                         page: element.page,
                         top: refs[0].top,
                         first_bottom: refs[0].bottom,
+                        first_baseline: refs[0].baseline,
+                        pitch: median(steps(&refs)),
+                        steps: steps(&refs),
+                        gap_above: (n == 0)
+                            .then_some(object_bottom)
+                            .flatten()
+                            .filter(|_| {
+                                matches!(
+                                    items.last(),
+                                    Some(Item::Table(..) | Item::Image(..) | Item::Vector(..))
+                                )
+                            })
+                            .filter(|(page, _)| *page == element.page)
+                            .map(|(_, bottom)| refs[0].top - bottom)
+                            .filter(|gap| (0.0..=72.0).contains(gap)),
                         first_x0,
                         rest_x0,
                         column_left,
@@ -962,10 +1119,17 @@ pub(crate) fn emit(
                 if !element.floats.is_empty() {
                     items.push(Item::Floats(element.floats.clone(), element.region));
                 }
+                object_bottom = Some((element.page, table.bounds.3));
                 items.push(Item::Table(table.clone(), element.region));
             }
-            EKind::Image(image) => items.push(Item::Image(image.clone(), element.region)),
-            EKind::Vector(vector) => items.push(Item::Vector(vector.clone(), element.region)),
+            EKind::Image(image) => {
+                object_bottom = Some((element.page, image.bounds.y1));
+                items.push(Item::Image(image.clone(), element.region));
+            }
+            EKind::Vector(vector) => {
+                object_bottom = Some((element.page, vector.bounds.y1));
+                items.push(Item::Vector(vector.clone(), element.region));
+            }
         }
     }
     findings.record(
@@ -1018,6 +1182,7 @@ pub(crate) fn emit(
         comments: Vec::new(),
         notes: Vec::new(),
         z: 0,
+        rhythm: Rhythm::default(),
         vector_clipped: 0,
         vector_split: 0,
     };
@@ -1047,6 +1212,13 @@ pub(crate) fn emit(
     // Every level used needs a style: a tagged level the fonts did not
     // produce takes the font of its first paragraph.
     emitter.heading_keys = emitter.sheet.headings.clone();
+    let (measured, below) = rhythm(&items, emitter.sheet.body.as_ref());
+    emitter.rhythm = measured;
+    for (item, gap) in items.iter_mut().zip(below) {
+        if let Item::Para(p) = item {
+            p.gap_below = gap;
+        }
+    }
     // The Title, when a paragraph is one: the sheet's key, or a tagged
     // `Title`'s own font.
     emitter.title_key = items
@@ -1095,7 +1267,13 @@ pub(crate) fn emit(
             ParagraphProperties {
                 spacing: Some(Spacing {
                     before_twips: Some(0),
-                    after_twips: Some(twips(f64::from(body.half_points) / 2.0 * 0.6)),
+                    after_twips: Some(twips(
+                        emitter
+                            .rhythm
+                            .body_after
+                            .unwrap_or(f64::from(body.half_points) / 2.0 * 0.6),
+                    )),
+                    line_percent: emitter.rhythm.line_percent,
                     ..Spacing::default()
                 }),
                 ..ParagraphProperties::default()
@@ -1106,6 +1284,19 @@ pub(crate) fn emit(
         emitter.styles.push((id, normal));
         emitter.normal = Some(id);
         let headings = emitter.heading_keys.clone();
+        let rhythm = emitter.rhythm.clone();
+        let level_before = |level: usize| {
+            u8::try_from(level)
+                .ok()
+                .and_then(|l| rhythm.heading_before.get(&l))
+                .copied()
+        };
+        let level_after = |level: usize| {
+            u8::try_from(level)
+                .ok()
+                .and_then(|l| rhythm.heading_after.get(&l))
+                .copied()
+        };
         for (i, heading) in headings.iter().enumerate() {
             let hid = StyleId::new(emitter.id()?);
             let mut s = style(
@@ -1115,8 +1306,17 @@ pub(crate) fn emit(
                     outline_level: u8::try_from(i).ok(),
                     keep_next: Some(true),
                     spacing: Some(Spacing {
-                        before_twips: Some(twips(f64::from(heading.half_points) / 2.0 * 0.8)),
-                        after_twips: Some(twips(f64::from(heading.half_points) / 2.0 * 0.3)),
+                        before_twips: Some(twips(
+                            level_before(i + 1)
+                                .unwrap_or(f64::from(heading.half_points) / 2.0 * 0.8),
+                        )),
+                        after_twips: Some(twips(
+                            level_after(i + 1)
+                                .unwrap_or(f64::from(heading.half_points) / 2.0 * 0.3),
+                        )),
+                        // Normal's measured leading is the body's; a heading
+                        // set in a larger size keeps single lines.
+                        line_percent: rhythm.line_percent.map(|_| 100),
                         ..Spacing::default()
                     }),
                     ..ParagraphProperties::default()
@@ -1137,7 +1337,10 @@ pub(crate) fn emit(
                 ParagraphProperties {
                     spacing: Some(Spacing {
                         before_twips: Some(0),
-                        after_twips: Some(twips(f64::from(title.half_points) / 2.0 * 0.3)),
+                        after_twips: Some(twips(
+                            level_after(0).unwrap_or(f64::from(title.half_points) / 2.0 * 0.3),
+                        )),
+                        line_percent: rhythm.line_percent.map(|_| 100),
                         ..Spacing::default()
                     }),
                     ..ParagraphProperties::default()
@@ -1405,15 +1608,22 @@ pub(crate) fn emit(
                     inlines,
                 }));
             }
-            Item::Image(image, _) => {
+            Item::Image(image, region) => {
                 let media = emitter.media(image)?;
                 let b = image.bounds;
+                let (left, right) = column(&flow, *region, None, b.x0, page_w);
+                let room = (
+                    right - left,
+                    // The paragraph's own space after it shares the page.
+                    by1 - by0 - emitter.rhythm.body_after.unwrap_or(0.0) - 2.0,
+                );
+                let (width, height) = fit(b.width(), b.height(), room);
                 let drawing = Drawing {
                     id: emitter.id()?,
                     media,
                     extent: Some(Extent {
-                        width_emu: ((b.x1 - b.x0) * 12_700.0).round().max(1.0) as i64,
-                        height_emu: ((b.y1 - b.y0) * 12_700.0).round().max(1.0) as i64,
+                        width_emu: (width * 12_700.0).round().max(1.0) as i64,
+                        height_emu: (height * 12_700.0).round().max(1.0) as i64,
                     }),
                     descr: None,
                     crop: None,
@@ -1619,6 +1829,219 @@ pub(crate) fn emit(
 
 /// Appends `more` to `chars` with a space, or de-hyphenated. Returns the
 /// joined characters and the hyphens removed.
+/// The typical single line of a text face, as a multiple of its size: the
+/// ascent, descent and line gap of Arial, Liberation Sans, Times New Roman
+/// and Helvetica all come to about 1.15 em, so `auto` spacing of 100% sets
+/// lines that far apart. Measured PDF leading is expressed against it.
+pub const SINGLE_LINE_EMS: f64 = 1.15;
+
+/// A measured leading within this share of single is single (no direct
+/// value): the rounding of a PDF's positions is not a spacing choice.
+const SINGLE_TOLERANCE: f64 = 0.05;
+
+/// The document's vertical rhythm as the PDF set it: line spacing for
+/// Normal, the space after a body paragraph, before and after each heading
+/// level (index 0 is the Title), and between list items. Every value is a
+/// median over the pairs that show it, so one paragraph pushed down by a
+/// float or a page's leftover space does not set it. Points; `None` keeps
+/// the default.
+#[derive(Clone, Debug, Default)]
+struct Rhythm {
+    /// `auto` line spacing for Normal, in percent of single.
+    line_percent: Option<u16>,
+    body_after: Option<f64>,
+    /// Normal's size, in points.
+    body_size: f64,
+    heading_before: BTreeMap<u8, f64>,
+    heading_after: BTreeMap<u8, f64>,
+    list_after: Option<f64>,
+    /// Per size (half points), the median pitch over size of the
+    /// paragraphs set in it that have two lines or more.
+    ratio_by_size: BTreeMap<u32, f64>,
+}
+
+/// A picture's size scaled down, aspect kept, to fit `room` (the column's
+/// width, the body's height). A picture the PDF drew over the margins (a
+/// scanned page is one picture the size of the page) overflowed the column
+/// on the right and the page at the bottom, and each scanned page reflowed
+/// as two: the picture cut off, then a blank page. Word and Google Docs fit
+/// a pasted picture to the column the same way. O(1).
+pub(super) fn fit(width: f64, height: f64, room: (f64, f64)) -> (f64, f64) {
+    let scale = (room.0 / width.max(1e-6))
+        .min(room.1 / height.max(1e-6))
+        .min(1.0);
+    if scale > 0.0 && scale.is_finite() {
+        (width * scale, height * scale)
+    } else {
+        (width, height)
+    }
+}
+
+/// The median of `values`, or `None` when there are none. O(n log n).
+fn median(mut values: Vec<f64>) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(f64::total_cmp);
+    Some(values[values.len() / 2])
+}
+
+/// The distances between consecutive baselines of `lines` on one page,
+/// ignoring a step larger than three of its ems (a paragraph that carried
+/// on below a figure) or one that goes back up (a column change). O(lines).
+fn steps(lines: &[&ILine]) -> Vec<f64> {
+    lines
+        .windows(2)
+        .filter(|w| w[0].page == w[1].page)
+        .map(|w| w[1].baseline - w[0].baseline)
+        .filter(|step| *step > 0.0)
+        .filter(|step| *step <= 3.0 * lines[0].size.max(1.0))
+        .collect()
+}
+
+/// The size most of a paragraph's characters are set in, in points.
+/// O(characters).
+fn size_of(p: &IPara) -> Option<f64> {
+    let mut counts: BTreeMap<u32, usize> = BTreeMap::new();
+    for c in &p.chars {
+        if !c.text.trim().is_empty() && !c.sup {
+            *counts.entry(c.style.half_points).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .max_by_key(|(half, n)| (*n, std::cmp::Reverse(*half)))
+        .map(|(half, _)| f64::from(half) / 2.0)
+}
+
+/// Measures the rhythm: the body's line pitch over its size gives Normal's
+/// line spacing; the space between two paragraphs one above the other in a
+/// column is the distance between the first's last baseline and the
+/// second's first, less the second's own line (its size times the line
+/// ratio it is given: the body's measured one at the body's size, single
+/// otherwise). Before the measurement Normal had a fixed 0.6 em after it
+/// and single spacing whatever the PDF set, so a document set at 1.4 lines
+/// with a blank line between paragraphs reflowed dense and run together.
+/// Returns the rhythm and, per item, the space below it when the next item
+/// is a paragraph under it in the same column. O(paragraphs log paragraphs).
+fn rhythm(items: &[Item], body: Option<&FontKey>) -> (Rhythm, Vec<Option<f64>>) {
+    let mut below = vec![None; items.len()];
+    let Some(body) = body else {
+        return (Rhythm::default(), below);
+    };
+    let body_size = f64::from(body.half_points) / 2.0;
+    let at_body = |p: &IPara| size_of(p).is_some_and(|s| (s - body_size).abs() <= 0.5);
+    let plain = |p: &IPara| p.heading.is_none() && p.list.is_none();
+    let ratio = median(
+        items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Para(p) if plain(p) && at_body(p) => p.pitch,
+                _ => None,
+            })
+            .map(|pitch| pitch / body_size.max(1.0))
+            .filter(|r| (0.8..=3.5).contains(r))
+            .collect(),
+    );
+    let mut by_size: BTreeMap<u32, Vec<f64>> = BTreeMap::new();
+    for item in items {
+        if let Item::Para(p) = item
+            && plain(p)
+            && let (Some(pitch), Some(size)) = (p.pitch, size_of(p))
+        {
+            by_size
+                .entry((size * 2.0).round() as u32)
+                .or_default()
+                .push(pitch / size.max(1.0));
+        }
+    }
+    let ratio_by_size: BTreeMap<u32, f64> = by_size
+        .into_iter()
+        .filter_map(|(half, ratios)| median(ratios).map(|m| (half, m)))
+        .collect();
+    let line_percent = ratio
+        .map(|r| r / SINGLE_LINE_EMS)
+        .filter(|f| (f - 1.0).abs() > SINGLE_TOLERANCE)
+        .map(|f| (f * 100.0).round().clamp(80.0, 300.0) as u16);
+    let body_ratio =
+        line_percent.map_or(SINGLE_LINE_EMS, |p| f64::from(p) / 100.0 * SINGLE_LINE_EMS);
+    let mut body_gaps = Vec::new();
+    let mut list_gaps = Vec::new();
+    let mut before: BTreeMap<u8, Vec<f64>> = BTreeMap::new();
+    let mut after: BTreeMap<u8, Vec<f64>> = BTreeMap::new();
+    for (k, pair) in items.windows(2).enumerate() {
+        let (Item::Para(a), Item::Para(b)) = (&pair[0], &pair[1]) else {
+            continue;
+        };
+        let Some(last) = a.last_line.as_ref() else {
+            continue;
+        };
+        if last.page != b.page
+            || a.region != b.region
+            || (a.column_left - b.column_left).abs() > 1.0
+            || b.first_baseline <= last.baseline
+        {
+            continue;
+        }
+        let size = size_of(b).unwrap_or(body_size);
+        // The line `b` is given: its own measured leading (`own_spacing`)
+        // when it is body text, else the body's or single.
+        let measured: Option<f64> = b
+            .pitch
+            .map(|p| p / size.max(1.0))
+            .or_else(|| ratio_by_size.get(&((size * 2.0).round() as u32)).copied())
+            .filter(|ratio| (0.8..=3.5).contains(ratio));
+        let line = match (plain(b), measured) {
+            (true, Some(ratio)) => ratio,
+            (true, None) if at_body(b) => body_ratio,
+            _ => SINGLE_LINE_EMS,
+        };
+        let gap = b.first_baseline - last.baseline - size * line;
+        // A gap of more than six body lines is a page's or a figure's space,
+        // not the paragraph's.
+        if !(-0.5 * body_size..=6.0 * body_size * body_ratio).contains(&gap) {
+            continue;
+        }
+        let gap = gap.max(0.0);
+        // Above a heading the space is the heading style's.
+        if b.heading.is_none() {
+            below[k] = Some(gap);
+        }
+        if let Some(level) = b.heading {
+            before.entry(level).or_default().push(gap);
+        }
+        if let Some(level) = a.heading {
+            after.entry(level).or_default().push(gap);
+        } else if a.list.is_some() && b.list.is_some() && a.list.map(|l| l.0) == b.list.map(|l| l.0)
+        {
+            list_gaps.push(gap);
+        } else if plain(a) && plain(b) && at_body(a) && at_body(b) {
+            body_gaps.push(gap);
+        }
+    }
+    let body_after = median(body_gaps);
+    let rhythm = Rhythm {
+        line_percent,
+        body_after,
+        body_size,
+        // The space above a heading is what is left after the paragraph
+        // before it has put its own space after (Word adds the two).
+        heading_before: before
+            .into_iter()
+            .filter_map(|(level, gaps)| {
+                median(gaps).map(|g| (level, (g - body_after.unwrap_or(0.0)).max(0.0)))
+            })
+            .collect(),
+        heading_after: after
+            .into_iter()
+            .filter_map(|(level, gaps)| median(gaps).map(|g| (level, g)))
+            .collect(),
+        list_after: median(list_gaps),
+        ratio_by_size,
+    };
+    (rhythm, below)
+}
+
 fn glue(mut chars: Vec<PChar>, more: Vec<PChar>) -> (Vec<PChar>, u32) {
     while chars.last().is_some_and(|c| c.text.trim().is_empty()) {
         chars.pop();

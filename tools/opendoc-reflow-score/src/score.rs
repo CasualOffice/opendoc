@@ -150,6 +150,34 @@ pub fn score(src: &Summary, out: &Summary) -> Value {
     let (mut ltp, mut lfp, mut lfn, mut llevel) = (0, 0, 0, 0);
     let (mut bold, mut italic, mut size, mut formatted) = (0, 0, 0, 0);
     let mut heading_misses = Vec::new();
+    // Layout over the close pairs: alignment, line pitch (within 12%), and
+    // the space down to the next paragraph (after plus the next one's
+    // before, as Word adds them; within 3 pt or a quarter of it).
+    let (mut aligned, mut pitched, mut spaced, mut laid) = (0, 0, 0, 0);
+    let mut layout_misses = Vec::new();
+    let gap =
+        |s: &Summary, k: usize| s.paras[k].after + s.paras.get(k + 1).map_or(0.0, |n| n.before);
+    for &(i, j, s) in &pairs {
+        if s >= 0.9 {
+            let (a, b) = (&src.paras[i], &out.paras[j]);
+            laid += 1;
+            let align = a.align == b.align;
+            let pitch = (a.pitch - b.pitch).abs() <= 0.12 * a.pitch.max(1.0);
+            let (ga, gb) = (gap(src, i), gap(out, j));
+            let space = (ga - gb).abs() <= (0.25 * ga).max(3.0);
+            aligned += usize::from(align);
+            pitched += usize::from(pitch);
+            spaced += usize::from(space);
+            if !(align && pitch && space) && layout_misses.len() < 12 {
+                layout_misses.push(json!({
+                    "text": a.text.chars().take(30).collect::<String>(),
+                    "align": [a.align, b.align],
+                    "pitch": [(a.pitch * 10.0).round() / 10.0, (b.pitch * 10.0).round() / 10.0],
+                    "space": [(ga * 10.0).round() / 10.0, (gb * 10.0).round() / 10.0],
+                }));
+            }
+        }
+    }
     for &(i, j, s) in &pairs {
         let (a, b) = (&src.paras[i], &out.paras[j]);
         match (a.heading, b.heading) {
@@ -275,6 +303,7 @@ pub fn score(src: &Summary, out: &Summary) -> Value {
         "formatting": if formatted == 0 { 0.0 } else { (bold + italic + size) as f64 / (3 * formatted) as f64 },
         "special": share(special, special_total),
         "frames": f64::from(u8::from(out.text_boxes == 0)),
+        "layout": if laid == 0 { 0.0 } else { (aligned + pitched + spaced) as f64 / (3 * laid) as f64 },
         "evidence": {
             "paragraphs": [src.paras.len(), out.paras.len(), pairs.len(), close],
             "unmatched_source": unmatched_source,
@@ -292,6 +321,8 @@ pub fn score(src: &Summary, out: &Summary) -> Value {
             "page": [[src.page.0, src.page.1], [out.page.0, out.page.1]],
             "margins": [[src.margins.0, src.margins.1, src.margins.2, src.margins.3], [out.margins.0, out.margins.1, out.margins.2, out.margins.3]],
             "formatting": [formatted, bold, italic, size],
+            "layout": [laid, aligned, pitched, spaced],
+            "layout_misses": layout_misses,
             "bad_chars": [out.bad_chars.0, out.bad_chars.1, out.bad_chars.2],
             "missing_special": missing_special,
             "text_boxes": out.text_boxes,

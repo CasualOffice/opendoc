@@ -92,6 +92,7 @@ HMAC
 HTML
 HTTP
 HarfBuzz
+Helvetica
 HiDPI
 Hocuspocus
 Hotfix

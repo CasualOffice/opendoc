@@ -308,6 +308,7 @@ pub fn marker_token(token: &str) -> bool {
                 half_points: 0,
                 fill: None,
                 mode: casual_doc_pdf_read::RenderMode::Fill,
+                oblique: false,
             },
             sup: false,
             link: None,
@@ -359,7 +360,7 @@ pub fn segment(
             // indented line is a hanging indent's second line.
             let could_end = short || terminal(&line_text(prev));
             let breaks = marker(&line.chars, false).is_some()
-                || keys[i] != keys[i - 1]
+                || restyled(keys[i - 1].as_ref(), keys[i].as_ref(), short)
                 || (short && keys[i - 1].as_ref().is_some_and(monospaced))
                 || gap > PARAGRAPH_GAP * height
                 || (short && terminal(&line_text(prev)))
@@ -491,7 +492,29 @@ pub fn continues(
             // or hang under its text (a list item's, a hanging indent's).
             || (under && next.x0 >= last.x0 - 1.0 && next.x0 <= last.x0 + (4.0 * em).max(40.0)))
         && marker(&next.chars, false).is_none()
-        && dominant(last.chars.iter(), key) == dominant(next.chars.iter(), key)
+        && !restyled(
+            dominant(last.chars.iter(), key).as_ref(),
+            dominant(next.chars.iter(), key).as_ref(),
+            false,
+        )
+}
+
+/// Whether the font change from a line whose characters mostly carry
+/// `prev` to one mostly carrying `next` ends a paragraph. A change of size
+/// does (a heading and its body, a caption, a note). A change of weight,
+/// slant or family alone does only after a line that stopped short of the
+/// column (`short`): a line that ran to the edge was wrapped, so the bold or
+/// italic phrase, or the inline code, that fills most of the next line is
+/// inside the paragraph (Word, LibreOffice and every report writer set
+/// emphasis inline; breaking on it split the paragraph and made the
+/// emphasised line a false heading). Half a point is the same size: sizes
+/// are rounded to half points. O(1).
+#[must_use]
+pub fn restyled(prev: Option<&FontKey>, next: Option<&FontKey>, short: bool) -> bool {
+    match (prev, next) {
+        (Some(a), Some(b)) => a.half_points.abs_diff(b.half_points) > 1 || (short && a != b),
+        (a, b) => a != b,
+    }
 }
 
 /// Whether `next` continues `last`'s visual line: the same page, sharing
@@ -541,8 +564,10 @@ pub fn abut(mut chars: Vec<PChar>, more: Vec<PChar>, next: &ILine) -> Vec<PChar>
     chars
 }
 
-/// Per key: (characters, paragraphs, short paragraphs).
-pub type KeyStats = BTreeMap<FontKey, (usize, usize, usize)>;
+/// Per key: (characters, paragraphs, short paragraphs, brief paragraphs).
+/// Short: brief and not ending like prose. Brief: at most
+/// [`HEADING_MAX_LINES`] lines and [`HEADING_MAX_CHARS`] characters.
+pub type KeyStats = BTreeMap<FontKey, (usize, usize, usize, usize)>;
 
 /// Adds one paragraph to the statistics.
 pub fn count(stats: &mut KeyStats, chars: &[PChar], lines: usize, key: &dyn Fn(&PChar) -> FontKey) {
@@ -556,11 +581,11 @@ pub fn count(stats: &mut KeyStats, chars: &[PChar], lines: usize, key: &dyn Fn(&
         let text_len = chars.iter().map(|c| c.text.chars().count()).sum::<usize>();
         let entry = stats.entry(k).or_default();
         entry.1 += 1;
-        if lines <= HEADING_MAX_LINES
-            && text_len <= HEADING_MAX_CHARS
-            && !text_ends_like_prose(chars)
-        {
-            entry.2 += 1;
+        if lines <= HEADING_MAX_LINES && text_len <= HEADING_MAX_CHARS {
+            entry.3 += 1;
+            if !text_ends_like_prose(chars) {
+                entry.2 += 1;
+            }
         }
     }
 }
@@ -583,16 +608,22 @@ pub fn sheet(stats: &KeyStats) -> StyleSheet {
     let body = body.clone();
     let mut candidates: Vec<(FontKey, usize)> = stats
         .iter()
-        .filter(|(k, (_, paragraphs, short))| {
+        .filter(|(k, (_, paragraphs, short, brief))| {
             let larger =
                 f64::from(k.half_points) >= HEADING_SIZE_FACTOR * f64::from(body.half_points);
             let bolder = k.bold && !body.bold && k.half_points >= body.half_points;
+            // A larger size sets a heading apart on its own, so a heading
+            // that is a sentence ("Lorem ipsum dolor sit amet, consectetur
+            // adipiscing elit.") still counts; a heading only bolder than
+            // the body must not read like prose, or every bold lead-in
+            // paragraph would be one.
+            let headed = if larger { *brief } else { *short };
             **k != body
                 && (larger || bolder)
                 && *paragraphs > 0
-                && (*short as f64) >= HEADING_SHORT_SHARE * (*paragraphs as f64)
+                && (headed as f64) >= HEADING_SHORT_SHARE * (*paragraphs as f64)
         })
-        .map(|(k, (_, paragraphs, _))| (k.clone(), *paragraphs))
+        .map(|(k, (_, paragraphs, _, _))| (k.clone(), *paragraphs))
         .collect();
     candidates.sort_by(|a, b| {
         b.0.half_points

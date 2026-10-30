@@ -467,6 +467,7 @@ impl<'a> Device<'a> for Collector<'_> {
         let [a, b, c, d, _, _] = first_transform.as_coeffs();
         let size = c.hypot(d) * 1000.0;
         let rotation_degrees = b.atan2(a).to_degrees();
+        let oblique = oblique([a, b, c, d]);
         let along = a.hypot(b);
         let codes = crate::unicode::FontCodes::of(&self.fonts.fonts[font].name);
         let mut glyphs = Vec::with_capacity(run.glyphs().len());
@@ -558,6 +559,7 @@ impl<'a> Device<'a> for Collector<'_> {
             font,
             size,
             rotation_degrees,
+            oblique,
             fill,
             mode: render,
             glyphs,
@@ -660,4 +662,22 @@ impl<'a> Device<'a> for Collector<'_> {
     fn end_marked_content(&mut self) {
         self.marked.pop();
     }
+}
+
+/// Whether a glyph transform's linear part `[a, b, c, d]` (the baseline's
+/// direction is `(a, b)`, the glyph's vertical `(c, d)`) slants the glyphs
+/// as a synthesised italic does: the vertical leans 6 to 30 degrees off the
+/// baseline's perpendicular, whichever way the page's axes run. A rotated
+/// run that is not sheared is upright (its two axes stay perpendicular).
+/// O(1).
+pub(crate) fn oblique([a, b, c, d]: [f64; 4]) -> bool {
+    if a.hypot(b) < 1e-9 || c.hypot(d) < 1e-9 {
+        return false;
+    }
+    let mut between = (d.atan2(c) - b.atan2(a)).to_degrees().abs() % 360.0;
+    if between > 180.0 {
+        between = 360.0 - between;
+    }
+    let slant = (90.0 - between).abs();
+    (6.0..=30.0).contains(&slant)
 }
