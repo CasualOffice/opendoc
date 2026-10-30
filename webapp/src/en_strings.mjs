@@ -754,6 +754,7 @@ export const EN_STRINGS = Object.freeze({
   "break.inserted.column": "Column break inserted",
   "break.inserted.section": "Section break inserted",
   "menuGroup.breaks": "Breaks",
+  "menuGroup.pictures": "Pictures",
   "menuGroup.contentControls": "Content controls",
   "filePane.export.label": "Export",
   // ---- Format names ---------------------------------------------------------

@@ -415,7 +415,12 @@ export const APP_MENU_SECTIONS = {
       "layout.break.section.evenPage",
       "layout.break.section.oddPage",
     ),
-    band("menuGroup.illustrations", "insert.image", "insert.imageFromUrl", "insert.shape", "insert.chart"),
+    // Word's Insert > Pictures is ONE dropdown: This Device… / Online Pictures….
+    // The same two here, as a flyout, so the menu stays within
+    // `menu-submenus.spec.mjs`'s cap (Insert reached 14 top-level rows once
+    // #918 added the table rows).
+    sub("menuGroup.pictures", "insert.image", "insert.imageFromUrl"),
+    band("menuGroup.illustrations", "insert.shape", "insert.chart"),
     // Content controls (`109` RM-34): Word's Developer ▸ Controls, as a submenu
     // for the same reason Breaks is one — seven kinds and three actions.
     sub(
