@@ -58,6 +58,18 @@ async function runFromPalette(page, query, label) {
   await page.locator(".cmd-item", { hasText: label }).first().click();
 }
 
+/** Inserts the default ellipse and leaves it SELECTED: picking a preset arms the
+ *  pointer, and a bare click on the page places it at its default size, as in
+ *  Word (the route `command-surface-and-recovery.spec.mjs` uses). */
+async function insertSelectedShape(page) {
+  await page.locator('[data-tab="insert"]').click();
+  await page.locator("#insertShapeBtn").click();
+  await page.locator('#shapeGalleryMenu [data-shape-geometry="ellipse"]').click();
+  const sheet = await stableBox(page.locator(".page-wrap .page").first());
+  await page.mouse.click(sheet.x + sheet.width * 0.3, sheet.y + sheet.height * 0.3);
+  await expect(page.locator("#pages")).toHaveAttribute("data-object-kind", "shape");
+}
+
 async function insertTwoByTwoTable(page) {
   await page.locator('[data-tab="insert"]').click();
   await page.locator("#insertTableBtn").click();
@@ -538,6 +550,228 @@ export const MODALS = [
       await clickIntoFirstPage(page);
       await insertTwoByTwoTable(page);
       await page.locator("#splitCellBtn").click();
+    },
+  },
+  // The table dialogs (`table_tools.mjs`). Every opener is a ribbon button, and a
+  // band button does not take focus on click, so the caret keeps it and focus
+  // goes back to the editing surface — the shape of every ribbon-opened dialog
+  // in this roster.
+  {
+    id: "tableInsertDialog",
+    name: "Insert table",
+    opener: null,
+    restore: EDITOR_SURFACE,
+    // Word's Insert Table dialog opens on the number of columns.
+    focus: "#tableInsertColumns",
+    async open(page) {
+      await gotoEditor(page);
+      // Disabled without an insertion point: the table goes at the caret.
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="insert"]').click();
+      await page.locator("#insertTableDialogBtn").click();
+    },
+  },
+  {
+    id: "textToTableDialog",
+    name: "Convert text to table",
+    opener: null,
+    restore: EDITOR_SURFACE,
+    focus: "#textToTableColumns",
+    async open(page) {
+      await gotoEditor(page);
+      // It converts the SELECTED paragraphs, so select across the fixture's first
+      // two, which are both outside its table (a third press reaches into the
+      // table, which the command rightly refuses).
+      await clickIntoFirstPage(page);
+      await page.keyboard.press(`${MOD}+Home`);
+      await page.keyboard.press("Shift+ArrowDown");
+      await page.locator('[data-tab="insert"]').click();
+      await page.locator("#textToTableBtn").click();
+    },
+  },
+  {
+    id: "tableToTextDialog",
+    name: "Convert table to text",
+    opener: null,
+    restore: EDITOR_SURFACE,
+    // The separator is the one decision, so focus lands on the chosen radio.
+    focus: '#tableToTextDialog input[name="tableToTextSeparator"]:checked',
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await insertTwoByTwoTable(page);
+      await page.locator("#tableToTextBtn").click();
+    },
+  },
+  {
+    id: "tableInsertCellsDialog",
+    name: "Insert cells",
+    opener: null,
+    restore: EDITOR_SURFACE,
+    focus: '#tableInsertCellsDialog input[name="tableInsertCellsShift"]:checked',
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await insertTwoByTwoTable(page);
+      await page.locator("#tableInsertCellsBtn").click();
+    },
+  },
+  {
+    id: "tableDeleteCellsDialog",
+    name: "Delete cells",
+    opener: null,
+    restore: EDITOR_SURFACE,
+    focus: '#tableDeleteCellsDialog input[name="tableDeleteCellsShift"]:checked',
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await insertTwoByTwoTable(page);
+      await page.locator("#tableDeleteCellsBtn").click();
+    },
+  },
+  // The two note dialogs (`note_commands.mjs`), from the rows of the References
+  // band's Notes menu — Word's Footnote and Endnote dialog and its Convert….
+  {
+    id: "noteSettingsDialog",
+    name: "Note settings",
+    opener: null,
+    restore: EDITOR_SURFACE,
+    // Which kind of note is the first choice: every other control loads from it.
+    focus: "#noteSettingsKind",
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="references"]').click();
+      await page.locator("#refNotesMenuBtn").click();
+      await page.locator('#refNotesMenu [data-command="reference.noteSettings"]').click();
+    },
+  },
+  {
+    id: "convertNotesDialog",
+    name: "Convert notes",
+    opener: null,
+    restore: EDITOR_SURFACE,
+    focus: "#convertNotesDialog input[name=convertNotes]:checked",
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="references"]').click();
+      await page.locator("#refNotesMenuBtn").click();
+      await page.locator('#refNotesMenu [data-command="reference.convertNotes"]').click();
+    },
+  },
+  {
+    id: "autoCorrectDialog",
+    name: "AutoCorrect options",
+    // From the palette, which closes as it runs the command: no opener survives,
+    // the About / Keyboard shortcuts shape.
+    opener: null,
+    restore: EDITOR_SURFACE,
+    // The as-you-type switches are the first thing Word's AutoCorrect tab lists.
+    focus: "#autoCorrectDialog input[type=checkbox]",
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await runFromPalette(page, "autocorrect options", "AutoCorrect options");
+    },
+  },
+  {
+    id: "textLanguageDialog",
+    name: "Set language",
+    opener: null,
+    restore: EDITOR_SURFACE,
+    // Word's Language dialog: type a few letters, then pick — so the search box.
+    focus: "#textLanguageSearch",
+    async open(page) {
+      await gotoEditor(page);
+      // The language is set on the selection, so it needs a caret.
+      await clickIntoFirstPage(page);
+      await runFromPalette(page, "set language", "Set language");
+    },
+  },
+  {
+    id: "dictionaryDialog",
+    name: "Personal dictionary",
+    opener: null,
+    restore: EDITOR_SURFACE,
+    // Adding a word is the dialog's first action, so its box takes focus.
+    focus: "#dictionaryWord",
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await runFromPalette(page, "personal dictionary", "Personal dictionary");
+    },
+  },
+  {
+    id: "pictureUrlDialog",
+    name: "Picture from URL",
+    opener: null,
+    restore: EDITOR_SURFACE,
+    focus: "#pictureUrlInput",
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="insert"]').click();
+      await page.locator("#insertPictureUrlBtn").click();
+    },
+  },
+  {
+    id: "tableBordersDialog",
+    name: "Borders and shading",
+    opener: null,
+    restore: EDITOR_SURFACE,
+    // The preview's lines are the dialog: focus lands on the first one.
+    focus: "#tableBordersDialog [data-border-line]:not(:disabled)",
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await insertTwoByTwoTable(page);
+      await page.locator("#tableBordersBtn").click();
+    },
+  },
+  {
+    id: "tablePositionDialog",
+    name: "Table positioning",
+    // Opened from a button INSIDE the table properties panel, which keeps focus
+    // on click, so Escape must hand the keyboard back to it.
+    opener: "#tablePositionBtn",
+    focus: "#tablePositionHAlign",
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await insertTwoByTwoTable(page);
+      await page.locator("#tablePropertiesBtn").click();
+      // Positioning is a property of a table text wraps AROUND, as in Word, so
+      // the button is enabled by choosing that first.
+      await page.locator('#tableWrap input[value="around"]').check();
+      await expect(page.locator("#tablePositionBtn")).toBeEnabled();
+      await page.locator("#tablePositionBtn").click();
+    },
+  },
+  {
+    id: "objectLayoutDialog",
+    name: "More layout options",
+    opener: null,
+    restore: EDITOR_SURFACE,
+    focus: "#objectLayoutTop",
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await insertSelectedShape(page);
+      await runFromPalette(page, "layout options", "More layout options");
+    },
+  },
+  {
+    id: "shapeShadowDialog",
+    name: "Shadow options",
+    opener: null,
+    restore: EDITOR_SURFACE,
+    focus: "#shapeShadowColor",
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await insertSelectedShape(page);
+      await runFromPalette(page, "shadow options", "Shadow options");
     },
   },
   {
