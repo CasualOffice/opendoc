@@ -369,6 +369,10 @@ pub struct Element {
     /// Vector art only: the text drawn inside it (a chart's axis labels and
     /// legend, a diagram's captions), drawn with it (`labels`).
     pub labels: Vec<ILine>,
+    /// Vector art only: the pictures that are pieces of the same figure (a
+    /// screenshot with its frame and shadow tiles), drawn with it, under
+    /// its shapes (`cluster_pictures`).
+    pub pictures: Vec<SourceImage>,
 }
 
 /// The ordinal of the nearest `role` element on a lineage.
@@ -481,6 +485,7 @@ fn tagged_table(cells: Vec<Element>) -> Element {
         lineage: Vec::new(),
         floats,
         labels: Vec::new(),
+        pictures: Vec::new(),
     }
 }
 
@@ -814,6 +819,87 @@ fn merge_figures(
     out
 }
 
+/// Whether vector art draws nothing on a white page: every path a white
+/// fill with no stroke (LibreOffice paints the white knock-out around a
+/// picture text wraps about as four white rectangles; Qt paints its page
+/// white). Such art is not placed, and it is no figure for a picture to
+/// join: the knock-out had made a wrapped picture an own-line figure. O(paths).
+fn invisible(vector: &SourceVector) -> bool {
+    vector
+        .paths
+        .iter()
+        .all(|p| p.stroke.is_none() && matches!(p.fill, Some(Some([255, 255, 255, _]))))
+}
+
+/// `vector` without the paths that lie mostly off the page (a clip in the
+/// PDF hid them: a mockup's panel drawn past the page edge and cut there),
+/// its bounds recomputed; `None` when nothing is left. Drawn, such a path
+/// was a black block beside the page in a group as wide as two pages.
+/// O(paths).
+fn on_page(vector: &SourceVector, width: f64, height: f64) -> Option<SourceVector> {
+    let inside = |b: &Bounds| {
+        let w = (b.x1.min(width) - b.x0.max(0.0)).max(0.0);
+        let h = (b.y1.min(height) - b.y0.max(0.0)).max(0.0);
+        let area = b.width().max(0.01) * b.height().max(0.01);
+        // A rule (no area) counts by its length on the page.
+        if b.width() < 0.5 || b.height() < 0.5 {
+            return w.max(h) >= 0.5 * b.width().max(b.height());
+        }
+        w * h >= 0.5 * area
+    };
+    let paths: Vec<casual_doc_pdf_read::PathEvidence> = vector
+        .paths
+        .iter()
+        .filter(|p| inside(&p.bounds))
+        .cloned()
+        .collect();
+    if paths.len() == vector.paths.len() {
+        return Some(vector.clone());
+    }
+    let first = paths.first()?.bounds;
+    let bounds = paths.iter().fold(first, |b, p| Bounds {
+        x0: b.x0.min(p.bounds.x0),
+        y0: b.y0.min(p.bounds.y0),
+        x1: b.x1.max(p.bounds.x1),
+        y1: b.y1.max(p.bounds.y1),
+    });
+    Some(SourceVector { bounds, paths })
+}
+
+/// `vector` with its page-sized fills (half the page or more) taken out: a
+/// white page, or a white body box (LibreOffice), painted in the same run as
+/// the shapes on it (Qt, Skia) made the whole run as large as the page, so
+/// nothing on the page could be told apart from it. A white one draws
+/// nothing on a white page and is dropped; any other is a run of its own.
+/// O(paths).
+fn split_page_fill(vector: SourceVector, width: f64, height: f64) -> Vec<SourceVector> {
+    let page_sized = |p: &casual_doc_pdf_read::PathEvidence| {
+        p.bounds.width() * p.bounds.height() >= FIGURE_AREA * width * height
+    };
+    if !vector.paths.iter().any(page_sized) {
+        return vec![vector];
+    }
+    let (fills, rest): (Vec<_>, Vec<_>) = vector.paths.into_iter().partition(page_sized);
+    let mut out = Vec::new();
+    let coloured: Vec<_> = fills
+        .into_iter()
+        .filter(|p| p.stroke.is_some() || !matches!(p.fill, Some(Some([255, 255, 255, _]))))
+        .collect();
+    for paths in [coloured, rest] {
+        let Some(first) = paths.first().map(|p| p.bounds) else {
+            continue;
+        };
+        let bounds = paths.iter().fold(first, |b, p| Bounds {
+            x0: b.x0.min(p.bounds.x0),
+            y0: b.y0.min(p.bounds.y0),
+            x1: b.x1.max(p.bounds.x1),
+            y1: b.y1.max(p.bounds.y1),
+        });
+        out.push(SourceVector { bounds, paths });
+    }
+    out
+}
+
 /// The shortest rule kept on its own, as a share of the page's width: a
 /// separator line across the text. Shorter lone rules are a form's fields
 /// or a footnote separator, and stay out.
@@ -877,6 +963,137 @@ fn free_rules(
             }
         })
         .collect()
+}
+
+/// A figure, whether it is only rules, and the pictures that are its pieces.
+type PicturedFigure = (SourceVector, bool, Vec<SourceImage>);
+
+/// Pictures that overlap a figure join it, and pictures within
+/// `FIGURE_GAP` of each other are one; pictures that touch each other with no
+/// figure make one of their own (paths empty). A screenshot drawn as nine
+/// tiles of shadow around its content and a frame of rules was eleven
+/// drawings, each placed on its own line; it is one figure. A picture
+/// covering half the page or more (a background) joins nothing. Returns the
+/// figures with their pictures, and the pictures left alone.
+/// O((figures + pictures)^2) on a page, which holds few.
+fn cluster_pictures(
+    figures: Vec<(SourceVector, bool)>,
+    images: &[SourceImage],
+    area: f64,
+    work: &mut u64,
+) -> (Vec<PicturedFigure>, Vec<SourceImage>) {
+    let near = |a: &Bounds, b: &Bounds| {
+        a.x0 <= b.x1 + FIGURE_GAP
+            && b.x0 <= a.x1 + FIGURE_GAP
+            && a.y0 <= b.y1 + FIGURE_GAP
+            && b.y0 <= a.y1 + FIGURE_GAP
+    };
+    // Only a page's own background is no figure's piece: a mockup's card
+    // with its screenshot can cover most of a page.
+    let big = |b: &Bounds| b.width() * b.height() >= FULL_PAGE * area;
+    // Union-find over figures (0..f) and pictures (f..f+p).
+    let f = figures.len();
+    let total = f + images.len();
+    let mut parent: Vec<usize> = (0..total).collect();
+    fn root(parent: &mut [usize], mut i: usize) -> usize {
+        while parent[i] != i {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        i
+    }
+    let bounds = |i: usize| -> Bounds {
+        if i < f {
+            figures[i].0.bounds
+        } else {
+            images[i - f].bounds
+        }
+    };
+    for i in f..total {
+        if big(&bounds(i)) {
+            continue;
+        }
+        #[allow(clippy::needless_range_loop)] // `j` spans figures and pictures.
+        for j in 0..total {
+            *work += 1;
+            // A page-sized figure (a page's background) or picture is no
+            // figure's piece, and a lone rule is not a frame.
+            if j == i || big(&bounds(j)) || figures.get(j).is_some_and(|fig| fig.1) {
+                continue;
+            }
+            // Picture to picture: touching (a screenshot's shadow tiles).
+            // Picture to figure: overlapping it (a screenshot inside its
+            // frame); a picture merely beside a drawing floats on its own.
+            let (bi, bj) = (bounds(i), bounds(j));
+            let linked = if j >= f {
+                near(&bi, &bj)
+            } else {
+                bi.x0 < bj.x1 && bj.x0 < bi.x1 && bi.y0 < bj.y1 && bj.y0 < bi.y1
+            };
+            if linked {
+                let (a, b) = (root(&mut parent, i), root(&mut parent, j));
+                if a != b {
+                    parent[a.max(b)] = a.min(b);
+                }
+            }
+        }
+    }
+    // Each root's members.
+    let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for i in 0..total {
+        let r = root(&mut parent, i);
+        groups.entry(r).or_default().push(i);
+    }
+    let mut figures: Vec<Option<(SourceVector, bool)>> = figures.into_iter().map(Some).collect();
+    let mut out = Vec::new();
+    let mut loose = Vec::new();
+    for members in groups.into_values() {
+        let pics: Vec<SourceImage> = members
+            .iter()
+            .filter(|&&i| i >= f)
+            .map(|&i| images[i - f].clone())
+            .collect();
+        let vecs: Vec<usize> = members.iter().copied().filter(|&i| i < f).collect();
+        if vecs.is_empty() && pics.len() < 2 {
+            loose.extend(pics);
+            continue;
+        }
+        // One figure from its vector runs (paths in paint order) and its
+        // pictures' extent.
+        let mut paths = Vec::new();
+        let mut only_rules = !vecs.is_empty();
+        let mut b: Option<Bounds> = None;
+        let grow = |b: &mut Option<Bounds>, c: Bounds| {
+            *b = Some(match *b {
+                Some(o) => Bounds {
+                    x0: o.x0.min(c.x0),
+                    y0: o.y0.min(c.y0),
+                    x1: o.x1.max(c.x1),
+                    y1: o.y1.max(c.y1),
+                },
+                None => c,
+            });
+        };
+        for i in vecs {
+            if let Some((v, rules)) = figures[i].take() {
+                only_rules &= rules;
+                grow(&mut b, v.bounds);
+                paths.extend(v.paths);
+            }
+        }
+        for p in &pics {
+            grow(&mut b, p.bounds);
+        }
+        let Some(bounds) = b else {
+            continue;
+        };
+        out.push((
+            SourceVector { bounds, paths },
+            only_rules && pics.is_empty(),
+            pics,
+        ));
+    }
+    (out, loose)
 }
 
 /// The text drawn inside `figure`, when it is a figure: every text element
@@ -1808,6 +2025,7 @@ pub fn build(
                 lineage: node.map(|n| n.lineage.clone()).unwrap_or_default(),
                 floats: Vec::new(),
                 labels: Vec::new(),
+                pictures: Vec::new(),
             });
         }
         for table in page_tables {
@@ -1830,6 +2048,7 @@ pub fn build(
                 lineage: Vec::new(),
                 floats: Vec::new(),
                 labels: Vec::new(),
+                pictures: Vec::new(),
             });
         }
         // Pictures and vector art: floated on the text they sit beside or
@@ -1842,7 +2061,10 @@ pub fn build(
             .iter()
             .enumerate()
             .filter(|(i, _)| !shading_art.contains(i) && !decoration_art.contains(i))
-            .map(|(_, v)| (v.clone(), false))
+            .filter(|(_, v)| !invisible(v))
+            .filter_map(|(_, v)| on_page(v, page.width, page.height))
+            .flat_map(|v| split_page_fill(v, page.width, page.height))
+            .map(|v| (v, false))
             .collect();
         pieces.extend(
             free_rules(page, &taken_rules, &decorated.rules, &table_bounds)
@@ -1850,10 +2072,17 @@ pub fn build(
                 .map(|v| (v, true)),
         );
         let figures = merge_figures(pieces, page.width * page.height, &mut work.graphics);
-        let mut labelled: Vec<(SourceVector, Vec<ILine>)> = Vec::new();
+        // Pictures that touch a figure or each other are its pieces.
+        let (figures, loose) = cluster_pictures(
+            figures,
+            &page.images,
+            page.width * page.height,
+            &mut work.graphics,
+        );
+        let mut labelled: Vec<(SourceVector, Vec<ILine>, Vec<SourceImage>)> = Vec::new();
         let mut taken = vec![false; elements.len()];
         let mut unlabelled: Vec<SourceVector> = Vec::new();
-        for (figure, only_rules) in figures {
+        for (figure, only_rules, pictures) in figures {
             // Rules on their own: a long one is a separator line in the
             // text (kept as a drawing); short ones (a form's fields, a
             // footnote's separator) are left out, as before.
@@ -1872,10 +2101,11 @@ pub fn build(
                 &mut taken,
                 &mut work.graphics,
             );
-            if lines.is_empty() {
+            // A figure with pictures in it is drawn whole on its own line.
+            if lines.is_empty() && pictures.is_empty() {
                 unlabelled.push(figure);
             } else {
-                labelled.push((figure, lines));
+                labelled.push((figure, lines, pictures));
             }
         }
         let text_rects: Vec<(usize, Rect)> = elements
@@ -1884,7 +2114,7 @@ pub fn build(
             .filter(|(i, e)| matches!(e.kind, EKind::Text(_)) && !taken[*i])
             .map(|(i, e)| (i, e.rect))
             .collect();
-        for (figure, lines) in labelled {
+        for (figure, lines, pictures) in labelled {
             let b = figure.bounds;
             vectors_placed += 1;
             elements.push(Element {
@@ -1903,12 +2133,12 @@ pub fn build(
                 lineage: Vec::new(),
                 floats: Vec::new(),
                 labels: lines,
+                pictures,
             });
         }
-        let graphics = page
-            .images
-            .iter()
-            .map(|image| Graphic::Image(image.clone()))
+        let graphics = loose
+            .into_iter()
+            .map(Graphic::Image)
             .chain(unlabelled.into_iter().map(Graphic::Vector));
         for graphic in graphics {
             let b = graphic.bounds();
@@ -1984,6 +2214,7 @@ pub fn build(
                 lineage: Vec::new(),
                 floats: Vec::new(),
                 labels: Vec::new(),
+                pictures: Vec::new(),
             });
         }
         // The labels left their text elements for their drawings.

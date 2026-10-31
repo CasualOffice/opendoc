@@ -997,3 +997,124 @@ fn the_body_clears_a_letterheads_logo_band() {
     let top = f64::from(section.page_margins.top_twips) / 20.0;
     assert!((79.0..=90.0).contains(&top), "{top}");
 }
+
+/// Every shape group in the body, with how many pictures each holds.
+fn groups_with_pictures(document: &Document) -> Vec<usize> {
+    document
+        .body()
+        .iter()
+        .filter_map(|b| match b {
+            BlockNode::Paragraph(p) => Some(p.inlines.iter().filter_map(|i| {
+                match i {
+                    InlineNode::Group(g) => Some(
+                        g.children
+                            .iter()
+                            .filter(|c| matches!(c, GroupChild::Picture(_)))
+                            .count(),
+                    ),
+                    _ => None,
+                }
+            })),
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
+
+fn pictures_pdf(content: String) -> Vec<u8> {
+    let mut pdf = synth::Pdf::default();
+    let image = pdf.stream(
+        "/Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceGray /BitsPerComponent 8",
+        &[90u8; 16],
+    );
+    synth::document_in(
+        &mut pdf,
+        &[Page::new(content)],
+        &format!("{COURIER} /XObject << /Im1 {image} 0 R >>"),
+        "",
+        |_| String::new(),
+    )
+}
+
+#[test]
+fn a_mockup_of_tiles_on_a_card_is_one_drawing() {
+    // A screenshot as an app draws it: a grey card, a shadow of four
+    // pictures along its edges, and the screenshot inside, under a paragraph,
+    // all on a white page painted in the same run as the card.
+    let mut content = String::from("1 g 0 0 612 792 re f 0.94 g 80 200 452 300 re f 0 g\n");
+    for (x, y, w, h) in [
+        (74.0, 494.0, 464.0, 6.0),
+        (74.0, 200.0, 464.0, 6.0),
+        (74.0, 206.0, 6.0, 288.0),
+        (532.0, 206.0, 6.0, 288.0),
+        (100.0, 220.0, 412.0, 260.0),
+    ] {
+        content.push_str(&format!("q {w} 0 0 {h} {x} {y} cm /Im1 Do Q\n"));
+    }
+    content.push_str(&text(
+        "F1",
+        11.0,
+        72.0,
+        700.0,
+        14.0,
+        &["A paragraph of prose comes before the screenshot here."],
+    ));
+    let reflowed = reflow_of(pictures_pdf(content));
+    let document = &reflowed.document;
+    // One drawing holding all five pictures over its card; no picture of
+    // its own anywhere.
+    assert_eq!(groups_with_pictures(document), vec![5]);
+    assert!(!document.body().iter().any(|b| matches!(
+        b,
+        BlockNode::Paragraph(p) if p.inlines.iter().any(|i| matches!(i, InlineNode::Drawing(_) | InlineNode::AnchoredDrawing(_)))
+    )));
+}
+
+#[test]
+fn a_white_knock_out_around_a_picture_is_not_a_figure() {
+    // LibreOffice's way of wrapping text about a picture: four white
+    // rectangles around it. The picture still floats beside its text.
+    let mut content = String::from(
+        "1 g 72 600 160 20 re f 72 480 160 20 re f 72 500 8 100 re f 224 500 8 100 re f 0 g\n",
+    );
+    content.push_str("q 144 0 0 100 80 500 cm /Im1 Do Q\n");
+    let prose = full("prose");
+    let lines: Vec<&str> = std::iter::repeat_n(&prose[..40], 8).collect();
+    content.push_str(&text("F1", 11.0, 250.0, 590.0, 14.0, &lines));
+    let reflowed = reflow_of(pictures_pdf(content));
+    let document = &reflowed.document;
+    assert!(groups_with_pictures(document).is_empty(), "no figure");
+    assert_eq!(graphics(document), 1, "the picture alone");
+}
+
+#[test]
+fn a_shape_drawn_past_the_page_edge_is_left_out_of_its_drawing() {
+    // A panel drawn mostly beyond the right edge (the PDF clips it there)
+    // painted in the same run as a card on the page.
+    let mut content = String::from("0.9 g 80 300 300 150 re f 0.2 g 520 300 600 150 re f 0 g\n");
+    content.push_str(&text(
+        "F1",
+        11.0,
+        72.0,
+        700.0,
+        14.0,
+        &["A paragraph before it."],
+    ));
+    let reflowed = reflow_of(pictures_pdf(content));
+    let widths: Vec<i64> = reflowed
+        .document
+        .body()
+        .iter()
+        .filter_map(|b| match b {
+            BlockNode::Paragraph(p) => Some(p.inlines.iter().filter_map(|i| match i {
+                InlineNode::Group(g) => Some(g.extent.width_emu),
+                _ => None,
+            })),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    // The card alone: 300 pt, not 1040.
+    assert_eq!(widths.len(), 1, "{widths:?}");
+    assert!(widths[0] <= 301 * 12_700, "{widths:?}");
+}

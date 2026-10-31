@@ -28,6 +28,8 @@ use casual_doc_model::v1::Shading;
 use casual_doc_model::v1::{
     GroupChild, GroupTextBox, PointEmu, ShapeGeometry, TextBoxBodyProperties, TextBoxInsets,
 };
+// Own line: a figure's pictures in its group.
+use casual_doc_model::v1::GroupPicture;
 // Own line: paragraph borders from the PDF's rules.
 use casual_doc_model::v1::ParagraphBorders;
 // Own line: ruled rows keep the PDF's height.
@@ -165,8 +167,9 @@ enum Item {
     Para(IPara),
     Table(ITable, Option<usize>),
     Image(SourceImage, Option<usize>),
-    /// Vector art on its own line, with the text drawn inside it.
-    Vector(SourceVector, Option<usize>, Vec<ILine>),
+    /// Vector art on its own line, with the text drawn inside it and the
+    /// pictures that are its pieces.
+    Vector(SourceVector, Option<usize>, Vec<ILine>, Vec<SourceImage>),
     /// Floats whose text produced no paragraph of its own (a tagged table's
     /// cells): carried by an empty paragraph.
     Floats(Vec<Float>, Option<usize>),
@@ -192,7 +195,7 @@ impl Item {
     fn region(&self) -> Option<usize> {
         match self {
             Self::Para(p) => p.region,
-            Self::Table(_, r) | Self::Image(_, r) | Self::Vector(_, r, _) | Self::Floats(_, r) => {
+            Self::Table(_, r) | Self::Image(_, r) | Self::Vector(_, r, ..) | Self::Floats(_, r) => {
                 *r
             }
         }
@@ -252,12 +255,46 @@ impl Emitter<'_> {
         vector: &SourceVector,
         anchor: DrawingAnchor,
         labels: &[ILine],
+        pictures: &[SourceImage],
     ) -> Result<Option<InlineNode>, PdfImportError> {
         let paths: Vec<&casual_doc_pdf_read::PathEvidence> = vector.paths.iter().collect();
         let mut built = crate::fixed::vector_children(&paths, &mut || self.id())?;
         self.vector_clipped += built.clipped;
         self.vector_split += built.split;
-        let Some(mut bounds) = built.bounds else {
+        // The figure's pictures, over its shapes (a screenshot over the card
+        // it sits on) and under its labels, where the PDF drew them.
+        let mut children = Vec::with_capacity(pictures.len() + built.children.len());
+        let mut extent: Option<(f64, f64, f64, f64)> = built.bounds;
+        for picture in pictures {
+            let b = picture.bounds;
+            let media = self.media(picture)?;
+            children.push(GroupChild::Picture(GroupPicture {
+                id: self.id()?,
+                media,
+                offset: PointEmu {
+                    x_emu: crate::fixed::emu(b.x0),
+                    y_emu: crate::fixed::emu(b.y0),
+                },
+                extent: Extent {
+                    width_emu: crate::fixed::emu(b.width()).max(1),
+                    height_emu: crate::fixed::emu(b.height()).max(1),
+                },
+                descr: None,
+                crop: None,
+                opacity: None,
+                hyperlink: None,
+                border: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            }));
+            extent = Some(match extent {
+                Some(e) => (e.0.min(b.x0), e.1.min(b.y0), e.2.max(b.x1), e.3.max(b.y1)),
+                None => (b.x0, b.y0, b.x1, b.y1),
+            });
+        }
+        built.children.append(&mut children);
+        let Some(mut bounds) = extent else {
             return Ok(None);
         };
         // The text drawn inside it, each line a text box where the PDF set
@@ -373,7 +410,7 @@ impl Emitter<'_> {
                     })));
                 }
                 Graphic::Vector(vector) => {
-                    if let Some(group) = self.group(vector, anchor, &[])? {
+                    if let Some(group) = self.group(vector, anchor, &[], &[])? {
                         out.push(group);
                     }
                 }
@@ -1425,6 +1462,7 @@ pub(crate) fn emit(
                     vector.clone(),
                     element.region,
                     element.labels.clone(),
+                    element.pictures.clone(),
                 ));
             }
         }
@@ -1983,11 +2021,14 @@ pub(crate) fn emit(
                 let table = emitter.table(t)?;
                 body.push(BlockNode::Table(Box::new(table)));
             }
-            Item::Vector(vector, region, labels) => {
+            Item::Vector(vector, region, labels, pictures) => {
                 let x0 = labels.iter().map(|l| l.x0).fold(vector.bounds.x0, f64::min);
                 let (left, _) = column(&flow, *region, None, x0, page_w);
                 let anchor = float_anchor(x0 - left, 0.0, None);
-                let inlines = emitter.group(vector, anchor, labels)?.into_iter().collect();
+                let inlines = emitter
+                    .group(vector, anchor, labels, pictures)?
+                    .into_iter()
+                    .collect();
                 body.push(BlockNode::Paragraph(Paragraph {
                     id: emitter.id()?,
                     properties: ParagraphProperties::default().into(),
