@@ -14032,3 +14032,12 @@ body[data-table-draw] .page-wrap * {
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* Settings takes the same 0.75rem window margin as Keyboard shortcuts, and for
+   the same measured reason: at 1280x720 on CI's Linux faces its body held 568px
+   in a 560px box (dialog-fit), with nothing cut on macOS. The phone rung's
+   `body.phone-mode .dialog-card` outranks this, so the bottom sheet is unchanged.
+   Two classes, as the width rule above needs (a bare class loses to the card). */
+.dialog-card.settings-dialog {
+  max-height: min(45rem, calc(100vh - 1.5rem));
+}
