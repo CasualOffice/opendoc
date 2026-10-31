@@ -178,4 +178,5 @@ def test_the_quickstart_example_the_site_quotes_runs(tmp_path):
     assert "nothing lost" in result.stdout
     for name in ("report.docx", "report.pdf", "page-1.png"):
         assert (tmp_path / name).stat().st_size > 0
-    assert Document(tmp_path / "report.docx").paragraphs[1].text == "Revenue grew 12% quarter on quarter."
+    texts = [p.text for p in Document(tmp_path / "report.docx").paragraphs]
+    assert "Revenue grew 12% quarter on quarter." in texts

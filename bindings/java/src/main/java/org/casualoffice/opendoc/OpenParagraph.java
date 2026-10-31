@@ -94,6 +94,44 @@ public final class OpenParagraph {
         }
     }
 
+    /** Set when a header or footer handed out its first, empty paragraph through {@code createParagraph}. */
+    boolean claimed;
+
+    private int length() {
+        String text = getText();
+        return text.codePointCount(0, text.length());
+    }
+
+    /**
+     * Appends a field: {@code "page"}, {@code "numpages"}, {@code "date"},
+     * {@code "time"}, {@code "filename"} or {@code "author"}. POI writes a raw
+     * {@code CTSimpleField}; here the engine builds the field.
+     */
+    public void addField(String kind) {
+        document.edit(OpenDocument.cmd("op", "insertField", "paragraph", id, "offset", length(), "kind", kind, "result", ""));
+    }
+
+    /** A footnote whose reference mark goes at the end of this paragraph; returns it. */
+    public OpenNote addFootnote(String text) {
+        return note("footnote", text);
+    }
+
+    /** An endnote whose reference mark goes at the end of this paragraph; returns it. */
+    public OpenNote addEndnote(String text) {
+        return note("endnote", text);
+    }
+
+    private OpenNote note(String kind, String text) {
+        String noteId = (String) document.edit(OpenDocument.cmd("op", "insertNote", "kind", kind, "paragraph", id, "offset", length(), "text", text)).get(0);
+        return new OpenNote(document, noteId);
+    }
+
+    /** Inserts a section break after this paragraph's text; returns the new section. */
+    public OpenSection insertSectionBreak(SectionStart start) {
+        int index = ((Number) document.edit(OpenDocument.cmd("op", "insertSectionBreak", "paragraph", id, "offset", length(), "start", start.value())).get(0)).intValue();
+        return new OpenSection(document, index);
+    }
+
     /** Inserts a paragraph before this one ({@code insertNewParagraph} at this position). */
     public OpenParagraph insertParagraphBefore(String text) {
         String newId = (String) document.edit(OpenDocument.cmd("op", "insertParagraph", "before", id, "text", text)).get(0);

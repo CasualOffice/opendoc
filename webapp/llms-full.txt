@@ -4096,11 +4096,8 @@ type.
   cached until the next edit. It uses bundled faces by default (`RenderOptions` adds faces or
   allows OS fonts).
 - **Not built (stated, not hidden):**
-  - inserting pictures, headers, footers or notes by edit (the builder writes all four);
-  - page or section edits;
   - paragraph loops inside headers and footers (value tags work there);
   - SVG (no backend, §3.1);
-  - opening HTML or Markdown (export-only adapters).
 
 **One defect class found and handled in the SDK.** A comment's anchor from
 `casual_doc_review` is measured in the layout anchor stream, which counts a footnote
@@ -4248,9 +4245,8 @@ The local wheel (`opendoc-0.1.0-cp39-abi3-macosx_11_0_arm64.whl`) is 17.1 MB on
   `py.typed` ships, and `mypy python/opendoc` reports no issues.
 - **Errors.** `OpenDocError.code` is the stable code. `TemplateError.errors` lists every
   issue, in docxtemplater's ids.
-- **Not built.** `add_picture` into an existing document raises with the reason. Character
-  styles on runs and table styles other than Table Grid cannot be set. Headers and footers
-  are read-only.
+- **Not built.** Character styles on runs and table styles other than Table Grid cannot be
+  set. Pictures, headers and footers, notes and sections are edits (§12.12).
 - **Guards.** `bindings/python/tests/test_opendoc.py` has 9 tests. One is python-docx's
   quickstart, run unchanged apart from `add_picture`, then reopened and checked run by run.
   - **Mutation.** `core_properties.author` mapped to `subject` turned
@@ -4464,6 +4460,65 @@ and this document is published beside it as `reference/three-sdk-products.html`.
 - **Mutation.** A docxtemplater time in `results.json` changed from 10.34 to 30 made the
   page stale (`--check` red) and, with the page regenerated, the loss list one shorter;
   the guard's independent count went red against a hand-edited claim.
+
+### 12.12 Pictures, headers and footers, notes and sections, by edit
+
+The builder could write all four; an opened document could not get any of them. Now each is
+an edit in every binding, lowered by `casual_doc_command` (the capability registry the editor
+and the agent front doors share, `docs/181`) and applied through the batch's choke point
+(ADR-030 I1): the same operations as the editor's own gestures, all or nothing per batch,
+with the batch's exact undo. `crates/opendoc/src/edit/objects.rs` holds them.
+
+| Edit | Rust (`Editor`) and JSON (`op`) | JavaScript | Python (python-docx names) | Java (POI names) |
+| --- | --- | --- | --- | --- |
+| Insert a picture | `insert_picture` / `insertPicture` | `addPicture`, `insertPicture` | `add_picture`, `run.add_picture` | `OpenRun.addPicture(InputStream, int, String, int, int)` |
+| Replace, resize, alt text, delete | `replace_picture`, `resize_picture`, `set_alt_text`, `delete_picture` | `replacePicture`, `resizePicture`, `setAltText`, `deletePicture` | `InlineShape.replace`, `.width`/`.height`, `.alt_text`, `.delete()` | `OpenPicture.replace`, `setSize`, `setDescription`, `remove` |
+| A header or footer (default, first, even) | `header_footer` / `headerFooter` | `header`, `footer` | `section.header`, `first_page_header`, `even_page_footer`, … | `createHeader(HeaderFooterType)`, `createFooter` |
+| Remove, link to previous | `remove_header_footer`, `set_linked_to_previous` | `removeHeader`, `setLinkedToPrevious` | `HeaderFooter.remove()`, `is_linked_to_previous` | `OpenHeaderFooter.remove()` |
+| Different first page, odd and even | `set_different_first_page`, `set_different_odd_even` | `setDifferentFirstPage`, `setDifferentOddEven` | `different_first_page_header_footer`, `settings.odd_and_even_pages_header_footer` | `OpenSection.setTitlePage`, `setEvenAndOddHeaders` |
+| A field (page, numpages, date, time, filename, author) | `insert_field` / `insertField` | `insertField` | `Paragraph.add_field` | `OpenParagraph.addField` |
+| Footnotes and endnotes | `insert_note`, `set_note_text`, `delete_note` | `addFootnote`, `addEndnote`, `setNoteText`, `deleteNote` | `Paragraph.add_footnote`, `add_endnote`, `Note.text`, `Note.delete()` | `OpenParagraph.addFootnote`, `addEndnote`, `OpenNote` |
+| Add a section, a break, its start | `add_section`, `insert_section_break`, `set_section_start` | `addSection`, `insertSectionBreak`, `setSectionStart` | `add_section`, `section.start_type` | `addSection`, `insertSectionBreak`, `OpenSection.setStart` |
+| Page size, orientation, margins, columns | `set_page_setup` / `setPageSetup` | `setPageSetup` | `page_width`, `orientation`, `left_margin`, …, `columns` | `OpenSection.setPageSize`, `setOrientation`, `setMargins`, `setColumns` |
+
+The C ABI reaches all of them through `opendoc_call(doc, "edit", json)`, the JSON vocabulary
+the other bindings send (`crates/opendoc-ffi/tests/abi.rs`).
+
+**Decisions, and where this differs.**
+
+- **Units.** Points in Rust, JSON, JavaScript and Java's additions; python-docx `Length`s in
+  Python; EMU in POI's own `addPicture` signature, as POI takes them.
+- **Pictures.** The format is read from the bytes (PNG, JPEG, GIF, BMP, TIFF, WebP). Give one
+  side and the other keeps the image's proportions; give neither for its own size at 96 dpi.
+  The bytes join the document's resources only when the batch applies. Replace keeps the
+  picture's id, position, wrap and alt text and fits the new image inside the old frame, as
+  Word's Change Picture does.
+- **Headers and footers** are named by `(section index, header|footer, default|first|even)`.
+  Asking for a band the section does not have creates it; a section that showed the previous
+  section's band gets its own copy first (Word's unlink). `First` and `Even` show only with a
+  different first page or odd and even pages; Java's `createHeader(FIRST|EVEN)` turns those on,
+  as POI does. A paragraph after one in a header, footer or note is inserted by splitting it
+  (Enter), because only the body and cells take blocks by position.
+- **A new section** (by `add_section` or a break) shows the previous section's header and
+  footer by inheritance rather than naming the same bodies: it renders the same, and it is
+  what python-docx writes, so "linked to previous" is true until unlinked.
+- **A section's start.** The operation set has no single "set start" operation, so it is the
+  existing set in one step: a boundary carrying the new start is spliced in beside the old,
+  the paragraph that ends the section is pointed at it, its form protection moves, and the
+  old boundary is removed. The section's id changes; its index, content and bands do not.
+- **Orientation** swaps width and height when they disagree with it, as Word does; python-docx
+  sets only the flag.
+
+**Guards.**
+
+- `crates/opendoc/tests/objects.rs` (6 tests): every edit applied, read back, saved and
+  reopened with no loss, undone, and refused as a whole batch; the JSON commands.
+- `packages/opendoc/test/objects.test.mjs`, `bindings/python/tests/test_objects.py`,
+  `ConformanceTest` (Java) and `crates/opendoc-ffi/tests/abi.rs` drive the same edits
+  through each binding.
+- **Mutations**, each red then restored: the picture's bytes not handed to the resources
+  ("the bytes are in the package"); the orientation swap removed ("turning swaps the size, as
+  Word does").
 
 [poi]: https://poi.apache.org/components/document/
 [pydocx]: https://python-docx.readthedocs.io/en/latest/api/text.html

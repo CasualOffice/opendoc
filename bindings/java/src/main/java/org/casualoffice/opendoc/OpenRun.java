@@ -54,6 +54,23 @@ public final class OpenRun {
         }
     }
 
+    /**
+     * Adds a picture at the end of this run ({@code addPicture(InputStream, int,
+     * String, int, int)}): {@code width} and {@code height} are EMU, as in POI
+     * ({@code Units.toEMU(pixels)}); 0 for both takes the image's own size. The
+     * format is read from the bytes, so {@code pictureType} and {@code filename}
+     * are accepted for POI's signature and not needed.
+     */
+    public OpenPicture addPicture(java.io.InputStream data, int pictureType, String filename, int width, int height)
+            throws java.io.IOException {
+        Double widthPt = width > 0 ? width / 12700.0 : null;
+        Double heightPt = height > 0 ? height / 12700.0 : null;
+        String id = (String) doc().edit(OpenDocument.cmd(
+                "op", "insertPicture", "paragraph", paragraph.getId(), "offset", start + length,
+                "image", OpenPicture.encode(data), "widthPt", widthPt, "heightPt", heightPt)).get(0);
+        return new OpenPicture(doc(), id);
+    }
+
     /** The run's text ({@code getText(0)}). */
     public String getText() {
         String text = paragraph.getText();

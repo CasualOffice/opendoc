@@ -66,7 +66,9 @@ mod wasm;
 
 pub use builder::DocumentSpec;
 pub use document::{Document, OpenOptions, PageImage, PageSize, RenderOptions};
-pub use edit::{EditCommand, Editor, Position, PropertiesPatch, RunFormat, Undo};
+pub use edit::{
+    EditCommand, Editor, PageKind, PageSetup, Position, PropertiesPatch, Region, RunFormat, Undo,
+};
 pub use error::{Error, ErrorCode, Result};
 pub use format::{Format, SaveMode};
 pub use report::{Finding, ImportReport, SaveReport};

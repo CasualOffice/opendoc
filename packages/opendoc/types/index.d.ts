@@ -157,8 +157,35 @@ export interface SectionView {
   marginsPt: { top: number; bottom: number; left: number; right: number; header?: number; footer?: number };
   columns: number;
   titlePage: boolean;
+  /** How the section starts. */
+  start: SectionStart;
+  /** Even pages use their own header and footer variant (document-wide). */
+  evenAndOddHeaders: boolean;
   headers: { kind: "default" | "first" | "even"; id: string }[];
   footers: { kind: "default" | "first" | "even"; id: string }[];
+}
+
+/** How a section starts. */
+export type SectionStart = "nextPage" | "continuous" | "evenPage" | "oddPage" | "nextColumn";
+/** Which page a header or footer applies to. */
+export type PageKind = "default" | "first" | "even";
+/** The fields a header or footer (or any paragraph) can hold. */
+export type FieldKind = "page" | "numpages" | "date" | "time" | "filename" | "author";
+/** A picture: bytes or base64. PNG, JPEG, GIF, BMP, TIFF or WebP. */
+export type PictureData = Uint8Array | ArrayBuffer | string;
+/** A section's page setup; omitted values stay. Points throughout. */
+export interface PageSetup {
+  widthPt?: number;
+  heightPt?: number;
+  orientation?: "portrait" | "landscape";
+  topPt?: number;
+  bottomPt?: number;
+  leftPt?: number;
+  rightPt?: number;
+  headerPt?: number;
+  footerPt?: number;
+  columns?: number;
+  columnSpacingPt?: number;
 }
 
 export interface StyleView {
@@ -248,7 +275,25 @@ export type EditCommand =
   | { op: "suggestReplace"; paragraph: string; start: number; end: number; text: string; date?: string }
   | { op: "acceptAllRevisions" }
   | { op: "rejectAllRevisions" }
-  | { op: "setProperties"; properties: Partial<Pick<Properties, "title" | "subject" | "creator" | "keywords" | "description" | "lastModifiedBy" | "category">> };
+  | { op: "setProperties"; properties: Partial<Pick<Properties, "title" | "subject" | "creator" | "keywords" | "description" | "lastModifiedBy" | "category">> }
+  | { op: "insertPicture"; paragraph: string; offset?: number; image: string; widthPt?: number; heightPt?: number }
+  | { op: "replacePicture"; picture: string; image: string }
+  | { op: "resizePicture"; picture: string; widthPt: number; heightPt: number }
+  | { op: "setAltText"; picture: string; text?: string }
+  | { op: "deletePicture"; picture: string }
+  | { op: "headerFooter"; section: number; region: "header" | "footer"; kind?: PageKind }
+  | { op: "removeHeaderFooter"; section: number; region: "header" | "footer"; kind?: PageKind }
+  | { op: "setLinkedToPrevious"; section: number; region: "header" | "footer"; kind?: PageKind; linked: boolean }
+  | { op: "setDifferentFirstPage"; section: number; on: boolean }
+  | { op: "setDifferentOddEven"; on: boolean }
+  | { op: "insertField"; paragraph: string; offset?: number; kind: FieldKind; result?: string }
+  | { op: "insertNote"; kind: "footnote" | "endnote"; paragraph: string; offset: number; text?: string }
+  | { op: "setNoteText"; note: string; text: string }
+  | { op: "deleteNote"; note: string }
+  | { op: "addSection"; start?: SectionStart }
+  | { op: "insertSectionBreak"; paragraph: string; offset: number; start?: SectionStart }
+  | { op: "setSectionStart"; section: number; start: SectionStart }
+  | { op: "setPageSetup"; section: number; setup: PageSetup };
 
 export interface TemplateOptions {
   delimiters?: { start: string; end: string };
@@ -314,6 +359,34 @@ export declare class Document {
   acceptAllRevisions(): boolean;
   rejectAllRevisions(): boolean;
   setProperties(properties: Partial<Pick<Properties, "title" | "subject" | "creator" | "keywords" | "description" | "lastModifiedBy" | "category">>): void;
+
+  /** Appends a paragraph holding a picture; returns the picture id (python-docx `add_picture`). */
+  addPicture(data: PictureData, options?: { widthPt?: number; heightPt?: number; style?: string }): string;
+  insertPicture(paragraph: string, offset: number, data: PictureData, options?: { widthPt?: number; heightPt?: number }): string;
+  replacePicture(picture: string, data: PictureData): void;
+  resizePicture(picture: string, widthPt: number, heightPt: number): void;
+  setAltText(picture: string, text: string | null): void;
+  deletePicture(picture: string): void;
+
+  /** The first paragraph of a section's header, created on first use; returns its id. */
+  header(section?: number, options?: { kind?: PageKind }): string;
+  footer(section?: number, options?: { kind?: PageKind }): string;
+  removeHeader(section?: number, options?: { kind?: PageKind }): void;
+  removeFooter(section?: number, options?: { kind?: PageKind }): void;
+  setLinkedToPrevious(section: number, region: "header" | "footer", linked: boolean, options?: { kind?: PageKind }): void;
+  setDifferentFirstPage(section: number, on?: boolean): void;
+  setDifferentOddEven(on?: boolean): void;
+  insertField(paragraph: string, offset: number, kind: FieldKind, options?: { result?: string }): string;
+
+  addFootnote(paragraph: string, offset: number, text: string): string;
+  addEndnote(paragraph: string, offset: number, text: string): string;
+  setNoteText(note: string, text: string): void;
+  deleteNote(note: string): void;
+
+  addSection(start?: SectionStart): number;
+  insertSectionBreak(paragraph: string, offset: number, start?: SectionStart): number;
+  setSectionStart(section: number, start: SectionStart): void;
+  setPageSetup(section: number, setup: PageSetup): void;
 
   render(data: object, options?: TemplateOptions): this;
   templateTags(options?: TemplateOptions): { name: string; kind: "value" | "loop" | "inverted" }[];

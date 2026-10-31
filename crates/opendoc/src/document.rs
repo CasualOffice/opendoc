@@ -500,7 +500,13 @@ impl Document {
         let mut editor = Editor::new(&mut self.state, self.author.clone());
         match batch(&mut editor) {
             Ok(value) => {
-                let undo = editor.finish();
+                let (undo, media) = editor.finish();
+                // A picture's bytes join the resource map only once its batch
+                // has applied; undo leaves them there (unreferenced bytes are
+                // not written), so a redo still finds them.
+                for (part, bytes) in media {
+                    self.resources.insert(part, bytes);
+                }
                 if !undo.is_empty() {
                     self.changed = true;
                     self.layout = OnceCell::new();

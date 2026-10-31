@@ -580,14 +580,15 @@ test("how much English the reference pages put on the site, measured and publish
   // edit to docs/176 moves this figure; re-measure it then.
   // 4013 -> 4016: docs/176 §12.3 records the importer fix (RM-46). MEASURED.
   // 4016 -> 4024: docs/176 §12.10 records the per-call cost fix. MEASURED.
+  // 4024 -> 4113: docs/176 §12.12 records editing pictures, headers and footers, notes and sections. MEASURED.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    4024,
-    `the fourteen reference pages carry ${total} unrouted English strings (was 4024). That ` +
+    4113,
+    `the fourteen reference pages carry ${total} unrouted English strings (was 4113). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose, or a page was published. Regenerate the pages, then MEASURE and record ` +
       `the new figure here — do not calculate it. Per page: ` +

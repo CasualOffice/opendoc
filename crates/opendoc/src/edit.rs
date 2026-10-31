@@ -15,8 +15,10 @@
 //! JavaScript strings index UTF-16 units; the two agree except for characters
 //! outside the Basic Multilingual Plane, and the JS package converts.
 //!
-//! **Atomicity.** The batch runs on a copy and replaces the document only when
-//! every edit succeeded: one refusal leaves the document exactly as it was.
+//! **Atomicity.** A batch applies to the live model and, on a refusal, rolls
+//! back through the engine's own inverses: one refusal leaves the document
+//! exactly as it was. Pictures, headers and footers, notes and sections are
+//! edits like any other (`edit/objects.rs`).
 
 use casual_doc_edit::access::Capabilities;
 use casual_doc_edit::protection::refuse_if_protected;
@@ -34,6 +36,10 @@ use serde::Deserialize;
 
 use crate::error::{Error, ErrorCode, Result};
 use crate::view::parse_id;
+
+mod objects;
+
+pub use objects::{PageKind, PageSetup, Region};
 
 /// Character formatting to set over a range. `None` leaves a property as it is.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -211,6 +217,10 @@ pub struct Editor<'a> {
     state: &'a mut EditState,
     inverses: Vec<Operation>,
     author: String,
+    /// Picture bytes this batch registered, as `(package part, bytes)`. The
+    /// model holds the reference; the document's resource map takes the bytes
+    /// when the batch succeeds, and a refused batch drops them with it.
+    pub(crate) media: Vec<(String, Vec<u8>)>,
 }
 
 impl std::fmt::Debug for Editor<'_> {
@@ -227,6 +237,7 @@ impl<'a> Editor<'a> {
             state,
             inverses: Vec::new(),
             author,
+            media: Vec::new(),
         }
     }
 
@@ -250,11 +261,14 @@ impl<'a> Editor<'a> {
         Ok(())
     }
 
-    pub(crate) fn finish(mut self) -> Undo {
+    pub(crate) fn finish(mut self) -> (Undo, Vec<(String, Vec<u8>)>) {
         self.inverses.reverse();
-        Undo {
-            operations: self.inverses,
-        }
+        (
+            Undo {
+                operations: self.inverses,
+            },
+            self.media,
+        )
     }
 
     /// Applies operations in order through the engine's choke point.
@@ -672,6 +686,16 @@ impl<'a> Editor<'a> {
         let style = style
             .map(|s| self.style_id(s, StyleKind::Paragraph))
             .transpose()?;
+        // A paragraph in a header, footer, note or comment has no body position;
+        // after it, the new paragraph comes from splitting it (Enter).
+        if let Position::After(id) = at {
+            let node = parse_id(id)?;
+            if locate_block(self.state.model.body(), node, None).is_none()
+                && find_paragraph(&self.state.model, node).is_some()
+            {
+                return self.insert_paragraph_after_elsewhere(node, text, style);
+            }
+        }
         let (container, index) = self.resolve(at)?;
         let paragraph = self.new_paragraph(text, style)?;
         let id = paragraph.id.to_string();
@@ -1504,6 +1528,164 @@ pub enum EditCommand {
         /// The patch.
         properties: PropertiesPatch,
     },
+    /// [`Editor::insert_picture`]; the image is base64.
+    #[serde(rename_all = "camelCase")]
+    InsertPicture {
+        /// Paragraph id.
+        paragraph: String,
+        /// Character offset (default 0).
+        #[serde(default)]
+        offset: usize,
+        /// The image, standard base64.
+        image: String,
+        /// Width in points.
+        #[serde(default)]
+        width_pt: Option<f64>,
+        /// Height in points.
+        #[serde(default)]
+        height_pt: Option<f64>,
+    },
+    /// [`Editor::replace_picture`]; the image is base64.
+    ReplacePicture {
+        /// Picture id.
+        picture: String,
+        /// The image, standard base64.
+        image: String,
+    },
+    /// [`Editor::resize_picture`].
+    #[serde(rename_all = "camelCase")]
+    ResizePicture {
+        /// Picture id.
+        picture: String,
+        /// Width in points.
+        width_pt: f64,
+        /// Height in points.
+        height_pt: f64,
+    },
+    /// [`Editor::set_alt_text`].
+    SetAltText {
+        /// Picture id.
+        picture: String,
+        /// The text; omitted or `""` clears it.
+        #[serde(default)]
+        text: Option<String>,
+    },
+    /// [`Editor::delete_picture`].
+    DeletePicture {
+        /// Picture id.
+        picture: String,
+    },
+    /// [`Editor::header_footer`]: returns the band's first paragraph id.
+    HeaderFooter {
+        /// Section index.
+        section: usize,
+        /// `"header"` or `"footer"`.
+        region: Region,
+        /// `"default"`, `"first"` or `"even"`.
+        #[serde(default)]
+        kind: PageKind,
+    },
+    /// [`Editor::remove_header_footer`].
+    RemoveHeaderFooter {
+        /// Section index.
+        section: usize,
+        /// `"header"` or `"footer"`.
+        region: Region,
+        /// `"default"`, `"first"` or `"even"`.
+        #[serde(default)]
+        kind: PageKind,
+    },
+    /// [`Editor::set_linked_to_previous`].
+    SetLinkedToPrevious {
+        /// Section index.
+        section: usize,
+        /// `"header"` or `"footer"`.
+        region: Region,
+        /// `"default"`, `"first"` or `"even"`.
+        #[serde(default)]
+        kind: PageKind,
+        /// Linked.
+        linked: bool,
+    },
+    /// [`Editor::set_different_first_page`].
+    SetDifferentFirstPage {
+        /// Section index.
+        section: usize,
+        /// On.
+        on: bool,
+    },
+    /// [`Editor::set_different_odd_even`].
+    SetDifferentOddEven {
+        /// On.
+        on: bool,
+    },
+    /// [`Editor::insert_field`]: returns the field id.
+    InsertField {
+        /// Paragraph id.
+        paragraph: String,
+        /// Character offset.
+        #[serde(default)]
+        offset: usize,
+        /// `"page"`, `"numpages"`, `"date"`, `"time"`, `"filename"`, `"author"`.
+        kind: String,
+        /// The shown value for the date, time, filename and author kinds.
+        #[serde(default)]
+        result: String,
+    },
+    /// [`Editor::insert_note`]: returns the note id.
+    InsertNote {
+        /// `"footnote"` or `"endnote"`.
+        kind: String,
+        /// Paragraph id.
+        paragraph: String,
+        /// Character offset of the reference mark.
+        offset: usize,
+        /// The note's text.
+        #[serde(default)]
+        text: String,
+    },
+    /// [`Editor::set_note_text`].
+    SetNoteText {
+        /// Note id.
+        note: String,
+        /// Text.
+        text: String,
+    },
+    /// [`Editor::delete_note`].
+    DeleteNote {
+        /// Note id.
+        note: String,
+    },
+    /// [`Editor::add_section`]: returns the new section's index.
+    AddSection {
+        /// `"nextPage"` (default), `"continuous"`, `"evenPage"`, `"oddPage"`.
+        #[serde(default)]
+        start: Option<String>,
+    },
+    /// [`Editor::insert_section_break`]: returns the new section's index.
+    InsertSectionBreak {
+        /// Paragraph id.
+        paragraph: String,
+        /// Character offset.
+        offset: usize,
+        /// The new section's start.
+        #[serde(default)]
+        start: Option<String>,
+    },
+    /// [`Editor::set_section_start`].
+    SetSectionStart {
+        /// Section index.
+        section: usize,
+        /// The start.
+        start: String,
+    },
+    /// [`Editor::set_page_setup`].
+    SetPageSetup {
+        /// Section index.
+        section: usize,
+        /// What to change.
+        setup: PageSetup,
+    },
 }
 
 fn position(at: Option<&str>, before: Option<&String>, after: Option<&String>) -> Result<Position> {
@@ -1687,6 +1869,125 @@ impl Editor<'_> {
                 self.set_properties(properties)?;
                 Value::Null
             }
+            other => self.run_object(other)?,
+        })
+    }
+
+    /// The picture, header and footer, note and section commands.
+    fn run_object(&mut self, command: &EditCommand) -> Result<serde_json::Value> {
+        use serde_json::Value;
+        let image = |data: &str| {
+            crate::builder::base64_decode(data)
+                .ok_or_else(|| Error::invalid("the image is not valid base64"))
+        };
+        Ok(match command {
+            EditCommand::InsertPicture {
+                paragraph,
+                offset,
+                image: data,
+                width_pt,
+                height_pt,
+            } => Value::from(self.insert_picture(
+                paragraph,
+                *offset,
+                &image(data)?,
+                *width_pt,
+                *height_pt,
+            )?),
+            EditCommand::ReplacePicture {
+                picture,
+                image: data,
+            } => {
+                self.replace_picture(picture, &image(data)?)?;
+                Value::Null
+            }
+            EditCommand::ResizePicture {
+                picture,
+                width_pt,
+                height_pt,
+            } => {
+                self.resize_picture(picture, *width_pt, *height_pt)?;
+                Value::Null
+            }
+            EditCommand::SetAltText { picture, text } => {
+                self.set_alt_text(picture, text.as_deref())?;
+                Value::Null
+            }
+            EditCommand::DeletePicture { picture } => {
+                self.delete_picture(picture)?;
+                Value::Null
+            }
+            EditCommand::HeaderFooter {
+                section,
+                region,
+                kind,
+            } => Value::from(self.header_footer(*section, *region, *kind)?),
+            EditCommand::RemoveHeaderFooter {
+                section,
+                region,
+                kind,
+            } => {
+                self.remove_header_footer(*section, *region, *kind)?;
+                Value::Null
+            }
+            EditCommand::SetLinkedToPrevious {
+                section,
+                region,
+                kind,
+                linked,
+            } => {
+                self.set_linked_to_previous(*section, *region, *kind, *linked)?;
+                Value::Null
+            }
+            EditCommand::SetDifferentFirstPage { section, on } => {
+                self.set_different_first_page(*section, *on)?;
+                Value::Null
+            }
+            EditCommand::SetDifferentOddEven { on } => {
+                self.set_different_odd_even(*on)?;
+                Value::Null
+            }
+            EditCommand::InsertField {
+                paragraph,
+                offset,
+                kind,
+                result,
+            } => Value::from(self.insert_field(paragraph, *offset, kind, result)?),
+            EditCommand::InsertNote {
+                kind,
+                paragraph,
+                offset,
+                text,
+            } => Value::from(self.insert_note(kind, paragraph, *offset, text)?),
+            EditCommand::SetNoteText { note, text } => {
+                self.set_note_text(note, text)?;
+                Value::Null
+            }
+            EditCommand::DeleteNote { note } => {
+                self.delete_note(note)?;
+                Value::Null
+            }
+            EditCommand::AddSection { start } => {
+                Value::from(self.add_section(start.as_deref().unwrap_or("nextPage"))?)
+            }
+            EditCommand::InsertSectionBreak {
+                paragraph,
+                offset,
+                start,
+            } => Value::from(self.insert_section_break(
+                paragraph,
+                *offset,
+                start.as_deref().unwrap_or("nextPage"),
+            )?),
+            EditCommand::SetSectionStart { section, start } => {
+                self.set_section_start(*section, start)?;
+                Value::Null
+            }
+            EditCommand::SetPageSetup { section, setup } => {
+                self.set_page_setup(*section, setup)?;
+                Value::Null
+            }
+            _ => return Err(Error::invalid("not an object command")),
         })
     }
 }

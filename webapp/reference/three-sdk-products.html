@@ -1435,11 +1435,8 @@
         <li><strong>Render:</strong> <code>page_count</code>, <code>page_sizes</code>, <code>page_text</code>, <code>render_page</code> (RGBA), <code>render_page_png</code>, <code>to_pdf</code>, <code>outline</code> and <code>font_needs</code>. One layout serves all of them, cached until the next edit. It uses bundled faces by default (<code>RenderOptions</code> adds faces or allows OS fonts).</li>
         <li><strong>Not built (stated, not hidden):</strong></li>
         <ul class="doc-list">
-        <li>inserting pictures, headers, footers or notes by edit (the builder writes all four);</li>
-        <li>page or section edits;</li>
         <li>paragraph loops inside headers and footers (value tags work there);</li>
         <li>SVG (no backend, §3.1);</li>
-        <li>opening HTML or Markdown (export-only adapters).</li>
         </ul>
         </ul>
         <p class="doc-body"><strong>One defect class found and handled in the SDK.</strong> A comment's anchor from <code>casual_doc_review</code> is measured in the layout anchor stream, which counts a footnote reference's printed number. The read view's <code>text</code> does not count it, so the first build returned <code>&quot;noted &quot;</code> for a comment on <code>&quot; noted&quot;</code> after a footnote. <code>Document::comments</code> and <code>revisions</code> now map anchors through both length functions (<code>ParagraphSpace</code>). The engine-side disagreement is the one recorded on <code>casual_doc_review::body::inline_anchor_len</code>.</p>
@@ -1516,7 +1513,7 @@
         </ul>
         <li><strong>Typed.</strong> The package code is annotated, and <code>_opendoc.pyi</code> stubs the native module. <code>py.typed</code> ships, and <code>mypy python/opendoc</code> reports no issues.</li>
         <li><strong>Errors.</strong> <code>OpenDocError.code</code> is the stable code. <code>TemplateError.errors</code> lists every issue, in docxtemplater's ids.</li>
-        <li><strong>Not built.</strong> <code>add_picture</code> into an existing document raises with the reason. Character styles on runs and table styles other than Table Grid cannot be set. Headers and footers are read-only.</li>
+        <li><strong>Not built.</strong> Character styles on runs and table styles other than Table Grid cannot be set. Pictures, headers and footers, notes and sections are edits (§12.12).</li>
         <li><strong>Guards.</strong> <code>bindings/python/tests/test_opendoc.py</code> has 9 tests. One is python-docx's quickstart, run unchanged apart from <code>add_picture</code>, then reopened and checked run by run.</li>
         <ul class="doc-list">
         <li><strong>Mutation.</strong> <code>core_properties.author</code> mapped to <code>subject</code> turned <code>test_core_properties_read_and_write</code> red: <code>('Sub', 'Sub') == ('Lin', 'Sub')</code>. The first version of that test set and read through one mapping, so it stayed green under the same mutation. It now reads the file's own fields.</li>
@@ -1959,6 +1956,102 @@
         <li><strong>Generated, not typed.</strong> <code>webapp/tools/build-sdk-page.mjs</code> copies every code panel whole from a file a test runs (<code>packages/opendoc/test/examples.test.mjs</code>, <code>bindings/python/tests/test_opendoc.py</code>, <code>bindings/java/build.sh</code>, <code>crates/opendoc/tests/sdk.rs</code>), renders the benchmark table and its list of losses from <code>benchmarks/sdk/results.json</code>, and reads the format table from the <code>casual-doc-io</code> descriptors. <code>webapp/build.sh</code> runs its <code>--check</code>.</li>
         <li><strong>Guards.</strong> <code>webapp/tests/sdk_page.test.mjs</code> re-derives the ratios, the loss count and the format counts independently of the generator, checks each panel is verbatim in its file and that the file it names as the runner runs it, and checks every API name in the familiarity table exists in the binding. <code>webapp/tests/e2e/sdk-page.spec.mjs</code> checks the chrome, every route, no horizontal scroll at 390 px and WCAG AA.</li>
         <li><strong>Mutation.</strong> A docxtemplater time in <code>results.json</code> changed from 10.34 to 30 made the page stale (<code>--check</code> red) and, with the page regenerated, the loss list one shorter; the guard's independent count went red against a hand-edited claim.</li>
+        </ul>
+        <h3 class="doc-h3" id="12-12-pictures-headers-and-footers-notes-and-sections-by-edit">12.12 Pictures, headers and footers, notes and sections, by edit</h3>
+        <p class="doc-body">The builder could write all four; an opened document could not get any of them. Now each is an edit in every binding, lowered by <code>casual_doc_command</code> (the capability registry the editor and the agent front doors share, <code>docs/181</code>) and applied through the batch's choke point (ADR-030 I1): the same operations as the editor's own gestures, all or nothing per batch, with the batch's exact undo. <code>crates/opendoc/src/edit/objects.rs</code> holds them.</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Edit</th>
+        <th>Rust (<code>Editor</code>) and JSON (<code>op</code>)</th>
+        <th>JavaScript</th>
+        <th>Python (python-docx names)</th>
+        <th>Java (POI names)</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>Insert a picture</td>
+        <td><code>insert_picture</code> / <code>insertPicture</code></td>
+        <td><code>addPicture</code>, <code>insertPicture</code></td>
+        <td><code>add_picture</code>, <code>run.add_picture</code></td>
+        <td><code>OpenRun.addPicture(InputStream, int, String, int, int)</code></td>
+        </tr>
+        <tr>
+        <td>Replace, resize, alt text, delete</td>
+        <td><code>replace_picture</code>, <code>resize_picture</code>, <code>set_alt_text</code>, <code>delete_picture</code></td>
+        <td><code>replacePicture</code>, <code>resizePicture</code>, <code>setAltText</code>, <code>deletePicture</code></td>
+        <td><code>InlineShape.replace</code>, <code>.width</code>/<code>.height</code>, <code>.alt_text</code>, <code>.delete()</code></td>
+        <td><code>OpenPicture.replace</code>, <code>setSize</code>, <code>setDescription</code>, <code>remove</code></td>
+        </tr>
+        <tr>
+        <td>A header or footer (default, first, even)</td>
+        <td><code>header_footer</code> / <code>headerFooter</code></td>
+        <td><code>header</code>, <code>footer</code></td>
+        <td><code>section.header</code>, <code>first_page_header</code>, <code>even_page_footer</code>, …</td>
+        <td><code>createHeader(HeaderFooterType)</code>, <code>createFooter</code></td>
+        </tr>
+        <tr>
+        <td>Remove, link to previous</td>
+        <td><code>remove_header_footer</code>, <code>set_linked_to_previous</code></td>
+        <td><code>removeHeader</code>, <code>setLinkedToPrevious</code></td>
+        <td><code>HeaderFooter.remove()</code>, <code>is_linked_to_previous</code></td>
+        <td><code>OpenHeaderFooter.remove()</code></td>
+        </tr>
+        <tr>
+        <td>Different first page, odd and even</td>
+        <td><code>set_different_first_page</code>, <code>set_different_odd_even</code></td>
+        <td><code>setDifferentFirstPage</code>, <code>setDifferentOddEven</code></td>
+        <td><code>different_first_page_header_footer</code>, <code>settings.odd_and_even_pages_header_footer</code></td>
+        <td><code>OpenSection.setTitlePage</code>, <code>setEvenAndOddHeaders</code></td>
+        </tr>
+        <tr>
+        <td>A field (page, numpages, date, time, filename, author)</td>
+        <td><code>insert_field</code> / <code>insertField</code></td>
+        <td><code>insertField</code></td>
+        <td><code>Paragraph.add_field</code></td>
+        <td><code>OpenParagraph.addField</code></td>
+        </tr>
+        <tr>
+        <td>Footnotes and endnotes</td>
+        <td><code>insert_note</code>, <code>set_note_text</code>, <code>delete_note</code></td>
+        <td><code>addFootnote</code>, <code>addEndnote</code>, <code>setNoteText</code>, <code>deleteNote</code></td>
+        <td><code>Paragraph.add_footnote</code>, <code>add_endnote</code>, <code>Note.text</code>, <code>Note.delete()</code></td>
+        <td><code>OpenParagraph.addFootnote</code>, <code>addEndnote</code>, <code>OpenNote</code></td>
+        </tr>
+        <tr>
+        <td>Add a section, a break, its start</td>
+        <td><code>add_section</code>, <code>insert_section_break</code>, <code>set_section_start</code></td>
+        <td><code>addSection</code>, <code>insertSectionBreak</code>, <code>setSectionStart</code></td>
+        <td><code>add_section</code>, <code>section.start_type</code></td>
+        <td><code>addSection</code>, <code>insertSectionBreak</code>, <code>OpenSection.setStart</code></td>
+        </tr>
+        <tr>
+        <td>Page size, orientation, margins, columns</td>
+        <td><code>set_page_setup</code> / <code>setPageSetup</code></td>
+        <td><code>setPageSetup</code></td>
+        <td><code>page_width</code>, <code>orientation</code>, <code>left_margin</code>, …, <code>columns</code></td>
+        <td><code>OpenSection.setPageSize</code>, <code>setOrientation</code>, <code>setMargins</code>, <code>setColumns</code></td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">The C ABI reaches all of them through <code>opendoc_call(doc, &quot;edit&quot;, json)</code>, the JSON vocabulary the other bindings send (<code>crates/opendoc-ffi/tests/abi.rs</code>).</p>
+        <p class="doc-body"><strong>Decisions, and where this differs.</strong></p>
+        <ul class="doc-list">
+        <li><strong>Units.</strong> Points in Rust, JSON, JavaScript and Java's additions; python-docx <code>Length</code>s in Python; EMU in POI's own <code>addPicture</code> signature, as POI takes them.</li>
+        <li><strong>Pictures.</strong> The format is read from the bytes (PNG, JPEG, GIF, BMP, TIFF, WebP). Give one side and the other keeps the image's proportions; give neither for its own size at 96 dpi. The bytes join the document's resources only when the batch applies. Replace keeps the picture's id, position, wrap and alt text and fits the new image inside the old frame, as Word's Change Picture does.</li>
+        <li><strong>Headers and footers</strong> are named by <code>(section index, header|footer, default|first|even)</code>. Asking for a band the section does not have creates it; a section that showed the previous section's band gets its own copy first (Word's unlink). <code>First</code> and <code>Even</code> show only with a different first page or odd and even pages; Java's <code>createHeader(FIRST|EVEN)</code> turns those on, as POI does. A paragraph after one in a header, footer or note is inserted by splitting it (Enter), because only the body and cells take blocks by position.</li>
+        <li><strong>A new section</strong> (by <code>add_section</code> or a break) shows the previous section's header and footer by inheritance rather than naming the same bodies: it renders the same, and it is what python-docx writes, so &quot;linked to previous&quot; is true until unlinked.</li>
+        <li><strong>A section's start.</strong> The operation set has no single &quot;set start&quot; operation, so it is the existing set in one step: a boundary carrying the new start is spliced in beside the old, the paragraph that ends the section is pointed at it, its form protection moves, and the old boundary is removed. The section's id changes; its index, content and bands do not.</li>
+        <li><strong>Orientation</strong> swaps width and height when they disagree with it, as Word does; python-docx sets only the flag.</li>
+        </ul>
+        <p class="doc-body"><strong>Guards.</strong></p>
+        <ul class="doc-list">
+        <li><code>crates/opendoc/tests/objects.rs</code> (6 tests): every edit applied, read back, saved and reopened with no loss, undone, and refused as a whole batch; the JSON commands.</li>
+        <li><code>packages/opendoc/test/objects.test.mjs</code>, <code>bindings/python/tests/test_objects.py</code>, <code>ConformanceTest</code> (Java) and <code>crates/opendoc-ffi/tests/abi.rs</code> drive the same edits through each binding.</li>
+        <li><strong>Mutations</strong>, each red then restored: the picture's bytes not handed to the resources (&quot;the bytes are in the package&quot;); the orientation swap removed (&quot;turning swaps the size, as Word does&quot;).</li>
         </ul>
         <p class="doc-body">[poi]: https://poi.apache.org/components/document/ [pydocx]: https://python-docx.readthedocs.io/en/latest/api/text.html [pydocx-gh]: https://github.com/python-openxml/python-docx [docx4j]: https://github.com/plutext/docx4j [oxsdk]: https://github.com/dotnet/Open-XML-SDK [aspose-layout]: https://docs.aspose.com/words/net/rendering/ [aspose]: https://products.aspose.com/words/ [docxjs]: https://github.com/VolodymyrBaydalka/docxjs [mammoth]: https://github.com/mwilliamson/mammoth.js [uniffi]: https://mozilla.github.io/uniffi-rs/latest/ [uniffi-readme]: https://github.com/mozilla/uniffi-rs [jep454]: https://openjdk.org/jeps/454</p>
         <p class="doc-body">[docxjs-readme]: https://raw.githubusercontent.com/dolanmiu/docx/master/README.md [docxjs-docs]: https://github.com/dolanmiu/docx/tree/master/docs/usage [dt-tags]: https://docxtemplater.com/docs/tag-types/ [dt-config]: https://docxtemplater.com/docs/configuration/ [dt-errors]: https://docxtemplater.com/docs/errors/ [dt-pricing]: https://docxtemplater.com/pricing/ [pydocx-home]: https://python-docx.readthedocs.io/en/latest/ [pydocx-quick]: https://python-docx.readthedocs.io/en/latest/user/quickstart.html [pydocx-comments]: https://python-docx.readthedocs.io/en/latest/user/comments.html [docxtpl]: https://docxtpl.readthedocs.io/en/latest/ [poi-doc]: https://poi.apache.org/apidocs/dev/org/apache/poi/xwpf/usermodel/XWPFDocument.html [poi-run]: https://poi.apache.org/apidocs/dev/org/apache/poi/xwpf/usermodel/XWPFRun.html [docx4j-api]: https://raw.githubusercontent.com/plutext/docx4j/master/docx4j-core/src/main/java/org/docx4j/Docx4J.java [docx4j-blog]: https://www.docx4java.org/blog/?p=148 [aspose-doc]: https://reference.aspose.com/words/java/com.aspose.words/document/ [aspose-builder]: https://reference.aspose.com/words/net/aspose.words/documentbuilder/ [aspose-replace]: https://reference.aspose.com/words/net/aspose.words/range/replace/ [aspose-layout-collector]: https://reference.aspose.com/words/java/com.aspose.words/layoutcollector/</p>

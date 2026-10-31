@@ -332,6 +332,13 @@ pub struct SectionView {
     pub columns: u16,
     /// Whether the first page has its own header and footer.
     pub title_page: bool,
+    /// How the section starts: `"nextPage"`, `"continuous"`, `"evenPage"`,
+    /// `"oddPage"` or `"nextColumn"` (`nextPage` when the file says nothing).
+    pub start: &'static str,
+    /// Whether even pages use their own header and footer variant. One
+    /// document-wide setting in OOXML (`w:evenAndOddHeaders`), repeated on
+    /// every section so a reader of one section sees it.
+    pub even_and_odd_headers: bool,
     /// The headers it references.
     pub headers: Vec<StoryRef>,
     /// The footers it references.
@@ -821,6 +828,14 @@ impl<'a> Projector<'a> {
                     },
                     columns: section.columns.count.max(1),
                     title_page: section.title_page.unwrap_or(false),
+                    even_and_odd_headers: self.defs.settings.even_and_odd_headers,
+                    start: match section.section_type {
+                        Some(casual_doc_model::v1::SectionType::Continuous) => "continuous",
+                        Some(casual_doc_model::v1::SectionType::EvenPage) => "evenPage",
+                        Some(casual_doc_model::v1::SectionType::OddPage) => "oddPage",
+                        Some(casual_doc_model::v1::SectionType::NextColumn) => "nextColumn",
+                        Some(casual_doc_model::v1::SectionType::NextPage) | None => "nextPage",
+                    },
                     headers: refs(&section.headers),
                     footers: refs(&section.footers),
                 }

@@ -38,6 +38,9 @@ pdf-import = ["casual-doc-io/pdf-import", "opendoc-viewer/pdf-import"]
 wasm-opt = ['-Oz', '--enable-bulk-memory', '--enable-sign-ext', '--enable-nontrapping-float-to-int']
 
 [dependencies]
+# The lowerings the editor and the agent front doors share (`docs/181`): pictures,
+# notes, headers and footers, fields and section breaks go through them.
+casual-doc-command.workspace = true
 casual-doc-diff.workspace = true
 casual-doc-edit.workspace = true
 casual-doc-io.workspace = true

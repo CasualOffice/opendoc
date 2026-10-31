@@ -152,3 +152,78 @@ fn the_header_declares_every_export() {
     assert!(declared >= exports.len());
     assert!(header.contains(&format!("#define OPENDOC_ABI_VERSION {ABI_VERSION}")));
 }
+
+#[test]
+fn pictures_headers_notes_and_sections_are_edits_through_the_abi() {
+    // docs/176 §12.12: the C ABI reaches the new edits through `edit`, the same
+    // JSON vocabulary every binding sends.
+    let png = opendoc::Document::create()
+        .unwrap()
+        .render_page_png(0, 4.0)
+        .unwrap();
+    let doc = opendoc_create();
+    assert!(!doc.is_null(), "{}", last_error());
+    let added = call(
+        doc,
+        "edit",
+        Some(r#"[{"op":"insertParagraph","text":"Hello"}]"#),
+    );
+    let p = added["results"][0].as_str().unwrap().to_owned();
+    let batch = serde_json::json!([
+        {"op": "insertPicture", "paragraph": p, "offset": 5,
+         "image": opendoc::base64::encode(&png), "widthPt": 40},
+        {"op": "headerFooter", "section": 0, "region": "header"},
+        {"op": "insertNote", "kind": "footnote", "paragraph": p, "offset": 1, "text": "n1"},
+        {"op": "addSection", "start": "continuous"},
+        {"op": "setPageSetup", "section": 1, "setup": {"orientation": "landscape"}}
+    ]);
+    let results = call(doc, "edit", Some(&batch.to_string()));
+    let picture = results["results"][0].as_str().unwrap().to_owned();
+    let header = results["results"][1].as_str().unwrap().to_owned();
+    let follow = serde_json::json!([
+        {"op": "insertText", "paragraph": header, "offset": 0, "text": "Top"},
+        {"op": "setAltText", "picture": picture, "text": "Logo"}
+    ]);
+    call(doc, "edit", Some(&follow.to_string()));
+    let sections = call(doc, "sections", None);
+    assert_eq!(sections[1]["orientation"], "landscape");
+    assert_eq!(sections[1]["start"], "continuous");
+    assert_eq!(call(doc, "notes", None)[0]["text"], "n1");
+    let headers = call(doc, "headersFooters", None);
+    assert!(
+        headers
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|h| h["text"] == "Top")
+    );
+    let paragraph = call(
+        doc,
+        "paragraph",
+        Some(&serde_json::json!({ "id": p }).to_string()),
+    );
+    assert!(
+        paragraph["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["id"] == picture.as_str() && r["image"]["description"] == "Logo")
+    );
+    // A refused batch is refused whole, with a coded error.
+    let method = CString::new("edit").unwrap();
+    let arg = CString::new(
+        r#"[{"op":"addSection"},{"op":"setSectionStart","section":9,"start":"oddPage"}]"#,
+    )
+    .unwrap();
+    // SAFETY: a live handle and NUL-terminated strings.
+    let refused = unsafe { opendoc_call(doc, method.as_ptr(), arg.as_ptr()) };
+    assert!(refused.is_null());
+    assert!(last_error().contains("section 9"));
+    assert_eq!(
+        call(doc, "sections", None).as_array().unwrap().len(),
+        2,
+        "nothing applied"
+    );
+    // SAFETY: freed once.
+    unsafe { opendoc_free(doc) };
+}

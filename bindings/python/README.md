@@ -56,6 +56,41 @@ Every edit is an engine operation, applied all or nothing. A read-only document 
 edits. `Document.edit([...])` runs a list of JSON edit commands as one batch; it is the same
 vocabulary the JavaScript package uses.
 
+## Pictures, headers and footers, notes, sections
+
+python-docx's names, each one an engine edit, applied whole or not at all:
+
+```python
+from opendoc import Document, Inches, Pt, WD_ORIENT, WD_SECTION
+
+document = Document()
+shape = document.add_picture("logo.png", width=Inches(1))  # or paragraph.add_run().add_picture(...)
+shape.width = Inches(1.5)                                   # resizes; the height is yours to set too
+shape.alt_text = "Company logo"                             # additions: alt_text, replace(), delete()
+shape.replace("logo-2026.png")
+
+section = document.sections[0]
+section.header.paragraphs[0].text = "Quarterly report"
+footer = section.footer.paragraphs[0]
+footer.text = "Page "
+footer.add_field("page")                                    # numpages, date, time, filename, author
+section.different_first_page_header_footer = True
+section.first_page_header.paragraphs[0].text = "Cover"
+document.settings.odd_and_even_pages_header_footer = True
+section.even_page_header.add_paragraph("Even pages")
+
+note = document.paragraphs[0].add_footnote("Source: annual report")  # add_endnote too
+note.text = "Source: annual report, p. 4"
+note.delete()
+
+landscape = document.add_section(WD_SECTION.NEW_PAGE)
+landscape.orientation = WD_ORIENT.LANDSCAPE                 # the page turns, as in Word
+landscape.left_margin = Inches(0.5)
+landscape.columns = 2
+landscape.start_type = WD_SECTION.ODD_PAGE
+landscape.header.is_linked_to_previous = False              # its own copy of the header
+```
+
 ## Templates
 
 ```python
@@ -72,10 +107,9 @@ loops are `{{#items}}…{{/items}}`, not `{% for %}`. An invalid template raises
 
 ## Not built yet
 
-- `add_picture` into an existing document raises, and says so. `opendoc.build({...})` with a
-  docx-js-shaped spec writes pictures.
 - Character styles on a run cannot be set.
 - A table style other than Table Grid cannot be set.
-- Headers and footers are read-only (`section.header.paragraphs`).
+- Turning a section's `orientation` also swaps its width and height, as Word does;
+  python-docx sets the flag alone.
 - `add_page_break()` adds an empty paragraph that starts a new page; python-docx adds a
   page-break run.
