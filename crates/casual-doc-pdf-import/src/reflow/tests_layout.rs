@@ -1118,3 +1118,54 @@ fn a_shape_drawn_past_the_page_edge_is_left_out_of_its_drawing() {
     assert_eq!(widths.len(), 1, "{widths:?}");
     assert!(widths[0] <= 301 * 12_700, "{widths:?}");
 }
+
+/// A caption beside a chart ("Figure 3. ...", set small within two ems of
+/// it, as an axis title is) stays a paragraph after the drawing; it had
+/// joined the chart's labels as a text box. Mutation, driven red:
+/// `labels` ignoring `caption_text`.
+#[test]
+fn a_caption_beside_a_chart_is_not_one_of_its_labels() {
+    // `chart_pdf`'s chart, alone on its page, with a caption 6 pt under
+    // its frame.
+    let mut content = String::new();
+    content.push_str(&text(
+        "F1",
+        11.0,
+        72.0,
+        720.0,
+        14.0,
+        &["A paragraph of prose comes before the chart, and it ends here."],
+    ));
+    content.push_str("0.5 G 0.5 w 150 100 m 450 100 l 450 300 l 150 300 l h S 0 G\n");
+    content.push_str(&text("F1", 8.0, 140.0, 100.0, 10.0, &["0"]));
+    content.push_str("0 0 1 rg 180 100 40 120 re f 0 g\n");
+    content.push_str(&text("F1", 8.0, 135.0, 200.0, 10.0, &["50"]));
+    content.push_str("1 0 0 rg 260 100 40 160 re f 0 g\n");
+    content.push_str(&text("F1", 8.0, 130.0, 290.0, 10.0, &["100"]));
+    content.push_str("0 1 0 rg 340 100 40 80 re f 0 g\n");
+    content.push_str(&text("F1", 8.0, 390.0, 270.0, 10.0, &["Series A"]));
+    content.push_str("0 0 1 rg 380 270 6 6 re f 0 g\n");
+    content.push_str(&text("F1", 8.0, 250.0, 88.0, 10.0, &["Figure 3. Sales"]));
+    let reflowed = reflow_of(synth::document(&[Page::new(content)], COURIER, ""));
+    let texts: Vec<String> = paragraphs(&reflowed.document)
+        .iter()
+        .map(|p| para_text(p))
+        .collect();
+    assert!(
+        texts.iter().any(|t| t == "Figure 3. Sales"),
+        "the caption is a paragraph: {texts:?}"
+    );
+    assert!(!texts.iter().any(|t| t == "Series A"), "{texts:?}");
+    for (text, caption) in [
+        ("Figure 1. OpenDoc rendering pipeline", true),
+        ("Fig. 2a", true),
+        ("Table IV", true),
+        ("Source: Statistics Office", true),
+        ("Figures", false),
+        ("Tablet sales", false),
+        ("100", false),
+        ("Series A", false),
+    ] {
+        assert_eq!(super::caption_text(text), caption, "{text}");
+    }
+}

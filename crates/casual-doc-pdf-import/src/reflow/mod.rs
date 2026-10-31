@@ -1190,8 +1190,14 @@ fn labels(
         let within_y = r.y0 >= b.y0 - slack && r.y1 <= b.y1 + slack;
         let near_x = r.x1 >= b.x0 - slack && r.x0 <= b.x1 + slack;
         let near_y = r.y1 >= b.y0 - slack && r.y0 <= b.y1 + slack;
+        // A caption beside the drawing ("Figure 1. ...", "Source: ...")
+        // is the figure's paragraph, not one of its labels: short and set
+        // small, it sits within two ems as an axis title does.
+        let inside = r.x0 >= b.x0 && r.x1 <= b.x1 && r.y0 >= b.y0 && r.y1 <= b.y1;
+        let captioned = !inside && lines.first().is_some_and(|line| caption_text(&line.text()));
         if ((within_x && near_y) || (within_y && near_x))
             && em <= body_size + 0.5
+            && !captioned
             && lines.iter().all(label_line)
         {
             taken[i] = true;
@@ -1199,6 +1205,33 @@ fn labels(
         }
     }
     out
+}
+
+/// Whether `text` opens as a caption does: "Figure 1", "Fig. 2a",
+/// "Table IV", "Chart 3", "Exhibit 2" (the word, then a number or a roman
+/// numeral), or a "Source:" or "Note:" line. O(text).
+fn caption_text(text: &str) -> bool {
+    let lower = text.trim_start().to_lowercase();
+    if ["source:", "note:", "notes:"]
+        .iter()
+        .any(|p| lower.starts_with(p))
+    {
+        return true;
+    }
+    let numbered = |rest: &str| {
+        let number = rest.trim_start_matches([' ', '\u{a0}']);
+        let spaced = number.len() < rest.len();
+        let roman = number
+            .split(|c: char| !c.is_ascii_alphabetic())
+            .next()
+            .is_some_and(|w| !w.is_empty() && w.chars().all(|c| "ivxlc".contains(c)));
+        (spaced || rest.is_empty()) && (number.starts_with(|c: char| c.is_ascii_digit()) || roman)
+    };
+    [
+        "figure", "fig.", "fig", "table", "chart", "graph", "exhibit", "diagram", "plate",
+    ]
+    .iter()
+    .any(|word| lower.strip_prefix(word).is_some_and(numbered))
 }
 
 /// A column region and the page it is on.

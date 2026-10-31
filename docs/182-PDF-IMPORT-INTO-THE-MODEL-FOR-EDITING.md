@@ -1886,8 +1886,9 @@ committed `nist-ir8105.pdf`).
    centred; `tables` 0.792 to 0.810.)
 2. Text wrapped around a picture: the lines beside it start a new paragraph at the picture's
    edge.
-3. A chart's labels are text boxes inside its group: right where they were, but a label that
-   was a figure's caption ("Figure 1", short) sitting within two ems of it joins it too.
+3. Fixed: a caption beside a chart ("Figure 1. ...", "Table IV", "Source: ...") within two
+   ems of it stays the figure's paragraph instead of joining its labels (`caption_text`); a
+   chart's own labels are still text boxes inside its group.
 4. Fixed: a light weight (`HelveticaNeue-Light`, `-UltraLight`, `-Thin`) keeps its own family
    name, the way Word and macOS name one ("Helvetica Neue Light"), where it had been mapped to
    Arial and drawn regular; a machine with the face uses it, and the layout substitutes a
