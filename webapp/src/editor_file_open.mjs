@@ -398,7 +398,12 @@ export function createFileOpen(ed) {
       // tracked changes shows markup on open, so struck deletions are never
       // invisible behind a buried toggle. A clean document opens with markup off.
       // Set before the first `renderAll` so it renders the correct layout once.
-      ed.showingChanges = ed.documentHasTrackedChanges();
+      // A document that OPENS in Suggesting (its file says Track Changes is on,
+      // HF-283, or the host asked for it) keeps the markup Suggesting turned on
+      // above: this line used to reset it to "has revisions", so a clean tracked
+      // file opened in Suggesting under Simple markup and the reader's typing was
+      // tracked but drew no insertion mark.
+      ed.showingChanges = ed.reviewMode === "suggesting" || ed.documentHasTrackedChanges();
       ed.reflectShowingChangesState();
       // Apply any caller-supplied opened-document state (e.g. a gallery demo
       // preset) now — after the review/mode reset above and before the first

@@ -32,8 +32,12 @@ test("Set Language marks one word French: the status bar says so and spell check
 
   // Select the word (double-click), then click the status bar's text language.
   const box = await stableBox(squiggle);
-  // The mark is drawn under the text, so the word itself is a few pixels above it.
-  await page.mouse.dblclick(box.x + box.width / 2, box.y - 5);
+  // The marker element IS the word's text box (`decorationRectsOnPages`; the wave
+  // is its `::after`, at the bottom), so the word is at its centre — as
+  // `spell-check.spec.mjs` clicks it. Aiming 5 px ABOVE the box, as this did,
+  // double-clicked the line above and set French on one space of it.
+  await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.locator(".overlay .highlight"), "the double-click selected the word").toHaveCount(1);
   const status = page.locator("#textLanguageStatus");
   await expect(status).toBeVisible();
   await expect(status).toHaveAttribute("aria-label", /English/);
@@ -53,11 +57,21 @@ test("Set Language marks one word French: the status bar says so and spell check
   // formatting change, and the checker no longer flags it as bad English.
   await expect(status).toHaveAttribute("aria-label", /French/);
   await expect(page.locator("#undoBtn")).toHaveAttribute("aria-label", "Undo Formatting");
+  // The caret leaves the word first: the checker never marks the word the caret
+  // is in (`paint` skips it while it is being typed), so with the selection still
+  // on it a count of 0 would hold even if the French tag were ignored. A count
+  // of 0 is also what the overlay shows for a moment while it repaints, so the
+  // POSITIVE half comes first: the checker itself says it met French text it
+  // has no list for, which it says only once it has split the paragraph by
+  // language (`languageParts`).
+  await expect(page.locator("#status")).toHaveText("No spelling dictionary for fr-FR", { timeout: 20_000 });
+  await clickIntoFirstPage(page);
   await expect(squiggle).toHaveCount(0, { timeout: 20_000 });
 
   // One Undo puts the English back, and with it the squiggle. (The button, not
   // the chord: focus went back to the status-bar item that opened the dialog.)
   await page.locator("#undoBtn").click();
+  await clickIntoFirstPage(page);
   await expect(squiggle).toHaveCount(1, { timeout: 20_000 });
   expect(consoleErrors).toEqual([]);
 });

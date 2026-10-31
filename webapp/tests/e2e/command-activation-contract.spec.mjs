@@ -55,13 +55,19 @@ const ALL_DISABLED_BY_DESIGN = new Set(["references"]);
 // The only commands this sweep may not activate, and why. Both hand control to
 // the operating system and never give it back to the test: `window.print()`
 // blocks the renderer until the print dialog is dismissed (see `printDocument`),
-// and the two file commands open a native file chooser. Both are covered by
-// their own specs (`print.spec.mjs`, `multi-format-io.spec.mjs`). The ids are
-// asserted to still exist below, so a skip cannot outlive its command.
+// and the file commands open a native file chooser, which this sweep's DOM
+// recorder cannot see (the chooser is not in the page). Print is covered by
+// `print.spec.mjs`; every file-chooser row is clicked below and must raise a
+// chooser. The ids are asserted to still exist below, so a skip cannot outlive
+// its command.
+const FILE_CHOOSER = "opens a native file chooser";
 const POINTER_UNSAFE = new Map([
   ["file.print", "window.print() blocks the renderer until the OS dialog closes"],
-  ["file.open", "opens a native file chooser"],
-  ["insert.image", "opens a native file chooser"],
+  ["file.open", FILE_CHOOSER],
+  ["insert.image", FILE_CHOOSER],
+  // Insert ▸ Text from file (`docs/153` page.textFromFile), Word's Insert ▸
+  // Object ▸ Text from File: a file picker first, as Picture is.
+  ["insert.textFromFile", FILE_CHOOSER],
 ]);
 
 /** Starts recording every DOM change, tagged with the observer batch it arrived
@@ -167,6 +173,20 @@ async function loadEditor(page) {
   await clickIntoFirstPage(page);
 }
 
+/** A reload that really is a fresh editor. The reader's view preferences live in
+ *  this origin's storage and survive a reload by design — Reflow (`docReflow`),
+ *  the chrome mode — so a plain reload carried the PREVIOUS row's toggle into the
+ *  next activation: View ▸ Reflow left reflow on, and View ▸ Multiple pages,
+ *  which is greyed in reflow (with its reason), was then clicked as the enabled
+ *  row it had been when the menu was read, until the test timed out. */
+async function reloadFresh(page) {
+  await page.evaluate(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+  await page.reload();
+}
+
 /** The editor in the state a tab needs to exist at all. Only Table is
  *  contextual: its panel is hidden and its controls disabled until the caret is
  *  inside a table, so sweeping it from a plain load would skip all 19 buttons. */
@@ -243,7 +263,7 @@ test.describe("every menu-bar command acts or explains itself", () => {
 
         // A fresh document per row: this asks what ONE activation does, and the
         // row before it may have rewritten the document it acts on.
-        await page.reload();
+        await reloadFresh(page);
         await loadEditor(page);
         await openAppMenu(page, menu);
         thrown.length = 0;
@@ -271,7 +291,7 @@ test.describe("every menu-bar command acts or explains itself", () => {
     page.on("pageerror", (error) => thrown.push(String(error)));
 
     const withCaret = await enabledMenuIds(page, loadEditor);
-    await page.reload();
+    await reloadFresh(page);
     const withSelection = await enabledMenuIds(page, loadEditorWithSelection);
     const onlyWithSelection = [...withSelection].filter(
       (id) => !withCaret.has(id) && !POINTER_UNSAFE.has(id),
@@ -282,7 +302,7 @@ test.describe("every menu-bar command acts or explains itself", () => {
     ).toBeGreaterThan(0);
 
     for (const id of onlyWithSelection) {
-      await page.reload();
+      await reloadFresh(page);
       await loadEditorWithSelection(page);
       // Find the row again: which menu it lives in is the taxonomy's business,
       // not this test's.
@@ -321,6 +341,32 @@ test.describe("every menu-bar command acts or explains itself", () => {
     // would otherwise report.
     expect([...POINTER_UNSAFE.keys()].filter((id) => !offered.has(id))).toEqual([]);
   });
+
+  // The other half of the file-chooser skip: those rows are not inert either.
+  // Each is clicked from its menu and must raise the browser's file chooser,
+  // which is what a user sees. Playwright intercepts the chooser, so nothing
+  // blocks.
+  test("every file-chooser command opens the file chooser", async ({ page }) => {
+    const ids = [...POINTER_UNSAFE].filter(([, why]) => why === FILE_CHOOSER).map(([id]) => id);
+    await loadEditor(page);
+    for (const id of ids) {
+      await reloadFresh(page);
+      await loadEditor(page);
+      let found = false;
+      for (const menu of MENUS) {
+        await openAppMenu(page, menu);
+        if (await page.locator(`#appMenuPopover .app-menu-item[data-command="${id}"]`).count()) {
+          found = true;
+          break;
+        }
+        await page.keyboard.press("Escape");
+      }
+      expect(found, `${id} should be in the bar`).toBe(true);
+      const chooser = page.waitForEvent("filechooser", { timeout: 5_000 });
+      await (await revealMenuRow(page, id)).click();
+      await expect(chooser, `${id} opened no file chooser`).resolves.toBeTruthy();
+    }
+  });
 });
 
 test.describe("every ribbon control acts or explains itself", () => {
@@ -357,7 +403,7 @@ test.describe("every ribbon control acts or explains itself", () => {
       for (const button of buttons) {
         if (button.disabled || POINTER_UNSAFE.has(button.id)) continue;
 
-        await page.reload();
+        await reloadFresh(page);
         await loadEditorForTab(page, tab);
         await page.locator(`.ribbon-tab[data-tab="${tab}"]`).click();
         thrown.length = 0;
