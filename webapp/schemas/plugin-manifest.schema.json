@@ -58,7 +58,20 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["title"],
-          "properties": { "title": { "type": "string", "maxLength": 64 }, "width": { "type": "integer", "minimum": 240, "maximum": 480 } }
+          "properties": {
+            "title": { "type": "string", "maxLength": 64 },
+            "width": { "type": "integer", "minimum": 240, "maximum": 480 },
+            "menu": {
+              "type": "array",
+              "maxItems": 6,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["command"],
+                "properties": { "command": { "type": "string" }, "icon": { "type": "string", "pattern": "^[a-z0-9_]{1,40}$" } }
+              }
+            }
+          }
         },
         "contextMenu": {
           "type": "array",

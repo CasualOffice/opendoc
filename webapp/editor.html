@@ -2483,6 +2483,7 @@
       <button data-i18n="notes.convertCommand" type="button" role="menuitem" class="menu-item" data-command="reference.convertNotes">Convert notes…</button>
     </div>
     <div data-i18n-label="selToolbar.aiActions.label" id="selAiMenu" class="context-menu" hidden role="menu" aria-label="Casual AI actions"></div>
+    <div data-i18n-label="pluginPanelMenu.label" id="pluginPanelMenu" class="context-menu" hidden role="menu" aria-label="Panel options"></div>
     <div data-i18n-label="addinsMenu.label" id="addinsMenu" class="context-menu" hidden role="menu" aria-label="Add-ins">
       <div id="addinsMenuItems" role="none"></div>
       <button data-i18n="addinsMenu.manage" type="button" role="menuitem" class="menu-item" id="addinsManage">Manage add-ins…</button>
@@ -4340,19 +4341,6 @@
         <div id="compareBody" class="panel-body compare-body"></div>
         <input id="compareFile" type="file" accept=".docx,.odt,.rtf,.json,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/rtf,text/rtf,application/json,text/plain" hidden />
       </aside>
-      <!-- A plugin's panel (docs/183 §8): the SAME side-panel slot as the outline,
-           pages and compare panels — frame, head, close button and width — and
-           hidden until a running plugin opens it. Every running plugin's frame
-           lives in its body from its start, shown only while its panel is open:
-           moving an iframe reloads it, which the platform reads as the plugin
-           navigating away. -->
-      <aside id="pluginPanel" class="side-panel plugin-panel" hidden aria-labelledby="pluginPanelTitle">
-        <div class="panel-head">
-          <span id="pluginPanelTitle" class="panel-title"></span>
-          <button data-i18n-title="pluginPanel.close.title" data-i18n-label="pluginPanel.close.label" id="pluginPanelClose" type="button" class="panel-close" title="Close" aria-label="Close add-in panel"><span class="ms" aria-hidden="true">close</span></button>
-        </div>
-        <div id="pluginPanelBody" class="panel-body plugin-panel-body"></div>
-      </aside>
       <main id="viewport" class="viewport">
         <div id="drop" class="drop">
           <div class="drop-card">
@@ -4769,6 +4757,25 @@
             </fieldset>
           </div>
         </div>
+      </aside>
+      <!-- A plugin's panel (docs/183 §8, §21): the `.side-panel` shell (head,
+           title, close button, inset), DOCKED on the right at full height the way
+           Gemini sits in Google Docs and Copilot in Word — the last item of the
+           work area's row, so the document column shrinks to make room and
+           nothing covers the page. Its inner edge is a splitter
+           (`plugin_panel_width.mjs`); on a phone it is the bottom sheet every
+           side panel becomes. Hidden until a running plugin opens it. Every
+           running plugin's frame lives in its body from its start, shown only
+           while its panel is open: moving an iframe reloads it, which the
+           platform reads as the plugin navigating away. -->
+      <aside id="pluginPanel" class="side-panel plugin-panel" hidden aria-labelledby="pluginPanelTitle">
+        <div data-i18n-title="pluginPanel.resize.title" data-i18n-label="pluginPanel.resize.label" id="pluginPanelResize" class="plugin-panel-resize" role="separator" aria-orientation="vertical" aria-controls="pluginPanel" tabindex="0" title="Drag to resize. Double-click to reset." aria-label="Resize the panel"></div>
+        <div class="panel-head">
+          <span id="pluginPanelTitle" class="panel-title"></span>
+          <button data-i18n-title="pluginPanel.more.title" data-i18n-label="pluginPanel.more.label" id="pluginPanelMore" type="button" class="panel-close" hidden title="More" aria-label="More options" aria-haspopup="menu" aria-controls="pluginPanelMenu" aria-expanded="false"><span class="ms" aria-hidden="true">more_horiz</span></button>
+          <button data-i18n-title="pluginPanel.close.title" data-i18n-label="pluginPanel.close.label" id="pluginPanelClose" type="button" class="panel-close" title="Close" aria-label="Close add-in panel"><span class="ms" aria-hidden="true">close</span></button>
+        </div>
+        <div id="pluginPanelBody" class="panel-body plugin-panel-body"></div>
       </aside>
     </div>
 

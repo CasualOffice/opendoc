@@ -37,6 +37,7 @@ export const MANIFEST_BOUNDS = Object.freeze({
   network: 8,
   locales: 32,
   panelWidth: Object.freeze([240, 480]),
+  panelMenu: 6,
   entryBytes: 1024 * 1024,
   manifestBytes: 64 * 1024,
 });
@@ -173,14 +174,18 @@ export function checkManifest(raw, { manifestUrl, selfOrigin }) {
   let panel = null;
   if (contributes.panel !== undefined) {
     if (!isObject(contributes.panel)) return fail("contributes.panel must be an object", "contributes.panel");
-    const unknownKey = unknownField(contributes.panel, ["title", "width"], "contributes.panel.");
+    const unknownKey = unknownField(contributes.panel, ["title", "width", "menu"], "contributes.panel.");
     if (unknownKey) return unknownKey;
     const problem = text(contributes.panel.title, MANIFEST_BOUNDS.nameChars, "contributes.panel.title");
     if (problem) return problem;
     const [min, max] = MANIFEST_BOUNDS.panelWidth;
     const width = contributes.panel.width ?? 320;
     if (!Number.isInteger(width) || width < min || width > max) return fail(`contributes.panel.width must be ${min} to ${max}`, "contributes.panel.width");
-    panel = Object.freeze({ title: contributes.panel.title, width });
+    // Rows of the panel head's ⋯ menu (`docs/183` §21): the plugin's own
+    // commands, drawn and announced by the editor.
+    const menu = refs(contributes.panel.menu, MANIFEST_BOUNDS.panelMenu, "contributes.panel.menu", ["icon"]);
+    if (!menu.ok) return menu.problem;
+    panel = Object.freeze({ title: contributes.panel.title, width, menu: Object.freeze(menu.items) });
   }
   // Writing issues drawn in the text by the host (`docs/183` §19). Reading the
   // paragraphs to check is reading the document, so it needs `read`.

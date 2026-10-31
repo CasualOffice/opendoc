@@ -72,6 +72,10 @@
       " Write the reply only, in one or two sentences, as the user would write it. No preface.",
   });
 
+  var SELECTION_RULE =
+    'The user has selected some text, given as <document_text id="selection">. If they ask you to change it, reply with the replacement text only: ' +
+    "no preface, no quotes, no citations. Otherwise answer the question about it.";
+
   /** The declared token estimate: UTF-8 bytes / 4, rounded up. */
   function estimate(text) {
     var s = String(text == null ? "" : text);
@@ -184,8 +188,16 @@
     return request(SYSTEM.edits, instruction + " Apply it to each paragraph.\n\n" + blocks, { maxTokens: 4000, temperature: 0.3, stream: false });
   }
 
-  function askRequest(question, context, history) {
-    return request(SYSTEM.ask, "The document:\n" + context.text + "\n\nQuestion: " + question, { history: history || [], maxTokens: 1500 });
+  /**
+   * A question about the document. With `selection` (the text the person has
+   * selected, attached in the composer) the selected text travels as its own
+   * data block, and the model is told that a request to change it is answered
+   * with the new text only, so the answer card can offer Replace selection.
+   */
+  function askRequest(question, context, history, selection) {
+    var attached = selection ? "\n\nThe selected text:\n" + dataBlock("selection", selection) : "";
+    var system = selection ? SYSTEM.ask + " " + SELECTION_RULE : SYSTEM.ask;
+    return request(system, "The document:\n" + context.text + attached + "\n\nQuestion: " + question, { history: history || [], maxTokens: 1500 });
   }
 
   var SUMMARY_KINDS = Object.freeze({
@@ -203,9 +215,11 @@
     return request(SYSTEM.review, "Review this document:\n" + context.text, { maxTokens: 4000, stream: false, temperature: 0.2 });
   }
 
-  function draftRequest(prompt, context) {
+  /** A draft at the cursor. `history` is the conversation so far, so "write me a
+   *  paragraph based on our discussion" has the discussion to draw on. */
+  function draftRequest(prompt, context, history) {
     var around = context && context.text ? "\n\nThe document around the insertion point, for context:\n" + context.text : "";
-    return request(SYSTEM.draft, String(prompt) + around, { maxTokens: 2000, temperature: 0.7 });
+    return request(SYSTEM.draft, String(prompt) + around, { history: history || [], maxTokens: 2000, temperature: 0.7 });
   }
 
   function replyRequest(thread, quoted) {
@@ -324,6 +338,7 @@
     var dropped = 0;
     var comments = 0;
     var suggestions = 0;
+    var shown = [];
     items.slice(0, 20).forEach(function (item) {
       var node = item && context.ids[String(item.id)];
       var block = node && blocksById[node];
@@ -334,13 +349,16 @@
       edits.push({ op: "comment", target: anchor, text: note });
       comments += 1;
       var replacement = typeof item.replacement === "string" ? cleanText(item.replacement) : "";
-      if (replacement && replacement !== quote) {
+      var suggested = !!replacement && replacement !== quote;
+      if (suggested) {
         edits.push({ op: "replace_text", target: anchor, text: replacement });
         suggestions += 1;
       }
+      // What the answer card shows before anything is applied.
+      shown.push({ quote: quote, comment: note, replacement: suggested ? replacement : null });
     });
     if (!edits.length) return { ok: false, reason: dropped ? "unparsable" : "nothing", dropped: dropped };
-    return { ok: true, plan: plan(revision, edits), dropped: dropped, comments: comments, suggestions: suggestions };
+    return { ok: true, plan: plan(revision, edits), dropped: dropped, comments: comments, suggestions: suggestions, items: shown };
   }
 
   /** A draft after a paragraph: plain paragraphs, nothing else. */
@@ -353,6 +371,119 @@
       .map(function (text) { return { text: text }; });
     if (!afterNode || !paragraphs.length) return { ok: false, reason: "empty" };
     return { ok: true, plan: plan(revision, [{ op: "insert_paragraphs", after: { node: afterNode }, paragraphs: paragraphs }]) };
+  }
+
+  /** An answer's text without its citation markers (`[p2]`, `[p1, p3]`). */
+  function stripCitations(text) {
+    return String(text == null ? "" : text).replace(/\s*\[p\d{1,4}(?:\s*,\s*p\d{1,4})*\]/g, "");
+  }
+
+  /**
+   * An answer as paragraphs to insert: blank lines separate paragraphs, and a run
+   * of bullet or numbered lines becomes one paragraph per line (a Key points
+   * answer is a list, not one long line). At most 40.
+   */
+  function paragraphsOf(text) {
+    var out = [];
+    cleanText(stripCitations(text)).split(/\n\s*\n/).forEach(function (chunk) {
+      var lines = chunk.split(/\n/).map(function (l) { return l.trim(); }).filter(Boolean);
+      if (!lines.length) return;
+      var listy = lines.length > 1 && lines.every(function (l) { return /^([•\-*–]|\d{1,3}[.)])\s/.test(l); });
+      if (listy) out.push.apply(out, lines);
+      else out.push(lines.join(" "));
+    });
+    return out.slice(0, 40);
+  }
+
+  /**
+   * Insert at the cursor (`caret` is `{node, offset}`, the offset in UTF-8 bytes
+   * as the editor's positions are): one paragraph of answer goes INTO the text at
+   * the caret, as Docs' and Word's Insert do; several become new paragraphs after
+   * the caret's paragraph. Only `insert_text` or `insert_paragraphs`.
+   */
+  function planForInsert(caret, answer, revision) {
+    var paragraphs = paragraphsOf(answer);
+    if (!caret || !caret.node || !paragraphs.length) return { ok: false, reason: "empty" };
+    if (paragraphs.length === 1 && Number.isInteger(caret.offset) && caret.offset >= 0) {
+      return { ok: true, plan: plan(revision, [{ op: "insert_text", at: { node: caret.node, pos: { start: caret.offset, end: caret.offset } }, text: paragraphs[0] }]) };
+    }
+    return { ok: true, plan: plan(revision, [{ op: "insert_paragraphs", after: { node: caret.node }, paragraphs: paragraphs.map(function (p) { return { text: p }; }) }]) };
+  }
+
+  /** Add as comment: the answer, without citations, as one comment on `anchor`
+   *  (the attached selection, or the caret's whole paragraph). Only `comment`. */
+  function planForComment(anchor, answer, revision) {
+    var text = cleanText(stripCitations(answer)).slice(0, 4000);
+    if (!anchor || !anchor.node || !text) return { ok: false, reason: "empty" };
+    return { ok: true, plan: plan(revision, [{ op: "comment", target: anchor, text: text }]) };
+  }
+
+  /**
+   * A word-level diff of `before` → `after` for the answer card: segments of
+   * `{kind: "same" | "del" | "ins", text}`. Longest common subsequence over
+   * word-and-space tokens; past 160,000 token pairs it is one deletion and one
+   * insertion rather than O(n·m) work on a long answer. O(n·m) tokens, bounded.
+   */
+  function wordDiff(before, after) {
+    var a = String(before == null ? "" : before).match(/\s+|[^\s]+/g) || [];
+    var b = String(after == null ? "" : after).match(/\s+|[^\s]+/g) || [];
+    var out = [];
+    function push(kind, text) {
+      if (!text) return;
+      var last = out[out.length - 1];
+      if (last && last.kind === kind) last.text += text;
+      else out.push({ kind: kind, text: text });
+    }
+    if (a.length * b.length > 160000) {
+      push("del", a.join(""));
+      push("ins", b.join(""));
+      return out;
+    }
+    var n = a.length;
+    var m = b.length;
+    var table = [];
+    for (var i = 0; i <= n; i += 1) table.push(new Array(m + 1).fill(0));
+    for (var x = n - 1; x >= 0; x -= 1) {
+      for (var y = m - 1; y >= 0; y -= 1) table[x][y] = a[x] === b[y] ? table[x + 1][y + 1] + 1 : Math.max(table[x + 1][y], table[x][y + 1]);
+    }
+    var p = 0;
+    var q = 0;
+    while (p < n && q < m) {
+      if (a[p] === b[q]) {
+        push("same", a[p]);
+        p += 1;
+        q += 1;
+      } else if (table[p + 1][q] >= table[p][q + 1]) {
+        push("del", a[p]);
+        p += 1;
+      } else {
+        push("ins", b[q]);
+        q += 1;
+      }
+    }
+    for (; p < n; p += 1) push("del", a[p]);
+    for (; q < m; q += 1) push("ins", b[q]);
+    return out;
+  }
+
+  /**
+   * Whether an answer to a question about a selection reads as a REVISION of it
+   * (the card shows a diff and offers Replace selection first) rather than an
+   * answer ABOUT it (the card offers Add as comment first). A revision is one
+   * paragraph that is not much longer than the selection, or that keeps most of
+   * its words. Pure.
+   */
+  function looksLikeRevision(selected, answer) {
+    var sel = String(selected || "").trim();
+    var text = cleanText(stripCitations(answer));
+    if (!sel || !text || /\n\s*\n/.test(text)) return false;
+    if (text.length <= sel.length * 2 + 40) return true;
+    var mine = words(sel);
+    if (!mine.length) return false;
+    var theirs = {};
+    words(text).forEach(function (w) { theirs[w] = 1; });
+    var shared = mine.filter(function (w) { return theirs[w]; }).length;
+    return shared / mine.length >= 0.6 && text.length <= sel.length * 3 + 80;
   }
 
   /** A reply on a comment thread, anchored where the thread is. */
@@ -393,6 +524,12 @@
     planForReview: planForReview,
     planForDraft: planForDraft,
     planForReply: planForReply,
+    planForInsert: planForInsert,
+    planForComment: planForComment,
+    paragraphsOf: paragraphsOf,
+    stripCitations: stripCitations,
+    wordDiff: wordDiff,
+    looksLikeRevision: looksLikeRevision,
     trimHistory: trimHistory,
   });
   root.CasualAssistantCore = api;

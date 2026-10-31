@@ -139,6 +139,8 @@
       ui: {
         notify: function (message, kind) { return request("ui/notify", { message: message, kind: kind || "info" }); },
         panel: function (open) { return request("ui/panel", { open: open !== false }); },
+        /** First-party add-ins only: plain text to the clipboard. */
+        copy: function (text) { return request("ui/copy", { text: String(text || "") }).then(function (r) { return r.copied === true; }); },
       },
       storage: {
         get: function () { return request("storage/get").then(function (r) { return r.value; }); },

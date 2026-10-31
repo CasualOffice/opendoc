@@ -215,6 +215,20 @@ const TASKS = [
     const out = Core.planForDraft("n4", "First line\nwrapped.\n\nSecond paragraph.", 9);
     assert.deepEqual(out.plan, { base_revision: 9, edits: [{ op: "insert_paragraphs", after: { node: "n4" }, paragraphs: [{ text: "First line wrapped." }, { text: "Second paragraph." }] }] });
   }],
+  ["a paragraph 'based on our discussion' sees the discussion, as turns before the request", () => {
+    const ctx = Core.selectContext(DOC, "", 1000);
+    const discussion = [
+      { role: "user", content: "What ships in June?" },
+      { role: "assistant", content: "The SDK ships in June." },
+    ];
+    const body = Core.draftRequest("Write me a paragraph based on our discussion", ctx, discussion);
+    assert.deepEqual(body.messages.slice(1, 3), discussion);
+    assert.equal(body.messages.at(-1).role, "user");
+    assert.match(body.messages.at(-1).content, /^Write me a paragraph based on our discussion/);
+    // And the answer goes in at the cursor, only as an insertion.
+    const out = Core.planForInsert({ node: "n4", offset: 0 }, "The SDK follows in June.", 2);
+    assert.deepEqual(out.plan.edits.map((e) => e.op), ["insert_text"]);
+  }],
   ["a reply lands on its thread, at the thread's own anchor", () => {
     const comment = { id: "c1", anchor: { node: "n3", start: 4, end: 10 } };
     const out = Core.planForReply(comment, "Yes, approved on 3 May.", 4);

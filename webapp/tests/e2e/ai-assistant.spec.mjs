@@ -140,7 +140,8 @@ test("Stop ends a stream at once and says so", async ({ page }) => {
   await frame.locator("#prompt").press("Enter");
   await expect(frame.locator("#stop")).toBeVisible();
   await frame.locator("#stop").click();
-  await expect(frame.locator("#working")).toBeHidden();
+  await expect(frame.locator("#stop")).toBeHidden();
+  await expect(frame.locator("#send")).toBeVisible();
   await expect(frame.locator(".ca-msg-ai").last()).toContainText("Stopped.");
 });
 
@@ -155,10 +156,17 @@ test("Ask answers with citation chips that jump to the paragraph, and history su
   await frame.locator("#send").click();
   const chip = frame.locator(".ca-cite").first();
   await expect(chip).toHaveAttribute("aria-label", "Go to paragraph 1");
-  // Under every answer: Insert and Try again (Gemini's side panel), and the
-  // disclosure says the model can be wrong.
-  await expect(frame.locator(".ca-msg-actions").last().locator("button")).toHaveText(["Insert at the cursor", "Try again"]);
-  await expect(frame.locator("#disclosure")).toContainText("AI can make mistakes");
+  // Every answer is a card: a primary action that changes the document, a
+  // second one, Copy and Try again (Gemini's side panel); one line under the
+  // composer says the model can be wrong.
+  const actions = frame.locator(".ca-card").last().locator(".ca-card-actions button");
+  await expect(actions).toHaveCount(4);
+  await expect(actions.nth(0)).toHaveText("Insert at the cursor");
+  await expect(actions.nth(0)).toHaveClass(/btn-primary/);
+  await expect(actions.nth(1)).toHaveText("Add as comment");
+  await expect(actions.nth(2)).toHaveAttribute("aria-label", "Copy");
+  await expect(actions.nth(3)).toHaveAttribute("aria-label", "Try again");
+  await expect(frame.locator("#caveat")).toContainText("AI can make mistakes");
   await chip.click();
   // Focus moved to the document, at the cited paragraph.
   await expect.poll(() => page.evaluate(() => document.activeElement?.id ?? "")).toMatch(/^(pages|editorTextInput)$/);
@@ -167,7 +175,9 @@ test("Ask answers with citation chips that jump to the paragraph, and history su
   await waitForAssistant(page);
   await page.evaluate(() => window.opendoc.execute("plugin.org.casualoffice.assistant.ask"));
   await expect(assistant(page).locator(".ca-msg-user")).toContainText(["Where is the title?"]);
-  await assistant(page).locator("#clear").click();
+  // Clear history is behind the panel's ⋯, in the one header line.
+  await page.locator("#pluginPanelMore").click();
+  await page.locator("#pluginPanelMenu .menu-item", { hasText: "Clear history" }).click();
   await expect(assistant(page).locator(".ca-msg-user")).toHaveCount(0);
 });
 
@@ -188,8 +198,12 @@ test("the review pass proposes comments and suggestions in one preview", async (
   });
   await waitForAssistant(page);
   await page.evaluate(() => window.opendoc.execute("plugin.org.casualoffice.assistant.review"));
+  // The findings show in the card first; Apply as suggestions opens the preview.
+  const card = assistant(page).locator(".ca-card").last();
+  await expect(card).toContainText("Comments: 1. Suggestions: 1.");
+  await card.locator('[data-action="apply"]').click();
   await expect(page.locator("#aiPreviewPanel")).toBeVisible();
-  await expect(assistant(page).locator(".ca-msg-ai").last()).toContainText("Comments: 1. Suggestions: 1.");
+  await expect(card.locator(".ca-card-note")).toContainText("The review is in the preview. Comments: 1. Suggestions: 1.");
 });
 
 test("⌘/ opens the ✦ actions on a selection", async ({ page }) => {

@@ -35,6 +35,8 @@ import { fetchVocabulary } from "./ai_webmcp.mjs";
 import { MANIFEST_BOUNDS, addedPermissions, checkManifest, localised } from "./plugin_manifest.mjs";
 import { startPlugin } from "./plugin_host.mjs";
 import { createAddinProofing } from "./addin_proofing.mjs";
+import { attachPanelResize } from "./plugin_panel_width.mjs";
+import { disclosureKey } from "./ai_settings.mjs";
 import { addCommandSource, shown } from "./plugin_command_sources.mjs";
 import {
   addInstalled,
@@ -204,9 +206,10 @@ export function pluginCommands({ plugins, context = {}, openManager, invoke, act
  * @param {object} io.assistant `editor.ai`
  * @param {object} io.providers the AI provider service
  * @param {object} io.config `hostConfig()`
+ * @param {() => void} [io.openAiSettings] Settings ▸ AI provider, for the ⋯ menu
  * @param {object} [io.view]
  */
-export function startPluginPlatform(ed, { assistant, providers, config, view = globalThis }) {
+export function startPluginPlatform(ed, { assistant, providers, config, openAiSettings = null, view = globalThis }) {
   const doc = view.document;
   /** id -> {manifest, entry, running: host|null, enabled} */
   const plugins = new Map();
@@ -298,7 +301,34 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
   const panelTitle = doc.getElementById("pluginPanelTitle");
   const panelBody = doc.getElementById("pluginPanelBody");
   const panelClose = doc.getElementById("pluginPanelClose");
+  const panelMore = doc.getElementById("pluginPanelMore");
+  const panelMenu = doc.getElementById("pluginPanelMenu");
+  const panelResize = doc.getElementById("pluginPanelResize");
   let panelOpener = null;
+
+  // Docked on the right at full height, with a splitter on its inner edge
+  // (`docs/183` §21). The width and the status bar's height are custom
+  // properties on the root, because the footer and the private preview move in
+  // beside the panel by the same amount.
+  const root = doc.documentElement;
+  let reanchorFrame = 0;
+  const applyWidth = (width) => {
+    root.style.setProperty("--plugin-panel-w", `${width}px`);
+    const footer = doc.querySelector("body > .footer, .footer");
+    const foot = footer && footer.getClientRects().length ? Math.round(footer.getBoundingClientRect().height) : 0;
+    root.style.setProperty("--plugin-panel-foot", `${foot}px`);
+    // The page column changed width: the overlays that follow the pages
+    // re-anchor once per frame, not once per pointer event.
+    if (!reanchorFrame) {
+      reanchorFrame = view.requestAnimationFrame?.(() => {
+        reanchorFrame = 0;
+        ed.reanchorPageOverlays?.();
+      }) ?? 0;
+    }
+  };
+  const sizer = panel && panelResize
+    ? attachPanelResize({ handle: panelResize, panel, apply: applyWidth, rtl: () => direction(activeLocale()) === "rtl" || doc.documentElement.dir === "rtl", view })
+    : null;
 
   function showPanel(record, open) {
     if (!panel || !record?.running?.frame) return;
@@ -306,6 +336,8 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
       if (activePanel !== record) return;
       activePanel = null;
       panel.hidden = true;
+      doc.body.classList.remove("plugin-panel-open");
+      if (panelMenuPopover) closePopover(panelMenuPopover);
       record.running.frame.hidden = true;
       ed.reanchorPageOverlays?.();
       const back = shown(panelOpener);
@@ -320,16 +352,81 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
     panelTitle.textContent = catalogued(record.manifest, "panel", localised(record.manifest, "panel.title", activeLocale(), record.manifest.contributes.panel.title));
     panelClose.setAttribute("aria-label", t("plugins.panel.close", { name: nameOf(record.manifest) }));
     panelClose.title = panelClose.getAttribute("aria-label");
+    if (panelMore) panelMore.hidden = panelMenuRows(record).length === 0;
     // One side panel at a time, as the outline and the review sidebar already
     // agree between themselves (`editor_outline.mjs`).
     if (ed.reviewSidebar && !ed.reviewSidebar.hidden) ed.toggleReview?.(false);
     ed.closeFlankingPanel?.(ed.outlinePanel, ed.railOutline);
     ed.closeFlankingPanel?.(ed.pagesPanel, ed.railPages);
     panel.hidden = false;
+    doc.body.classList.add("plugin-panel-open");
+    sizer?.reclamp();
     ed.reanchorPageOverlays?.();
     record.running.frame.focus?.();
   }
   panelClose?.addEventListener("click", () => activePanel && showPanel(activePanel, false));
+
+  // ---- The panel's ⋯ menu ----------------------------------------------------
+  //
+  // One header line (owner, 2026-10-31: "too crowded, redundant information"):
+  // what is not the conversation lives behind ⋯ — the add-in's own panel
+  // commands (`contributes.panel.menu`, Casual AI's Clear history) and, for an
+  // add-in holding `ai`, where its text goes and the way to change that. The
+  // disclosure is the HOST's sentence from the provider's own description
+  // (`disclosureKey`), so an add-in cannot word it.
+
+  /** The ⋯ rows for `record`: `[{kind: "command"|"info"|"settings", …}]`. */
+  function panelMenuRows(record) {
+    const rows = (record.manifest.contributes.panel?.menu ?? []).map((item) => ({ kind: "command", item }));
+    if (record.running?.grant().permissions.includes("ai")) {
+      rows.push({ kind: "info" });
+      if (openAiSettings) rows.push({ kind: "settings" });
+    }
+    return rows;
+  }
+
+  function panelMenuItems(record, close) {
+    return panelMenuRows(record).map((row) => {
+      if (row.kind === "command") return menuRow(record, row.item, close);
+      const button = doc.createElement("button");
+      button.type = "button";
+      button.className = "menu-item";
+      button.setAttribute("role", "menuitem");
+      const icon = doc.createElement("span");
+      icon.className = "ms";
+      icon.setAttribute("aria-hidden", "true");
+      const label = doc.createElement("span");
+      if (row.kind === "info") {
+        // Information, not an action: announced in the menu, never actionable.
+        const [key, params] = disclosureKey(providers.describe());
+        icon.textContent = "info";
+        label.textContent = t(key, params);
+        button.setAttribute("aria-disabled", "true");
+        button.classList.add("menu-item-note");
+        button.dataset.panelMenu = "disclosure";
+      } else {
+        icon.textContent = "settings";
+        label.textContent = t("plugins.panel.aiSettings");
+        button.dataset.panelMenu = "aiSettings";
+        onButton(button, () => {
+          close();
+          openAiSettings();
+        });
+      }
+      button.append(icon, label);
+      return button;
+    });
+  }
+
+  let panelMenuPopover = null;
+  if (panelMore && panelMenu) {
+    panelMenuPopover = registerPopover(
+      panelMore,
+      panelMenu,
+      () => panelMenu.replaceChildren(...(activePanel ? panelMenuItems(activePanel, () => closePopover(panelMenuPopover)) : [])),
+      { needsDocument: false },
+    );
+  }
   panel?.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && activePanel) {
       event.preventDefault();
@@ -338,6 +435,30 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
   });
 
   // ---- Running a plugin ------------------------------------------------------
+
+  /** Plain text to the clipboard: the async API, else a hidden field and the
+   *  copy command (an older engine, or a page without the permission). */
+  async function copyText(text) {
+    try {
+      await view.navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      const field = doc.createElement("textarea");
+      field.value = text;
+      field.setAttribute("readonly", "");
+      field.className = "sr-only";
+      doc.body.append(field);
+      field.select();
+      let done = false;
+      try {
+        done = doc.execCommand("copy");
+      } catch {
+        done = false;
+      }
+      field.remove();
+      return done;
+    }
+  }
 
   function granted(record) {
     if (record.entry.hostGrant) return [...record.entry.hostGrant];
@@ -387,6 +508,9 @@ export function startPluginPlatform(ed, { assistant, providers, config, view = g
         notify: (message, kind) => ed.setStatus(t("plugins.notify", { name: nameOf(record.manifest), message }), kind === "error" ? "error" : undefined),
         panel: (open) => showPanel(record, open),
         reveal,
+        // Copy, for a FIRST-PARTY plugin's answer cards: the sandbox holds no
+        // clipboard, so the editor writes the text (plain text, bounded).
+        copy: record.entry.source === "first-party" ? (text) => copyText(text) : null,
         strings: (keys) => {
           if (record.entry.source !== "first-party") return {};
           const out = {};

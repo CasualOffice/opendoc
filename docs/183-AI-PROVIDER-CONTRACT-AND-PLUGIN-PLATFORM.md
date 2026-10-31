@@ -1163,3 +1163,110 @@ Kept as they were, because they already match established practice:
 - citation chips that move the caret to the paragraph;
 - Clear history;
 - Enter to send and Shift+Enter for a new line.
+
+## 21. The Casual AI panel, redesigned after the owner's review (RM-52, 2026-10-31)
+
+The owner on the §20 build: "too crowded, redundant information, too narrow, we need something
+tangible that basically works; it would be nice to have it on the right side, full page height,
+and drag to expand the width." Measured against Gemini's side panel in Google Docs and Copilot's
+pane in Word, the panel had four problems: it sat in the 252px outline slot on the LEFT; it showed
+the endpoint, the caveat and a history note on every open; it had two rows of actions (five chips
+and an Ask/Draft select) above the composer; and an answer's only route into the document was a
+quiet "Insert" link.
+
+**Placement (`editor.html`, `style.css`, `plugin_platform.mjs`).** `#pluginPanel` is now the last
+item of `.workarea`'s row: flush to the window's right edge, from right below the ribbon to the
+bottom of the window. It reaches down past the status bar, whose own right edge moves in by the same
+width (`--plugin-panel-foot` is the status bar's measured height, 0 when it is hidden). The page
+column is the flex item that shrinks, so nothing covers a page. It keeps the `.side-panel` shell
+(head, title, close button, inset; `panel-alignment.spec.mjs` still holds it) but drops the
+floating card's inset, radius and shadow for one hairline on its inner edge: a docked pane, as
+Docs' and Word's are. What is pinned to the window's right edge moves in beside it: Find and
+replace, and the private preview, which docks at the foot of the panel over its composer while
+the panel is open. On a phone it is the bottom sheet every side panel becomes. It is the slot for
+every add-in panel, not only Casual AI's (Office add-in task panes are on the right too).
+
+**Resizable (`src/plugin_panel_width.mjs`).** The WAI-ARIA window splitter on its inner edge:
+`role="separator"`, focusable, `aria-valuenow`/`-min`/`-max`; a pointer drag; ← / → by 16px
+(Shift: 64px), the arrow pointing away from the panel widens it (mirrored right to left);
+Home/End for the two ends; a double-click resets it (VS Code's sash). At least 320px, at most half
+the window, 400px by default; remembered on this device under `opendoc.pluginPanel.width`
+(try/catch, so a refusing storage only means the default); re-clamped when the window changes,
+keeping the remembered width so the panel grows back with the window.
+
+**Decluttered.** One header line, drawn by the editor: the title, ⋯ and Close. ⋯ holds the
+add-in's own panel commands (a new manifest field, `contributes.panel.menu`, refs to its declared
+commands; Casual AI's is Clear history) and, for an add-in holding `ai`, the HOST's disclosure
+sentence (`disclosureKey`, so an add-in cannot word it) and "AI provider settings…". The body is the
+conversation. While it is empty it shows four suggestions (Summarise, Key points, Draft…, Review
+document), gone at the first message, and, once per device, where text goes and that history stays
+on the device. ONE composer: a growing text field with Send that becomes Stop, a chip naming the
+selection only while there is one (× asks without it), and a "Draft at the cursor" chip while
+drafting. One line under it: "AI can make mistakes". Gone: the permanent endpoint line, the
+Ask/Draft select, the Action items and Reply to comments chips (Reply to comments is a palette
+command), the history note and the Clear history button.
+
+**Tangible answers.** Every answer is a card whose first button changes the document:
+
+| Answer | Primary | Also |
+| --- | --- | --- |
+| A question, a summary, key points | Insert at the cursor | Add as comment |
+| A question with the selection attached, answered as a revision of it | Replace selection, with an inline diff in the card | Add as comment |
+| A question with the selection attached, answered about it | Add as comment (on the selection) | Replace selection |
+| A draft | Insert at the cursor | — |
+| A review | Apply as suggestions, with each finding's diff and comment in the card | — |
+| A ✦ action on the selection | Replace selection (proposed at once, as §20 decided; the button re-proposes after a discard) | — |
+
+Plus Copy (a new first-party-only host method, `ui/copy`, 64 KiB; the sandbox holds no clipboard)
+and Try again (re-runs the turn in place of the card). "Revision or answer" is
+`looksLikeRevision`: one paragraph no longer than twice the selection plus 40 characters, or
+keeping 60% of its words. Insert at the cursor is new: one paragraph goes INTO the text at the
+caret (`insert_text` at the caret's byte offset), several become paragraphs after it, and a list
+answer becomes one paragraph per item. Every action still goes through `propose_edits`, the private
+preview and Accept, as tracked suggestions by "Casual AI" in one undo step: `assistant_core.js`
+builds each plan from the action's own operations only (`planForInsert`: `insert_text` or
+`insert_paragraphs`; `planForComment`: `comment`; the rest as before). The inline diff is
+`wordDiff`, a word-level LCS bounded at 160,000 token pairs. Drafts and summaries join the
+conversation history, so "write me a paragraph based on our discussion" has the discussion.
+
+**Guards, each driven red** (the mutation and the red line are in the commit message):
+`tests/ai_panel.test.mjs` (clamp, keys, storage, the menu field, the plans, the diff, the
+selection rule) and `tests/e2e/ai-panel.spec.mjs` (full height on the right with no page under it at
+1280×800 and 1920×1080; drag, keyboard, clamping and persistence; each card action landing in the
+document; the discussion draft; Copy).
+
+## 22. Further owner requirements of 2026-10-31: designed, not built in this lane
+
+Four requirements arrived while §21 was being built. Each is larger than a panel change: each
+touches the engine's tracking rules, the edit path or the collaboration layer, and the owner's
+standing rule is that such work ships as ONE complete lane, not as a partial merge. They are
+recorded here with what was measured, so the lanes start from facts.
+
+1. **Tables from AI ("Turn into table", "Describe this table").** Measured: `insert_table` and
+   `text_to_table` are untracked commands (`casual-doc-command` `registry.rs`,
+   `TABLE_NOT_TRACKABLE`), and `casual-doc-ai`'s planner refuses them in suggest mode
+   (`refuse_untracked`, `plan.rs`). `insert_table` builds an EMPTY table and `set_cell_text` needs
+   the new table's id, which a plan cannot name before it exists. The one existing path that builds
+   a filled table in one undo step is `pasteExternalStructured` (the clipboard's real-table paste),
+   which also refuses Suggesting mode. So a real table from Casual AI is a DIRECT edit, which the
+   assistant does not hold (it is granted `suggest`, never `edit`). The design: a first-party-only
+   host method that takes validated rows (rectangular, at most 50 × 20, a header row), previews
+   them in the card, and on the person's click inserts through `pasteExternalStructured` at the
+   end of the source paragraph, saying in the card that a table is added directly because the
+   engine cannot track a table insertion. Refused in Suggesting mode and without the person's
+   edit capability. "Describe this table" needs `read_blocks` to return a table's cells as
+   structured data and an `insert_paragraphs` anchor after a table.
+2. **Edits streamed into the document by a visible co-editor** (a "Casual AI" caret and presence
+   flag from `collab_presence.mjs`, a Figma-style pointer with a name tag on the overlay layer,
+   gliding with eased motion and jumping under `prefers-reduced-motion`; tokens applied every
+   50–100 ms as tracked insertions; Stop keeps them; Accept all / Reject all per turn; one undo
+   step per turn; incremental validation that rolls the turn back on a violation; the user typing
+   elsewhere is preserved). This replaces the private preview for edit actions, which ADR-077 and
+   §16 made the safety model, and needs: turn-scoped history coalescing in the engine, an apply
+   path for a first-party add-in that is not `propose`, a presence participant that is not a room
+   member, and position transforms of the AI's anchor against local edits (ADR-030 I3). It is a
+   lane of its own, carried end to end.
+3. **"AI edits as: Suggestions | Direct edits"**, capped by the document's mode, protection and
+   the person's role, told to the model in a capability line and enforced by the validator, with an
+   access badge in the composer and the e2e role matrix. Depends on 2 for "Direct edits stream in".
+4. Everything above keeps §21's panel.

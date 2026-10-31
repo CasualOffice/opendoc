@@ -30,6 +30,7 @@ export const PLUGIN_LIMITS = Object.freeze({
   notifyChars: 200,
   selectionBytes: 16 * 1024,
   storageBytes: 256 * 1024,
+  copyBytes: 64 * 1024,
   concurrentAi: 4,
   closingMs: 2000,
 });
@@ -72,6 +73,7 @@ const truncate = (text, max) => {
  *   `execute(id)`; `contractRow(id)`; `commandIds()`; `providers`;
  *   `loadVocabulary()`; `selection()`; `notify(text, kind)`; `panel(open)`;
  *   `locale()`; `direction()`; `theme()`; `storage` → `{get(), set(value)}`;
+ *   `copy(text)` → Promise<boolean>, or null when the plugin may not copy;
  *   `fetchEntry(url)` → the entry page's text; `onClosed(reason)`
  * @param {HTMLElement} io.container where the frame lives (the side panel's body)
  */
@@ -206,6 +208,15 @@ export function startPlugin({ manifest, granted, env, container }) {
       need("read");
       if (!manifest.contributes.proofing) throw new RpcRefusal("bad-request", "This add-in declares no proofing contribution.");
       return env.proofingReport?.(params) ?? { accepted: 0, dropped: 0 };
+    },
+    /** Plain text to the clipboard, for a FIRST-PARTY plugin only (its answer
+     *  cards' Copy): the sandbox holds no clipboard of its own. At most 64 KiB. */
+    async "ui/copy"(params) {
+      if (typeof env.copy !== "function") throw new RpcRefusal("permission-denied", "Only the product's own add-ins may copy.");
+      const text = String(params?.text ?? "");
+      if (!text) throw new RpcRefusal("bad-request", "ui/copy needs text.");
+      if (new TextEncoder().encode(text).length > PLUGIN_LIMITS.copyBytes) throw new RpcRefusal("bad-request", "ui/copy takes at most 64 KiB.");
+      return { copied: (await env.copy(text)) === true };
     },
     "ui/notify"(params) {
       const message = truncate(params?.message, PLUGIN_LIMITS.notifyChars);

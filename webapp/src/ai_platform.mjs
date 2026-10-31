@@ -101,7 +101,7 @@ export function startAiPlatform(ed, { assistant = null, view = globalThis } = {}
   // (its unit tests) must not need a DOM.
   if (assistant && view.document) {
     platformPromise = import("./plugin_platform.mjs").then(({ startPluginPlatform }) =>
-      startPluginPlatform(ed, { assistant, providers, config, view }),
+      startPluginPlatform(ed, { assistant, providers, config, openAiSettings: openSettings, view }),
     );
   }
   return providers;

@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0
-   Casual AI's panel. Layout only: every colour, radius and size is one of the
-   editor's tokens (`plugin.css`). The panel's head, close button and width are
-   the editor's own side panel around this frame. */
+   Casual AI's panel (`docs/183` §21). Layout only: every colour, radius and size
+   is one of the editor's tokens (`plugin.css`); the components are the editor's
+   own (`.btn`, `.btn-primary`, `.btn-quiet`, `.field`, `.note`). The one header
+   line, the close button and the width are the editor's docked panel around
+   this frame. */
 .ca {
   flex: 1 1 auto;
   min-height: 0;
@@ -10,7 +12,8 @@
   gap: var(--space-2);
   box-sizing: border-box;
 }
-.ca-disclosure { flex: 0 0 auto; }
+
+/* ---- The conversation fills the body ---------------------------------- */
 .ca-log {
   flex: 1 1 auto;
   min-height: 6rem;
@@ -18,12 +21,51 @@
   overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
+  padding-bottom: var(--space-1);
 }
+.ca-log:focus-visible { outline-offset: -2px; }
+
+/* ---- Empty state: four suggestions, gone once the conversation starts -- */
+.ca-empty {
+  margin: auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.ca-empty-text { margin: 0; color: var(--ink); font-weight: 600; line-height: 1.45; }
+.ca-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: var(--space-2); }
+.ca-chip { justify-content: flex-start; min-height: var(--h-search); font-weight: 500; white-space: normal; text-align: start; }
+.ca-chip .ms { color: var(--accent-text); }
+.ca-first-run { padding-top: var(--space-2); border-top: 1px solid var(--line); }
+
+/* ---- Messages and answer cards ---------------------------------------- */
 .ca-msg { margin: 0; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
-.ca-msg-who { display: block; color: var(--muted); font-size: var(--fs-small); font-weight: 600; }
-.ca-msg-user { padding: var(--space-2); border-radius: var(--radius-sm); background: var(--bg-2); }
-.ca-msg-ai { padding: var(--space-2) 0; }
+.ca-msg-user {
+  align-self: flex-end;
+  max-width: 85%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--bg-2);
+}
+.ca-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.ca-card-body { margin: 0; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
+.ca-card-body:empty { display: none; }
+.ca-card-note { margin: 0; color: var(--muted); font-size: var(--fs-small); line-height: 1.45; }
+.ca-card-note:empty { display: none; }
+.ca-pending::after { content: "…"; color: var(--muted); }
+.ca-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
+.ca-card-actions .btn { min-height: var(--h-control); padding: 0 var(--space-2); }
+.ca-card-actions .ca-spacer { flex: 1 1 auto; }
+.ca-icon-btn { width: var(--h-control); justify-content: center; padding: 0; }
 .ca-cite {
   display: inline-flex;
   align-items: center;
@@ -38,17 +80,96 @@
   font-size: var(--fs-small);
   cursor: pointer;
 }
-.ca-msg-actions { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-1); }
-.ca-working, .ca-row, .ca-foot { display: flex; align-items: center; gap: var(--space-2); }
-.ca-working { justify-content: space-between; }
-.ca-row .field { flex: 1 1 auto; }
-.ca-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
-.ca-chips .btn { min-height: var(--h-control); padding: 0 var(--space-2); font-weight: 500; }
-.ca-composer { display: flex; flex-direction: column; gap: var(--space-1); }
-.ca-mode { max-width: 9rem; }
-.ca-foot { justify-content: space-between; }
+
+/* The compact inline diff a suggestion shows before it is applied, on the
+   PAPER layer with the page's own insert and delete colours, as the editor's
+   private preview draws its redline. */
+.ca-diff {
+  margin: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--paper-ink);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.ca-diff ins { color: var(--paper-insert); text-decoration: underline; }
+.ca-diff del { color: var(--paper-delete); text-decoration: line-through; }
+.ca-review { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-2); }
+.ca-review-item { display: flex; flex-direction: column; gap: var(--space-1); }
+.ca-review-comment { margin: 0; font-size: var(--fs-small); line-height: 1.45; }
+.ca-review-comment .ms { font-size: 1rem; vertical-align: -0.1875rem; color: var(--muted); }
 .ca-threads { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-2); }
 .ca-thread { padding: var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+
+/* ---- One composer at the bottom ---------------------------------------- */
+.ca-row { display: flex; align-items: center; gap: var(--space-2); }
+.ca-row .field { flex: 1 1 auto; }
+.ca-composer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.ca-composer:focus-within { border-color: var(--accent); }
+.ca-context { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.ca-context:not(:has(> :not([hidden]))) { display: none; }
+.ca-attached {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  min-height: 1.5rem;
+  padding: 0 0 0 var(--space-2);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: var(--fs-small);
+}
+.ca-attached .ms { font-size: 1rem; }
+.ca-attached-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ca-attached-x {
+  display: inline-grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.ca-attached-x:hover { background: var(--accent-line); }
+.ca-input { display: flex; align-items: flex-end; gap: var(--space-2); }
+.ca-prompt {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: var(--h-control);
+  max-height: 10rem;
+  padding: var(--space-1) 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.5;
+  resize: none;
+  overflow-y: auto;
+}
+.ca-prompt:focus-visible { outline: none; }
+.ca-prompt::placeholder { color: var(--muted); }
+.ca-send { width: var(--h-control); min-height: var(--h-control); justify-content: center; padding: 0; }
+.ca-caveat { flex: 0 0 auto; text-align: center; font-size: var(--fs-caption, var(--fs-small)); }
+
 @media (pointer: coarse) {
-  .btn, .ca-cite, select.field { min-height: 2.75rem; }
+  .btn, .ca-cite, select.field, .ca-send, .ca-icon-btn { min-height: 2.75rem; }
+  .ca-send, .ca-icon-btn { width: 2.75rem; }
+  .ca-attached-x { width: 2.75rem; height: 2.75rem; }
 }

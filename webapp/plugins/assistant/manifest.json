@@ -20,7 +20,9 @@
       { "id": "translate", "title": "Translate" },
       { "id": "summarise", "title": "Summarise the document" },
       { "id": "review", "title": "Review the document" },
-      { "id": "draft", "title": "Draft at the cursor" }
+      { "id": "draft", "title": "Draft at the cursor" },
+      { "id": "replies", "title": "Reply to comments" },
+      { "id": "clear", "title": "Clear history" }
     ],
     "selection": [
       { "command": "rewrite", "icon": "edit_note" },
@@ -33,6 +35,6 @@
       { "command": "translate", "icon": "translate" },
       { "command": "ask", "icon": "forum" }
     ],
-    "panel": { "title": "Casual AI" }
+    "panel": { "title": "Casual AI", "width": 400, "menu": [{ "command": "clear", "icon": "delete_sweep" }] }
   }
 }
