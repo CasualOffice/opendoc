@@ -939,6 +939,7 @@ impl Emitter<'_> {
                             fill: cell.shading.map(|[r, g, b]| RgbColor { r, g, b }),
                             ..Shading::default()
                         },
+                        vertical_alignment: cell.valign,
                         ..TableCellProperties::default()
                     },
                     blocks,
@@ -1044,16 +1045,29 @@ fn pitch_height(rows: &[Vec<super::tables::ICell>], r: usize) -> RowHeight {
     let height = step(r, r + 1).or_else(|| r.checked_sub(1).and_then(|p| step(p, r)));
     // A step of more than three of its lines (each 1.5 of its ems) is a
     // gap the table does not own.
-    let lines = rows[r]
-        .iter()
-        .map(|c| c.lines.len().max(1))
-        .max()
-        .unwrap_or(1);
     let em = rows[r]
         .iter()
         .flat_map(|c| c.lines.iter())
         .map(|l| l.size)
         .fold(1.0, f64::max);
+    // A tall row (cells at its top and bottom) is as many lines as its
+    // text spans, not as its cells hold.
+    let spanned = {
+        let all = rows[r].iter().flat_map(|c| c.lines.iter());
+        let top = all.clone().map(|l| l.top).fold(f64::INFINITY, f64::min);
+        let bottom = all.map(|l| l.bottom).fold(f64::NEG_INFINITY, f64::max);
+        if bottom > top {
+            ((bottom - top) / (1.2 * em)).ceil() as usize
+        } else {
+            1
+        }
+    };
+    let lines = rows[r]
+        .iter()
+        .map(|c| c.lines.len().max(1))
+        .max()
+        .unwrap_or(1)
+        .max(spanned);
     match height {
         Some(h) if h <= 3.0 * 1.5 * em * lines as f64 => RowHeight {
             value_twips: Some(u32::try_from(twips(h).clamp(0, 31_680)).unwrap_or(0)),

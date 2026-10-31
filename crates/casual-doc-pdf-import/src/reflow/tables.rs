@@ -69,6 +69,9 @@ pub struct ICell {
     pub y1: f64,
     /// Background, from a filled rectangle under the cell.
     pub shading: Option<[u8; 3]>,
+    /// Where its text sits in a row taller than it (`w:vAlign`): read from
+    /// a tall row whose cells stand at its top, middle and bottom.
+    pub valign: Option<casual_doc_model::v1::CellVerticalAlignment>,
 }
 
 /// One table.
@@ -443,6 +446,7 @@ fn build(
                 y0: ys[r],
                 y1: ys[r + 1],
                 shading: None,
+                valign: None,
             };
             for k in start..=c {
                 cell.lines.append(&mut contents[r][k]);
@@ -815,7 +819,14 @@ pub struct Candidate {
     pub confidence: f64,
     /// Aligned rows.
     pub rows: usize,
+    /// Tall rows whose cells share no baseline (one at the row's top, one
+    /// in its middle, one at its bottom): the baseline of each such row's
+    /// highest line, for [`whitespace_table`] to make a row of.
+    pub tall_rows: Vec<f64>,
 }
+
+/// A tall row reaches at most this many ems below the aligned row above it.
+pub const TALL_ROW_EMS: f64 = 12.0;
 
 /// Scores whitespace-table candidates among text elements (each a list of
 /// lines with its bounds). O(l log l).
@@ -899,6 +910,82 @@ pub fn whitespace_candidates(
             uf.union(upper[0].2, lower[0].2);
         }
     }
+    // A tall row whose cells are aligned top, centre and bottom shares no
+    // baseline, so it links nothing and its cells became a staircase of
+    // paragraphs. Under an aligned row (before the next one, within
+    // TALL_ROW_EMS), the single-line elements standing side by side, a
+    // gutter apart, whose columns agree with the row above are one row.
+    let mut tall: Vec<(usize, f64)> = Vec::new();
+    for (k, (b0, s0, upper)) in aligned_rows.iter().enumerate() {
+        *work += 1;
+        let limit = aligned_rows
+            .get(k + 1)
+            .map_or(b0 + TALL_ROW_EMS * s0.max(1.0), |next| next.0)
+            .min(b0 + TALL_ROW_EMS * s0.max(1.0));
+        let mut pieces: Vec<(f64, f64, usize, f64)> = elements
+            .iter()
+            .enumerate()
+            .filter_map(|(e, (lines, _))| match lines {
+                [line]
+                    if !aligned_lines[e][0]
+                        && line.baseline > b0 + BASELINE_TOLERANCE
+                        && line.baseline < limit - BASELINE_TOLERANCE =>
+                {
+                    Some((line.x0, line.x1, e, line.baseline))
+                }
+                _ => None,
+            })
+            .collect();
+        if pieces.len() < 2 {
+            continue;
+        }
+        pieces.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let gutter = CELL_GUTTER_EMS * s0.max(1.0);
+        let disjoint = pieces.windows(2).all(|w| w[1].0 - w[0].1 >= gutter);
+        let cells: Vec<(f64, f64, usize)> = pieces.iter().map(|p| (p.0, p.1, p.2)).collect();
+        // Every piece in its own column of the row above.
+        let columned = cells.iter().all(|c| {
+            upper
+                .iter()
+                .filter(|u| c.0 <= u.1 + COLUMN_SLACK && c.1 >= u.0 - COLUMN_SLACK)
+                .count()
+                == 1
+        }) && {
+            let mut used: Vec<usize> = cells
+                .iter()
+                .filter_map(|c| {
+                    upper
+                        .iter()
+                        .position(|u| c.0 <= u.1 + COLUMN_SLACK && c.1 >= u.0 - COLUMN_SLACK)
+                })
+                .collect();
+            used.dedup();
+            used.len() == cells.len()
+        };
+        // Not one line: the pieces' baselines differ (else they are an
+        // aligned row already).
+        let staggered = pieces
+            .iter()
+            .any(|p| (p.3 - pieces[0].3).abs() > BASELINE_TOLERANCE);
+        if disjoint && columned && staggered {
+            for p in &pieces {
+                uf.union(upper[0].2, p.2);
+                aligned_lines[p.2][0] = true;
+            }
+            let top = pieces.iter().map(|p| p.3).fold(f64::INFINITY, f64::min);
+            let lowest = pieces.iter().map(|p| p.3).fold(f64::NEG_INFINITY, f64::max);
+            // The row under it, a row's reach below its lowest line and in
+            // the same columns, is the same table.
+            if let Some((b1, _, lower)) = aligned_rows.get(k + 1)
+                && b1 - lowest <= ROW_REACH * s0.max(1.0)
+                && columns_agree(upper, lower)
+            {
+                uf.union(upper[0].2, lower[0].2);
+            }
+            *rows_of.entry(pieces[0].2).or_default() += 1;
+            tall.push((pieces[0].2, top));
+        }
+    }
     let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for e in 0..elements.len() {
         groups.entry(uf.find(e)).or_default().push(e);
@@ -932,13 +1019,51 @@ pub fn whitespace_candidates(
         let confidence = share * (1.0 - prose_share) * (rows as f64 / 3.0).min(1.0);
         let mut elements_sorted = members.clone();
         elements_sorted.sort_by(|&a, &b| elements[a].1.0.total_cmp(&elements[b].1.0));
+        let tall_rows = tall
+            .iter()
+            .filter(|(e, _)| members.contains(e))
+            .map(|(_, b)| *b)
+            .collect();
         out.push(Candidate {
             elements: elements_sorted,
             confidence,
             rows,
+            tall_rows,
         });
     }
     out
+}
+
+/// Where a cell's `lines` sit in a tall row of `cells`: at its top (the
+/// default, `None`), its bottom or its middle, against the band from the
+/// row's highest line top to its lowest line bottom, within a third of a
+/// line. O(lines in the row).
+fn cell_valign(
+    lines: &[ILine],
+    cells: &[Vec<ILine>],
+) -> Option<casual_doc_model::v1::CellVerticalAlignment> {
+    use casual_doc_model::v1::CellVerticalAlignment;
+    let all = cells.iter().flatten();
+    let top = all.clone().map(|l| l.top).fold(f64::INFINITY, f64::min);
+    let bottom = all.map(|l| l.bottom).fold(f64::NEG_INFINITY, f64::max);
+    let own_top = lines.iter().map(|l| l.top).fold(f64::INFINITY, f64::min);
+    let own_bottom = lines
+        .iter()
+        .map(|l| l.bottom)
+        .fold(f64::NEG_INFINITY, f64::max);
+    if !own_top.is_finite() {
+        return None;
+    }
+    let slack = lines.iter().map(|l| l.bottom - l.top).fold(1.0, f64::max) / 3.0;
+    if own_top - top <= slack {
+        None
+    } else if bottom - own_bottom <= slack {
+        Some(CellVerticalAlignment::Bottom)
+    } else if (((own_top + own_bottom) - (top + bottom)) / 2.0).abs() <= slack * 1.5 {
+        Some(CellVerticalAlignment::Center)
+    } else {
+        None
+    }
 }
 
 /// The shaded header band over a whitespace candidate, if there is one: one
@@ -1015,7 +1140,7 @@ pub const COLUMN_SLACK: f64 = 6.0;
 /// it in its column, so no text is dropped. O(e² + l log l) for `e` elements,
 /// a table's cells.
 #[must_use]
-pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))]) -> ITable {
+pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))], tall_rows: &[f64]) -> ITable {
     // Columns: (left, right), and per element (column, span).
     let mut order: Vec<usize> = (0..columns.len()).collect();
     order.sort_by(|&a, &b| {
@@ -1089,6 +1214,16 @@ pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))]) -> ITable {
             baselines.push(line.baseline);
         }
     }
+    // A tall row is a row from its highest line down: its lower cells'
+    // lines fall to it as the row above them.
+    for &b in tall_rows {
+        if !baselines
+            .iter()
+            .any(|x| (x - b).abs() <= BASELINE_TOLERANCE)
+        {
+            baselines.push(b);
+        }
+    }
     baselines.sort_by(f64::total_cmp);
     let width = clusters.len().max(1);
     let mut grid: Vec<Vec<Vec<ILine>>> = vec![vec![Vec::new(); width]; baselines.len()];
@@ -1133,6 +1268,26 @@ pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))]) -> ITable {
             bands[r + 1].0 = middle;
         }
     }
+    // Each tall row's cells: at its top, in its middle or at its bottom.
+    let valigns: Vec<Vec<Option<casual_doc_model::v1::CellVerticalAlignment>>> = grid
+        .iter()
+        .enumerate()
+        .map(|(r, cells)| {
+            let tall = tall_rows
+                .iter()
+                .any(|b| (b - baselines[r]).abs() <= BASELINE_TOLERANCE);
+            cells
+                .iter()
+                .map(|lines| {
+                    if tall {
+                        cell_valign(lines, cells)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .collect();
     let mut rows: Vec<Vec<ICell>> = Vec::with_capacity(grid.len());
     for (r, cells) in grid.into_iter().enumerate() {
         let mut row = Vec::new();
@@ -1145,6 +1300,7 @@ pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))]) -> ITable {
                 }
             }
             let last = (c + span - 1).min(width - 1);
+            let valign = valigns[r][c];
             row.push(ICell {
                 lines: rejoin(lines),
                 span: u32::try_from(span).unwrap_or(1),
@@ -1153,6 +1309,7 @@ pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))]) -> ITable {
                 x1: clusters.get(last).map_or(0.0, |k| k.1),
                 y0: bands[r].0,
                 y1: bands[r].1,
+                valign,
                 ..ICell::default()
             });
         }

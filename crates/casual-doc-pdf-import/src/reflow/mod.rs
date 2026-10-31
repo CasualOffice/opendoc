@@ -1959,7 +1959,7 @@ pub fn build(
                         (lines, b)
                     })
                     .collect();
-                page_tables.push(tables::whitespace_table(&columns));
+                page_tables.push(tables::whitespace_table(&columns, &candidate.tall_rows));
             } else if candidate.confidence >= tables::TABLE_CANDIDATE {
                 findings.record(
                     report::TABLE_TOPOLOGY_DEGRADED,

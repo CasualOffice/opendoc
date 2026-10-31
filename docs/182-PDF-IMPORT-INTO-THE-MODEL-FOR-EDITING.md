@@ -1878,8 +1878,12 @@ committed `nist-ir8105.pdf`).
 
 **Still weak on these files**, in the order they hurt:
 
-1. A table whose cells are aligned differently in one tall row (top, centre, bottom) reads
-   as a staircase of rows, since its cells share no baseline. (The staircase `sample.docx`
+1. Fixed: a table whose cells are aligned differently in one tall row (top, centre, bottom)
+   read as a staircase of paragraphs, since its cells share no baseline. Under an aligned
+   row, single-line elements standing side by side in its columns at staggered baselines are
+   one tall row (`whitespace_candidates`, `Candidate::tall_rows`), linked to the aligned row
+   under it; each cell keeps its `w:vAlign` (`cell_valign`), and the row is as tall as its
+   text spans. (The staircase `sample.docx`
    showed was a different cause, now fixed: its "merged cells" table is two rows under a
    shaded header band, and two aligned rows were below the three a borderless table needs.
    `tables::shaded_header` counts the band as the merged header row, spanning the columns,

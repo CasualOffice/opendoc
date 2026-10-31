@@ -2738,3 +2738,71 @@ fn text_wrapped_around_a_picture_stays_one_paragraph() {
     );
     assert_eq!(whole.1, vec![(WrapMode::Square, false)], "{found:?}");
 }
+
+/// A tall row whose cells are aligned top, centre and bottom (Word's
+/// "vertical alignment" table) shares no baseline: one row of the table,
+/// each cell keeping its alignment, not a staircase of paragraphs.
+/// Mutations, each driven red: no tall row found in
+/// `whitespace_candidates` (its cells stay paragraphs); `whitespace_table`
+/// making no row of it (its cells fall into the row above); `cell_valign`
+/// answering `None`.
+#[test]
+fn a_tall_row_with_cells_at_top_middle_and_bottom_is_one_row() {
+    let mut content = text("F2", 11.0, 72.0, 720.0, 14.0, &["Vertical alignment."]);
+    let columns = [84.0, 220.0, 380.0];
+    for (c, cell) in ["Feature", "Input", "Status"].iter().enumerate() {
+        content.push_str(&text("F3", 9.0, columns[c], 690.0, 11.0, &[cell]));
+    }
+    // The tall row: top, middle and bottom of a band 36 pt deep.
+    for (c, (cell, y)) in [
+        ("Top cell", 668.0),
+        ("Middle cell", 652.0),
+        ("Bottom cell", 636.0),
+    ]
+    .iter()
+    .enumerate()
+    {
+        content.push_str(&text("F2", 9.0, columns[c], *y, 11.0, &[cell]));
+    }
+    for (r, row) in [["Next", "row", "here"], ["Last", "row", "too"]]
+        .iter()
+        .enumerate()
+    {
+        let y = 612.0 - 22.0 * r as f64;
+        for (c, cell) in row.iter().enumerate() {
+            content.push_str(&text("F2", 9.0, columns[c], y, 11.0, &[cell]));
+        }
+    }
+    let (_, reflowed) = reflow_of(synth::document(&[Page::new(content)], "", ""));
+    let document = &reflowed.document;
+    let tables = tables_in(document);
+    assert_eq!(tables.len(), 1, "{:?}", texts(document));
+    let rows = cell_texts(document, 0);
+    assert_eq!(rows.len(), 4, "{rows:?}");
+    assert_eq!(
+        rows[1],
+        vec!["Top cell", "Middle cell", "Bottom cell"],
+        "{rows:?}"
+    );
+    use casual_doc_model::v1::CellVerticalAlignment;
+    let aligned: Vec<Option<CellVerticalAlignment>> = tables[0].rows[1]
+        .cells
+        .iter()
+        .map(|c| c.properties.vertical_alignment)
+        .collect();
+    assert_eq!(
+        aligned,
+        vec![
+            None,
+            Some(CellVerticalAlignment::Center),
+            Some(CellVerticalAlignment::Bottom)
+        ]
+    );
+    assert!(
+        tables[0].rows[2]
+            .cells
+            .iter()
+            .all(|c| c.properties.vertical_alignment.is_none()),
+        "an ordinary row keeps the default"
+    );
+}
