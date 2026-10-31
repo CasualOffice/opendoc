@@ -1884,8 +1884,10 @@ committed `nist-ir8105.pdf`).
    shaded header band, and two aligned rows were below the three a borderless table needs.
    `tables::shaded_header` counts the band as the merged header row, spanning the columns,
    centred; `tables` 0.792 to 0.810.)
-2. Text wrapped around a picture: the lines beside it start a new paragraph at the picture's
-   edge.
+2. Fixed: text wrapped around a picture on its right no longer ends its paragraph at the
+   picture's edge; a line beside a floated picture is measured against the picture
+   (`emit::wrap_right`), so the sentence carries on below it. A picture on the text's left
+   needed nothing: the lines beside it still reach the column's edge.
 3. Fixed: a caption beside a chart ("Figure 1. ...", "Table IV", "Source: ...") within two
    ems of it stays the figure's paragraph instead of joining its labels (`caption_text`); a
    chart's own labels are still text boxes inside its group.

@@ -1277,6 +1277,24 @@ pub const PAGE_BREAK_FILL: f64 = 0.75;
 /// Justified: at least three lines, every line but the last ending at the
 /// same right edge (within a point) at the column's right, and the last line
 /// shorter. Ragged-right text does not end every line within a point. O(lines).
+/// Where `line` had to stop: the left edge of a graphic floated beside the
+/// text (`FloatWrap::Beside`) that shares its band and stands to its right,
+/// else the column's right edge. Text wrapped around a picture runs to the
+/// picture, not the column, so the paragraph it began goes on below the
+/// picture instead of ending at its edge. O(floats).
+fn wrap_right(line: &ILine, column_right: f64, floats: &[Float]) -> f64 {
+    floats
+        .iter()
+        .filter(|f| f.page == line.page && matches!(f.wrap, FloatWrap::Beside))
+        .map(|f| f.graphic.bounds())
+        .filter(|b| {
+            let shared = line.bottom.min(b.y1) - line.top.max(b.y0);
+            shared > 0.5 * (line.bottom - line.top) && b.x0 >= line.x1 - 1.0 && b.x0 < column_right
+        })
+        .map(|b| b.x0)
+        .fold(column_right, f64::min)
+}
+
 pub(super) fn justified(lines: &[&ILine], column_left: f64, column_right: f64) -> bool {
     if lines.len() < 3 {
         return false;
@@ -1355,7 +1373,8 @@ pub(crate) fn emit(
                         let continued = same_struct
                             || same_line
                             || prev.last_line.as_ref().is_some_and(|last| {
-                                text::continues(last, prev.column_right, refs[0], left, key)
+                                let right = wrap_right(last, prev.column_right, &prev.floats);
+                                text::continues(last, right, refs[0], left, key)
                             });
                         if continued {
                             let (more, removed) = text::join(&refs);

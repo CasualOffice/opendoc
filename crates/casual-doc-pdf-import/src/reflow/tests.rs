@@ -2702,3 +2702,39 @@ fn letter_spacing_reflows_as_character_spacing() {
         "kerning is not tracking"
     );
 }
+
+/// Text wrapped around a picture on its right: the lines beside it stop
+/// short of the column at the picture's edge, and the sentence carries on
+/// below the picture across the column. One paragraph, floated on by the
+/// picture, not a paragraph ending at the picture's edge. Mutation, driven
+/// red: `wrap_right` answering the column's edge.
+#[test]
+fn text_wrapped_around_a_picture_stays_one_paragraph() {
+    let beside = [
+        "Text that wraps around a picture runs to the picture",
+        "and not to the column, so every line beside it stops",
+        "at the same place, a little short of the picture edge",
+        "where the picture begins, and the sentence carries on",
+    ];
+    let below = [
+        "below the picture across the full width of the column where the text now runs",
+        "to the right margin and the paragraph ends here at last.",
+    ];
+    let content = format!(
+        "{}{}{}",
+        picture(312.0, 655.0, 100.0, 65.0),
+        text("F1", 10.0, 72.0, 710.0, 14.0, &beside),
+        text("F1", 10.0, 72.0, 630.0, 14.0, &below),
+    );
+    let (_, reflowed) = reflow_of(with_picture(&[Page::new(content)]));
+    let found = graphics(&reflowed.document);
+    let whole = found
+        .iter()
+        .find(|(text, _, _)| text.starts_with("Text that wraps"))
+        .unwrap_or_else(|| panic!("{found:?}"));
+    assert!(
+        whole.0.ends_with("ends here at last."),
+        "the lines below the picture continue the paragraph: {found:?}"
+    );
+    assert_eq!(whole.1, vec![(WrapMode::Square, false)], "{found:?}");
+}
