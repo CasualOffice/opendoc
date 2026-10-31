@@ -140,7 +140,11 @@ const WASM = fileURLToPath(new URL("../pkg/casual_doc_wasm_bg.wasm", import.meta
 // pulldown-cmark, content controls and forms, table layout and borders, shape
 // effects, picture insert, find/view extras). MEASURED by CI at 27,978,452 B;
 // the ceiling is that plus ~128 KiB.
-const MAX_TOTAL_BYTES = 28_110_000;
+// 28,110,000 -> 28,265,000 for the bundled symbol face (#922: Noto Sans Symbols 2
+// subset to the symbol blocks, so form ballot boxes and check marks stop drawing
+// as `.notdef`): a 151,048 B data segment, no code. AN ESTIMATE (measured face
+// bytes added to the ceiling); CI's measurement replaces it.
+const MAX_TOTAL_BYTES = 28_265_000;
 /** What the browser then compiles. Measured: 10,594,266 B (#805); 11,585,101 B
  *  after §19; 12,349,976 B with HF-360, whose opt-level-3 build is 14,144,617 B,
  *  so a dropped `z` still lands far outside this. */

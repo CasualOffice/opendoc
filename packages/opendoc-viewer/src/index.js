@@ -37,6 +37,7 @@ export const PACKAGE_FONTS = Object.freeze({
   ],
   Roboto: ["Roboto-Regular.ttf", "Roboto-Bold.ttf", "Roboto-Italic.ttf", "Roboto-BoldItalic.ttf"],
   "Noto Emoji": ["NotoEmoji-Variable.ttf"],
+  "Noto Sans Symbols 2": ["NotoSansSymbols2-Subset.ttf"],
 });
 
 let ready = null;
