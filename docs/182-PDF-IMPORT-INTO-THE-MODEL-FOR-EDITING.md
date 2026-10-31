@@ -1878,9 +1878,12 @@ committed `nist-ir8105.pdf`).
 
 **Still weak on these files**, in the order they hurt:
 
-1. A table whose cells are aligned differently in one tall row (top, centre, bottom: the
-   source's "merged cells and vertical alignment" table) reads as a staircase of rows, since
-   its cells share no baseline.
+1. A table whose cells are aligned differently in one tall row (top, centre, bottom) reads
+   as a staircase of rows, since its cells share no baseline. (The staircase `sample.docx`
+   showed was a different cause, now fixed: its "merged cells" table is two rows under a
+   shaded header band, and two aligned rows were below the three a borderless table needs.
+   `tables::shaded_header` counts the band as the merged header row, spanning the columns,
+   centred; `tables` 0.792 to 0.810.)
 2. Text wrapped around a picture: the lines beside it start a new paragraph at the picture's
    edge.
 3. A chart's labels are text boxes inside its group: right where they were, but a label that
@@ -1888,6 +1891,9 @@ committed `nist-ir8105.pdf`).
 4. Light weights (Helvetica Neue Light and UltraLight) map to the regular face: the model has
    bold and not a weight. Letter spacing (a subtitle's expanded tracking) is not read.
 5. A scanned PDF has no text without an OCR provider; the headless tools have none.
-6. Glyphs the writer's bundled faces lack (checkboxes, Indic, CJK) are missing from our own
-   PDF of `sample.docx`, so its reflow cannot have them (`special` 0.371): the writer's font
-   fallback, not the reflow.
+6. Fixed: glyphs missing from our own PDF of `sample.docx` (`special` 0.371 to 1.000). Four
+   causes, all in the writer or the reader, none in the reflow: a system face over 64 MiB
+   (the macOS emoji face) failed the whole export; no bundled face drew ballot boxes and
+   check marks (now Noto Sans Symbols 2, subset); `ToUnicode` named a CJK ideograph after
+   the radical sharing its glyph; and an Indic syllable several glyphs draw could not be
+   named by glyph id (now an `/ActualText` span, which `casual-doc-pdf-read` honours).

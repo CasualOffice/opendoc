@@ -1827,12 +1827,32 @@ pub fn build(
                 lines.iter().map(|l| l.x1).fold(f64::NEG_INFINITY, f64::max),
             )
         };
+        // A header band's cell spans the columns under it, not its words.
+        let mut spans_over: BTreeMap<usize, (f64, f64)> = BTreeMap::new();
         let candidates = {
             let views: Vec<(&[ILine], (f64, f64))> = lines_only
                 .iter()
                 .map(|l| (l.as_slice(), bounds_of(l)))
                 .collect();
-            tables::whitespace_candidates(&views, &mut work.tables)
+            let mut found = tables::whitespace_candidates(&views, &mut work.tables);
+            // A two-row candidate under a shaded header band spanning its
+            // columns is a table: the band is its merged header row.
+            for candidate in &mut found {
+                if candidate.rows == 2
+                    && let Some((header, extent)) = tables::shaded_header(
+                        &candidate.elements,
+                        &views,
+                        &page.fills,
+                        &mut work.tables,
+                    )
+                {
+                    candidate.elements.insert(0, header);
+                    spans_over.insert(header, extent);
+                    candidate.rows = 3;
+                    candidate.confidence *= 1.5;
+                }
+            }
+            found
         };
         for candidate in candidates {
             // Cells a tagged `Table` owns are its; the tree decides them.
@@ -1851,7 +1871,10 @@ pub fn build(
                     .iter()
                     .map(|&e| {
                         let lines = std::mem::take(&mut lines_only[e]);
-                        let b = bounds_of(&lines);
+                        let b = spans_over
+                            .get(&e)
+                            .copied()
+                            .unwrap_or_else(|| bounds_of(&lines));
                         (lines, b)
                     })
                     .collect();

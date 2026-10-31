@@ -897,9 +897,15 @@ impl Emitter<'_> {
                             body.as_ref(),
                             numbers.map(|(p, t, _)| (p, t, varying.as_slice())),
                         )?;
+                        let mut properties = cell_paragraph();
+                        if centred_in(chunk, cell.x0, cell.x1) {
+                            let mut centred = (*properties).clone();
+                            centred.alignment = Some(Alignment::Center);
+                            properties = centred.into();
+                        }
                         blocks.push(BlockNode::Paragraph(Paragraph {
                             id,
-                            properties: cell_paragraph(),
+                            properties,
                             inlines,
                         }));
                     }
@@ -1057,6 +1063,23 @@ fn pitch_height(rows: &[Vec<super::tables::ICell>], r: usize) -> RowHeight {
 /// A cell paragraph's properties: no space after it (the row's height, or
 /// the cell's padding, is the space; Normal's measured space between body
 /// paragraphs inside every cell made each row a line taller). O(1).
+/// Whether every line of a cell paragraph is centred between the cell's
+/// edges `x0`..`x1` and stands clear of both by at least an em: a merged
+/// header centred across the columns it spans, a status centred in its
+/// column. Text flush with an edge is left (or end) aligned, whatever its
+/// centre. O(lines).
+pub(super) fn centred_in(lines: &[&ILine], x0: f64, x1: f64) -> bool {
+    let middle = (x0 + x1) / 2.0;
+    let tolerance = ((x1 - x0) * 0.04).max(2.0);
+    !lines.is_empty()
+        && lines.iter().all(|line| {
+            let em = line.size.max(1.0);
+            ((line.x0 + line.x1) / 2.0 - middle).abs() <= tolerance
+                && line.x0 - x0 >= em
+                && x1 - line.x1 >= em
+        })
+}
+
 fn cell_paragraph() -> casual_doc_model::v1::SharedParagraphProperties {
     ParagraphProperties {
         spacing: Some(Spacing {

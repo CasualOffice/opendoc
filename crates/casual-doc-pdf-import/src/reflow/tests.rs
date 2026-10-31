@@ -2577,3 +2577,84 @@ fn a_table_with_an_overhanging_column_still_validates() {
         0
     );
 }
+
+/// A two-row borderless table under a shaded header band that spans its
+/// columns, the way Word and LibreOffice print a merged header row
+/// (`sample.docx` OD-TBL-002): one table of three rows, the header one cell
+/// spanning every column, centred, and the rows' cells side by side, not
+/// a staircase of indented paragraphs. Mutations, each driven red: no
+/// header band found (`shaded_header` answering `None`: two rows are no
+/// table); the header keeping its words' extent (it lands in one column of
+/// the first row); a spanning single-line cell getting no row of its own in
+/// `whitespace_table`; `centred_in` answering `false`.
+#[test]
+fn a_shaded_header_band_makes_two_aligned_rows_a_table() {
+    let mut content = text("F2", 11.0, 72.0, 720.0, 14.0, &["Merged cells."]);
+    content.push_str("0.91 0.93 0.96 rg\n");
+    content.push_str(&rect(72.0, 672.0, 420.0, 20.0));
+    content.push_str("0 g\n");
+    content.push_str(&text(
+        "F2",
+        9.0,
+        // Centred on the band: 132 pt of words around x = 282.
+        216.0,
+        678.0,
+        11.0,
+        &["Merged header across three columns"],
+    ));
+    let rows = [["A1", "B1", "C1"], ["Merged pair", "", "Standalone"]];
+    for (r, row) in rows.iter().enumerate() {
+        let y = 678.0 - 24.0 * (r + 1) as f64;
+        for (c, cell) in row.iter().enumerate() {
+            if !cell.is_empty() {
+                content.push_str(&text("F2", 9.0, [84.0, 230.0, 380.0][c], y, 11.0, &[cell]));
+            }
+        }
+    }
+    // The next paragraph one row pitch below the last row: the row's own
+    // height already holds that space.
+    content.push_str(&text(
+        "F2",
+        9.0,
+        72.0,
+        678.0 - 24.0 * 3.0,
+        11.0,
+        &["After the table."],
+    ));
+    let (_, reflowed) = reflow_of(synth::document(&[Page::new(content)], "", ""));
+    let document = &reflowed.document;
+    let tables = tables_in(document);
+    assert_eq!(tables.len(), 1, "{:?}", texts(document));
+    let rows = cell_texts(document, 0);
+    assert_eq!(rows.len(), 3, "{rows:?}");
+    let after = paragraphs(document)
+        .into_iter()
+        .find(|p| para_text(p).starts_with("After"))
+        .expect("the paragraph after the table");
+    let before = after
+        .properties
+        .spacing
+        .as_ref()
+        .and_then(|s| s.before_twips)
+        .unwrap_or(0);
+    assert!(
+        before < 100,
+        "the last row's slack is not counted again above the next paragraph: {before} twips"
+    );
+    assert_eq!(
+        rows[0],
+        vec!["Merged header across three columns"],
+        "{rows:?}"
+    );
+    assert_eq!(rows[1], vec!["A1", "B1", "C1"], "{rows:?}");
+    let header = &tables[0].rows[0].cells[0];
+    assert_eq!(header.properties.grid_span, Some(3));
+    let BlockNode::Paragraph(paragraph) = &header.blocks[0] else {
+        panic!("a paragraph");
+    };
+    assert_eq!(
+        paragraph.properties.alignment,
+        Some(casual_doc_model::v1::Alignment::Center),
+        "the header is centred across the columns it spans"
+    );
+}
