@@ -105,6 +105,12 @@ pub struct GlyphRunEvidence {
     pub size: f64,
     /// Clockwise rotation of the baseline in degrees (0 = upright).
     pub rotation_degrees: f64,
+    /// The glyphs are slanted by the text matrix (a shear between the
+    /// baseline and the vertical of 6 to 30 degrees): an italic a producer
+    /// synthesised from an upright face (LibreOffice, Word and Quartz do,
+    /// when the family has no italic program), which the font's own flags
+    /// do not show.
+    pub oblique: bool,
     /// Fill colour (`None` when painted with a pattern).
     pub fill: Option<Rgba8>,
     /// Paint mode.

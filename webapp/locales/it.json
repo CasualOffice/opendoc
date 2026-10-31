@@ -2650,6 +2650,7 @@
   "findings.feature.pdfJustification": "Testo giustificato dedotto dalla larghezza delle righe",
   "findings.feature.pdfPageBreaks": "Interruzioni di pagina dedotte dalla fine delle pagine",
   "findings.feature.pdfFloats": "Immagini e disegni mobili accanto o dietro al loro testo",
+  "findings.feature.pdfDecorations": "Sottolineature, evidenziazioni, sfondi e bordi disegnati come forme restituiti al loro testo",
   "findings.feature.pdfVectorsPlaced": "Disegni inseriti come forme",
   "pdfImport.title": "Apertura di {name}",
   "pdfImport.openFailed": "Impossibile aprire {name}: {message}",

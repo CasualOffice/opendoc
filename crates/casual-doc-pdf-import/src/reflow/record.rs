@@ -185,7 +185,8 @@ pub struct PdfSourceState {
 
 /// The axis-aligned rectangles a path is made of, one per subpath, when it
 /// is nothing else: each subpath a move and at most four straight lines
-/// (closed or not) along the axes. `x y w h re` is one such subpath; a
+/// (closed or not) along the axes, or a thin bar of more corners
+/// (`thin_polygon`). `x y w h re` is one such subpath; a
 /// producer that paints a table's borders as one path of many `re`
 /// (LibreOffice, Excel, report writers) gives one per border. O(path).
 #[must_use]
@@ -196,7 +197,17 @@ pub fn rectangles(path: &PathEvidence) -> Option<Vec<Bounds>> {
         if points.is_empty() {
             return true;
         }
-        if points.len() > 5 {
+        // Repeated points (a closing point equal to the start, a zero-length
+        // segment) add no corner.
+        points.dedup_by(|b, a| (a.x - b.x).abs() < 0.01 && (a.y - b.y).abs() < 0.01);
+        if points.len() > 1
+            && let (Some(first), Some(last)) = (points.first().copied(), points.last().copied())
+            && (first.x - last.x).abs() < 0.01
+            && (first.y - last.y).abs() < 0.01
+        {
+            points.pop();
+        }
+        if points.len() > 5 && !thin_polygon(points) {
             return false;
         }
         // Every segment along an axis, the closing one included.
@@ -241,6 +252,20 @@ pub fn rectangles(path: &PathEvidence) -> Option<Vec<Bounds>> {
         return None;
     }
     Some(out)
+}
+
+/// Whether a polygon of more than four corners is a bar: every point within
+/// a rule's thickness of one axis-aligned line. LibreOffice paints each table
+/// border as a filled six-cornered bar with bevelled ends (`m`, five `l`,
+/// `h`, `f*`), so its tables had no rules and reflowed as loose lines with
+/// stray strokes through them. Any polygon that thin is a bar whatever its
+/// corners, and its bounds are the rule. O(points).
+fn thin_polygon(points: &[casual_doc_pdf_read::Point]) -> bool {
+    let x0 = points.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let x1 = points.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    let y0 = points.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+    let y1 = points.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+    (x1 - x0).min(y1 - y0) <= RULE_THICKNESS
 }
 
 /// Whether a rectangle is thin enough, and long enough, to be a rule.

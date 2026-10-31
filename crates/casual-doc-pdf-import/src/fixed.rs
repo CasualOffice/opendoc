@@ -703,7 +703,7 @@ impl Builder {
             size_half_points: Some(style.half_points),
             size_complex_half_points: Some(style.half_points),
             bold: font.is_some_and(|f| f.bold).then_some(true),
-            italic: font.is_some_and(|f| f.italic).then_some(true),
+            italic: (style.oblique || font.is_some_and(|f| f.italic)).then_some(true),
             color: style
                 .fill
                 .map(|[r, g, b, _]| Color::Rgb(RgbColor { r, g, b })),
