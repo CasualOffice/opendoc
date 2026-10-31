@@ -37,6 +37,9 @@ import { startPlugin } from "./plugin_host.mjs";
 import { createAddinProofing } from "./addin_proofing.mjs";
 import { attachPanelResize } from "./plugin_panel_width.mjs";
 import { disclosureKey } from "./ai_settings.mjs";
+import { createCoEditor } from "./ai_coeditor.mjs";
+import { registerAiLive } from "./ai_live.mjs";
+import { capabilityLine, loadAiEditSetting, saveAiEditSetting } from "./ai_edit_mode.mjs";
 import { addCommandSource, shown } from "./plugin_command_sources.mjs";
 import {
   addInstalled,
@@ -207,10 +210,40 @@ export function pluginCommands({ plugins, context = {}, openManager, invoke, act
  * @param {object} io.providers the AI provider service
  * @param {object} io.config `hostConfig()`
  * @param {() => void} [io.openAiSettings] Settings ▸ AI provider, for the ⋯ menu
+ * @param {() => object} [io.aiAccess] the effective AI access (`ai_platform.mjs`)
  * @param {object} [io.view]
  */
-export function startPluginPlatform(ed, { assistant, providers, config, openAiSettings = null, view = globalThis }) {
+export function startPluginPlatform(ed, { assistant, providers, config, openAiSettings = null, aiAccess = null, view = globalThis }) {
   const doc = view.document;
+  // Casual AI as a live co-editor (`docs/183` §23): one per editor, painted from
+  // the editor's overlay repaint (`editor_proofing.mjs`).
+  const effective = () => (aiAccess ? aiAccess() : { mode: "chat", setting: "suggest", badge: "readonly", direct: { allowed: false, reason: null }, reason: null, protectedLevel: null });
+  const coeditor = createCoEditor(ed, { t, effective, view });
+  /** The access as an add-in reads it: the effective mode, the badge and the
+   *  model-facing capability line (fixed English). */
+  const describeAccess = () => {
+    const access = effective();
+    return {
+      ...access,
+      capability: capabilityLine(access),
+      // Said in the person's language by the editor: the add-in shows these as
+      // they are (its sandbox has no catalogue of the editor's own keys).
+      badgeText: t(`ai.access.badge.${access.badge}`),
+      reasonText: access.reason ? t(access.reason) : "",
+      directReasonText: access.direct.allowed ? "" : t(access.direct.reason ?? "ai.access.reason.viewer"),
+    };
+  };
+  let lastAccess = "";
+  /** Tells running add-ins when what the AI may do changed (a mode switch, a
+   *  protection, the setting). Compared as JSON, so an unchanged state is silent. */
+  function accessChanged() {
+    const now = describeAccess();
+    const key = JSON.stringify(now);
+    if (key === lastAccess) return;
+    lastAccess = key;
+    platform.notifyAll("access/changed", now);
+  }
+  registerAiLive({ editor: coeditor, accessChanged });
   /** id -> {manifest, entry, running: host|null, enabled} */
   const plugins = new Map();
   let catalogue = { mode: "none", entries: [], allowInstall: false, problems: [] };
@@ -379,6 +412,8 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
   function panelMenuRows(record) {
     const rows = (record.manifest.contributes.panel?.menu ?? []).map((item) => ({ kind: "command", item }));
     if (record.running?.grant().permissions.includes("ai")) {
+      const held = record.running.grant().permissions;
+      if (record.entry.source === "first-party" && (held.includes("suggest") || held.includes("edit"))) rows.push({ kind: "editAs" });
       rows.push({ kind: "info" });
       if (openAiSettings) rows.push({ kind: "settings" });
     }
@@ -396,7 +431,33 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
       icon.className = "ms";
       icon.setAttribute("aria-hidden", "true");
       const label = doc.createElement("span");
-      if (row.kind === "info") {
+      if (row.kind === "editAs") {
+        // The quick toggle for "AI edits as" (Settings ▸ AI provider is the full
+        // control). A checked menu item: Direct edits, on or off. Greyed out WITH
+        // the reason when the document or the role caps the AI at suggestions.
+        const access = effective();
+        const direct = loadAiEditSetting(view) === "direct";
+        icon.textContent = direct ? "edit" : "rate_review";
+        label.textContent = t("plugins.panel.editAs");
+        button.setAttribute("role", "menuitemcheckbox");
+        button.setAttribute("aria-checked", String(direct && access.direct.allowed));
+        button.dataset.panelMenu = "editAs";
+        if (!access.direct.allowed) {
+          button.setAttribute("aria-disabled", "true");
+          button.title = t(access.direct.reason ?? "ai.access.reason.viewer");
+          const why = doc.createElement("small");
+          why.className = "menu-item-reason";
+          why.textContent = button.title;
+          label.append(doc.createElement("br"), why);
+        } else {
+          onButton(button, () => {
+            close();
+            saveAiEditSetting(direct ? "suggest" : "direct", view);
+            accessChanged();
+            ed.setStatus(t(direct ? "ai.editAs.nowSuggest" : "ai.editAs.nowDirect"));
+          });
+        }
+      } else if (row.kind === "info") {
         // Information, not an action: announced in the menu, never actionable.
         const [key, params] = disclosureKey(providers.describe());
         icon.textContent = "info";
@@ -503,7 +564,18 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
           } catch {
             text = "";
           }
-          return { hasRange: ed.hasRange(), text, anchor: { ...anchor }, focus: { ...focus } };
+          // The table the caret is in, if any: "Describe this table" offers itself there.
+          let table = null;
+          try {
+            if (ed.doc.inTable(focus.node)) {
+              const info = ed.doc.tableInfo(focus.node);
+              table = info?.found ? String(info.table) : null;
+              info?.free?.();
+            }
+          } catch {
+            table = null;
+          }
+          return { hasRange: ed.hasRange(), text, anchor: { ...anchor }, focus: { ...focus }, table };
         },
         notify: (message, kind) => ed.setStatus(t("plugins.notify", { name: nameOf(record.manifest), message }), kind === "error" ? "error" : undefined),
         panel: (open) => showPanel(record, open),
@@ -511,6 +583,20 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
         // Copy, for a FIRST-PARTY plugin's answer cards: the sandbox holds no
         // clipboard, so the editor writes the text (plain text, bounded).
         copy: record.entry.source === "first-party" ? (text) => copyText(text) : null,
+        // Live co-editing (`docs/183` §23), for the product's own assistant only:
+        // a third-party add-in still proposes through the private preview.
+        coedit: record.entry.source === "first-party" && record.entry.when === "ai" ? {
+          access: describeAccess,
+          begin: (spec, options) => coeditor.begin(spec, options),
+          write: (turn, text, options) => coeditor.write(turn, text, options),
+          replace: (turn, spec) => coeditor.replace(turn, spec),
+          comment: (turn, spec) => coeditor.comment(turn, spec),
+          remove: (turn, spec) => coeditor.remove(turn, spec),
+          end: (turn) => coeditor.end(turn),
+          stop: (turn) => coeditor.stop(turn, "add-in"),
+          abort: (turn, code) => coeditor.abort(turn, code),
+          decide: (turn, accept) => coeditor.decide(turn, accept),
+        } : null,
         strings: (keys) => {
           if (record.entry.source !== "first-party") return {};
           const out = {};
@@ -726,13 +812,17 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
     let lastKey = null;
     session()?.on("change", ({ detail }) => {
       platform.notifyAll("document/changed", { revision: detail.revision });
+      accessChanged();
       const key = opaqueKey(`${ed.draftDocKey ?? ""}|${ed.currentName ?? ""}`);
       if (lastKey !== null && key !== lastKey) platform.notifyAll("document/opened", { documentKey: key });
       lastKey = key;
     });
     session()?.on("selection", ({ detail }) => {
       view.clearTimeout(selectionTimer);
-      selectionTimer = view.setTimeout(() => platform.notifyAll("selection/changed", { hasRange: !!detail.hasRange }), 250);
+      selectionTimer = view.setTimeout(() => {
+        platform.notifyAll("selection/changed", { hasRange: !!detail.hasRange });
+        accessChanged();
+      }, 250);
     });
     // Theme and locale changes reach running plugins with the tokens' new values.
     const themeChanged = () => platform.notifyAll("theme/changed", { theme: theme(), tokens: tokens() }, { always: true });
@@ -982,6 +1072,8 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
     refresh,
     actions,
     proofing,
+    coeditor,
+    accessChanged,
     install: async (manifestUrl) => {
       const admitted = await admit({ manifestUrl, source: "installed", hostGrant: null, enabled: false, when: null });
       if (!admitted.ok) return admitted;

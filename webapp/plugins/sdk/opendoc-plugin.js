@@ -142,6 +142,22 @@
         /** First-party add-ins only: plain text to the clipboard. */
         copy: function (text) { return request("ui/copy", { text: String(text || "") }).then(function (r) { return r.copied === true; }); },
       },
+      // Live co-editing (`docs/183` §23), for the product's own assistant only:
+      // the editor writes the text at a visible pointer, batched, as one undo
+      // step, within the effective access `access()` reports. Every other add-in
+      // is refused and proposes with `tools.call("propose_edits", …)`.
+      edit: {
+        access: function () { return request("edit/access"); },
+        begin: function (spec, kind) { return request("edit/begin", { spec: spec, kind: kind || "text" }); },
+        write: function (turn, text, cell) { return request("edit/write", cell ? { turn: turn, text: text, cell: cell } : { turn: turn, text: text }); },
+        replace: function (turn, spec) { return request("edit/replace", { turn: turn, spec: spec }); },
+        comment: function (turn, spec) { return request("edit/comment", { turn: turn, spec: spec }); },
+        remove: function (turn, spec) { return request("edit/remove", { turn: turn, spec: spec }); },
+        end: function (turn) { return request("edit/end", { turn: turn }); },
+        stop: function (turn) { return request("edit/stop", { turn: turn }); },
+        abort: function (turn, code) { return request("edit/abort", { turn: turn, code: code }); },
+        decide: function (turn, accept) { return request("edit/decide", { turn: turn, accept: accept === true }); },
+      },
       storage: {
         get: function () { return request("storage/get").then(function (r) { return r.value; }); },
         set: function (value) { return request("storage/set", { value: value }); },

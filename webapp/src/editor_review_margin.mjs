@@ -3,6 +3,7 @@
 // (docs/177); it reaches the rest of the editor only through the context `ed`.
 import { mayDecideReview, reviewDecisionRefusal } from "./review_authority.mjs";
 import { t } from "./i18n.mjs";
+import { aiAccessMayHaveChanged } from "./ai_live.mjs";
 import { reflectReviewModeAccess } from "./capabilities.mjs";
 import { orderedSelectionEnds } from "./caret_navigation.mjs";
 import { reviewCardSignature, reviewCommentIsReplyTo, reviewStackHeight, stackReviewCards } from "./review_layout.mjs";
@@ -131,6 +132,7 @@ export function createReviewMargin(ed) {
     // The banner's "Switch to editing" offer is `updateReviewControls`'s, below,
     // so the segments and the banner cannot disagree about whether editing is possible.
     ed.reflectChrome(); // every edge — `readOnlyReason`, a preview's two, and the MODE
+    aiAccessMayHaveChanged(); // Casual AI's effective access follows the mode (`docs/183` §23.3)
     for (const button of ed.reviewModeButtons) {
       button.setAttribute("aria-pressed", String(button.dataset.reviewMode === ed.reviewMode));
     }

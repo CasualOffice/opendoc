@@ -24,6 +24,8 @@
 //
 // Complexity: O(1) per interaction; nothing here reads the document.
 import { endpointAllowed, endpointHost } from "./ai_provider.mjs";
+import { bindRadioGroup } from "./radio_group.mjs";
+import { loadAiEditSetting, saveAiEditSetting } from "./ai_edit_mode.mjs";
 
 /** The storage key. */
 export const AI_SETTINGS_KEY = "opendoc.ai.provider";
@@ -151,8 +153,11 @@ export function testRequest(model) {
  * @param {object} deps.providers `createAiProviders`'s value
  * @param {boolean} deps.byokAllowed whether this page may hold a key at all
  * @param {() => void} [deps.onChange] told after a save or a forget
+ * @param {() => object|null} [deps.editAccess] the effective AI access now
+ *   (`ai_edit_mode.mjs` `effectiveAiAccess`), for the "AI edits as" choice
+ * @param {(value: string) => void} [deps.onEditAs] told when the person changes it
  */
-export function createAiSettingsDialog({ registerModal, fallbackFocus, t, providers, byokAllowed, onChange = () => {} }) {
+export function createAiSettingsDialog({ registerModal, fallbackFocus, t, providers, byokAllowed, onChange = () => {}, editAccess = () => null, onEditAs = () => {} }) {
   const $ = (id) => document.getElementById(id);
   const dialog = $("aiProviderDialog");
   if (!dialog) return { open() {} };
@@ -170,6 +175,41 @@ export function createAiSettingsDialog({ registerModal, fallbackFocus, t, provid
   const test = $("aiProviderTest");
   const forget = $("aiProviderForget");
   let testing = null;
+
+  // "AI edits as: Suggestions | Direct edits" (`docs/183` §23.3). Saved the
+  // moment it is chosen, like the theme: a preference, not part of the provider.
+  const editAsGroup = $("aiEditAs");
+  const editAsNote = $("aiEditAsNote");
+  const editAs = editAsGroup
+    ? bindRadioGroup(editAsGroup, {
+        attr: "data-ai-edit-as",
+        onSelect: (value) => {
+          saveAiEditSetting(value);
+          onEditAs(value);
+          reflectEditAs();
+        },
+      })
+    : null;
+  /** Direct is greyed out WITH the reason when the document or the role caps the
+   *  AI at suggestions (SKILL §10: never a dead control). */
+  function reflectEditAs() {
+    if (!editAs) return;
+    const access = editAccess();
+    const direct = editAsGroup.querySelector('[data-ai-edit-as="direct"]');
+    const capped = access && !access.direct.allowed;
+    direct.disabled = !!capped;
+    if (capped) {
+      direct.title = t(access.direct.reason ?? "ai.access.reason.viewer");
+      direct.setAttribute("aria-describedby", "aiEditAsNote");
+    } else {
+      direct.removeAttribute("title");
+      direct.removeAttribute("aria-describedby");
+    }
+    // Capped: what the AI will actually do is shown checked; the person's own
+    // choice is kept and comes back when the cap lifts.
+    editAs.reflect(capped ? "suggest" : loadAiEditSetting());
+    editAsNote.textContent = capped ? t("aiProvider.editAs.capped", { reason: t(access.direct.reason ?? "ai.access.reason.viewer") }) : t("aiProvider.editAs.note");
+  }
 
   const controller = registerModal(dialog, {
     initialFocus: () => (byokAllowed ? preset : $("aiProviderClose")),
@@ -241,6 +281,7 @@ export function createAiSettingsDialog({ registerModal, fallbackFocus, t, provid
     status.textContent = "";
     showDisclosure();
     refreshButtons();
+    reflectEditAs();
   }
 
   preset.addEventListener("change", () => {

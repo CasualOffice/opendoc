@@ -4769,5 +4769,15 @@ iframes with an `asc_*` API of their own; ours must not become a second addressi
   registry (`docs/181` §1's VS Code counter-example).
 - BYOK inside a framed editor (a key stored on an origin the host does not control).
 
+**Amended 2026-10-31 (owner, `docs/183` §23).** For the product's OWN assistant, decision 4's
+"the private preview" is replaced by live co-editing: its edits stream into the document at a
+visible "Casual AI" pointer through first-party-only `edit/*` methods, as one undo step per turn
+(the engine's `Coalesce::Join`), as suggestions unless the person chose Direct edits, capped by
+the most restrictive of that setting, the editor's mode, the document's protection and the
+person's role (the AI never exceeds the human), and rolled back on a validation failure. A
+third-party add-in keeps the private preview, and so does a reply on a comment thread. Direct
+edits are now the person's choice rather than only the host's `?ai=direct`; `?ai=suggest` is a
+host ceiling.
+
 **Open.** `docs/183` §13 (the feature list and UI), and whether MCP sampling should ship given
 its deprecation in MCP 2026-07-28 (§3.7).

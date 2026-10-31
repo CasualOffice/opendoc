@@ -21,6 +21,8 @@ import { registerModal } from "./modal.mjs";
 import { createAiProviders } from "./ai_provider_channel.mjs";
 import { createAiSettingsDialog, disclosureKey, loadAiSettings } from "./ai_settings.mjs";
 import { shown } from "./plugin_command_sources.mjs";
+import { effectiveAiAccess, loadAiEditSetting } from "./ai_edit_mode.mjs";
+import { readProtection } from "./document_protection.mjs";
 
 /** The page's provider service, once started; and the plugin platform's promise. */
 let started = null;
@@ -29,6 +31,34 @@ let platformPromise = null;
 /** The page's AI provider service, or null before `startAiPlatform`. */
 export function aiProviders() {
   return started;
+}
+
+/**
+ * What Casual AI may do HERE, now (`docs/183` §23.3): the person's "AI edits as"
+ * setting capped by the editor's mode, the document's protection, the room's
+ * grant and the host's (`effectiveAiAccess`). Asked at every turn, never cached:
+ * a mode switch or a protection change applies to the next decision.
+ * O(1) beyond reading the protection's small JSON.
+ */
+export function effectiveAccessFor(ed, assistant, config = {}, view = globalThis) {
+  const grant = assistant?.access?.() ?? { access: "none" };
+  let protection = null;
+  try {
+    protection = ed.doc && typeof ed.doc.documentProtection === "function" ? readProtection(ed.doc.documentProtection()) : null;
+  } catch {
+    protection = null;
+  }
+  const authority = ed.SESSION?.modeAuthority;
+  const editingRefused = authority?.allows?.("editing")?.allowed === false;
+  const suggestingAllowed = authority?.allows?.("suggesting")?.allowed !== false;
+  return effectiveAiAccess({
+    access: grant.access,
+    setting: loadAiEditSetting(view),
+    reviewMode: ed.reviewMode ?? "editing",
+    protection,
+    suggestOnly: editingRefused && suggestingAllowed,
+    hostSuggestOnly: String(config?.ai ?? "").toLowerCase() === "suggest",
+  });
 }
 
 /** Whether this page may hold a key: standalone, and the host did not choose a
@@ -64,6 +94,7 @@ export function startAiPlatform(ed, { assistant = null, view = globalThis } = {}
     hostFn: () => session()?.aiProvider ?? null,
   });
   started = providers;
+  const aiAccess = () => effectiveAccessFor(ed, assistant, config, view);
 
   let dialog = null;
   const summary = () => view.document?.getElementById("aiProviderSummary");
@@ -85,6 +116,8 @@ export function startAiPlatform(ed, { assistant = null, view = globalThis } = {}
         // A saved or forgotten key starts or stops the AI plugins at once.
         void platformPromise?.then((platform) => platform.refresh());
       },
+      editAccess: aiAccess,
+      onEditAs: () => void platformPromise?.then((platform) => platform.accessChanged()),
     });
     dialog.open();
   }
@@ -101,7 +134,7 @@ export function startAiPlatform(ed, { assistant = null, view = globalThis } = {}
   // (its unit tests) must not need a DOM.
   if (assistant && view.document) {
     platformPromise = import("./plugin_platform.mjs").then(({ startPluginPlatform }) =>
-      startPluginPlatform(ed, { assistant, providers, config, openAiSettings: openSettings, view }),
+      startPluginPlatform(ed, { assistant, providers, config, openAiSettings: openSettings, aiAccess, view }),
     );
   }
   return providers;

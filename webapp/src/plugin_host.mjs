@@ -93,6 +93,12 @@ export function startPlugin({ manifest, granted, env, container }) {
     const name = env.addInName?.() ?? "";
     return name && typeof env.ai.previewFrom === "function" ? env.ai.previewFrom(plan, name) : env.ai.preview(plan);
   };
+  /** The co-editor, for the product's own assistant; refused for anyone else. */
+  const coedit = () => {
+    if (!env.coedit) throw new RpcRefusal("permission-denied", "Only the product's own assistant edits live.");
+    if (!grant().permissions.includes("ai")) throw new RpcRefusal("permission-denied", "This add-in does not hold the ai permission.", { permission: "ai" });
+    return env.coedit;
+  };
   const need = (permission) => {
     if (!grant().permissions.includes(permission)) throw new RpcRefusal("permission-denied", `This add-in does not hold the ${permission} permission.`, { permission });
   };
@@ -151,11 +157,11 @@ export function startPlugin({ manifest, granted, env, container }) {
     "selection/get"() {
       need("read");
       const selection = env.selection();
-      if (!selection) return { hasRange: false, text: "", anchor: null, focus: null, truncated: false };
+      if (!selection) return { hasRange: false, text: "", anchor: null, focus: null, truncated: false, table: null };
       const encoded = new TextEncoder().encode(selection.text ?? "");
       const truncated = encoded.length > PLUGIN_LIMITS.selectionBytes;
       const text = truncated ? new TextDecoder().decode(encoded.slice(0, PLUGIN_LIMITS.selectionBytes)).replace(/�$/, "") : String(selection.text ?? "");
-      return { hasRange: !!selection.hasRange, text, anchor: selection.anchor ?? null, focus: selection.focus ?? null, truncated };
+      return { hasRange: !!selection.hasRange, text, anchor: selection.anchor ?? null, focus: selection.focus ?? null, truncated, table: selection.table ?? null };
     },
     "commands/list"() {
       const { permissions } = grant();
@@ -217,6 +223,47 @@ export function startPlugin({ manifest, granted, env, container }) {
       if (!text) throw new RpcRefusal("bad-request", "ui/copy needs text.");
       if (new TextEncoder().encode(text).length > PLUGIN_LIMITS.copyBytes) throw new RpcRefusal("bad-request", "ui/copy takes at most 64 KiB.");
       return { copied: (await env.copy(text)) === true };
+    },
+    // ---- Live co-editing (`docs/183` §23): the product's own assistant only ----
+    //
+    // The add-in streams its model's text through these; the EDITOR batches it,
+    // draws the pointer, holds the turn's one undo step and enforces the
+    // effective access. A third-party add-in has no `coedit` and is refused:
+    // it proposes through the private preview, as before.
+    "edit/access"() {
+      need("read");
+      return coedit().access();
+    },
+    async "edit/begin"(params) {
+      const held = grant().permissions;
+      const kind = params?.kind === "comment" ? "comment" : "text";
+      const may = kind === "comment" ? held.includes("comment") || held.includes("suggest") || held.includes("edit") : held.includes("suggest") || held.includes("edit");
+      if (!may) throw new RpcRefusal("permission-denied", "This add-in may not change the document.", { permission: kind === "comment" ? "comment" : "suggest" });
+      return coedit().begin(params?.spec ?? {}, { kind, notify: (state) => rpc?.notify("edit/state", state) });
+    },
+    "edit/write"(params) {
+      return coedit().write(params?.turn, String(params?.text ?? ""), { cell: Array.isArray(params?.cell) ? params.cell.slice(0, 2).map((n) => Number(n) | 0) : null });
+    },
+    async "edit/replace"(params) {
+      return coedit().replace(params?.turn, params?.spec ?? {});
+    },
+    async "edit/remove"(params) {
+      return coedit().remove(params?.turn, params?.spec ?? {});
+    },
+    async "edit/comment"(params) {
+      return coedit().comment(params?.turn, params?.spec ?? {});
+    },
+    async "edit/end"(params) {
+      return coedit().end(params?.turn);
+    },
+    "edit/stop"(params) {
+      return { stopped: coedit().stop(params?.turn) };
+    },
+    async "edit/abort"(params) {
+      return { aborted: await coedit().abort(params?.turn, String(params?.code ?? "plan").slice(0, 32)) };
+    },
+    async "edit/decide"(params) {
+      return coedit().decide(params?.turn, params?.accept === true);
     },
     "ui/notify"(params) {
       const message = truncate(params?.message, PLUGIN_LIMITS.notifyChars);

@@ -81,6 +81,7 @@ FNV
 FORMCHECKBOX
 FORMDROPDOWN
 FORMTEXT
+Figma
 Firefox
 Flate
 Foxit
@@ -716,6 +717,7 @@ unrotated
 unrouted
 unsourced
 unstyled
+untrackable
 untracked
 untrusted
 uri

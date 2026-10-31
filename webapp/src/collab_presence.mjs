@@ -123,26 +123,38 @@ export function createPresence({ newRoster, document, transport, selection, pain
           const el = place(remote.selection.slice(i, i + 5), "remote-selection");
           if (el) el.style.backgroundColor = color;
         }
-        const el = place(remote.caret, "remote-caret");
-        if (el) {
-          el.style.borderColor = color;
-          el.dataset.participant = String(remote.client);
-          el.dataset.verified = String(view.verified);
-          const label = el.ownerDocument.createElement("span");
-          label.textContent = view.label;
-          // A CLAIMED name is marked unverified on the caret as on the chip
-          // (`docs/175` §4.2): the tooltip says so in words, and the class lets
-          // the label read as a claim.
-          if (!view.numbered && !view.verified) {
-            label.title = t("collab.presence.unverified", { name: view.label });
-            label.classList.add("is-unverified");
-          }
-          label.style.backgroundColor = color;
-          // White alone measured 2.6:1 on the palette's yellows; the seam picks the ink.
-          label.style.color = view.ink;
-          el.append(label);
-        }
+        const el = paintCaretFlag(place, remote.caret, view, t);
+        if (el) el.dataset.participant = String(remote.client);
       }
     },
   };
+}
+
+/**
+ * One participant's caret and name flag on a page overlay: the room's carets
+ * and Casual AI's (`ai_coeditor.mjs`, a participant that is not a room member)
+ * are drawn by this one function, so the AI's flag cannot drift from what a
+ * person's looks like. `rect` is the engine's flat `[page, x, y, w, h]`; `view`
+ * is `participantDisplay`'s. Returns the caret element, or null when its page is
+ * not on screen. O(1).
+ */
+export function paintCaretFlag(place, rect, view, t) {
+  const el = place(rect, "remote-caret");
+  if (!el) return null;
+  el.style.borderColor = view.color;
+  el.dataset.verified = String(view.verified);
+  const label = el.ownerDocument.createElement("span");
+  label.textContent = view.label;
+  // A CLAIMED name is marked unverified on the caret as on the chip
+  // (`docs/175` §4.2): the tooltip says so in words, and the class lets
+  // the label read as a claim.
+  if (!view.numbered && !view.verified) {
+    label.title = t("collab.presence.unverified", { name: view.label });
+    label.classList.add("is-unverified");
+  }
+  label.style.backgroundColor = view.color;
+  // White alone measured 2.6:1 on the palette's yellows; the seam picks the ink.
+  label.style.color = view.ink;
+  el.append(label);
+  return el;
 }

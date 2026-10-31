@@ -12,8 +12,8 @@
 //     click to reset — clamped between 320px and half the window, remembered;
 //   * one header line, the conversation, ONE composer; four suggestions only
 //     while the conversation is empty;
-//   * every answer is a card whose primary action CHANGES THE DOCUMENT (through
-//     the private preview, as a tracked suggestion by "Casual AI").
+//   * every answer is a card whose primary action CHANGES THE DOCUMENT (live, by
+//     the co-editor, as a tracked suggestion by "Casual AI", `docs/183` §23).
 import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, stableBox } from "./fixtures.mjs";
 
 test.describe.configure({ timeout: 120_000 });
@@ -86,10 +86,15 @@ async function caretAtStart(page) {
   await moveCaretToDocStart(page);
 }
 
-async function acceptPreview(page) {
-  await expect(page.locator("#aiPreviewPanel")).toBeVisible();
-  await page.locator("#aiPreviewPanel .ai-preview-accept").click();
-  await expect(page.locator("#aiPreviewPanel")).toBeHidden();
+/** The co-editor finished writing the turn: Accept all in its bar (`docs/183`
+ *  §23 replaced the private preview for Casual AI's own edits). */
+async function turnDone(page) {
+  await expect(page.locator("#aiTurnBar")).toHaveAttribute("data-state", "done", { timeout: 30_000 });
+}
+async function acceptTurn(page) {
+  await expect(page.locator("#aiTurnBar")).toHaveAttribute("data-state", "done", { timeout: 30_000 });
+  await page.locator("#aiTurnBar .ai-turn-accept").click();
+  await expect(page.locator("#aiTurnBar")).toBeHidden();
 }
 
 // ---- Placement ------------------------------------------------------------------
@@ -143,7 +148,7 @@ test("the ⋯ menu holds Clear history and where text goes; the empty state's su
   await gotoEditor(page);
   await openPanel(page);
   const frame = assistant(page);
-  await expect(frame.locator("[data-chip] > span:last-child")).toHaveText(["Summarise", "Key points", "Draft…", "Review document"]);
+  await expect(frame.locator("[data-chip] > span:last-child")).toHaveText(["Summarise", "Key points", "Draft…", "Review document", "Table…"]);
   // The endpoint is said once, on first use, not as a permanent line.
   await expect(frame.locator("#firstRun")).toBeVisible();
   await expect(frame.locator("#firstRun")).toContainText("127.0.0.1");
@@ -264,7 +269,7 @@ test("Insert at the cursor puts the answer into the document", async ({ page }) 
   await expect(card.locator(".ca-card-actions .btn-primary")).toHaveText("Insert at the cursor");
   expect(await has(page, "CASUALINSERTED")).toBe(0);
   await card.locator('[data-action="insert"]').click();
-  await acceptPreview(page);
+  await acceptTurn(page);
   await expect.poll(() => has(page, "CASUALINSERTED")).toBeGreaterThan(0);
   // Into the text at the caret, without the citation marker.
   expect(await documentText(page)).toMatch(/^CASUALINSERTED/);
@@ -290,14 +295,14 @@ test("with a selection attached, the answer card shows a diff and Replace select
   await expect(card.locator(".ca-card-actions .btn-primary")).toHaveText("Replace selection");
   // The selection went to the model as data.
   expect(seen.at(-1).messages.at(-1).content).toContain(`<document_text id="selection">${WORD}</document_text>`);
+  // Detaching the selection is one click (the card keeps the one it answered).
+  await frame.locator("#detach").click();
+  await expect(frame.locator("#attached")).toBeHidden();
   await card.locator('[data-action="replace"]').click();
-  await acceptPreview(page);
+  await turnDone(page);
   await expect.poll(() => has(page, "CASUALREPLACED")).toBeGreaterThan(0);
   const changes = await page.evaluate(async () => (await window.opendoc.ai.read({ tool: "trackedChanges" })).value.trackedChanges);
   expect(changes.length).toBeGreaterThan(0);
-  // Detaching the selection is one click.
-  await frame.locator("#detach").click();
-  await expect(frame.locator("#attached")).toBeHidden();
 });
 
 test("Add as comment puts the answer on the document as a comment", async ({ page }) => {
@@ -315,7 +320,7 @@ test("Add as comment puts the answer on the document as a comment", async ({ pag
   const comments = () => page.evaluate(async () => (await window.opendoc.ai.read({ tool: "comments" })).value.comments.map((c) => c.text));
   expect((await comments()).some((t) => t.includes("CASUALCOMMENT"))).toBe(false);
   await card.locator('[data-action="comment"]').click();
-  await acceptPreview(page);
+  await acceptTurn(page);
   await expect.poll(async () => (await comments()).some((t) => t.includes("CASUALCOMMENT"))).toBe(true);
 });
 
@@ -340,14 +345,14 @@ test("a review shows each suggestion as a diff, and Apply as suggestions lands t
   await expect(page.locator("#aiPreviewPanel")).toBeHidden();
   expect(await has(page, "CASUALREVIEWED")).toBe(0);
   await card.locator('[data-action="apply"]').click();
-  await acceptPreview(page);
+  await turnDone(page);
   await expect.poll(() => has(page, "CASUALREVIEWED")).toBeGreaterThan(0);
   const authors = await page.evaluate(async () => (await window.opendoc.ai.read({ tool: "trackedChanges" })).value.trackedChanges.map((c) => c.author));
   expect(authors.length).toBeGreaterThan(0);
   expect(authors.every((a) => /AI/.test(a ?? ""))).toBe(true);
 });
 
-test("'Write me a paragraph based on our discussion' draws on the conversation, and Insert puts it in", async ({ page }) => {
+test("'Write me a paragraph based on our discussion' draws on the conversation, and it streams into the document", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await withProvider(page);
   const seen = await mockModel(page, (body) => (body.messages[0].content.includes("drafting text") ? "CASUALDISCUSSED paragraph." : "The SDK ships in June."));
@@ -365,13 +370,11 @@ test("'Write me a paragraph based on our discussion' draws on the conversation, 
   await expect(frame.locator("#draftMode")).toBeVisible();
   await frame.locator("#prompt").fill("Write me a paragraph based on our discussion");
   await frame.locator("#prompt").press("Enter");
-  const card = frame.locator(".ca-card").last();
-  await expect(card).toContainText("CASUALDISCUSSED");
   await expect(frame.locator("#draftMode")).toBeHidden();
+  // A draft streams straight into the document now (`docs/183` §23).
+  await acceptTurn(page);
   const draft = seen.at(-1);
   expect(draft.messages.map((m) => m.content)).toEqual(expect.arrayContaining(["What ships in June?", "The SDK ships in June."]));
-  await card.locator('[data-action="insert"]').click();
-  await acceptPreview(page);
   await expect.poll(() => has(page, "CASUALDISCUSSED")).toBeGreaterThan(0);
 });
 

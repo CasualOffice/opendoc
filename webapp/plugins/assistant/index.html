@@ -24,6 +24,7 @@
         <button type="button" class="btn ca-chip" data-chip="keyPoints"><span class="ms" aria-hidden="true">format_list_bulleted</span><span></span></button>
         <button type="button" class="btn ca-chip" data-chip="draft"><span class="ms" aria-hidden="true">edit_note</span><span></span></button>
         <button type="button" class="btn ca-chip" data-chip="review"><span class="ms" aria-hidden="true">rate_review</span><span></span></button>
+        <button type="button" class="btn ca-chip" data-chip="table"><span class="ms" aria-hidden="true">table</span><span></span></button>
       </div>
       <!-- Shown once on this device, until the first message: where text goes.
            Afterwards it lives in the panel's ⋯ menu. -->
@@ -41,10 +42,21 @@
        script. -->
   <div id="composer" class="ca-composer" role="group">
     <div class="ca-context">
+      <!-- What the AI may do here (`docs/183` §23.3): Editing, Suggesting,
+           Commenting or Read-only, with who decided in the tooltip. A status,
+           not a control. -->
+      <span id="accessBadge" class="ca-badge" role="status" hidden><span class="ms" aria-hidden="true">rate_review</span><span id="accessBadgeText"></span></span>
       <span id="attached" class="ca-attached" hidden>
         <span class="ms" aria-hidden="true">format_quote</span>
         <span id="attachedText" class="ca-attached-text"></span>
         <button id="detach" type="button" class="ca-attached-x"><span class="ms" aria-hidden="true">close</span></button>
+      </span>
+      <button id="turnIntoTable" type="button" class="ca-attached ca-offer" hidden><span class="ms" aria-hidden="true">table</span><span id="turnIntoTableText" class="ca-attached-text"></span></button>
+      <button id="describeTableChip" type="button" class="ca-attached ca-offer" hidden><span class="ms" aria-hidden="true">table_view</span><span id="describeTableText" class="ca-attached-text"></span></button>
+      <span id="tableMode" class="ca-attached" hidden>
+        <span class="ms" aria-hidden="true">table</span>
+        <span id="tableModeText" class="ca-attached-text"></span>
+        <button id="tableCancel" type="button" class="ca-attached-x"><span class="ms" aria-hidden="true">close</span></button>
       </span>
       <span id="draftMode" class="ca-attached" hidden>
         <span class="ms" aria-hidden="true">edit_note</span>

@@ -173,3 +173,37 @@
   .ca-send, .ca-icon-btn { width: 2.75rem; }
   .ca-attached-x { width: 2.75rem; height: 2.75rem; }
 }
+
+/* ---- Live co-editing (`docs/183` §23) -------------------------------------- */
+/* The access badge: a status in the composer, never a control. */
+.ca-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 1.5rem;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+.ca-badge .ms { font-size: 1rem; }
+.ca-badge[data-access="editing"] { color: var(--accent-text); border-color: var(--accent-line); }
+.ca-badge[data-access="suggesting"] { color: var(--paper-insert); border-color: color-mix(in srgb, var(--paper-insert) 40%, transparent); }
+.ca-offer { padding: 0 var(--space-2); cursor: pointer; font: inherit; font-size: var(--fs-small); }
+.ca-offer:hover { background: var(--accent-line); }
+/* The card's compact control: "Casual AI is writing… · Stop · Accept all · Reject all". */
+.ca-live { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); padding-top: var(--space-1); border-top: 1px solid var(--line); }
+.ca-live[hidden] { display: none; }
+.ca-live .btn { min-height: var(--h-control); padding: 0 var(--space-2); }
+.ca-live-status { flex: 1 1 auto; display: inline-flex; align-items: center; gap: var(--space-1); color: var(--muted); font-size: var(--fs-small); }
+.ca-live-dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--muted); }
+.ca-live[data-state="writing"] .ca-live-dot { background: var(--accent); animation: ca-pulse 1.2s ease-in-out infinite; }
+.ca-live[data-state="rolledBack"] .ca-live-status { color: var(--danger); }
+@keyframes ca-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) {
+  .ca-live[data-state="writing"] .ca-live-dot { animation: none; }
+}
+@media (pointer: coarse) {
+  .ca-live .btn, .ca-offer { min-height: 2.75rem; }
+}

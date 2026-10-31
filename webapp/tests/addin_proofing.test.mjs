@@ -149,7 +149,17 @@ test("nothing an add-in sends applies a fix: the plugin host has no such method,
   const host = readFileSync(new URL("../src/plugin_host.mjs", import.meta.url), "utf8");
   const methods = [...host.matchAll(/^ {4}(?:async )?"?([\w/]+)"?\(/gm)].map((m) => m[1]);
   assert.ok(methods.includes("proofing/report"));
-  assert.equal(methods.some((m) => /apply|replace|accept/i.test(m)), false, `a plugin method could apply a fix: ${methods}`);
+  // The live co-editor's `edit/*` methods (`docs/183` §23) DO change the
+  // document, and are the product's own assistant's only: each one goes through
+  // `coedit()`, which refuses any add-in the platform did not mark first-party
+  // and AI-gated. Every other method still applies nothing.
+  const liveOnly = methods.filter((m) => m.startsWith("edit/"));
+  for (const m of liveOnly) {
+    const body = host.slice(host.indexOf(`"${m}"(`), host.indexOf("\n    },", host.indexOf(`"${m}"(`)));
+    assert.match(body, /coedit\(\)/, `${m} is not gated to the first-party assistant`);
+  }
+  assert.match(host, /if \(!env\.coedit\) throw new RpcRefusal\("permission-denied"/, "coedit() refuses an add-in without the co-editor");
+  assert.equal(methods.filter((m) => !m.startsWith("edit/")).some((m) => /apply|replace|accept/i.test(m)), false, `a plugin method could apply a fix: ${methods}`);
   const source = readFileSync(new URL("../src/addin_proofing.mjs", import.meta.url), "utf8");
   assert.match(source, /if \(!event\?\.isTrusted\) return;/, "apply() no longer requires the person's own click");
 });

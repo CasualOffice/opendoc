@@ -494,6 +494,276 @@
     return { ok: true, plan: plan(revision, [{ op: "comment", reply_to: comment.id, target: { node: a.node, pos: { start: a.start, end: a.end } }, text: text }]) };
   }
 
+  // ---- Live co-editing (`docs/183` §23) ----------------------------------------
+  //
+  // An edit action no longer waits in a private preview: the model's text streams
+  // INTO the document, through the editor's co-editor, as a person typing would.
+  // What used to be one check on the finished answer (`planFor…`) is now two
+  // small machines run on every delta, so the stream is shaped and validated
+  // INCREMENTALLY and a violation stops it before the next batch lands:
+  //
+  //   * the SHAPER turns raw model text into what is written: a leading quote or
+  //     Markdown fence dropped, a closing one held back until the end, a blank line
+  //     made a paragraph break ("\n"), a single newline a space unless it starts a
+  //     list line. It holds back only what it cannot decide yet (at most a few
+  //     characters), so the document trails the model by one batch, not one answer.
+  //   * the GUARD sees the cumulative text and answers a violation code, or null:
+  //     `injection` (the data markers echoed back), `plan` (the model writing plan
+  //     JSON instead of prose), `control` (control or bidirectional-override
+  //     characters), `length` (more than the action's budget), `access` (any write
+  //     at all when the mode admits none). The co-editor ROLLS THE TURN BACK on a
+  //     violation; the editor enforces its own cap on top (`ai_coeditor.mjs`).
+  //
+  // Both are O(delta) per push: the guard keeps only a count and a short tail.
+
+  var LIST_LINE = /^([•\-*–]|\d{1,3}[.)])\s/;
+
+  /**
+   * A stream shaper. `push(delta)` returns the text that may be written now,
+   * `finish()` the rest. A paragraph break is "\n" in what it returns.
+   * `options.paragraphs` false keeps everything on one paragraph (a selection
+   * rewrite inside one paragraph): every newline becomes a space.
+   */
+  function createShaper(options) {
+    var o = options || {};
+    var oneParagraph = o.paragraphs === false;
+    var head = true;
+    var fence = false;
+    var quote = null;
+    var pending = "";
+    var wrote = false;
+    var lastBreak = true;
+    var listy = false;
+
+    function closingHold() {
+      if (fence) return 3;
+      if (quote) return 1;
+      return 0;
+    }
+
+    /** Emits from `pending` everything that is decided. */
+    function drain(final) {
+      var out = "";
+      while (pending.length) {
+        var c = pending[0];
+        if (c === "\r") { pending = pending.slice(1); continue; }
+        if (c === "\n" || (c === " " && /^ +\n/.test(pending))) {
+          // A newline run: decided once the next non-newline text is known.
+          var m = /^[ \t]*\n[\s]*/.exec(pending);
+          if (!m) break;
+          var run = m[0];
+          var rest = pending.slice(run.length);
+          if (!final && rest.length < 4) break;
+          var blank = (run.match(/\n/g) || []).length >= 2;
+          pending = rest;
+          if (!wrote) continue;
+          var nextList = LIST_LINE.test(rest);
+          if (oneParagraph) out += " ";
+          else if (blank || nextList || listy) out += "\n";
+          else out += " ";
+          listy = nextList;
+          lastBreak = true;
+          continue;
+        }
+        var hold = final ? 0 : closingHold();
+        if (pending.length <= hold) break;
+        if (lastBreak && LIST_LINE.test(pending)) listy = true;
+        lastBreak = false;
+        out += c;
+        wrote = true;
+        pending = pending.slice(1);
+      }
+      return out;
+    }
+
+    function push(delta) {
+      pending += String(delta == null ? "" : delta);
+      if (head) {
+        var lead = pending.replace(/^\s+/, "");
+        if (!lead.length) return "";
+        if (lead[0] === "`") {
+          if (lead.length < 3) return "";
+          if (lead.slice(0, 3) === "```") {
+            var nl = lead.indexOf("\n");
+            if (nl < 0) return "";
+            fence = true;
+            pending = lead.slice(nl + 1);
+          } else pending = lead;
+        } else if (lead[0] === "\"" || lead[0] === "“") {
+          quote = lead[0] === "“" ? "”" : "\"";
+          pending = lead.slice(1);
+        } else pending = lead;
+        head = false;
+      }
+      return drain(false);
+    }
+
+    function finish() {
+      if (head) {
+        head = false;
+        pending = pending.replace(/^\s+/, "");
+      }
+      var tail = pending.replace(/\s+$/, "");
+      if (fence) tail = tail.replace(/`{3}\s*$/, "").replace(/\s+$/, "");
+      if (quote && tail.slice(-1) === quote) tail = tail.slice(0, -1);
+      pending = tail;
+      return drain(true).replace(/\s+$/, "");
+    }
+
+    return { push: push, finish: finish };
+  }
+
+  var CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F‪-‮⁦-⁩]/;
+  var DATA_MARKER = /<\s*\/?\s*document_text/i;
+  var PLAN_JSON = /"op"\s*:\s*"|"edits"\s*:\s*\[|"base_revision"\s*:/;
+
+  /**
+   * An incremental guard over what is about to be written. `check(text)` takes
+   * the NEXT piece (shaped) and answers null or a violation code; it keeps a
+   * running count and a 32-character tail so a marker split across two deltas is
+   * still seen. `options.budget` is the most characters the action may write;
+   * `options.mode` the effective mode (`ai_edit_mode.mjs`).
+   */
+  function createGuard(options) {
+    var o = options || {};
+    var budget = Math.max(1, o.budget || 20000);
+    var written = 0;
+    var tail = "";
+    var start = "";
+    return {
+      check: function (piece) {
+        var text = String(piece == null ? "" : piece);
+        if (!text) return null;
+        if (o.mode !== "direct" && o.mode !== "suggest") return "access";
+        var window = tail + text;
+        if (CONTROL.test(text)) return "control";
+        if (DATA_MARKER.test(window)) return "injection";
+        if (PLAN_JSON.test(window)) return "plan";
+        if (start.length < 2) {
+          start = (start + text.replace(/^\s+/, "")).slice(0, 2);
+          if (start === "[{" || start === "{\"") return "plan";
+        }
+        written += text.length;
+        if (written > budget) return "length";
+        tail = window.slice(-32);
+        return null;
+      },
+      written: function () { return written; },
+    };
+  }
+
+  /** The most a streamed action may write, in characters: a rewrite stays near
+   *  its selection's size, a draft or a description has a fixed ceiling. */
+  function budgetFor(action, selected) {
+    var size = String(selected || "").length;
+    if (action === "shorten" || action === "grammar") return size + 200;
+    if (action === "rewrite" || action === "formal" || action === "friendly" || action === "confident" || action === "translate" || action === "replace") return size * 3 + 400;
+    if (action === "expand") return size * 6 + 1200;
+    return 16000;
+  }
+
+  /** The system message with the editor's capability line appended (the line is
+   *  fixed English from `ai_edit_mode.mjs`'s `capabilityLine`). */
+  function withAccess(body, line) {
+    if (!body || !Array.isArray(body.messages) || !line) return body;
+    var first = body.messages[0];
+    if (first && first.role === "system") first.content = first.content + " " + String(line);
+    return body;
+  }
+
+  // ---- Tables ----------------------------------------------------------------
+
+  var TABLE_LIMITS = Object.freeze({ rows: 50, columns: 20, cell: 500 });
+
+  var TABLE_SYSTEM =
+    "You are Casual AI, turning text into a table inside a document editor. " + SYSTEM_DATA_RULE +
+    ' Reply with JSON only, no prose and no fences: {"header": ["<column name>", ...], "rows": [["<cell>", ...], ...]}. ' +
+    "Every row has exactly as many cells as the header. At most 20 columns and 49 rows. Cells are short plain text.";
+
+  /** "Turn into table": the selected paragraphs (or, with none, the user's
+   *  prompt and the document around the caret) into header + rows. */
+  function tableRequest(paragraphs, prompt, context) {
+    var source = (paragraphs || []).map(function (p, i) { return dataBlock("p" + (i + 1), p.text); }).join("\n");
+    var ask = paragraphs && paragraphs.length
+      ? "Turn these paragraphs into a table. Choose sensible columns; keep every fact.\n\n" + source
+      : String(prompt || "Make a table.") + (context && context.text ? "\n\nThe document around the insertion point, for context:\n" + context.text : "");
+    if (paragraphs && paragraphs.length && prompt) ask = String(prompt) + "\n\n" + source;
+    return request(TABLE_SYSTEM, ask, { maxTokens: 3000, stream: false, temperature: 0.2 });
+  }
+
+  /**
+   * The model's table, schema-checked: `{ok, header, rows}` with every cell a
+   * string, the shape rectangular and within `TABLE_LIMITS`; anything else is
+   * `{ok: false, reason}` and nothing is built. A missing or short row is a
+   * refusal, not a guess: a table with a silently padded cell says something the
+   * model did not.
+   */
+  function parseTableAnswer(text) {
+    var s = String(text == null ? "" : text);
+    var fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(s);
+    if (fence) s = fence[1];
+    var start = s.indexOf("{");
+    var end = s.lastIndexOf("}");
+    if (start < 0 || end <= start) return { ok: false, reason: "unparsable" };
+    var value;
+    try {
+      value = JSON.parse(s.slice(start, end + 1));
+    } catch (err) {
+      return { ok: false, reason: "unparsable" };
+    }
+    var header = value && value.header;
+    var rows = value && value.rows;
+    var isRow = function (row) { return Array.isArray(row) && row.every(function (cell) { return typeof cell === "string"; }); };
+    if (!isRow(header) || !header.length || header.length > TABLE_LIMITS.columns) return { ok: false, reason: "schema" };
+    if (!Array.isArray(rows) || !rows.length || rows.length + 1 > TABLE_LIMITS.rows) return { ok: false, reason: "schema" };
+    for (var i = 0; i < rows.length; i += 1) {
+      if (!isRow(rows[i]) || rows[i].length !== header.length) return { ok: false, reason: "schema" };
+    }
+    var clean = function (cell) {
+      var t = String(cell).replace(/\s+/g, " ").trim();
+      return t.length > TABLE_LIMITS.cell ? t.slice(0, TABLE_LIMITS.cell - 1) + "…" : t;
+    };
+    var all = [header].concat(rows).map(function (row) { return row.map(clean); });
+    for (var r = 0; r < all.length; r += 1) {
+      for (var c = 0; c < all[r].length; c += 1) if (CONTROL.test(all[r][c]) || DATA_MARKER.test(all[r][c])) return { ok: false, reason: "schema" };
+    }
+    return { ok: true, header: all[0], rows: all.slice(1), cells: all };
+  }
+
+  /** A table read by `read_table` (`{rows: [{cells: [{text}]}]}`) as the rows of
+   *  text the model sees. Bounded by `TABLE_LIMITS`. */
+  function tableRows(read) {
+    return ((read && read.rows) || []).slice(0, TABLE_LIMITS.rows).map(function (row) {
+      return (row.cells || []).slice(0, TABLE_LIMITS.columns).map(function (cell) { return String(cell.text || "").replace(/\s+/g, " ").trim(); });
+    });
+  }
+
+  var DESCRIBE_SYSTEM =
+    "You are Casual AI, describing a table in a document. " + SYSTEM_DATA_RULE +
+    " Reply with plain prose only, no Markdown, no lists, no preface: what the table shows and what stands out in it, using its own numbers.";
+
+  /** "Describe this table": the table travels as structured data (one JSON array
+   *  of rows inside its data block), and the answer is a paragraph. */
+  function describeTableRequest(rows, kind) {
+    var ask = kind === "summary" ? "Summarise this table in one or two sentences." : "Describe this table in one short paragraph.";
+    return request(DESCRIBE_SYSTEM, ask + " The first row is the header.\n\n" + dataBlock("table", JSON.stringify(rows)), { maxTokens: 600, temperature: 0.3 });
+  }
+
+  /**
+   * What a request outside the effective access becomes: `{allowed: false,
+   * alternative}` names what the panel offers instead (`comment` for a
+   * commenter's change request, `copy` for a reader's). The editor's co-editor
+   * refuses the turn regardless; this is so the panel can say so first.
+   */
+  function allowedEdit(mode, kind) {
+    if (kind === "comment") {
+      if (mode === "direct" || mode === "suggest" || mode === "comment") return { allowed: true };
+      return { allowed: false, alternative: "copy" };
+    }
+    if (mode === "direct" || mode === "suggest") return { allowed: true };
+    return { allowed: false, alternative: mode === "comment" ? "comment" : "copy" };
+  }
+
   /** Bounded chat history for one document: the last `max` turns, text only. */
   function trimHistory(history, max) {
     var list = Array.isArray(history) ? history.filter(function (h) { return h && (h.role === "user" || h.role === "assistant") && typeof h.content === "string"; }) : [];
@@ -531,6 +801,16 @@
     wordDiff: wordDiff,
     looksLikeRevision: looksLikeRevision,
     trimHistory: trimHistory,
+    createShaper: createShaper,
+    createGuard: createGuard,
+    budgetFor: budgetFor,
+    withAccess: withAccess,
+    TABLE_LIMITS: TABLE_LIMITS,
+    tableRequest: tableRequest,
+    parseTableAnswer: parseTableAnswer,
+    tableRows: tableRows,
+    describeTableRequest: describeTableRequest,
+    allowedEdit: allowedEdit,
   });
   root.CasualAssistantCore = api;
 })(typeof self !== "undefined" ? self : globalThis);

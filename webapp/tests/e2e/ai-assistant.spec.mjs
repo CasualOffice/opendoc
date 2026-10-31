@@ -93,7 +93,7 @@ test("with no AI provider the editor shows nothing of Casual AI and runs none of
   await expect(page.locator("#pluginPanel")).toBeHidden();
 });
 
-test("✦ Rewrite works at the selection, proposes in the preview, and lands as a suggestion by Casual AI", async ({ page }) => {
+test("✦ Rewrite works at the selection, streams in live, and lands as a suggestion by Casual AI", async ({ page }) => {
   await withProvider(page);
   const seen = await mockModel(page, { "Reply with the replacement text only": "CASUALREWRITTEN" });
   await gotoEditor(page);
@@ -103,23 +103,21 @@ test("✦ Rewrite works at the selection, proposes in the preview, and lands as 
   await page.locator("#selAiBtn").click();
   const menu = page.locator("#selAiMenu");
   await expect(menu).toBeVisible();
-  await expect(menu.locator(".menu-item > span:last-child")).toHaveText(["Rewrite", "Shorten", "Expand", "Fix grammar", "Make more formal", "Make friendlier", "Make more confident", "Translate…", "Ask Casual AI"]);
+  await expect(menu.locator(".menu-item > span:last-child")).toHaveText(["Rewrite", "Shorten", "Expand", "Fix grammar", "Make more formal", "Make friendlier", "Make more confident", "Translate…", "Turn into table", "Ask Casual AI"]);
   await menu.locator(".menu-item", { hasText: "Rewrite" }).click();
   // As Google Docs' Refine and Notion's Edit with AI: the action works where the
-  // selection is. The side panel stays closed; the result opens in the preview.
-  await expect(page.locator("#aiPreviewPanel")).toBeVisible();
+  // selection is. The side panel stays closed; the rewrite streams in live, and
+  // the editor's turn bar holds Stop, Accept all and Reject all (`docs/183` §23).
+  await expect(page.locator("#aiTurnBar")).toBeVisible();
   await expect(page.locator("#pluginPanel")).toBeHidden();
-  // The exchange is still in the panel's history for whoever opens it.
-  await expect(assistant(page).locator(".ca-msg-ai").first()).toContainText("CASUALREWRITTEN");
+  await expect(page.locator("#aiPreviewPanel")).toHaveCount(0);
+  const has = (word) => page.evaluate(async (w) => (await window.opendoc.ai.read({ tool: "search", query: w })).value.hits.length, word);
+  await expect.poll(() => has("CASUALREWRITTEN")).toBeGreaterThan(0);
   // The selected text went to the model data-marked, never as an instruction.
   expect(seen[0].messages.at(-1).content).toContain(`<document_text id="selection">${WORD}</document_text>`);
   expect(seen[0].stream).toBe(true);
-  // Nothing in the document yet: the preview waits for the person.
-  await expect(page.locator("#aiPreviewPanel")).toBeVisible();
-  const has = (word) => page.evaluate(async (w) => (await window.opendoc.ai.read({ tool: "search", query: w })).value.hits.length, word);
-  expect(await has("CASUALREWRITTEN")).toBe(0);
-  await page.locator("#aiPreviewPanel .ai-preview-accept").click();
-  await expect.poll(() => has("CASUALREWRITTEN")).toBeGreaterThan(0);
+  // The exchange is still in the panel's history for whoever opens it.
+  await expect(assistant(page).locator(".ca-msg-ai").first().locator(".ca-diff ins")).toContainText("CASUALREWRITTEN");
   const authors = await page.evaluate(async () => (await window.opendoc.ai.read({ tool: "trackedChanges" })).value.trackedChanges.map((c) => c.author));
   expect(authors.length).toBeGreaterThan(0);
   expect(authors.every((a) => /AI/.test(a ?? ""))).toBe(true);
@@ -181,7 +179,7 @@ test("Ask answers with citation chips that jump to the paragraph, and history su
   await expect(assistant(page).locator(".ca-msg-user")).toHaveCount(0);
 });
 
-test("the review pass proposes comments and suggestions in one preview", async ({ page }) => {
+test("the review pass applies comments and suggestions in one live turn", async ({ page }) => {
   await withProvider(page);
   await gotoEditor(page);
   // The answer quotes the document's real first paragraph, read the way the
@@ -198,12 +196,15 @@ test("the review pass proposes comments and suggestions in one preview", async (
   });
   await waitForAssistant(page);
   await page.evaluate(() => window.opendoc.execute("plugin.org.casualoffice.assistant.review"));
-  // The findings show in the card first; Apply as suggestions opens the preview.
+  // The findings show in the card first; Apply as suggestions writes them, live.
   const card = assistant(page).locator(".ca-card").last();
   await expect(card).toContainText("Comments: 1. Suggestions: 1.");
   await card.locator('[data-action="apply"]').click();
-  await expect(page.locator("#aiPreviewPanel")).toBeVisible();
-  await expect(card.locator(".ca-card-note")).toContainText("The review is in the preview. Comments: 1. Suggestions: 1.");
+  await expect(page.locator("#aiTurnBar")).toHaveAttribute("data-state", "done", { timeout: 30_000 });
+  const read = (tool) => page.evaluate(async (t) => (await window.opendoc.ai.read({ tool: t })).value, tool);
+  expect((await read("comments")).comments.some((c) => c.text === "Clarify this." && c.author === "Casual AI")).toBe(true);
+  expect((await read("trackedChanges")).trackedChanges.some((c) => c.author === "Casual AI")).toBe(true);
+  await expect(page.locator("#aiPreviewPanel")).toHaveCount(0);
 });
 
 test("⌘/ opens the ✦ actions on a selection", async ({ page }) => {

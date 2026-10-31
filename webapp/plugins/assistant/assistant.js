@@ -1,30 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 // Casual AI's panel: the assistant as a first-party plugin on the public plugin
-// API (`docs/183` §13, §21, owner decision 3). Everything it does goes through
-// the same port any plugin has: it reads with the read tools, asks the configured
-// model with `ai/complete` (never seeing the key), and proposes every change
-// with `propose_edits`, which opens the editor's private preview. The person
-// accepts or discards; an accepted change lands as tracked suggestions by
-// "Casual AI", one undo step.
+// API (`docs/183` §13, §21, §23, owner decision 3). It reads with the read tools,
+// asks the configured model with `ai/complete` (never seeing the key), and makes
+// every change as a LIVE CO-EDITOR (`editor.edit`, §23): the editor writes the
+// text at a visible "Casual AI" pointer, batched, as one undo step, within the
+// effective access, and the card shows "Casual AI is writing… · Stop · Accept all
+// · Reject all". The private preview remains for other add-ins and for replies.
 //
 // THE PANEL (owner review, 2026-10-31: "too crowded, redundant information, too
 // narrow, we need something tangible that basically works"). Designed from
 // Gemini's side panel in Google Docs and Copilot's in Word:
 //
-//   * the conversation fills the body, with four suggestions while it is empty;
+//   * the conversation fills the body, with suggestions while it is empty;
 //   * ONE composer at the bottom: a growing text field, Send that becomes Stop
-//     while the model writes, and a chip naming the selection only while there
-//     is one (so a question can be about it, and its answer can replace it);
+//     while the model writes, a chip naming the selection only while there is
+//     one, and an ACCESS BADGE (Editing / Suggesting / Commenting / Read-only)
+//     that says what the AI may do here;
 //   * every answer is a CARD with one clear primary action that changes the
-//     document — Insert at the cursor, Replace selection, Add as comment, or
-//     Apply as suggestions — plus Copy and Try again. A replacement or a review
-//     shows a compact inline diff in the card before anything is applied;
-//   * what is not the conversation (Clear history, where text goes, the
-//     provider settings) is behind the editor's ⋯ in the header line, and the
-//     endpoint is said once, on first use, not on every open.
+//     document — Insert at the cursor, Replace selection, Add as comment, Apply —
+//     or, where the access admits no change, the allowed alternative (a comment,
+//     Copy) with the reason said in words;
+//   * what is not the conversation is behind the editor's ⋯ in the header line.
 //
-// Streaming shows HERE, in the panel, never as jumps in the document (owner
-// rule 4). Stop aborts the model call at once.
+// Chat answers stream into their cards; EDITS stream into the document (owner,
+// 2026-10-31, superseding rule 4's "never as jumps in the document": the
+// pointer makes the AI's work visible as a person's would be).
 (function () {
   "use strict";
   var Core = window.CasualAssistantCore;
@@ -32,18 +32,27 @@
   var NS = "plugins.assistant.";
   var KEYS = [
     "disclosure.endpoint", "disclosure.host", "logLabel", "empty", "you", "ai", "prompt.label", "prompt.placeholder",
-    "prompt.draftPlaceholder", "send", "stop", "cleared", "chip.summary", "chip.keyPoints", "chip.draft", "chip.review",
-    "working", "reading", "stopped", "proposed", "dropped", "citation", "insert", "replace", "comment", "apply", "copy",
-    "copied", "truncated", "noSelection", "noCaret", "unchanged", "unparsable", "translateTo", "translateGo", "noComments",
+    "prompt.draftPlaceholder", "prompt.tablePlaceholder", "send", "stop", "cleared", "chip.summary", "chip.keyPoints", "chip.draft", "chip.review",
+    "chip.table", "chip.describeTable", "chip.turnIntoTable",
+    "working", "reading", "stopped", "dropped", "citation", "insert", "replace", "comment", "apply", "applyDirect", "applyComments", "copy",
+    "copied", "truncated", "noSelection", "noCaret", "noTable", "unchanged", "unparsable", "translateTo", "translateGo", "noComments",
     "draftReply", "historyNote", "error.generic", "error.auth", "error.rate", "error.network", "error.timeout",
     "error.budget", "error.tooLong", "error.refused", "replyFor", "caveat", "workingOn", "retry", "attached", "detach",
-    "draftMode", "draftCancel", "reviewSummary", "reviewProposed", "diff.inserted", "diff.deleted",
+    "draftMode", "draftCancel", "tableMode", "reviewSummary", "proposed", "diff.inserted", "diff.deleted",
+    "live.writing", "live.done", "live.stopped", "live.acceptAll", "live.rejectAll", "live.keep", "live.undoAll",
+    "live.accepted", "live.rejected", "live.rolledBack", "live.refused", "live.stale",
+    "violation.injection", "violation.plan", "violation.control", "violation.length", "violation.access", "violation.engine",
+    "access.label", "access.cannotEdit", "access.cannotComment", "replaceTable", "replaceTableConfirm", "describeTable",
   ].concat(
-    ["ask", "rewrite", "shorten", "expand", "grammar", "formal", "friendly", "confident", "translate", "summarise", "review", "draft", "replies"].map(function (id) { return "command." + id; }),
+    ["ask", "rewrite", "shorten", "expand", "grammar", "formal", "friendly", "confident", "translate", "summarise", "review", "draft", "replies", "table", "describeTable"].map(function (id) { return "command." + id; }),
   ).map(function (k) { return NS + k; });
   var LANGUAGES = ["ar", "de", "en", "es", "fr", "hi", "id", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "uk", "vi", "zh"];
   var CONTEXT_BUDGET = 6000;
   var READ_CAP = 60000;
+  /** A known answer replayed into the document: this many characters per piece,
+   *  one piece per tick, so the pointer is seen writing it (the editor batches). */
+  var REPLAY_CHARS = 12;
+  var REPLAY_MS = 40;
   /** The storage key that remembers the first-run note was shown. Not a
    *  document key (those are 8 hex digits), so eviction never takes it. */
   var SEEN = "~seen";
@@ -53,10 +62,19 @@
   var strings = {};
   var history = [];
   var running = null;
-  /** The selection the composer's chip names: `{text, anchor, focus}`, or null. */
+  /** The selection the composer's chip names: `{text, anchor, focus, table}`, or null. */
   var attached = null;
+  /** The table the caret is in, when it is in one. */
+  var caretTable = null;
   var mode = "ask";
   var seenNote = true;
+  /** What the AI may do here (`edit/access`), refreshed on `access/changed`. */
+  var access = { mode: "chat", badge: "readonly", capability: "", badgeText: "", reasonText: "" };
+  /** Live turns by id: `{out, live}`. */
+  var turns = Object.create(null);
+  /** Subscriptions made once the editor has connected. */
+  var editorEvents = [];
+  var VIOLATIONS = ["injection", "plan", "control", "length", "access", "engine"];
 
   function s(key, params) {
     var text = strings[NS + key] || "";
@@ -64,6 +82,10 @@
     return text;
   }
   var clip = function (text, max) { return text.length > max ? text.slice(0, max - 1) + "…" : text; };
+  var encoder = new TextEncoder();
+  var bytes = function (text) { return encoder.encode(String(text || "")).length; };
+  var canEdit = function () { return access.mode === "direct" || access.mode === "suggest"; };
+  var canComment = function () { return canEdit() || access.mode === "comment"; };
 
   // ---- Rendering ----------------------------------------------------------
 
@@ -88,7 +110,7 @@
   }
 
   /** An answer card: body (the streamed text), extra (a diff, a review list),
-   *  note (what happened), actions. */
+   *  note (what happened), live (the turn control), actions. */
   function card() {
     started();
     var root = document.createElement("article");
@@ -101,13 +123,16 @@
     extra.hidden = true;
     var note = document.createElement("p");
     note.className = "ca-card-note";
+    var live = document.createElement("div");
+    live.className = "ca-live";
+    live.hidden = true;
     var actions = document.createElement("div");
     actions.className = "ca-card-actions";
     actions.hidden = true;
-    root.append(body, extra, note, actions);
+    root.append(body, extra, note, live, actions);
     $("log").append(root);
     scrollDown();
-    return { root: root, body: body, extra: extra, note: note, actions: actions };
+    return { root: root, body: body, extra: extra, note: note, live: live, actions: actions };
   }
 
   function renderAnswer(target, text, ids) {
@@ -249,23 +274,51 @@
     target.note.textContent = text;
   }
 
-  // ---- Model calls, streamed into a card ------------------------------------
+  // ---- The access badge (`docs/183` §23.3) ------------------------------------
 
-  /** One streamed completion into `target.body`. Resolves with the full text. */
-  function complete(body, target, workingKey) {
+  function reflectAccess(next) {
+    if (next && typeof next === "object") access = next;
+    var badge = $("accessBadge");
+    if (!badge) return;
+    badge.dataset.access = access.badge || "readonly";
+    $("accessBadgeText").textContent = access.badgeText || "";
+    var icon = access.badge === "editing" ? "edit" : access.badge === "suggesting" ? "rate_review" : access.badge === "commenting" ? "add_comment" : "visibility";
+    badge.firstElementChild.textContent = icon;
+    var why = access.reasonText ? " — " + access.reasonText : "";
+    badge.title = s("access.label", { mode: access.badgeText || "" }) + why;
+    badge.setAttribute("aria-label", badge.title);
+    badge.hidden = !access.badgeText;
+  }
+
+  function refreshAccess() {
+    return editor.edit.access().then(reflectAccess).catch(function () {});
+  }
+
+  /** A request with the capability line the editor gave (fixed English). */
+  function told(body) {
+    return Core.withAccess(body, access.capability);
+  }
+
+  // ---- Model calls ------------------------------------------------------------
+
+  /** One streamed completion. `target` (a card) shows the text as it comes, or
+   *  `onDelta` receives each delta (a live turn writes it into the document).
+   *  Resolves with the full text. */
+  function complete(body, target, workingKey, onDelta) {
     var controller = new AbortController();
     running = controller;
     setWorking(s(workingKey || "working"));
     var text = "";
     if (target) target.body.classList.add("ca-pending");
     return editor.ai
-      .complete(body, {
+      .complete(told(body), {
         signal: controller.signal,
         onChunk: function (chunk) {
           var delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta;
           if (delta && typeof delta.content === "string") {
             text += delta.content;
-            if (target) {
+            if (onDelta) onDelta(delta.content);
+            else if (target) {
               target.body.textContent = text;
               scrollDown();
             }
@@ -274,7 +327,10 @@
       })
       .then(function (result) {
         var message = result.response.choices[0].message;
-        return typeof message.content === "string" ? message.content : text;
+        var full = typeof message.content === "string" ? message.content : text;
+        // A server that did not stream answers once: the whole text is one delta.
+        if (onDelta && full && full.length > text.length && full.slice(0, text.length) === text) onDelta(full.slice(text.length));
+        return full;
       })
       .finally(function () {
         if (target) target.body.classList.remove("ca-pending");
@@ -285,6 +341,232 @@
 
   $("stop").addEventListener("click", function () {
     if (running) running.abort();
+  });
+
+  // ---- Live co-editing (`docs/183` §23) ----------------------------------------
+
+  /** The card's compact control while a turn runs and until it is decided:
+   *  "Casual AI is writing… · Stop · Accept all · Reject all". */
+  function renderLive(out, live) {
+    var box = out.live;
+    box.replaceChildren();
+    var status = document.createElement("span");
+    status.className = "ca-live-status";
+    status.setAttribute("role", "status");
+    var dot = document.createElement("span");
+    dot.className = "ca-live-dot";
+    dot.setAttribute("aria-hidden", "true");
+    status.append(dot, document.createTextNode(
+      live.state === "writing" ? s("live.writing")
+        : live.state === "stopped" ? s("live.stopped")
+          : live.state === "accepted" ? s("live.accepted")
+            : live.state === "rejected" ? s("live.rejected")
+              : live.state === "rolledBack" ? s("live.rolledBack", { reason: s("violation." + (live.code || "engine")) })
+                : s("live.done"),
+    ));
+    box.dataset.state = live.state;
+    box.append(status);
+    var open = live.state === "writing" || live.state === "done" || live.state === "stopped";
+    if (live.state === "writing") {
+      var stop = button(s("stop"), "btn ca-live-stop");
+      stop.dataset.live = "stop";
+      stop.addEventListener("click", function () { stopTurn(live); });
+      box.append(stop);
+    }
+    if (open) {
+      var direct = live.mode === "direct" || live.kind === "comment";
+      var accept = button(s(direct ? "live.keep" : "live.acceptAll"), "btn btn-primary");
+      accept.dataset.live = "accept";
+      accept.addEventListener("click", function () { decideTurn(live, true); });
+      var reject = button(s(direct ? "live.undoAll" : "live.rejectAll"), "btn");
+      reject.dataset.live = "reject";
+      reject.addEventListener("click", function () { decideTurn(live, false); });
+      box.append(accept, reject);
+    }
+    box.hidden = false;
+    scrollDown();
+  }
+
+  function setLive(live, state, extra) {
+    live.state = state;
+    if (extra && extra.code) live.code = extra.code;
+    var held = turns[live.turn];
+    if (held) renderLive(held.out, live);
+  }
+
+  function stopTurn(live) {
+    if (live.state !== "writing") return;
+    if (running) running.abort();
+    live.stopping = true;
+    void editor.edit.stop(live.turn).catch(function () {});
+    setLive(live, "stopped");
+  }
+
+  function decideTurn(live, accept) {
+    if (running && live.state === "writing") running.abort();
+    live.stopping = true;
+    return editor.edit.decide(live.turn, accept).then(function (answer) {
+      if (answer && answer.ok === false) return;
+      setLive(live, accept ? "accepted" : "rejected");
+    }).catch(function () {});
+  }
+
+  /** Opens a live turn for `out`. Resolves with the turn, or null when the
+   *  editor refused it (the card says why, and offers what is allowed). */
+  function beginTurn(out, spec, kind) {
+    return editor.edit.begin(spec, kind || "text").then(function (opened) {
+      if (!opened || opened.ok === false) {
+        out.note.textContent = opened && opened.code === "stale" ? s("live.stale") : s("live.refused", { reason: (opened && opened.message) || "" });
+        return null;
+      }
+      var live = { turn: opened.turn, mode: opened.mode, cells: opened.cells || null, kind: kind || "text", state: "writing", code: null, stopping: false };
+      turns[live.turn] = { out: out, live: live };
+      renderLive(out, live);
+      return live;
+    });
+  }
+
+  /** A guard for the turn: the core's incremental validator. */
+  function guardFor(live, action, selected) {
+    live.guard = Core.createGuard({ mode: live.mode, budget: Core.budgetFor(action, selected) });
+    return live.guard;
+  }
+
+  /** Writes `piece` into the turn, or aborts it on a violation. False when the
+   *  turn must not continue. */
+  /** How often validated text leaves the panel for the editor. The port admits
+   *  20 requests a second (`plugin_rpc.mjs` RPC_BOUNDS), so a fast model's deltas
+   *  are coalesced here and the editor batches again on its side. */
+  var SEND_MS = 100;
+
+  function post(live, piece, cell) {
+    void editor.edit.write(live.turn, piece, cell).then(function (answer) {
+      if (answer && answer.ok === false && !live.code && VIOLATIONS.indexOf(answer.code) >= 0) {
+        live.code = answer.code || "engine";
+        if (running) running.abort();
+        setLive(live, "rolledBack", { code: live.code });
+      }
+    }).catch(function () {});
+  }
+
+  /** Sends what the panel has buffered for the turn, now. */
+  function drainOut(live) {
+    if (live.outTimer) clearTimeout(live.outTimer);
+    live.outTimer = 0;
+    if (live.out && !live.code && !live.stopping) post(live, live.out, null);
+    live.out = "";
+  }
+
+  /** Validates `piece` and queues it for the turn, or aborts the turn on a
+   *  violation. False when the turn must not continue. A `cell` move is sent at
+   *  once, after whatever was queued for the cell before it. */
+  function send(live, guard, piece, cell, final) {
+    if (live.code || live.stopping) return false;
+    // What could still become a data marker ("<", "</doc", …) is held until the
+    // next delta decides it, so a marker never reaches the page even briefly.
+    piece = (live.hold || "") + (piece || "");
+    live.hold = "";
+    if (!final) {
+      var lt = piece.lastIndexOf("<");
+      if (lt >= 0) {
+        var tail = piece.slice(lt);
+        var name = tail.replace(/^<\s*\/?\s*/, "");
+        if (tail.length < 24 && /^<\s*\/?\s*[a-z_]*$/i.test(tail) && "document_text".indexOf(name.toLowerCase()) === 0) {
+          live.hold = tail;
+          piece = piece.slice(0, lt);
+        }
+      }
+    }
+    if (!piece) return true;
+    var code = guard.check(piece);
+    if (code) {
+      live.code = code;
+      live.out = "";
+      if (running) running.abort();
+      void editor.edit.abort(live.turn, code).catch(function () {});
+      setLive(live, "rolledBack", { code: code });
+      return false;
+    }
+    if (cell) {
+      drainOut(live);
+      post(live, piece, cell);
+      return true;
+    }
+    live.out = (live.out || "") + piece;
+    if (!live.outTimer) live.outTimer = setTimeout(function () { drainOut(live); }, SEND_MS);
+    return true;
+  }
+
+  function endTurn(live) {
+    if (live.hold && live.guard) send(live, live.guard, "", null, true);
+    if (live.code || live.stopping) return Promise.resolve();
+    drainOut(live);
+    return editor.edit.end(live.turn).then(function (answer) {
+      if (answer && answer.ok === false) return;
+      if (live.state === "writing") setLive(live, "done");
+    }).catch(function () {});
+  }
+
+  /** Streams a model answer INTO the turn, shaped and guarded per delta. */
+  function streamInto(live, body, options) {
+    var o = options || {};
+    var shaper = Core.createShaper({ paragraphs: o.paragraphs !== false });
+    var guard = guardFor(live, o.action, o.selected);
+    return complete(body, null, "working", function (delta) {
+      send(live, guard, shaper.push(delta));
+    }).then(function (full) {
+      send(live, guard, shaper.finish());
+      return endTurn(live).then(function () { return full; });
+    }, function (err) {
+      // Stopped by the person (here, in the editor's bar, or Escape): what was
+      // written stays. A model error mid-stream keeps it too, and says so.
+      if (!live.code && !live.stopping) {
+        void editor.edit.stop(live.turn).catch(function () {});
+        setLive(live, "stopped");
+      }
+      if (err && err.code !== "cancelled") throw err;
+      return null;
+    });
+  }
+
+  /** Replays a known answer into the turn at a typing pace (the editor batches). */
+  function replayInto(live, text, options) {
+    var o = options || {};
+    var guard = guardFor(live, o.action || "insert", o.selected);
+    var all = String(text || "");
+    var at = 0;
+    return new Promise(function (resolve) {
+      function tick() {
+        if (live.code || live.stopping) return resolve();
+        if (at >= all.length) return resolve(endTurn(live));
+        var piece = all.slice(at, at + REPLAY_CHARS);
+        at += piece.length;
+        if (!send(live, guard, piece, o.cell)) return resolve();
+        setTimeout(tick, REPLAY_MS);
+      }
+      tick();
+    });
+  }
+
+  editorEvents.push(function () {
+    editor.on("edit/state", function (params) {
+      var held = params && turns[params.turn];
+      if (!held) return;
+      var live = held.live;
+      if (params.state === "stopped" && live.state === "writing") {
+        live.stopping = true;
+        if (running) running.abort();
+        setLive(live, "stopped");
+      } else if (params.state === "rolledBack") {
+        live.code = live.code || params.code || "engine";
+        if (running) running.abort();
+        setLive(live, "rolledBack", { code: live.code });
+      } else if (params.state === "accepted" || params.state === "rejected") {
+        live.stopping = true;
+        setLive(live, params.state);
+      }
+    });
+    editor.on("access/changed", reflectAccess);
   });
 
   // ---- Reading -------------------------------------------------------------
@@ -319,7 +601,7 @@
     });
   }
 
-  /** Sends a plan to the private preview. Resolves with the card's note. */
+  /** Sends a plan to the private preview (replies only, now). */
   function propose(planResult, doneKey, params) {
     if (!planResult.ok) {
       return Promise.resolve(s(planResult.reason === "unchanged" || planResult.reason === "nothing" ? "unchanged" : "unparsable"));
@@ -346,40 +628,81 @@
     });
   }
 
-  function insertAtCaret(text) {
+  /** What a card says and offers when the access admits no change: the reason,
+   *  in words, and the allowed alternative (a comment for a commenter, Copy for
+   *  a reader). Resolves with the note. */
+  function refusedEdit(target, text, sel) {
+    var note = s(canComment() ? "access.cannotEdit" : "access.cannotComment", { mode: access.badgeText || "" });
+    if (access.reasonText) note += " " + access.reasonText;
+    var list = canComment() ? [{ id: "comment", label: s("comment"), run: function () { return addComment(target, sel, text); } }] : [];
+    setActions(target, list, Core.cleanText(Core.stripCitations(text)), null);
+    return Promise.resolve(note);
+  }
+
+  /** Insert at the cursor, live: one paragraph into the text at the caret, more
+   *  as paragraphs, a list one per item (the same shaping `paragraphsOf` does). */
+  function insertAtCaret(target, text) {
+    if (!canEdit()) return refusedEdit(target, text, null);
     return caret().then(function (at) {
       if (!at) return s("noCaret");
-      return readFrom(at.node, 200).then(function (value) { return propose(Core.planForInsert(at, text, value.revision)); });
-    });
-  }
-
-  /** The anchor for a remembered one-paragraph selection, re-found in the
-   *  paragraph as it is NOW (the person may have typed since). */
-  function anchorOf(sel) {
-    return readFrom(sel.anchor.node, 1500).then(function (value) {
-      var block = (value.blocks || [])[0];
-      var start = Math.min(sel.anchor.offset, sel.focus.offset);
-      return { anchor: block ? Core.anchorFor(block.id, block.text, sel.text, start) : null, revision: value.revision };
-    });
-  }
-
-  function replaceSelection(sel, text) {
-    return anchorOf(sel).then(function (found) {
-      if (!found.anchor) return s("noSelection");
-      return propose(Core.planForSelection(found.anchor, Core.stripCitations(text), found.revision));
-    });
-  }
-
-  function addComment(sel, text) {
-    if (sel && singleParagraph(sel)) {
-      return anchorOf(sel).then(function (found) {
-        if (!found.anchor) return s("noSelection");
-        return propose(Core.planForComment(found.anchor, text, found.revision));
+      var paragraphs = Core.paragraphsOf(text);
+      if (!paragraphs.length) return s("unchanged");
+      return beginTurn(target, { kind: "insert", at: at }).then(function (live) {
+        if (!live) return null;
+        return replayInto(live, paragraphs.join("\n"), { action: "insert" }).then(function () { return null; });
       });
-    }
-    return caret().then(function (at) {
-      if (!at) return s("noCaret");
-      return readFrom(at.node, 200).then(function (value) { return propose(Core.planForComment({ node: at.node }, text, value.revision)); });
+    });
+  }
+
+  /** The remembered one-paragraph selection as a replace spec, re-checked by the
+   *  editor against the paragraph as it is NOW (the person may have typed). */
+  function replaceSpec(sel) {
+    var start = Math.min(sel.anchor.offset, sel.focus.offset);
+    var end = Math.max(sel.anchor.offset, sel.focus.offset);
+    return { kind: "replace", node: sel.anchor.node, start: start, end: end, exact: sel.text };
+  }
+
+  function replaceSelection(target, sel, text) {
+    if (!canEdit()) return refusedEdit(target, text, sel);
+    var clean = Core.cleanText(Core.stripCitations(text)).replace(/\s*\n+\s*/g, " ");
+    if (!clean) return Promise.resolve(s("unchanged"));
+    if (clean === sel.text) return Promise.resolve(s("unchanged"));
+    return beginTurn(target, replaceSpec(sel)).then(function (live) {
+      if (!live) return null;
+      return replayInto(live, clean, { action: "replace", selected: sel.text }).then(function () { return null; });
+    });
+  }
+
+  /** Add as comment, live: a comment by Casual AI on the attached selection, or
+   *  on the caret's whole paragraph. */
+  function addComment(target, sel, text) {
+    if (!canComment()) return refusedEdit(target, text, sel);
+    var body = Core.cleanText(Core.stripCitations(text)).slice(0, 4000);
+    if (!body) return Promise.resolve(s("unchanged"));
+    var spec = sel && singleParagraph(sel)
+      ? Promise.resolve({ node: sel.anchor.node, start: Math.min(sel.anchor.offset, sel.focus.offset), end: Math.max(sel.anchor.offset, sel.focus.offset), exact: sel.text })
+      : caret().then(function (at) {
+        if (!at) return null;
+        return readFrom(at.node, 200).then(function (value) {
+          var block = (value.blocks || [])[0];
+          return block ? { node: at.node, start: 0, end: bytes(block.text) } : null;
+        });
+      });
+    return spec.then(function (where) {
+      if (!where) return s("noCaret");
+      return beginTurn(target, { kind: "at", at: { node: where.node, offset: where.end } }, "comment").then(function (live) {
+        if (!live) return null;
+        drainOut(live);
+          return editor.edit.comment(live.turn, { node: where.node, start: where.start, end: where.end, exact: where.exact, text: body }).then(function (answer) {
+          if (answer && answer.ok === false) {
+            live.code = answer.code || "engine";
+            void editor.edit.abort(live.turn, live.code);
+            setLive(live, "rolledBack", { code: live.code });
+            return null;
+          }
+          return endTurn(live).then(function () { return null; });
+        });
+      });
     });
   }
 
@@ -388,11 +711,15 @@
   /** The actions for an answer to a question, a summary or a draft. */
   function answerActions(target, answer, sel, again) {
     var plain = Core.cleanText(Core.stripCitations(answer));
-    var insert = { id: "insert", label: s("insert"), run: function () { return insertAtCaret(answer); } };
-    var comment = { id: "comment", label: s("comment"), run: function () { return addComment(sel, answer); } };
-    var list = [insert, comment];
-    if (sel && singleParagraph(sel)) {
-      var replace = { id: "replace", label: s("replace"), run: function () { return replaceSelection(sel, answer); } };
+    if (!canComment()) {
+      setActions(target, [], plain, again);
+      return;
+    }
+    var insert = { id: "insert", label: s("insert"), run: function () { return insertAtCaret(target, answer); } };
+    var comment = { id: "comment", label: s("comment"), run: function () { return addComment(target, sel, answer); } };
+    var list = canEdit() ? [insert, comment] : [comment];
+    if (sel && singleParagraph(sel) && canEdit()) {
+      var replace = { id: "replace", label: s("replace"), run: function () { return replaceSelection(target, sel, answer); } };
       if (Core.looksLikeRevision(sel.text, answer)) {
         // A revision of the selection: shown as a diff, replaced first.
         target.body.hidden = true;
@@ -413,42 +740,95 @@
         return null;
       }
       var title = actionTitle(action);
-      // The panel stays closed (Docs' Refine, Notion's Edit with AI): progress is
-      // said in the editor's status line and the result opens in the preview.
       void editor.ui.notify(s("workingOn", { action: title })).catch(function () {});
       userMessage(title + ": “" + clip(sel.text, 160) + "”");
       var out = card();
+      if (!canEdit()) {
+        // No change is admitted here: the model still answers, in the card, and
+        // the card offers what is allowed instead.
+        return complete(Core.selectionRequest(action, sel.text, language), out).then(function (answer) {
+          var text = Core.cleanText(answer);
+          out.body.hidden = true;
+          out.extra.replaceChildren(diffView(sel.text, text));
+          out.extra.hidden = false;
+          return refusedEdit(out, text, sel).then(function (note) { out.note.textContent = note; });
+        }).catch(function (err) { fail(err, out); });
+      }
       if (singleParagraph(sel)) {
-        return anchorOf(sel).then(function (found) {
-          return complete(Core.selectionRequest(action, sel.text, language), out).then(function (answer) {
-            var text = Core.cleanText(answer);
+        // Live: the pointer goes to the selection, marks it, and the rewrite
+        // streams in where it was (struck through first, when suggesting).
+        return beginTurn(out, replaceSpec(sel)).then(function (live) {
+          if (!live) return null;
+          return streamInto(live, Core.selectionRequest(action, sel.text, language), { paragraphs: false, action: action, selected: sel.text }).then(function (answer) {
+            if (answer === null) return;
             out.body.hidden = true;
-            out.extra.replaceChildren(diffView(sel.text, text));
+            out.extra.replaceChildren(diffView(sel.text, Core.cleanText(answer)));
             out.extra.hidden = false;
-            var replace = { id: "replace", label: s("replace"), run: function () { return propose(Core.planForSelection(found.anchor, answer, found.revision)); } };
-            setActions(out, [replace], text, function () { return selectionAction(action, language); });
-            return replace.run().then(function (note) { out.note.textContent = note; });
+            setActions(out, [], Core.cleanText(answer), function () { return selectionAction(action, language); });
           });
         }).catch(function (err) { fail(err, out); notifyError(err); });
       }
       // Across paragraphs: each paragraph the selection touches is rewritten
-      // whole, as one JSON answer, then proposed paragraph by paragraph.
+      // whole, as one JSON answer, then written paragraph by paragraph, live.
       return readFrom(sel.anchor.node, 8000).then(function (value) {
-        var paras = [];
-        var blocks = value.blocks || [];
-        for (var i = 0; i < blocks.length; i += 1) {
-          if (blocks[i].kind === "paragraph") paras.push(blocks[i]);
-          if (blocks[i].id === sel.focus.node) break;
-        }
+        var paras = paragraphsIn(value.blocks || [], sel.focus.node);
         out.body.textContent = s("working");
         return complete(Core.paragraphsRequest(action, paras, language), null).then(function (answer) {
           out.body.textContent = "";
           var result = Core.planForParagraphs(answer, paras, value.revision);
-          var apply = { id: "apply", label: s("apply"), run: function () { return propose(result); } };
-          setActions(out, [apply], null, function () { return selectionAction(action, language); });
-          return apply.run().then(function (note) { out.note.textContent = note; });
+          if (!result.ok) {
+            out.note.textContent = s(result.reason === "unchanged" ? "unchanged" : "unparsable");
+            return;
+          }
+          var byId = {};
+          paras.forEach(function (p) { byId[p.id] = p; });
+          var edits = result.plan.edits.map(function (e) { return { node: e.target.node, before: byId[e.target.node].text, after: e.markdown }; });
+          return rewriteParagraphs(out, edits, action).then(function () {
+            if (result.dropped) out.note.textContent = s("dropped", { count: result.dropped });
+            setActions(out, [], null, function () { return selectionAction(action, language); });
+          });
         });
       }).catch(function (err) { fail(err, out); notifyError(err); });
+    });
+  }
+
+  function paragraphsIn(blocks, lastNode) {
+    var paras = [];
+    for (var i = 0; i < blocks.length; i += 1) {
+      if (blocks[i].kind === "paragraph") paras.push(blocks[i]);
+      if (blocks[i].id === lastNode) break;
+    }
+    return paras;
+  }
+
+  /** Each `{node, before, after}` replaced whole, in one live turn. */
+  function rewriteParagraphs(out, edits, action) {
+    if (!edits.length) return Promise.resolve();
+    var first = edits[0];
+    return beginTurn(out, { kind: "at", at: { node: first.node, offset: 0 } }).then(function (live) {
+      if (!live) return null;
+      var guard = guardFor(live, action, edits.map(function (e) { return e.before; }).join(" "));
+      var chain = Promise.resolve();
+      edits.forEach(function (edit) {
+        chain = chain.then(function () {
+          if (live.code || live.stopping) return null;
+          drainOut(live);
+          return editor.edit.replace(live.turn, { node: edit.node, start: 0, end: bytes(edit.before), exact: edit.before }).then(function (answer) {
+            if (answer && answer.ok === false) return null;
+            return new Promise(function (resolve) {
+              var at = 0;
+              (function tick() {
+                if (live.code || live.stopping || at >= edit.after.length) return resolve();
+                var piece = edit.after.slice(at, at + REPLAY_CHARS);
+                at += piece.length;
+                if (!send(live, guard, piece)) return resolve();
+                setTimeout(tick, REPLAY_MS);
+              })();
+            });
+          });
+        });
+      });
+      return chain.then(function () { return endTurn(live); });
     });
   }
 
@@ -489,6 +869,144 @@
     var code = $("translateTo").value;
     void selectionAction("translate", new Intl.DisplayNames(["en"], { type: "language" }).of(code) || code);
   });
+
+  // ---- Tables (`docs/183` §23.4) ---------------------------------------------
+
+  /** Builds `table` (`parseTableAnswer`'s) after `after`, then streams its
+   *  cells in one by one, the pointer moving cell to cell. `remove` (the
+   *  selected paragraphs) is removed after the table is built. */
+  function buildTable(out, table, after, remove) {
+    var spec = { kind: "table", after: after, rows: table.cells.length, columns: table.header.length, header: true };
+    return beginTurn(out, spec).then(function (live) {
+      if (!live) return null;
+      var guard = guardFor(live, "table");
+      return Promise.resolve().then(function () {
+        var chain = Promise.resolve();
+        table.cells.forEach(function (row, r) {
+          row.forEach(function (text, c) {
+            chain = chain.then(function () {
+              if (live.code || live.stopping || !text) return null;
+              return new Promise(function (resolve) {
+                var at = 0;
+                var first = true;
+                (function tick() {
+                  if (live.code || live.stopping || at >= text.length) return resolve();
+                  var piece = text.slice(at, at + REPLAY_CHARS);
+                  at += piece.length;
+                  if (!send(live, guard, piece, first ? [r, c] : null)) return resolve();
+                  first = false;
+                  setTimeout(tick, REPLAY_MS);
+                })();
+              });
+            });
+          });
+        });
+        // The paragraphs the table was made from go last, in the same turn, so
+        // one Undo (or Reject all) puts them back with the table gone.
+        if (remove) {
+          chain = chain.then(function () {
+            if (live.code || live.stopping) return null;
+            drainOut(live);
+          return editor.edit.remove(live.turn, remove);
+          });
+        }
+        return chain.then(function () { return endTurn(live); });
+      });
+    });
+  }
+
+  /** "Turn into table": the selected paragraphs, or a prompt at the cursor. */
+  function turnIntoTable(prompt, retry) {
+    return editor.selection().then(function (sel) {
+      var title = s("command.table");
+      if (!retry) userMessage(prompt ? prompt : title + (sel && sel.hasRange ? ": “" + clip(sel.text, 120) + "”" : ""));
+      var out = card();
+      if (!canEdit()) {
+        out.note.textContent = s(canComment() ? "access.cannotEdit" : "access.cannotComment", { mode: access.badgeText || "" }) + (access.reasonText ? " " + access.reasonText : "");
+        return null;
+      }
+      var at = sel && (sel.focus || sel.anchor);
+      if (!at || !at.node) {
+        out.note.textContent = s("noCaret");
+        return null;
+      }
+      var withSelection = !!(sel.hasRange && sel.text.trim());
+      var start = withSelection ? sel.anchor.node : at.node;
+      return readFrom(start, 8000).then(function (value) {
+        var blocks = value.blocks || [];
+        var paras = withSelection ? paragraphsIn(blocks, sel.focus.node) : [];
+        var context = withSelection ? null : Core.selectContext(blocks, prompt || "", 1000);
+        out.body.textContent = s("working");
+        return complete(Core.tableRequest(paras, prompt, context), null).then(function (answer) {
+          out.body.textContent = "";
+          var table = Core.parseTableAnswer(answer);
+          if (!table.ok) {
+            out.note.textContent = s("unparsable");
+            setActions(out, [], null, function () { return turnIntoTable(prompt, true); });
+            return null;
+          }
+          var last = paras[paras.length - 1];
+          var after = paras.length ? last.id : at.node;
+          var remove = paras.length ? { anchor: { node: paras[0].id, offset: 0 }, focus: { node: last.id, offset: bytes(last.text) } } : null;
+          return buildTable(out, table, after, remove).then(function () {
+            setActions(out, [], table.cells.map(function (row) { return row.join("\t"); }).join("\n"), function () { return turnIntoTable(prompt, true); });
+          });
+        });
+      }).catch(function (err) { fail(err, out); });
+    });
+  }
+
+  /** "Describe this table": the table as structured data; a paragraph streams
+   *  in below it (or, confirmed, replaces it). */
+  function describeTable(kind, retry) {
+    return editor.selection().then(function (sel) {
+      var table = sel && sel.table;
+      if (!retry) userMessage(s("command.describeTable"));
+      var out = card();
+      if (!table) {
+        out.note.textContent = s("noTable");
+        return null;
+      }
+      return editor.tools.call("read_table", { table: table, limit: Core.TABLE_LIMITS.rows }).then(function (answer) {
+        if (!answer || !answer.ok) throw Object.assign(new Error("read"), { code: "read" });
+        var rows = Core.tableRows(answer.value);
+        var request = Core.describeTableRequest(rows, kind);
+        if (!canEdit()) {
+          return complete(request, out).then(function (text) {
+            out.body.textContent = Core.cleanText(text);
+            return refusedEdit(out, text, null).then(function (note) { out.note.textContent = note; });
+          });
+        }
+        return beginTurn(out, { kind: "after", block: table }).then(function (live) {
+          if (!live) return null;
+          return streamInto(live, request, { paragraphs: true, action: "describe" }).then(function (text) {
+            if (text === null) return;
+            var clean = Core.cleanText(text);
+            // Replace the table instead, after a confirmation (a second press).
+            var confirming = false;
+            var replaceAction = {
+              id: "replaceTable",
+              label: s("replaceTable"),
+              run: function () {
+                if (!confirming) {
+                  confirming = true;
+                  var b = out.actions.querySelector('[data-action="replaceTable"]');
+                  if (b) b.textContent = s("replaceTableConfirm");
+                  return s("replaceTableConfirm");
+                }
+                var next = card();
+                return beginTurn(next, { kind: "replaceTable", table: table }).then(function (again) {
+                  if (!again) return null;
+                  return replayInto(again, Core.paragraphsOf(clean).join("\n"), { action: "describe" }).then(function () { return null; });
+                });
+              },
+            };
+            setActions(out, live.mode === "direct" || live.mode === "suggest" ? [replaceAction] : [], clean, function () { return describeTable(kind, true); });
+          });
+        });
+      }).catch(function (err) { fail(err, out); });
+    });
+  }
 
   // ---- Ask, summarise, review, draft, reply --------------------------------
 
@@ -538,6 +1056,56 @@
     }).catch(function (err) { setWorking(""); fail(err, out); });
   }
 
+  /** A review's findings applied in ONE live turn: for each, the pointer goes to
+   *  the quote, replaces it (when the finding suggests text and the access
+   *  admits it), and leaves the comment. */
+  function applyReview(out, items, byId) {
+    if (!items.length) return Promise.resolve(s("unchanged"));
+    var first = items[0];
+    var kind = canEdit() ? "text" : "comment";
+    return beginTurn(out, { kind: "at", at: { node: first.node, offset: 0 } }, kind).then(function (live) {
+      if (!live) return null;
+      var guard = guardFor(live, "review");
+      var skipped = 0;
+      var chain = Promise.resolve();
+      items.forEach(function (item) {
+        chain = chain.then(function () {
+          if (live.code || live.stopping) return null;
+          var block = byId[item.node];
+          var at = block ? block.text.indexOf(item.quote) : -1;
+          if (at < 0) {
+            skipped += 1;
+            return null;
+          }
+          var start = bytes(block.text.slice(0, at));
+          var end = start + bytes(item.quote);
+          var commentOn = function (to) {
+            drainOut(live);
+          return editor.edit.comment(live.turn, { node: item.node, start: start, end: to, text: item.comment }).then(function (answer) {
+              if (answer && answer.ok === false) skipped += 1;
+            });
+          };
+          if (!item.replacement || !canEdit()) return commentOn(end);
+          drainOut(live);
+          return editor.edit.replace(live.turn, { node: item.node, start: start, end: end, exact: item.quote }).then(function (answer) {
+            if (answer && answer.ok === false) {
+              skipped += 1;
+              return null;
+            }
+            if (!send(live, guard, item.replacement)) return null;
+            // The new text starts where the quote did; a struck quote has no
+            // width in the editor's positions, so the comment covers the new text.
+            var to = start + bytes(item.replacement);
+            return commentOn(to);
+          });
+        });
+      });
+      return chain.then(function () { return endTurn(live); }).then(function () {
+        return skipped ? s("dropped", { count: skipped }) : null;
+      });
+    });
+  }
+
   function review(retry) {
     if (!retry) userMessage(s("chip.review"));
     var out = card();
@@ -559,6 +1127,11 @@
         var list = document.createElement("ul");
         list.className = "ca-review";
         var copy = [];
+        var findings = [];
+        result.plan.edits.forEach(function (edit) {
+          if (edit.op === "comment") findings.push({ node: edit.target.node, quote: edit.target.exact, comment: edit.text, replacement: null });
+          else if (edit.op === "replace_text" && findings.length) findings[findings.length - 1].replacement = edit.text;
+        });
         result.items.forEach(function (item) {
           var li = document.createElement("li");
           li.className = "ca-review-item";
@@ -585,13 +1158,17 @@
         var summary = s("reviewSummary", { comments: result.comments || 0, suggestions: result.suggestions || 0 });
         if (result.dropped) summary += " " + s("dropped", { count: result.dropped });
         out.note.textContent = summary;
-        var counts = { comments: result.comments || 0, suggestions: result.suggestions || 0 };
-        var apply = { id: "apply", label: s("apply"), run: function () { return propose(result, "reviewProposed", counts); } };
-        setActions(out, [apply], copy.join("\n\n"), function () { return review(true); });
+        var actions = [];
+        if (canComment()) {
+          var label = canEdit() ? s(access.mode === "direct" ? "applyDirect" : "apply") : s("applyComments");
+          actions.push({ id: "apply", label: label, run: function () { return applyReview(out, findings, byId); } });
+        } else out.note.textContent = summary + " " + s("access.cannotComment", { mode: access.badgeText || "" });
+        setActions(out, actions, copy.join("\n\n"), function () { return review(true); });
       });
     }).catch(function (err) { setWorking(""); fail(err, out); });
   }
 
+  /** Draft at the cursor, LIVE: the text streams into the document. */
   function draft(prompt, retry) {
     if (!retry) userMessage(prompt);
     var out = card();
@@ -602,11 +1179,22 @@
       }
       return readFrom(at.node, 1000).then(function (value) {
         var context = Core.selectContext(value.blocks || [], prompt, 1000);
-        return complete(Core.draftRequest(prompt, context, Core.trimHistory(history, 12)), out).then(function (answer) {
-          var insert = { id: "insert", label: s("insert"), run: function () { return insertAtCaret(answer); } };
-          setActions(out, [insert], Core.cleanText(answer), function () { return draft(prompt, true); });
-          if (!retry) history.push({ role: "user", content: prompt }, { role: "assistant", content: Core.cleanText(answer) });
-          persist();
+        var request = Core.draftRequest(prompt, context, Core.trimHistory(history, 12));
+        if (!canEdit()) {
+          // The draft is still written, in the card, for the reader to copy.
+          return complete(request, out).then(function (answer) {
+            out.body.textContent = Core.cleanText(answer);
+            return refusedEdit(out, answer, null).then(function (note) { out.note.textContent = note; });
+          });
+        }
+        return beginTurn(out, { kind: "insert", at: at }).then(function (live) {
+          if (!live) return null;
+          return streamInto(live, request, { paragraphs: true, action: "draft" }).then(function (answer) {
+            if (answer === null) return;
+            setActions(out, [], Core.cleanText(answer), function () { return draft(prompt, true); });
+            if (!retry) history.push({ role: "user", content: prompt }, { role: "assistant", content: Core.cleanText(answer) });
+            persist();
+          });
         });
       });
     }).catch(function (err) { fail(err, out); });
@@ -641,6 +1229,8 @@
     }).catch(function (err) { fail(err, out); });
   }
 
+  /** A reply on a thread still goes through the private preview: a reply joins
+   *  someone else's conversation, so the person sees it before it is posted. */
   function draftReply(comment, all, retry) {
     var thread = [comment].concat(all.filter(function (c) { return c.parentParaId && c.parentParaId === comment.paraId; }));
     if (!retry) userMessage(s("replyFor", { text: clip(comment.text, 80) }));
@@ -650,7 +1240,7 @@
       var quoted = block ? block.text.slice(comment.anchor.start, comment.anchor.end) : "";
       return complete(Core.replyRequest(thread, quoted), out).then(function (answer) {
         var reply = { id: "comment", label: s("comment"), run: function () { return propose(Core.planForReply(comment, answer, value.revision)); } };
-        setActions(out, [reply], Core.cleanText(answer), function () { return draftReply(comment, all, true); });
+        setActions(out, canComment() ? [reply] : [], Core.cleanText(answer), function () { return draftReply(comment, all, true); });
       });
     }).catch(function (err) { fail(err, out); });
   }
@@ -669,19 +1259,24 @@
   function setMode(next) {
     mode = next;
     $("draftMode").hidden = mode !== "draft";
-    $("prompt").placeholder = s(mode === "draft" ? "prompt.draftPlaceholder" : "prompt.placeholder");
+    $("tableMode").hidden = mode !== "table";
+    $("prompt").placeholder = s(mode === "draft" ? "prompt.draftPlaceholder" : mode === "table" ? "prompt.tablePlaceholder" : "prompt.placeholder");
   }
 
-  /** The chip names the selection only while there is one. */
+  /** The chip names the selection only while there is one; the table chips
+   *  offer themselves where the selection fits (paragraphs, or a table). */
   function reflectSelection() {
     return editor.selection().then(function (sel) {
-      attached = sel && sel.hasRange && sel.text && sel.text.trim() ? { text: sel.text, anchor: sel.anchor, focus: sel.focus } : null;
+      attached = sel && sel.hasRange && sel.text && sel.text.trim() ? { text: sel.text, anchor: sel.anchor, focus: sel.focus, table: sel.table || null } : null;
+      caretTable = sel && sel.table ? sel.table : null;
       $("attached").hidden = !attached;
       if (attached) {
         var label = s("attached", { text: clip(attached.text.replace(/\s+/g, " ").trim(), 60) });
         $("attachedText").textContent = label;
         $("attached").title = label;
       }
+      $("turnIntoTable").hidden = !(attached && !attached.table && canEdit());
+      $("describeTableChip").hidden = !caretTable;
     }).catch(function () {});
   }
 
@@ -691,7 +1286,7 @@
     field.style.height = Math.min(field.scrollHeight, 160) + "px";
   }
 
-  function send() {
+  function send_() {
     var text = $("prompt").value.trim();
     if (!text || running) return;
     $("prompt").value = "";
@@ -704,14 +1299,17 @@
     if (mode === "draft") {
       setMode("ask");
       void draft(text);
+    } else if (mode === "table") {
+      setMode("ask");
+      void turnIntoTable(text);
     } else void ask(text, attached);
   }
-  $("send").addEventListener("click", send);
+  $("send").addEventListener("click", send_);
   $("prompt").addEventListener("input", grow);
   $("prompt").addEventListener("keydown", function (event) {
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
-      send();
+      send_();
     } else if (event.key === "Escape" && running) {
       event.preventDefault();
       running.abort();
@@ -720,12 +1318,19 @@
   $("detach").addEventListener("click", function () {
     attached = null;
     $("attached").hidden = true;
+    $("turnIntoTable").hidden = true;
     $("prompt").focus();
   });
   $("draftCancel").addEventListener("click", function () {
     setMode("ask");
     $("prompt").focus();
   });
+  $("tableCancel").addEventListener("click", function () {
+    setMode("ask");
+    $("prompt").focus();
+  });
+  $("turnIntoTable").addEventListener("click", function () { if (!running) void turnIntoTable(null); });
+  $("describeTableChip").addEventListener("click", function () { if (!running) void describeTable("describe"); });
   Array.prototype.forEach.call(document.querySelectorAll("[data-chip]"), function (chip) {
     chip.addEventListener("click", function () {
       if (running) return;
@@ -733,6 +1338,9 @@
       if (kind === "review") void review();
       else if (kind === "draft") {
         setMode("draft");
+        $("prompt").focus();
+      } else if (kind === "table") {
+        setMode("table");
         $("prompt").focus();
       } else void summarise(kind);
     });
@@ -753,6 +1361,11 @@
     $("draftModeText").textContent = s("draftMode");
     $("draftCancel").setAttribute("aria-label", s("draftCancel"));
     $("draftCancel").title = s("draftCancel");
+    $("tableModeText").textContent = s("tableMode");
+    $("tableCancel").setAttribute("aria-label", s("draftCancel"));
+    $("tableCancel").title = s("draftCancel");
+    $("turnIntoTableText").textContent = s("chip.turnIntoTable");
+    $("describeTableText").textContent = s("chip.describeTable");
     $("caveat").textContent = s("caveat");
     Array.prototype.forEach.call(document.querySelectorAll("[data-chip]"), function (b) { b.lastElementChild.textContent = s("chip." + b.dataset.chip); });
     var p = info.provider || {};
@@ -788,9 +1401,10 @@
       return editor.strings(KEYS).then(function (table) {
         strings = table || {};
         label();
-        return restore();
-      });
+        return refreshAccess();
+      }).then(restore);
     }).then(function () {
+      editorEvents.forEach(function (fn) { fn(); });
       void reflectSelection();
       editor.on("selection/changed", function () { void reflectSelection(); });
       editor.on("contribution/invoked", function (params) {
@@ -798,18 +1412,22 @@
         // Ask and Translate need the panel; the host opens it for everything that
         // is not a selection action, so these two open it themselves.
         if (command === "ask" || command === "translate") void editor.ui.panel(true).catch(function () {});
-        if (command === "ask" || command === "panel") {
-          void reflectSelection();
-          $("prompt").focus();
-        } else if (command === "summarise") void summarise("summary");
-        else if (command === "review") void review();
-        else if (command === "draft") {
-          setMode("draft");
-          $("prompt").focus();
-        } else if (command === "replies") void replies();
-        else if (command === "clear") clearHistory();
-        else if (command === "translate") showTranslate();
-        else if (Core.ACTION_IDS.indexOf(command) >= 0) void selectionAction(command);
+        void refreshAccess().then(function () {
+          if (command === "ask" || command === "panel") {
+            void reflectSelection();
+            $("prompt").focus();
+          } else if (command === "summarise") void summarise("summary");
+          else if (command === "review") void review();
+          else if (command === "draft") {
+            setMode("draft");
+            $("prompt").focus();
+          } else if (command === "replies") void replies();
+          else if (command === "clear") clearHistory();
+          else if (command === "translate") showTranslate();
+          else if (command === "table") void turnIntoTable(null);
+          else if (command === "describeTable") void describeTable("describe");
+          else if (Core.ACTION_IDS.indexOf(command) >= 0) void selectionAction(command);
+        });
       });
       editor.on("document/opened", function (params) {
         info.documentKey = params.documentKey;
@@ -818,7 +1436,7 @@
       editor.on("theme/changed", function (params) {
         if (params && params.locale && params.locale !== info.locale) info.locale = params.locale;
       });
-      window.casualAssistant = { ask: ask, summarise: summarise, review: review, selectionAction: selectionAction, draft: draft, replies: replies, clear: clearHistory };
+      window.casualAssistant = { ask: ask, summarise: summarise, review: review, selectionAction: selectionAction, draft: draft, replies: replies, clear: clearHistory, turnIntoTable: turnIntoTable, describeTable: describeTable, access: function () { return access; } };
     });
   });
 })();

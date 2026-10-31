@@ -248,6 +248,20 @@ test("rpc: more than the per-second budget is refused rate-limited", async () =>
   close();
 });
 
+test("rpc: the live co-editor's stream has its own window, so it cannot starve the add-in's other calls", async () => {
+  const bounds = { maxBytes: 1e6, maxInFlight: 64, perSecond: 3, streamPerSecond: 5 };
+  const { call, close } = pair({ echo: () => 1, "edit/write": () => 1, "edit/stop": () => 1 }, { bounds, now: () => 1000 });
+  // A stream that used its whole window...
+  const writes = await Promise.all([1, 2, 3, 4, 5].map(() => call("edit/write")));
+  assert.equal(writes.filter((a) => a.error).length, 0);
+  // ...leaves the add-in's other calls their own budget,
+  const others = await Promise.all([1, 2, 3].map(() => call("echo")));
+  assert.equal(others.filter((a) => a.error).length, 0);
+  // and the stream itself is still bounded.
+  assert.equal((await call("edit/stop")).error?.data?.code, "rate-limited");
+  close();
+});
+
 // ---- A running plugin, over a real port, with a fake frame ------------------------------
 
 function fakeDocument() {

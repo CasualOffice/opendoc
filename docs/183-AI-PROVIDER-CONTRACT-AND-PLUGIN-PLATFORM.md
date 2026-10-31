@@ -3,7 +3,8 @@
 **Status:** Designed 2026-10-30. P1 (provider contract), P2 (plugin runtime), P3 (Casual AI) and P4 (LanguageTool, Readability)
 built on `program/ai-plugins-2`; the owner chose F1–F7 on 2026-10-31 (§13) and set UI rules
 that changed parts of §8 (§16). Proofing add-ins redone as writing issues in the text (§19), and
-Casual AI corrected against Google Docs and Notion (§20), on `program/ai-main`.
+Casual AI corrected against Google Docs and Notion (§20), on `program/ai-main`. Casual AI made a
+live co-editor with "AI edits as" capped by role, and tables (§23), on `program/ai-main-rebased`.
 **Decides:** ADR-077 (proposed). **Rows:** `docs/109` RM-50 (provider contract), RM-51
 (plugin platform), RM-52 (assistant plugin), RM-53 (further first-party plugins), RM-54 (RAG,
 MCP client and the agent loop).
@@ -1235,7 +1236,7 @@ selection rule) and `tests/e2e/ai-panel.spec.mjs` (full height on the right with
 1280×800 and 1920×1080; drag, keyboard, clamping and persistence; each card action landing in the
 document; the discussion draft; Copy).
 
-## 22. Further owner requirements of 2026-10-31: designed, not built in this lane
+## 22. Further owner requirements of 2026-10-31: designed here, built in §23
 
 Four requirements arrived while §21 was being built. Each is larger than a panel change: each
 touches the engine's tracking rules, the edit path or the collaboration layer, and the owner's
@@ -1270,3 +1271,136 @@ recorded here with what was measured, so the lanes start from facts.
    the person's role, told to the model in a capability line and enforced by the validator, with an
    access badge in the composer and the e2e role matrix. Depends on 2 for "Direct edits stream in".
 4. Everything above keeps §21's panel.
+
+## 23. Built: Casual AI as a live co-editor, edit modes and tables (RM-52, 2026-10-31)
+
+§22's four requirements, built as one lane on `program/ai-main-rebased`. With no provider the
+editor is exactly as before: the co-editor, the pointer layer and the turn bar are created by the
+plugin platform, which loads only when a provider exists (`ai_live.mjs` is the one seam the
+editor's repaint and mode switch call, a null check otherwise).
+
+### 23.1 The patterns, named
+
+- **Streaming with batching.** The model's deltas are buffered by the editor and written once
+  every 80 ms (`ai_coeditor.mjs` `FLUSH_MS`), so the engine sees about twelve writes a second
+  whatever the token rate. Each batch is one engine call (`aiTurnWrite`), O(1) in the document's
+  size (O(paragraph) for a suggestion, as typing one in Suggesting mode is).
+- **A presence participant that is not a room member.** "Casual AI" gets a caret and name flag
+  drawn by the room's own seam (`collab_presence.mjs` `paintCaretFlag`, now shared, over
+  `presence_strip.mjs` `participantDisplay`), and a Figma-style pointer: an arrow and name tag in
+  the viewport's scrolling content, so it follows a scroll for free and is re-placed on every
+  overlay repaint (a zoom, a re-render). It glides with an eased transform transition when the AI
+  moved and jumps when the page moved under it; `prefers-reduced-motion` turns the transition
+  off. `pointer-events: none`, `aria-hidden`, nothing focusable: it never takes the person's
+  pointer, focus or scroll, and nothing in the co-editor scrolls. It hides when the turn ends.
+- **Anchors, not offsets (ADR-030 I3).** The engine owns the AI's insertion point
+  (`aiTurnAnchor`) and maps it through every commit that is not the turn's, so the person can type
+  elsewhere, or before the AI in its own paragraph, while it writes. The person's selection is
+  mapped over the AI's writes in JS (`mapPersonSelection`, a point at or after the AI's keeps its
+  distance from the AI's text, across a paragraph break too).
+- **One undo step per turn: turn-scoped coalescing.** `casual-doc-transaction` gained
+  `Coalesce::Join(group)` and `RevisionLog::open_turn_group`: every commit of a turn joins one
+  group even with the person's own commits interleaved; a person's `Continue` never joins a turn
+  group, so their typing keeps its own steps; the history walk dedupes groups globally so an
+  interleaved turn is offered once; selective undo rebases a turn group that others interleave,
+  so undoing or rejecting the turn never touches the person's text.
+- **Safety as a rollback, not a preview.** This REPLACES the private preview for the assistant's
+  edit actions (ADR-077 as amended): the text appears where it goes, and a violation stops the
+  stream and reverts the turn as if it never happened (`aiTurnRevert(turn, true)` retires the turn
+  and its revert from Undo).
+
+### 23.2 What streams, and the control
+
+Every change Casual AI makes goes through the co-editor: Insert at the cursor and Replace
+selection from a card (a known answer replayed at a typing pace), ✦ selection rewrites (the
+pointer goes to the selection, marks it for 450 ms, the replacement streams in after the struck
+text when suggesting), Draft at the cursor (the model's stream straight into the document), a
+multi-paragraph rewrite and a review's findings (one turn: replace, then comment), and the two
+table actions. Add as comment is a comment turn (`aiTurnComment`). A REPLY to a comment thread
+still goes through the private preview: it joins someone else's conversation.
+
+The card shows "Casual AI is writing… · Stop · Accept all · Reject all"; the editor shows the same
+as a turn bar over the page column (so a ✦ action with the panel closed has it too; Escape there
+stops). In Direct edits Accept all reads Keep and Reject all reads Undo all. Stop halts at once
+and keeps what was written; what was buffered and not yet written is dropped, it was never on
+the page. Accept all accepts exactly the turn's revisions in one undo step; Reject all reverts the
+turn as one undoable step.
+
+**Incremental validation.** `assistant_core.js` runs two machines per delta. The shaper drops a
+leading quote or fence and holds the closing one, makes a blank line a paragraph break and a
+single newline a space unless a list line follows, and holds back only what it cannot decide yet.
+The guard answers `injection` (the data markers echoed), `plan` (plan JSON instead of prose),
+`control` (control or bidirectional-override characters), `length` (past the action's budget:
+a rewrite stays near its selection's size) or `access` (any write in a mode that admits none).
+The editor enforces its own ceiling on top (256 KiB a turn, 4 KiB a cell, 400 paragraph breaks,
+no control characters, the effective mode on every write), and every write still meets the
+engine's protection check at the choke point.
+
+### 23.3 "AI edits as", capped by the document and the role
+
+Settings ▸ AI provider has "AI edits as: Suggestions (default) | Direct edits", saved on choosing
+(`opendoc.ai.editAs`), shown when a host manages the provider too; the panel's ⋯ has a quick
+toggle (a menu checkbox, greyed out with the reason when capped). The EFFECTIVE mode is the most
+restrictive of the setting, the document and the role (`ai_edit_mode.mjs`
+`effectiveAiAccess`):
+
+| Authority | Effect |
+| --- | --- |
+| Role: viewer (`read`) or nothing | chat only |
+| Role: commenter (`comment`) | comments only |
+| Viewing mode | chat only |
+| Suggesting mode, a suggest-only participant grant, the host's `?ai=suggest` | suggestions |
+| Protection `trackedChanges` / `comments` / `readOnly` or `forms` | suggestions / comments / chat |
+
+The AI is told its access in the system prompt (`capabilityLine`, fixed English: what it may do,
+the protection, and "say so plainly and offer what you can do") and re-told on every request,
+because the panel refreshes it on `access/changed` (a mode switch, a protection, the setting, a
+selection or document change). The code is the authority: the co-editor refuses a turn and a
+write the mode does not admit, whatever the model says. When the access admits no change the
+card says why and offers the allowed alternative: Add as comment for a commenter, Copy for a
+reader. The composer carries an access badge: Editing, Suggesting, Commenting or Read-only, with
+the authority that decided in its tooltip. (Commenting is a fourth state beside the owner's
+three, because a commenter's AI can do more than a reader's.) Where we differ from Word: Copilot
+follows Track Changes only; this AI is capped by protection and role too.
+
+### 23.4 Tables
+
+**Engine.** A table insertion is now trackable (`casual-doc-review` `suggest_insert_table`):
+every row carries `w:trPr/w:ins` and its cell text `w:ins`, by "Casual AI" or the person; the
+review list shows it as ONE `table_insertion` item (id `<table>:table`); accepting clears the row
+marks and accepts the cell text, rejecting deletes the table. A tracked table DELETION is the
+mirror (`w:trPr/w:del` on every row). `insert_table` is `Trackable::Yes` in the registry, so the
+MCP planner suggests a table instead of refusing; `text_to_table` stays untrackable (it would be
+a tracked deletion of paragraphs plus a tracked table in one command, not built).
+
+**Turn into table** (✦, the composer's chip on a selection, a Table… chip with a prompt): the
+model answers rows as JSON, checked by `parseTableAnswer` (strings only, rectangular, at most 20
+columns and 50 rows with the header, no markers; a short row is refused, never padded). The table
+is built through the engine after the selection, the cells stream in one by one with the pointer
+moving cell to cell, and the source paragraphs are removed last in the same turn (struck when
+suggesting), so one Undo or Reject all puts them back.
+
+**Describe this table** (the composer offers it while the caret is in a table): the table goes to
+the model as structured data (`read_table`, now a read tool on WebMCP and the plugin port, sent as
+one JSON array of rows in a data block), and the description streams into a new paragraph right
+after the table (`aiTurnParagraphAfter`). Replace table asks for a second press, then writes the
+description in place of the table (`aiTurnRemoveTable`).
+
+### 23.5 Evidence
+
+Rust: the turn coalescing and the tracked table (crate tests named in the commit). Unit:
+`tests/ai_coediting.test.mjs` (the role matrix, the shaper, the guard, the table schema, the
+editor's ceiling, the selection mapping) and an eval in `ai_evals.test.mjs` where a reader asks
+for a rewrite and a model that ignores its capability line is still blocked in code. E2E:
+`tests/e2e/ai-coediting.spec.mjs` against a mock provider that really streams (a `ReadableStream`
+answering the page's fetch, one SSE chunk per 20–140 ms): the pointer appears, moves and follows
+the insertion point, three or more intermediate states, the person's typing in another paragraph
+kept, Stop, Reject all, one undo step, a mid-stream injection rolled back with nothing left to
+undo, the five role and mode rows, and both table actions end to end. Each was driven red by a
+mutation (the commit message lists them).
+
+**Open.** The co-editor is per mount; in a shared room the AI's commits are this replica's own and
+travel as the person's (`docs/175` §5.2: the relay's attested name wins at commit), so the "Casual
+AI" author does not survive there until `docs/178` §10's agent principal exists, and other
+participants see the text arrive but not the pointer. Header, footer and note bodies take the
+same writes, but the actions only start from body paragraphs.

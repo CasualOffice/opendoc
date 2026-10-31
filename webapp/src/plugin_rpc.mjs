@@ -26,7 +26,13 @@ export const RPC_ERRORS = Object.freeze({
 });
 
 /** The bounds of one plugin port. */
-export const RPC_BOUNDS = Object.freeze({ maxBytes: 4 * 1024 * 1024, maxInFlight: 64, perSecond: 20 });
+export const RPC_BOUNDS = Object.freeze({ maxBytes: 4 * 1024 * 1024, maxInFlight: 64, perSecond: 20, streamPerSecond: 40 });
+
+/** The live co-editor's methods (`docs/183` §23) count against their OWN window,
+ *  `streamPerSecond`: a stream of batched writes must not starve the add-in's
+ *  other calls, and Stop or a rollback must never be refused because the stream
+ *  used the second up. The co-editor bounds what the writes carry. */
+const STREAMED = (method) => method.startsWith("edit/");
 
 /** A refusal value a handler may return to answer with a policy error. */
 export class RpcRefusal extends Error {
@@ -56,6 +62,8 @@ const sizeOf = (value) => {
 export function servePort(port, handlers, { now = () => Date.now(), bounds = RPC_BOUNDS, onError = () => {} } = {}) {
   const inFlight = new Map();
   let windowStart = 0;
+  let streamStart = 0;
+  let streamCount = 0;
   let windowCount = 0;
   let closed = false;
 
@@ -81,12 +89,21 @@ export function servePort(port, handlers, { now = () => Date.now(), bounds = RPC
       return;
     }
     const at = now();
-    if (at - windowStart >= 1000) {
-      windowStart = at;
-      windowCount = 0;
+    const streamed = STREAMED(method) && Number.isFinite(bounds.streamPerSecond);
+    if (streamed) {
+      if (at - streamStart >= 1000) {
+        streamStart = at;
+        streamCount = 0;
+      }
+      streamCount += 1;
+    } else {
+      if (at - windowStart >= 1000) {
+        windowStart = at;
+        windowCount = 0;
+      }
+      windowCount += 1;
     }
-    windowCount += 1;
-    if (windowCount > bounds.perSecond) {
+    if (streamed ? streamCount > bounds.streamPerSecond : windowCount > bounds.perSecond) {
       if (!isNotification) error(id, RPC_ERRORS.refused, "Too many requests.", { code: "rate-limited" });
       return;
     }

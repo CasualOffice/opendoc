@@ -3272,6 +3272,17 @@
             </label>
           </div>
           <p id="aiProviderDisclosure" class="dialog-field-note"></p>
+          <!-- "AI edits as" (`docs/183` §23.3): the person's choice, kept on this
+               device and capped by the document and their role. Outside the form,
+               so it is offered when a host manages the provider too. -->
+          <div class="settings-section ai-edit-as">
+            <div data-i18n="aiProviderDialog.editAs" class="settings-label" id="aiEditAsLabel">AI edits as</div>
+            <div class="segmented" id="aiEditAs" role="radiogroup" aria-labelledby="aiEditAsLabel" aria-describedby="aiEditAsNote">
+              <button data-i18n="aiProviderDialog.editAs.suggest" type="button" data-ai-edit-as="suggest">Suggestions</button>
+              <button data-i18n="aiProviderDialog.editAs.direct" type="button" data-ai-edit-as="direct">Direct edits</button>
+            </div>
+            <p id="aiEditAsNote" class="dialog-field-note"></p>
+          </div>
           <p id="aiProviderStatus" class="dialog-field-note" role="status" aria-live="polite"></p>
         </div>
         <footer class="dialog-foot"><button data-i18n="aiProviderDialog.forget" id="aiProviderForget" type="button" class="dialog-button">Forget</button><div class="dialog-actions"><button data-i18n="aiProviderDialog.test" id="aiProviderTest" type="button" class="dialog-button">Test connection</button><button data-i18n="aiProviderDialog.save" id="aiProviderSave" type="button" class="dialog-button dialog-button-primary">Save</button></div></footer>
