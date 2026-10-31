@@ -140,6 +140,7 @@ Myers
 NOTEREF
 NUL
 NUMPAGES
+NaN
 Namespace
 NodeId
 NodeIds

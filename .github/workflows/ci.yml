@@ -172,6 +172,17 @@ jobs:
           cargo +nightly-2026-07-20 fuzz build odt_content
           cargo +nightly-2026-07-20 fuzz build rtf_import
           cargo +nightly-2026-07-20 fuzz build pdf_import
+      # The C ABI (crates/opendoc-ffi) under arbitrary call sequences: null,
+      # stale, double-freed and wrong-kind handles, wrong lengths, out-of-order
+      # frees (docs/176 section 12.14). Built here and run for a bounded time,
+      # so a crash the target finds fails the job rather than waiting for a
+      # campaign someone remembers to start.
+      - name: Build and run the C ABI fuzz target
+        run: |
+          cargo +nightly-2026-07-20 fuzz build ffi_calls
+          mkdir -p target/fuzz-corpus/ffi_calls
+          cargo +nightly-2026-07-20 fuzz run ffi_calls target/fuzz-corpus/ffi_calls -- \
+            -max_total_time=120 -timeout=20 -max_len=4096 -rss_limit_mb=3072
       - name: Verify fuzz lockfile remains unchanged
         run: git diff --exit-code -- fuzz/Cargo.lock
 

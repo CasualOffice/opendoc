@@ -41,6 +41,20 @@ committed directly. Minimize and review a reproducer, then add it to the
 repository fixture corpus with provenance, checksum, expected outcome, and a
 regression test.
 
+## The C ABI
+
+`ffi_calls` drives `crates/opendoc-ffi` with arbitrary call sequences: documents opened
+from arbitrary bytes with wrong lengths (short, zero, a null pointer with a length), JSON
+and non-JSON arguments, real and made-up method names, page numbers and resolutions out
+of range, and handles and buffers that are null, live, freed (stale), of the wrong kind,
+freed out of order and twice. CI's `fuzz-build` job builds it and runs it for two
+minutes on every change (`docs/176` §12.14):
+
+```sh
+cargo +nightly-2026-07-20 fuzz run ffi_calls target/fuzz-corpus/ffi_calls -- \
+  -max_total_time=120 -timeout=20 -max_len=4096 -rss_limit_mb=3072
+```
+
 ## Collaboration convergence
 
 `bash fuzz/convergence.sh 24` exercises concurrent insert/delete schedules through

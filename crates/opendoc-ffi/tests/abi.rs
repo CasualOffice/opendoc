@@ -243,3 +243,63 @@ fn a_page_renders_as_svg_through_the_abi() {
     // SAFETY: freed once.
     unsafe { opendoc_free(doc) };
 }
+
+#[test]
+fn stale_double_freed_and_foreign_handles_are_refused_not_dereferenced() {
+    // docs/176 §12.14: the registry turns a use-after-free into a coded error.
+    // Without it each line below is undefined behaviour; the fuzz target
+    // `ffi_calls` drives these sequences at random.
+    let doc = opendoc_create();
+    assert!(!doc.is_null());
+    let text = CString::new("text").unwrap();
+    // SAFETY: each call is made through the ABI's own checks; the handle and
+    // buffer may be stale on purpose, which is what is under test.
+    unsafe {
+        opendoc_free(doc);
+        assert!(opendoc_call(doc, text.as_ptr(), std::ptr::null()).is_null());
+        assert!(last_error().contains("not a live document handle"));
+        opendoc_free(doc); // a double free: refused, not freed again
+        assert!(last_error().contains("not live"));
+        assert!(opendoc_render_svg(doc, 0).is_null());
+        assert!(opendoc_compare(doc, doc).is_null());
+
+        let buf = opendoc_version();
+        assert!(opendoc_buffer_len(buf) > 0);
+        opendoc_buffer_free(buf);
+        assert_eq!(opendoc_buffer_len(buf), 0, "a freed buffer reads as empty");
+        assert!(opendoc_buffer_data(buf).is_null());
+        opendoc_buffer_free(buf); // a double free: a no-op
+
+        // A buffer passed where a document belongs.
+        let other = opendoc_version();
+        assert!(opendoc_call(other.cast(), text.as_ptr(), std::ptr::null()).is_null());
+        assert!(last_error().contains("not a live document handle"));
+        opendoc_buffer_free(other);
+    }
+}
+
+#[test]
+fn the_abi_fuzz_target_is_armed_in_ci() {
+    // SKILL §9.2: a gate the docs call CI-enforced must be seen armed. The
+    // `ffi_calls` target exists in the fuzz workspace, drives this crate, and
+    // CI's `fuzz-build` job both builds and runs it.
+    let manifest = include_str!("../../../fuzz/Cargo.toml");
+    let target = include_str!("../../../fuzz/fuzz_targets/ffi_calls.rs");
+    let ci = include_str!("../../../.github/workflows/ci.yml");
+    assert!(manifest.contains("name = \"ffi_calls\""));
+    assert!(manifest.contains("opendoc-ffi = { path = \"../crates/opendoc-ffi\""));
+    assert!(target.contains("opendoc_free(") && target.contains("opendoc_buffer_free("));
+    let start = ci.find("\n  fuzz-build:").expect("the fuzz-build job");
+    let end = ci[start + 1..]
+        .find("\n  docs:")
+        .map_or(ci.len(), |at| start + 1 + at);
+    let job = &ci[start..end];
+    assert!(
+        job.contains("fuzz build ffi_calls"),
+        "fuzz-build does not build ffi_calls"
+    );
+    assert!(
+        job.contains("fuzz run ffi_calls"),
+        "fuzz-build does not run ffi_calls"
+    );
+}

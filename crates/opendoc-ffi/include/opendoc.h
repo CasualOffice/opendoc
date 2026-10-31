@@ -11,6 +11,12 @@
  * message starts with a stable code such as "open:" or "template:".
  * Structured values are UTF-8 JSON in buffers; strings in are NUL-terminated
  * UTF-8.
+ *
+ * Handles are checked: a freed, double-freed or foreign handle or buffer is
+ * refused (NULL plus an "invalid-argument" message, or a no-op for the frees
+ * and the buffer accessors), never dereferenced. A pointer to fewer bytes than
+ * the length given, or a string with no NUL, is still the caller's error.
+ * Do not use one handle from two threads at once.
  */
 #ifndef OPENDOC_H
 #define OPENDOC_H

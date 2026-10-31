@@ -16,6 +16,7 @@ casual-doc-import = { path = "../crates/casual-doc-import", version = "=0.0.1" }
 casual-doc-odf = { path = "../crates/casual-doc-odf", version = "=0.0.1" }
 casual-doc-rtf = { path = "../crates/casual-doc-rtf", version = "=0.0.1" }
 casual-doc-pdf-import = { path = "../crates/casual-doc-pdf-import", version = "=0.0.1" }
+opendoc-ffi = { path = "../crates/opendoc-ffi", version = "=0.0.1" }
 libfuzzer-sys = "=0.4.13"
 
 [[bin]]
@@ -63,6 +64,13 @@ bench = false
 [[bin]]
 name = "pdf_import"
 path = "fuzz_targets/pdf_import.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ffi_calls"
+path = "fuzz_targets/ffi_calls.rs"
 test = false
 doc = false
 bench = false

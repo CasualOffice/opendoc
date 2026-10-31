@@ -904,7 +904,7 @@ version 1 (`opendoc_abi_version`) and a header, `include/opendoc.h`.
   block is a boundary read with a `SAFETY` comment.
 - **Not built.** The header is hand-written, because cbindgen is not installed here.
   `the_header_declares_every_export` fails if an export is missing from it. The boundary is
-  not fuzzed yet (P4).
+  fuzzed, and its handles are checked (§12.14).
 
 **`bindings/java`** uses the Foreign Function & Memory API (JEP 454, final in JDK 22) over
 that ABI, with no JNI glue and no dependency. `Json.java` is a 200-line reader and writer.
@@ -1199,6 +1199,46 @@ A page renders as SVG from the same display list the PNG raster and the PDF writ
 - **Mutations**, each red then restored: glyph outlines not flipped (the raster
   comparison, 0.439% of pixels visibly different, and the golden); the text layer
   dropped ("the text layer reads \"Vector pages\": \"\"").
+
+### 12.14 Fuzzing the C ABI, and checked handles
+
+`fuzz/fuzz_targets/ffi_calls.rs` drives `crates/opendoc-ffi` with arbitrary call sequences.
+Each input is a short program: documents opened from arbitrary bytes with honest but wrong
+lengths (all, half, zero, a null pointer with a length) and arbitrary options, JSON and
+non-JSON arguments, real and made-up method names (and edit commands aimed at a real
+paragraph id read back from `body`), page numbers and resolutions out of range (NaN, zero,
+negative, infinite, 10⁹ dpi), and handles and buffers that are null, live, freed already,
+of the wrong kind, freed out of order and freed twice. Every handle still live at the end
+is freed. It does not hand the library a pointer to fewer bytes than the length it states,
+or a string without its NUL: no ABI can check those.
+
+**What it found.** Against the ABI as it stood, a heap-use-after-free within about 1,700
+runs (AddressSanitizer, in the drop of a freed document reached through a stale handle):
+the ABI trusted every pointer, so a stale or double-freed handle was undefined behaviour.
+**The fix:** every handle and buffer the library returns is recorded in a registry
+(`DOCUMENTS`, `BUFFERS`, by address), every export checks the pointer against it first, and
+the frees remove before they free. A freed, double-freed, foreign or wrong-kind pointer is
+now a coded `invalid-argument` error (`NULL`), or a no-op for the two frees and the buffer
+accessors. One hash lookup per call. The ownership rule and the ABI version are unchanged;
+the header says what is now checked and what is still the caller's promise.
+
+**Armed.** CI's `fuzz-build` job builds the target and runs it for 120 seconds on every
+change (`.github/workflows/ci.yml`); `the_abi_fuzz_target_is_armed_in_ci`
+(`crates/opendoc-ffi/tests/abi.rs`) fails if the job stops building or running it. The
+fuzz workspace's lockfile starts from the main one, so it fuzzes the engine versions that
+ship.
+
+**Evidence.** A 300-second local run after the fix (70,568 executions, 37,006 coverage
+edges, a 1,322-input corpus): no crash, leak report or timeout.
+
+**Guards and mutations.**
+- `stale_double_freed_and_foreign_handles_are_refused_not_dereferenced` uses a freed handle,
+  frees it twice, reads and frees a freed buffer twice, and passes a buffer as a document.
+  Mutation: the registry check skipped in `live_document`; the test died with `SIGSEGV`.
+- The fuzz target itself, run against the ABI with the registry disabled: the
+  heap-use-after-free above, in under five seconds.
+- `the_abi_fuzz_target_is_armed_in_ci`. Mutation: `fuzz run ffi_calls` renamed in the job;
+  red, "fuzz-build does not run ffi_calls".
 
 [poi]: https://poi.apache.org/components/document/
 [pydocx]: https://python-docx.readthedocs.io/en/latest/api/text.html
