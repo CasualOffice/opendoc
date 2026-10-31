@@ -178,11 +178,17 @@ async function loadEditor(page) {
  *  the chrome mode — so a plain reload carried the PREVIOUS row's toggle into the
  *  next activation: View ▸ Reflow left reflow on, and View ▸ Multiple pages,
  *  which is greyed in reflow (with its reason), was then clicked as the enabled
- *  row it had been when the menu was read, until the test timed out. */
+ *  row it had been when the menu was read, until the test timed out.
+ *
+ *  The chrome mode is the one preference kept: it is the sweep's own choice
+ *  (`openAppMenu` switches to the compact chrome to reach the bar), and the
+ *  state every row was read in, so each row need not switch chrome again. */
 async function reloadFresh(page) {
   await page.evaluate(() => {
+    const chrome = localStorage.getItem("opendoc.chromeMode");
     localStorage.clear();
     sessionStorage.clear();
+    if (chrome !== null) localStorage.setItem("opendoc.chromeMode", chrome);
   });
   await page.reload();
 }
@@ -235,7 +241,11 @@ async function enabledMenuIds(page, prepare) {
 test.describe("every menu-bar command acts or explains itself", () => {
   for (const menu of MENUS) {
     test(`the ${menu} menu has no dead or inert row`, async ({ page }) => {
-      test.setTimeout(240_000);
+      // One reload and one activation PER ROW. Insert is the longest menu (47 s
+      // locally; CI runs this sweep about 5x slower) and had never been swept
+      // to its end on CI: from #918 it stopped at insert.textFromFile. 240 s
+      // was the budget for shorter menus.
+      test.setTimeout(480_000);
       const thrown = [];
       page.on("pageerror", (error) => thrown.push(String(error)));
 
