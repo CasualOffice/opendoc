@@ -17,6 +17,9 @@
 
 use std::collections::BTreeMap;
 
+// Own line (anti-conflict): the source text behind glyphs, for `/ActualText`.
+use crate::cluster::ClusterText;
+
 use casual_doc_layout::display::Color;
 use casual_doc_layout::display::DisplayList;
 use casual_doc_layout::display::Fill;
@@ -112,11 +115,27 @@ pub(crate) struct Transcriber<'a> {
     gaps: BTreeMap<&'static str, usize>,
     font_source: &'a dyn PdfFontSource,
     media: &'a dyn PdfMediaSource,
+    /// The source text behind the glyphs, for `/ActualText` spans.
+    clusters: Option<&'a ClusterText>,
 }
 
 impl<'a> Transcriber<'a> {
+    /// A transcriber whose text runs read as `clusters` says: a cluster drawn
+    /// by several glyphs is wrapped in an `/ActualText` span.
+    pub(crate) fn with_clusters(
+        font_source: &'a dyn PdfFontSource,
+        media: &'a dyn PdfMediaSource,
+        clusters: &'a ClusterText,
+    ) -> Self {
+        Self {
+            clusters: Some(clusters),
+            ..Self::new(font_source, media)
+        }
+    }
+
     pub(crate) fn new(font_source: &'a dyn PdfFontSource, media: &'a dyn PdfMediaSource) -> Self {
         Self {
+            clusters: None,
             fonts: FontTable::new(),
             images: ImageTable::new(),
             alphas: BTreeMap::new(),
@@ -438,7 +457,31 @@ impl<'a> Transcriber<'a> {
         // display list put them.
         let mut array = String::from("[<");
         let mut open = true;
-        for glyph in &run.glyphs {
+        // The cluster an `/ActualText` span is open for: its glyphs get their
+        // own `TJ` inside the span (the text position carries across `TJ`s).
+        let mut span: Option<u32> = None;
+        for (index, glyph) in run.glyphs.iter().enumerate() {
+            let starts = index == 0 || run.glyphs[index - 1].cluster != glyph.cluster;
+            if starts {
+                if span.take().is_some() {
+                    close_tj(&mut array, open);
+                    array.push_str("EMC\n[<");
+                    open = true;
+                }
+                if let Some(text) = run
+                    .node
+                    .zip(self.clusters)
+                    .and_then(|(node, clusters)| clusters.span(node, glyph.cluster))
+                {
+                    close_tj(&mut array, open);
+                    array.push_str(&format!(
+                        "/Span<</ActualText{}>>BDC\n[<",
+                        crate::writer::text_string(text)
+                    ));
+                    open = true;
+                    span = Some(glyph.cluster);
+                }
+            }
             if !open {
                 array.push('<');
                 open = true;
@@ -468,10 +511,11 @@ impl<'a> Transcriber<'a> {
                 open = false;
             }
         }
-        if open {
-            array.push('>');
+        close_tj(&mut array, open);
+        if span.is_some() {
+            array.push_str("EMC\n");
         }
-        array.push_str("] TJ\nET\n");
+        array.push_str("ET\n");
         let effects = run.decoration.effects;
         let offset = (size / 24.0).max(0.375);
         let mut passes = Vec::new();
@@ -1570,6 +1614,20 @@ fn exponential(from: Color, to: Color) -> String {
         channel(to.b)
     )
 }
+
+/// Closes the `TJ` array being built in `array` (`open`: whether a hex string
+/// is open in it). An array left empty (`[<>]`) is dropped rather than shown.
+fn close_tj(array: &mut String, open: bool) {
+    if array.ends_with("[<") {
+        array.truncate(array.len() - 2);
+        return;
+    }
+    if open {
+        array.push('>');
+    }
+    array.push_str("] TJ\n");
+}
+
 #[cfg(test)]
 mod path_tests {
     use super::*;

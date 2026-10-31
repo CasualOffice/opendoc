@@ -378,7 +378,10 @@ fn write_pdf_with_metadata(
     let page_tree = writer.reserve();
     let resources = writer.reserve();
 
-    let mut transcriber = Transcriber::new(fonts, media);
+    // Resolved before the pages are transcribed: the content stream reads
+    // it for `/ActualText` spans, and the fonts for `ToUnicode`.
+    let clusters = ClusterText::build(pages, text);
+    let mut transcriber = Transcriber::with_clusters(fonts, media, &clusters);
     let mut page_objects = Vec::with_capacity(pages.len());
     for page in pages {
         let stream = transcriber.page(&mut writer, *page)?;
@@ -399,8 +402,7 @@ fn write_pdf_with_metadata(
         page_objects.push(object);
     }
 
-    let (findings, faces) =
-        write_resources(&mut writer, transcriber, pages, fonts, text, resources)?;
+    let (findings, faces) = write_resources(&mut writer, transcriber, fonts, &clusters, resources)?;
 
     let kids: Vec<String> = page_objects
         .iter()
@@ -452,9 +454,8 @@ fn write_pdf_with_metadata(
 fn write_resources(
     writer: &mut Writer,
     transcriber: Transcriber<'_>,
-    pages: &[PdfPage<'_>],
     fonts: &dyn PdfFontSource,
-    text: &dyn PdfTextSource,
+    clusters: &ClusterText,
     resources: writer::Ref,
 ) -> Result<(Vec<PdfFinding>, Vec<EmbeddedFace>), PdfError> {
     let mut shading_entries = String::new();
@@ -506,8 +507,7 @@ fn write_resources(
     let image_entries = transcriber.images.resource_dictionary();
     let has_fonts = !transcriber.fonts.is_empty();
     let has_images = !transcriber.images.is_empty();
-    let clusters = ClusterText::build(pages, text);
-    let faces = transcriber.fonts.write(writer, fonts, &clusters)?;
+    let faces = transcriber.fonts.write(writer, fonts, clusters)?;
     transcriber.images.write(writer);
 
     for face in &faces {

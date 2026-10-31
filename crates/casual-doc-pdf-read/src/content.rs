@@ -21,6 +21,7 @@
 //!
 //! Complexity: O(stream bytes) for every function here.
 
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// The marked-content tag prefix that numbers a show operator.
@@ -342,6 +343,135 @@ pub fn instrument(data: &[u8], ops: &[OpSpan]) -> Option<(Vec<u8>, u32)> {
     Some((out, show))
 }
 
+/// The `/ActualText` of every show inside a marked-content span that carries
+/// one (ISO 32000-1 §14.9.4), as `show index -> (span number, text)`: the
+/// text a reader must use for the span's glyphs instead of their `ToUnicode`
+/// readings. Producers write one for a cluster several glyphs draw (an Indic
+/// syllable, a base with its marks), for a hyphen a line break added, and for
+/// a ligature. Shows are numbered as [`instrument`] numbers them. A span
+/// whose properties are a named resource, not an inline dictionary, is not
+/// read. O(bytes).
+#[must_use]
+pub fn actual_texts(data: &[u8], ops: &[OpSpan]) -> BTreeMap<u32, (u32, String)> {
+    let mut out = BTreeMap::new();
+    // One entry per open marked-content sequence: its span number and text
+    // when it carries `/ActualText`.
+    let mut open: Vec<Option<(u32, String)>> = Vec::new();
+    let mut spans = 0u32;
+    let mut show = 0u32;
+    for op in ops {
+        let name = &data[op.name.0..op.name.1];
+        match name {
+            b"BDC" => {
+                let text = op
+                    .operands
+                    .get(1)
+                    .and_then(|(s, e)| actual_text_of(&data[*s..*e]));
+                open.push(text.map(|text| {
+                    spans += 1;
+                    (spans, text)
+                }));
+            }
+            b"BMC" => open.push(None),
+            b"EMC" => {
+                open.pop();
+            }
+            _ if is_show(name) => {
+                if let Some((span, text)) = open.iter().rev().flatten().next() {
+                    out.insert(show, (*span, text.clone()));
+                }
+                show = show.saturating_add(1);
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The `/ActualText` string of an inline properties dictionary's bytes. O(bytes).
+fn actual_text_of(dictionary: &[u8]) -> Option<String> {
+    const KEY: &[u8] = b"/ActualText";
+    let at = dictionary.windows(KEY.len()).position(|w| w == KEY)? + KEY.len();
+    let rest = &dictionary[at..];
+    let start = rest.iter().position(|b| !is_white(*b))?;
+    let rest = &rest[start..];
+    let bytes = match rest.first()? {
+        b'<' => {
+            let end = rest.iter().position(|b| *b == b'>')?;
+            let digits: Vec<u8> = rest[1..end]
+                .iter()
+                .copied()
+                .filter(u8::is_ascii_hexdigit)
+                .collect();
+            let mut bytes: Vec<u8> = digits
+                .chunks(2)
+                .map(|pair| {
+                    let high = (pair[0] as char).to_digit(16).unwrap_or(0);
+                    let low = pair
+                        .get(1)
+                        .map_or(0, |b| (*b as char).to_digit(16).unwrap_or(0));
+                    (high * 16 + low) as u8
+                })
+                .collect();
+            bytes.truncate(digits.len().div_ceil(2));
+            bytes
+        }
+        b'(' => literal_bytes(&rest[1..])?,
+        _ => return None,
+    };
+    Some(crate::annots::text_string(&bytes))
+}
+
+/// The bytes of a literal string whose body starts at `body` (after its
+/// `(`), escapes resolved, up to its balancing `)`. O(bytes).
+fn literal_bytes(body: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut at = 0;
+    while let Some(&byte) = body.get(at) {
+        at += 1;
+        match byte {
+            b'\\' => {
+                let next = *body.get(at)?;
+                at += 1;
+                match next {
+                    b'n' => out.push(b'\n'),
+                    b'r' => out.push(b'\r'),
+                    b't' => out.push(b'\t'),
+                    b'b' => out.push(8),
+                    b'f' => out.push(12),
+                    b'0'..=b'7' => {
+                        let mut value = u32::from(next - b'0');
+                        for _ in 0..2 {
+                            match body.get(at) {
+                                Some(digit @ b'0'..=b'7') => {
+                                    value = value * 8 + u32::from(digit - b'0');
+                                    at += 1;
+                                }
+                                _ => break,
+                            }
+                        }
+                        out.push((value & 0xff) as u8);
+                    }
+                    b'\r' | b'\n' => {}
+                    other => out.push(other),
+                }
+            }
+            b'(' => {
+                depth += 1;
+                out.push(byte);
+            }
+            b')' if depth == 0 => return Some(out),
+            b')' => {
+                depth -= 1;
+                out.push(byte);
+            }
+            _ => out.push(byte),
+        }
+    }
+    None
+}
+
 /// The show index a marked-content tag names, if it is one of ours.
 pub(crate) fn show_of_tag(tag: &[u8]) -> Option<u32> {
     let digits = tag.strip_prefix(SHOW_TAG)?;
@@ -472,6 +602,28 @@ mod tests {
         assert!(agrees_with_hayro(data, &ops));
         let tj = &ops[4];
         assert_eq!(&data[tj.start..tj.end], b"(a (nested) \\) str) Tj");
+    }
+
+    #[test]
+    fn a_shows_actual_text_is_read_from_its_enclosing_span() {
+        // Show 1 is a three-glyph syllable in a UTF-16 span; show 2 a hyphen
+        // span in a literal; shows 0 and 3 are outside any span.
+        let data: &[u8] = b"BT [<01>] TJ /Span<</ActualText<FEFF0939093F0902>>>BDC \
+            [<0203> 40 <04>] TJ EMC /Span <</Lang (hi) /ActualText (a\\(b\\)) >> BDC \
+            (-) Tj EMC /P <</MCID 2>> BDC (x) Tj EMC ET";
+        let ops = tokenize(data).unwrap();
+        let texts = actual_texts(data, &ops);
+        assert_eq!(
+            texts.get(&1),
+            Some(&(1, "\u{0939}\u{093F}\u{0902}".to_owned()))
+        );
+        assert_eq!(texts.get(&2), Some(&(2, "a(b)".to_owned())));
+        assert_eq!(texts.get(&0), None);
+        assert_eq!(
+            texts.get(&3),
+            None,
+            "a span without /ActualText reads as its glyphs"
+        );
     }
 
     #[test]

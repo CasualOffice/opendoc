@@ -1157,3 +1157,88 @@ fn a_colour_face_is_embedded_and_its_colour_loss_reported() {
         export.findings.iter().map(|f| &f.code).collect::<Vec<_>>()
     );
 }
+
+/// A cluster several glyphs draw (an Indic syllable whose vowel sign is drawn
+/// first, a base with its marks) reads as its own text through an
+/// `/ActualText` span: `ToUnicode` is keyed by glyph id and cannot say "these
+/// glyphs are this text in this order", so a reordered syllable copied
+/// scrambled or without its signs.
+#[test]
+fn a_cluster_drawn_by_several_glyphs_reads_as_its_text_through_actual_text() {
+    use casual_doc_layout::display::DisplayList;
+    use casual_doc_layout::text::{Decoration, Glyph, GlyphRun};
+    use casual_doc_layout::units::{Point, Twip};
+
+    struct Syllable;
+    impl casual_doc_pdf::PdfTextSource for Syllable {
+        fn node_text(&self, _node: casual_doc_model::NodeId) -> Option<String> {
+            // "हिंद": a three-glyph cluster at 0, then a one-glyph cluster at 9.
+            Some("\u{0939}\u{093F}\u{0902}\u{0926}".to_owned())
+        }
+    }
+    let glyph = |id, cluster| Glyph {
+        id,
+        advance: Twip(120),
+        cluster,
+        is_whitespace: false,
+    };
+    let run = GlyphRun {
+        node: casual_doc_model::NodeId::from_parts(7, 1).ok(),
+        font: FontId(12),
+        size: Twip(240),
+        ascent: Twip::ZERO,
+        descent: Twip::ZERO,
+        character_scale_percent: 100,
+        color: [0, 0, 0, 255],
+        origin: Point::new(Twip(1440), Twip(1440)),
+        bidi_level: 0,
+        decoration: Decoration::default(),
+        highlight: None,
+        shading: None,
+        is_marker: false,
+        is_leader: false,
+        glyphs: vec![glyph(40, 0), glyph(41, 0), glyph(42, 0), glyph(43, 9)],
+    };
+    let list = DisplayList {
+        items: vec![PaintItem::Glyphs { run }],
+    };
+    let pages = [PdfPage {
+        width: Twip(12240),
+        height: Twip(15840),
+        list: &list,
+    }];
+    let export = casual_doc_pdf::write_pdf_with_text(
+        &pages,
+        &casual_doc_pdf::BundledFontSource,
+        &NoMediaSource,
+        &PdfExportOptions::default(),
+        &Syllable,
+    )
+    .expect("export");
+    let pdf = inspect::parse(&export.bytes).expect("parse");
+    let page = pdf.pages()[0];
+    let stream = pdf
+        .get(page, "Contents")
+        .and_then(|contents| pdf.stream_data(contents))
+        .expect("a content stream");
+    let stream = String::from_utf8_lossy(&stream);
+    assert_eq!(
+        stream
+            .matches("/Span<</ActualText<FEFF0939093F0902>>>BDC")
+            .count(),
+        1,
+        "the syllable's three glyphs are one span reading as its text: {stream}"
+    );
+    assert_eq!(stream.matches("EMC").count(), 1, "{stream}");
+    let span = stream.find("BDC").expect("a span");
+    let end = stream.find("EMC").expect("its end");
+    let inside = &stream[span..end];
+    assert!(
+        inside.contains("0028") && inside.contains("002A"),
+        "the span holds the syllable's glyphs: {inside}"
+    );
+    assert!(
+        !inside.contains("002B"),
+        "and not the next cluster's glyph: {inside}"
+    );
+}
