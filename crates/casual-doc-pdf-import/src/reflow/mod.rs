@@ -89,6 +89,10 @@ pub struct PChar {
     pub strike: bool,
     /// Shaded (a fill tight behind its run: a highlight).
     pub shade: Option<[u8; 3]>,
+    /// The letter spacing of its run, in points: the even space the PDF
+    /// put between its glyphs beyond their widths (`Tc`, a subtitle's
+    /// expanded tracking). Zero when the run is set solid.
+    pub tracking: f64,
 }
 
 /// One line.
@@ -120,6 +124,47 @@ pub struct ILine {
     pub shade: Option<[u8; 3]>,
 }
 
+/// Even space between letters wider than tracking noise, in ems: below it
+/// a run is set solid (kerning and rounding leave a few hundredths).
+const TRACKING_EMS: f64 = 0.04;
+
+/// Sets each run's letter spacing ([`PChar::tracking`]): over a run of one
+/// style, the gaps between adjacent single-character, non-space glyphs
+/// (the PDF's position less the glyph's width) when there are at least
+/// three and they agree (each within a third of their median) on a
+/// median of [`TRACKING_EMS`] to half an em. Kerning is uneven and a word
+/// space is wider, so neither reads as tracking. O(characters).
+fn track(chars: &mut [PChar]) {
+    let mut start = 0;
+    while start < chars.len() {
+        let mut end = start + 1;
+        while end < chars.len() && chars[end].style == chars[start].style {
+            end += 1;
+        }
+        let run = &chars[start..end];
+        let letter = |c: &PChar| c.text.chars().count() == 1 && !c.text.trim().is_empty();
+        let mut gaps: Vec<f64> = run
+            .windows(2)
+            .filter(|w| letter(&w[0]) && letter(&w[1]))
+            .map(|w| w[1].x0 - w[0].x1)
+            .collect();
+        let size = run.iter().map(|c| c.size).fold(0.0, f64::max).max(1.0);
+        if gaps.len() >= 3 {
+            gaps.sort_by(f64::total_cmp);
+            let median = gaps[gaps.len() / 2];
+            let agree = gaps
+                .iter()
+                .all(|g| (g - median).abs() <= median.abs() / 3.0);
+            if agree && (TRACKING_EMS * size..=0.5 * size).contains(&median) {
+                for c in &mut chars[start..end] {
+                    c.tracking = median;
+                }
+            }
+        }
+        start = end;
+    }
+}
+
 impl ILine {
     fn new(line: &Line, page: usize, mcid: Option<i32>) -> Self {
         let size = line.size;
@@ -131,7 +176,7 @@ impl ILine {
             .next()
             .unwrap_or(line.baseline);
         // A glyph with no Unicode (empty text) has no character to edit.
-        let chars = line
+        let mut chars: Vec<PChar> = line
             .chars
             .iter()
             .filter(|c| !c.text.is_empty())
@@ -151,8 +196,11 @@ impl ILine {
                 underline: false,
                 strike: false,
                 shade: None,
+                tracking: 0.0,
             })
             .collect();
+
+        track(&mut chars);
         Self {
             page,
             chars,

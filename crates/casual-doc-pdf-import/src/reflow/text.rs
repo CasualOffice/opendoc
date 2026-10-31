@@ -317,6 +317,7 @@ pub fn marker_token(token: &str) -> bool {
             underline: false,
             strike: false,
             shade: None,
+            tracking: 0.0,
         })
         .collect();
     chars.shrink_to_fit();

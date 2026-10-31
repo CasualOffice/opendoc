@@ -2658,3 +2658,47 @@ fn a_shaded_header_band_makes_two_aligned_rows_a_table() {
         "the header is centred across the columns it spans"
     );
 }
+
+/// A line set with letter spacing (`2 Tc`: a subtitle's expanded tracking)
+/// reflows with that spacing on its runs, and a line set solid with none.
+/// Mutations, each driven red: `track` never setting a run's tracking; the
+/// run properties ignoring it; the agreement test dropped (a solid line's
+/// kerning noise reads as tracking, here forced by a kerned TJ).
+#[test]
+fn letter_spacing_reflows_as_character_spacing() {
+    let mut content = text(
+        "F2",
+        10.0,
+        72.0,
+        720.0,
+        14.0,
+        &["An ordinary paragraph set solid, with nothing between its letters."],
+    );
+    content.push_str("BT /F2 14 Tf 2 Tc 72 680 Td (EXPANDED SUBTITLE) Tj 0 Tc ET\n");
+    // Kerned, not tracked: uneven adjustments between a few pairs.
+    content.push_str("BT /F2 10 Tf 72 650 Td [(A) -20 (V) -90 (A) -40 (T) -80 (W) -50 (a) -25 (y) -70 (s)] TJ ET\n");
+    let (_, reflowed) = reflow_of(synth::document(&[Page::new(content)], "", ""));
+    let spacing_of = |start: &str| -> Vec<Option<i32>> {
+        paragraphs(&reflowed.document)
+            .into_iter()
+            .find(|p| para_text(p).starts_with(start))
+            .unwrap_or_else(|| panic!("{start}: {:?}", texts(&reflowed.document)))
+            .inlines
+            .iter()
+            .filter_map(|i| match i {
+                InlineNode::Run(run) => Some(run.properties.character_spacing_twips),
+                _ => None,
+            })
+            .collect()
+    };
+    let expanded = spacing_of("EXPANDED");
+    assert!(
+        expanded.iter().all(|s| *s == Some(40)),
+        "2 pt of tracking is 40 twips on every run: {expanded:?}"
+    );
+    assert!(spacing_of("An ordinary").iter().all(Option::is_none));
+    assert!(
+        spacing_of("AVA").iter().all(Option::is_none),
+        "kerning is not tracking"
+    );
+}

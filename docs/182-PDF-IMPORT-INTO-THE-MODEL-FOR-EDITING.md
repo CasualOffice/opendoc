@@ -1888,8 +1888,12 @@ committed `nist-ir8105.pdf`).
    edge.
 3. A chart's labels are text boxes inside its group: right where they were, but a label that
    was a figure's caption ("Figure 1", short) sitting within two ems of it joins it too.
-4. Light weights (Helvetica Neue Light and UltraLight) map to the regular face: the model has
-   bold and not a weight. Letter spacing (a subtitle's expanded tracking) is not read.
+4. Fixed: a light weight (`HelveticaNeue-Light`, `-UltraLight`, `-Thin`) keeps its own family
+   name, the way Word and macOS name one ("Helvetica Neue Light"), where it had been mapped to
+   Arial and drawn regular; a machine with the face uses it, and the layout substitutes a
+   missing one by class. Letter spacing is read: a run whose letters stand evenly apart
+   beyond their widths (`Tc`) carries it as character spacing, and the grouping no longer
+   reads each tracked letter as a word ("E X P A N D E D"). Kerning, uneven, is not tracking.
 5. A scanned PDF has no text without an OCR provider; the headless tools have none.
 6. Fixed: glyphs missing from our own PDF of `sample.docx` (`special` 0.371 to 1.000). Four
    causes, all in the writer or the reader, none in the reflow: a system face over 64 MiB

@@ -516,6 +516,9 @@ impl Emitter<'_> {
         if let Some([r, g, b]) = c.shade {
             p.shading.fill = Some(RgbColor { r, g, b });
         }
+        if c.tracking.abs() >= 0.1 {
+            p.character_spacing_twips = Some(twips(c.tracking));
+        }
         p
     }
 
