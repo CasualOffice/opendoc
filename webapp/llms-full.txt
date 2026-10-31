@@ -3475,7 +3475,7 @@ Node uses the same module through `@casualoffice/opendoc-viewer/node`, which rea
 | `text`, `pageText(i)` | (none) | **Existing**. Body only: headers, footers and notes are not included yet |
 | `outline()` | (none) | **Existing**: level, text and page of each body heading, by the editor's heading rule |
 | `fontNeeds()`, `missingCodePoints()`, `registerFonts`, `registerFallbackFont`, `fontProvider` | §10 `ResourceRequest::Font` | **Existing**: the host font hook (§10, Q2) |
-| Page to SVG | (none) | **Not built**: the engine has no SVG backend, so it is not cheap. A vector page is the PDF |
+| Page to SVG | (none) | **Existing** since 2026-10-31: `casual_doc_render::svg`, from the same display list as the PNG and PDF (§12.13) |
 | `importReport()`: what was degraded or dropped | (none) | **Partial**: `CompatibilityReport` exists in `casual-doc-import`/`-io`, but it is not exposed |
 | `metadata()` | (none) | **Partial**: in `casual-doc-wasm`, not in the cut |
 | `search(query)` → page rectangles | (none) | **Partial**: Find in the editor; geometry needs a hit-test-free rect query |
@@ -4097,7 +4097,6 @@ type.
   allows OS fonts).
 - **Not built (stated, not hidden):**
   - paragraph loops inside headers and footers (value tags work there);
-  - SVG (no backend, §3.1);
 
 **One defect class found and handled in the SDK.** A comment's anchor from
 `casual_doc_review` is measured in the layout anchor stream, which counts a footnote
@@ -4519,6 +4518,56 @@ the other bindings send (`crates/opendoc-ffi/tests/abi.rs`).
 - **Mutations**, each red then restored: the picture's bytes not handed to the resources
   ("the bytes are in the package"); the orientation swap removed ("turning swaps the size, as
   Word does").
+
+### 12.13 SVG pages
+
+A page renders as SVG from the same display list the PNG raster and the PDF writer paint:
+`casual_doc_render::svg::render_svg`, reached as `ViewerDocument::render_page_svg`,
+`Document::render_page_svg` (Rust), `renderPageSvg` (JavaScript), `render_page_svg`
+(Python), `renderPageSvg` (Java), `opendoc_render_svg` (C ABI) and
+`opendoc render --format svg` (CLI).
+
+- **Glyphs** are outlines from the exact face the layout measured with (skrifa, as the
+  raster draws them), each distinct glyph defined once and placed with `<use>`. A page
+  therefore looks the same in every viewer whatever fonts it has.
+- **Real text.** Over each run lies a transparent `<text>` carrying the run's characters,
+  recovered from the paragraph through the glyphs' cluster offsets (the PDF writer's
+  `ToUnicode` mechanism) and stretched to the run's advance, so the text can be selected,
+  searched and read aloud. A run with no source paragraph (a list marker, a tab leader)
+  has the outline alone.
+- **Pictures** are embedded as `data:` URIs: PNG, JPEG, GIF and WebP as their own bytes,
+  BMP and TIFF re-encoded as PNG under the raster backend's decode ceilings, anything
+  undecodable as the raster's crossed placeholder. Crops, rotation, flips and opacity
+  carry over.
+- **Shapes, clips, layers, gradients and shadows** map to SVG paths, `clipPath`, groups
+  (a multiplied layer as `mix-blend-mode: multiply`), gradients and `feGaussianBlur`.
+- **Not drawn yet (stated, not hidden):** colour glyphs (COLR and bitmap emoji) are drawn
+  from their outline glyph when the face has one, in the run's colour, else omitted;
+  arrowheads on lines; glyph ink effects (shadow, emboss, outline).
+- **Determinism.** Coordinates are the list's twips with one decimal, ids are assigned in
+  paint order, so the same document gives the same bytes on every platform with the
+  bundled faces.
+
+**Guards** (`crates/opendoc/tests/svg.rs`):
+
+- `an_svg_page_is_well_formed_sized_and_carries_real_text` parses the page and reads its
+  text layer back, `&` and `<` included.
+- `an_svg_page_draws_what_the_png_page_draws` rasterizes the SVG with an independent
+  renderer (resvg, no text stack) and compares it with the engine's own PNG of the page:
+  mean channel difference under 1.0 and under 0.2% of pixels visibly different, on a
+  built page and on the sample's second page (no pictures: this resvg build decodes none).
+  The residue is antialiasing and the raster's stroke widths, which are device pixels at
+  the render resolution where the PDF writer and the SVG read them as pixels at 96 dpi.
+- `svg_pages_are_the_same_bytes_on_every_platform` holds `tests/svg.golden`: FNV-1a and
+  length of the first three sample pages and one built page. It was blessed on macOS
+  arm64 (`OPENDOC_BLESS=1 cargo test -p opendoc --test svg`, recorded in its `#` lines);
+  CI's Linux `test` job and the macOS and Windows `platform` jobs are its cross-platform
+  check. `.gitattributes` keeps it LF.
+- Each binding renders a page and finds its text (`objects.test.mjs`,
+  `test_objects.py`, `ConformanceTest`, `abi.rs`, `cli.rs`).
+- **Mutations**, each red then restored: glyph outlines not flipped (the raster
+  comparison, 0.439% of pixels visibly different, and the golden); the text layer
+  dropped ("the text layer reads \"Vector pages\": \"\"").
 
 [poi]: https://poi.apache.org/components/document/
 [pydocx]: https://python-docx.readthedocs.io/en/latest/api/text.html

@@ -399,6 +399,8 @@ export declare class Document {
   pageText(index: number): string;
   renderPage(index: number, options?: { dpi?: number }): { width: number; height: number; rgba: Uint8Array };
   renderPagePng(index: number, options?: { dpi?: number }): Uint8Array;
+  /** One page as SVG: glyph outlines plus a transparent real-text layer, from the same layout as the PNG and PDF. */
+  renderPageSvg(index: number): string;
   toPdf(): Uint8Array;
   outline(): { level: number; text: string; page: number | null }[];
   fontNeeds(): string[];

@@ -1987,6 +1987,8 @@ dependencies = [
  "casual-doc-ooxml",
  "casual-doc-review",
  "opendoc-viewer",
+ "quick-xml",
+ "resvg",
  "serde",
  "serde_json",
  "wasm-bindgen",

@@ -106,6 +106,19 @@ fn render_writes_deterministic_pngs_for_the_pages_asked() {
             .unwrap()
             .starts_with(b"%PDF-")
     );
+    let svg = ok(&[
+        "render",
+        SAMPLE,
+        "--out",
+        s(&a),
+        "--format",
+        "svg",
+        "--pages",
+        "2",
+    ]);
+    assert_eq!(svg.lines().count(), 1);
+    let page = std::fs::read_to_string(a.join("sample-2.svg")).unwrap();
+    assert!(page.starts_with("<svg ") && page.contains("</text>"));
     let past = opendoc(&["render", SAMPLE, "--out", s(&a), "--pages", "999"]);
     assert_eq!(past.status.code(), Some(2));
 }

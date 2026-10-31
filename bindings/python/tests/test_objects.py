@@ -111,3 +111,13 @@ def test_sections_add_start_type_page_size_orientation_margins_columns():
         assert d.sections[0].orientation == WD_ORIENT.PORTRAIT
     with pytest.raises(OpenDocError):
         section.start_type = "sideways"
+
+
+def test_render_page_svg_from_the_same_layout():
+    document = Document()
+    document.add_paragraph("Vector & <text>")
+    svg = document.render_page_svg(0)
+    assert svg.startswith("<svg ")
+    assert "Vector &amp; &lt;text&gt;</text>" in svg
+    with pytest.raises(OpenDocError):
+        document.render_page_svg(5)

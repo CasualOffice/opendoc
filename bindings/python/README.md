@@ -44,6 +44,7 @@ report = document.save("demo.docx")         # a SaveReport: report.losses is emp
 document.save("demo.pdf")                   # laid out by the engine, real selectable text
 document.save("demo.odt")                   # also .html, .md, .txt, .json
 png = document.render_page_png(0, dpi=150)  # a page image
+svg = document.render_page_svg(0)           # the same page as SVG, with selectable text
 document.page_count                         # from the engine's own pagination
 document.import_report.losses               # what the open could not carry
 document.replace("ACME", "Contoso")         # every story, returns the count

@@ -595,6 +595,7 @@ resizable
 restamped
 restorable
 resumable
+resvg
 retryable
 reviewable
 revisioned

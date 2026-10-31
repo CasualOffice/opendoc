@@ -385,6 +385,24 @@ pub unsafe extern "C" fn opendoc_render_png(
     })
 }
 
+/// One page as SVG (UTF-8), from the same layout as the PNG and the PDF.
+///
+/// # Safety
+///
+/// `doc` is a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn opendoc_render_svg(doc: *mut OdDocument, page: u32) -> *mut OdBuffer {
+    guard(|| {
+        // SAFETY: forwarded caller contract.
+        let od = unsafe { doc_mut(doc) }?;
+        od.doc
+            .render_page_svg(page as usize)
+            .map(String::into_bytes)
+            .map(buffer)
+            .map_err(sdk)
+    })
+}
+
 /// A real-text PDF.
 ///
 /// # Safety

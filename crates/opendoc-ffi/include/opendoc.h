@@ -39,6 +39,8 @@ void opendoc_free(OdDocument *doc);
 OdBuffer *opendoc_call(OdDocument *doc, const char *method, const char *arg_json);
 OdBuffer *opendoc_save(OdDocument *doc, const char *format, const char *mode);
 OdBuffer *opendoc_render_png(OdDocument *doc, uint32_t page, float dpi);
+/* One page as SVG, UTF-8. */
+OdBuffer *opendoc_render_svg(OdDocument *doc, uint32_t page);
 OdBuffer *opendoc_to_pdf(OdDocument *doc);
 OdBuffer *opendoc_compare(OdDocument *older, OdDocument *newer);
 OdBuffer *opendoc_convert(const uint8_t *data, size_t len, const char *to);

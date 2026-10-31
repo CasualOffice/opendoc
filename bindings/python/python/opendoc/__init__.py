@@ -608,6 +608,11 @@ class Document:
     def render_page_png(self, index: int, dpi: float = 96.0) -> bytes:
         return _call(self._native.render_page_png, index, dpi)
 
+    def render_page_svg(self, index: int) -> str:
+        """One page as SVG, from the same layout as the PNG and the PDF: glyph
+        outlines, a transparent real-text layer, pictures embedded."""
+        return str(_call(self._native.render_page_svg, index))
+
     def render_page(self, index: int, dpi: float = 96.0) -> Tuple[int, int, bytes]:
         return _call(self._native.render_page, index, dpi)
 

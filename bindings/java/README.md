@@ -32,6 +32,7 @@ try (OpenDocument doc = new OpenDocument()) {             // or new OpenDocument
     }
     doc.save(Path.of("out.pdf"));                           // Aspose-style: the format from the extension
     byte[] png = doc.renderPagePng(0, 150f);
+    String svg = doc.renderPageSvg(0);                       // the same page as SVG, selectable text
     int pages = doc.getPageCount();
 }
 ```

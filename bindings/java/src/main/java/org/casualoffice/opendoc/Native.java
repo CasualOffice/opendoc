@@ -43,6 +43,8 @@ final class Native {
             FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
     private static final MethodHandle RENDER_PNG = fn("opendoc_render_png",
             FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT, ValueLayout.JAVA_FLOAT));
+    private static final MethodHandle RENDER_SVG = fn("opendoc_render_svg",
+            FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
     private static final MethodHandle TO_PDF = fn("opendoc_to_pdf",
             FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
     private static final MethodHandle COMPARE = fn("opendoc_compare",
@@ -209,6 +211,14 @@ final class Native {
     static byte[] renderPng(MemorySegment doc, int page, float dpi) {
         try {
             return take((MemorySegment) RENDER_PNG.invokeExact(doc, page, dpi));
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    static byte[] renderSvg(MemorySegment doc, int page) {
+        try {
+            return take((MemorySegment) RENDER_SVG.invokeExact(doc, page));
         } catch (Throwable t) {
             throw rethrow(t);
         }

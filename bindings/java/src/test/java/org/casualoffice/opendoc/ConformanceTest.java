@@ -185,6 +185,12 @@ public final class ConformanceTest {
             check(back.getHeadersFooters().stream().anyMatch(h -> "Cover".equals(h.get("text"))), "the first-page header survives a save");
         }
 
+        try (OpenDocument doc = new OpenDocument()) {
+            doc.createParagraph().createRun().setText("Vector page");
+            String svg = doc.renderPageSvg(0);
+            check(svg.startsWith("<svg ") && svg.contains(">Vector page</text>"), "a page renders as SVG with its text");
+        }
+
         byte[] text = OpenDocument.convert(sampleBytes, "txt");
         check(text.length > 0, "convert writes text");
         check(!OpenDocument.version().isEmpty(), "the engine reports its version");

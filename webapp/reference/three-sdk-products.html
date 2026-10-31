@@ -284,7 +284,7 @@
         <tr>
         <td>Page to SVG</td>
         <td>(none)</td>
-        <td><strong>Not built</strong>: the engine has no SVG backend, so it is not cheap. A vector page is the PDF</td>
+        <td><strong>Existing</strong> since 2026-10-31: <code>casual_doc_render::svg</code>, from the same display list as the PNG and PDF (§12.13)</td>
         </tr>
         <tr>
         <td><code>importReport()</code>: what was degraded or dropped</td>
@@ -1436,7 +1436,6 @@
         <li><strong>Not built (stated, not hidden):</strong></li>
         <ul class="doc-list">
         <li>paragraph loops inside headers and footers (value tags work there);</li>
-        <li>SVG (no backend, §3.1);</li>
         </ul>
         </ul>
         <p class="doc-body"><strong>One defect class found and handled in the SDK.</strong> A comment's anchor from <code>casual_doc_review</code> is measured in the layout anchor stream, which counts a footnote reference's printed number. The read view's <code>text</code> does not count it, so the first build returned <code>&quot;noted &quot;</code> for a comment on <code>&quot; noted&quot;</code> after a footnote. <code>Document::comments</code> and <code>revisions</code> now map anchors through both length functions (<code>ParagraphSpace</code>). The engine-side disagreement is the one recorded on <code>casual_doc_review::body::inline_anchor_len</code>.</p>
@@ -2052,6 +2051,24 @@
         <li><code>crates/opendoc/tests/objects.rs</code> (6 tests): every edit applied, read back, saved and reopened with no loss, undone, and refused as a whole batch; the JSON commands.</li>
         <li><code>packages/opendoc/test/objects.test.mjs</code>, <code>bindings/python/tests/test_objects.py</code>, <code>ConformanceTest</code> (Java) and <code>crates/opendoc-ffi/tests/abi.rs</code> drive the same edits through each binding.</li>
         <li><strong>Mutations</strong>, each red then restored: the picture's bytes not handed to the resources (&quot;the bytes are in the package&quot;); the orientation swap removed (&quot;turning swaps the size, as Word does&quot;).</li>
+        </ul>
+        <h3 class="doc-h3" id="12-13-svg-pages">12.13 SVG pages</h3>
+        <p class="doc-body">A page renders as SVG from the same display list the PNG raster and the PDF writer paint: <code>casual_doc_render::svg::render_svg</code>, reached as <code>ViewerDocument::render_page_svg</code>, <code>Document::render_page_svg</code> (Rust), <code>renderPageSvg</code> (JavaScript), <code>render_page_svg</code> (Python), <code>renderPageSvg</code> (Java), <code>opendoc_render_svg</code> (C ABI) and <code>opendoc render --format svg</code> (CLI).</p>
+        <ul class="doc-list">
+        <li><strong>Glyphs</strong> are outlines from the exact face the layout measured with (skrifa, as the raster draws them), each distinct glyph defined once and placed with <code>&lt;use&gt;</code>. A page therefore looks the same in every viewer whatever fonts it has.</li>
+        <li><strong>Real text.</strong> Over each run lies a transparent <code>&lt;text&gt;</code> carrying the run's characters, recovered from the paragraph through the glyphs' cluster offsets (the PDF writer's <code>ToUnicode</code> mechanism) and stretched to the run's advance, so the text can be selected, searched and read aloud. A run with no source paragraph (a list marker, a tab leader) has the outline alone.</li>
+        <li><strong>Pictures</strong> are embedded as <code>data:</code> URIs: PNG, JPEG, GIF and WebP as their own bytes, BMP and TIFF re-encoded as PNG under the raster backend's decode ceilings, anything undecodable as the raster's crossed placeholder. Crops, rotation, flips and opacity carry over.</li>
+        <li><strong>Shapes, clips, layers, gradients and shadows</strong> map to SVG paths, <code>clipPath</code>, groups (a multiplied layer as <code>mix-blend-mode: multiply</code>), gradients and <code>feGaussianBlur</code>.</li>
+        <li><strong>Not drawn yet (stated, not hidden):</strong> colour glyphs (COLR and bitmap emoji) are drawn from their outline glyph when the face has one, in the run's colour, else omitted; arrowheads on lines; glyph ink effects (shadow, emboss, outline).</li>
+        <li><strong>Determinism.</strong> Coordinates are the list's twips with one decimal, ids are assigned in paint order, so the same document gives the same bytes on every platform with the bundled faces.</li>
+        </ul>
+        <p class="doc-body"><strong>Guards</strong> (<code>crates/opendoc/tests/svg.rs</code>):</p>
+        <ul class="doc-list">
+        <li><code>an_svg_page_is_well_formed_sized_and_carries_real_text</code> parses the page and reads its text layer back, <code>&amp;</code> and <code>&lt;</code> included.</li>
+        <li><code>an_svg_page_draws_what_the_png_page_draws</code> rasterizes the SVG with an independent renderer (resvg, no text stack) and compares it with the engine's own PNG of the page: mean channel difference under 1.0 and under 0.2% of pixels visibly different, on a built page and on the sample's second page (no pictures: this resvg build decodes none). The residue is antialiasing and the raster's stroke widths, which are device pixels at the render resolution where the PDF writer and the SVG read them as pixels at 96 dpi.</li>
+        <li><code>svg_pages_are_the_same_bytes_on_every_platform</code> holds <code>tests/svg.golden</code>: FNV-1a and length of the first three sample pages and one built page. It was blessed on macOS arm64 (<code>OPENDOC_BLESS=1 cargo test -p opendoc --test svg</code>, recorded in its <code>#</code> lines); CI's Linux <code>test</code> job and the macOS and Windows <code>platform</code> jobs are its cross-platform check. <code>.gitattributes</code> keeps it LF.</li>
+        <li>Each binding renders a page and finds its text (<code>objects.test.mjs</code>, <code>test_objects.py</code>, <code>ConformanceTest</code>, <code>abi.rs</code>, <code>cli.rs</code>).</li>
+        <li><strong>Mutations</strong>, each red then restored: glyph outlines not flipped (the raster comparison, 0.439% of pixels visibly different, and the golden); the text layer dropped (&quot;the text layer reads \&quot;Vector pages\&quot;: \&quot;\&quot;&quot;).</li>
         </ul>
         <p class="doc-body">[poi]: https://poi.apache.org/components/document/ [pydocx]: https://python-docx.readthedocs.io/en/latest/api/text.html [pydocx-gh]: https://github.com/python-openxml/python-docx [docx4j]: https://github.com/plutext/docx4j [oxsdk]: https://github.com/dotnet/Open-XML-SDK [aspose-layout]: https://docs.aspose.com/words/net/rendering/ [aspose]: https://products.aspose.com/words/ [docxjs]: https://github.com/VolodymyrBaydalka/docxjs [mammoth]: https://github.com/mwilliamson/mammoth.js [uniffi]: https://mozilla.github.io/uniffi-rs/latest/ [uniffi-readme]: https://github.com/mozilla/uniffi-rs [jep454]: https://openjdk.org/jeps/454</p>
         <p class="doc-body">[docxjs-readme]: https://raw.githubusercontent.com/dolanmiu/docx/master/README.md [docxjs-docs]: https://github.com/dolanmiu/docx/tree/master/docs/usage [dt-tags]: https://docxtemplater.com/docs/tag-types/ [dt-config]: https://docxtemplater.com/docs/configuration/ [dt-errors]: https://docxtemplater.com/docs/errors/ [dt-pricing]: https://docxtemplater.com/pricing/ [pydocx-home]: https://python-docx.readthedocs.io/en/latest/ [pydocx-quick]: https://python-docx.readthedocs.io/en/latest/user/quickstart.html [pydocx-comments]: https://python-docx.readthedocs.io/en/latest/user/comments.html [docxtpl]: https://docxtpl.readthedocs.io/en/latest/ [poi-doc]: https://poi.apache.org/apidocs/dev/org/apache/poi/xwpf/usermodel/XWPFDocument.html [poi-run]: https://poi.apache.org/apidocs/dev/org/apache/poi/xwpf/usermodel/XWPFRun.html [docx4j-api]: https://raw.githubusercontent.com/plutext/docx4j/master/docx4j-core/src/main/java/org/docx4j/Docx4J.java [docx4j-blog]: https://www.docx4java.org/blog/?p=148 [aspose-doc]: https://reference.aspose.com/words/java/com.aspose.words/document/ [aspose-builder]: https://reference.aspose.com/words/net/aspose.words/documentbuilder/ [aspose-replace]: https://reference.aspose.com/words/net/aspose.words/range/replace/ [aspose-layout-collector]: https://reference.aspose.com/words/java/com.aspose.words/layoutcollector/</p>

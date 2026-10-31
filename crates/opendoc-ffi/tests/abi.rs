@@ -227,3 +227,19 @@ fn pictures_headers_notes_and_sections_are_edits_through_the_abi() {
     // SAFETY: freed once.
     unsafe { opendoc_free(doc) };
 }
+
+#[test]
+fn a_page_renders_as_svg_through_the_abi() {
+    // SAFETY: SAMPLE is a live slice; options are NULL.
+    let doc = unsafe { opendoc_open(SAMPLE.as_ptr(), SAMPLE.len(), std::ptr::null()) };
+    assert!(!doc.is_null(), "{}", last_error());
+    // SAFETY: a live handle.
+    let svg = take(unsafe { opendoc_render_svg(doc, 0) });
+    assert!(svg.starts_with(b"<svg "));
+    // SAFETY: a live handle; a page past the end is a coded error, not a crash.
+    let past = unsafe { opendoc_render_svg(doc, 999) };
+    assert!(past.is_null());
+    assert!(!last_error().is_empty());
+    // SAFETY: freed once.
+    unsafe { opendoc_free(doc) };
+}

@@ -779,6 +779,21 @@ impl Document {
             .map_err(|e| Error::new(ErrorCode::Render, e.to_string()))
     }
 
+    /// One page as SVG, from the same layout [`Document::render_page_png`] and
+    /// [`Document::to_pdf`] draw: glyph outlines from the faces the layout
+    /// measured with, a transparent real-text layer over them for selection and
+    /// search, pictures embedded (`docs/176` §12.13). Deterministic: the same
+    /// document gives the same bytes on every platform with the bundled faces.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorCode::InvalidArgument`] past the last page.
+    pub fn render_page_svg(&self, index: usize) -> Result<String> {
+        self.layout()
+            .render_page_svg(index)
+            .map_err(|e| Error::invalid(e.to_string()))
+    }
+
     /// A real-text vector PDF of the current state, from the same layout.
     ///
     /// # Errors

@@ -100,3 +100,12 @@ test("sections are added, typed and set up, atomically", () => {
   assert.throws(() => doc.edit([{ op: "addSection" }, { op: "setPageSetup", section: 9, setup: {} }]), /section 9/);
   assert.deepEqual(doc.save("json").bytes, before, "a refused batch changed nothing");
 });
+
+test("a page renders as SVG, from the same layout, with its text", () => {
+  const doc = Document.create();
+  doc.addParagraph("Vector & <text>");
+  const svg = doc.renderPageSvg(0);
+  assert.ok(svg.startsWith("<svg "), svg.slice(0, 40));
+  assert.match(svg, /<text [^>]*>Vector &amp; &lt;text&gt;<\/text>/);
+  assert.throws(() => doc.renderPageSvg(5), /page/);
+});

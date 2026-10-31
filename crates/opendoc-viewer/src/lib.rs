@@ -58,6 +58,7 @@ use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::text::LineBreak;
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{BlockNode, Document};
+use casual_doc_render::svg::{SvgTextSource, render_svg};
 use casual_doc_render::{MediaSource, RegistryFontSource, Surface, render};
 
 #[cfg(feature = "wasm")]
@@ -283,6 +284,9 @@ pub struct ViewerDocument {
     /// Built on the first per-page text request and kept until the next
     /// layout: one O(document) walk instead of one per page.
     text_index: OnceCell<TextIndex>,
+    /// Every paragraph's text on every surface, for the SVG text layer: built on
+    /// the first SVG page.
+    svg_texts: OnceCell<HashMap<NodeId, String>>,
 }
 
 impl fmt::Debug for ViewerDocument {
@@ -370,6 +374,7 @@ impl ViewerDocument {
             font_needs: Vec::new(),
             missing: Vec::new(),
             text_index: OnceCell::new(),
+            svg_texts: OnceCell::new(),
         };
         doc.relayout();
         doc
@@ -515,6 +520,37 @@ impl ViewerDocument {
             .0
             .encode_png()
             .map_err(|error| ViewerError::Encode(format!("{error:?}")))
+    }
+
+    /// One page as SVG, from the same layout the PNG and the PDF are drawn from:
+    /// glyph outlines from the faces the layout measured with, a transparent
+    /// real-text layer over them, pictures embedded (`casual_doc_render::svg`).
+    ///
+    /// **O(page)**, after one O(document) text index on the first call.
+    ///
+    /// # Errors
+    ///
+    /// [`ViewerError::NoSuchPage`] past the end.
+    pub fn render_page_svg(&self, index: usize) -> Result<String, ViewerError> {
+        let page = self.page(index)?;
+        let registry = self.shaper.registry();
+        let fonts = RegistryFontSource::new(&registry);
+        let texts = self
+            .svg_texts
+            .get_or_init(|| all_paragraph_texts(&self.document));
+        let background = self
+            .document
+            .background()
+            .map_or([255, 255, 255], |c| [c.r, c.g, c.b]);
+        Ok(render_svg(
+            &compose_page(page),
+            page.page_size.width,
+            page.page_size.height,
+            background,
+            &fonts,
+            &self.media,
+            &MapText(texts),
+        ))
     }
 
     /// The rendered surface and its pixel size. **O(page)**.
@@ -678,6 +714,45 @@ impl ViewerDocument {
         .map(|export| export.bytes)
         .map_err(|error| ViewerError::Encode(format!("pdf: {error}")))
     }
+}
+
+/// The SVG text layer's source: paragraph id → text.
+struct MapText<'a>(&'a HashMap<NodeId, String>);
+
+impl SvgTextSource for MapText<'_> {
+    fn node_text(&self, node: NodeId) -> Option<String> {
+        self.0.get(&node).cloned()
+    }
+}
+
+/// Every paragraph's text, on every surface a page draws (body, headers,
+/// footers, notes), including those inside tables, content controls and text
+/// boxes, in the byte layout glyph clusters index. **O(document)**.
+fn all_paragraph_texts(document: &Document) -> HashMap<NodeId, String> {
+    fn add(blocks: &[BlockNode], out: &mut HashMap<NodeId, String>) {
+        casual_doc_model::v1::visit_paragraphs(blocks, &mut |paragraph| {
+            out.insert(paragraph.id, node_plain_text(&paragraph.inlines));
+            for inline in &paragraph.inlines {
+                if let casual_doc_model::v1::InlineNode::TextBox(text_box) = inline {
+                    add(&text_box.blocks, out);
+                }
+            }
+        });
+    }
+    let mut out = HashMap::new();
+    add(document.body(), &mut out);
+    let definitions = document.definitions();
+    for (_, story) in definitions.headers.iter().chain(definitions.footers.iter()) {
+        add(&story.blocks, &mut out);
+    }
+    for (_, note) in definitions
+        .footnotes
+        .iter()
+        .chain(definitions.endnotes.iter())
+    {
+        add(&note.blocks, &mut out);
+    }
+    out
 }
 
 /// Appends each paragraph's text and a newline, descending into tables and

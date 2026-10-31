@@ -46,6 +46,7 @@ await writeFile("out.docx", bytes);
 console.log(report.losses.length ? report.losses : "nothing lost");
 await writeFile("out.pdf", doc.toPdf());
 await writeFile("page1.png", doc.renderPagePng(0, { dpi: 150 }));
+await writeFile("page1.svg", doc.renderPageSvg(0));            // vector, with selectable text
 ```
 
 In a browser or a worker, call `await init()` first (or `init({ wasm: url })`),
@@ -167,7 +168,6 @@ section's header and footer until `setLinkedToPrevious(s, "header", false)` give
 
 - A paragraph loop inside a header or footer is reported as an error and not run. Value tags
   work there.
-- There is no SVG page output.
 - The module embeds every bundled face (Liberation, Carlito, Caladea, Roboto, Noto Emoji),
   so pixels do not depend on the machine. That makes the download large: `npm pack` prints
   its size.

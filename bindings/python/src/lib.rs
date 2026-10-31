@@ -233,6 +233,10 @@ impl NativeDocument {
         Ok(PyBytes::new(py, &png))
     }
 
+    fn render_page_svg(&self, index: usize) -> PyResult<String> {
+        self.inner.render_page_svg(index).map_err(err)
+    }
+
     /// Returns `(width, height, rgba)`.
     #[pyo3(signature = (index, dpi=96.0))]
     fn render_page<'py>(

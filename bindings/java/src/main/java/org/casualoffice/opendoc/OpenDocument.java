@@ -443,6 +443,11 @@ public final class OpenDocument implements AutoCloseable {
         return Native.renderPng(handle(), page, dpi);
     }
 
+    /** One page as SVG, from the same layout as the PNG and the PDF (glyph outlines, a transparent real-text layer). */
+    public String renderPageSvg(int page) {
+        return new String(Native.renderSvg(handle(), page), java.nio.charset.StandardCharsets.UTF_8);
+    }
+
     /** A real-text PDF from the same layout. */
     public byte[] toPdf() {
         return Native.toPdf(handle());

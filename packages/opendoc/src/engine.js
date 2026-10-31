@@ -535,6 +535,10 @@ export class Document {
     const rgba = call(() => this.#doc.renderPageRgba(index, dpi));
     return { width: this.#doc.lastRenderWidth(), height: this.#doc.lastRenderHeight(), rgba };
   }
+  /** One page as SVG text: glyph outlines and a transparent real-text layer, from the same layout as the PNG and PDF. */
+  renderPageSvg(index) {
+    return call(() => this.#doc.renderPageSvg(index));
+  }
   /** One page as PNG bytes. */
   renderPagePng(index, { dpi = 96 } = {}) {
     return call(() => this.#doc.renderPagePng(index, dpi));
