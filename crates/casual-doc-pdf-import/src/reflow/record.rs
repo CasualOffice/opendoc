@@ -32,6 +32,24 @@ pub const RULE_THICKNESS: f64 = 2.5;
 pub const RULE_MIN_LENGTH: f64 = 4.0;
 /// Rotation (degrees) below which text counts as upright.
 const UPRIGHT_DEGREES: f64 = 0.5;
+/// A run turned at most this far is a skewed line (a scan fed a degree or
+/// two off square, read by OCR), not rotated text: it is laid level along
+/// its own baseline and grouped with the lines around it.
+pub const SKEW_DEGREES: f64 = 5.0;
+
+/// `run` laid level: its glyphs placed along a horizontal baseline from its
+/// first glyph, at their advances. O(glyphs).
+fn level(run: &GlyphRunEvidence) -> GlyphRunEvidence {
+    let mut flat = run.clone();
+    let origin = flat.glyphs.first().map(|g| g.origin).unwrap_or_default();
+    let mut x = origin.x;
+    for glyph in &mut flat.glyphs {
+        glyph.origin = casual_doc_pdf_read::Point { x, y: origin.y };
+        x += glyph.advance;
+    }
+    flat.rotation_degrees = 0.0;
+    flat
+}
 
 /// A block of text and the marked-content sequence it sits in.
 #[derive(Clone, Debug)]
@@ -386,6 +404,23 @@ impl PdfSourceState {
             annotations,
             ..SourcePage::default()
         };
+        // Skewed runs laid level first, so they group as the upright ones do
+        // (every line of a scan fed off square had been text of its own,
+        // reported rotated: 404 lines on one owner scan, and a page count
+        // four times the PDF's).
+        let levelled: Vec<Option<GlyphRunEvidence>> = page
+            .items
+            .iter()
+            .map(|item| match item {
+                PaintEvidence::Glyphs(run)
+                    if run.rotation_degrees.abs() > UPRIGHT_DEGREES
+                        && run.rotation_degrees.abs() <= SKEW_DEGREES =>
+                {
+                    Some(level(run))
+                }
+                _ => None,
+            })
+            .collect();
         // Upright runs, segmented by marked-content sequence.
         let mut rotated: Vec<SourceBlock> = Vec::new();
         let mut segment: Vec<&GlyphRunEvidence> = Vec::new();
@@ -424,7 +459,7 @@ impl PdfSourceState {
             segment.clear();
             n
         };
-        for item in &page.items {
+        for (at, item) in page.items.iter().enumerate() {
             // Glyphs or a picture end the run; only the item directly before
             // a run can be the picture it masks.
             match item {
@@ -440,18 +475,12 @@ impl PdfSourceState {
             }
             match item {
                 PaintEvidence::Glyphs(run) => {
+                    let run = levelled[at].as_ref().unwrap_or(run);
                     if run.rotation_degrees.abs() > UPRIGHT_DEGREES {
                         // Reflowed upright where it starts, as fixed layout
                         // frames it (`docs/182` G-3), and reported.
                         out.rotated_runs += 1;
-                        let mut flat = run.clone();
-                        let origin = flat.glyphs.first().map(|g| g.origin).unwrap_or_default();
-                        let mut x = origin.x;
-                        for glyph in &mut flat.glyphs {
-                            glyph.origin = casual_doc_pdf_read::Point { x, y: origin.y };
-                            x += glyph.advance;
-                        }
-                        flat.rotation_degrees = 0.0;
+                        let flat = level(run);
                         let (blocks, n) = group::blocks_counted(&[&flat], params);
                         comparisons += n;
                         rotated.extend(blocks.into_iter().map(|block| SourceBlock {

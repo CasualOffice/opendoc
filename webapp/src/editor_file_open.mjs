@@ -375,6 +375,9 @@ export function createFileOpen(ed) {
         actions: origin ? () => pdfCommands.summaryActions() : null,
       });
       // A scanned PDF is recognised straight away, downloading the models on first use.
+      // Its summary then waits for the recognised document: the open that
+      // recognition makes reports the final state, once.
+      const recognising = origin === "pdf" && pdfCommands.willAutoRecognise();
       if (origin === "pdf") queueMicrotask(() => pdfCommands.autoRecognise());
       ed.railOutline.disabled = ed.railPages.disabled = false;
       ed.reflowView.setEnabled();
@@ -422,7 +425,7 @@ export function createFileOpen(ed) {
       // Word says what it did to a PDF before you edit it; so does this, once,
       // after the pages are on screen. Not for a restored draft or a version:
       // those were summarised when they were first opened.
-      if (origin && !ed.activatingRestore) ed.compatFindings.open();
+      if (origin && !ed.activatingRestore && !recognising) ed.compatFindings.open();
       ed.buildOutline();
       ed.referenceCommands.numbering.refresh();
       ed.tocCommands.fields.refresh();
