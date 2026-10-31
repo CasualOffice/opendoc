@@ -519,7 +519,16 @@ fn float_extent_inlines(
         match inline {
             InlineNode::AnchoredDrawing(drawing) => {
                 let rect = resolve_anchor_rect(&drawing.anchor, drawing.extent, refs);
-                *bottom = (*bottom).max(rect.bottom());
+                // A picture behind the text that reaches past the middle of
+                // the page is the page's background (a letterhead printed as
+                // one page-sized picture, a watermark), not header content:
+                // Word runs the body over it. Reserving it pushed the body
+                // off every page, and the document paginated without end.
+                let background = drawing.anchor.behind_doc
+                    && rect.bottom().raw() > ctx.config.page_size.height.raw() / 2;
+                if !background {
+                    *bottom = (*bottom).max(rect.bottom());
+                }
             }
             InlineNode::EmbeddedObject(object) => {
                 if let Some(anchor) = &object.anchor {

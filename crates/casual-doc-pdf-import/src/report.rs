@@ -143,6 +143,7 @@ pub const FEATURES: &[&str] = &[
     PATTERN_FLATTENED,
     QUOTE_FROM_GLYPH_NAME,
     READING_ORDER_INFERRED,
+    SCAN_REPLACED_BY_TEXT,
     STYLE_INFERRED,
     SYMBOL_FONT_MAPPED,
     TABLE_CONTINUED,
@@ -278,6 +279,11 @@ pub const LINK_UNRESOLVED: &str = "pdf.import.link_unresolved";
 /// Reflow: a bullet or enumerator with a hanging indent became a numbered
 /// or bulleted list item.
 pub const LIST_INFERRED: &str = "pdf.import.list_inferred";
+/// Reflow: a scanned page whose text the recogniser read is that text in
+/// the flowing document; the scan behind it, whose words sit at their old
+/// places under lines that now run differently, is kept by the exact layout
+/// only.
+pub const SCAN_REPLACED_BY_TEXT: &str = "pdf.import.scan_replaced_by_text";
 /// Reflow: font clusters became the style sheet (Normal and Heading n).
 pub const STYLE_INFERRED: &str = "pdf.import.style_inferred";
 /// Reflow: a ruling-line grid, or whitespace-aligned columns above the

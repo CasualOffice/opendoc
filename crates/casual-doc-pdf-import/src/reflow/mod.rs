@@ -243,7 +243,15 @@ pub enum FloatWrap {
     Beside,
     /// It paints behind the text (`wp:wrapNone behindDoc`): art under text.
     Behind,
+    /// The page's background: a picture covering much of the page with text
+    /// over it, behind the text and anchored to the page where the PDF drew
+    /// it (`wp:wrapNone behindDoc`, page-relative), so it pushes nothing.
+    Background,
 }
+
+/// The share of a page's area a picture with text over it must cover to be
+/// the page's background rather than a picture in the text.
+pub const BACKGROUND_SHARE: f64 = 0.4;
 
 /// A graphic floated on the text element it belongs with.
 #[derive(Clone, Debug)]
@@ -474,6 +482,79 @@ fn tagged_table(cells: Vec<Element>) -> Element {
         floats,
         labels: Vec::new(),
     }
+}
+
+/// The share of a page a background covers to be the whole page's.
+pub const FULL_PAGE: f64 = 0.85;
+
+/// Takes out of the elements' floats every page background that repeats in
+/// the same place and size (2 pt; any that covers 85% of its page is one
+/// class) on at least two pages and half of them, and returns one of each,
+/// the second page's: a letterhead printed as a picture the size of the
+/// page. Each page's copy, floated on whichever paragraph the reflow put
+/// first on that page of the PDF, landed on arbitrary pages of the flowing
+/// document (twice on some, never on others). O(floats log floats).
+fn repeated_backgrounds(
+    elements: &mut [Element],
+    sizes: &[(f64, f64)],
+    work: &mut u64,
+) -> Vec<SourceImage> {
+    let pages = sizes.len();
+    let bucket = |v: f64| (v / 2.0).round() as i64;
+    // A background covering nearly the whole page is the page's, wherever a
+    // scanner or a producer put it a few points off: those are one class.
+    let key = |b: &Bounds, page: usize| {
+        let full = sizes
+            .get(page)
+            .is_some_and(|&(w, h)| b.width() * b.height() >= FULL_PAGE * w * h);
+        if full {
+            (i64::MIN, 0, 0, 0)
+        } else {
+            (
+                bucket(b.x0),
+                bucket(b.y0),
+                bucket(b.width()),
+                bucket(b.height()),
+            )
+        }
+    };
+    let mut seen: BTreeMap<(i64, i64, i64, i64), BTreeSet<usize>> = BTreeMap::new();
+    for e in elements.iter() {
+        for f in &e.floats {
+            *work += 1;
+            if f.wrap == FloatWrap::Background {
+                seen.entry(key(&f.graphic.bounds(), f.page))
+                    .or_default()
+                    .insert(f.page);
+            }
+        }
+    }
+    let repeated: BTreeSet<(i64, i64, i64, i64)> = seen
+        .into_iter()
+        .filter(|(_, on)| on.len() >= 2 && on.len() * 2 >= pages)
+        .map(|(k, _)| k)
+        .collect();
+    if repeated.is_empty() {
+        return Vec::new();
+    }
+    let mut out: BTreeMap<(i64, i64, i64, i64), SourceImage> = BTreeMap::new();
+    for e in elements.iter_mut() {
+        e.floats.retain(|f| {
+            let k = key(&f.graphic.bounds(), f.page);
+            if f.wrap != FloatWrap::Background || !repeated.contains(&k) {
+                return true;
+            }
+            if let Graphic::Image(image) = &f.graphic {
+                // The second page's copy: a first page is the likeliest to
+                // differ.
+                if f.page > 0 || !out.contains_key(&k) {
+                    out.entry(k).or_insert_with(|| image.clone());
+                }
+            }
+            false
+        });
+    }
+    out.into_values().collect()
 }
 
 /// The digit runs of a cell's text, in order. O(characters).
@@ -896,6 +977,9 @@ pub enum PartObject {
     Table(ITable, usize, BTreeSet<(usize, usize, usize)>),
     /// A picture, drawn where the PDF placed it.
     Image(SourceImage),
+    /// A page background repeated on the pages (a letterhead printed as one
+    /// picture the size of the page), behind the text on every page.
+    Background(SourceImage),
 }
 
 /// The header and footer parts, keyed by (is footer, variant).
@@ -1430,6 +1514,7 @@ pub fn build(
             .map_or((612.0, 792.0), |((w, h), _)| (w as f64, h as f64))
     };
     let mut masks = 0;
+    let mut scans_replaced = 0;
     let mut vectors_placed = 0;
     let mut floats = 0;
     let mut rotated = 0;
@@ -1836,6 +1921,46 @@ pub fn build(
             let vector = matches!(graphic, Graphic::Vector(_));
             vectors_placed += u32::from(vector);
             work.graphics += text_rects.len() as u64;
+            // A picture covering much of the page with text over it is the
+            // page's background: before this it was an inline picture a page
+            // tall, and the text it was behind came after it.
+            if !vector && b.width() * b.height() >= BACKGROUND_SHARE * page.width * page.height {
+                let over = text_rects
+                    .iter()
+                    .find(|(_, t)| {
+                        t.x0 < rect.x1 && t.x1 > rect.x0 && t.y0 < rect.y1 && t.y1 > rect.y0
+                    })
+                    .map(|(i, _)| *i);
+                // A scan whose text is the recogniser's: the flowing document
+                // is that text, and the scan behind it (its words at their
+                // old places, now under different lines) is left to the exact
+                // layout.
+                let optical = text_rects
+                    .iter()
+                    .filter(|(_, t)| {
+                        t.x0 < rect.x1 && t.x1 > rect.x0 && t.y0 < rect.y1 && t.y1 > rect.y0
+                    })
+                    .all(|(i, _)| match &elements[*i].kind {
+                        EKind::Text(lines) => lines
+                            .iter()
+                            .flat_map(|l| l.chars.iter())
+                            .all(|c| c.style.font == crate::ocr::OCR_FONT),
+                        _ => false,
+                    });
+                if over.is_some() && optical {
+                    scans_replaced += 1;
+                    continue;
+                }
+                if let Some(anchor) = over {
+                    floats += 1;
+                    elements[anchor].floats.push(Float {
+                        page: page.index,
+                        graphic,
+                        wrap: FloatWrap::Background,
+                    });
+                    continue;
+                }
+            }
             if let Some((anchor, wrap)) = placement(&rect, vector, &text_rects) {
                 floats += 1;
                 elements[anchor].floats.push(Float {
@@ -1978,8 +2103,23 @@ pub fn build(
     let continued = tables::continue_across_pages(&mut flow.elements, &mut work.tables);
     findings.record(report::TABLE_CONTINUED, Outcome::Mapped, continued, None);
     // Tables and pictures repeated at the top or bottom of the pages are
-    // the header's and the footer's, not body content on every page.
-    let objects = repeated_objects(&mut flow.elements, &state.pages, &mut work.furniture);
+    // the header's and the footer's, not body content on every page; a
+    // background repeated on the pages is the header's too, behind the text
+    // of every page.
+    let mut objects = repeated_objects(&mut flow.elements, &state.pages, &mut work.furniture);
+    objects.extend(
+        repeated_backgrounds(
+            &mut flow.elements,
+            &state
+                .pages
+                .iter()
+                .map(|p| (p.width, p.height))
+                .collect::<Vec<_>>(),
+            &mut work.furniture,
+        )
+        .into_iter()
+        .map(|image| (false, false, image.bounds.y0, PartObject::Background(image))),
+    );
     if !objects.is_empty() {
         findings.record(
             report::HEADER_FOOTER_INFERRED,
@@ -1992,6 +2132,15 @@ pub fn build(
             if first {
                 first_variant.push((footer, top, object));
                 continue;
+            }
+            // A background is on every page: in the first-page and even-page
+            // header parts too, when the text made them.
+            if matches!(object, PartObject::Background(_)) {
+                for variant in [Variant::First, Variant::Even] {
+                    if let Some(part) = furniture.parts.get_mut(&(false, variant)) {
+                        part.objects.push((top, object.clone()));
+                    }
+                }
             }
             furniture
                 .parts
@@ -2062,6 +2211,12 @@ pub fn build(
         findings.record(report::TAG_STRUCTURE_IGNORED, Outcome::Degraded, 1, None);
     }
     findings.record(report::VECTOR_OMITTED, Outcome::Omitted, masks, None);
+    findings.record(
+        report::SCAN_REPLACED_BY_TEXT,
+        Outcome::Degraded,
+        scans_replaced,
+        None,
+    );
     findings.record(report::VECTOR_PLACED, Outcome::Mapped, vectors_placed, None);
     findings.record(report::FLOAT_INFERRED, Outcome::Mapped, floats, None);
     findings.record(report::TEXT_ROTATED, Outcome::Degraded, rotated, None);

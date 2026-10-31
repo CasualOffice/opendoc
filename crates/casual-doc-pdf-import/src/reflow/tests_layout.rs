@@ -9,7 +9,7 @@ use casual_doc_model::v1::{
     Alignment, BlockNode, Document, HeightRule, InlineNode, Paragraph, Spacing,
 };
 // Own line: sections and drawings.
-use casual_doc_model::v1::{FieldKind, GroupChild, SectionType};
+use casual_doc_model::v1::{FieldKind, GroupChild, HorizontalAnchor, SectionType, VerticalAnchor};
 
 use crate::synth::{self, Page, text};
 use crate::{PdfImportError, PdfReadLimits, Reflowed, import_pdf};
@@ -875,4 +875,87 @@ fn a_repeated_title_block_and_logo_are_the_header_with_page_fields() {
         _ => false,
     });
     assert!(logo, "the logo is in the header");
+}
+
+/// `pages` pages, each a picture the size of the page (a letterhead) drawn
+/// first, with prose over it; the last page's picture is `last` instead.
+fn letterhead_pdf(pages: usize) -> Vec<u8> {
+    let mut pdf = synth::Pdf::default();
+    let image = pdf.stream(
+        "/Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceGray /BitsPerComponent 8",
+        &[200u8; 16],
+    );
+    let prose = full("prose");
+    let lines: Vec<&str> = std::iter::repeat_n(prose.as_str(), 20).collect();
+    let content = format!(
+        "q 612 0 0 792 0 0 cm /Im1 Do Q\n{}",
+        text("F1", 11.0, 72.0, 640.0, 14.0, &lines)
+    );
+    let all: Vec<Page> = (0..pages).map(|_| Page::new(content.clone())).collect();
+    synth::document_in(
+        &mut pdf,
+        &all,
+        &format!("{COURIER} /XObject << /Im1 {image} 0 R >>"),
+        "",
+        |_| String::new(),
+    )
+}
+
+fn anchored(inlines: &[InlineNode]) -> Vec<&casual_doc_model::v1::AnchoredDrawing> {
+    inlines
+        .iter()
+        .filter_map(|i| match i {
+            InlineNode::AnchoredDrawing(d) => Some(d.as_ref()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_page_sized_picture_under_text_is_a_background_not_an_inline_picture() {
+    // One page: the picture is behind the text, page-anchored where the PDF
+    // drew it, and pushes nothing (no inline picture in the body).
+    let reflowed = reflow_of(letterhead_pdf(1));
+    let document = &reflowed.document;
+    assert!(
+        !document.body().iter().any(|b| matches!(
+            b,
+            BlockNode::Paragraph(p) if p.inlines.iter().any(|i| matches!(i, InlineNode::Drawing(_)))
+        )),
+        "no inline picture"
+    );
+    let backgrounds: Vec<_> = paragraphs(document)
+        .into_iter()
+        .flat_map(|p| anchored(&p.inlines))
+        .collect();
+    assert_eq!(backgrounds.len(), 1);
+    let anchor = &backgrounds[0].anchor;
+    assert!(anchor.behind_doc);
+    assert_eq!(anchor.horizontal.relative_from, HorizontalAnchor::Page);
+    assert_eq!(anchor.vertical.relative_from, VerticalAnchor::Page);
+}
+
+#[test]
+fn a_background_on_every_page_is_the_headers_letterhead() {
+    // Three pages with the same background: one copy, in the header, behind
+    // the text of every page; none left in the body.
+    let reflowed = reflow_of(letterhead_pdf(3));
+    let document = &reflowed.document;
+    let in_body: usize = paragraphs(document)
+        .into_iter()
+        .map(|p| anchored(&p.inlines).len())
+        .sum();
+    assert_eq!(in_body, 0);
+    let headers = &document.definitions().headers;
+    let behind: Vec<bool> = headers
+        .iter()
+        .flat_map(|(_, h)| h.blocks.iter())
+        .filter_map(|b| match b {
+            BlockNode::Paragraph(p) => Some(anchored(&p.inlines)),
+            _ => None,
+        })
+        .flatten()
+        .map(|d| d.anchor.behind_doc)
+        .collect();
+    assert_eq!(behind, vec![true], "{headers:?}");
 }

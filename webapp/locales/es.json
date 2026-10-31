@@ -2650,6 +2650,7 @@
   "findings.feature.pdfJustification": "Texto justificado deducido del ancho de las líneas",
   "findings.feature.pdfPageBreaks": "Saltos de página deducidos de dónde terminan las páginas",
   "findings.feature.pdfFloats": "Imágenes y dibujos flotantes junto a su texto o detrás de él",
+  "findings.feature.pdfScanReplaced": "Páginas escaneadas mostradas como su texto reconocido (el escaneo queda en el diseño exacto)",
   "findings.feature.pdfDecorations": "Subrayados, resaltados, sombreados y bordes dibujados como formas devueltos a su texto",
   "findings.feature.pdfVectorsPlaced": "Dibujos colocados como formas",
   "pdfImport.title": "Abriendo {name}",

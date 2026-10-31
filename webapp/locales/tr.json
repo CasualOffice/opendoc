@@ -2639,6 +2639,7 @@
   "findings.feature.pdfJustification": "Satır genişliklerinden çıkarılan iki yana yaslama",
   "findings.feature.pdfPageBreaks": "Sayfa sonlarından çıkarılan sayfa sonları",
   "findings.feature.pdfFloats": "Resimler ve çizimler metnin yanına veya arkasına yerleştirildi",
+  "findings.feature.pdfScanReplaced": "Taranan sayfalar tanınan metin olarak gösterildi (tarama tam düzende kalır)",
   "findings.feature.pdfDecorations": "Şekil olarak çizilen alt çizgiler, vurgular, gölgelendirme ve kenarlıklar metne geri verildi",
   "findings.feature.pdfVectorsPlaced": "Çizimler şekil olarak yerleştirildi",
   "pdfImport.title": "{name} açılıyor",

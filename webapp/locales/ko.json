@@ -2628,6 +2628,7 @@
   "findings.feature.pdfJustification": "줄 너비에서 추정한 양쪽 맞춤",
   "findings.feature.pdfPageBreaks": "페이지 끝에서 추정한 페이지 나누기",
   "findings.feature.pdfFloats": "그림과 도형을 텍스트 옆이나 뒤에 배치",
+  "findings.feature.pdfScanReplaced": "스캔한 페이지를 인식된 텍스트로 표시 (스캔 이미지는 정확한 레이아웃에 남음)",
   "findings.feature.pdfDecorations": "도형으로 그려진 밑줄, 강조, 음영, 테두리를 텍스트 서식으로 복원",
   "findings.feature.pdfVectorsPlaced": "도형으로 배치한 그리기 개체",
   "pdfImport.title": "{name} 여는 중",

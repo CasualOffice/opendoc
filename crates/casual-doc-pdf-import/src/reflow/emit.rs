@@ -64,18 +64,29 @@ const FLOAT_SIDE_GAP: f64 = 9.0;
 /// top. `None` is vector art on its own line (`wp:wrapTopAndBottom`). O(1).
 fn float_anchor(dx: f64, dy: f64, wrap: Option<FloatWrap>) -> DrawingAnchor {
     let emu = crate::fixed::emu;
+    // A background is placed on the page itself (`dx`, `dy` from its
+    // corner), whatever paragraph carries it.
+    let page = wrap == Some(FloatWrap::Background);
     DrawingAnchor {
         horizontal: AnchorHorizontal {
-            relative_from: HorizontalAnchor::Column,
+            relative_from: if page {
+                HorizontalAnchor::Page
+            } else {
+                HorizontalAnchor::Column
+            },
             position: HorizontalPosition::Offset(emu(dx)),
         },
         vertical: AnchorVertical {
-            relative_from: VerticalAnchor::Paragraph,
+            relative_from: if page {
+                VerticalAnchor::Page
+            } else {
+                VerticalAnchor::Paragraph
+            },
             position: VerticalPosition::Offset(emu(dy)),
         },
         wrap: match wrap {
             Some(FloatWrap::Beside) => WrapMode::Square,
-            Some(FloatWrap::Behind) => WrapMode::None,
+            Some(FloatWrap::Behind | FloatWrap::Background) => WrapMode::None,
             None => WrapMode::TopAndBottom,
         },
         wrap_text: None,
@@ -90,7 +101,7 @@ fn float_anchor(dx: f64, dy: f64, wrap: Option<FloatWrap>) -> DrawingAnchor {
             WrapDistances::default()
         },
         wrap_polygon: None,
-        behind_doc: wrap == Some(FloatWrap::Behind),
+        behind_doc: matches!(wrap, Some(FloatWrap::Behind | FloatWrap::Background)),
         allow_overlap: true,
     }
 }
@@ -330,7 +341,9 @@ impl Emitter<'_> {
         let mut out = Vec::with_capacity(floats.len());
         for float in floats {
             let b = float.graphic.bounds();
-            let (dx, dy) = if float.page == page {
+            let (dx, dy) = if float.wrap == FloatWrap::Background {
+                (b.x0, b.y0)
+            } else if float.page == page {
                 (b.x0 - left, b.y0 - top)
             } else {
                 (0.0, 0.0)
@@ -1745,7 +1758,12 @@ pub(crate) fn emit(
         .get(&(false, Variant::Default))
         .and_then(|part| {
             let row = part.rows.first().and_then(|row| row.first()).map(|l| l.top);
-            let object = part.objects.iter().map(|o| o.0).reduce(f64::min);
+            let object = part
+                .objects
+                .iter()
+                .filter(|o| !matches!(o.1, super::PartObject::Background(_)))
+                .map(|o| o.0)
+                .reduce(f64::min);
             match (row, object) {
                 (Some(a), Some(b)) => Some(a.min(b)),
                 (a, b) => a.or(b),
@@ -1758,6 +1776,43 @@ pub(crate) fn emit(
         .and_then(|part| part.rows.last())
         .and_then(|row| row.last())
         .map(|l| l.bottom);
+    // A header's or footer's pictures and tables are page-anchored or sit
+    // in the part; the body clears them (the body of a page with a logo in
+    // the header had started under the logo).
+    let object_edge = |footer: bool| -> Option<f64> {
+        let part = flow.furniture.parts.get(&(footer, Variant::Default))?;
+        let edges = part.objects.iter().map(|(_, o)| match o {
+            super::PartObject::Image(image) => {
+                if footer {
+                    image.bounds.y0
+                } else {
+                    image.bounds.y1
+                }
+            }
+            // Behind the text: the body runs over it.
+            super::PartObject::Background(_) => {
+                if footer {
+                    f64::INFINITY
+                } else {
+                    f64::NEG_INFINITY
+                }
+            }
+            super::PartObject::Table(t, ..) => {
+                if footer {
+                    t.bounds.1
+                } else {
+                    t.bounds.3
+                }
+            }
+        });
+        if footer {
+            edges.reduce(f64::min)
+        } else {
+            edges.reduce(f64::max)
+        }
+    };
+    let by0 = object_edge(false).map_or(by0, |bottom| by0.max(bottom + 4.0));
+    let by1 = object_edge(true).map_or(by1, |top| by1.min(top - 4.0));
     let margins = PageMargins {
         top_twips: twips(by0.max(0.0)),
         bottom_twips: twips((page_h - by1).max(0.0)),
@@ -2742,7 +2797,8 @@ fn furniture_part(
                     emitter.numbered_table(table, Some((page + 1, total_pages, varying)))?;
                 placed.push((*top, BlockNode::Table(Box::new(built))));
             }
-            super::PartObject::Image(image) => {
+            super::PartObject::Image(image) | super::PartObject::Background(image) => {
+                let behind = matches!(object, super::PartObject::Background(_));
                 let media = emitter.media(image)?;
                 let b = image.bounds;
                 emitter.z += 1;
@@ -2768,7 +2824,7 @@ fn furniture_part(
                             wrap_text: None,
                             wrap_distances: WrapDistances::default(),
                             wrap_polygon: None,
-                            behind_doc: false,
+                            behind_doc: behind,
                             allow_overlap: true,
                         },
                         descr: None,
