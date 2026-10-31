@@ -2465,6 +2465,8 @@ body.phone-mode .autocorrect-body {
 }
 
 .dialog-listbox {
+  /* The product's field, not the OS list chrome (docs/115 §6; styles-control). */
+  appearance: none;
   width: 100%;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);

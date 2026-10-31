@@ -393,7 +393,8 @@ test("every <select> in the chrome wears the product's field, not the OS's", asy
         which:
           el.id || el.className || `${el.parentElement?.className} > select`,
         appearance: cs.appearance,
-        hasCaret: cs.backgroundImage !== "none",
+        // A list box (several rows shown) has no drop-down, so no caret to draw.
+        hasCaret: el.size > 1 || el.multiple || cs.backgroundImage !== "none",
       };
     }),
   );
