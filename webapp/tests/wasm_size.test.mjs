@@ -229,8 +229,11 @@ const PDF_WASM = fileURLToPath(new URL("../pkg-pdf/casual_doc_wasm_pdf_bg.wasm",
 const PDF_GLUE = fileURLToPath(new URL("../pkg-pdf/casual_doc_wasm_pdf.js", import.meta.url));
 const MAIN_GLUE = fileURLToPath(new URL("../pkg/casual_doc_wasm.js", import.meta.url));
 // MEASURED by CI at 9,359,261 B (the 8,500,000 estimate predated reflow, the P3
-// fonts and the save planner in this module); the ceiling is that plus ~128 KiB.
-const MAX_PDF_TOTAL_BYTES = 9_490_000;
+// fonts and the save planner in this module), then at 9,534,441 B after the
+// reflow-quality work of `docs/182` §18.11 (+175 KB: the measured rhythm, the
+// decorations pass, borderless-table fitting, figures with their labels and
+// repeated header objects). The ceiling is that plus ~160 KiB.
+const MAX_PDF_TOTAL_BYTES = 9_700_000;
 const MIN_PDF_TOTAL_BYTES = 1_000_000;
 
 /** Every name a wasm-bindgen glue file exports. */
