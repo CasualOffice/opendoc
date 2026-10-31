@@ -315,7 +315,8 @@ mod pdf_import;
 // gives; the lowerings are `casual_doc_command::sections`, shared with agents.
 mod running;
 
-mod ai; // `editor.ai`: the in-page assistant's reads and private preview (`docs/181` §4.4).
+mod ai;
+mod ai_turn; // a live Casual AI co-editing turn (`docs/183` §23). // `editor.ai`: the in-page assistant's reads and private preview (`docs/181` §4.4).
 // The opt-in sparse-strip raster (`docs/architecture/179`, ADR-073 Proposed): one more export
 // with `renderPage`'s contract, compiled only with the `sparse-raster` feature.
 #[cfg(feature = "sparse-raster")]
@@ -713,6 +714,8 @@ pub struct WasmDocument {
     /// keystroke. The host owns gesture boundaries through `session`; the engine
     /// additionally requires exact caret continuity before coalescing history.
     typing_history: Option<TypingHistory>,
+    /// The open Casual AI co-editing turn, if any (`ai_turn.rs`, `docs/183` §23).
+    ai_turn: Option<ai_turn::AiTurn>,
     /// Set only while a FORM-AWARE action is running, so it may edit a document
     /// protected with `w:documentProtection w:edit="forms"`.
     ///
@@ -22943,6 +22946,7 @@ fn session_from_import(
         log: RevisionLog::default(),
         next_transaction: 0,
         typing_history: None,
+        ai_turn: None,
         editing_a_form_field: false,
         form_roles: form_roles::FormRoles::default(),
         capabilities: Capabilities::local(),
@@ -31871,6 +31875,7 @@ mod tests {
             log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
+            ai_turn: None,
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
@@ -32328,6 +32333,7 @@ mod tests {
             log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
+            ai_turn: None,
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
@@ -32645,6 +32651,7 @@ mod tests {
             log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
+            ai_turn: None,
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
@@ -36724,6 +36731,7 @@ mod tests {
             log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
+            ai_turn: None,
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
@@ -38110,6 +38118,7 @@ mod tests {
             log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
+            ai_turn: None,
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
@@ -39615,6 +39624,7 @@ mod tests {
             log: RevisionLog::default(),
             next_transaction: 0,
             typing_history: None,
+            ai_turn: None,
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),

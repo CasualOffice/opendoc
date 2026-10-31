@@ -195,6 +195,20 @@ pub enum Coalesce {
     /// earliest snapshot already restores the paragraph. Forward operations are still
     /// recorded in full, so nothing the OT substrate needs is lost.
     ContinueKeepingFirstInverse,
+    /// Join exactly `group`, a TURN group opened by [`RevisionLog::open_turn_group`], even when
+    /// other own commits landed after its last one.
+    ///
+    /// The co-editing assistant's rule (`docs/183` §23): an AI turn streams many commits into
+    /// the document while the person keeps typing elsewhere, and the whole turn must still be
+    /// ONE undo step. `Continue` cannot express that — it joins whatever own group is newest,
+    /// which would fold the person's keystrokes into the assistant's step or the other way
+    /// round. A turn group is skipped by `Continue`, appears once in every history read (at its
+    /// newest commit), and is undone through the rebasing path whenever anything is
+    /// interleaved with it, so undoing the turn never touches the person's own text.
+    ///
+    /// Past [`MAX_COMMITS_PER_TURN`] commits the turn opens a fresh group (two undo steps
+    /// rather than an unbounded one), as a long typing run does at [`MAX_COMMITS_PER_GROUP`].
+    Join(GroupId),
 }
 
 /// Boundary behavior when an edit occurs at a position.
@@ -743,6 +757,10 @@ pub struct RevisionLog {
     /// effect somebody else already removed. See [`RevisionLog::retire`]. Bounded by the
     /// groups the log holds, because eviction prunes it.
     retired: Vec<GroupId>,
+    /// Groups opened by [`RevisionLog::open_turn_group`]: the assistant's turns. Pruned with
+    /// eviction, like `retired`, so bounded by the groups the log holds plus the turns opened
+    /// since the last eviction.
+    turn_groups: Vec<GroupId>,
 }
 
 /// Undo steps retained before the oldest is dropped whole.
@@ -786,6 +804,18 @@ pub const DEFAULT_MAX_UNDO_GROUPS: usize = 256;
 /// comment cannot drift away from the code.
 pub const MAX_COMMITS_PER_GROUP: usize = 200;
 
+/// Commits one AI turn group ([`Coalesce::Join`]) may hold before the turn opens a new group.
+///
+/// Larger than [`MAX_COMMITS_PER_GROUP`] because a turn's commits are BATCHES, not keystrokes:
+/// the host writes the streamed answer every 50–100 ms, so 600 commits is 30–60 seconds of
+/// continuous streaming, longer than any answer the assistant asks for (its requests cap the
+/// completion at a few thousand tokens). A typing-sized cap would have split an ordinary long
+/// answer into several undo steps. Past it the turn splits, exactly as a long typing run does.
+///
+/// It raises the log's worst case honestly: [`RevisionLog::commit_ceiling`] is derived from
+/// this cap, because a log whose every retained step is a full turn is reachable.
+pub const MAX_COMMITS_PER_TURN: usize = 600;
+
 impl Default for RevisionLog {
     fn default() -> Self {
         Self::new(DEFAULT_MAX_UNDO_GROUPS)
@@ -804,6 +834,7 @@ impl RevisionLog {
             next_group: 0,
             max_groups: max_groups.max(1),
             retired: Vec::new(),
+            turn_groups: Vec::new(),
         }
     }
 
@@ -1022,7 +1053,7 @@ impl RevisionLog {
             operations: transaction.operations,
             inverse_operations: match transaction.coalesce {
                 Coalesce::ContinueKeepingFirstInverse => Vec::new(),
-                Coalesce::New | Coalesce::Continue => inverse_operations,
+                Coalesce::New | Coalesce::Continue | Coalesce::Join(_) => inverse_operations,
             },
             position_map: map,
         };
@@ -1066,11 +1097,15 @@ impl RevisionLog {
             Coalesce::Continue | Coalesce::ContinueKeepingFirstInverse => {
                 // The newest commit that is not somebody else's. O(the run of arrivals since),
                 // which the group bound caps.
+                // A turn group is never continued by the person's typing: the assistant and
+                // the person each keep their own undo steps while both write (`Join`).
                 if let Some(last) = self
                     .commits
                     .iter()
                     .rev()
-                    .find(|commit| commit.origin != Origin::Remote)
+                    .find(|commit| {
+                        commit.origin != Origin::Remote && !self.turn_groups.contains(&commit.group)
+                    })
                     .map(|commit| commit.group)
                     && !self.retired.contains(&last)
                     && self.commits_in_group(last) < MAX_COMMITS_PER_GROUP
@@ -1080,6 +1115,19 @@ impl RevisionLog {
                 self.allocate_group()
             }
             Coalesce::New => self.allocate_group(),
+            Coalesce::Join(group) => {
+                let joinable = self.turn_groups.contains(&group)
+                    && !self.retired.contains(&group)
+                    && self.commits_in_group(group) < MAX_COMMITS_PER_TURN;
+                if joinable {
+                    return group;
+                }
+                // Past the cap (or a group that is not a live turn): the turn continues in
+                // a fresh turn group, so `Continue` still never joins it.
+                let fresh = self.allocate_group();
+                self.turn_groups.push(fresh);
+                fresh
+            }
         }
     }
 
@@ -1101,9 +1149,39 @@ impl RevisionLog {
     /// product — and it cannot drift from the two rules that produce it.
     #[must_use]
     pub const fn commit_ceiling(&self) -> usize {
-        self.max_groups
-            .saturating_mul(2)
-            .saturating_mul(MAX_COMMITS_PER_GROUP)
+        // The larger of the two per-group caps: a turn group may hold up to
+        // `MAX_COMMITS_PER_TURN`, and nothing stops every retained group being one.
+        let per_group = if MAX_COMMITS_PER_TURN > MAX_COMMITS_PER_GROUP {
+            MAX_COMMITS_PER_TURN
+        } else {
+            MAX_COMMITS_PER_GROUP
+        };
+        self.max_groups.saturating_mul(2).saturating_mul(per_group)
+    }
+
+    /// Opens a TURN group: an undo step that commits join by [`Coalesce::Join`] for as long
+    /// as the turn lasts, whatever else is committed in between. Nothing is appended; the
+    /// group exists once its first commit lands. O(1) amortised.
+    pub fn open_turn_group(&mut self) -> GroupId {
+        // A turn that never committed leaves no commit for eviction to prune it with, so
+        // drop those here: the set stays bounded by the groups the log actually holds.
+        let held: Vec<GroupId> = self
+            .turn_groups
+            .iter()
+            .copied()
+            .filter(|turn| self.commits.iter().any(|commit| commit.group == *turn))
+            .collect();
+        self.turn_groups = held;
+        let group = self.allocate_group();
+        self.turn_groups.push(group);
+        group
+    }
+
+    /// Whether `group` was opened by [`RevisionLog::open_turn_group`]. O(turn groups held),
+    /// which eviction bounds.
+    #[must_use]
+    pub fn is_turn_group(&self, group: GroupId) -> bool {
+        self.turn_groups.contains(&group)
     }
 
     fn allocate_group(&mut self) -> GroupId {
@@ -1197,6 +1275,7 @@ impl RevisionLog {
             }
         } else {
             self.retired.retain(|retired| *retired != group);
+            self.turn_groups.retain(|turn| *turn != group);
         }
     }
 
@@ -1332,17 +1411,31 @@ impl RevisionLog {
     /// typing run interleaved with arrivals still read as one step: with them removed, an own
     /// group is contiguous again, because a local `Continue` only ever joins the newest own
     /// group.
+    ///
+    /// Deduplicated across the WHOLE walk, not only against the previous commit: an AI turn
+    /// group ([`Coalesce::Join`]) can be interleaved with the person's own groups, and it is
+    /// one step, read once, at its newest commit. For every other group this is the same
+    /// answer as before, because an own non-turn group is contiguous once arrivals are
+    /// skipped. O(retained commits × groups seen), both bounded by the log's caps.
     fn groups_newest_first_with_id(&self) -> impl Iterator<Item = (GroupId, Origin)> + '_ {
-        let mut seen: Option<GroupId> = None;
+        let mut last: Option<GroupId> = None;
+        let mut seen: Vec<GroupId> = Vec::new();
+        let interleaved = !self.turn_groups.is_empty();
         self.commits
             .iter()
             .rev()
             .filter(|commit| commit.origin != Origin::Remote)
             .filter_map(move |commit| {
-                if seen == Some(commit.group) {
+                if last == Some(commit.group) {
                     return None;
                 }
-                seen = Some(commit.group);
+                last = Some(commit.group);
+                if interleaved {
+                    if seen.contains(&commit.group) {
+                        return None;
+                    }
+                    seen.push(commit.group);
+                }
                 Some((commit.group, commit.origin))
             })
     }
@@ -1985,8 +2078,8 @@ mod tests {
         let ceiling = log.commit_ceiling();
         assert_eq!(
             ceiling,
-            2 * 2 * MAX_COMMITS_PER_GROUP,
-            "the ceiling must be derived from the two rules that produce it"
+            2 * 2 * MAX_COMMITS_PER_TURN.max(MAX_COMMITS_PER_GROUP),
+            "the ceiling must be derived from the rules that produce it"
         );
 
         let keystrokes = MAX_COMMITS_PER_GROUP * 3;
@@ -2164,5 +2257,152 @@ mod tests {
             2,
             "…and with After affinity moves past it"
         );
+    }
+
+    // ---- AI turns (`Coalesce::Join`, `docs/183` §23) ------------------------------------
+
+    /// Undoes `group` the way the editor does: the selective inverse, as an Undo commit.
+    fn undo_group(
+        log: &mut RevisionLog,
+        doc: &mut Document,
+        ids: &mut IdGenerator,
+        group: GroupId,
+    ) {
+        let ops = log
+            .selective_inverse(group, doc, ids)
+            .expect("the step can be undone");
+        let undo = transaction(
+            TransactionId::new(9_000 + u128::from(log.head().get())),
+            log.head(),
+            "Undo",
+            ops,
+        )
+        .with_origin(Origin::Undo { group });
+        log.apply(doc, undo).expect("undo applies");
+    }
+
+    #[test]
+    fn an_ai_turn_interleaved_with_the_persons_typing_is_one_step_and_spares_their_text() {
+        let (mut doc, nodes, mut ids) = document(2);
+        let mut log = RevisionLog::default();
+        let turn = log.open_turn_group();
+        // AI writes "Hel" in paragraph 0, the person types "ab" in paragraph 1, the AI
+        // writes "lo", the person types "c".
+        let ai = |log: &RevisionLog, id, offset, text| {
+            typing(id, log.head(), nodes[0], offset, text).coalescing(Coalesce::Join(turn))
+        };
+        let tx = ai(&log, 1, 0, "Hel");
+        log.apply(&mut doc, tx).expect("ai");
+        let tx = typing(2, log.head(), nodes[1], 0, "a");
+        log.apply(&mut doc, tx).expect("person");
+        let tx = typing(3, log.head(), nodes[1], 1, "b").coalescing(Coalesce::Continue);
+        log.apply(&mut doc, tx).expect("person");
+        let tx = ai(&log, 4, 3, "lo");
+        log.apply(&mut doc, tx).expect("ai");
+        let tx = typing(5, log.head(), nodes[1], 2, "c").coalescing(Coalesce::Continue);
+        log.apply(&mut doc, tx).expect("person");
+        assert_eq!(text_of(&doc, nodes[0]), "Hello");
+        assert_eq!(text_of(&doc, nodes[1]), "abc");
+        // The person's typing never joined the turn, and the turn never joined theirs:
+        // "c" continued the person's own word across the assistant's "lo".
+        let person: std::collections::BTreeSet<_> = log
+            .commits()
+            .filter(|c| c.group() != turn)
+            .map(Commit::group)
+            .collect();
+        assert_eq!(
+            person.len(),
+            1,
+            "the person's \"abc\" is one step of their own"
+        );
+        assert_eq!(log.commits().filter(|c| c.group() == turn).count(), 2);
+        // Undo order: newest occurrence first. The person's word, then the whole turn.
+        assert_eq!(log.undo_depth(), 2, "the interleaved turn is read ONCE");
+        let first = log.undo_target().expect("abc");
+        assert_ne!(first, turn);
+        undo_group(&mut log, &mut doc, &mut ids, first);
+        assert_eq!(text_of(&doc, nodes[1]), "");
+        assert_eq!(
+            text_of(&doc, nodes[0]),
+            "Hello",
+            "the person's undo spares the turn"
+        );
+        assert_eq!(log.undo_target(), Some(turn), "the turn is the next step");
+        undo_group(&mut log, &mut doc, &mut ids, turn);
+        assert_eq!(
+            text_of(&doc, nodes[0]),
+            "",
+            "one Undo takes the whole turn back"
+        );
+        assert_eq!(log.undo_target(), None);
+    }
+
+    #[test]
+    fn undoing_a_turn_spares_the_persons_later_text() {
+        let (mut doc, nodes, mut ids) = document(2);
+        let mut log = RevisionLog::default();
+        let turn = log.open_turn_group();
+        let tx = typing(1, log.head(), nodes[0], 0, "Hel").coalescing(Coalesce::Join(turn));
+        log.apply(&mut doc, tx).expect("ai");
+        let tx = typing(2, log.head(), nodes[1], 0, "ab");
+        log.apply(&mut doc, tx).expect("person");
+        let tx = typing(3, log.head(), nodes[0], 3, "lo").coalescing(Coalesce::Join(turn));
+        log.apply(&mut doc, tx).expect("ai");
+        assert_eq!(log.undo_target(), Some(turn));
+        undo_group(&mut log, &mut doc, &mut ids, turn);
+        assert_eq!(text_of(&doc, nodes[0]), "");
+        assert_eq!(
+            text_of(&doc, nodes[1]),
+            "ab",
+            "the person's interleaved word survives"
+        );
+        assert_ne!(
+            log.undo_target(),
+            Some(turn),
+            "the turn is not offered twice"
+        );
+        assert_eq!(log.undo_depth(), 1);
+    }
+
+    #[test]
+    fn reverting_a_turn_rebases_over_the_persons_edit_in_the_same_paragraph() {
+        let (mut doc, nodes, mut ids) = document(1);
+        let mut log = RevisionLog::default();
+        let turn = log.open_turn_group();
+        let tx = typing(1, log.head(), nodes[0], 0, "AI").coalescing(Coalesce::Join(turn));
+        log.apply(&mut doc, tx).expect("ai");
+        // The person types IN FRONT of the assistant's text.
+        let tx = typing(2, log.head(), nodes[0], 0, "me ");
+        log.apply(&mut doc, tx).expect("person");
+        assert_eq!(text_of(&doc, nodes[0]), "me AI");
+        undo_group(&mut log, &mut doc, &mut ids, turn);
+        assert_eq!(
+            text_of(&doc, nodes[0]),
+            "me ",
+            "the plain inverse would have deleted the person's \"me\" instead"
+        );
+    }
+
+    #[test]
+    fn a_turn_past_its_cap_continues_in_a_fresh_turn_group() {
+        let (mut doc, nodes, _ids) = document(1);
+        let mut log = RevisionLog::new(4);
+        let turn = log.open_turn_group();
+        for step in 0..=MAX_COMMITS_PER_TURN {
+            let tx = typing(step as u128 + 1, log.head(), nodes[0], step as u32, "x");
+            log.apply(&mut doc, tx.coalescing(Coalesce::Join(turn)))
+                .expect("batch");
+        }
+        assert_eq!(
+            log.commits().filter(|c| c.group() == turn).count(),
+            MAX_COMMITS_PER_TURN
+        );
+        let last = log.commits().last().expect("commit").group();
+        assert_ne!(last, turn);
+        assert!(
+            log.is_turn_group(last),
+            "the overflow is still a turn, never continued by typing"
+        );
+        assert!(log.commits().len() <= log.commit_ceiling());
     }
 }

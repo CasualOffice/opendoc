@@ -226,11 +226,14 @@ impl WasmDocument {
                 text("cursor"),
                 limit,
             ),
+            "table" => {
+                read::read_table(&session, text("table").unwrap_or(""), text("cursor"), limit)
+            }
             "trackedChanges" => read::list_tracked_changes(&session, text("cursor"), limit),
             "comments" => read::list_comments(&session, text("cursor"), limit),
             other => Err(AiError::invalid(format!(
-                "Unknown read `{}`; the reads are outline, read, search, trackedChanges and \
-                 comments.",
+                "Unknown read `{}`; the reads are outline, read, search, table, trackedChanges \
+                 and comments.",
                 casual_doc_ai::text::clip(other, 40)
             ))),
         }

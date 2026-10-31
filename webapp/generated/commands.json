@@ -375,7 +375,11 @@
     },
     {
       "emits": [
-        "InsertTable"
+        "InsertTable",
+        "UpdateReviewState",
+        "SplitParagraph",
+        "JoinParagraphs",
+        "SetParagraphProperties"
       ],
       "example": {
         "after": {
@@ -388,8 +392,8 @@
       "family": "tables",
       "id": "insert_table",
       "summary": "Insert an empty table (rows x columns, with a thin grid) after an anchor's top-level block.",
-      "trackable": "no",
-      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "trackable": "yes",
+      "trackableReason": null,
       "uiCommands": [
         "insert.table",
         "insert.tableDialog",
@@ -654,7 +658,7 @@
       "id": "text_to_table",
       "summary": "Convert consecutive paragraphs into a table, cutting each paragraph into cells at a separator (tab, comma, semicolon, a character) or one cell per paragraph.",
       "trackable": "no",
-      "trackableReason": "Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.",
+      "trackableReason": "Converting text to a table cannot be suggested yet: a tracked table insertion is modelled, but the conversion also REMOVES the source paragraphs, and a suggested paragraph removal that a reviewer could accept without the table (or the table without the removal) would lose text. Insert the table with insert_table and delete the paragraphs as separate suggestions, or use mode `direct`.",
       "uiCommands": [
         "insert.textToTable"
       ]
@@ -1569,7 +1573,9 @@
         "UpdateReviewState",
         "SplitParagraph",
         "JoinParagraphs",
-        "SetParagraphProperties"
+        "SetParagraphProperties",
+        "ReplaceTable",
+        "DeleteTable"
       ],
       "example": {
         "decision": "accept",

@@ -647,6 +647,20 @@ pub const fn admitted_by(op: &Operation) -> Capabilities {
         | Operation::SetNumberingInstance { .. } => {
             Capabilities::viewer().with_suggest().with_edit()
         }
+        // A whole table as one tracked change (`docs/183` §23): inserting a table whose rows
+        // are all `w:trPr/w:ins`, or a new paragraph whose mark is a tracked insertion, is a
+        // suggestion; replacing a table with every row marked deleted is a suggested deletion;
+        // clearing those marks, or removing a tracked-inserted table, is a review decision.
+        // Their untracked forms are `edit`, which the document-aware pass tells apart
+        // (`protection::is_tracked_only` / `is_review_only`).
+        Operation::InsertTable { .. } | Operation::InsertBlocks { .. } => {
+            Capabilities::viewer().with_suggest().with_edit()
+        }
+        Operation::ReplaceTable { .. } => Capabilities::viewer()
+            .with_suggest()
+            .with_review()
+            .with_edit(),
+        Operation::DeleteTable { .. } => Capabilities::viewer().with_review().with_edit(),
         _ => Capabilities::viewer().with_edit(),
     }
 }
@@ -690,6 +704,10 @@ pub fn refuse_if_not_permitted(
                     | Operation::SplitParagraph { .. }
                     | Operation::SetAbstractNumbering { .. }
                     | Operation::SetNumberingInstance { .. }
+                    | Operation::InsertTable { .. }
+                    | Operation::InsertBlocks { .. }
+                    | Operation::ReplaceTable { .. }
+                    | Operation::DeleteTable { .. }
             )
         {
             continue;
