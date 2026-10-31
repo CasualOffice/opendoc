@@ -2683,6 +2683,7 @@
   "findings.feature.pdfJustification": "ضبط مستنتج من عرض الأسطر",
   "findings.feature.pdfPageBreaks": "فواصل صفحات مستنتجة من نهايات الصفحات",
   "findings.feature.pdfFloats": "صور ورسومات عائمة بجانب نصها أو خلفه",
+  "findings.feature.pdfDecorations": "أُعيد التسطير والتمييز والتظليل والحدود المرسومة كأشكال إلى نصها",
   "findings.feature.pdfVectorsPlaced": "رسومات موضوعة كأشكال",
   "pdfImport.title": "جارٍ فتح {name}",
   "pdfImport.openFailed": "تعذّر فتح {name}: {message}",

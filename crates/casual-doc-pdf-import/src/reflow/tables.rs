@@ -86,6 +86,11 @@ pub struct ITable {
     pub border_color: Option<[u8; 3]>,
     /// The thickness of its rules, in points (the most common one).
     pub border_width: f64,
+    /// A borderless table's cell padding before its text, in points: the
+    /// distance from the fill behind its rows to its first column's text
+    /// (zero without one). Its cells' margins are this on the start side and
+    /// nothing on the end, so each column's text starts where the PDF's did.
+    pub pad: f64,
     /// Leading rows that repeat as a header on every page the table spans
     /// (`w:tblHeader`): the row a table continued across a page repeated.
     pub header_rows: usize,
@@ -417,6 +422,7 @@ fn build(
         border_color,
         border_width,
         header_rows: 0,
+        pad: 0.0,
     };
     let mut owner: Vec<Vec<usize>> = vec![vec![usize::MAX; cols]; rows];
     for r in 0..rows {
@@ -504,22 +510,105 @@ pub fn shade(table: &mut ITable, fills: &[Fill], work: &mut u64) {
     if meeting.is_empty() {
         return;
     }
+    let ruled = table.ruled;
     for cell in table.rows.iter_mut().flatten() {
-        let area = (cell.x1 - cell.x0) * (cell.y1 - cell.y0);
+        // A ruled cell is its rules' box; a borderless cell's box is its
+        // text (its band runs to the middle of the gap to the next row,
+        // which a row's fill does not reach).
+        let (x0, y0, x1, y1) = if ruled || cell.lines.is_empty() {
+            (cell.x0, cell.y0, cell.x1, cell.y1)
+        } else {
+            (
+                cell.lines
+                    .iter()
+                    .map(|l| l.x0)
+                    .fold(f64::INFINITY, f64::min),
+                cell.lines
+                    .iter()
+                    .map(|l| l.top)
+                    .fold(f64::INFINITY, f64::min),
+                cell.lines
+                    .iter()
+                    .map(|l| l.x1)
+                    .fold(f64::NEG_INFINITY, f64::max),
+                cell.lines
+                    .iter()
+                    .map(|l| l.bottom)
+                    .fold(f64::NEG_INFINITY, f64::max),
+            )
+        };
+        let area = (x1 - x0) * (y1 - y0);
         if area <= 0.0 {
             continue;
         }
         for fill in &meeting {
             *work += 1;
             let b = fill.bounds;
-            let w = (b.x1.min(cell.x1) - b.x0.max(cell.x0)).max(0.0);
-            let h = (b.y1.min(cell.y1) - b.y0.max(cell.y0)).max(0.0);
+            let w = (b.x1.min(x1) - b.x0.max(x0)).max(0.0);
+            let h = (b.y1.min(y1) - b.y0.max(y0)).max(0.0);
             if w * h >= SHADING_COVER * area {
                 let [r, g, bl, _] = fill.color;
                 cell.shading = ([r, g, bl] != [255, 255, 255]).then_some([r, g, bl]);
             }
         }
     }
+}
+
+/// Slack after a borderless table's last column's text, in points, for a
+/// substitute face that sets it wider.
+pub const CELL_MARGINS: f64 = 12.0;
+
+/// Widens a whitespace table to the fills painted behind its rows: a
+/// borderless table's shaded header row or banded rows run from the table's
+/// left to its right, while its bounds were only its text's, so the table
+/// reflowed as narrow as its text and the fills, wider than it, were placed
+/// as drawings beside it. A fill counts when it lies within the table's
+/// rows (half a row of slack) and meets its columns. O(fills).
+pub fn fit_to_fills(table: &mut ITable, fills: &[Fill], work: &mut u64) {
+    if table.ruled || table.rows.is_empty() {
+        return;
+    }
+    let (left, top, right, bottom) = table.bounds;
+    let slack = (bottom - top) / table.rows.len() as f64 / 2.0;
+    let (mut x0, mut x1) = (left, right);
+    for fill in fills {
+        *work += 1;
+        let b = fill.bounds;
+        let [r, g, bl, _] = fill.color;
+        if [r, g, bl] == [255, 255, 255]
+            || b.y0 < top - slack
+            || b.y1 > bottom + slack
+            || b.x1 <= left
+            || b.x0 >= right
+        {
+            continue;
+        }
+        x0 = x0.min(b.x0);
+        x1 = x1.max(b.x1);
+    }
+    if x1 > right {
+        if let Some(w) = table.columns.last_mut() {
+            *w += x1 - right;
+        }
+        for row in &mut table.rows {
+            if let Some(cell) = row.last_mut() {
+                cell.x1 = x1;
+            }
+        }
+    }
+    // Every column starts its padding before its text, so the widths
+    // between column starts are unchanged and the first cell's text keeps
+    // its place.
+    if x0 < left {
+        table.pad = (left - x0).min(12.0);
+        for row in &mut table.rows {
+            if let Some(cell) = row.first_mut() {
+                cell.x0 = x0;
+            }
+        }
+    }
+    // The bounds stay the text's: they set the page's body (its margins),
+    // which a fill reaching into the margin must not move.
 }
 
 /// Whether vector art is a table's shading: every path a flat fill of
@@ -532,6 +621,10 @@ pub fn is_shading(vector: &SourceVector, tables: &[ITable]) -> bool {
         // past the text by the cell padding.
         let slack = if t.ruled { 1.0 } else { 12.0 };
         let (left, top, right, bottom) = t.bounds;
+        // Its cells may reach past its text (`fit_to_fills`).
+        let cells = t.rows.iter().flatten();
+        let left = cells.clone().map(|c| c.x0).fold(left, f64::min);
+        let right = cells.map(|c| c.x1).fold(right, f64::max);
         b.x0 >= left - slack
             && b.x1 <= right + slack
             && b.y0 >= top - slack
@@ -998,8 +1091,11 @@ pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))]) -> ITable {
     let left = clusters.first().map_or(0.0, |c| c.0);
     let right = clusters.last().map_or(0.0, |c| c.1);
     let mut widths: Vec<f64> = clusters.windows(2).map(|w| w[1].0 - w[0].0).collect();
+    // The last column holds its widest text plus some slack: at exactly its
+    // text's width, the substitute face's slightly wider text wrapped ("12
+    // ms" became "12" over "ms" in a tab-leader list).
     if let Some(last) = clusters.last() {
-        widths.push((last.1 - last.0).max(1.0));
+        widths.push((last.1 - last.0).max(1.0) + CELL_MARGINS);
     }
     let top = columns
         .iter()

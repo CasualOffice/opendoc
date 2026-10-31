@@ -2661,6 +2661,7 @@
   "findings.feature.pdfJustification": "Вирівнювання за шириною визначено за довжиною рядків",
   "findings.feature.pdfPageBreaks": "Розриви сторінок визначено за кінцями сторінок",
   "findings.feature.pdfFloats": "Зображення та малюнки розміщено поруч із текстом або за ним",
+  "findings.feature.pdfDecorations": "Підкреслення, виділення, заливку та межі, намальовані фігурами, повернуто тексту",
   "findings.feature.pdfVectorsPlaced": "Малюнки розміщено як фігури",
   "pdfImport.title": "Відкриття {name}",
   "pdfImport.openFailed": "Не вдалося відкрити {name}: {message}",

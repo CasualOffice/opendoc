@@ -2661,6 +2661,7 @@
   "findings.feature.pdfJustification": "Выравнивание по ширине определено по длине строк",
   "findings.feature.pdfPageBreaks": "Разрывы страниц определены по концам страниц",
   "findings.feature.pdfFloats": "Изображения и рисунки размещены рядом с текстом или за ним",
+  "findings.feature.pdfDecorations": "Подчёркивания, выделения, заливка и границы, нарисованные фигурами, возвращены тексту",
   "findings.feature.pdfVectorsPlaced": "Рисунки размещены как фигуры",
   "pdfImport.title": "Открытие {name}",
   "pdfImport.openFailed": "Не удалось открыть {name}: {message}",

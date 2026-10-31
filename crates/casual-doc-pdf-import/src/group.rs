@@ -59,6 +59,9 @@ pub struct Style {
     pub fill: Option<Rgba8>,
     /// Render mode.
     pub mode: RenderMode,
+    /// Slanted by the text matrix: a synthesised italic
+    /// ([`casual_doc_pdf_read::GlyphRunEvidence::oblique`]).
+    pub oblique: bool,
 }
 
 /// One glyph placed on a line.
@@ -165,6 +168,7 @@ pub fn blocks_counted(runs: &[&GlyphRunEvidence], params: LayoutParams) -> (Vec<
             half_points: (run.size * 2.0).round().clamp(1.0, 65_534.0) as u32,
             fill: run.fill,
             mode: run.mode,
+            oblique: run.oblique,
         };
         for glyph in &run.glyphs {
             let c = Char {

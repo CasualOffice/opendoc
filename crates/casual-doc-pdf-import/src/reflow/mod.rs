@@ -28,6 +28,7 @@
 //! guarded by an n-versus-2n work test (SKILL §8), and the counters are on
 //! [`Reflowed::work`].
 
+pub mod decorate;
 mod emit;
 pub mod notes;
 pub mod order;
@@ -39,6 +40,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use casual_doc_model::v1::Document;
 use casual_doc_pdf_read::{AnnotationEvidence, AnnotationKind, Bounds, LinkTarget, StructNode};
+// Own line: rules made vector art.
+use casual_doc_pdf_read::{PathCommand, Point};
 
 pub use record::{Fill, PdfSourceState, Rule, SourceBlock, SourceImage, SourcePage, SourceVector};
 
@@ -80,6 +83,12 @@ pub struct PChar {
     pub note: Option<usize>,
     /// Comments anchored on it.
     pub comments: Vec<usize>,
+    /// Underlined (a rule under it, `decorate`).
+    pub underline: bool,
+    /// Struck through (a rule through it).
+    pub strike: bool,
+    /// Shaded (a fill tight behind its run: a highlight).
+    pub shade: Option<[u8; 3]>,
 }
 
 /// One line.
@@ -103,6 +112,12 @@ pub struct ILine {
     pub size: f64,
     /// Marked-content id.
     pub mcid: Option<i32>,
+    /// A rule under it that is its paragraph's bottom border: thickness in
+    /// points and colour (`decorate`).
+    pub border_below: Option<(f64, Option<[u8; 3]>)>,
+    /// A fill behind the whole line with room to spare: its paragraph's
+    /// shading (`decorate`).
+    pub shade: Option<[u8; 3]>,
 }
 
 impl ILine {
@@ -133,6 +148,9 @@ impl ILine {
                 link: None,
                 note: None,
                 comments: Vec::new(),
+                underline: false,
+                strike: false,
+                shade: None,
             })
             .collect();
         Self {
@@ -145,6 +163,8 @@ impl ILine {
             baseline,
             size,
             mcid,
+            border_below: None,
+            shade: None,
         }
     }
 
@@ -161,7 +181,7 @@ impl ILine {
         }
     }
 
-    fn text(&self) -> String {
+    pub(crate) fn text(&self) -> String {
         self.chars.iter().map(|c| c.text.as_str()).collect()
     }
 }
@@ -338,6 +358,9 @@ pub struct Element {
     pub lineage: Vec<StructNode>,
     /// Graphics floated on it (text elements only).
     pub floats: Vec<Float>,
+    /// Vector art only: the text drawn inside it (a chart's axis labels and
+    /// legend, a diagram's captions), drawn with it (`labels`).
+    pub labels: Vec<ILine>,
 }
 
 /// The ordinal of the nearest `role` element on a lineage.
@@ -449,7 +472,387 @@ fn tagged_table(cells: Vec<Element>) -> Element {
         region,
         lineage: Vec::new(),
         floats,
+        labels: Vec::new(),
     }
+}
+
+/// The digit runs of a cell's text, in order. O(characters).
+pub(crate) fn digit_runs(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut run = String::new();
+    for c in text.chars() {
+        if c.is_ascii_digit() {
+            run.push(c);
+        } else if !run.is_empty() {
+            out.push(std::mem::take(&mut run));
+        }
+    }
+    if !run.is_empty() {
+        out.push(run);
+    }
+    out
+}
+
+/// A cell's text. O(characters).
+pub(crate) fn cell_text(table: &ITable, r: usize, c: usize) -> String {
+    table
+        .rows
+        .get(r)
+        .and_then(|row| row.get(c))
+        .map(|cell| {
+            cell.lines
+                .iter()
+                .map(ILine::text)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
+}
+
+/// The digit runs of `table` that differ in some other instance of it:
+/// a running title block's page number changes from page to page, its form
+/// number and revision do not. O(cells x instances).
+fn varying_runs(table: &ITable, instances: &[&ITable]) -> BTreeSet<(usize, usize, usize)> {
+    let mut out = BTreeSet::new();
+    for (r, row) in table.rows.iter().enumerate() {
+        for c in 0..row.len() {
+            let mine = digit_runs(&cell_text(table, r, c));
+            for other in instances {
+                let theirs = digit_runs(&cell_text(other, r, c));
+                for (k, value) in mine.iter().enumerate() {
+                    if theirs.get(k).is_some_and(|t| t != value) {
+                        out.insert((r, c, k));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The share of a page, from its top or its bottom, a repeated table or
+/// picture must lie in to be the header's or the footer's.
+pub const OBJECT_BAND: f64 = 0.3;
+
+/// A repeated object's identity: footer or header, table or picture, its
+/// place (2 pt buckets, measured from its own edge of the page) and its
+/// grid's shape (a table) or its picture's type.
+type ObjectKey = (bool, bool, i64, i64, i64, i64, String);
+
+/// Takes out of `elements` every table and picture that repeats, in the
+/// same place with the same text, at the top or bottom of at least two
+/// pages and half of them (a form's title block, a letterhead's logo); one
+/// instance of each is returned with whether it is a footer, whether it is
+/// the first page's own variant (a table in a repeated table's place on the
+/// first page only, with other text), and its top.
+/// Repeated text was already furniture (`furniture`); repeated tables and
+/// pictures were body content on every page. O(elements log elements).
+fn repeated_objects(
+    elements: &mut Vec<Element>,
+    pages: &[SourcePage],
+    work: &mut u64,
+) -> Vec<(bool, bool, f64, PartObject)> {
+    let bucket = |v: f64| (v / 2.0).round() as i64;
+    let mut seen: BTreeMap<ObjectKey, (BTreeSet<usize>, Vec<usize>)> = BTreeMap::new();
+    for (i, e) in elements.iter().enumerate() {
+        *work += 1;
+        let Some(page) = pages.get(e.page) else {
+            continue;
+        };
+        let h = page.height;
+        let footer = if e.rect.y1 <= OBJECT_BAND * h {
+            false
+        } else if e.rect.y0 >= (1.0 - OBJECT_BAND) * h {
+            true
+        } else {
+            continue;
+        };
+        // A table is known by its place and its grid: its text can differ
+        // from page to page (a page number, a title page's own wording).
+        let (table, text) = match &e.kind {
+            EKind::Table(t) => (
+                true,
+                format!(
+                    "{}x{}",
+                    t.rows.len(),
+                    t.rows.iter().map(Vec::len).max().unwrap_or(0)
+                ),
+            ),
+            // The same logo is often a fresh image object on every page:
+            // its place and size identify it.
+            EKind::Image(image) => (false, image.media.media_type.clone()),
+            _ => continue,
+        };
+        let y = if footer { h - e.rect.y1 } else { e.rect.y0 };
+        let key = (
+            footer,
+            table,
+            bucket(e.rect.x0),
+            bucket(y),
+            bucket(e.rect.x1 - e.rect.x0),
+            bucket(e.rect.y1 - e.rect.y0),
+            text,
+        );
+        let entry = seen.entry(key).or_default();
+        entry.0.insert(e.page);
+        entry.1.push(i);
+    }
+    let total = pages.len();
+    let mut take: BTreeSet<usize> = BTreeSet::new();
+    let mut out = Vec::new();
+    // Accepted places (the key without its text), for the first page's own
+    // variant of a repeated table (a form's first page says "Page 1" where
+    // its digits are the same, but its title block's text can differ).
+    let mut places: BTreeSet<(bool, bool, i64, i64, i64, i64)> = BTreeSet::new();
+    let mut pending: Vec<(ObjectKey, Vec<usize>)> = Vec::new();
+    for (key, (on, at)) in seen {
+        if on.len() < 2 || on.len() * 2 < total {
+            if on.len() == 1 && on.contains(&0) {
+                pending.push((key, at));
+            }
+            continue;
+        }
+        let (footer, table, x, y, w, h, _) = key;
+        places.insert((footer, table, x, y, w, h));
+        // The instance from the first page after the first: a first page
+        // is the likeliest to differ.
+        let first = at
+            .iter()
+            .copied()
+            .find(|&i| elements[i].page > 0)
+            .unwrap_or(at[0]);
+        let e = &elements[first];
+        let object = match &e.kind {
+            EKind::Table(t) => {
+                let tables: Vec<&ITable> = at
+                    .iter()
+                    .filter_map(|&i| match &elements[i].kind {
+                        EKind::Table(t) => Some(t),
+                        _ => None,
+                    })
+                    .collect();
+                PartObject::Table(t.clone(), e.page, varying_runs(t, &tables))
+            }
+            EKind::Image(image) => PartObject::Image(image.clone()),
+            _ => continue,
+        };
+        out.push((footer, false, e.rect.y0, object));
+        take.extend(at);
+    }
+    for ((footer, table, x, y, w, h, _), at) in pending {
+        if !table || !places.contains(&(footer, table, x, y, w, h)) {
+            continue;
+        }
+        let e = &elements[at[0]];
+        if let EKind::Table(t) = &e.kind {
+            out.push((
+                footer,
+                true,
+                e.rect.y0,
+                PartObject::Table(t.clone(), e.page, BTreeSet::new()),
+            ));
+            take.extend(at);
+        }
+    }
+    if !take.is_empty() {
+        let mut i = 0;
+        elements.retain(|_| {
+            let keep = !take.contains(&i);
+            i += 1;
+            keep
+        });
+    }
+    out
+}
+
+/// A label line: at most six words and forty characters (an axis value,
+/// a legend entry, a box's caption), never prose.
+fn label_line(line: &ILine) -> bool {
+    let text: String = line.chars.iter().map(|c| c.text.as_str()).collect();
+    text.split_whitespace().count() <= 6 && text.trim().chars().count() <= 40
+}
+
+/// The smallest drawing whose text is its own: a chart or a diagram, at
+/// least an inch wide, half an inch tall and of three paths.
+const LABELLED_ART: (f64, f64, usize) = (72.0, 36.0, 3);
+
+/// The largest share of the page a figure covers: anything larger is a
+/// background.
+const FIGURE_AREA: f64 = 0.5;
+
+/// How near two runs of vector art are to be one figure, in points.
+const FIGURE_GAP: f64 = 6.0;
+
+/// Runs of vector art that overlap or nearly touch, merged into one, paths
+/// in paint order: a chart's frame, gridlines, bars and legend keys are
+/// painted between its text, so each was a drawing of its own, the chart
+/// reflowed as several pieces. O(runs^2) on a page, which holds few.
+/// Each run carries whether it is only rules (`free_rules`); a merged
+/// figure is only rules when all its pieces are.
+fn merge_figures(
+    vectors: Vec<(SourceVector, bool)>,
+    area: f64,
+    work: &mut u64,
+) -> Vec<(SourceVector, bool)> {
+    // A page-sized fill (a page's or a frame's background) is behind
+    // everything; it is no figure's piece.
+    let background = |b: &Bounds| b.width() * b.height() > FIGURE_AREA * area;
+    let near = |a: &Bounds, b: &Bounds| {
+        !background(a)
+            && !background(b)
+            && a.x0 <= b.x1 + FIGURE_GAP
+            && b.x0 <= a.x1 + FIGURE_GAP
+            && a.y0 <= b.y1 + FIGURE_GAP
+            && b.y0 <= a.y1 + FIGURE_GAP
+    };
+    let mut out: Vec<(SourceVector, bool)> = Vec::new();
+    for vector in vectors {
+        out.push(vector);
+        // Fold every earlier figure the last one meets into it, until none.
+        loop {
+            let last = out.len() - 1;
+            *work += last as u64;
+            let Some(k) = (0..last).find(|&k| near(&out[k].0.bounds, &out[last].0.bounds)) else {
+                break;
+            };
+            let (other, rules) = out.remove(k);
+            let last = out.len() - 1;
+            out[last].1 &= rules;
+            let merged = &mut out[last].0;
+            merged.bounds = Bounds {
+                x0: merged.bounds.x0.min(other.bounds.x0),
+                y0: merged.bounds.y0.min(other.bounds.y0),
+                x1: merged.bounds.x1.max(other.bounds.x1),
+                y1: merged.bounds.y1.max(other.bounds.y1),
+            };
+            let mut paths = other.paths;
+            paths.append(&mut merged.paths);
+            merged.paths = paths;
+        }
+    }
+    out
+}
+
+/// The shortest rule kept on its own, as a share of the page's width: a
+/// separator line across the text. Shorter lone rules are a form's fields
+/// or a footnote separator, and stay out.
+const SEPARATOR_WIDTH: f64 = 0.5;
+
+/// The page's rules no table, decoration or furniture band took, as one-path
+/// vector art each (a filled bar in the rule's colour): a chart's axes and
+/// gridlines, a diagram's connectors, a separator. They were dropped, so a
+/// chart reflowed without its frame or gridlines. Rules within 8 pt of a
+/// table (a borderless table's rules over and under its header) and in the
+/// top or bottom furniture band (a header's or a footer's line) stay out.
+/// O(rules x tables).
+fn free_rules(
+    page: &SourcePage,
+    grids: &BTreeSet<usize>,
+    decorations: &BTreeSet<usize>,
+    tables: &[(f64, f64, f64, f64)],
+) -> Vec<SourceVector> {
+    let band = FURNITURE_BAND * page.height;
+    page.rules
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !grids.contains(i) && !decorations.contains(i))
+        .filter(|(_, r)| r.y0 > band && r.y1 < page.height - band)
+        .filter(|(_, r)| {
+            !tables.iter().any(|&(x0, y0, x1, y1)| {
+                r.x0 >= x0 - 8.0 && r.x1 <= x1 + 8.0 && r.y0 >= y0 - 8.0 && r.y1 <= y1 + 8.0
+            })
+        })
+        .map(|(_, r)| {
+            // At least a quarter point thick, so a hairline still draws.
+            let (y0, y1) = if r.y1 - r.y0 < 0.25 {
+                let c = (r.y0 + r.y1) / 2.0;
+                (c - 0.125, c + 0.125)
+            } else {
+                (r.y0, r.y1)
+            };
+            let (x0, x1) = if r.x1 - r.x0 < 0.25 {
+                let c = (r.x0 + r.x1) / 2.0;
+                (c - 0.125, c + 0.125)
+            } else {
+                (r.x0, r.x1)
+            };
+            let bounds = Bounds { x0, y0, x1, y1 };
+            SourceVector {
+                bounds,
+                paths: vec![casual_doc_pdf_read::PathEvidence {
+                    commands: vec![
+                        PathCommand::MoveTo(Point { x: x0, y: y0 }),
+                        PathCommand::LineTo(Point { x: x1, y: y0 }),
+                        PathCommand::LineTo(Point { x: x1, y: y1 }),
+                        PathCommand::LineTo(Point { x: x0, y: y1 }),
+                        PathCommand::Close,
+                    ],
+                    fill: Some(Some(r.color.unwrap_or([0, 0, 0, 255]))),
+                    even_odd: false,
+                    stroke: None,
+                    bounds,
+                    clipped: false,
+                }],
+            }
+        })
+        .collect()
+}
+
+/// The text drawn inside `figure`, when it is a figure: every text element
+/// inside its bounds (two of the text's ems of slack), not yet taken, whose lines are all
+/// labels; they are marked taken. A chart's axis values and legend,
+/// reflowed as paragraphs, came out as a column of one-word lines beside a
+/// chart with none. Prose over a drawing stays prose (the drawing floats
+/// behind it). O(elements).
+fn labels(
+    figure: &SourceVector,
+    area: f64,
+    body_size: f64,
+    elements: &[Element],
+    taken: &mut [bool],
+    work: &mut u64,
+) -> Vec<ILine> {
+    let b = figure.bounds;
+    if b.width() < LABELLED_ART.0
+        || b.height() < LABELLED_ART.1
+        || b.width() * b.height() > FIGURE_AREA * area
+        || figure.paths.len() < LABELLED_ART.2
+    {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for (i, e) in elements.iter().enumerate() {
+        *work += 1;
+        // A tagged table's cells are the table's, however short (the
+        // structure tree builds it after this; a table's header fill and
+        // rules had made it a figure and its cells its labels).
+        if taken[i] || !e.floats.is_empty() || e.lineage.iter().any(|n| n.role == "Table") {
+            continue;
+        }
+        let EKind::Text(lines) = &e.kind else {
+            continue;
+        };
+        // An axis value sits just outside the frame it labels (right-aligned
+        // against it, so a long value reaches farther): inside the drawing
+        // along one axis and within two of its ems of it along the other
+        // counts. Labels are set no larger than the body, so a heading
+        // just above a chart stays a heading.
+        let em = lines.iter().map(|l| l.size).fold(0.5, f64::max);
+        let slack = 2.0 * em;
+        let r = e.rect;
+        let within_x = r.x0 >= b.x0 - slack && r.x1 <= b.x1 + slack;
+        let within_y = r.y0 >= b.y0 - slack && r.y1 <= b.y1 + slack;
+        let near_x = r.x1 >= b.x0 - slack && r.x0 <= b.x1 + slack;
+        let near_y = r.y1 >= b.y0 - slack && r.y0 <= b.y1 + slack;
+        if ((within_x && near_y) || (within_y && near_x))
+            && em <= body_size + 0.5
+            && lines.iter().all(label_line)
+        {
+            taken[i] = true;
+            out.extend(lines.iter().cloned());
+        }
+    }
+    out
 }
 
 /// A column region and the page it is on.
@@ -479,6 +882,20 @@ pub struct Part {
     pub rows: Vec<Vec<ILine>>,
     /// Character positions holding the page number: `(row, line, start, end)`.
     pub numbers: Vec<(usize, usize, usize, usize)>,
+    /// Tables and pictures repeated in the band (a letterhead's logo, a
+    /// form's title block), with the top they sit at (`repeated_objects`).
+    pub objects: Vec<(f64, PartObject)>,
+}
+
+/// A table or picture that repeats at the top or bottom of the pages.
+#[derive(Clone, Debug)]
+pub enum PartObject {
+    /// A table, the page (zero-based) the kept instance is from, and the
+    /// digit runs that change from page to page, `(row, cell, run)`: those
+    /// are its page number.
+    Table(ITable, usize, BTreeSet<(usize, usize, usize)>),
+    /// A picture, drawn where the PDF placed it.
+    Image(SourceImage),
 }
 
 /// The header and footer parts, keyed by (is footer, variant).
@@ -582,6 +999,9 @@ pub(crate) struct Flow {
     /// measure per page, and one document-wide edge made every portrait
     /// line look short (found by `tools/opendoc-reflow-score`).
     pub page_body: Vec<(f64, f64)>,
+    /// Per page, its size in points (a landscape page in a portrait
+    /// document starts a section of its own).
+    pub page_sizes: Vec<(f64, f64)>,
 }
 
 /// The font key of a character, through the families the fixed build chose.
@@ -593,7 +1013,7 @@ pub(crate) fn key_of(state: &PdfSourceState) -> impl Fn(&PChar) -> FontKey + '_ 
             family,
             half_points: c.style.half_points,
             bold,
-            italic,
+            italic: italic || c.style.oblique,
         }
     }
 }
@@ -629,9 +1049,25 @@ fn furniture(
     let mut seen: BTreeMap<(bool, String, i64), Vec<(usize, usize)>> = BTreeMap::new();
     let mut artifacts_omitted = 0;
     for page in &state.pages {
+        // Text inside a ruled grid is a table's cell: a repeated table is
+        // the header's or footer's whole (`repeated_objects`), so its first
+        // row must not be taken out on its own as a band of text.
+        let mut grid_work = 0;
+        let cells: Vec<(f64, f64, f64, f64)> = tables::grids(&page.rules, &mut grid_work)
+            .iter()
+            .filter_map(|(xs, ys, _)| Some((*xs.first()?, *ys.first()?, *xs.last()?, *ys.last()?)))
+            .collect();
+        *work += grid_work;
         for (b, block) in page.blocks.iter().enumerate() {
             *work += 1;
             let bb = &block.block;
+            let (cx, cy) = ((bb.x0 + bb.x1) / 2.0, (bb.top + bb.bottom) / 2.0);
+            if cells
+                .iter()
+                .any(|&(x0, y0, x1, y1)| cx > x0 && cx < x1 && cy > y0 && cy < y1)
+            {
+                continue;
+            }
             let top_band = bb.bottom <= FURNITURE_BAND * page.height * 1.5
                 && bb.top <= FURNITURE_BAND * page.height;
             let bottom_band = bb.top >= (1.0 - FURNITURE_BAND) * page.height;
@@ -824,6 +1260,7 @@ fn furniture(
             Part {
                 rows: grouped,
                 numbers,
+                objects: Vec::new(),
             },
         );
     }
@@ -935,7 +1372,7 @@ pub fn build(
     let mut findings = Findings::default();
     let mut work = ReflowWork::default();
     let key = key_of(state);
-    let (furniture_blocks, furniture) = furniture(state, &mut findings, &mut work.furniture);
+    let (furniture_blocks, mut furniture) = furniture(state, &mut findings, &mut work.furniture);
 
     // Structure leaves by (page, mcid), when tagged.
     let mut leaves: BTreeMap<(usize, i32), usize> = BTreeMap::new();
@@ -1135,8 +1572,72 @@ pub fn build(
         // Filled rectangles under a whitespace table's cells are its shading
         // too (a borderless table with a shaded header row).
         for table in page_tables.iter_mut().filter(|t| !t.ruled) {
+            tables::fit_to_fills(table, &page.fills, &mut work.tables);
             tables::shade(table, &page.fills, &mut work.tables);
         }
+        // Underlines, strikethroughs, highlights, paragraph shading and
+        // borders the PDF drew as paths go back on the text.
+        // The rules of the grids that became tables (a grid with no text in
+        // it, a chart's frame and gridlines, is no table: its rules are art).
+        let ruled: Vec<(f64, f64, f64, f64)> = page_tables
+            .iter()
+            .filter(|t| t.ruled)
+            .map(|t| t.bounds)
+            .collect();
+        let taken_rules: BTreeSet<usize> = page
+            .rules
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                grids
+                    .iter()
+                    .flat_map(|g| g.2.iter())
+                    .any(|g| g.x0 == r.x0 && g.x1 == r.x1 && g.y0 == r.y0 && g.y1 == r.y1)
+                    && ruled.iter().any(|&(x0, y0, x1, y1)| {
+                        r.x0 >= x0 - 1.0 && r.x1 <= x1 + 1.0 && r.y0 >= y0 - 1.0 && r.y1 <= y1 + 1.0
+                    })
+            })
+            .map(|(i, _)| i)
+            .collect();
+        let table_bounds: Vec<(f64, f64, f64, f64)> =
+            page_tables.iter().map(|t| t.bounds).collect();
+        let decorated = decorate::decorate(
+            &mut lines_only,
+            &page.rules,
+            &taken_rules,
+            &page.fills,
+            &table_bounds,
+            page.width * page.height,
+            &mut work.paragraphs,
+        );
+        findings.record(
+            report::DECORATION_INFERRED,
+            Outcome::Mapped,
+            (decorated.rules.len() + decorated.fills.len()) as u32,
+            Some(page.index),
+        );
+        let decoration_art: BTreeSet<usize> = page
+            .vectors
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| {
+                v.paths.iter().all(|path| {
+                    path.stroke.is_none()
+                        && record::rectangles(path).is_some_and(|rects| {
+                            rects.iter().all(|b| {
+                                decorated.fills.iter().any(|&f| {
+                                    let d = page.fills[f].bounds;
+                                    (d.x0 - b.x0).abs() < 0.01
+                                        && (d.y0 - b.y0).abs() < 0.01
+                                        && (d.x1 - b.x1).abs() < 0.01
+                                        && (d.y1 - b.y1).abs() < 0.01
+                                })
+                            })
+                        })
+                })
+            })
+            .map(|(i, _)| i)
+            .collect();
         // Vector art that is only flat rectangles inside a table is that
         // table's shading (now on its cells), not a drawing of its own.
         let shading_art: BTreeSet<usize> = page
@@ -1221,6 +1722,7 @@ pub fn build(
                 region: None,
                 lineage: node.map(|n| n.lineage.clone()).unwrap_or_default(),
                 floats: Vec::new(),
+                labels: Vec::new(),
             });
         }
         for table in page_tables {
@@ -1242,27 +1744,87 @@ pub fn build(
                 region: None,
                 lineage: Vec::new(),
                 floats: Vec::new(),
+                labels: Vec::new(),
             });
         }
         // Pictures and vector art: floated on the text they sit beside or
         // under, else on their own line in reading order.
+        // A figure's pieces (a chart's frame, bars and legend keys, painted
+        // between its labels) are one drawing, and the text inside it is its
+        // labels, drawn with it on its own line.
+        let mut pieces: Vec<(SourceVector, bool)> = page
+            .vectors
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !shading_art.contains(i) && !decoration_art.contains(i))
+            .map(|(_, v)| (v.clone(), false))
+            .collect();
+        pieces.extend(
+            free_rules(page, &taken_rules, &decorated.rules, &table_bounds)
+                .into_iter()
+                .map(|v| (v, true)),
+        );
+        let figures = merge_figures(pieces, page.width * page.height, &mut work.graphics);
+        let mut labelled: Vec<(SourceVector, Vec<ILine>)> = Vec::new();
+        let mut taken = vec![false; elements.len()];
+        let mut unlabelled: Vec<SourceVector> = Vec::new();
+        for (figure, only_rules) in figures {
+            // Rules on their own: a long one is a separator line in the
+            // text (kept as a drawing); short ones (a form's fields, a
+            // footnote's separator) are left out, as before.
+            if only_rules {
+                if figure.paths.len() == 1 && figure.bounds.width() >= SEPARATOR_WIDTH * page.width
+                {
+                    unlabelled.push(figure);
+                }
+                continue;
+            }
+            let lines = labels(
+                &figure,
+                page.width * page.height,
+                body_size,
+                &elements,
+                &mut taken,
+                &mut work.graphics,
+            );
+            if lines.is_empty() {
+                unlabelled.push(figure);
+            } else {
+                labelled.push((figure, lines));
+            }
+        }
         let text_rects: Vec<(usize, Rect)> = elements
             .iter()
             .enumerate()
-            .filter(|(_, e)| matches!(e.kind, EKind::Text(_)))
+            .filter(|(i, e)| matches!(e.kind, EKind::Text(_)) && !taken[*i])
             .map(|(i, e)| (i, e.rect))
             .collect();
+        for (figure, lines) in labelled {
+            let b = figure.bounds;
+            vectors_placed += 1;
+            elements.push(Element {
+                page: page.index,
+                rect: Rect {
+                    x0: b.x0,
+                    y0: b.y0,
+                    x1: b.x1,
+                    y1: b.y1,
+                },
+                kind: EKind::Vector(figure),
+                leaf: None,
+                struct_element: None,
+                role: None,
+                region: None,
+                lineage: Vec::new(),
+                floats: Vec::new(),
+                labels: lines,
+            });
+        }
         let graphics = page
             .images
             .iter()
             .map(|image| Graphic::Image(image.clone()))
-            .chain(
-                page.vectors
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| !shading_art.contains(i))
-                    .map(|(_, v)| Graphic::Vector(v.clone())),
-            );
+            .chain(unlabelled.into_iter().map(Graphic::Vector));
         for graphic in graphics {
             let b = graphic.bounds();
             let rect = Rect {
@@ -1296,11 +1858,26 @@ pub fn build(
                 region: None,
                 lineage: Vec::new(),
                 floats: Vec::new(),
+                labels: Vec::new(),
             });
         }
+        // The labels left their text elements for their drawings.
+        let mut index = 0;
+        elements.retain(|_| {
+            let keep = taken.get(index).is_none_or(|t| !t);
+            index += 1;
+            keep
+        });
         let mut page_bottom = f64::NEG_INFINITY;
         let (mut px0, mut px1) = (f64::INFINITY, f64::NEG_INFINITY);
         for e in &elements {
+            // Where the page's content stops: a picture or a figure at the
+            // bottom of the page is content (a chart closing a page had read
+            // as a page that ended early, so the next page started with a
+            // break and the reflow left a page nearly empty).
+            if !matches!(e.kind, EKind::Text(_) | EKind::Table(_)) {
+                page_bottom = page_bottom.max(e.rect.y1);
+            }
             if matches!(e.kind, EKind::Text(_) | EKind::Table(_)) {
                 page_bottom = page_bottom.max(e.rect.y1);
                 px0 = px0.min(e.rect.x0);
@@ -1315,6 +1892,7 @@ pub fn build(
             }
         }
         flow.page_body.push((px0, px1));
+        flow.page_sizes.push((page.width, page.height));
 
         flow.page_bottoms.push(page_bottom);
         // Reading order: XY-Cut++ always (it also finds the column regions);
@@ -1399,6 +1977,81 @@ pub fn build(
     // row, when the next page repeats it, becomes a header row).
     let continued = tables::continue_across_pages(&mut flow.elements, &mut work.tables);
     findings.record(report::TABLE_CONTINUED, Outcome::Mapped, continued, None);
+    // Tables and pictures repeated at the top or bottom of the pages are
+    // the header's and the footer's, not body content on every page.
+    let objects = repeated_objects(&mut flow.elements, &state.pages, &mut work.furniture);
+    if !objects.is_empty() {
+        findings.record(
+            report::HEADER_FOOTER_INFERRED,
+            Outcome::Mapped,
+            objects.len() as u32,
+            None,
+        );
+        let mut first_variant = Vec::new();
+        for (footer, first, top, object) in objects {
+            if first {
+                first_variant.push((footer, top, object));
+                continue;
+            }
+            furniture
+                .parts
+                .entry((footer, Variant::Default))
+                .or_default()
+                .objects
+                .push((top, object));
+        }
+        // The first page's own table: a title page whose parts are the
+        // default ones with that table in place of the repeated one.
+        if !first_variant.is_empty() && !furniture.title_page {
+            for footer in [false, true] {
+                let mut part = furniture
+                    .parts
+                    .get(&(footer, Variant::Default))
+                    .cloned()
+                    .unwrap_or_default();
+                let own: Vec<(f64, PartObject)> = first_variant
+                    .iter()
+                    .filter(|o| o.0 == footer)
+                    .map(|o| (o.1, o.2.clone()))
+                    .collect();
+                if !own.is_empty() {
+                    part.objects
+                        .retain(|o| !matches!(o.1, PartObject::Table(..)));
+                    part.objects.extend(own);
+                }
+                if !part.rows.is_empty() || !part.objects.is_empty() {
+                    furniture.parts.insert((footer, Variant::First), part);
+                }
+            }
+            furniture.title_page = true;
+        }
+        // The body's extent and each page's content end without them.
+        let (mut x0, mut y0, mut x1, mut y1) = (
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        );
+        let mut bottoms = vec![f64::NEG_INFINITY; state.pages.len()];
+        for e in &flow.elements {
+            if let Some(b) = bottoms.get_mut(e.page) {
+                *b = b.max(e.rect.y1);
+            }
+            let page = &state.pages[e.page];
+            if matches!(e.kind, EKind::Text(_) | EKind::Table(_))
+                && (page.width.round(), page.height.round()) == common_size
+            {
+                x0 = x0.min(e.rect.x0);
+                y0 = y0.min(e.rect.y0);
+                x1 = x1.max(e.rect.x1);
+                y1 = y1.max(e.rect.y1);
+            }
+        }
+        if x0.is_finite() {
+            (bx0, by0, bx1, by1) = (x0, y0, x1, y1);
+        }
+        flow.page_bottoms = bottoms;
+    }
     findings.record(
         report::READING_ORDER_INFERRED,
         Outcome::Mapped,
@@ -1501,3 +2154,5 @@ fn annotation_target(annotation: &AnnotationEvidence) -> LinkTarget {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_layout;

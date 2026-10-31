@@ -890,6 +890,7 @@
   "findings.feature.pdfClip": "Clipping of drawn shapes",
   "findings.feature.pdfColumns": "Columns inferred from the page layout",
   "findings.feature.pdfComments": "Comments recreated from PDF notes",
+  "findings.feature.pdfDecorations": "Underlines, highlights, shading and borders drawn as shapes put back on their text",
   "findings.feature.pdfDehyphenation": "Words rejoined across line breaks",
   "findings.feature.pdfEarlierRevision": "Replaced text, still recoverable from the PDF's earlier version",
   "findings.feature.pdfEncrypted": "Password protection",
