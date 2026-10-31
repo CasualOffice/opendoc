@@ -52,6 +52,8 @@ pub use evidence::{
     GlyphRunEvidence, ImageEvidence, ImageFormat, PageEvidence, PageNotes, PaintEvidence,
     PathCommand, PathEvidence, Point, RenderMode, Rgba8, StrokeEvidence,
 };
+// Own line: a page-sized picture's ink bands.
+pub use evidence::{INK_MEASURED_AREA, InkBands};
 pub use limits::PdfReadLimits;
 pub use structure::{StructLeaf, StructNode, StructureTree};
 

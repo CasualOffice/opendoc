@@ -202,6 +202,15 @@ pub(crate) fn run_font(
     )
 }
 
+/// A picture the build placed: its page, where, its part, and its ink bands
+/// (for the reflow's letterhead margins).
+pub(crate) type PlacedImage = (
+    usize,
+    Bounds,
+    MediaReference,
+    Option<casual_doc_pdf_read::InkBands>,
+);
+
 /// A finished build: the document, its media and the report.
 pub(crate) type Built = (Document, BTreeMap<String, Vec<u8>>, crate::PdfImportReport);
 
@@ -226,7 +235,7 @@ pub(crate) struct Builder {
     pub(crate) programs: Vec<EmbeddedFontProgram>,
     /// Every picture placed: page, bounds after the clip, its media
     /// reference (the reflow sidecar references these, never copies them).
-    pub(crate) placed_images: Vec<(usize, Bounds, MediaReference)>,
+    pub(crate) placed_images: Vec<PlacedImage>,
     /// The previous page's anchor paragraph, waiting for the next page so it
     /// can carry the section break that ends its page.
     pending: Option<(Paragraph, SectionId)>,
@@ -1318,6 +1327,7 @@ impl Builder {
                 media_type: media_type.to_owned(),
                 part_name,
             },
+            image.ink,
         ));
         let z = self.next_z();
         let rotation = (!upright).then(|| (image.rotation_degrees * 60_000.0).round() as i32);

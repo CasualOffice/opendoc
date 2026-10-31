@@ -959,3 +959,41 @@ fn a_background_on_every_page_is_the_headers_letterhead() {
         .collect();
     assert_eq!(behind, vec![true], "{headers:?}");
 }
+
+#[test]
+fn the_body_clears_a_letterheads_logo_band() {
+    // Three pages, each a page-sized letterhead whose top tenth is a dark
+    // logo band (a 4 x 40 grey picture, its top four rows black), with prose
+    // over it starting at 72 pt, inside the band.
+    let mut pdf = synth::Pdf::default();
+    let mut samples = vec![255u8; 4 * 40];
+    samples[..16].fill(0);
+    let image = pdf.stream(
+        "/Type /XObject /Subtype /Image /Width 4 /Height 40 /ColorSpace /DeviceGray /BitsPerComponent 8",
+        &samples,
+    );
+    let prose = full("prose");
+    let lines: Vec<&str> = std::iter::repeat_n(prose.as_str(), 20).collect();
+    let content = format!(
+        "q 612 0 0 792 0 0 cm /Im1 Do Q\n{}",
+        text("F1", 11.0, 72.0, 712.0, 14.0, &lines)
+    );
+    let pages: Vec<Page> = (0..3).map(|_| Page::new(content.clone())).collect();
+    let bytes = synth::document_in(
+        &mut pdf,
+        &pages,
+        &format!("{COURIER} /XObject << /Im1 {image} 0 R >>"),
+        "",
+        |_| String::new(),
+    );
+    let reflowed = reflow_of(bytes);
+    let section = reflowed
+        .document
+        .definitions()
+        .sections
+        .first()
+        .expect("a section");
+    // The band ends at 79.2 pt; the body starts below it.
+    let top = f64::from(section.page_margins.top_twips) / 20.0;
+    assert!((79.0..=90.0).contains(&top), "{top}");
+}

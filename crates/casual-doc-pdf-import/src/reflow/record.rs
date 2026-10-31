@@ -86,6 +86,9 @@ pub struct SourceImage {
     pub bounds: Bounds,
     /// The media reference (part name and type) of its bytes.
     pub media: MediaReference,
+    /// A page-sized picture's ink bands (`casual_doc_pdf_read::InkBands`):
+    /// where a letterhead's logo band ends and its footer band starts.
+    pub ink: Option<casual_doc_pdf_read::InkBands>,
 }
 
 /// Vector art: a maximal run of consecutive paths that are not rules, in

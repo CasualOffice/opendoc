@@ -1789,12 +1789,18 @@ pub(crate) fn emit(
                     image.bounds.y1
                 }
             }
-            // Behind the text: the body runs over it.
-            super::PartObject::Background(_) => {
-                if footer {
-                    f64::INFINITY
-                } else {
-                    f64::NEG_INFINITY
+            // Behind the text: the body runs over it, but not over its
+            // logo band (a letterhead's logo at the top, its address band at
+            // the bottom, measured from its ink).
+            super::PartObject::Background(image) => {
+                let b = image.bounds;
+                match image.ink {
+                    Some(ink) if footer && ink.bottom < 1.0 => {
+                        b.y0 + f64::from(ink.bottom) * b.height()
+                    }
+                    Some(ink) if !footer && ink.top > 0.0 => b.y0 + f64::from(ink.top) * b.height(),
+                    _ if footer => f64::INFINITY,
+                    _ => f64::NEG_INFINITY,
                 }
             }
             super::PartObject::Table(t, ..) => {
