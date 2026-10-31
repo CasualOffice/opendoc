@@ -390,14 +390,39 @@ impl<'a> Transcriber<'a> {
         if run.glyphs.is_empty() {
             return Ok(());
         }
-        let resource = self.fonts.use_face(
+        let resource = match self.fonts.use_face(
             writer,
             self.font_source,
             run.font,
             run.glyphs
                 .iter()
                 .filter_map(|glyph| u16::try_from(glyph.id).ok()),
-        )?;
+        ) {
+            Ok(resource) => resource,
+            // A face's licence forbids embedding: a refusal, out loud.
+            Err(error @ FontError::EmbeddingRestricted(..)) => return Err(error),
+            // A face that cannot be written (too large to copy whole, no
+            // outline tables): its glyphs are left out of this PDF and
+            // reported, and the export goes on. Failing it had cost the user
+            // the whole file for one emoji.
+            Err(_) => {
+                self.gap("pdf.font.skipped");
+                return Ok(());
+            }
+        };
+        // Colour glyphs (an emoji face's bitmaps or layers) draw as their
+        // outline glyphs, empty or monochrome: the text is in the PDF, its
+        // colour picture is not.
+        if self
+            .font_source
+            .font_data(run.font)
+            .and_then(|bytes| {
+                crate::subset::Face::parse(bytes, self.font_source.face_index(run.font)).ok()
+            })
+            .is_some_and(|face| face.has_colour_glyphs())
+        {
+            self.gap("pdf.font.colour_glyphs");
+        }
         let units = f32::from(self.fonts.units_per_em(run.font).unwrap_or(1000));
         let size = pt(run.size);
         let scale = f32::from(run.character_scale_percent) / 100.0;

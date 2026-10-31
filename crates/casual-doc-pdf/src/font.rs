@@ -122,6 +122,7 @@ impl FontTable {
             let units_per_em = face
                 .units_per_em()
                 .map_err(|error| FontError::Malformed(font.0, error))?;
+            embeddable(&face, bytes.len()).map_err(|error| FontError::Malformed(font.0, error))?;
             self.next += 1;
             self.planned.insert(
                 font.0,
@@ -225,6 +226,32 @@ pub struct EmbeddedFace {
     /// subsetter also keeps the components a composite glyph references, and no
     /// content stream ever emits those, so there is nothing to copy.
     pub unmapped_glyphs: usize,
+}
+
+/// Whether `face` can be written into a PDF, checked before any page names
+/// it (a face found unusable while writing would leave pages naming a font
+/// the file lacks): a program copied whole fits [`MAX_FONT_BYTES`], and a
+/// TrueType face has the `glyf` and `loca` tables a subset is built from.
+/// O(tables).
+fn embeddable(face: &Face<'_>, bytes: usize) -> Result<(), SfntError> {
+    let no_subsetting = face
+        .embedding_permissions()
+        .is_some_and(|flags| flags & FSTYPE_NO_SUBSETTING != 0);
+    if (face.is_cff() || no_subsetting) && bytes > crate::subset::MAX_FONT_BYTES {
+        return Err(SfntError::TooLarge(bytes));
+    }
+    if !face.is_cff() {
+        for tag in [b"glyf", b"loca"] {
+            if face.table(tag).is_none() {
+                return Err(SfntError::MissingTable(if tag == b"glyf" {
+                    "glyf"
+                } else {
+                    "loca"
+                }));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn write_face(

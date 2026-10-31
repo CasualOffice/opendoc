@@ -1054,3 +1054,106 @@ fn character_effects_keep_one_extractable_text_copy_and_emit_real_ink_passes() {
         }
     }
 }
+
+/// Serves the bundled faces, each passed through `change`.
+struct ChangedFontSource {
+    faces: Vec<Vec<u8>>,
+}
+
+impl ChangedFontSource {
+    fn new(change: impl Fn(&[u8]) -> Vec<u8>) -> Self {
+        let faces = (0..24)
+            .map(|id| change(casual_doc_layout::fonts::face_bytes(FontId(id))))
+            .collect();
+        Self { faces }
+    }
+}
+
+impl PdfFontSource for ChangedFontSource {
+    fn font_data(&self, font: FontId) -> Option<&[u8]> {
+        self.faces
+            .get(usize::try_from(font.0).ok()?)
+            .map(Vec::as_slice)
+    }
+}
+
+/// A copy of a face with the tag of its table `from` renamed `to`.
+fn rename_table(bytes: &[u8], from: &[u8; 4], to: &[u8; 4]) -> Vec<u8> {
+    let mut out = bytes.to_vec();
+    let tables = usize::from(u16::from_be_bytes([out[4], out[5]]));
+    for slot in 0..tables {
+        let record = 12 + slot * 16;
+        if &out[record..record + 4] == from {
+            out[record..record + 4].copy_from_slice(to);
+        }
+    }
+    out
+}
+
+/// The rich document laid out and written with `fonts`.
+fn write_rich_with(fonts: &dyn PdfFontSource) -> Result<PdfExport, PdfError> {
+    let (document, _) = open(RICH_DOCX);
+    let shaper = ParleyShaper::new();
+    let laid_out = paginate_document(&document, &shaper);
+    let lists: Vec<_> = laid_out
+        .pages
+        .iter()
+        .map(|page| (page.page_size, compose_page(page)))
+        .collect();
+    let pages: Vec<PdfPage<'_>> = lists
+        .iter()
+        .map(|(size, list)| PdfPage {
+            width: size.width,
+            height: size.height,
+            list,
+        })
+        .collect();
+    write_pdf(&pages, fonts, &NoMediaSource, &PdfExportOptions::default())
+}
+
+#[test]
+fn a_face_larger_than_the_copy_limit_is_still_subset_and_the_export_succeeds() {
+    // The system's colour emoji face is 188 MB on macOS; a face over the
+    // 64 MiB bound on copying a program whole is still subset (only its
+    // used glyphs are read), so the export does not fail.
+    let large = ChangedFontSource::new(|bytes| {
+        let mut out = bytes.to_vec();
+        out.resize(65 * 1024 * 1024, 0);
+        out
+    });
+    let export = write_rich_with(&large).expect("the export succeeds");
+    assert!(!export.faces.is_empty(), "the faces are embedded");
+    assert!(
+        export.findings.iter().all(|f| f.code != "pdf.font.skipped"),
+        "nothing is left out"
+    );
+}
+
+#[test]
+fn a_face_that_cannot_be_written_is_left_out_and_reported_not_fatal() {
+    // A TrueType face without its outline table cannot be subset: its text
+    // is left out of the PDF and reported, and the export goes on.
+    let broken = ChangedFontSource::new(|bytes| rename_table(bytes, b"glyf", b"glyX"));
+    let export = write_rich_with(&broken).expect("the export succeeds");
+    assert!(
+        export.findings.iter().any(|f| f.code == "pdf.font.skipped"),
+        "{:?}",
+        export.findings.iter().map(|f| &f.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_colour_face_is_embedded_and_its_colour_loss_reported() {
+    // A face with colour glyphs (here a bundled face given an `sbix` table)
+    // is embedded by its outlines, and the loss of its colour is reported.
+    let colour = ChangedFontSource::new(|bytes| rename_table(bytes, b"name", b"sbix"));
+    let export = write_rich_with(&colour).expect("the export succeeds");
+    assert!(
+        export
+            .findings
+            .iter()
+            .any(|f| f.code == "pdf.font.colour_glyphs"),
+        "{:?}",
+        export.findings.iter().map(|f| &f.code).collect::<Vec<_>>()
+    );
+}

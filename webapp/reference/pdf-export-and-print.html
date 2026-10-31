@@ -221,6 +221,21 @@
         <td>The export fails, naming the face. No substitution, no outlines, no rasterized text, no silent drop. A face flagged no-subsetting is embedded whole with a finding.</td>
         </tr>
         <tr>
+        <td>A face larger than the 64 MiB bound on copying a program whole</td>
+        <td><strong>Supported</strong></td>
+        <td>Subset like any TrueType face: parsing reads only the table directory (a file up to 1 GiB) and the subsetter only the glyphs used. Only a program that must be copied whole (CFF, no-subsetting) is held to 64 MiB. Before this, one 188 MB system emoji face failed the export of every document with an emoji in it.</td>
+        </tr>
+        <tr>
+        <td>A face that cannot be written (copied whole over 64 MiB, or no <code>glyf</code>/<code>loca</code>)</td>
+        <td><strong>Partial, reported</strong></td>
+        <td>Its glyphs are left out of the PDF and reported as <code>pdf.font.skipped</code>; the export goes on. Checked before any page names the face.</td>
+        </tr>
+        <tr>
+        <td>Colour glyphs (<code>sbix</code>, <code>CBDT</code>, <code>COLR</code>: emoji)</td>
+        <td><strong>Partial, reported</strong></td>
+        <td>Embedded by their outline glyphs, which are empty or monochrome: the characters copy and search, their colour pictures are absent. Reported as <code>pdf.font.colour_glyphs</code>.</td>
+        </tr>
+        <tr>
         <td>Page geometry</td>
         <td><strong>Supported</strong></td>
         <td><code>/MediaBox</code> from pagination; twips → points with the y axis flipped. No device scale is applied anywhere: a PDF is resolution-free.</td>

@@ -580,6 +580,13 @@ fn gap_detail(code: &str) -> String {
         "pdf.shape.gradient" => {
             "a gradient fill had no representable geometry and was not painted".to_owned()
         }
+        "pdf.font.skipped" => "a face could not be embedded (too large to copy whole, or \
+             without outline tables), so the text it drew is absent from the PDF"
+            .to_owned(),
+        "pdf.font.colour_glyphs" => "colour glyphs (emoji) are drawn from their face's \
+             outline glyphs, which carry no colour: the characters are in the PDF, their \
+             colour pictures are not"
+            .to_owned(),
         other => format!("`{other}` could not be represented in the PDF"),
     }
 }
