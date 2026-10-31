@@ -2673,6 +2673,7 @@
   "findings.pdfReflow.source": "Het is opgebouwd uit de pdf zoals die werd geopend: bewerkingen aan de pagina’s van de pdf staan er niet in.",
   "pdfOcr.command": "Tekst herkennen in gescande pagina’s",
   "pdfOcr.notPdf": "Tekstherkenning geldt voor een document dat uit een pdf is geopend.",
+  "pdfOcr.recognisingPage": "Tekst herkennen op pagina {page} van {total}…",
   "pdfOcr.noScans": "Deze pdf heeft geen gescande pagina’s om te lezen.",
   "pdfOcr.done": "De gescande pagina’s van deze pdf zijn al gelezen.",
   "pdfOcr.noModels": "Tekstherkenning is niet beschikbaar: deze editor heeft geen herkenningsmodellen. De site die de editor aanbiedt, kan ze toevoegen.",

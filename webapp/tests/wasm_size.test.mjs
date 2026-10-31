@@ -286,3 +286,68 @@ test("the main module exports no PDF import entry point, and links no PDF reader
   assert.ok(!holds(readFileSync(WASM), "hayro"), "the main module links hayro again");
   assert.ok(!holds(readFileSync(WASM), "casual-doc-pdf-save"), "the main module links the save planner");
 });
+
+// ---- Text recognition's kernels are vectorised (HF-414) ---------------------
+//
+// rten selects its WebAssembly SIMD kernels at compile time, so a PDF module
+// built without `-C target-feature=+simd128` still works, only many times
+// slower: on the live site (2026-10-31) a scanned page had not finished after
+// ten minutes, and the owner reported that OCR "is still not there".
+// `build.sh` builds this module with `simd128` and the main module without it.
+//
+// The check reads the artifact, not the build script: a function that keeps a
+// value in a `v128` local declares it in its body's local declarations (value
+// type 0x7b), which a scalar build never does. O(code section), decoding only
+// each body's local declarations, never its instructions.
+
+/** How many function bodies in `bytes` (a wasm module) declare a `v128` local. */
+function v128Functions(bytes) {
+  let p = 8;
+  const leb = () => {
+    let value = 0;
+    let shift = 0;
+    let byte;
+    do {
+      byte = bytes[p++];
+      value += (byte & 0x7f) * 2 ** shift;
+      shift += 7;
+    } while (byte & 0x80);
+    return value;
+  };
+  let count = 0;
+  while (p < bytes.length) {
+    const id = bytes[p++];
+    const size = leb();
+    const end = p + size;
+    if (id === 10) {
+      const bodies = leb();
+      for (let i = 0; i < bodies; i += 1) {
+        const bodyEnd = leb() + p;
+        const groups = leb();
+        let vector = false;
+        for (let g = 0; g < groups; g += 1) {
+          leb();
+          if (bytes[p++] === 0x7b) vector = true;
+        }
+        if (vector) count += 1;
+        p = bodyEnd;
+      }
+    }
+    p = end;
+  }
+  return count;
+}
+
+test("the PDF module is built with WebAssembly SIMD, and the main module is not", () => {
+  assert.ok(existsSync(PDF_WASM) && existsSync(WASM), STALE);
+  const pdf = v128Functions(readFileSync(PDF_WASM));
+  // Measured 563 with simd128, 0 in the scalar module the site served before.
+  assert.ok(
+    pdf >= 100,
+    `only ${pdf} functions in the PDF module use v128: it was built without simd128 ` +
+      "(webapp/build.sh's RUSTFLAGS for casual-doc-wasm-pdf), so OCR's kernels run scalar",
+  );
+  // The main module's build is a separate decision (RM-14); this keeps the flag
+  // from leaking into it unnoticed.
+  assert.equal(v128Functions(readFileSync(WASM)), 0, "the main module now uses SIMD: RM-14 decides that, not this flag");
+});

@@ -12,6 +12,7 @@ import { avatarPolicy, hostIdentity, joinIdentity } from "./host_identity.mjs";
 import { PRESENCE_OUTCOMES, createPresence } from "./collab_presence.mjs";
 import { mentionsOrdered } from "./mention_notices.mjs";
 import { historyScope, sharedVersionSource } from "./shared_versions.mjs";
+import { randomUuid } from "./web_crypto.mjs";
 
 /** Host-managed sharing, checkpoints, recovery and ephemeral presence scheduling. */
 export function createCollaborationShell({ root, getDocument, getTransport, setTransport,
@@ -69,7 +70,9 @@ export function createCollaborationShell({ root, getDocument, getTransport, setT
       // Asked per join, reconnects included, and only when the host has a
       // provider that can answer; the grant is never kept here (§3.3).
       credentials: typeof provider?.credentialsFor === "function" ? () => provider.credentialsFor({ room }) : undefined,
-      resumeKey: resumeKey(globalThis.sessionStorage, () => globalThis.crypto.randomUUID()),
+      // `randomUuid`, not `crypto.randomUUID`: the latter is undefined on a
+      // plain-HTTP page and threw on every open there (HF-414).
+      resumeKey: resumeKey(globalThis.sessionStorage, () => randomUuid()),
       onFrame: (bytes) => remotePresence.frame(bytes),
       onOutcome: (o) => {
         recovery.receive(o);

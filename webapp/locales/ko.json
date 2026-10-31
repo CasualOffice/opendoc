@@ -2662,6 +2662,7 @@
   "findings.pdfReflow.source": "열었을 때의 PDF로 만들었으므로 PDF 페이지에서 한 편집은 들어 있지 않습니다.",
   "pdfOcr.command": "스캔한 페이지의 텍스트 인식",
   "pdfOcr.notPdf": "텍스트 인식은 PDF에서 연 문서에 적용됩니다.",
+  "pdfOcr.recognisingPage": "{total}페이지 중 {page}페이지의 텍스트를 인식하는 중…",
   "pdfOcr.noScans": "이 PDF에는 읽을 스캔 페이지가 없습니다.",
   "pdfOcr.done": "이 PDF의 스캔 페이지는 이미 읽었습니다.",
   "pdfOcr.noModels": "텍스트 인식을 사용할 수 없습니다. 이 편집기에는 인식 모델이 없습니다. 편집기를 제공하는 사이트에서 추가할 수 있습니다.",

@@ -2662,6 +2662,7 @@
   "findings.pdfReflow.source": "它是根据打开时的 PDF 构建的：对 PDF 页面所做的编辑不在其中。",
   "pdfOcr.command": "识别扫描页中的文字",
   "pdfOcr.notPdf": "文字识别适用于从 PDF 打开的文档。",
+  "pdfOcr.recognisingPage": "正在识别第 {page} 页（共 {total} 页）的文字…",
   "pdfOcr.noScans": "此 PDF 没有需要读取的扫描页。",
   "pdfOcr.done": "此 PDF 的扫描页已读取过。",
   "pdfOcr.noModels": "文字识别不可用：此编辑器没有识别模型。提供此编辑器的网站可以添加。",

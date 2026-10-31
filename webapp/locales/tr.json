@@ -2673,6 +2673,7 @@
   "findings.pdfReflow.source": "PDF açıldığı hâliyle oluşturuldu: PDF'nin sayfalarında yapılan düzenlemeler bunda yok.",
   "pdfOcr.command": "Taranmış sayfalardaki metni tanı",
   "pdfOcr.notPdf": "Metin tanıma, bir PDF'den açılan belgeye uygulanır.",
+  "pdfOcr.recognisingPage": "{total} sayfanın {page}. sayfasındaki metin tanınıyor…",
   "pdfOcr.noScans": "Bu PDF'de okunacak taranmış sayfa yok.",
   "pdfOcr.done": "Bu PDF'nin taranmış sayfaları zaten okundu.",
   "pdfOcr.noModels": "Metin tanıma kullanılamıyor: bu düzenleyicide tanıma modeli yok. Düzenleyiciyi sunan site bunları ekleyebilir.",

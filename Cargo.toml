@@ -181,3 +181,28 @@ opt-level = 3
 opt-level = 3
 [profile.release.package.icu_normalizer]
 opt-level = 3
+
+# --- Text recognition in the PDF module (`docs/182` §17a.5, HF-414) ---------
+#
+# PP-OCRv5 runs on rten inside `casual-doc-wasm-pdf`, and every scanned page is
+# a detection graph over the whole page plus a recognition graph per line: GEMM
+# and convolution kernels whose speed IS the feature. Under the browser build's
+# `opt-level = z` they lost loop unrolling and inlining, and `build.sh` now also
+# builds that module with `simd128`, whose kernels rten selects at compile time
+# (`rten-simd`, `cfg(target_feature = "simd128")`). The main module links none
+# of these crates, so its size is untouched; the PDF module keeps its own
+# budget in `webapp/tests/wasm_size.test.mjs`.
+[profile.release.package.rten]
+opt-level = 3
+[profile.release.package.rten-base]
+opt-level = 3
+[profile.release.package.rten-gemm]
+opt-level = 3
+[profile.release.package.rten-simd]
+opt-level = 3
+[profile.release.package.rten-vecmath]
+opt-level = 3
+[profile.release.package.rten-tensor]
+opt-level = 3
+[profile.release.package.casual-doc-ocr]
+opt-level = 3

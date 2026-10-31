@@ -2662,6 +2662,7 @@
   "findings.pdfReflow.source": "它是根據開啟時的 PDF 建立的：對 PDF 頁面所做的編輯不在其中。",
   "pdfOcr.command": "辨識掃描頁中的文字",
   "pdfOcr.notPdf": "文字辨識適用於從 PDF 開啟的文件。",
+  "pdfOcr.recognisingPage": "正在辨識第 {page} 頁（共 {total} 頁）的文字…",
   "pdfOcr.noScans": "此 PDF 沒有需要讀取的掃描頁。",
   "pdfOcr.done": "此 PDF 的掃描頁已讀取過。",
   "pdfOcr.noModels": "無法使用文字辨識：此編輯器沒有辨識模型。提供此編輯器的網站可以新增。",

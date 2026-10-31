@@ -144,6 +144,14 @@ run_wasm_pack() {
   # importer and PP-OCRv5 on rten, with no bundled faces, CMaps or models.
   # `src/pdf_module.mjs` imports it on the first PDF open; its own budget is in
   # `tests/wasm_size.test.mjs`.
+  #
+  # Built with `simd128` (HF-414): rten picks its WebAssembly SIMD kernels at
+  # compile time, and without them a scanned page took minutes to recognise.
+  # Only this module: the main one keeps its build (RM-14 records that
+  # decision separately). Every browser the editor supports runs WebAssembly
+  # SIMD (Chrome 91, Firefox 89, Safari 16.4). The flag is appended to any
+  # RUSTFLAGS the caller set, never replacing them.
+  RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C target-feature=+simd128" \
   wasm-pack build "$repo/crates/casual-doc-wasm-pdf" \
     --target web \
     --out-dir "$here/pkg-pdf" \

@@ -2684,6 +2684,7 @@
   "findings.pdfReflow.source": "Il a été construit à partir du PDF tel qu’il a été ouvert : les modifications apportées aux pages du PDF n’y figurent pas.",
   "pdfOcr.command": "Reconnaître le texte des pages numérisées",
   "pdfOcr.notPdf": "La reconnaissance de texte s’applique à un document ouvert à partir d’un PDF.",
+  "pdfOcr.recognisingPage": "Reconnaissance du texte de la page {page} sur {total}…",
   "pdfOcr.noScans": "Ce PDF n’a aucune page numérisée à lire.",
   "pdfOcr.done": "Les pages numérisées de ce PDF ont déjà été lues.",
   "pdfOcr.noModels": "La reconnaissance de texte n’est pas disponible : cet éditeur n’a pas de modèles de reconnaissance. Le site qui fournit l’éditeur peut les ajouter.",

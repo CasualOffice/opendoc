@@ -2684,6 +2684,7 @@
   "findings.pdfReflow.source": "È stato creato dal PDF così come è stato aperto: le modifiche apportate alle pagine del PDF non sono incluse.",
   "pdfOcr.command": "Riconosci il testo nelle pagine scansionate",
   "pdfOcr.notPdf": "Il riconoscimento del testo si applica a un documento aperto da un PDF.",
+  "pdfOcr.recognisingPage": "Riconoscimento del testo della pagina {page} di {total}…",
   "pdfOcr.noScans": "Questo PDF non ha pagine scansionate da leggere.",
   "pdfOcr.done": "Le pagine scansionate di questo PDF sono già state lette.",
   "pdfOcr.noModels": "Il riconoscimento del testo non è disponibile: questo editor non ha modelli di riconoscimento. Il sito che fornisce l’editor può aggiungerli.",

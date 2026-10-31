@@ -2673,6 +2673,7 @@
   "findings.pdfReflow.source": "Es wurde aus dem PDF in dem Zustand erstellt, in dem es geöffnet wurde: Änderungen an den Seiten des PDFs sind nicht enthalten.",
   "pdfOcr.command": "Text in gescannten Seiten erkennen",
   "pdfOcr.notPdf": "Texterkennung gilt für ein aus einem PDF geöffnetes Dokument.",
+  "pdfOcr.recognisingPage": "Text auf Seite {page} von {total} wird erkannt…",
   "pdfOcr.noScans": "Dieses PDF hat keine gescannten Seiten zum Lesen.",
   "pdfOcr.done": "Die gescannten Seiten dieses PDFs wurden bereits gelesen.",
   "pdfOcr.noModels": "Texterkennung ist nicht verfügbar: Dieser Editor hat keine Erkennungsmodelle. Die Website, die den Editor bereitstellt, kann sie hinzufügen.",

@@ -1051,11 +1051,20 @@ the two landed in different 0.1 ms ticks (task 9467.1, mark 9467.2) the 1.4-2.7 
 was counted as a slice. A slice is now a task that ENDS before the mark; with the slices
 mutated into one task (`SLICE_BUDGET_MS = 1e9`) it still fails, at 1,582 ms.
 
-**Not built, and the next lever.** Recognition is slow: ~50-90 s for one page in desktop
-Chromium, because rten runs scalar and single-threaded on wasm32. The tab no longer
-freezes, but a ten-page scan is still minutes of waiting. `simd128` for the PDF module is
-the next lever (the same build decision `109` RM-14 records for the renderer); its size and
-browser floor need measuring first.
+**SIMD, built (`109` HF-414 follow-up).** Recognition was slow because rten ran scalar
+and, under `build.sh`'s browser-wide `opt-level = z`, without unrolling or inlining: on the
+live site a real scanned page had not finished after ten minutes. `build.sh` now builds the
+PDF module alone with `-C target-feature=+simd128` (rten picks its SIMD kernels at compile
+time; `wasm-opt --enable-simd`), and the root `Cargo.toml` keeps `rten*` and
+`casual-doc-ocr` at opt-level 3. Measured on one machine: the synthetic printed page of
+`e2e/ocr-main-thread.spec.mjs` went from 70-90 s to 5.7 s; a real eight-page 150 dpi scan
+read in 159 s (6-36 s a page) where the scalar module took 382 s for its first page. The
+module shrank (9,443,198 B to 8,612,646 B). Browser floor: WebAssembly SIMD (Chrome 91,
+Firefox 89, Safari 16.4); an older browser cannot compile the PDF module at all and says
+so through the module-load error. The main module stays scalar (RM-14 decides that), and
+`wasm_size.test.mjs` asserts both, from the artifacts. The page is also recognised over
+plain HTTP now: Web Crypto's SHA-256 is missing in an insecure context, and
+`web_crypto.mjs` computes it in JavaScript there (`e2e/ocr-deployed.spec.mjs`).
 
 ## 20. P5/P6 built: OCR and optional ML layout (headless)
 

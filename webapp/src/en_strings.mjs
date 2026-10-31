@@ -928,6 +928,7 @@ export const EN_STRINGS = Object.freeze({
   "findings.pdfReflow.source": "It was built from the PDF as it was opened: edits made to the PDF's pages are not in it.",
   "pdfOcr.command": "Recognise text in scanned pages",
   "pdfOcr.notPdf": "Text recognition applies to a document opened from a PDF.",
+  "pdfOcr.recognisingPage": "Recognising text on page {page} of {total}…",
   "pdfOcr.noScans": "This PDF has no scanned pages to read.",
   "pdfOcr.done": "The scanned pages of this PDF have already been read.",
   "pdfOcr.noModels": "Text recognition is unavailable: this editor has no recognition models. The site that provides the editor can add them.",

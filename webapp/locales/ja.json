@@ -2662,6 +2662,7 @@
   "findings.pdfReflow.source": "開いた時点の PDF から作成されています。PDF のページに加えた編集は含まれません。",
   "pdfOcr.command": "スキャンしたページの文字を認識",
   "pdfOcr.notPdf": "文字認識は PDF から開いた文書に対して行います。",
+  "pdfOcr.recognisingPage": "{total} ページ中 {page} ページ目の文字を認識しています…",
   "pdfOcr.noScans": "この PDF には読み取るスキャンページがありません。",
   "pdfOcr.done": "この PDF のスキャンページはすでに読み取り済みです。",
   "pdfOcr.noModels": "文字認識は利用できません。このエディターには認識モデルがありません。エディターを提供しているサイトが追加できます。",

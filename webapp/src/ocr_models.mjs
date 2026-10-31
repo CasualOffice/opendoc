@@ -18,6 +18,7 @@
 // manifest rules, the digest refusal and the cache are tested in node.
 
 import { hostParams } from "./capabilities.mjs";
+import { sha256Hex as digestHex } from "./web_crypto.mjs";
 
 /** The database. Its own, for `proof_store.mjs`'s reason: a model can be
  *  evicted or deleted wholesale, and nothing about it may ever touch a draft. */
@@ -160,11 +161,12 @@ export async function obtainModels(manifest, io) {
   return { detection, packs };
 }
 
-/** The lower-case hex SHA-256 of `bytes`, through Web Crypto. */
+/** The lower-case hex SHA-256 of `bytes`: Web Crypto, or, on a page that is
+ *  not a secure context (plain HTTP, where `crypto.subtle` is undefined), the
+ *  same digest computed in JavaScript (`web_crypto.mjs`, HF-414). Never
+ *  skipped: a model is only used once its digest matches the manifest. */
 export async function sha256Hex(bytes, subtle = globalThis.crypto?.subtle) {
-  if (!subtle) throw new Error("this browser cannot verify downloads (no Web Crypto)");
-  const digest = new Uint8Array(await subtle.digest("SHA-256", bytes));
-  return [...digest].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return digestHex(bytes, subtle);
 }
 
 /** Fetches and validates the manifest at `url`. */
