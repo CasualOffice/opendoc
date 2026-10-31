@@ -186,9 +186,13 @@ function sections(bytes) {
   return sizes;
 }
 
-test("the editor's engine download stays inside its budget", () => {
+// Each size test reports what it measured (`t.diagnostic`, a `#` line in the
+// CI log) on a pass too, so a ceiling is re-measured from CI's own build
+// rather than estimated by a lane that cannot run build.sh.
+test("the editor's engine download stays inside its budget", (t) => {
   assert.ok(existsSync(WASM), `${WASM} is missing. ${STALE}`);
   const total = statSync(WASM).size;
+  t.diagnostic(`engine module measured ${total.toLocaleString("en-US")} B`);
   assert.ok(
     total <= MAX_TOTAL_BYTES,
     `the engine module is ${total.toLocaleString("en-US")} B, over the ` +
@@ -200,9 +204,10 @@ test("the editor's engine download stays inside its budget", () => {
   );
 });
 
-test("the code the browser must compile stays inside its budget", () => {
+test("the code the browser must compile stays inside its budget", (t) => {
   assert.ok(existsSync(WASM), `${WASM} is missing. ${STALE}`);
   const code = sections(readFileSync(WASM))[10] ?? 0;
+  t.diagnostic(`code section measured ${code.toLocaleString("en-US")} B`);
   assert.ok(
     code >= MIN_CODE_BYTES,
     `the code section is only ${code.toLocaleString("en-US")} B — that is not this ` +
@@ -260,9 +265,10 @@ function holds(bytes, needle) {
   return Buffer.from(bytes).includes(Buffer.from(needle, "latin1"));
 }
 
-test("the PDF module stays inside its own budget", () => {
+test("the PDF module stays inside its own budget", (t) => {
   assert.ok(existsSync(PDF_WASM), `${PDF_WASM} is missing. ${STALE}`);
   const total = statSync(PDF_WASM).size;
+  t.diagnostic(`PDF module measured ${total.toLocaleString("en-US")} B`);
   assert.ok(total >= MIN_PDF_TOTAL_BYTES, `the PDF module is only ${total} B — not this module. ${STALE}`);
   assert.ok(
     total <= MAX_PDF_TOTAL_BYTES,
