@@ -181,7 +181,7 @@ impl ILine {
         }
     }
 
-    fn text(&self) -> String {
+    pub(crate) fn text(&self) -> String {
         self.chars.iter().map(|c| c.text.as_str()).collect()
     }
 }
@@ -476,6 +476,195 @@ fn tagged_table(cells: Vec<Element>) -> Element {
     }
 }
 
+/// The digit runs of a cell's text, in order. O(characters).
+pub(crate) fn digit_runs(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut run = String::new();
+    for c in text.chars() {
+        if c.is_ascii_digit() {
+            run.push(c);
+        } else if !run.is_empty() {
+            out.push(std::mem::take(&mut run));
+        }
+    }
+    if !run.is_empty() {
+        out.push(run);
+    }
+    out
+}
+
+/// A cell's text. O(characters).
+pub(crate) fn cell_text(table: &ITable, r: usize, c: usize) -> String {
+    table
+        .rows
+        .get(r)
+        .and_then(|row| row.get(c))
+        .map(|cell| {
+            cell.lines
+                .iter()
+                .map(ILine::text)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
+}
+
+/// The digit runs of `table` that differ in some other instance of it:
+/// a running title block's page number changes from page to page, its form
+/// number and revision do not. O(cells x instances).
+fn varying_runs(table: &ITable, instances: &[&ITable]) -> BTreeSet<(usize, usize, usize)> {
+    let mut out = BTreeSet::new();
+    for (r, row) in table.rows.iter().enumerate() {
+        for c in 0..row.len() {
+            let mine = digit_runs(&cell_text(table, r, c));
+            for other in instances {
+                let theirs = digit_runs(&cell_text(other, r, c));
+                for (k, value) in mine.iter().enumerate() {
+                    if theirs.get(k).is_some_and(|t| t != value) {
+                        out.insert((r, c, k));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The share of a page, from its top or its bottom, a repeated table or
+/// picture must lie in to be the header's or the footer's.
+pub const OBJECT_BAND: f64 = 0.3;
+
+/// A repeated object's identity: footer or header, table or picture, its
+/// place (2 pt buckets, measured from its own edge of the page) and its
+/// grid's shape (a table) or its picture's type.
+type ObjectKey = (bool, bool, i64, i64, i64, i64, String);
+
+/// Takes out of `elements` every table and picture that repeats, in the
+/// same place with the same text, at the top or bottom of at least two
+/// pages and half of them (a form's title block, a letterhead's logo); one
+/// instance of each is returned with whether it is a footer, whether it is
+/// the first page's own variant (a table in a repeated table's place on the
+/// first page only, with other text), and its top.
+/// Repeated text was already furniture (`furniture`); repeated tables and
+/// pictures were body content on every page. O(elements log elements).
+fn repeated_objects(
+    elements: &mut Vec<Element>,
+    pages: &[SourcePage],
+    work: &mut u64,
+) -> Vec<(bool, bool, f64, PartObject)> {
+    let bucket = |v: f64| (v / 2.0).round() as i64;
+    let mut seen: BTreeMap<ObjectKey, (BTreeSet<usize>, Vec<usize>)> = BTreeMap::new();
+    for (i, e) in elements.iter().enumerate() {
+        *work += 1;
+        let Some(page) = pages.get(e.page) else {
+            continue;
+        };
+        let h = page.height;
+        let footer = if e.rect.y1 <= OBJECT_BAND * h {
+            false
+        } else if e.rect.y0 >= (1.0 - OBJECT_BAND) * h {
+            true
+        } else {
+            continue;
+        };
+        // A table is known by its place and its grid: its text can differ
+        // from page to page (a page number, a title page's own wording).
+        let (table, text) = match &e.kind {
+            EKind::Table(t) => (
+                true,
+                format!(
+                    "{}x{}",
+                    t.rows.len(),
+                    t.rows.iter().map(Vec::len).max().unwrap_or(0)
+                ),
+            ),
+            // The same logo is often a fresh image object on every page:
+            // its place and size identify it.
+            EKind::Image(image) => (false, image.media.media_type.clone()),
+            _ => continue,
+        };
+        let y = if footer { h - e.rect.y1 } else { e.rect.y0 };
+        let key = (
+            footer,
+            table,
+            bucket(e.rect.x0),
+            bucket(y),
+            bucket(e.rect.x1 - e.rect.x0),
+            bucket(e.rect.y1 - e.rect.y0),
+            text,
+        );
+        let entry = seen.entry(key).or_default();
+        entry.0.insert(e.page);
+        entry.1.push(i);
+    }
+    let total = pages.len();
+    let mut take: BTreeSet<usize> = BTreeSet::new();
+    let mut out = Vec::new();
+    // Accepted places (the key without its text), for the first page's own
+    // variant of a repeated table (a form's first page says "Page 1" where
+    // its digits are the same, but its title block's text can differ).
+    let mut places: BTreeSet<(bool, bool, i64, i64, i64, i64)> = BTreeSet::new();
+    let mut pending: Vec<(ObjectKey, Vec<usize>)> = Vec::new();
+    for (key, (on, at)) in seen {
+        if on.len() < 2 || on.len() * 2 < total {
+            if on.len() == 1 && on.contains(&0) {
+                pending.push((key, at));
+            }
+            continue;
+        }
+        let (footer, table, x, y, w, h, _) = key;
+        places.insert((footer, table, x, y, w, h));
+        // The instance from the first page after the first: a first page
+        // is the likeliest to differ.
+        let first = at
+            .iter()
+            .copied()
+            .find(|&i| elements[i].page > 0)
+            .unwrap_or(at[0]);
+        let e = &elements[first];
+        let object = match &e.kind {
+            EKind::Table(t) => {
+                let tables: Vec<&ITable> = at
+                    .iter()
+                    .filter_map(|&i| match &elements[i].kind {
+                        EKind::Table(t) => Some(t),
+                        _ => None,
+                    })
+                    .collect();
+                PartObject::Table(t.clone(), e.page, varying_runs(t, &tables))
+            }
+            EKind::Image(image) => PartObject::Image(image.clone()),
+            _ => continue,
+        };
+        out.push((footer, false, e.rect.y0, object));
+        take.extend(at);
+    }
+    for ((footer, table, x, y, w, h, _), at) in pending {
+        if !table || !places.contains(&(footer, table, x, y, w, h)) {
+            continue;
+        }
+        let e = &elements[at[0]];
+        if let EKind::Table(t) = &e.kind {
+            out.push((
+                footer,
+                true,
+                e.rect.y0,
+                PartObject::Table(t.clone(), e.page, BTreeSet::new()),
+            ));
+            take.extend(at);
+        }
+    }
+    if !take.is_empty() {
+        let mut i = 0;
+        elements.retain(|_| {
+            let keep = !take.contains(&i);
+            i += 1;
+            keep
+        });
+    }
+    out
+}
+
 /// A label line: at most six words and forty characters (an axis value,
 /// a legend entry, a box's caption), never prose.
 fn label_line(line: &ILine) -> bool {
@@ -693,6 +882,20 @@ pub struct Part {
     pub rows: Vec<Vec<ILine>>,
     /// Character positions holding the page number: `(row, line, start, end)`.
     pub numbers: Vec<(usize, usize, usize, usize)>,
+    /// Tables and pictures repeated in the band (a letterhead's logo, a
+    /// form's title block), with the top they sit at (`repeated_objects`).
+    pub objects: Vec<(f64, PartObject)>,
+}
+
+/// A table or picture that repeats at the top or bottom of the pages.
+#[derive(Clone, Debug)]
+pub enum PartObject {
+    /// A table, the page (zero-based) the kept instance is from, and the
+    /// digit runs that change from page to page, `(row, cell, run)`: those
+    /// are its page number.
+    Table(ITable, usize, BTreeSet<(usize, usize, usize)>),
+    /// A picture, drawn where the PDF placed it.
+    Image(SourceImage),
 }
 
 /// The header and footer parts, keyed by (is footer, variant).
@@ -846,9 +1049,25 @@ fn furniture(
     let mut seen: BTreeMap<(bool, String, i64), Vec<(usize, usize)>> = BTreeMap::new();
     let mut artifacts_omitted = 0;
     for page in &state.pages {
+        // Text inside a ruled grid is a table's cell: a repeated table is
+        // the header's or footer's whole (`repeated_objects`), so its first
+        // row must not be taken out on its own as a band of text.
+        let mut grid_work = 0;
+        let cells: Vec<(f64, f64, f64, f64)> = tables::grids(&page.rules, &mut grid_work)
+            .iter()
+            .filter_map(|(xs, ys, _)| Some((*xs.first()?, *ys.first()?, *xs.last()?, *ys.last()?)))
+            .collect();
+        *work += grid_work;
         for (b, block) in page.blocks.iter().enumerate() {
             *work += 1;
             let bb = &block.block;
+            let (cx, cy) = ((bb.x0 + bb.x1) / 2.0, (bb.top + bb.bottom) / 2.0);
+            if cells
+                .iter()
+                .any(|&(x0, y0, x1, y1)| cx > x0 && cx < x1 && cy > y0 && cy < y1)
+            {
+                continue;
+            }
             let top_band = bb.bottom <= FURNITURE_BAND * page.height * 1.5
                 && bb.top <= FURNITURE_BAND * page.height;
             let bottom_band = bb.top >= (1.0 - FURNITURE_BAND) * page.height;
@@ -1041,6 +1260,7 @@ fn furniture(
             Part {
                 rows: grouped,
                 numbers,
+                objects: Vec::new(),
             },
         );
     }
@@ -1152,7 +1372,7 @@ pub fn build(
     let mut findings = Findings::default();
     let mut work = ReflowWork::default();
     let key = key_of(state);
-    let (furniture_blocks, furniture) = furniture(state, &mut findings, &mut work.furniture);
+    let (furniture_blocks, mut furniture) = furniture(state, &mut findings, &mut work.furniture);
 
     // Structure leaves by (page, mcid), when tagged.
     let mut leaves: BTreeMap<(usize, i32), usize> = BTreeMap::new();
@@ -1757,6 +1977,81 @@ pub fn build(
     // row, when the next page repeats it, becomes a header row).
     let continued = tables::continue_across_pages(&mut flow.elements, &mut work.tables);
     findings.record(report::TABLE_CONTINUED, Outcome::Mapped, continued, None);
+    // Tables and pictures repeated at the top or bottom of the pages are
+    // the header's and the footer's, not body content on every page.
+    let objects = repeated_objects(&mut flow.elements, &state.pages, &mut work.furniture);
+    if !objects.is_empty() {
+        findings.record(
+            report::HEADER_FOOTER_INFERRED,
+            Outcome::Mapped,
+            objects.len() as u32,
+            None,
+        );
+        let mut first_variant = Vec::new();
+        for (footer, first, top, object) in objects {
+            if first {
+                first_variant.push((footer, top, object));
+                continue;
+            }
+            furniture
+                .parts
+                .entry((footer, Variant::Default))
+                .or_default()
+                .objects
+                .push((top, object));
+        }
+        // The first page's own table: a title page whose parts are the
+        // default ones with that table in place of the repeated one.
+        if !first_variant.is_empty() && !furniture.title_page {
+            for footer in [false, true] {
+                let mut part = furniture
+                    .parts
+                    .get(&(footer, Variant::Default))
+                    .cloned()
+                    .unwrap_or_default();
+                let own: Vec<(f64, PartObject)> = first_variant
+                    .iter()
+                    .filter(|o| o.0 == footer)
+                    .map(|o| (o.1, o.2.clone()))
+                    .collect();
+                if !own.is_empty() {
+                    part.objects
+                        .retain(|o| !matches!(o.1, PartObject::Table(..)));
+                    part.objects.extend(own);
+                }
+                if !part.rows.is_empty() || !part.objects.is_empty() {
+                    furniture.parts.insert((footer, Variant::First), part);
+                }
+            }
+            furniture.title_page = true;
+        }
+        // The body's extent and each page's content end without them.
+        let (mut x0, mut y0, mut x1, mut y1) = (
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        );
+        let mut bottoms = vec![f64::NEG_INFINITY; state.pages.len()];
+        for e in &flow.elements {
+            if let Some(b) = bottoms.get_mut(e.page) {
+                *b = b.max(e.rect.y1);
+            }
+            let page = &state.pages[e.page];
+            if matches!(e.kind, EKind::Text(_) | EKind::Table(_))
+                && (page.width.round(), page.height.round()) == common_size
+            {
+                x0 = x0.min(e.rect.x0);
+                y0 = y0.min(e.rect.y0);
+                x1 = x1.max(e.rect.x1);
+                y1 = y1.max(e.rect.y1);
+            }
+        }
+        if x0.is_finite() {
+            (bx0, by0, bx1, by1) = (x0, y0, x1, y1);
+        }
+        flow.page_bottoms = bottoms;
+    }
     findings.record(
         report::READING_ORDER_INFERRED,
         Outcome::Mapped,

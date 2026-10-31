@@ -1809,6 +1809,14 @@ driven red by the mutation named in its commit):
 | Landscape pages | `sample.docx`'s landscape page reflowed onto a portrait page; every section after the first opened on a page with no running head | One page size for the whole document; the title-page flag was on every section | A page turned the other way from the document's is a section of its own size (`NextPage`, the document's margins, and no extra page break on its first paragraph); only the first section can be a title page |
 | Charts and figures | A chart reflowed in pieces with no frame or gridlines, its axis values and legend as a column of one-word paragraphs; a chart closing a page made the next page start with a break, leaving a page nearly empty | Each run of paths between two text runs was its own drawing; rules outside tables were dropped (a grid with no text was counted as a table's); text over a drawing was always prose; only text and tables counted as a page's content | Runs of vector art that overlap or come within 6 pt are one figure (a page-sized background is no figure's piece); rules no table, decoration or furniture band took become art (a lone one only when it spans half the page: a separator); label lines (≤ 6 words, ≤ 40 characters, no larger than the body) inside a figure, or within two of their ems of it, become text boxes in its group, drawn where the PDF set them; pictures and drawings count as where a page's content stops |
 
+**The owner's second report (2026-10-31): running headers and footers, page backgrounds,
+scans.** Measured on thirteen PDFs the owner supplied (letters, forms, contracts, guides,
+scans; kept on the owner's machine, nothing of them committed):
+
+| Family | What a person saw | Root cause | Fix |
+| --- | --- | --- | --- |
+| Repeated tables and pictures | A form's title block (a ruled table with "Page 2 of 6") and its logo were body content on every page, the table's first row split off as header text | Furniture was text only, and it took the band's text out of the table before the table was built | `reflow::repeated_objects`: a table or picture in the top or bottom 30% of a page, in the same place (2 pt) with the same grid shape (a table) or type (a picture), on at least two pages and half of them, is the header's or the footer's; the band-text pass leaves text inside a ruled grid to its table. The digit runs that change from instance to instance are the page number (`PAGE`), and a run after one equal to the page count is `NUMPAGES`; a constant number (a form or revision number) stays text. Pictures are page-anchored in the part where the PDF drew them |
+
 **`sample.docx` through our writer, before and after** (the scorer fix applied to both):
 
 | Family | Before | After |

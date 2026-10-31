@@ -9,7 +9,7 @@ use casual_doc_model::v1::{
     Alignment, BlockNode, Document, HeightRule, InlineNode, Paragraph, Spacing,
 };
 // Own line: sections and drawings.
-use casual_doc_model::v1::{GroupChild, SectionType};
+use casual_doc_model::v1::{FieldKind, GroupChild, SectionType};
 
 use crate::synth::{self, Page, text};
 use crate::{PdfImportError, PdfReadLimits, Reflowed, import_pdf};
@@ -784,4 +784,95 @@ fn a_tagged_table_with_a_filled_header_stays_a_table() {
         .expect("Table 1 is a table");
     assert_eq!(table.rows.len(), 6);
     assert!(table.rows.iter().all(|r| r.cells.len() == 4));
+}
+
+/// Three pages, each with the same ruled title block at the top ("Form 7",
+/// "Page N of 3") beside the same logo, and body prose under it.
+fn running_table_pdf() -> Vec<u8> {
+    let mut pdf = synth::Pdf::default();
+    let image = pdf.stream(
+        "/Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceGray /BitsPerComponent 8",
+        &[128u8; 16],
+    );
+    let prose = full("prose");
+    let lines: Vec<&str> = std::iter::repeat_n(prose.as_str(), 30).collect();
+    let pages: Vec<Page> = (1..=3)
+        .map(|n| {
+            let mut content = String::from("q 40 0 0 40 72 712 cm /Im1 Do Q\n0 g\n");
+            for y in [752.0, 732.0, 712.0] {
+                content.push_str(&synth::line(130.0, y, 540.0, y));
+            }
+            for x in [130.0, 330.0, 540.0] {
+                content.push_str(&synth::line(x, 712.0, x, 752.0));
+            }
+            content.push_str(&text("F1", 10.0, 135.0, 738.0, 12.0, &["Form 7"]));
+            content.push_str(&text("F1", 10.0, 335.0, 738.0, 12.0, &["Revision 2"]));
+            content.push_str(&text("F1", 10.0, 135.0, 718.0, 12.0, &["Consent"]));
+            content.push_str(&text(
+                "F1",
+                10.0,
+                335.0,
+                718.0,
+                12.0,
+                &[&format!("Page {n} of 3")],
+            ));
+            content.push_str(&text("F1", 11.0, 72.0, 680.0, 14.0, &lines));
+            Page::new(content)
+        })
+        .collect();
+    synth::document_in(
+        &mut pdf,
+        &pages,
+        &format!("{COURIER} /XObject << /Im1 {image} 0 R >>"),
+        "",
+        |_| String::new(),
+    )
+}
+
+#[test]
+fn a_repeated_title_block_and_logo_are_the_header_with_page_fields() {
+    let reflowed = reflow_of(running_table_pdf());
+    let document = &reflowed.document;
+    // The body holds neither the title block nor the logo.
+    assert!(
+        !document
+            .body()
+            .iter()
+            .any(|b| matches!(b, BlockNode::Table(_))),
+        "the title block left the body"
+    );
+    assert_eq!(graphics(document), 0);
+    // The default header holds both, the page number and count as fields.
+    let headers = &document.definitions().headers;
+    assert_eq!(headers.len(), 1, "one header part");
+    let header = headers.iter().next().map(|(_, h)| h).expect("a header");
+    let table = header
+        .blocks
+        .iter()
+        .find_map(|b| match b {
+            BlockNode::Table(t) => Some(t),
+            _ => None,
+        })
+        .expect("the title block is in the header");
+    let mut kinds = Vec::new();
+    for cell in table.rows.iter().flat_map(|r| r.cells.iter()) {
+        for block in &cell.blocks {
+            if let BlockNode::Paragraph(p) = block {
+                for inline in &p.inlines {
+                    if let InlineNode::Field(f) = inline {
+                        kinds.push(f.kind.clone());
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(kinds, vec![FieldKind::Page, FieldKind::NumPages]);
+    let logo = header.blocks.iter().any(|b| match b {
+        BlockNode::Paragraph(p) => p
+            .inlines
+            .iter()
+            .any(|i| matches!(i, InlineNode::AnchoredDrawing(_))),
+        _ => false,
+    });
+    assert!(logo, "the logo is in the header");
 }

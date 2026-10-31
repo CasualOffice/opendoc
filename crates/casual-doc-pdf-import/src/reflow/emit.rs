@@ -47,6 +47,11 @@ use super::{Float, FloatWrap, Graphic, SourceImage, SourceVector};
 use crate::PdfImportError;
 use crate::report::{self, Findings, PdfModelOutcome as Outcome};
 
+/// A running header table's page numbering: the kept instance's page
+/// (one-based), the page count, and its digit runs that vary from page to
+/// page, `(row, cell, run)`.
+type PageNumbers<'a> = (usize, usize, &'a BTreeSet<(usize, usize, usize)>);
+
 fn twips(points: f64) -> i32 {
     (points * 20.0).round() as i32
 }
@@ -718,6 +723,93 @@ impl Emitter<'_> {
     }
 
     fn table(&mut self, table: &ITable) -> Result<Table, PdfImportError> {
+        self.numbered_table(table, None)
+    }
+
+    /// The runs of `chars` that are page numbers: the digit runs at the
+    /// `varying` indices equal to `page` are `PAGE`, and a run after one of
+    /// them equal to `total` is `NUMPAGES` ("Page 2 of 6"). O(characters).
+    fn page_runs(
+        chars: &[PChar],
+        varying: &[usize],
+        page: usize,
+        total: usize,
+    ) -> Vec<(usize, usize, FieldKind)> {
+        let digit = |c: &PChar| !c.text.is_empty() && c.text.chars().all(|d| d.is_ascii_digit());
+        let mut runs = Vec::new();
+        let mut i = 0;
+        while i < chars.len() {
+            if digit(&chars[i]) {
+                let mut j = i;
+                while j < chars.len() && digit(&chars[j]) {
+                    j += 1;
+                }
+                runs.push((i, j));
+                i = j;
+            } else {
+                i += 1;
+            }
+        }
+        let value = |(a, b): (usize, usize)| -> String {
+            chars[a..b].iter().map(|c| c.text.as_str()).collect()
+        };
+        let mut out = Vec::new();
+        let mut after_page = false;
+        for (k, &run) in runs.iter().enumerate() {
+            if varying.contains(&k) && value(run) == page.to_string() {
+                out.push((run.0, run.1, FieldKind::Page));
+                after_page = true;
+            } else if after_page && value(run) == total.to_string() {
+                out.push((run.0, run.1, FieldKind::NumPages));
+                after_page = false;
+            }
+        }
+        out
+    }
+
+    /// Inline content where a digit run equal to `page` (one-based) is a
+    /// `PAGE` field and one equal to `total` a `NUMPAGES` field (a running
+    /// header's "Page 2 of 6"); without numbers, [`Self::inlines`].
+    /// O(characters).
+    fn numbered_inlines(
+        &mut self,
+        chars: &[PChar],
+        style: Option<&FontKey>,
+        numbers: Option<(usize, usize, &[usize])>,
+    ) -> Result<Vec<InlineNode>, PdfImportError> {
+        let Some((page, total, varying)) = numbers else {
+            return self.inlines(chars, style);
+        };
+        let mut out = Vec::new();
+        let mut from = 0;
+        for (i, j, kind) in Self::page_runs(chars, varying, page, total) {
+            out.extend(self.inlines(&chars[from..i], style)?);
+            let cached = self.inlines(&chars[i..j], style)?;
+            let instruction = if kind == FieldKind::Page {
+                " PAGE "
+            } else {
+                " NUMPAGES "
+            };
+            out.push(InlineNode::Field(Box::new(Field {
+                id: self.id()?,
+                instruction: instruction.to_owned(),
+                kind,
+                inlines: cached,
+                form: None,
+                update: FieldUpdateState::default(),
+            })));
+            from = j;
+        }
+        out.extend(self.inlines(&chars[from..], style)?);
+        Ok(out)
+    }
+
+    /// [`Self::table`], with a running header's page numbers as fields.
+    fn numbered_table(
+        &mut self,
+        table: &ITable,
+        numbers: Option<PageNumbers<'_>>,
+    ) -> Result<Table, PdfImportError> {
         let mut rows = Vec::with_capacity(table.rows.len());
         // The rules' own thickness and colour (Word's floor is a quarter
         // point, `w:sz` 2), so a hairline grid stays a hairline.
@@ -731,7 +823,7 @@ impl Emitter<'_> {
         let body = self.sheet.body.clone();
         for (r, row) in table.rows.iter().enumerate() {
             let mut cells = Vec::with_capacity(row.len());
-            for cell in row {
+            for (c, cell) in row.iter().enumerate() {
                 let mut blocks = Vec::new();
                 if cell.vmerge != Some(false) {
                     let lines: Vec<&ILine> = cell.lines.iter().collect();
@@ -740,7 +832,21 @@ impl Emitter<'_> {
                     {
                         let (chars, _) = text::join(chunk);
                         let id = self.id()?;
-                        let inlines = self.inlines(&chars, body.as_ref())?;
+                        // The cell's varying digit runs, by their index in
+                        // the cell's whole text.
+                        let varying: Vec<usize> = numbers
+                            .map(|(_, _, v)| {
+                                v.iter()
+                                    .filter(|(vr, vc, _)| *vr == r && *vc == c)
+                                    .map(|(_, _, k)| *k)
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let inlines = self.numbered_inlines(
+                            &chars,
+                            body.as_ref(),
+                            numbers.map(|(p, t, _)| (p, t, varying.as_slice())),
+                        )?;
                         blocks.push(BlockNode::Paragraph(Paragraph {
                             id,
                             properties: cell_paragraph(),
@@ -1637,9 +1743,14 @@ pub(crate) fn emit(
         .furniture
         .parts
         .get(&(false, Variant::Default))
-        .and_then(|part| part.rows.first())
-        .and_then(|row| row.first())
-        .map(|l| l.top);
+        .and_then(|part| {
+            let row = part.rows.first().and_then(|row| row.first()).map(|l| l.top);
+            let object = part.objects.iter().map(|o| o.0).reduce(f64::min);
+            match (row, object) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            }
+        });
     let footer_bottom = flow
         .furniture
         .parts
@@ -1666,7 +1777,7 @@ pub(crate) fn emit(
             Variant::First => HeaderFooterKind::First,
         };
         let (id, content) =
-            match furniture_part(&mut emitter, &part.rows, &part.numbers, page_w, margins)? {
+            match furniture_part(&mut emitter, part, page_w, margins, flow.page_sizes.len())? {
                 Some(built) => built,
                 // An empty first-page part: the title page shows nothing there.
                 None => (
@@ -2611,19 +2722,73 @@ fn lists(items: &mut [Item], emitter: &mut Emitter<'_>) -> Result<u32, PdfImport
 /// separated by tabs at centre or right stops, the page number a PAGE field.
 fn furniture_part(
     emitter: &mut Emitter<'_>,
-    rows: &[Vec<ILine>],
-    numbers: &[(usize, usize, usize, usize)],
+    part: &super::Part,
     page_width: f64,
     margins: PageMargins,
+    total_pages: usize,
 ) -> Result<Option<(HeaderFooterId, HeaderFooter)>, PdfImportError> {
-    if rows.is_empty() {
+    let (rows, numbers) = (&part.rows, &part.numbers);
+    if rows.is_empty() && part.objects.is_empty() {
         return Ok(None);
+    }
+    // Blocks in the order they sit down the band: text rows, tables, and
+    // pictures (carried by the block they precede).
+    let mut placed: Vec<(f64, BlockNode)> = Vec::new();
+    let mut pictures: Vec<(f64, InlineNode)> = Vec::new();
+    for (top, object) in &part.objects {
+        match object {
+            super::PartObject::Table(table, page, varying) => {
+                let built =
+                    emitter.numbered_table(table, Some((page + 1, total_pages, varying)))?;
+                placed.push((*top, BlockNode::Table(Box::new(built))));
+            }
+            super::PartObject::Image(image) => {
+                let media = emitter.media(image)?;
+                let b = image.bounds;
+                emitter.z += 1;
+                pictures.push((
+                    *top,
+                    InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+                        id: emitter.id()?,
+                        media,
+                        extent: Extent {
+                            width_emu: crate::fixed::emu(b.width()).max(1),
+                            height_emu: crate::fixed::emu(b.height()).max(1),
+                        },
+                        anchor: DrawingAnchor {
+                            horizontal: AnchorHorizontal {
+                                relative_from: HorizontalAnchor::Page,
+                                position: HorizontalPosition::Offset(crate::fixed::emu(b.x0)),
+                            },
+                            vertical: AnchorVertical {
+                                relative_from: VerticalAnchor::Page,
+                                position: VerticalPosition::Offset(crate::fixed::emu(b.y0)),
+                            },
+                            wrap: WrapMode::None,
+                            wrap_text: None,
+                            wrap_distances: WrapDistances::default(),
+                            wrap_polygon: None,
+                            behind_doc: false,
+                            allow_overlap: true,
+                        },
+                        descr: None,
+                        relative_height: Some(emitter.z),
+                        crop: None,
+                        opacity: None,
+                        hyperlink: None,
+                        border: None,
+                        flip_h: false,
+                        flip_v: false,
+                        rotation: None,
+                    })),
+                ));
+            }
+        }
     }
     let left = f64::from(margins.start_twips) / 20.0;
     let right = page_width - f64::from(margins.end_twips) / 20.0;
     let width = (right - left).max(1.0);
     let body = emitter.sheet.body.clone();
-    let mut blocks = Vec::new();
     for (r, row) in rows.iter().enumerate() {
         let mut inlines = Vec::new();
         let mut tabs = Vec::new();
@@ -2679,21 +2844,45 @@ fn furniture_part(
                 None => inlines.extend(emitter.inlines(&line.chars, body.as_ref())?),
             }
         }
+        let top = row.first().map_or(0.0, |l| l.top);
+        placed.push((
+            top,
+            BlockNode::Paragraph(Paragraph {
+                id: emitter.id()?,
+                properties: ParagraphProperties {
+                    alignment,
+                    tabs,
+                    spacing: Some(Spacing {
+                        before_twips: Some(0),
+                        after_twips: Some(0),
+                        ..Spacing::default()
+                    }),
+                    ..ParagraphProperties::default()
+                }
+                .into(),
+                inlines,
+            }),
+        ));
+    }
+    placed.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut blocks: Vec<BlockNode> = placed.into_iter().map(|p| p.1).collect();
+    // A part must end in a paragraph (a table cannot close a story), and
+    // the pictures, page-anchored, ride on its first paragraph.
+    if !matches!(blocks.last(), Some(BlockNode::Paragraph(_))) {
         blocks.push(BlockNode::Paragraph(Paragraph {
             id: emitter.id()?,
-            properties: ParagraphProperties {
-                alignment,
-                tabs,
-                spacing: Some(Spacing {
-                    before_twips: Some(0),
-                    after_twips: Some(0),
-                    ..Spacing::default()
-                }),
-                ..ParagraphProperties::default()
-            }
-            .into(),
-            inlines,
+            properties: ParagraphProperties::default().into(),
+            inlines: Vec::new(),
         }));
+    }
+    if !pictures.is_empty()
+        && let Some(BlockNode::Paragraph(first)) = blocks
+            .iter_mut()
+            .find(|b| matches!(b, BlockNode::Paragraph(_)))
+    {
+        let mut inlines: Vec<InlineNode> = pictures.into_iter().map(|p| p.1).collect();
+        inlines.append(&mut first.inlines);
+        first.inlines = inlines;
     }
     let id = HeaderFooterId::new(emitter.id()?);
     Ok(Some((id, HeaderFooter { blocks })))
