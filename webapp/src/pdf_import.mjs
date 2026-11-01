@@ -401,7 +401,7 @@ export function createPdfImport(io = {}) {
       });
       // The pages were read and finished in the worker: from here, this
       // thread's work is opening the package (`pdf-import.spec` partitions on it).
-      clock.mark?.(FINISH_MARK);
+      (scope.performance ?? globalThis.performance).mark?.(FINISH_MARK);
       return imported;
     } catch (error) {
       if (active.cancelRequested || error?.name === "AbortError") return null;
