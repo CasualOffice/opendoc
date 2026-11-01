@@ -1403,6 +1403,25 @@ mutation (the commit message lists them).
 **Open (closed in §24).** Header, footer and note bodies take the same writes, but the actions
 only start from body paragraphs. The shared-room gap this paragraph recorded is closed in §24.1.
 
+### 23.6 A turn that writes nothing changes nothing; the whole document is read (HF-422, 2026-11-01)
+
+The owner ran the assistant against a local Ollama (llama3.2:3b, CPU-only). What broke, why, and
+what changed:
+
+| Report | Cause | Now |
+| --- | --- | --- |
+| "Make more confident": `Deleted: <sentence>`, no insertion, then "Accepted." | `begin` struck (or removed) the selection 450 ms after the turn opened, before any text existed; an empty answer, a timeout, a dropped connection, a guard violation or a Stop all ended with it deleted, and Accept accepted the deletion | **Deferred replacement.** The range is only marked; it is replaced in the same queued step as the first batch holding a visible character, after being found again through the engine-mapped anchor and re-checked against its exact text. A turn that ends having written nothing is reverted (`empty`: "returned nothing; your text is unchanged") and offers no Accept. A model error mid-stream rolls the whole turn back (`incomplete`); the person's Stop keeps what was written, as Docs' does |
+| Multi-paragraph "Make friendlier": "did not answer in time" | the JSON answer was not streamed, so the 30 s first-byte clock covered the whole generation; and a streaming server's headers reset the clock to the 60 s idle one before the first token | Local presets and loopback URLs get 180 s to the first token (cloud keeps 30 s); headers are not a first byte; review and table answers stream; the panel says it is waiting on the local model until the first word |
+| "Translate…": "The answer could not be used" | the selection reached the start of the next paragraph, so the multi-paragraph path ran; it asked for one JSON array and the model returned `["id": "p1", "text": …]`, which `parseJsonArray` rightly refused | A selection across paragraphs is rewritten one part per paragraph, plain text in and out (`selectionParts`): only the selected range of the first and last paragraph, never a table, a table of contents or an object (counted and said), and a blank part is no part, so the owner's case is a one-paragraph rewrite. Review and table answers that are not the structure asked for say so (`unparsableFormat`) |
+| A summary began "outside of the `<document_text>` tags" | the data rule told the model only that the user's message outside the tags is the instruction | The rule also says the tagged text is what the message is about and never to name the tags. Chat cards scrub an echoed marker (`scrubMarkers`); a live edit's stream is not scrubbed, so the `injection` guard is unchanged |
+| "Direct edits" beside a plugin grant of `direct: false` | Both were true: the live turn follows the effective access (ADR-077 as amended: the person's "AI edits as", capped by mode, protection and role); `grant.direct` is the third-party private preview's flag, which needs the host's `?ai=direct` | The platform's plugin list reports `liveEdits` beside `grant`; a unit guard holds the bar's label to the mode the engine was asked to write in |
+| "It can't access the full doc, or tables" | `selectContext` kept paragraph blocks only (a table is a summary block in `read_blocks`), read the body only, and cut at a fixed 6,000 tokens | Tables are read with `read_table` and sent as pipe rows inside one data block per 25-row chunk (the header repeated), each cell prefixed with its paragraph's short id, so an answer cites a cell and a review quotes one. Headers, footers, footnotes, endnotes and text boxes are read through `read_blocks`' new `surface` argument and marked `in="header"` and so on (a header shared by sections once). The budget is the provider's context window less the answer's reserve; a local model is assumed to hold 4,096 tokens (Ollama's default, which truncates a longer prompt from the START without an error). A partial read is told to the model and said under the answer |
+
+Comment bodies are not in the context: a comment is a conversation about the document, read by its
+own tool. Not done: a settings field for a local model's context window, and stripping a preamble
+("Here is the translation:") from a rewrite — no rule tells a preamble from text that starts that
+way, so it would delete real text.
+
 ## 24. Built: the agent principal, a tracked text-to-table, and turns that cannot cross (RM-52, 2026-11-01)
 
 The three gaps #923 shipped with, closed on `program/ai-main-rebased`.

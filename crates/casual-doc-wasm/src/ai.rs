@@ -57,7 +57,7 @@
 use std::cell::{Cell, RefCell};
 
 use casual_doc_ai::plan::{EditPlan, Mode};
-use casual_doc_ai::{AiError, Clock, Limits, Profile, Session, SessionConfig, read};
+use casual_doc_ai::{AiError, Clock, Limits, Profile, Session, SessionConfig, Surface, read};
 use casual_doc_edit::Operation;
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_review::body::RevisionIdAllocator;
@@ -209,8 +209,12 @@ impl WasmDocument {
                 text("cursor"),
                 limit,
             ),
-            "read" => read::read_blocks(
+            // `surface` names a header, footer, note or text box as get_outline
+            // lists them (`header:<id>`), so an assistant reads every container
+            // through the one read, not the body alone (`docs/183` §23.6).
+            "read" => read::read_blocks_in(
                 &session,
+                text("surface").map(Surface::parse).transpose()?,
                 text("start"),
                 text("cursor"),
                 number("maxTokens").and_then(|value| u32::try_from(value).ok()),

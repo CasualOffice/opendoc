@@ -85,6 +85,7 @@ const MODEL_TEXT = Object.freeze({
   baseRevision: "The `revision` your last read returned. A plan written against an older revision is refused.",
   depth: "Deepest heading level.",
   start: "A paragraph id to start from; the beginning when absent.",
+  surface: "A surface get_outline lists (`header:<id>`, `footer:<id>`, `footnote:<id>`, `endnote:<id>`, `text_box:<id>`); the body when absent.",
   maxTokens: "Stop near this many tokens.",
   mode: "Tracked suggestions unless the host granted direct edits.",
   get_outline:
@@ -124,6 +125,7 @@ const READS = Object.freeze([
     "read",
     {
       start: field("string", "start"),
+      surface: field("string", "surface"),
       cursor,
       maxTokens: field("integer", "maxTokens", { minimum: 1 }),
       format: { type: "string", enum: ["json", "markdown"] },

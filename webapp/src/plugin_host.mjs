@@ -131,7 +131,7 @@ export function startPlugin({ manifest, granted, env, container }) {
         // keep per-document state (the assistant's history) without learning its name.
         documentKey: held.permissions.includes("read") ? (env.documentKey?.() ?? null) : null,
         // The disclosure the person sees, never the key or the URL's path.
-        provider: held.permissions.includes("ai") ? { available: provider.available, kind: provider.kind, endpoint: provider.endpoint } : { available: false },
+        provider: held.permissions.includes("ai") ? { available: provider.available, kind: provider.kind, endpoint: provider.endpoint, local: provider.local === true, contextTokens: Number(provider.contextTokens) || null } : { available: false },
       };
     },
     async "tools/list"() {

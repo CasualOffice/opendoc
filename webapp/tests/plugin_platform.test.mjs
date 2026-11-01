@@ -412,7 +412,9 @@ test("ai/complete needs the ai permission; initialize never reveals more than th
   plugin.close("test");
   const withAi = await running({ permissions: ["read", "ai"] });
   const info2 = (await withAi.call("initialize")).result;
-  assert.deepEqual(info2.provider, { available: true, kind: "openai", endpoint: "api.example" });
+  // Plus what shapes the request, never who: whether the model runs on this
+  // computer (a longer first-byte wait) and its context window, if known.
+  assert.deepEqual(info2.provider, { available: true, kind: "openai", endpoint: "api.example", local: false, contextTokens: null });
   assert.equal(JSON.stringify(info2).includes("apiKey"), false);
   withAi.plugin.close("test");
 });

@@ -76,6 +76,11 @@ export const LIMITS = Object.freeze({
   maxTools: 64,
   /** No first byte within this long is `timeout`. */
   firstByteMs: 30_000,
+  /** The same for a model on this computer (a local preset, or a loopback URL):
+   *  a CPU-only server spends minutes evaluating a long prompt before its first
+   *  token, so 30 s refused answers that were on their way (owner, 2026-11-01,
+   *  Ollama llama3.2:3b in Docker). Idle stays `idleMs`: once tokens flow, they flow. */
+  localFirstByteMs: 180_000,
   /** No chunk within this long, once streaming, is `timeout`. */
   idleMs: 60_000,
   /** A request body larger than this is refused (4 MiB, the plugin port's bound too). */
@@ -422,6 +427,20 @@ export function endpointAllowed(url) {
   if (parsed.protocol === "https:") return true;
   if (parsed.protocol !== "http:") return false;
   return parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "[::1]";
+}
+
+/**
+ * Whether `url` reaches a model on THIS computer: a loopback host (`localhost`,
+ * `*.localhost`, `127.0.0.1`, `[::1]`). Such a server may be CPU-only, so it gets
+ * `LIMITS.localFirstByteMs` and the panel says it is waiting on it. O(url).
+ */
+export function isLocalEndpoint(url) {
+  try {
+    const host = new URL(String(url ?? "")).hostname;
+    return host === "localhost" || host.endsWith(".localhost") || host === "127.0.0.1" || host === "[::1]";
+  } catch {
+    return false;
+  }
 }
 
 /** The origin a disclosure names, `api.openai.com` or `localhost:11434`. O(url). */

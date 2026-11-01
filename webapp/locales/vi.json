@@ -3609,5 +3609,16 @@
   "plugins.assistant.command.describeTable": "Mô tả bảng này",
   "aiProviderDialog.editAs": "AI chỉnh sửa dưới dạng",
   "aiProviderDialog.editAs.suggest": "Đề xuất",
-  "aiProviderDialog.editAs.direct": "Chỉnh sửa trực tiếp"
+  "aiProviderDialog.editAs.direct": "Chỉnh sửa trực tiếp",
+  "ai.turn.empty": "Casual AI không trả về gì; văn bản của bạn không thay đổi.",
+  "ai.violation.empty": "không trả về gì nên văn bản của bạn không thay đổi.",
+  "ai.violation.incomplete": "câu trả lời bị cắt trước khi hoàn tất.",
+  "plugins.assistant.live.empty": "AI không trả về gì; văn bản của bạn không thay đổi.",
+  "plugins.assistant.violation.stale": "văn bản đã thay đổi trước khi Casual AI tới đó.",
+  "plugins.assistant.violation.empty": "không trả về gì nên văn bản của bạn không thay đổi.",
+  "plugins.assistant.violation.incomplete": "câu trả lời bị cắt trước khi hoàn tất.",
+  "plugins.assistant.workingLocal": "Đang chờ mô hình cục bộ… Trên máy tính không có card đồ họa, việc này có thể mất vài phút.",
+  "plugins.assistant.unparsableFormat": "Mô hình không trả lời theo dạng có cấu trúc được yêu cầu nên không có gì thay đổi. Hãy thử lại; mô hình lớn hơn làm việc này đáng tin cậy hơn.",
+  "plugins.assistant.skipped": "Giữ nguyên: bảng và mục lục trong vùng chọn ({count}).",
+  "plugins.assistant.truncatedLocal": "Chỉ một phần tài liệu được đọc: mô hình cục bộ được giả định chứa khoảng {tokens} token, nên câu trả lời có thể bỏ sót phần ở chỗ khác."
 }

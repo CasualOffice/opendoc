@@ -3631,5 +3631,16 @@
   "plugins.assistant.command.describeTable": "Descrever esta tabela",
   "aiProviderDialog.editAs": "A IA edita como",
   "aiProviderDialog.editAs.suggest": "Sugestões",
-  "aiProviderDialog.editAs.direct": "Edições diretas"
+  "aiProviderDialog.editAs.direct": "Edições diretas",
+  "ai.turn.empty": "O Casual AI não retornou nada; seu texto não foi alterado.",
+  "ai.violation.empty": "não retornou nada, então seu texto não foi alterado.",
+  "ai.violation.incomplete": "a resposta foi interrompida antes de terminar.",
+  "plugins.assistant.live.empty": "A IA não retornou nada; seu texto não foi alterado.",
+  "plugins.assistant.violation.stale": "o texto mudou antes que o Casual AI chegasse até ele.",
+  "plugins.assistant.violation.empty": "não retornou nada, então seu texto não foi alterado.",
+  "plugins.assistant.violation.incomplete": "a resposta foi interrompida antes de terminar.",
+  "plugins.assistant.workingLocal": "Aguardando o modelo local… Em um computador sem placa de vídeo, isso pode levar alguns minutos.",
+  "plugins.assistant.unparsableFormat": "O modelo não respondeu no formato estruturado pedido, então nada foi alterado. Tente de novo; um modelo maior faz isso com mais confiabilidade.",
+  "plugins.assistant.skipped": "Mantidos como estavam: tabelas e sumários na seleção ({count}).",
+  "plugins.assistant.truncatedLocal": "Só parte do documento foi lida: supõe-se que um modelo local comporte cerca de {tokens} tokens, então a resposta pode deixar passar o que está em outro lugar."
 }

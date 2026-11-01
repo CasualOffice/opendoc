@@ -3620,5 +3620,16 @@
   "plugins.assistant.command.describeTable": "Bu tabloyu tanımla",
   "aiProviderDialog.editAs": "Yapay zeka şu şekilde düzenler",
   "aiProviderDialog.editAs.suggest": "Öneriler",
-  "aiProviderDialog.editAs.direct": "Doğrudan düzenlemeler"
+  "aiProviderDialog.editAs.direct": "Doğrudan düzenlemeler",
+  "ai.turn.empty": "Casual AI hiçbir şey döndürmedi; metniniz değişmedi.",
+  "ai.violation.empty": "hiçbir şey döndürmedi, bu yüzden metniniz değişmedi.",
+  "ai.violation.incomplete": "yanıtı bitmeden kesildi.",
+  "plugins.assistant.live.empty": "Yapay zekâ hiçbir şey döndürmedi; metniniz değişmedi.",
+  "plugins.assistant.violation.stale": "metin, Casual AI ona ulaşmadan değişti.",
+  "plugins.assistant.violation.empty": "hiçbir şey döndürmedi, bu yüzden metniniz değişmedi.",
+  "plugins.assistant.violation.incomplete": "yanıtı bitmeden kesildi.",
+  "plugins.assistant.workingLocal": "Yerel model bekleniyor… Ekran kartı olmayan bir bilgisayarda bu birkaç dakika sürebilir.",
+  "plugins.assistant.unparsableFormat": "Model istenen yapılandırılmış biçimde yanıt vermedi, bu yüzden hiçbir şey değiştirilmedi. Yeniden deneyin; daha büyük bir model bunu daha güvenilir yapar.",
+  "plugins.assistant.skipped": "Olduğu gibi bırakıldı: seçimdeki tablolar ve içindekiler tabloları ({count}).",
+  "plugins.assistant.truncatedLocal": "Belgenin yalnızca bir kısmı okundu: yerel bir modelin yaklaşık {tokens} belirteç alabildiği varsayılır, bu yüzden yanıt başka yerdekileri kaçırabilir."
 }

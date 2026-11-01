@@ -3642,5 +3642,16 @@
   "plugins.assistant.command.describeTable": "Описать эту таблицу",
   "aiProviderDialog.editAs": "ИИ вносит правки как",
   "aiProviderDialog.editAs.suggest": "Предложения",
-  "aiProviderDialog.editAs.direct": "Прямые правки"
+  "aiProviderDialog.editAs.direct": "Прямые правки",
+  "ai.turn.empty": "Casual AI ничего не вернул; ваш текст не изменён.",
+  "ai.violation.empty": "он ничего не вернул, поэтому ваш текст не изменён.",
+  "ai.violation.incomplete": "его ответ оборвался, не завершившись.",
+  "plugins.assistant.live.empty": "ИИ ничего не вернул; ваш текст не изменён.",
+  "plugins.assistant.violation.stale": "текст изменился до того, как до него дошёл Casual AI.",
+  "plugins.assistant.violation.empty": "он ничего не вернул, поэтому ваш текст не изменён.",
+  "plugins.assistant.violation.incomplete": "его ответ оборвался, не завершившись.",
+  "plugins.assistant.workingLocal": "Ожидание локальной модели… На компьютере без видеокарты это может занять несколько минут.",
+  "plugins.assistant.unparsableFormat": "Модель не ответила в запрошенной структурированной форме, поэтому ничего не изменено. Попробуйте ещё раз; более крупная модель справляется надёжнее.",
+  "plugins.assistant.skipped": "Оставлены без изменений: таблицы и оглавления в выделении ({count}).",
+  "plugins.assistant.truncatedLocal": "Прочитана только часть документа: локальная модель, вероятно, вмещает около {tokens} токенов, поэтому ответ может упустить то, что находится в других местах."
 }

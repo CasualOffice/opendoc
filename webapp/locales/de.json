@@ -3620,5 +3620,16 @@
   "plugins.assistant.command.describeTable": "Diese Tabelle beschreiben",
   "aiProviderDialog.editAs": "KI bearbeitet als",
   "aiProviderDialog.editAs.suggest": "Vorschläge",
-  "aiProviderDialog.editAs.direct": "Direkte Änderungen"
+  "aiProviderDialog.editAs.direct": "Direkte Änderungen",
+  "ai.turn.empty": "Casual AI hat nichts zurückgegeben; Ihr Text ist unverändert.",
+  "ai.violation.empty": "es hat nichts zurückgegeben, Ihr Text ist daher unverändert.",
+  "ai.violation.incomplete": "seine Antwort brach ab, bevor sie fertig war.",
+  "plugins.assistant.live.empty": "Die KI hat nichts zurückgegeben; Ihr Text ist unverändert.",
+  "plugins.assistant.violation.stale": "der Text hat sich geändert, bevor Casual AI ihn erreichte.",
+  "plugins.assistant.violation.empty": "es hat nichts zurückgegeben, Ihr Text ist daher unverändert.",
+  "plugins.assistant.violation.incomplete": "seine Antwort brach ab, bevor sie fertig war.",
+  "plugins.assistant.workingLocal": "Warten auf das lokale Modell … Auf einem Computer ohne Grafikkarte kann das einige Minuten dauern.",
+  "plugins.assistant.unparsableFormat": "Das Modell hat nicht in der verlangten strukturierten Form geantwortet, daher wurde nichts geändert. Versuchen Sie es erneut; ein größeres Modell kann das zuverlässiger.",
+  "plugins.assistant.skipped": "Unverändert gelassen: Tabellen und Inhaltsverzeichnisse in der Auswahl ({count}).",
+  "plugins.assistant.truncatedLocal": "Nur ein Teil des Dokuments wurde gelesen: Ein lokales Modell fasst vermutlich etwa {tokens} Tokens, die Antwort kann also anderes übersehen."
 }

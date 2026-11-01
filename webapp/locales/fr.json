@@ -3631,5 +3631,16 @@
   "plugins.assistant.command.describeTable": "Décrire ce tableau",
   "aiProviderDialog.editAs": "L’IA modifie en",
   "aiProviderDialog.editAs.suggest": "Suggestions",
-  "aiProviderDialog.editAs.direct": "Modifications directes"
+  "aiProviderDialog.editAs.direct": "Modifications directes",
+  "ai.turn.empty": "Casual AI n’a rien renvoyé ; votre texte est inchangé.",
+  "ai.violation.empty": "il n’a rien renvoyé, votre texte est donc inchangé.",
+  "ai.violation.incomplete": "sa réponse a été coupée avant la fin.",
+  "plugins.assistant.live.empty": "L’IA n’a rien renvoyé ; votre texte est inchangé.",
+  "plugins.assistant.violation.stale": "le texte a changé avant que Casual AI ne l’atteigne.",
+  "plugins.assistant.violation.empty": "il n’a rien renvoyé, votre texte est donc inchangé.",
+  "plugins.assistant.violation.incomplete": "sa réponse a été coupée avant la fin.",
+  "plugins.assistant.workingLocal": "En attente du modèle local… Sur un ordinateur sans carte graphique, cela peut prendre quelques minutes.",
+  "plugins.assistant.unparsableFormat": "Le modèle n’a pas répondu sous la forme structurée demandée : rien n’a été modifié. Réessayez ; un modèle plus grand y parvient plus sûrement.",
+  "plugins.assistant.skipped": "Laissés tels quels : tableaux et tables des matières de la sélection ({count}).",
+  "plugins.assistant.truncatedLocal": "Seule une partie du document a été lue : un modèle local est supposé contenir environ {tokens} jetons, la réponse peut donc manquer ce qui se trouve ailleurs."
 }

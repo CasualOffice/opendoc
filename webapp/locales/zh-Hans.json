@@ -3609,5 +3609,16 @@
   "plugins.assistant.command.describeTable": "描述此表格",
   "aiProviderDialog.editAs": "AI 编辑方式",
   "aiProviderDialog.editAs.suggest": "建议",
-  "aiProviderDialog.editAs.direct": "直接编辑"
+  "aiProviderDialog.editAs.direct": "直接编辑",
+  "ai.turn.empty": "Casual AI 没有返回任何内容；你的文本未改变。",
+  "ai.violation.empty": "它没有返回任何内容，因此你的文本未改变。",
+  "ai.violation.incomplete": "它的回答在完成前被截断。",
+  "plugins.assistant.live.empty": "AI 没有返回任何内容；你的文本未改变。",
+  "plugins.assistant.violation.stale": "Casual AI 到达之前文本已更改。",
+  "plugins.assistant.violation.empty": "它没有返回任何内容，因此你的文本未改变。",
+  "plugins.assistant.violation.incomplete": "它的回答在完成前被截断。",
+  "plugins.assistant.workingLocal": "正在等待本地模型… 在没有显卡的电脑上可能需要几分钟。",
+  "plugins.assistant.unparsableFormat": "模型没有按要求的结构化格式回答，因此未作任何更改。请重试；更大的模型做得更可靠。",
+  "plugins.assistant.skipped": "保持原样：所选内容中的表格和目录（{count}）。",
+  "plugins.assistant.truncatedLocal": "只读取了文档的一部分：本地模型预计约能容纳 {tokens} 个词元，因此回答可能遗漏其他位置的内容。"
 }

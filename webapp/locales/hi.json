@@ -3620,5 +3620,16 @@
   "plugins.assistant.command.describeTable": "इस तालिका का वर्णन करें",
   "aiProviderDialog.editAs": "AI इस रूप में संपादित करता है",
   "aiProviderDialog.editAs.suggest": "सुझाव",
-  "aiProviderDialog.editAs.direct": "सीधे संपादन"
+  "aiProviderDialog.editAs.direct": "सीधे संपादन",
+  "ai.turn.empty": "Casual AI ने कुछ नहीं लौटाया; आपका पाठ नहीं बदला।",
+  "ai.violation.empty": "इसने कुछ नहीं लौटाया, इसलिए आपका पाठ नहीं बदला।",
+  "ai.violation.incomplete": "इसका उत्तर पूरा होने से पहले कट गया।",
+  "plugins.assistant.live.empty": "AI ने कुछ नहीं लौटाया; आपका पाठ नहीं बदला।",
+  "plugins.assistant.violation.stale": "Casual AI के पहुँचने से पहले पाठ बदल गया।",
+  "plugins.assistant.violation.empty": "इसने कुछ नहीं लौटाया, इसलिए आपका पाठ नहीं बदला।",
+  "plugins.assistant.violation.incomplete": "इसका उत्तर पूरा होने से पहले कट गया।",
+  "plugins.assistant.workingLocal": "स्थानीय मॉडल की प्रतीक्षा… ग्राफ़िक्स कार्ड के बिना कंप्यूटर पर इसमें कुछ मिनट लग सकते हैं।",
+  "plugins.assistant.unparsableFormat": "मॉडल ने माँगे गए संरचित रूप में उत्तर नहीं दिया, इसलिए कुछ नहीं बदला। फिर से कोशिश करें; बड़ा मॉडल यह अधिक भरोसे से करता है।",
+  "plugins.assistant.skipped": "जैसे थे वैसे छोड़े गए: चयन में तालिकाएँ और विषय-सूचियाँ ({count})।",
+  "plugins.assistant.truncatedLocal": "दस्तावेज़ का केवल एक भाग पढ़ा गया: स्थानीय मॉडल लगभग {tokens} टोकन रख सकता है, इसलिए उत्तर अन्यत्र की बातें छोड़ सकता है।"
 }

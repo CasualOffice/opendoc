@@ -3664,5 +3664,16 @@
   "plugins.assistant.command.describeTable": "وصف هذا الجدول",
   "aiProviderDialog.editAs": "يحرّر الذكاء الاصطناعي بصيغة",
   "aiProviderDialog.editAs.suggest": "اقتراحات",
-  "aiProviderDialog.editAs.direct": "تعديلات مباشرة"
+  "aiProviderDialog.editAs.direct": "تعديلات مباشرة",
+  "ai.turn.empty": "لم يُرجع Casual AI شيئًا؛ لم يتغيّر نصك.",
+  "ai.violation.empty": "لم يُرجع شيئًا، لذا لم يتغيّر نصك.",
+  "ai.violation.incomplete": "انقطعت إجابته قبل أن تكتمل.",
+  "plugins.assistant.live.empty": "لم يُرجع الذكاء الاصطناعي شيئًا؛ لم يتغيّر نصك.",
+  "plugins.assistant.violation.stale": "تغيّر النص قبل أن يصل إليه Casual AI.",
+  "plugins.assistant.violation.empty": "لم يُرجع شيئًا، لذا لم يتغيّر نصك.",
+  "plugins.assistant.violation.incomplete": "انقطعت إجابته قبل أن تكتمل.",
+  "plugins.assistant.workingLocal": "في انتظار النموذج المحلي… قد يستغرق ذلك بضع دقائق على حاسوب بلا بطاقة رسوميات.",
+  "plugins.assistant.unparsableFormat": "لم يُجب النموذج بالشكل المنظَّم المطلوب، لذا لم يتغيّر شيء. حاول مجددًا؛ النماذج الأكبر أكثر موثوقية في ذلك.",
+  "plugins.assistant.skipped": "تُركت كما هي: الجداول وجداول المحتويات في التحديد ({count}).",
+  "plugins.assistant.truncatedLocal": "قُرئ جزء من المستند فقط: يُفترض أن النموذج المحلي يتّسع لنحو {tokens} رمز، لذا قد تفوت الإجابةَ أجزاءٌ أخرى."
 }

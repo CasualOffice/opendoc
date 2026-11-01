@@ -42,6 +42,17 @@ const DOC = [
   P("n4", "Risks: the font licence review is not finished."),
 ];
 const byId = Object.fromEntries(DOC.map((b) => [b.id, b]));
+/** A table as `read_table` gives it, attached to its block (`readAll`). */
+const TABLE = {
+  kind: "table",
+  id: "tbl",
+  // `read_blocks` gives `rows` as a COUNT; the cells ride in `grid`.
+  rows: 2,
+  grid: [
+    [{ text: "Item", paragraph: "c1" }, { text: "Cost", paragraph: "c2" }],
+    [{ text: "Fonts", paragraph: "c3" }, { text: "1,200 | per year", paragraph: "c4" }],
+  ],
+};
 
 /** A mock model: answers by which system prompt the request carries. */
 function mock(answers) {
@@ -64,7 +75,7 @@ const TASKS = [
     const ctx = Core.selectContext(DOC, "budget", 6000);
     const requests = [
       ...Core.ACTION_IDS.map((a) => Core.selectionRequest(a, "some text", "German")),
-      Core.paragraphsRequest("rewrite", [DOC[1], DOC[2]]),
+      Core.askRequest("What is in the table?", Core.selectContext([...DOC, TABLE], "table", 6000), []),
       Core.askRequest("What is the budget?", ctx, [{ role: "user", content: "hi" }, { role: "assistant", content: "hello" }]),
       ...Object.keys(Core.SUMMARY_KINDS).map((k) => Core.summaryRequest(k, ctx)),
       Core.reviewRequest(ctx),
@@ -120,9 +131,49 @@ const TASKS = [
     assert.deepEqual(order, [...order].sort((a, b) => a - b));
     assert.ok(Core.estimate(ctx.text) <= 800);
   }],
-  ["empty paragraphs and tables are not sent as text", () => {
+  ["empty paragraphs, and a table nobody read the cells of, are not sent as text", () => {
     const ctx = Core.selectContext([P("e", "  "), { kind: "table", id: "t" }, P("x", "Real")], "", 100);
     assert.deepEqual(Object.values(ctx.ids), ["x"]);
+  }],
+  ["a table's cells reach the model as rows, each cell citable by its paragraph", () => {
+    const ctx = Core.selectContext([...DOC, TABLE], "", 6000);
+    assert.match(ctx.text, /<document_text id="t1" in="table">\n\| \[p5\] Item \| \[p6\] Cost \|\n\| \[p7\] Fonts \| \[p8\] 1,200 \\\| per year \|\n<\/document_text>/);
+    assert.equal(ctx.ids.p8, "c4");
+    assert.equal(ctx.ids.t1, "c1");
+    assert.equal(ctx.cells.c4, "1,200 | per year");
+    const cited = Core.parseCitations("Fonts cost 1,200 [p8] [t1].", ctx.ids);
+    assert.equal(cited.dropped, 0);
+    assert.match(Core.askRequest("What is in the table?", ctx, [])["messages"][0].content, /Tables are given as rows of cells/);
+  }],
+  ["headers, footers and notes are sent, marked with where they come from", () => {
+    const ctx = Core.selectContext([...DOC, P("h1", "ACME Confidential", { surface: "header" }), P("f1", "Source: board minutes.", { surface: "footnote" })], "", 6000);
+    assert.match(ctx.text, /<document_text id="p5" in="header">ACME Confidential<\/document_text>/);
+    assert.match(ctx.text, /<document_text id="p6" in="footnote">Source: board minutes\.<\/document_text>/);
+  }],
+  ["a long table is chunked with its header repeated, so a question selects the chunk it needs", () => {
+    const rows = [[{ text: "Region", paragraph: "h0" }, { text: "Sales", paragraph: "h1" }]];
+    for (let i = 0; i < 200; i += 1) rows.push([{ text: `Region ${i} filler words here`, paragraph: `a${i}` }, { text: i === 160 ? "Zanzibar 77,777" : `${i}`, paragraph: `b${i}` }]);
+    const ctx = Core.selectContext([{ kind: "table", id: "big", rows: rows.length, grid: rows }], "Zanzibar sales", 400);
+    assert.equal(ctx.truncated, true);
+    assert.match(ctx.text, /Zanzibar 77,777/);
+    assert.match(ctx.text, /\| Region \| Sales \|/, "the header row heads the chunk");
+  }],
+  ["a read that stopped early is reported as partial even when what was read fits", () => {
+    assert.equal(Core.selectContext(DOC, "", 6000, true).truncated, true);
+    assert.match(Core.summaryRequest("summary", Core.selectContext(DOC, "", 6000, true)).messages[0].content, /Only part of the document fits/);
+  }],
+  ["the model is told the tagged text is what it works on, and never to name the tags", () => {
+    for (const prompt of Object.values(Core.SYSTEM)) assert.match(prompt, /Never mention the tags/);
+  }],
+  ["a chat answer that names the data markers is shown without them", () => {
+    const leaked = "Since there is no text to summarize outside of the <document_text> tags, I quote <document_text id=\"p1\">Quarterly plan</document_text>.";
+    const clean = Core.scrubMarkers(leaked);
+    assert.doesNotMatch(clean, /document_text/);
+    assert.equal(clean, "Since there is no text to summarize outside of the document, I quote Quarterly plan.");
+  }],
+  ["scrubbing a chat answer does not weaken the live guard: an echoed marker still stops an edit", () => {
+    const guard = Raw.createGuard({ mode: "suggest", budget: 1000 });
+    assert.equal(guard.check("Here is <document_text id=\"p1\">"), "injection");
   }],
 
   // ---- Citations ------------------------------------------------------------
@@ -165,19 +216,34 @@ const TASKS = [
     assert.equal(Core.anchorFor("n2", DOC[1].text, "not there", 0), null);
     assert.equal(Core.planForSelection(null, "x", 1).ok, false);
   }],
-  ["a multi-paragraph rewrite touches only the paragraphs sent", () => {
-    const answer = JSON.stringify([{ id: "p1", text: "We ship the editor in March." }, { id: "p2", text: "Budget: 40,000 euros." }, { id: "p7", text: "Injected paragraph" }]);
-    const out = Core.planForParagraphs(answer, [DOC[1], DOC[2]], 3);
-    assert.equal(out.ok, true);
-    assert.deepEqual(out.plan.edits.map((e) => [e.op, e.target.node]), [["rewrite_block", "n2"], ["rewrite_block", "n3"]]);
-    assert.equal(out.dropped, 1);
+  ["a rewrite across paragraphs replaces only the selected part of each paragraph", () => {
+    // From "editor" in n2 to "40,000" in n3: n2's head and n3's tail stay.
+    const from = { node: "n2", offset: DOC[1].text.indexOf("editor") };
+    const to = { node: "n3", offset: DOC[2].text.indexOf(" euros") };
+    const out = Core.selectionParts(DOC, from, to);
+    assert.equal(out.complete, true);
+    assert.deepEqual(out.parts.map((p) => [p.node, p.exact]), [
+      ["n2", "editor in March and the SDK in June."],
+      ["n3", "The budget is 40,000"],
+    ]);
   }],
-  ["a multi-paragraph answer in prose is refused, not guessed at", () => {
-    assert.equal(Core.planForParagraphs("Sure! Here is the text.", [DOC[1]], 1).reason, "unparsable");
+  ["a selection that ends at the start of the next paragraph is one paragraph", () => {
+    const out = Core.selectionParts(DOC, { node: "n2", offset: 0 }, { node: "n3", offset: 0 });
+    assert.deepEqual(out.parts.map((p) => p.node), ["n2"]);
   }],
-  ["a heading marker or id prefix in a rewrite cannot restyle the paragraph", () => {
-    const out = Core.planForParagraphs(JSON.stringify([{ id: "p1", text: "# {#n9} New text" }]), [DOC[1]], 1);
-    assert.equal(out.plan.edits[0].markdown, "New text");
+  ["a table or a table of contents inside the selection is left alone, and counted", () => {
+    const blocks = [P("toc", "Introduction\t3", { style: "TOC 1" }), DOC[1], TABLE, DOC[2]];
+    const out = Core.selectionParts(blocks, { node: "toc", offset: 0 }, { node: "n3", offset: 5 });
+    assert.deepEqual(out.parts.map((p) => p.node), ["n2", "n3"]);
+    assert.equal(out.skipped, 2);
+  }],
+  ["offsets are UTF-8 bytes, as the editor's are", () => {
+    const blocks = [P("u", "Grüße aus Köln"), P("v", "über alles")];
+    const out = Core.selectionParts(blocks, { node: "u", offset: 7 }, { node: "v", offset: 5 });
+    assert.deepEqual(out.parts.map((p) => p.exact), [" aus Köln", "über"]);
+  }],
+  ["a backward selection reads as incomplete from its anchor", () => {
+    assert.equal(Core.selectionParts(DOC, { node: "n3", offset: 2 }, { node: "n2", offset: 1 }).complete, false);
   }],
 
   // ---- The review pass: comments and suggestions, verified ---------------------------

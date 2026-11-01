@@ -3609,5 +3609,16 @@
   "plugins.assistant.command.describeTable": "この表を説明",
   "aiProviderDialog.editAs": "AI の編集方法",
   "aiProviderDialog.editAs.suggest": "提案",
-  "aiProviderDialog.editAs.direct": "直接編集"
+  "aiProviderDialog.editAs.direct": "直接編集",
+  "ai.turn.empty": "Casual AI は何も返しませんでした。テキストは変更されていません。",
+  "ai.violation.empty": "何も返さなかったため、テキストは変更されていません。",
+  "ai.violation.incomplete": "回答が完了する前に途切れました。",
+  "plugins.assistant.live.empty": "AI は何も返しませんでした。テキストは変更されていません。",
+  "plugins.assistant.violation.stale": "Casual AI が到達する前にテキストが変更されました。",
+  "plugins.assistant.violation.empty": "何も返さなかったため、テキストは変更されていません。",
+  "plugins.assistant.violation.incomplete": "回答が完了する前に途切れました。",
+  "plugins.assistant.workingLocal": "ローカルモデルを待っています… グラフィックカードのないコンピューターでは数分かかることがあります。",
+  "plugins.assistant.unparsableFormat": "モデルが求められた構造化形式で回答しなかったため、何も変更されませんでした。もう一度お試しください。より大きなモデルの方が確実です。",
+  "plugins.assistant.skipped": "そのままにしました: 選択範囲内の表と目次 ({count})。",
+  "plugins.assistant.truncatedLocal": "文書の一部だけを読み込みました。ローカルモデルが扱えるのは約 {tokens} トークンと想定されるため、他の箇所の内容を見落とす可能性があります。"
 }

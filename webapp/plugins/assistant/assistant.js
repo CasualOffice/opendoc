@@ -35,7 +35,7 @@
     "prompt.draftPlaceholder", "prompt.tablePlaceholder", "send", "stop", "cleared", "chip.summary", "chip.keyPoints", "chip.draft", "chip.review",
     "chip.table", "chip.describeTable", "chip.turnIntoTable",
     "working", "reading", "stopped", "dropped", "citation", "insert", "replace", "comment", "apply", "applyDirect", "applyComments", "copy",
-    "copied", "truncated", "noSelection", "noCaret", "noTable", "unchanged", "unparsable", "translateTo", "translateGo", "noComments",
+    "copied", "truncated", "noSelection", "noCaret", "noTable", "unchanged", "unparsable", "unparsableFormat", "skipped", "workingLocal", "truncatedLocal", "live.empty", "violation.stale", "violation.empty", "violation.incomplete", "translateTo", "translateGo", "noComments",
     "draftReply", "historyNote", "error.generic", "error.auth", "error.rate", "error.network", "error.timeout",
     "error.budget", "error.tooLong", "error.refused", "replyFor", "caveat", "workingOn", "retry", "attached", "detach",
     "draftMode", "draftCancel", "tableMode", "reviewSummary", "proposed", "diff.inserted", "diff.deleted",
@@ -47,8 +47,12 @@
     ["ask", "rewrite", "shorten", "expand", "grammar", "formal", "friendly", "confident", "translate", "summarise", "review", "draft", "replies", "table", "describeTable"].map(function (id) { return "command." + id; }),
   ).map(function (k) { return NS + k; });
   var LANGUAGES = ["ar", "de", "en", "es", "fr", "hi", "id", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "uk", "vi", "zh"];
-  var CONTEXT_BUDGET = 6000;
   var READ_CAP = 60000;
+  /** What a model on this computer is assumed to hold when nothing says more:
+   *  Ollama's default context window is 4,096 tokens, and its OpenAI-compatible
+   *  endpoint truncates a longer prompt FROM THE START (the system prompt goes
+   *  first) without an error. Sending what fits, and saying so, beats that. */
+  var LOCAL_CONTEXT = 4096;
   /** A known answer replayed into the document: this many characters per piece,
    *  one piece per tick, so the pointer is seen writing it (the editor batches). */
   var REPLAY_CHARS = 12;
@@ -74,7 +78,7 @@
   var turns = Object.create(null);
   /** Subscriptions made once the editor has connected. */
   var editorEvents = [];
-  var VIOLATIONS = ["injection", "plan", "control", "length", "access", "engine"];
+  var VIOLATIONS = ["injection", "plan", "control", "length", "access", "engine", "stale", "empty", "incomplete"];
 
   function s(key, params) {
     var text = strings[NS + key] || "";
@@ -307,7 +311,11 @@
   function complete(body, target, workingKey, onDelta) {
     var controller = new AbortController();
     running = controller;
-    setWorking(s(workingKey || "working"));
+    // A model on this computer may think for minutes before its first word (a
+    // CPU-only server evaluating the prompt): say so until the first word comes.
+    var local = !!(info && info.provider && info.provider.local);
+    var waiting = local;
+    setWorking(s(local ? "workingLocal" : workingKey || "working"));
     var text = "";
     if (target) target.body.classList.add("ca-pending");
     return editor.ai
@@ -316,10 +324,15 @@
         onChunk: function (chunk) {
           var delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta;
           if (delta && typeof delta.content === "string") {
+            if (waiting && delta.content) {
+              waiting = false;
+              setWorking(s(workingKey || "working"));
+            }
             text += delta.content;
             if (onDelta) onDelta(delta.content);
             else if (target) {
-              target.body.textContent = text;
+              // A chat card shows the answer without the prompt's data markers.
+              target.body.textContent = Core.scrubMarkers(text);
               scrollDown();
             }
           }
@@ -330,7 +343,9 @@
         var full = typeof message.content === "string" ? message.content : text;
         // A server that did not stream answers once: the whole text is one delta.
         if (onDelta && full && full.length > text.length && full.slice(0, text.length) === text) onDelta(full.slice(text.length));
-        return full;
+        // A card's answer (and what Insert or Add as comment takes from it) is
+        // scrubbed; a live edit's is not, so its guard still sees a marker.
+        return target ? Core.scrubMarkers(full) : full;
       })
       .finally(function () {
         if (target) target.body.classList.remove("ca-pending");
@@ -361,7 +376,8 @@
         : live.state === "stopped" ? s("live.stopped")
           : live.state === "accepted" ? s("live.accepted")
             : live.state === "rejected" ? s("live.rejected")
-              : live.state === "rolledBack" ? s("live.rolledBack", { reason: s("violation." + (live.code || "engine")) })
+              : live.state === "rolledBack" && live.code === "empty" ? s("live.empty")
+                : live.state === "rolledBack" ? s("live.rolledBack", { reason: s("violation." + (live.code || "engine")) })
                 : s("live.done"),
     ));
     box.dataset.state = live.state;
@@ -502,29 +518,58 @@
     if (live.code || live.stopping) return Promise.resolve();
     drainOut(live);
     return editor.edit.end(live.turn).then(function (answer) {
-      if (answer && answer.ok === false) return;
+      if (answer && answer.ok === false) {
+        // The editor reverted a turn that wrote nothing ("empty") or found the
+        // text changed under it ("stale"): the card says so, nothing to accept.
+        if (VIOLATIONS.indexOf(answer.code) >= 0 && !live.code) {
+          live.code = answer.code;
+          setLive(live, "rolledBack", { code: answer.code });
+        }
+        return;
+      }
       if (live.state === "writing") setLive(live, "done");
     }).catch(function () {});
   }
 
-  /** Streams a model answer INTO the turn, shaped and guarded per delta. */
+  /** Streams a model answer INTO the turn, shaped and guarded per delta, and
+   *  ends the turn. */
   function streamInto(live, body, options) {
+    return streamPart(live, body, options).then(function (full) {
+      if (full === null) return null;
+      return endTurn(live).then(function () { return full; });
+    });
+  }
+
+  /** Streams one model answer into the open turn (one part of a rewrite across
+   *  paragraphs, or the whole of any other), shaped and guarded per delta, and
+   *  leaves the turn open. Resolves with the answer, or null when stopped. */
+  function streamPart(live, body, options) {
     var o = options || {};
     var shaper = Core.createShaper({ paragraphs: o.paragraphs !== false });
     var guard = guardFor(live, o.action, o.selected);
     return complete(body, null, "working", function (delta) {
       send(live, guard, shaper.push(delta));
     }).then(function (full) {
-      send(live, guard, shaper.finish());
-      return endTurn(live).then(function () { return full; });
+      send(live, guard, shaper.finish(), null, true);
+      return full;
     }, function (err) {
-      // Stopped by the person (here, in the editor's bar, or Escape): what was
-      // written stays. A model error mid-stream keeps it too, and says so.
+      var cancelled = !err || err.code === "cancelled";
       if (!live.code && !live.stopping) {
-        void editor.edit.stop(live.turn).catch(function () {});
-        setLive(live, "stopped");
+        if (cancelled) {
+          // Stopped by the person (the panel's Stop): what was written stays,
+          // and a turn that had written nothing yet is reverted by the editor.
+          void editor.edit.stop(live.turn).catch(function () {});
+          setLive(live, "stopped");
+        } else {
+          // The model failed (a first-byte timeout, a dropped connection, a
+          // provider error): an unfinished rewrite is not what was asked for,
+          // so the whole turn is rolled back and the original text stays.
+          live.code = "incomplete";
+          void editor.edit.abort(live.turn, "incomplete").catch(function () {});
+          setLive(live, "rolledBack", { code: "incomplete" });
+        }
       }
-      if (err && err.code !== "cancelled") throw err;
+      if (!cancelled) throw err;
       return null;
     });
   }
@@ -571,27 +616,144 @@
 
   // ---- Reading -------------------------------------------------------------
 
-  /** Paragraph blocks of the body, paged up to READ_CAP tokens. */
+  /**
+   * How much of the document to send, in estimated tokens: the provider's
+   * context window (`initialize`'s `provider.contextTokens`; a local model
+   * `LOCAL_CONTEXT` unless told more) less `reserve` (the answer's ceiling and
+   * the prompt around the document), bounded by what is read at all. A FIXED
+   * budget (it was 6,000) sent a large cloud model a fifth of a document it could
+   * hold whole, and a small local one more than it could hold.
+   */
+  function contextBudget(reserve) {
+    var p = (info && info.provider) || {};
+    var window = Number(p.contextTokens) || 32000;
+    if (p.local) window = Math.min(window, LOCAL_CONTEXT);
+    return Math.max(800, Math.min(READ_CAP, window - reserve));
+  }
+
+  /** The note under an answer built from part of the document, or "". */
+  function partNote(context) {
+    if (!context.truncated) return "";
+    return info && info.provider && info.provider.local ? s("truncatedLocal", { tokens: LOCAL_CONTEXT }) : s("truncated");
+  }
+
+  /** The containers besides the body an assistant reads, in the order their
+   *  paragraphs are appended after the body's. Comments are not here: a comment
+   *  is a conversation about the document, read by its own tool. */
+  var SURFACE_KINDS = ["header", "footer", "footnote", "endnote", "text_box"];
+
+  function call(tool, args) {
+    return editor.tools.call(tool, args).then(function (answer) {
+      if (!answer || !answer.ok) throw Object.assign(new Error("read"), { code: "read" });
+      return answer.value;
+    });
+  }
+
+  /**
+   * The WHOLE document as the assistant's context reads it, up to READ_CAP
+   * tokens (`docs/183` §23.6): the body's blocks; every table's cells
+   * (`read_table`, attached to its block as `grid`, rows of `{text, paragraph}`,
+   * since `read_blocks` summarises a table to its header); then the paragraphs
+   * of every header, footer, footnote, endnote and text box (`read_blocks` on
+   * that surface), each marked with its `surface` kind. A header repeated by
+   * several sections is read once. `partial` is true when the cap stopped the
+   * read, so the answer says it saw only part. O(document) reads, paged.
+   */
   function readAll() {
     var blocks = [];
     var used = 0;
     var revision = 0;
-    function page(cursor) {
-      var args = { maxTokens: 8000, format: "json" };
-      if (cursor) args.cursor = cursor;
-      return editor.tools.call("read_blocks", args).then(function (answer) {
-        if (!answer || !answer.ok) throw Object.assign(new Error("read"), { code: "read" });
-        var value = answer.value;
-        revision = value.revision;
-        (value.blocks || []).forEach(function (b) {
-          blocks.push(b);
-          used += Core.estimate(b.text || "");
+    var partial = false;
+    var full = function () { return used >= READ_CAP; };
+
+    /** Pages `read_blocks` (on `surface`, or the body) into `blocks`. */
+    function pages(surface, kind, seen) {
+      function page(cursor) {
+        var args = { maxTokens: 8000, format: "json" };
+        if (surface) args.surface = surface;
+        if (cursor) args.cursor = cursor;
+        return call("read_blocks", args).then(function (value) {
+          if (!surface) revision = value.revision;
+          var list = value.blocks || [];
+          for (var i = 0; i < list.length; i += 1) {
+            var b = list[i];
+            if (kind) {
+              // The same header or footer text on several sections, once.
+              var key = kind + "\u0000" + (b.text || "");
+              if (b.kind === "paragraph" && seen[key]) continue;
+              seen[key] = true;
+              b = Object.assign({}, b, { surface: kind });
+            }
+            blocks.push(b);
+            used += Core.estimate(b.text || "");
+          }
+          if (value.nextCursor && !full()) return page(value.nextCursor);
+          if (value.nextCursor) partial = true;
+          return list;
         });
-        if (value.nextCursor && used < READ_CAP) return page(value.nextCursor);
-        return { blocks: blocks, revision: revision };
-      });
+      }
+      return page(null);
     }
-    return page(null);
+
+    /** Every table block's rows, paged by `read_table`, until the cap. */
+    function tables(from) {
+      var chain = Promise.resolve();
+      blocks.slice(from).forEach(function (b) {
+        if (b.kind !== "table" || b.grid) return;
+        chain = chain.then(function () {
+          if (full()) {
+            partial = true;
+            return null;
+          }
+          var rows = [];
+          function page(cursor) {
+            var args = { table: b.id, limit: 50 };
+            if (cursor) args.cursor = cursor;
+            return call("read_table", args).then(function (value) {
+              (value.rows || []).forEach(function (row) {
+                var cells = (row.cells || []).map(function (c) { return { text: String(c.text || ""), paragraph: c.paragraph || null }; });
+                rows.push(cells);
+                cells.forEach(function (c) { used += Core.estimate(c.text) + 1; });
+              });
+              if (value.nextCursor && !full()) return page(value.nextCursor);
+              if (value.nextCursor) partial = true;
+              return null;
+            });
+          }
+          return page(null).then(function () { b.grid = rows; }, function () { b.grid = rows; });
+        });
+      });
+      return chain;
+    }
+
+    return pages(null, "", null)
+      .then(function () { return tables(0); })
+      .then(function () {
+        if (full()) {
+          partial = true;
+          return null;
+        }
+        return call("get_outline", { limit: 100 }).then(function (outline) {
+          var seen = Object.create(null);
+          var chain = Promise.resolve();
+          (outline.surfaces || []).forEach(function (entry) {
+            if (SURFACE_KINDS.indexOf(entry.kind) < 0 || !entry.paragraphs && !entry.tables) return;
+            chain = chain.then(function () {
+              if (full()) {
+                partial = true;
+                return null;
+              }
+              var from = blocks.length;
+              // A surface this engine cannot read is skipped, not fatal: the
+              // body alone still answers.
+              return pages(entry.surface, entry.kind, seen).then(function () { return tables(from); }, function () { return null; });
+            });
+          });
+          if (outline.surfacesNextCursor) partial = true;
+          return chain;
+        }, function () { return null; });
+      })
+      .then(function () { return { blocks: blocks, revision: revision, partial: partial }; });
   }
 
   function readFrom(node, maxTokens) {
@@ -754,41 +916,94 @@
           return refusedEdit(out, text, sel).then(function (note) { out.note.textContent = note; });
         }).catch(function (err) { fail(err, out); });
       }
-      if (singleParagraph(sel)) {
-        // Live: the pointer goes to the selection, marks it, and the rewrite
-        // streams in where it was (struck through first, when suggesting).
-        return beginTurn(out, replaceSpec(sel)).then(function (live) {
-          if (!live) return null;
-          return streamInto(live, Core.selectionRequest(action, sel.text, language), { paragraphs: false, action: action, selected: sel.text }).then(function (answer) {
-            if (answer === null) return;
-            out.body.hidden = true;
-            out.extra.replaceChildren(diffView(sel.text, Core.cleanText(answer)));
-            out.extra.hidden = false;
-            setActions(out, [], Core.cleanText(answer), function () { return selectionAction(action, language); });
-          });
-        }).catch(function (err) { fail(err, out); notifyError(err); });
-      }
-      // Across paragraphs: each paragraph the selection touches is rewritten
-      // whole, as one JSON answer, then written paragraph by paragraph, live.
-      return readFrom(sel.anchor.node, 8000).then(function (value) {
-        var paras = paragraphsIn(value.blocks || [], sel.focus.node);
-        out.body.textContent = s("working");
-        return complete(Core.paragraphsRequest(action, paras, language), null).then(function (answer) {
-          out.body.textContent = "";
-          var result = Core.planForParagraphs(answer, paras, value.revision);
-          if (!result.ok) {
-            out.note.textContent = s(result.reason === "unchanged" ? "unchanged" : "unparsable");
-            return;
-          }
-          var byId = {};
-          paras.forEach(function (p) { byId[p.id] = p; });
-          var edits = result.plan.edits.map(function (e) { return { node: e.target.node, before: byId[e.target.node].text, after: e.markdown }; });
-          return rewriteParagraphs(out, edits, action).then(function () {
-            if (result.dropped) out.note.textContent = s("dropped", { count: result.dropped });
-            setActions(out, [], null, function () { return selectionAction(action, language); });
-          });
+      var again = function () { return selectionAction(action, language); };
+      if (singleParagraph(sel)) return rewriteOne(out, replaceSpec(sel), action, language, again);
+      // Across paragraphs: the selected part of EACH paragraph is rewritten on
+      // its own, streamed into one live turn (`selectionParts`). One request per
+      // part, plain text in and out: the old single JSON answer for all of them
+      // was the step a small model got wrong ("could not be used"), and it
+      // rewrote the first and last paragraphs whole, outside the selection.
+      return selectedParts(sel).then(function (found) {
+        var skipped = found ? found.skipped : 0;
+        if (!found || !found.parts.length) {
+          out.note.textContent = skipped ? s("skipped", { count: skipped }) : s("noSelection");
+          return null;
+        }
+        var run = found.parts.length === 1
+          ? rewriteOne(out, partSpec(found.parts[0]), action, language, again)
+          : rewriteParts(out, found.parts, action, language, again);
+        return run.then(function () {
+          if (skipped) out.note.textContent = s("skipped", { count: skipped });
         });
       }).catch(function (err) { fail(err, out); notifyError(err); });
+    });
+  }
+
+  /** A part of a selection (`Core.selectionParts`) as a replace spec. */
+  function partSpec(part) {
+    return { kind: "replace", node: part.node, start: part.start, end: part.end, exact: part.exact };
+  }
+
+  /** One range rewritten LIVE: the pointer goes to it, marks it, and the
+   *  rewrite streams in where it was (struck through first, when suggesting).
+   *  Nothing changes until the first word arrives (`ai_coeditor.mjs`). */
+  function rewriteOne(out, spec, action, language, again) {
+    return beginTurn(out, spec).then(function (live) {
+      if (!live) return null;
+      return streamInto(live, Core.selectionRequest(action, spec.exact, language), { paragraphs: false, action: action, selected: spec.exact }).then(function (answer) {
+        // A turn that was rolled back (nothing written, a violation, stale
+        // text) has no diff to show: the live line already says why.
+        if (answer === null || live.code) return;
+        out.body.hidden = true;
+        out.extra.replaceChildren(diffView(spec.exact, Core.cleanText(answer)));
+        out.extra.hidden = false;
+        setActions(out, [], Core.cleanText(answer), again);
+      });
+    }).catch(function (err) { fail(err, out); notifyError(err); });
+  }
+
+  /** The parts of a selection across paragraphs, read from its first end;
+   *  a backward selection is read from its focus. Null when the selection is
+   *  longer than one read can find. */
+  function selectedParts(sel) {
+    return readFrom(sel.anchor.node, 16000).then(function (value) {
+      var found = Core.selectionParts(value.blocks || [], sel.anchor, sel.focus);
+      if (found.complete) return found;
+      return readFrom(sel.focus.node, 16000).then(function (back) {
+        var reversed = Core.selectionParts(back.blocks || [], sel.focus, sel.anchor);
+        return reversed.complete ? reversed : null;
+      });
+    });
+  }
+
+  /** Each part rewritten on its own, in ONE live turn (one undo step, one
+   *  Accept all): the editor marks the part, the model's rewrite of exactly that
+   *  text streams in, then the next. A part whose answer is empty stays as it
+   *  was; a model failure rolls the whole turn back. */
+  function rewriteParts(out, parts, action, language, again) {
+    var first = parts[0];
+    return beginTurn(out, { kind: "at", at: { node: first.node, offset: first.start } }).then(function (live) {
+      if (!live) return null;
+      var chain = Promise.resolve(true);
+      parts.forEach(function (part) {
+        chain = chain.then(function (go) {
+          if (!go || live.code || live.stopping) return false;
+          drainOut(live);
+          return editor.edit.replace(live.turn, partSpec(part)).then(function (answer) {
+            // The person changed this part meanwhile: it is left as it is.
+            if (answer && answer.ok === false) return answer.code === "stale";
+            return streamPart(live, Core.selectionRequest(action, part.exact, language), { paragraphs: false, action: action, selected: part.exact }).then(function (full) {
+              return full !== null;
+            });
+          });
+        });
+      });
+      return chain.then(function (go) {
+        if (!go || live.code || live.stopping) return null;
+        return endTurn(live).then(function () {
+          if (!live.code) setActions(out, [], null, again);
+        });
+      });
     });
   }
 
@@ -799,37 +1014,6 @@
       if (blocks[i].id === lastNode) break;
     }
     return paras;
-  }
-
-  /** Each `{node, before, after}` replaced whole, in one live turn. */
-  function rewriteParagraphs(out, edits, action) {
-    if (!edits.length) return Promise.resolve();
-    var first = edits[0];
-    return beginTurn(out, { kind: "at", at: { node: first.node, offset: 0 } }).then(function (live) {
-      if (!live) return null;
-      var guard = guardFor(live, action, edits.map(function (e) { return e.before; }).join(" "));
-      var chain = Promise.resolve();
-      edits.forEach(function (edit) {
-        chain = chain.then(function () {
-          if (live.code || live.stopping) return null;
-          drainOut(live);
-          return editor.edit.replace(live.turn, { node: edit.node, start: 0, end: bytes(edit.before), exact: edit.before }).then(function (answer) {
-            if (answer && answer.ok === false) return null;
-            return new Promise(function (resolve) {
-              var at = 0;
-              (function tick() {
-                if (live.code || live.stopping || at >= edit.after.length) return resolve();
-                var piece = edit.after.slice(at, at + REPLAY_CHARS);
-                at += piece.length;
-                if (!send(live, guard, piece)) return resolve();
-                setTimeout(tick, REPLAY_MS);
-              })();
-            });
-          });
-        });
-      });
-      return chain.then(function () { return endTurn(live); });
-    });
   }
 
   function notifyError(err) {
@@ -941,7 +1125,8 @@
           out.body.textContent = "";
           var table = Core.parseTableAnswer(answer);
           if (!table.ok) {
-            out.note.textContent = s("unparsable");
+            // Say WHICH: the model did not answer in the structured form asked for.
+            out.note.textContent = s("unparsableFormat");
             setActions(out, [], null, function () { return turnIntoTable(prompt, true); });
             return null;
           }
@@ -1027,11 +1212,12 @@
     var out = card();
     setWorking(s("reading"));
     return readAll().then(function (doc) {
-      var context = Core.selectContext(doc.blocks, question + (sel ? " " + sel.text : ""), CONTEXT_BUDGET);
       var prior = Core.trimHistory(history, 12);
+      var spoken = prior.reduce(function (n, h) { return n + Core.estimate(h.content); }, Core.estimate(question + (sel ? sel.text : "")));
+      var context = Core.selectContext(doc.blocks, question + (sel ? " " + sel.text : ""), contextBudget(1500 + 800 + spoken), doc.partial);
       return complete(Core.askRequest(question, context, prior, sel ? sel.text : null), out).then(function (answer) {
         renderAnswer(out, answer, context.ids);
-        if (context.truncated) out.note.textContent = s("truncated");
+        if (context.truncated) out.note.textContent = partNote(context);
         answerActions(out, answer, sel, function () { return ask(question, sel, true); });
         if (!retry) history.push({ role: "user", content: question }, { role: "assistant", content: Core.stripCitations(answer) });
         persist();
@@ -1044,10 +1230,10 @@
     var out = card();
     setWorking(s("reading"));
     return readAll().then(function (doc) {
-      var context = Core.selectContext(doc.blocks, "", CONTEXT_BUDGET);
+      var context = Core.selectContext(doc.blocks, "", contextBudget(1200 + 800), doc.partial);
       return complete(Core.summaryRequest(kind, context), out).then(function (answer) {
         renderAnswer(out, answer, context.ids);
-        if (context.truncated) out.note.textContent = s("truncated");
+        if (context.truncated) out.note.textContent = partNote(context);
         answerActions(out, answer, null, function () { return summarise(kind, true); });
         // Part of the discussion a later "write a paragraph from this" draws on.
         if (!retry) history.push({ role: "user", content: s("chip." + kind) }, { role: "assistant", content: Core.stripCitations(answer) });
@@ -1111,14 +1297,17 @@
     var out = card();
     setWorking(s("reading"));
     return readAll().then(function (doc) {
-      var context = Core.selectContext(doc.blocks, "", 8000);
+      var context = Core.selectContext(doc.blocks, "", contextBudget(4000 + 900), doc.partial);
       var byId = {};
       doc.blocks.forEach(function (b) { if (b.kind === "paragraph") byId[b.id] = b; });
+      // A finding may quote a table cell: its paragraph is checked against the
+      // cell's text, and the engine re-checks the quote before anything lands.
+      Object.keys(context.cells || {}).forEach(function (id) { if (!byId[id]) byId[id] = { id: id, text: context.cells[id] }; });
       return complete(Core.reviewRequest(context), out).then(function (answer) {
         out.body.textContent = "";
         var result = Core.planForReview(answer, context, byId, doc.revision);
         if (!result.ok) {
-          out.note.textContent = s(result.reason === "nothing" ? "unchanged" : "unparsable");
+          out.note.textContent = s(result.reason === "nothing" ? "unchanged" : "unparsableFormat");
           setActions(out, [], null, function () { return review(true); });
           return;
         }
