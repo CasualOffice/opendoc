@@ -1054,6 +1054,21 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
     }
   }
 
+  /** Opens the first AI plugin's panel, whatever is selected (owner,
+   *  2026-11-02: Casual AI must be reachable without a selection, the way
+   *  Copilot and Gemini are). */
+  function openAiPanel() {
+    const first = contributed("selection")[0]?.[0] ?? null;
+    if (!first?.manifest.contributes.panel) return;
+    showPanel(first, true);
+    first.running.invoke("panel", { hasRange: !!ed.hasRange?.() });
+  }
+  const aiHeaderBtn = doc.getElementById("aiHeaderBtn");
+  const homeAiBtn = doc.getElementById("homeAiBtn");
+  const homeAiGroup = doc.getElementById("homeAiGroup");
+  aiHeaderBtn?.addEventListener("click", openAiPanel);
+  homeAiBtn?.addEventListener("click", openAiPanel);
+
   /** Shows only what running plugins contribute (owner rule 1). O(plugins). */
   function reflectChrome() {
     const ribbonRows = contributed("ribbon").length > 0;
@@ -1061,6 +1076,10 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
     const selectionRows = contributed("selection").length > 0;
     if (selButton) selButton.hidden = !selectionRows;
     if (selDivider) selDivider.hidden = !selectionRows;
+    // The always-there entry points follow the same rule: shown only while an
+    // AI plugin runs (no provider, no AI chrome — owner rule, 2026-10-31).
+    if (aiHeaderBtn) aiHeaderBtn.hidden = !selectionRows;
+    if (homeAiGroup) homeAiGroup.hidden = !selectionRows;
   }
 
   // ---- The registry --------------------------------------------------------

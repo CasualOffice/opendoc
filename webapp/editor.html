@@ -286,6 +286,10 @@
         </div>
         <!-- Row 2, with the tab strip: how the APPLICATION is presented. -->
         <div class="controls-app">
+          <!-- Ask Casual AI, always reachable without a selection (owner, 2026-11-02;
+               Gemini's "Ask Gemini" sits here in Google Docs). Hidden until an AI
+               provider is set up and the assistant runs (plugin_platform reflectChrome). -->
+          <button data-i18n-title="plugins.assistant.command.ask" id="aiHeaderBtn" type="button" class="ai-header-btn" title="Ask Casual AI" hidden><span class="ms" aria-hidden="true">auto_awesome</span><span data-i18n="plugins.assistant.command.ask" class="ai-header-text">Ask Casual AI</span></button>
           <!-- The editing mode, at the top right: where all three references put
                it — ONLYOFFICE at the right of the tab row, Google Docs at the
                right of the toolbar ("Editing ▾"), Word at the right of the ribbon
@@ -802,6 +806,13 @@
               </div>
             </div>
             <span data-i18n="panelHome.editing" class="rgroup-label">Editing</span>
+          </div>
+          <!-- Casual AI at the end of Home, where Word puts Copilot. Hidden until
+               the assistant runs; opens its panel with nothing selected. -->
+          <div class="rgroup" data-group="ai" id="homeAiGroup" hidden>
+            <div class="rgroup-ctl">
+              <button data-i18n-title="plugins.assistant.command.ask" data-i18n-label="plugins.assistant.command.ask" id="homeAiBtn" type="button" class="fmt fmt-big" title="Ask Casual AI" aria-label="Ask Casual AI"><span class="ms" aria-hidden="true">auto_awesome</span><span data-i18n="plugins.assistant.name" class="fmt-big-label">Casual AI</span></button>
+            </div>
           </div>
         </div>
 
