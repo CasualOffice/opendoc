@@ -2210,10 +2210,9 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
      user already chose to open; it is not a page heading and does not need to
      compete with the document. Word and Docs both set theirs at body weight
      plus a little. */
-  font-size: var(--fs-xl);
+  font-size: var(--fs-lg);
   font-weight: var(--fw-semibold);
-  line-height: 1.3;
-  letter-spacing: -0.01em;
+  line-height: 1.4;
 }
 
 /* The optional one-line description under the title (UX-053 D1): 13px in the
@@ -14363,3 +14362,155 @@ body.phone-mode .plugin-panel { height: 55vh; }
   flex: 1 1 auto;
   min-width: 0;
 }
+
+/* Page setup, one column (owner-approved audit D2, docs/184; Google Docs'
+   Page setup is the model). The old four-column layout with per-setting Apply
+   buttons is gone: Apply to, Orientation, Page size + colour, Margins (preset +
+   four fields in one row), and everything else behind Advanced. One Apply
+   writes all of it. Declared last so it wins over the multi-column rules above,
+   which no longer have markup to style. */
+#pageSetupMenu .page-setup-dialog {
+  width: min(var(--dialog-width-m), 100%);
+}
+#pageSetupMenu .page-setup-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--dlg-gap);
+  align-items: start;
+}
+#pageSetupMenu .page-setup-body > .dialog-group {
+  margin: 0;
+  display: grid;
+  gap: var(--dlg-gap-in);
+}
+#pageSetupMenu .ps-cols-2,
+#pageSetupMenu .ps-cols-4 {
+  display: grid;
+  gap: var(--dlg-gap-in);
+}
+#pageSetupMenu .ps-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#pageSetupMenu .ps-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+#pageSetupMenu .number-control,
+#pageSetupMenu .dialog-select,
+#pageSetupMenu input[type="color"] {
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+#pageSetupMenu input[type="color"] {
+  block-size: var(--h-input);
+  padding: 0.125rem;
+  border: 1px solid var(--line-control, var(--line));
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+#pageSetupMenu .orientation-segmented {
+  inline-size: max-content;
+}
+#pageSetupMenu .orientation-segmented .ms {
+  display: none;
+}
+#pageSetupMenu .dialog-advanced {
+  border-top: 1px solid var(--line);
+  padding-top: var(--dlg-gap-in);
+}
+#pageSetupMenu .dialog-advanced > summary {
+  cursor: pointer;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--accent-ink-on-surface, var(--accent));
+  min-block-size: 1.5rem;
+  display: flex;
+  align-items: center;
+}
+#pageSetupMenu .dialog-advanced-body {
+  display: grid;
+  gap: var(--dlg-gap-in);
+  padding-top: var(--dlg-gap-in);
+}
+#pageSetupMenu .dialog-advanced-body .dialog-group {
+  margin: 0;
+  display: grid;
+  gap: var(--dlg-gap-in);
+}
+@media (max-width: 30rem) {
+  #pageSetupMenu .ps-cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+#pageSetupMenu .number-control {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-inline-end: var(--space-3);
+}
+#pageSetupMenu .ps-orientation .segmented {
+  block-size: var(--h-input);
+}
+#pageSetupMenu .ps-orientation .segmented button {
+  min-block-size: 0;
+  block-size: 100%;
+}
+#pageSetupMenu .dialog-advanced > summary {
+  list-style: none;
+  gap: var(--space-1);
+}
+#pageSetupMenu .dialog-advanced > summary::-webkit-details-marker { display: none; }
+#pageSetupMenu .dialog-advanced > summary::before {
+  content: "chevron_right";
+  font-family: "Material Symbols Outlined";
+  font-size: var(--icon-sm);
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+#pageSetupMenu .dialog-advanced[open] > summary::before { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) {
+  #pageSetupMenu .dialog-advanced > summary::before { transition: none; }
+}
+
+/* Placeholders (owner, 2026-11-02): a short example, never the field's label —
+   one step smaller than the value, the tertiary ink, and always one line: an
+   overflow ends in an ellipsis instead of wrapping or pushing the field taller. */
+.dialog-card :is(input, textarea)::placeholder,
+.side-panel :is(input, textarea)::placeholder {
+  font-size: var(--fs-sm);
+  color: var(--ink-3, var(--muted));
+  opacity: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* A plain wrapper of fields inside a dialog body (e.g. #aiProviderForm) gets the
+   same field rhythm as the body itself; without it the fields stacked with no
+   gap, each label touching the box above. */
+.dialog-body div:not([class]):has(> :is(.dialog-field, .dialog-check, .dialog-field-note)),
+.dialog-body > div[id]:has(> .dialog-field) {
+  display: grid;
+  gap: var(--dlg-gap-in);
+}
+.dialog-body .settings-section {
+  display: grid;
+  gap: var(--space-2);
+}
+.dialog-field-note:empty { display: none; }
+
+/* AI provider as a section of Settings (owner, 2026-11-02): spans the whole
+   body under the two columns, same field rhythm as every dialog. */
+#settingsPanel .settings-ai {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: var(--dlg-gap-in);
+  padding-top: var(--dlg-gap);
+  border-top: 1px solid var(--line);
+}
+#settingsPanel .settings-ai #aiProviderForm {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--dlg-gap-in);
+}
+#settingsPanel .settings-ai #aiProviderForm > :is(.dialog-field-note, .dialog-check) {
+  grid-column: 1 / -1;
+}
+#settingsPanel .settings-ai-actions {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+#settingsPanel .settings-ai-actions .dialog-button-utility { margin-inline-end: auto; }
+#settingsPanel .settings-ai-actions .dialog-button-utility + .dialog-button-utility { margin-inline-end: 0; }

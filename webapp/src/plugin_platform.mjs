@@ -967,7 +967,13 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
     renderManager();
   }
   doc.getElementById("pluginsClose")?.addEventListener("click", () => managerController?.close());
-  doc.getElementById("settingsAddinsBtn")?.addEventListener("click", openManager);
+  doc.getElementById("settingsAddinsBtn")?.addEventListener("click", () => {
+    // Replaces Settings instead of stacking a second dialog over it (owner,
+    // 2026-11-02). Closed through its ✕, the same path as Escape.
+    const settings = doc.getElementById("settingsPanel");
+    if (settings && !settings.hidden) settings.querySelector(".dialog-close")?.click();
+    openManager();
+  });
   doc.getElementById("pluginsDone")?.addEventListener("click", () => managerController?.close());
 
   // ---- Menus: Add-ins (ribbon) and ✦ (selection toolbar) --------------------

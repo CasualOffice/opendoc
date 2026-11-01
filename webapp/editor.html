@@ -544,6 +544,46 @@
              editable lists live in the AutoCorrect options dialog. -->
         <button data-i18n="settingsPanel.autoCorrectOptions" type="button" id="settingsAutoCorrectOptions" class="dialog-button" aria-haspopup="dialog">AutoCorrect options…</button>
       </div>
+          <section id="settingsAiSection" class="settings-section settings-ai" aria-labelledby="settingsAiLabel">
+            <div id="settingsAiLabel" class="settings-label" data-i18n="aiProviderDialog.title">AI provider</div>
+            <p id="aiProviderManaged" class="dialog-field-note" hidden></p>
+          <div id="aiProviderForm">
+            <label data-i18n="aiProviderDialog.service" class="dialog-field field-wide">Service<select id="aiProviderPreset" class="dialog-select">
+              <option data-i18n="aiProviderDialog.preset.openai" value="openai">OpenAI</option>
+              <option data-i18n="aiProviderDialog.preset.azure" value="azure">Azure OpenAI</option>
+              <option data-i18n="aiProviderDialog.preset.anthropic" value="anthropic">Anthropic</option>
+              <option data-i18n="aiProviderDialog.preset.gemini" value="gemini">Google Gemini</option>
+              <option data-i18n="aiProviderDialog.preset.mistral" value="mistral">Mistral</option>
+              <option data-i18n="aiProviderDialog.preset.openrouter" value="openrouter">OpenRouter</option>
+              <option data-i18n="aiProviderDialog.preset.ollama" value="ollama">Ollama (this computer)</option>
+              <option data-i18n="aiProviderDialog.preset.lmstudio" value="lmstudio">LM Studio (this computer)</option>
+              <option data-i18n="aiProviderDialog.preset.vllm" value="vllm">vLLM (this computer)</option>
+              <option data-i18n="aiProviderDialog.preset.custom" value="custom">Other OpenAI-compatible service</option>
+            </select></label>
+            <label data-i18n="aiProviderDialog.endpoint" class="dialog-field field-wide">Endpoint URL<input id="aiProviderUrl" type="url" maxlength="2048" autocomplete="off" spellcheck="false" /></label>
+            <label data-i18n="aiProviderDialog.model" class="dialog-field field-wide">Model<input data-i18n-placeholder="aiProviderDialog.model.placeholder" id="aiProviderModel" type="text" maxlength="256" autocomplete="off" spellcheck="false" placeholder="The model name your service uses" /></label>
+            <label data-i18n="aiProviderDialog.key" class="dialog-field field-wide">API key<input id="aiProviderKey" type="password" maxlength="4096" autocomplete="off" spellcheck="false" aria-describedby="aiProviderKeyNote" /></label>
+            <p id="aiProviderKeyNote" class="dialog-field-note"></p>
+            <label class="dialog-check">
+              <input id="aiProviderLegacy" type="checkbox" />
+              <span><strong data-i18n="aiProviderDialog.legacy">Send max_tokens instead of max_completion_tokens</strong><small data-i18n="aiProviderDialog.legacyNote">Only for an older or local server that refuses the newer field name.</small></span>
+            </label>
+          </div>
+          <p id="aiProviderDisclosure" class="dialog-field-note"></p>
+          <!-- "AI edits as" (`docs/183` §23.3): the person's choice, kept on this
+               device and capped by the document and their role. Outside the form,
+               so it is offered when a host manages the provider too. -->
+          <div class="settings-section ai-edit-as">
+            <div data-i18n="aiProviderDialog.editAs" class="settings-label" id="aiEditAsLabel">AI edits as</div>
+            <div class="segmented" id="aiEditAs" role="radiogroup" aria-labelledby="aiEditAsLabel" aria-describedby="aiEditAsNote">
+              <button data-i18n="aiProviderDialog.editAs.suggest" type="button" data-ai-edit-as="suggest" role="radio" aria-checked="true" tabindex="0">Suggestions</button>
+              <button data-i18n="aiProviderDialog.editAs.direct" type="button" data-ai-edit-as="direct" role="radio" aria-checked="false" tabindex="-1">Direct edits</button>
+            </div>
+            <p id="aiEditAsNote" class="dialog-field-note"></p>
+          </div>
+          <p id="aiProviderStatus" class="dialog-field-note" role="status" aria-live="polite"></p>
+            <div class="settings-ai-actions"><button data-i18n="aiProviderDialog.forget" id="aiProviderForget" type="button" class="dialog-button dialog-button-utility">Forget</button><button data-i18n="aiProviderDialog.test" id="aiProviderTest" type="button" class="dialog-button dialog-button-utility">Test connection</button><button data-i18n="aiProviderDialog.save" id="aiProviderSave" type="button" class="dialog-button dialog-button-primary">Save</button></div>
+          </section>
         </div>
         <footer class="dialog-foot">
           <!-- AI provider and Add-ins (docs/183 §6.5): in the action row, not a body
@@ -1846,7 +1886,7 @@
           </button>
         </header>
         <div class="dialog-body page-setup-body">
-          <div class="page-preview" aria-hidden="true">
+          <div class="page-preview" hidden aria-hidden="true">
             <div id="pagePreviewSheet" class="page-preview-sheet" data-orientation="portrait">
               <div id="pagePreviewMargins" class="page-preview-margins">
                 <span></span><span></span><span></span><span></span>
@@ -1854,76 +1894,37 @@
             </div>
             <span data-i18n="pageSetupMenu.8271169" id="pagePreviewLabel" class="page-preview-label">8.27 × 11.69 in</span>
           </div>
-          <div class="page-setup-fields">
-            <fieldset class="dialog-group">
-              <legend data-i18n="pageSetupMenu.apply">Apply to</legend>
-              <label data-i18n="pageSetupMenu.section" class="dialog-field">Section<select id="pageSetupSection" class="dialog-select"></select></label>
-            </fieldset>
-            <fieldset class="dialog-group">
-              <legend data-i18n="pageSetupMenu.orientation">Orientation</legend>
-              <div data-i18n-label="pageSetupMenu.orientation.label" class="segmented orientation-segmented" id="pageOrientationSeg" role="radiogroup" aria-label="Orientation">
+          
+          <div class="dialog-field-grid ps-cols-2 ps-top">
+            <label data-i18n="pageSetupMenu.section" class="dialog-field">Section<select id="pageSetupSection" class="dialog-select"></select></label>
+            <div class="dialog-field ps-orientation"><span data-i18n="pageSetupMenu.orientation">Orientation</span><div data-i18n-label="pageSetupMenu.orientation.label" class="segmented orientation-segmented" id="pageOrientationSeg" role="radiogroup" aria-label="Orientation">
                 <button type="button" data-orientation="portrait"><span class="ms" aria-hidden="true">stay_current_portrait</span>Portrait</button>
                 <button type="button" data-orientation="landscape"><span class="ms" aria-hidden="true">stay_current_landscape</span>Landscape</button>
-              </div>
-            </fieldset>
-            <fieldset class="dialog-group">
-              <legend data-i18n="pageSetupMenu.pageSize">Page size</legend>
+              </div></div>
+          </div>
+          <div class="dialog-field-grid ps-cols-2">
               <label class="dialog-field"><span data-i18n="pagePresets.paper">Paper size preset</span><select id="pagePaperPreset" class="dialog-select"><option value="custom" data-i18n="pagePresets.custom">Custom</option><option value="letter" data-i18n="pagePresets.letter">Letter</option><option value="legal" data-i18n="pagePresets.legal">Legal</option><option value="a4">A4</option><option value="a5">A5</option></select></label>
-              <div class="dialog-field-grid">
-                <label data-i18n="pageSetupMenu.width" class="dialog-field">Width<span class="number-control"><input id="pageWidth" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-                <label data-i18n="pageSetupMenu.height" class="dialog-field">Height<span class="number-control"><input id="pageHeight" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-              </div>
-            </fieldset>
-            <fieldset class="dialog-group">
-              <legend data-i18n="pageSetupMenu.margins">Margins</legend>
-              <label class="dialog-check"><input id="pageMirrorMargins" type="checkbox" /><span data-i18n="pageExtras.mirror">Mirror margins on facing pages</span></label><button id="pageMirrorApply" type="button" class="chip-btn" data-i18n="pageExtras.applyMirror">Apply mirrored margins to document</button>
-              <label class="dialog-field"><span data-i18n="pagePresets.margins">Margin preset</span><select id="pageMarginsPreset" class="dialog-select"><option value="custom" data-i18n="pagePresets.custom">Custom</option><option value="normal" data-i18n="pagePresets.normal">Normal</option><option value="narrow" data-i18n="pagePresets.narrow">Narrow</option><option value="moderate" data-i18n="pagePresets.moderate">Moderate</option><option value="wide" data-i18n="pagePresets.wide">Wide</option></select></label>
-              <div class="dialog-field-grid">
-                <label data-i18n="pageSetupMenu.top" class="dialog-field">Top<span class="number-control"><input id="pageMarginTop" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-                <label data-i18n="pageSetupMenu.bottom" class="dialog-field">Bottom<span class="number-control"><input id="pageMarginBottom" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-                <label data-i18n="pageSetupMenu.left" class="dialog-field">Left<span class="number-control"><input id="pageMarginLeft" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-                <label data-i18n="pageSetupMenu.right" class="dialog-field">Right<span class="number-control"><input id="pageMarginRight" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-                <!-- Gutter: the binding margin added on the inner edge, which the
-                     engine has added to `margin_start` since P1F-36
-                     (`casual-doc-layout/src/document_layout.rs`) with no way to
-                     ask for one. It belongs beside the four margins, which is
-                     where ONLYOFFICE keeps it too
-                     (`apps/documenteditor/main/app/view/PageMarginsDialog.js:89`,
-                     in their Margins dialog).
-
-                     It gets its OWN label, which is a deliberate departure from
-                     them: their spinner has none, sitting under a bold header
-                     reading "Gutter position" that actually belongs to the combo
-                     beside it — they even define the string `textGutter`
-                     (`PageMarginsDialog.js:428`) and never reference it.
-
-                     Word's "Gutter position" (top vs left) is NOT offered: it is
-                     `w:settings/w:gutterAtTop`, which this engine does not model,
-                     and `document_layout.rs` records that landing it is a
-                     multi-crate change that must arrive as one unit. An offered
-                     control that silently did nothing is the thing docs/63
-                     forbids. -->
+              <label class="dialog-field"><span data-i18n="pageExtras.color">Page color</span><input id="pageBackgroundColor" type="color" value="#ffffff" /></label>
+            </div>
+            <div class="dialog-field-grid ps-cols-2">
+              <label data-i18n="pageSetupMenu.width" class="dialog-field">Width<span class="number-control"><input id="pageWidth" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+              <label data-i18n="pageSetupMenu.height" class="dialog-field">Height<span class="number-control"><input id="pageHeight" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+            </div>
+          <fieldset class="dialog-group">
+            <legend data-i18n="pageSetupMenu.margins">Margins</legend>
+            <label class="dialog-field"><span data-i18n="pagePresets.margins">Margin preset</span><select id="pageMarginsPreset" class="dialog-select"><option value="custom" data-i18n="pagePresets.custom">Custom</option><option value="normal" data-i18n="pagePresets.normal">Normal</option><option value="narrow" data-i18n="pagePresets.narrow">Narrow</option><option value="moderate" data-i18n="pagePresets.moderate">Moderate</option><option value="wide" data-i18n="pagePresets.wide">Wide</option></select></label>
+            <div class="dialog-field-grid ps-cols-4">
+              <label data-i18n="pageSetupMenu.top" class="dialog-field">Top<span class="number-control"><input id="pageMarginTop" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+              <label data-i18n="pageSetupMenu.bottom" class="dialog-field">Bottom<span class="number-control"><input id="pageMarginBottom" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+              <label data-i18n="pageSetupMenu.left" class="dialog-field">Left<span class="number-control"><input id="pageMarginLeft" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+              <label data-i18n="pageSetupMenu.right" class="dialog-field">Right<span class="number-control"><input id="pageMarginRight" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+            </div>
+          </fieldset>
+          <details class="dialog-advanced">
+            <summary data-i18n="pageSetupMenu.advanced">Advanced</summary>
+            <div class="dialog-advanced-body">
+              <div class="dialog-field-grid ps-cols-2">
                 <label data-i18n="pageSetupMenu.gutter" class="dialog-field">Gutter<span class="number-control"><input id="pageMarginGutter" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-              </div>
-            </fieldset>
-            <!-- Word's Page Setup ▸ Layout ▸ Vertical alignment. WORD is the model
-                 here and not ONLYOFFICE, because ONLYOFFICE does not have this
-                 feature at all — not merely no dialog: their `SectPr` constructor
-                 (`sdkjs/word/Editor/sections/sect-pr.js:58-88`) has no VAlign
-                 field, and their binary section-property enum
-                 (`sdkjs/word/Editor/Serialize2.js:391-406`) has no slot for it, so
-                 `w:vAlign` cannot survive a round-trip through their editor.
-
-                 The engine has aligned pages since `apply_page_vertical_alignment`
-                 (`casual-doc-layout/src/document_layout.rs:1206`), and it takes the
-                 property seriously enough that incremental repagination refuses to
-                 reuse a page while it is set — which is the note the dialog carries
-                 below, because a user choosing this on a long document should know
-                 it costs a full repagination per edit. -->
-            <fieldset class="dialog-group">
-              <legend data-i18n="pageSetupMenu.layout">Layout</legend>
-              <label class="dialog-field"><span data-i18n="pageExtras.color">Page color</span><input id="pageBackgroundColor" type="color" value="#ffffff" /></label><button id="pageBackgroundApply" type="button" class="chip-btn" data-i18n="pageExtras.applyColor">Apply page color to document</button><button id="pageBackgroundClear" type="button" class="chip-btn" data-i18n="pageExtras.clearColor">Automatic page color</button>
-              <div class="dialog-field-grid">
                 <label data-i18n="pageSetupMenu.verticalAlignment" class="dialog-field">Vertical alignment<select id="pageVerticalAlignment" class="dialog-select">
                   <option data-i18n="pageSetupMenu.vAlignTop" value="top">Top</option>
                   <option data-i18n="pageSetupMenu.vAlignCenter" value="center">Center</option>
@@ -1931,8 +1932,8 @@
                   <option data-i18n="pageSetupMenu.vAlignBottom" value="bottom">Bottom</option>
                 </select></label>
               </div>
-            </fieldset>
-            <fieldset class="dialog-group">
+              <label class="dialog-check"><input id="pageMirrorMargins" type="checkbox" /><span data-i18n="pageExtras.mirror">Mirror margins on facing pages</span></label>
+              <fieldset class="dialog-group">
               <legend data-i18n="pageSetupMenu.columns">Columns</legend>
               <div class="dialog-field-grid">
                 <label data-i18n="pageSetupMenu.number" class="dialog-field">Number<select id="pageColumnCount" class="dialog-select">
@@ -1952,7 +1953,8 @@
 <label class="dialog-field"><span data-i18n="pageColumns.space3">Space after column 4</span><span class="number-control"><input id="pageColumnSpace3" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
 
             </fieldset>
-          </div>
+            </div>
+          </details>
         </div>
         <footer class="dialog-foot">
           <span data-i18n="pageSetupMenu.appliesSectionCanBe" class="dialog-note">Applies to this section and can be undone.</span>
@@ -3248,45 +3250,7 @@
           </div>
           <button data-i18n-title="aiProviderDialog.close.title" data-i18n-label="aiProviderDialog.closeAiProviderDialog.label" id="aiProviderClose" type="button" class="dialog-close" title="Close" aria-label="Close AI provider dialog"><span class="ms" aria-hidden="true">close</span></button>
         </header>
-        <div class="dialog-body">
-          <p id="aiProviderManaged" class="dialog-field-note" hidden></p>
-          <div id="aiProviderForm">
-            <label data-i18n="aiProviderDialog.service" class="dialog-field field-wide">Service<select id="aiProviderPreset" class="dialog-select">
-              <option data-i18n="aiProviderDialog.preset.openai" value="openai">OpenAI</option>
-              <option data-i18n="aiProviderDialog.preset.azure" value="azure">Azure OpenAI</option>
-              <option data-i18n="aiProviderDialog.preset.anthropic" value="anthropic">Anthropic</option>
-              <option data-i18n="aiProviderDialog.preset.gemini" value="gemini">Google Gemini</option>
-              <option data-i18n="aiProviderDialog.preset.mistral" value="mistral">Mistral</option>
-              <option data-i18n="aiProviderDialog.preset.openrouter" value="openrouter">OpenRouter</option>
-              <option data-i18n="aiProviderDialog.preset.ollama" value="ollama">Ollama (this computer)</option>
-              <option data-i18n="aiProviderDialog.preset.lmstudio" value="lmstudio">LM Studio (this computer)</option>
-              <option data-i18n="aiProviderDialog.preset.vllm" value="vllm">vLLM (this computer)</option>
-              <option data-i18n="aiProviderDialog.preset.custom" value="custom">Other OpenAI-compatible service</option>
-            </select></label>
-            <label data-i18n="aiProviderDialog.endpoint" class="dialog-field field-wide">Endpoint URL<input id="aiProviderUrl" type="url" maxlength="2048" autocomplete="off" spellcheck="false" /></label>
-            <label data-i18n="aiProviderDialog.model" class="dialog-field field-wide">Model<input data-i18n-placeholder="aiProviderDialog.model.placeholder" id="aiProviderModel" type="text" maxlength="256" autocomplete="off" spellcheck="false" placeholder="The model name your service uses" /></label>
-            <label data-i18n="aiProviderDialog.key" class="dialog-field field-wide">API key<input id="aiProviderKey" type="password" maxlength="4096" autocomplete="off" spellcheck="false" aria-describedby="aiProviderKeyNote" /></label>
-            <p id="aiProviderKeyNote" class="dialog-field-note"></p>
-            <label class="dialog-check">
-              <input id="aiProviderLegacy" type="checkbox" />
-              <span><strong data-i18n="aiProviderDialog.legacy">Send max_tokens instead of max_completion_tokens</strong><small data-i18n="aiProviderDialog.legacyNote">Only for an older or local server that refuses the newer field name.</small></span>
-            </label>
-          </div>
-          <p id="aiProviderDisclosure" class="dialog-field-note"></p>
-          <!-- "AI edits as" (`docs/183` §23.3): the person's choice, kept on this
-               device and capped by the document and their role. Outside the form,
-               so it is offered when a host manages the provider too. -->
-          <div class="settings-section ai-edit-as">
-            <div data-i18n="aiProviderDialog.editAs" class="settings-label" id="aiEditAsLabel">AI edits as</div>
-            <div class="segmented" id="aiEditAs" role="radiogroup" aria-labelledby="aiEditAsLabel" aria-describedby="aiEditAsNote">
-              <button data-i18n="aiProviderDialog.editAs.suggest" type="button" data-ai-edit-as="suggest" role="radio" aria-checked="true" tabindex="0">Suggestions</button>
-              <button data-i18n="aiProviderDialog.editAs.direct" type="button" data-ai-edit-as="direct" role="radio" aria-checked="false" tabindex="-1">Direct edits</button>
-            </div>
-            <p id="aiEditAsNote" class="dialog-field-note"></p>
-          </div>
-          <p id="aiProviderStatus" class="dialog-field-note" role="status" aria-live="polite"></p>
-        </div>
-        <footer class="dialog-foot"><div class="dialog-actions"><button data-i18n="aiProviderDialog.forget" id="aiProviderForget" type="button" class="dialog-button dialog-button-utility">Forget</button><button data-i18n="aiProviderDialog.test" id="aiProviderTest" type="button" class="dialog-button dialog-button-utility">Test connection</button><button data-i18n="aiProviderDialog.save" id="aiProviderSave" type="button" class="dialog-button dialog-button-primary">Save</button></div></footer>
+        
       </section>
     </div>
 

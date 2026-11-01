@@ -100,7 +100,7 @@ export function createPageSetup(io) {
     ['pageMirrorApply', doc => doc.setMirroredMargins(el('pageMirrorMargins').checked)],
     ['pageBackgroundApply', doc => doc.setPageColor(el('pageBackgroundColor').value)],
     ['pageBackgroundClear', doc => doc.setPageColor('')],
-  ]) el(id).addEventListener('click', async () => { const doc = io.getDoc(); if (doc) { await io.runEdit(() => change(doc), { gate: true }); reflectDocumentSettings(); } });
+  ]) el(id)?.addEventListener('click', async () => { const doc = io.getDoc(); if (doc) { await io.runEdit(() => change(doc), { gate: true }); reflectDocumentSettings(); } });
   function reflectDocumentSettings() {
     const doc = io.getDoc();
     if (!doc) return;
@@ -542,6 +542,19 @@ export function createPageSetup(io) {
           ),
         { gate: true },
       );
+    }
+    // Mirror margins and page colour are document-wide settings. They used to
+    // have their own "Apply … to document" buttons inside this dialog; like
+    // Google Docs' Page setup, the one Apply now writes them, and only when
+    // they changed.
+    const mirror = el("pageMirrorMargins").checked;
+    if (mirror !== doc.mirroredMargins()) {
+      await io.runEdit(() => doc.setMirroredMargins(mirror), { gate: true });
+    }
+    const colour = el("pageBackgroundColor").value;
+    const stored = doc.pageColor() || "#ffffff";
+    if (colour.toLowerCase() !== stored.toLowerCase()) {
+      await io.runEdit(() => doc.setPageColor(colour.toLowerCase() === "#ffffff" ? "" : colour), { gate: true });
     }
     toggle(false);
   });

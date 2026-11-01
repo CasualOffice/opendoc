@@ -348,9 +348,11 @@ export function createAiSettingsDialog({ registerModal, fallbackFocus, t, provid
   });
 
   return {
+    /** Fills the provider form, which now lives inside Settings as its own
+     *  section (owner, 2026-11-02: never a dialog over a dialog). The caller
+     *  shows Settings and brings the section into view. */
     open() {
       fill();
-      controller.open();
     },
   };
 }
