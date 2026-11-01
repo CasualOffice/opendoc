@@ -790,7 +790,7 @@ export interface TableToTextEdit {
 /**
  * Convert consecutive paragraphs into a table, cutting each paragraph into cells at a separator (tab, comma, semicolon, a character) or one cell per paragraph.
  *
- * Family `tables`; trackable: no. Converting text to a table cannot be suggested yet: a tracked table insertion is modelled, but the conversion also REMOVES the source paragraphs, and a suggested paragraph removal that a reviewer could accept without the table (or the table without the removal) would lose text. Insert the table with insert_table and delete the paragraphs as separate suggestions, or use mode `direct`.
+ * Family `tables`; trackable: yes.
  *
  * @example {"op":"text_to_table","from":{"node":"1:2"},"separator":"comma"}
  */

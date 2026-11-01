@@ -118,12 +118,6 @@ const TABLE_NOT_TRACKABLE: &str = "Table structure and cell formatting cannot be
      tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile \
      that grants `edit`.";
 
-const TEXT_TO_TABLE_NOT_TRACKABLE: &str = "Converting text to a table cannot be suggested yet: \
-     a tracked table insertion is modelled, but the conversion also REMOVES the source \
-     paragraphs, and a suggested paragraph removal that a reviewer could accept without the \
-     table (or the table without the removal) would lose text. Insert the table with \
-     insert_table and delete the paragraphs as separate suggestions, or use mode `direct`.";
-
 const CLEAR_NOT_TRACKABLE: &str = "Clearing formatting cannot be suggested yet: a suggested format \
      change is recorded as the properties it sets, and clearing sets none. Use set_text_format \
      with explicit values, or mode `direct`.";
@@ -537,8 +531,19 @@ pub const COMMANDS: &[Command] = &[
         id: "text_to_table",
         family: Family::Tables,
         summary: "Convert consecutive paragraphs into a table, cutting each paragraph into cells at a separator (tab, comma, semicolon, a character) or one cell per paragraph.",
-        emits: &["DeleteBlocks", "InsertTable"],
-        trackable: Trackable::No(TEXT_TO_TABLE_NOT_TRACKABLE),
+        emits: &[
+            "DeleteBlocks",
+            "InsertTable",
+            "UpdateReviewState",
+            "SplitParagraph",
+            "JoinParagraphs",
+            "SetParagraphProperties",
+        ],
+        // Suggested (`docs/183` §24), the table is Word's tracked insertion placed before the
+        // source paragraphs, which stay struck through until a reviewer decides: Reject puts
+        // them back exactly. Sources that already carry tracked changes, or hold objects other
+        // than text and tabs, are refused in suggest mode.
+        trackable: Trackable::Yes,
         example: r#"{"op":"text_to_table","from":{"node":"1:2"},"separator":"comma"}"#,
         ui_commands: &["insert.textToTable"],
     },

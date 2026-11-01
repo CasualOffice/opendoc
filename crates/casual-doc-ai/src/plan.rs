@@ -94,7 +94,6 @@ fn needs(edit: &Edit, mode: Mode) -> Profile {
         | Edit::TableInsertCells { .. }
         | Edit::TableDeleteCells { .. }
         | Edit::TableToText { .. }
-        | Edit::TextToTable { .. }
         | Edit::RemoveTableOfContents { .. }
         | Edit::InsertTableOfFigures { .. }
         | Edit::SetContentsLevel { .. }
@@ -138,6 +137,7 @@ fn needs(edit: &Edit, mode: Mode) -> Profile {
         | Edit::InsertCrossReference { .. } => Profile::Edit,
         // Trackable since `docs/183` §23: a tracked table insertion.
         Edit::InsertTable { .. }
+        | Edit::TextToTable { .. }
         | Edit::InsertText { .. }
         | Edit::ReplaceText { .. }
         | Edit::DeleteText { .. }
@@ -1380,12 +1380,29 @@ fn apply_edit(
                 &mut || ids.next_id().ok(),
             )
             .map_err(|message| refusal(&message))?;
+            let sources: Vec<NodeId> = paragraphs.iter().map(|paragraph| paragraph.id).collect();
             drop(refs);
-            nodes.extend(edit.operations.iter().filter_map(|op| match op {
+            // Trackable since `docs/183` §24: suggested, the table is a tracked insertion
+            // before the sources, which stay struck, so Reject restores them exactly.
+            let ops = match mode {
+                Mode::Suggest => {
+                    lowered(casual_doc_review::table_review::suggest_text_to_table(
+                        &state.document,
+                        edit.operations,
+                        &sources,
+                        ids!(state),
+                        author,
+                        date,
+                    ))?
+                    .operations
+                }
+                Mode::Direct => edit.operations,
+            };
+            nodes.extend(ops.iter().filter_map(|op| match op {
                 Operation::InsertTable { table, .. } => Some(table.id),
                 _ => None,
             }));
-            commit(state, edit.operations)?;
+            commit(state, ops)?;
         }
         Edit::SetCellText {
             table,

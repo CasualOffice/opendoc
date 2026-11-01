@@ -235,6 +235,7 @@ export function createTableProps(ed) {
       return range?.anchorNode ? [range.anchorNode, range.focusNode] : null;
     },
     runEdit: (fn, options) => ed.runEdit(fn, options),
+    suggesting: () => ed.reviewMode === "suggesting",
     status: (text, kind) => ed.setStatus(text, kind),
     registerModal,
     registerPopover,

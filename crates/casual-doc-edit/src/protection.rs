@@ -647,7 +647,15 @@ pub(crate) fn is_tracked_only(document: &Document, op: &Operation) -> bool {
         // anything. The paragraph mark's own revision may not move.
         Operation::SetParagraphProperties { node, properties } => {
             current_properties(document, *node).is_some_and(|current| {
-                properties.mark_revision == current.mark_revision
+                // The mark as it was, or an untracked mark now a tracked DELETION (the
+                // paragraph break a cross-paragraph suggested deletion strikes, `docs/183`
+                // §24): rejecting it restores the break, so the "before" view is the same.
+                (properties.mark_revision == current.mark_revision
+                    || (current.mark_revision.is_none()
+                        && properties
+                            .mark_revision
+                            .as_ref()
+                            .is_some_and(|mark| mark.kind == MarkRevisionKind::Deletion)))
                     && paragraph_before(properties) == paragraph_before(current)
                     // Someone else's pending change keeps its author: a suggester
                     // extends a suggestion, never re-attributes or drops one.

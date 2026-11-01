@@ -2,7 +2,7 @@
 
 # The OpenDoc edit vocabulary, version 1.6
 
-73 commands in 14 families. 15 can be tracked suggestions, 55 are refused in suggest mode with the published reason, and 3 are not content edits (comments and review decisions). They are the agent-side twins of 127 editor command ids; 96 editor ids that can change a document are not exposed to agents, each with a reason (`commands.json` `uiNotExposed`).
+73 commands in 14 families. 16 can be tracked suggestions, 54 are refused in suggest mode with the published reason, and 3 are not content edits (comments and review decisions). They are the agent-side twins of 127 editor command ids; 96 editor ids that can change a document are not exposed to agents, each with a reason (`commands.json` `uiNotExposed`).
 
 | `op` | Family | Summary | Trackable | Editor twins |
 | --- | --- | --- | --- | --- |
@@ -33,7 +33,7 @@
 | `table_insert_cells` | tables | Insert empty cells at a cell or rectangle, shifting the cells there right or down (refused in a table with merged cells). | no: Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`. | `table.insertCells` |
 | `table_delete_cells` | tables | Delete a cell or rectangle of cells, closing the gap left or up (refused in a table with merged cells). | no: Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`. | `table.deleteCells` |
 | `table_to_text` | tables | Convert a body table to text: one paragraph per row with its cells joined by a separator, or every cell's paragraphs in order. | no: Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`. | `table.convertToText` |
-| `text_to_table` | tables | Convert consecutive paragraphs into a table, cutting each paragraph into cells at a separator (tab, comma, semicolon, a character) or one cell per paragraph. | no: Converting text to a table cannot be suggested yet: a tracked table insertion is modelled, but the conversion also REMOVES the source paragraphs, and a suggested paragraph removal that a reviewer could accept without the table (or the table without the removal) would lose text. Insert the table with insert_table and delete the paragraphs as separate suggestions, or use mode `direct`. | `insert.textToTable` |
+| `text_to_table` | tables | Convert consecutive paragraphs into a table, cutting each paragraph into cells at a separator (tab, comma, semicolon, a character) or one cell per paragraph. | yes | `insert.textToTable` |
 | `set_list` | lists | Make a paragraph a bulleted or numbered list item, or take it out of its list. | yes | `paragraph.list.bullet`, `paragraph.list.numbered` |
 | `change_list_level` | lists | Move a list item down (positive) or up (negative) a number of levels. | yes | none (agent-only) |
 | `restart_numbering` | lists | Restart numbering at a numbered list item, at 1 or a given value. | no: Restarting or continuing numbering cannot be suggested: it moves items to another numbering instance, which Word has no tracked-change record for. Use mode `direct` under a profile that grants `edit`. | `paragraph.list.restart` |

@@ -484,3 +484,176 @@ pub fn has_tracked_tables(document: &Document) -> bool {
     }
     !tables.is_empty()
 }
+
+/// Gives `paragraph` and every inline in it a fresh id, so a copy can sit beside its source.
+/// Refuses an inline that is not plain text or a tab: a copied comment range, bookmark,
+/// field or picture would have two homes. O(inlines).
+fn fresh_copy(
+    paragraph: &mut casual_doc_model::v1::Paragraph,
+    ids: &mut ReviewIds<'_>,
+) -> Result<(), String> {
+    let mut mint = || {
+        ids.nodes
+            .next_id()
+            .map_err(|_| "id space exhausted".to_owned())
+    };
+    paragraph.id = mint()?;
+    for inline in &mut paragraph.inlines {
+        match inline {
+            InlineNode::Run(run) => run.id = mint()?,
+            InlineNode::Tab(tab) => tab.id = mint()?,
+            _ => {
+                return Err(casual_doc_edit::refused!(
+                    "review.text-to-table-objects",
+                    "These paragraphs hold more than text (a link, field, picture, comment or \
+                     bookmark), which a suggested conversion would have to copy into the table \
+                     while the original stays struck through. Convert them in Editing mode."
+                )
+                .to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// "Convert text to table" as ONE tracked change (`docs/183` §24, RM-52), Word's shape: the
+/// table is a tracked insertion (`w:trPr/w:ins` on every row, its cell text `w:ins`) placed
+/// BEFORE the source paragraphs, and the source paragraphs stay on the page struck through
+/// (their text `w:del`, their paragraph marks deleted up to the paragraph after them), so
+/// Reject restores exactly the original paragraphs and Accept leaves only the table.
+///
+/// `edit` is what `casual_doc_command::table_tools::text_to_table` returned for `sources`
+/// (a `DeleteBlocks` of the sources and an `InsertTable` built from their text); the
+/// deletion is replaced by the tracked one, and every id the table reused from a source
+/// paragraph is minted fresh, since both now stand side by side. O(source inlines + cells).
+///
+/// # Errors
+/// No `InsertTable` in `edit`, sources that already carry tracked changes or hold objects
+/// other than text and tabs, an invalid author, or ids exhausted.
+pub fn suggest_text_to_table(
+    document: &Document,
+    edit: Vec<Operation>,
+    sources: &[NodeId],
+    ids: &mut ReviewIds<'_>,
+    author: Option<String>,
+    date: Option<String>,
+) -> Result<Lowered, String> {
+    validate_authored_revision_author(author.as_deref())?;
+    let (first, last) = match (sources.first(), sources.last()) {
+        (Some(first), Some(last)) => (*first, *last),
+        _ => return Err("Select the paragraphs to convert to a table.".to_owned()),
+    };
+    for node in sources {
+        let paragraph = document
+            .paragraph(*node)
+            .ok_or_else(|| "paragraph not found".to_owned())?;
+        if paragraph.properties.mark_revision.is_some()
+            || paragraph.properties.prop_change.is_some()
+            || paragraph
+                .inlines
+                .iter()
+                .any(|inline| matches!(inline, InlineNode::Revision(_)))
+        {
+            return Err(casual_doc_edit::refused!(
+                "review.text-to-table-tracked",
+                "These paragraphs already carry tracked changes. Accept or reject them first."
+            )
+            .to_string());
+        }
+    }
+    let Some((container, index, mut table)) = edit.into_iter().find_map(|op| match op {
+        Operation::InsertTable {
+            container,
+            index,
+            table,
+        } => Some((container, index, table)),
+        _ => None,
+    }) else {
+        return Err("a tracked conversion needs a table".to_owned());
+    };
+    for row in &mut table.rows {
+        row.properties.row_revision = Some(MarkRevision {
+            kind: MarkRevisionKind::Insertion,
+            author: author.clone(),
+            date: date.clone(),
+            revision_id: Some(ids.revisions.allocate()?),
+        });
+        for cell in &mut row.cells {
+            for block in &mut cell.blocks {
+                let BlockNode::Paragraph(paragraph) = block else {
+                    continue;
+                };
+                fresh_copy(paragraph, ids)?;
+                if paragraph.inlines.is_empty() {
+                    continue;
+                }
+                let id = ids
+                    .nodes
+                    .next_id()
+                    .map_err(|_| "id space exhausted".to_owned())?;
+                let inlines = std::mem::take(&mut paragraph.inlines);
+                paragraph.inlines = vec![InlineNode::Revision(Box::new(Revision {
+                    id,
+                    kind: RevisionKind::Insertion,
+                    author: author.clone(),
+                    date: date.clone(),
+                    revision_id: Some(ids.revisions.allocate()?),
+                    editor_group: None,
+                    inlines,
+                }))];
+            }
+        }
+    }
+    // The sources, struck: through the paragraph after them when there is one, so their
+    // marks go too and Accept leaves no empty paragraph behind; otherwise up to the end of
+    // the last one (a container ends in a paragraph, as in Word).
+    let mut nodes = sources.to_vec();
+    let end = match crate::body::adjacent_next_paragraph(document, last) {
+        Some(next) => {
+            nodes.push(next);
+            Pos::new(next, 0)
+        }
+        None => Pos::new(
+            last,
+            u32::try_from(crate::lower::paragraph_text(document, last).len())
+                .map_err(|_| "paragraph too long".to_owned())?,
+        ),
+    };
+    let mut operations = if nodes.len() > 1 {
+        crate::lower::suggest_range_edit(
+            document,
+            ids,
+            Pos::new(first, 0),
+            end,
+            &nodes,
+            None,
+            author,
+            date,
+        )?
+        .operations
+    } else if end.offset > 0 {
+        crate::lower::suggest_delete(
+            document,
+            ids,
+            &first.to_string(),
+            0,
+            end.offset,
+            author,
+            date,
+        )?
+        .operations
+    } else {
+        Vec::new()
+    };
+    let caret = first_paragraph(&table).unwrap_or(table.id);
+    operations.push(Operation::InsertTable {
+        container,
+        index,
+        table,
+    });
+    Ok(Lowered {
+        operations,
+        caret: Pos::new(caret, 0),
+        group: None,
+    })
+}
