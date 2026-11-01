@@ -207,6 +207,11 @@ mod track_changes_tests;
 #[cfg(test)]
 #[path = "pdf_fonts_tests.rs"]
 mod pdf_fonts_tests;
+// Object queries cost one walk of the document, not one per object (`docs/109`
+// HF-416).
+#[cfg(test)]
+#[path = "object_index_tests.rs"]
+mod object_index_tests;
 
 // Forms protection per section (`docs/165` M6, `docs/109` FID-AT-06).
 #[cfg(test)]
@@ -16336,6 +16341,13 @@ impl WasmDocument {
         // is quadratic, so it is the reason a click on a large document does not
         // come back (`docs/116`).
         let object_nodes = self.object_nodes_by_paragraph();
+        // Each object's anchor, group reference and frame, in ONE walk of the
+        // document. These were three lookups by id per placed object, each a
+        // walk of the document, so a fixed-layout PDF (a thousand frames and
+        // shapes on a few dozen pages) spent a quarter of a second natively on
+        // every `objectRect`, and the editor asks for it on every keystroke
+        // in a frame (`docs/182` §4.1, `109` HF-416).
+        let index = ObjectIndex::build(&self.document);
         let mut grouped: HashMap<NodeId, usize> = HashMap::new();
         // Per-paragraph claimed flags, one set per correlation list (images, text
         // boxes, charts), so a paragraph split across pages still maps each placed
@@ -16400,7 +16412,7 @@ impl WasmDocument {
                         if let Some(i) = pick {
                             entry.images[i] = true;
                             let found = &img_nodes[i];
-                            let frame = object_resize_handles(self.document.body(), found.node);
+                            let frame = index.frame(found.node);
                             // An embedded object painted as its cached preview is
                             // still an embedded object: it is not croppable and
                             // carries no `descr`, so it must not inherit a
@@ -16441,7 +16453,7 @@ impl WasmDocument {
                         );
                         if let Some(i) = entry.charts.iter().position(|used| !used) {
                             entry.charts[i] = true;
-                            let frame = object_resize_handles(self.document.body(), chart_nodes[i]);
+                            let frame = index.frame(chart_nodes[i]);
                             out.push(ObjectBox {
                                 root: chart_nodes[i],
                                 subject: chart_nodes[i],
@@ -16466,7 +16478,7 @@ impl WasmDocument {
                         );
                         if let Some(i) = entry.text_boxes.iter().position(|used| !used) {
                             entry.text_boxes[i] = true;
-                            let frame = object_resize_handles(self.document.body(), tb_nodes[i]);
+                            let frame = index.frame(tb_nodes[i]);
                             out.push(ObjectBox {
                                 root: tb_nodes[i],
                                 subject: tb_nodes[i],
@@ -16497,8 +16509,8 @@ impl WasmDocument {
                 // it. A group child is admitted by resolving its top-level root,
                 // because the child paints the subject while the group owns the
                 // anchor/delete commands.
-                let has_anchor = object_anchor_any_surface(&self.document, node).is_some();
-                let group_ref = body_group_object_ref(self.document.body(), node);
+                let has_anchor = index.floating.contains(&node);
+                let group_ref = index.groups.get(&node).cloned();
                 if !has_anchor && group_ref.is_none() {
                     continue;
                 }
@@ -16523,11 +16535,11 @@ impl WasmDocument {
                     AnchorContent::Chart { .. } => "chart",
                 };
                 if let Some(reference) = group_ref {
-                    let frame = object_resize_handles(self.document.body(), reference.root);
+                    let frame = index.frame(reference.root);
                     // A group CHILD paints its own `a:xfrm`, and the child is the
                     // subject the host rotates — the group root's transform is not
-                    // painted at all (see `object_resize_handles_in_inlines`).
-                    let subject_frame = object_resize_handles(self.document.body(), node);
+                    // painted at all (see `visit_frames_in_inlines`).
+                    let subject_frame = index.frame(node);
                     if reference.leaf_count == 1 || include_group_children {
                         out.push(ObjectBox {
                             root: reference.root,
@@ -16563,7 +16575,7 @@ impl WasmDocument {
                         });
                     }
                 } else {
-                    let float_frame = object_resize_handles(self.document.body(), node);
+                    let float_frame = index.frame(node);
                     out.push(ObjectBox {
                         root: node,
                         subject: node,
@@ -17945,7 +17957,34 @@ struct GroupObjectRef {
 /// Resolves `node` inside a body-owned top-level group, recursing through every
 /// structural wrapper supported by body editing. The model bounds group depth
 /// and child counts, so the returned path is bounded by validation.
+///
+/// O(blocks up to `node`). It is [`visit_group_refs_in_blocks`] stopped at the
+/// first match, so this lookup and [`ObjectIndex`]'s table agree by
+/// construction; never call it once per object in a loop (`SKILL` §8).
 fn body_group_object_ref(blocks: &[BlockNode], node: NodeId) -> Option<GroupObjectRef> {
+    let mut found = None;
+    visit_group_refs_in_blocks(blocks, &mut |id, reference| {
+        note_carrier_visit();
+        if id == node {
+            found = Some(reference());
+            true
+        } else {
+            false
+        }
+    });
+    found
+}
+
+/// Visits every group root and group descendant in `blocks` with a way to
+/// build its [`GroupObjectRef`], in the lookup's order (pre-order, document
+/// order). The reference is built only when asked for, so a lookup that
+/// passes a thousand children pays for none of their paths. `visit` returning
+/// `true` stops the walk. O(nodes in `blocks`), with a root's leaf count
+/// computed once per root.
+fn visit_group_refs_in_blocks(
+    blocks: &[BlockNode],
+    visit: &mut dyn FnMut(NodeId, &dyn Fn() -> GroupObjectRef) -> bool,
+) -> bool {
     fn leaf_count(children: &[GroupChild]) -> usize {
         children
             .iter()
@@ -17956,21 +17995,40 @@ fn body_group_object_ref(blocks: &[BlockNode], node: NodeId) -> Option<GroupObje
             .sum()
     }
 
-    fn child_path(children: &[GroupChild], node: NodeId, path: &mut Vec<u32>) -> bool {
-        for (index, child) in children.iter().enumerate() {
+    fn children(
+        root: NodeId,
+        leaves: usize,
+        kids: &[GroupChild],
+        path: &mut Vec<u32>,
+        visit: &mut dyn FnMut(NodeId, &dyn Fn() -> GroupObjectRef) -> bool,
+    ) -> bool {
+        for (index, child) in kids.iter().enumerate() {
             let Ok(index) = u32::try_from(index) else {
                 return false;
             };
             path.push(index);
-            let found = match child {
-                GroupChild::Picture(picture) => picture.id == node,
-                GroupChild::TextBox(text_box) => text_box.id == node,
-                GroupChild::Shape(shape) => shape.id == node,
-                GroupChild::Group(group) => {
-                    group.id == node || child_path(&group.children, node, path)
-                }
+            let id = match child {
+                GroupChild::Picture(picture) => picture.id,
+                GroupChild::TextBox(text_box) => text_box.id,
+                GroupChild::Shape(shape) => shape.id,
+                GroupChild::Group(group) => group.id,
             };
-            if found {
+            let matched = {
+                let at: &[u32] = path;
+                visit(id, &|| GroupObjectRef {
+                    root,
+                    path: at.to_vec(),
+                    leaf_count: leaves,
+                })
+            };
+            let stop = matched
+                || match child {
+                    GroupChild::Group(group) => {
+                        children(root, leaves, &group.children, path, visit)
+                    }
+                    GroupChild::Picture(_) | GroupChild::TextBox(_) | GroupChild::Shape(_) => false,
+                };
+            if stop {
                 return true;
             }
             path.pop();
@@ -17978,53 +18036,52 @@ fn body_group_object_ref(blocks: &[BlockNode], node: NodeId) -> Option<GroupObje
         false
     }
 
-    fn in_inlines(inlines: &[InlineNode], node: NodeId) -> Option<GroupObjectRef> {
+    fn in_inlines(
+        inlines: &[InlineNode],
+        visit: &mut dyn FnMut(NodeId, &dyn Fn() -> GroupObjectRef) -> bool,
+    ) -> bool {
         for inline in inlines {
-            let found = match inline {
+            let stop = match inline {
                 InlineNode::Group(group) => {
-                    let mut path = Vec::new();
-                    (group.id == node || child_path(&group.children, node, &mut path)).then(|| {
-                        GroupObjectRef {
-                            root: group.id,
-                            path,
-                            leaf_count: leaf_count(&group.children),
-                        }
-                    })
+                    let leaves = leaf_count(&group.children);
+                    visit(group.id, &|| GroupObjectRef {
+                        root: group.id,
+                        path: Vec::new(),
+                        leaf_count: leaves,
+                    }) || children(group.id, leaves, &group.children, &mut Vec::new(), visit)
                 }
-                InlineNode::Hyperlink(link) => in_inlines(&link.inlines, node),
-                InlineNode::Field(field) => in_inlines(&field.inlines, node),
-                InlineNode::Revision(revision) => in_inlines(&revision.inlines, node),
-                InlineNode::Sdt(sdt) => in_inlines(&sdt.inlines, node),
-                InlineNode::TextBox(text_box) => in_blocks(&text_box.blocks, node),
-                _ => None,
+                InlineNode::Hyperlink(link) => in_inlines(&link.inlines, visit),
+                InlineNode::Field(field) => in_inlines(&field.inlines, visit),
+                InlineNode::Revision(revision) => in_inlines(&revision.inlines, visit),
+                InlineNode::Sdt(sdt) => in_inlines(&sdt.inlines, visit),
+                InlineNode::TextBox(text_box) => {
+                    visit_group_refs_in_blocks(&text_box.blocks, visit)
+                }
+                _ => false,
             };
-            if found.is_some() {
-                return found;
+            if stop {
+                return true;
             }
         }
-        None
+        false
     }
 
-    fn in_blocks(blocks: &[BlockNode], node: NodeId) -> Option<GroupObjectRef> {
-        for block in blocks {
-            let found = match block {
-                BlockNode::Paragraph(paragraph) => in_inlines(&paragraph.inlines, node),
-                BlockNode::Table(table) => table.rows.iter().find_map(|row| {
-                    row.cells
-                        .iter()
-                        .find_map(|cell| in_blocks(&cell.blocks, node))
-                }),
-                BlockNode::Sdt(sdt) => in_blocks(&sdt.blocks, node),
-                BlockNode::AltChunk(_) => None,
-            };
-            if found.is_some() {
-                return found;
-            }
+    for block in blocks {
+        let stop = match block {
+            BlockNode::Paragraph(paragraph) => in_inlines(&paragraph.inlines, visit),
+            BlockNode::Table(table) => table.rows.iter().any(|row| {
+                row.cells
+                    .iter()
+                    .any(|cell| visit_group_refs_in_blocks(&cell.blocks, visit))
+            }),
+            BlockNode::Sdt(sdt) => visit_group_refs_in_blocks(&sdt.blocks, visit),
+            BlockNode::AltChunk(_) => false,
+        };
+        if stop {
+            return true;
         }
-        None
     }
-
-    in_blocks(blocks, node)
+    false
 }
 
 /// The text of every block story an inline list owns, at any container depth —
@@ -18647,6 +18704,81 @@ fn collect_block_text_all_surfaces(document: &Document, out: &mut Vec<(NodeId, S
 /// [`object_nodes_by_paragraph`](WasmDocument::object_nodes_by_paragraph).
 type ObjectNodesByParagraph = HashMap<NodeId, ParagraphObjectNodes>;
 
+// Test-only count of object carriers the object walks visit — the anchor,
+// group and frame lookups and the `ObjectIndex` built from the same visitors —
+// so a doubling test can tell one walk per document from one walk per object.
+// Production builds get an empty function and pay nothing.
+#[cfg(test)]
+thread_local! {
+    static CARRIER_VISITS: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn note_carrier_visit() {
+    CARRIER_VISITS.with(|visits| visits.set(visits.get() + 1));
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_carrier_visit() {}
+
+/// Zeroes the test-only carrier-visit counter and returns what it held.
+#[cfg(test)]
+fn take_carrier_visits() -> u64 {
+    CARRIER_VISITS.with(|visits| visits.replace(0))
+}
+
+/// What `resolve_object_boxes` needs to know about each object's model carrier,
+/// gathered in ONE walk of the document instead of three lookups by id per
+/// placed object (`SKILL` §8: indexing, not a lookup-by-id inside a loop).
+///
+/// Each table is filled by the same visitor its single-object lookup stops
+/// early on (`visit_frames_in_blocks`, `visit_group_refs_in_blocks`,
+/// `casual_doc_command::objects::visit_anchors_in_blocks`), keeping the FIRST
+/// answer the way the lookup does, so the index and the lookup agree by
+/// construction. Building it is O(document); each question after is O(1).
+#[derive(Default)]
+struct ObjectIndex {
+    /// Floating objects on any surface (`object_anchor_any_surface` is `Some`).
+    floating: std::collections::HashSet<NodeId>,
+    /// Body group roots and descendants (`body_group_object_ref`).
+    groups: HashMap<NodeId, GroupObjectRef>,
+    /// Body object frames (`object_resize_handles` over the body).
+    frames: HashMap<NodeId, ObjectFrame>,
+}
+
+impl ObjectIndex {
+    /// One walk per table over the document. O(document).
+    fn build(document: &Document) -> Self {
+        let mut index = Self::default();
+        for blocks in surface_block_lists(document) {
+            visit_anchors_in_blocks(blocks, &mut |id, anchor| {
+                note_carrier_visit();
+                if anchor.is_some() {
+                    index.floating.insert(id);
+                }
+                false
+            });
+        }
+        visit_group_refs_in_blocks(document.body(), &mut |id, reference| {
+            note_carrier_visit();
+            index.groups.entry(id).or_insert_with(reference);
+            false
+        });
+        visit_frames_in_blocks(document.body(), &mut |id, frame| {
+            note_carrier_visit();
+            index.frames.entry(id).or_insert(frame);
+            false
+        });
+        index
+    }
+
+    /// `object_resize_handles(document.body(), node)`, from the table. O(1).
+    fn frame(&self, node: NodeId) -> ObjectFrame {
+        self.frames.get(&node).copied().unwrap_or_default()
+    }
+}
+
 /// One paragraph's inline object nodes, in document order, split by the kind of
 /// painted box each can correlate to.
 ///
@@ -18710,6 +18842,9 @@ use casual_doc_command::charts::{EMBEDDED_CHART_RELATIONSHIP, default_chart_proj
 use casual_doc_command::charts::{
     chart_colors_by_point, chart_group_for_kind, unpainted_chart_refusal,
 };
+// Own line (anti-conflict): the anchor walk the object index shares with the
+// single-object lookup (`docs/109` HF-416).
+use casual_doc_command::objects::visit_anchors_in_blocks;
 
 /// Every embedded CHART object in `blocks`, in document order.
 ///
@@ -21303,6 +21438,7 @@ struct ObjectFrame {
 /// Exact handle support, rotation, and rotatability for one model carrier. This
 /// deliberately rejects flow-dependent group text boxes: their axis-aligned
 /// selection rectangles do not yet have an exact model inverse.
+#[cfg(test)]
 fn object_resize_handles(blocks: &[BlockNode], object: NodeId) -> ObjectFrame {
     object_frame_in_blocks(blocks, object).unwrap_or_default()
 }
@@ -21315,32 +21451,49 @@ fn object_resize_handles(blocks: &[BlockNode], object: NodeId) -> ObjectFrame {
 /// exactly, and every group CHILD, whose grips belong to its root. Reading that
 /// as "not here" made the search walk on past the node it had already found,
 /// which is harmless at the top level and wrong for one inside a table cell.
+///
+/// O(blocks up to `object`). It is [`visit_frames_in_blocks`] stopped at the
+/// first match, so this lookup and [`ObjectIndex`]'s one-walk table cannot
+/// give two answers to one question. Never call it once per object inside a
+/// loop over objects — build an [`ObjectIndex`] (`SKILL` §8).
 fn object_frame_in_blocks(blocks: &[BlockNode], object: NodeId) -> Option<ObjectFrame> {
+    let mut found = None;
+    visit_frames_in_blocks(blocks, &mut |id, frame| {
+        note_carrier_visit();
+        if id == object {
+            found = Some(frame);
+            true
+        } else {
+            false
+        }
+    });
+    found
+}
+
+/// Visits every object carrier the frame lookup can resolve in `blocks`, with
+/// its [`ObjectFrame`], in the lookup's search order (pre-order, document
+/// order); `visit` returning `true` stops the walk, and so does this function's
+/// `true`. O(nodes in `blocks`).
+fn visit_frames_in_blocks(
+    blocks: &[BlockNode],
+    visit: &mut dyn FnMut(NodeId, ObjectFrame) -> bool,
+) -> bool {
     for block in blocks {
-        match block {
-            BlockNode::Paragraph(paragraph) => {
-                if let Some(frame) = object_resize_handles_in_inlines(&paragraph.inlines, object) {
-                    return Some(frame);
-                }
-            }
-            BlockNode::Table(table) => {
-                for row in &table.rows {
-                    for cell in &row.cells {
-                        if let Some(frame) = object_frame_in_blocks(&cell.blocks, object) {
-                            return Some(frame);
-                        }
-                    }
-                }
-            }
-            BlockNode::Sdt(sdt) => {
-                if let Some(frame) = object_frame_in_blocks(&sdt.blocks, object) {
-                    return Some(frame);
-                }
-            }
-            BlockNode::AltChunk(_) => {}
+        let stop = match block {
+            BlockNode::Paragraph(paragraph) => visit_frames_in_inlines(&paragraph.inlines, visit),
+            BlockNode::Table(table) => table.rows.iter().any(|row| {
+                row.cells
+                    .iter()
+                    .any(|cell| visit_frames_in_blocks(&cell.blocks, visit))
+            }),
+            BlockNode::Sdt(sdt) => visit_frames_in_blocks(&sdt.blocks, visit),
+            BlockNode::AltChunk(_) => false,
+        };
+        if stop {
+            return true;
         }
     }
-    None
+    false
 }
 
 fn object_resize_handles_any_surface(document: &Document, object: NodeId) -> ObjectFrame {
@@ -21350,7 +21503,8 @@ fn object_resize_handles_any_surface(document: &Document, object: NodeId) -> Obj
         .unwrap_or_default()
 }
 
-/// The frame of `object` when it is a CHILD of `group` (at any nesting depth).
+/// Visits the frame of every CHILD of `group` (at any nesting depth), in the
+/// lookup's order.
 ///
 /// A child's grips belong to its root — `resolve_object_boxes` takes the mask
 /// from the group and only the angle from here — so `handles` is `0` and that is
@@ -21358,77 +21512,82 @@ fn object_resize_handles_any_surface(document: &Document, object: NodeId) -> Obj
 /// `casual-doc-layout`'s anchor pass paints each child's rotation onto its own
 /// paint item, which is why these are the objects a rotation handle is offered
 /// on while the group ROOT's own transform (painted by nothing) is not.
-fn object_frame_in_group(group: &WordprocessingGroup, object: NodeId) -> Option<ObjectFrame> {
+fn visit_frames_in_group(
+    group: &WordprocessingGroup,
+    visit: &mut dyn FnMut(NodeId, ObjectFrame) -> bool,
+) -> bool {
+    let leaf = |rotation: Option<i32>| ObjectFrame {
+        handles: 0,
+        rotation_60k: rotation.unwrap_or(0),
+        can_rotate: true,
+    };
     for child in &group.children {
-        let rotation = match child {
-            GroupChild::Picture(picture) if picture.id == object => picture.rotation,
-            GroupChild::Shape(shape) if shape.id == object => shape.rotation,
-            GroupChild::TextBox(text_box) if text_box.id == object => text_box.rotation,
+        let stop = match child {
+            GroupChild::Picture(picture) => visit(picture.id, leaf(picture.rotation)),
+            GroupChild::Shape(shape) => visit(shape.id, leaf(shape.rotation)),
             GroupChild::TextBox(text_box) => {
-                if let Some(frame) = object_frame_in_blocks(&text_box.blocks, object) {
-                    return Some(frame);
-                }
-                continue;
+                visit(text_box.id, leaf(text_box.rotation))
+                    || visit_frames_in_blocks(&text_box.blocks, visit)
             }
+            // A nested group is a group: its transform is modelled and
+            // unpainted, exactly like a top-level one.
             GroupChild::Group(nested) => {
-                if nested.id == object {
-                    // A nested group is a group: its transform is modelled and
-                    // unpainted, exactly like a top-level one.
-                    return Some(ObjectFrame::default());
-                }
-                if let Some(frame) = object_frame_in_group(nested, object) {
-                    return Some(frame);
-                }
-                continue;
+                visit(nested.id, ObjectFrame::default()) || visit_frames_in_group(nested, visit)
             }
-            GroupChild::Picture(_) | GroupChild::Shape(_) => continue,
         };
-        return Some(ObjectFrame {
-            handles: 0,
-            rotation_60k: rotation.unwrap_or(0),
-            can_rotate: true,
-        });
+        if stop {
+            return true;
+        }
     }
-    None
+    false
 }
 
-fn object_resize_handles_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<ObjectFrame> {
+/// Visits every object carrier in `inlines` (and inside them) with its frame,
+/// in the lookup's order. O(nodes in `inlines`).
+fn visit_frames_in_inlines(
+    inlines: &[InlineNode],
+    visit: &mut dyn FnMut(NodeId, ObjectFrame) -> bool,
+) -> bool {
     for inline in inlines {
-        match inline {
-            InlineNode::Drawing(drawing) if drawing.id == object => {
-                return Some(ObjectFrame {
+        let stop = match inline {
+            InlineNode::Drawing(drawing) => visit(
+                drawing.id,
+                ObjectFrame {
                     handles: INLINE_RESIZE_HANDLES,
                     rotation_60k: drawing.rotation.unwrap_or(0),
                     can_rotate: true,
-                });
-            }
-            InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
-                return Some(ObjectFrame {
+                },
+            ),
+            InlineNode::AnchoredDrawing(drawing) => visit(
+                drawing.id,
+                ObjectFrame {
                     handles: FLOAT_RESIZE_HANDLES,
                     rotation_60k: drawing.rotation.unwrap_or(0),
                     can_rotate: true,
-                });
-            }
+                },
+            ),
             // A chart / diagram / OLE object. Its `wp:extent` is mandatory in the
             // model and `set_object_extent_in_inlines` already writes it, so the
             // eight grips are a real contract — they used to answer
             // `ObjectFrame::default()` here, which published `can_resize: false`
             // for an object the engine could resize all along. It models no
             // `a:xfrm` of its own (see `EmbeddedObject`), so no rotation handle.
-            InlineNode::EmbeddedObject(embedded) if embedded.id == object => {
-                return Some(ObjectFrame {
+            InlineNode::EmbeddedObject(embedded) => visit(
+                embedded.id,
+                ObjectFrame {
                     handles: INLINE_RESIZE_HANDLES,
                     rotation_60k: 0,
                     can_rotate: false,
-                });
-            }
+                },
+            ),
+            // A TOP-LEVEL text box models no `a:xfrm` at all — see `TextBox` in
+            // `casual-doc-model` — so `setObjectRotation` refuses it and no
+            // handle is offered. A text box inside a group is a
+            // `GroupChild::TextBox`, which does carry one.
             InlineNode::TextBox(text_box) => {
-                if text_box.id == object {
-                    // A TOP-LEVEL text box models no `a:xfrm` at all — see
-                    // `TextBox` in `casual-doc-model` — so `setObjectRotation`
-                    // refuses it and no handle is offered. A text box inside a
-                    // group is a `GroupChild::TextBox`, which does carry one.
-                    return Some(ObjectFrame {
+                visit(
+                    text_box.id,
+                    ObjectFrame {
                         handles: if text_box.anchor.is_some() {
                             FLOAT_RESIZE_HANDLES
                         } else {
@@ -21436,49 +21595,42 @@ fn object_resize_handles_in_inlines(inlines: &[InlineNode], object: NodeId) -> O
                         },
                         rotation_60k: 0,
                         can_rotate: false,
-                    });
-                }
-                if let Some(frame) = object_frame_in_blocks(&text_box.blocks, object) {
-                    return Some(frame);
-                }
+                    },
+                ) || visit_frames_in_blocks(&text_box.blocks, visit)
             }
             InlineNode::Group(group) => {
-                if group.id != object {
-                    if let Some(frame) = object_frame_in_group(group, object) {
-                        return Some(frame);
-                    }
-                    continue;
-                }
-                return Some(ObjectFrame {
-                    handles: if group_resize_supported(group) {
-                        FLOAT_RESIZE_HANDLES
-                    } else {
-                        0
+                visit(
+                    group.id,
+                    ObjectFrame {
+                        handles: if group_resize_supported(group) {
+                            FLOAT_RESIZE_HANDLES
+                        } else {
+                            0
+                        },
+                        // A group's `wp:group` transform models a rotation, but no
+                        // layout pass applies it — `anchor.rs` carries each CHILD's
+                        // `a:xfrm` onto its paint item and never the group's — so a
+                        // rotation set here would change the document and nothing
+                        // on screen. Recorded as a gap rather than offered as a
+                        // handle.
+                        rotation_60k: 0,
+                        can_rotate: false,
                     },
-                    // A group's `wp:group` transform models a rotation, but no
-                    // layout pass applies it — `anchor.rs` carries each CHILD's
-                    // `a:xfrm` onto its paint item and never the group's — so a
-                    // rotation set here would change the document and nothing on
-                    // screen. Recorded as a gap rather than offered as a handle.
-                    rotation_60k: 0,
-                    can_rotate: false,
-                });
+                ) || visit_frames_in_group(group, visit)
             }
             // Every inline wrapper in the declared container set — `Hyperlink`,
             // `Field`, `Revision`, `Sdt` — not the two this walk used to name. A
             // float inside a field result (an `INCLUDEPICTURE` picture) or an
             // inline content control painted and could not be clicked (`109`
             // HF-166, HF-214).
-            other => {
-                if let Some(nested) = contained_inlines(other)
-                    && let Some(frame) = object_resize_handles_in_inlines(nested, object)
-                {
-                    return Some(frame);
-                }
-            }
+            other => contained_inlines(other)
+                .is_some_and(|nested| visit_frames_in_inlines(nested, visit)),
+        };
+        if stop {
+            return true;
         }
     }
-    None
+    false
 }
 
 fn positive_extent(extent: Extent) -> bool {
@@ -21509,7 +21661,7 @@ fn group_resize_supported(group: &WordprocessingGroup) -> bool {
 ///
 /// **A LEAF's rotation and flips are deliberately no longer conditions.** They
 /// used to be, and this was the SECOND gate — after
-/// `object_resize_handles_in_inlines` — that made a rotated object's grips
+/// `visit_frames_in_inlines` — that made a rotated object's grips
 /// disappear. It was the one that caught every floating SHAPE, since a shape is
 /// modelled as a group of one, so rotating a shape took its eight grips away.
 ///
@@ -21630,8 +21782,28 @@ fn object_anchor(blocks: &[BlockNode], object: NodeId) -> Option<DrawingAnchor> 
 /// The anchor of a floating object on any surface: the registry's one walk
 /// (`docs/181` §4.2 step 5), which also follows every inline wrapper (`109`
 /// HF-166, HF-214).
+///
+/// O(document up to `object`): never once per object in a loop; `ObjectIndex`
+/// is the same walk taken once.
 fn object_anchor_any_surface(document: &Document, object: NodeId) -> Option<DrawingAnchor> {
-    casual_doc_command::objects::anchor_of(document, object)
+    let mut found = None;
+    for blocks in surface_block_lists(document) {
+        let stop = visit_anchors_in_blocks(blocks, &mut |id, anchor| {
+            note_carrier_visit();
+            if id == object
+                && let Some(anchor) = anchor
+            {
+                found = Some(anchor.clone());
+                true
+            } else {
+                false
+            }
+        });
+        if stop {
+            break;
+        }
+    }
+    found
 }
 
 /// Resolves a DrawingML group carrier through the same bounded body traversal
