@@ -155,6 +155,40 @@ fn filling_replaces_the_placeholder_and_remove_keeps_the_content() {
 }
 
 #[test]
+fn changing_an_inline_controls_properties_leaves_the_caret_in_that_control() {
+    // Word leaves the caret where it was. It used to land at the paragraph's
+    // start, outside a control that does not open the paragraph, so the next
+    // Alt+Down, Fill or Properties found no control.
+    let mut d = authoring();
+    let end = paragraph_with(&d, "End of form");
+    d.insert_content_control_inner(
+        &end.to_string(),
+        4,
+        4,
+        "dropDownList",
+        "Choose an item.",
+        None,
+    )
+    .expect("insert after \u{201c}End \u{201d}");
+    let id = only_control(&d)["id"].as_str().unwrap().to_owned();
+    let result = d
+        .set_content_control_properties_inner(
+            &id,
+            r#"{"title":"Answer","items":[{"display":"Yes","value":""}]}"#,
+        )
+        .expect("configure it");
+    assert_eq!(result.node(), end.to_string());
+    let at = d
+        .content_control_at(&result.node(), result.offset())
+        .expect("the caret is in a control");
+    let at: Value = serde_json::from_str(&at).unwrap();
+    assert_eq!(
+        at["id"], id,
+        "the caret is in the control whose properties changed"
+    );
+}
+
+#[test]
 fn a_content_locked_control_refuses_typing_and_a_control_locked_one_refuses_removal() {
     let mut d = authoring();
     let end = paragraph_with(&d, "End of form");

@@ -102,6 +102,14 @@ impl PdfTextSource for DocumentText<'_> {
 #[derive(Debug, Default)]
 pub(crate) struct ClusterText {
     by_face: BTreeMap<u32, BTreeMap<u16, String>>,
+    /// The source text of every cluster drawn by SEVERAL glyphs that one run
+    /// holds entirely, keyed by `(node, cluster offset)`: an Indic syllable
+    /// (a reordered vowel sign, a conjunct drawn in parts, an anusvara above),
+    /// a base with its marks. `ToUnicode` is keyed by glyph id and cannot say
+    /// "these three glyphs are this text in this order", so the content stream
+    /// wraps such a cluster in a `/Span` with `/ActualText` (ISO 32000-1
+    /// §14.9.4) and a reader copies the cluster's own text.
+    spans: HashMap<(NodeId, u32), String>,
 }
 
 impl ClusterText {
@@ -123,11 +131,16 @@ impl ClusterText {
         // carries its glyphs in visual order, so neither the run's glyph order nor
         // its extent can supply the boundary.
         let mut boundaries: HashMap<NodeId, BTreeSet<u32>> = HashMap::new();
+        // How many glyphs each cluster has across every run: a cluster split
+        // between runs (a fallback face drew one of its marks) gets no span,
+        // or its text would be read twice.
+        let mut drawn: HashMap<(NodeId, u32), usize> = HashMap::new();
         for_each_run(pages, |run| {
             if let Some(node) = run.node {
                 let offsets = boundaries.entry(node).or_default();
                 for glyph in &run.glyphs {
                     offsets.insert(glyph.cluster);
+                    *drawn.entry((node, glyph.cluster)).or_default() += 1;
                 }
             }
         });
@@ -155,8 +168,23 @@ impl ClusterText {
                     out.offer(run.font, glyph, slice);
                 }
             }
+            for (cluster, count) in shared_clusters(run) {
+                if drawn.get(&(node, cluster)) == Some(&count)
+                    && let Some(slice) = cluster_slice(text, offsets, cluster)
+                    && plausible(slice, false)
+                {
+                    out.spans.insert((node, cluster), slice.to_owned());
+                }
+            }
         });
         out
+    }
+
+    /// The source text of the cluster at `cluster` in `node` when several
+    /// glyphs draw it and this text should be read for them as a whole
+    /// (`/ActualText`). O(1).
+    pub(crate) fn span(&self, node: NodeId, cluster: u32) -> Option<&str> {
+        self.spans.get(&(node, cluster)).map(String::as_str)
     }
 
     /// The `glyph id -> source text` map for one face, if any of its glyphs were
@@ -230,6 +258,16 @@ fn solitary_clusters(run: &GlyphRun) -> impl Iterator<Item = (u32, u16)> + '_ {
                 && after.is_none_or(|other| other.cluster != glyph.cluster)
         })
         .filter_map(|(_, glyph)| u16::try_from(glyph.id).ok().map(|id| (glyph.cluster, id)))
+}
+
+/// The clusters of `run` drawn by two or more of its glyphs, with how many:
+/// `(cluster offset, glyph count)`. A cluster's glyphs are contiguous in the
+/// run. O(glyphs).
+fn shared_clusters(run: &GlyphRun) -> impl Iterator<Item = (u32, usize)> + '_ {
+    run.glyphs
+        .chunk_by(|a, b| a.cluster == b.cluster)
+        .filter(|group| group.len() > 1)
+        .map(|group| (group[0].cluster, group.len()))
 }
 
 /// [`solitary_clusters`]' glyphs' whitespace flags, in the same order.
@@ -370,6 +408,64 @@ mod tests {
             vec![(3, 42)],
             "only the lone glyph claims a cluster"
         );
+    }
+
+    #[test]
+    fn a_cluster_drawn_by_several_glyphs_of_one_run_reads_as_its_text() {
+        // Devanagari "हिं": the vowel sign I is drawn before the consonant and
+        // the anusvara above it, three glyphs for one cluster; the next
+        // cluster ("द") is one glyph.
+        let text = "\u{0939}\u{093F}\u{0902}\u{0926}";
+        let run = run_of(Some(node(7)), &[(80, 0), (12, 0), (31, 0), (44, 9)]);
+        let list = casual_doc_layout::display::DisplayList {
+            items: vec![PaintItem::Glyphs { run }],
+        };
+        let pages = [PdfPage {
+            width: Twip(12240),
+            height: Twip(15840),
+            list: &list,
+        }];
+        struct One(&'static str);
+        impl PdfTextSource for One {
+            fn node_text(&self, _node: NodeId) -> Option<String> {
+                Some(self.0.to_owned())
+            }
+        }
+        let clusters = ClusterText::build(&pages, &One(text));
+        assert_eq!(clusters.span(node(7), 0), Some("\u{0939}\u{093F}\u{0902}"));
+        assert_eq!(
+            clusters.span(node(7), 9),
+            None,
+            "a lone glyph is named by ToUnicode"
+        );
+    }
+
+    #[test]
+    fn a_cluster_split_between_runs_gets_no_span() {
+        // A fallback face drew the second glyph: a span over the first run's
+        // part would read the cluster's text, and the second run's glyph would
+        // read again.
+        let first = run_of(Some(node(7)), &[(80, 0), (12, 0)]);
+        let second = run_of(Some(node(7)), &[(5, 0)]);
+        let list = casual_doc_layout::display::DisplayList {
+            items: vec![
+                PaintItem::Glyphs { run: first },
+                PaintItem::Glyphs { run: second },
+            ],
+        };
+        let pages = [PdfPage {
+            width: Twip(12240),
+            height: Twip(15840),
+            list: &list,
+        }];
+        struct One;
+        impl PdfTextSource for One {
+            fn node_text(&self, _node: NodeId) -> Option<String> {
+                Some("\u{0939}\u{093F}\u{0902}".to_owned())
+            }
+        }
+        let clusters = ClusterText::build(&pages, &One);
+        assert_eq!(clusters.span(node(7), 0), None);
     }
 
     #[test]

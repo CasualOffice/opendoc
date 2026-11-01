@@ -17,6 +17,9 @@
 
 use std::collections::BTreeMap;
 
+// Own line (anti-conflict): the source text behind glyphs, for `/ActualText`.
+use crate::cluster::ClusterText;
+
 use casual_doc_layout::display::Color;
 use casual_doc_layout::display::DisplayList;
 use casual_doc_layout::display::Fill;
@@ -112,11 +115,27 @@ pub(crate) struct Transcriber<'a> {
     gaps: BTreeMap<&'static str, usize>,
     font_source: &'a dyn PdfFontSource,
     media: &'a dyn PdfMediaSource,
+    /// The source text behind the glyphs, for `/ActualText` spans.
+    clusters: Option<&'a ClusterText>,
 }
 
 impl<'a> Transcriber<'a> {
+    /// A transcriber whose text runs read as `clusters` says: a cluster drawn
+    /// by several glyphs is wrapped in an `/ActualText` span.
+    pub(crate) fn with_clusters(
+        font_source: &'a dyn PdfFontSource,
+        media: &'a dyn PdfMediaSource,
+        clusters: &'a ClusterText,
+    ) -> Self {
+        Self {
+            clusters: Some(clusters),
+            ..Self::new(font_source, media)
+        }
+    }
+
     pub(crate) fn new(font_source: &'a dyn PdfFontSource, media: &'a dyn PdfMediaSource) -> Self {
         Self {
+            clusters: None,
             fonts: FontTable::new(),
             images: ImageTable::new(),
             alphas: BTreeMap::new(),
@@ -390,14 +409,39 @@ impl<'a> Transcriber<'a> {
         if run.glyphs.is_empty() {
             return Ok(());
         }
-        let resource = self.fonts.use_face(
+        let resource = match self.fonts.use_face(
             writer,
             self.font_source,
             run.font,
             run.glyphs
                 .iter()
                 .filter_map(|glyph| u16::try_from(glyph.id).ok()),
-        )?;
+        ) {
+            Ok(resource) => resource,
+            // A face's licence forbids embedding: a refusal, out loud.
+            Err(error @ FontError::EmbeddingRestricted(..)) => return Err(error),
+            // A face that cannot be written (too large to copy whole, no
+            // outline tables): its glyphs are left out of this PDF and
+            // reported, and the export goes on. Failing it had cost the user
+            // the whole file for one emoji.
+            Err(_) => {
+                self.gap("pdf.font.skipped");
+                return Ok(());
+            }
+        };
+        // Colour glyphs (an emoji face's bitmaps or layers) draw as their
+        // outline glyphs, empty or monochrome: the text is in the PDF, its
+        // colour picture is not.
+        if self
+            .font_source
+            .font_data(run.font)
+            .and_then(|bytes| {
+                crate::subset::Face::parse(bytes, self.font_source.face_index(run.font)).ok()
+            })
+            .is_some_and(|face| face.has_colour_glyphs())
+        {
+            self.gap("pdf.font.colour_glyphs");
+        }
         let units = f32::from(self.fonts.units_per_em(run.font).unwrap_or(1000));
         let size = pt(run.size);
         let scale = f32::from(run.character_scale_percent) / 100.0;
@@ -413,7 +457,31 @@ impl<'a> Transcriber<'a> {
         // display list put them.
         let mut array = String::from("[<");
         let mut open = true;
-        for glyph in &run.glyphs {
+        // The cluster an `/ActualText` span is open for: its glyphs get their
+        // own `TJ` inside the span (the text position carries across `TJ`s).
+        let mut span: Option<u32> = None;
+        for (index, glyph) in run.glyphs.iter().enumerate() {
+            let starts = index == 0 || run.glyphs[index - 1].cluster != glyph.cluster;
+            if starts {
+                if span.take().is_some() {
+                    close_tj(&mut array, open);
+                    array.push_str("EMC\n[<");
+                    open = true;
+                }
+                if let Some(text) = run
+                    .node
+                    .zip(self.clusters)
+                    .and_then(|(node, clusters)| clusters.span(node, glyph.cluster))
+                {
+                    close_tj(&mut array, open);
+                    array.push_str(&format!(
+                        "/Span<</ActualText{}>>BDC\n[<",
+                        crate::writer::text_string(text)
+                    ));
+                    open = true;
+                    span = Some(glyph.cluster);
+                }
+            }
             if !open {
                 array.push('<');
                 open = true;
@@ -443,10 +511,11 @@ impl<'a> Transcriber<'a> {
                 open = false;
             }
         }
-        if open {
-            array.push('>');
+        close_tj(&mut array, open);
+        if span.is_some() {
+            array.push_str("EMC\n");
         }
-        array.push_str("] TJ\nET\n");
+        array.push_str("ET\n");
         let effects = run.decoration.effects;
         let offset = (size / 24.0).max(0.375);
         let mut passes = Vec::new();
@@ -1545,6 +1614,20 @@ fn exponential(from: Color, to: Color) -> String {
         channel(to.b)
     )
 }
+
+/// Closes the `TJ` array being built in `array` (`open`: whether a hex string
+/// is open in it). An array left empty (`[<>]`) is dropped rather than shown.
+fn close_tj(array: &mut String, open: bool) {
+    if array.ends_with("[<") {
+        array.truncate(array.len() - 2);
+        return;
+    }
+    if open {
+        array.push('>');
+    }
+    array.push_str("] TJ\n");
+}
+
 #[cfg(test)]
 mod path_tests {
     use super::*;

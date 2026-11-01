@@ -18,6 +18,8 @@ use crate::evidence::{
     ImageEvidence, ImageFormat, PageNotes, PaintEvidence, PathCommand, PathEvidence, Point,
     RenderMode, Rgba8, StrokeEvidence,
 };
+// Own line: a page-sized picture's ink bands.
+use crate::evidence::{INK_MEASURED_AREA, InkBands};
 use crate::limits::check;
 use crate::{PdfReadError, PdfReadLimits};
 
@@ -270,6 +272,7 @@ impl<'c> Collector<'c> {
         height: u32,
         encoded: Option<(Vec<u8>, ImageFormat, (u32, u32))>,
         codecs: Vec<&'static str>,
+        ink: Option<InkBands>,
     ) {
         let Some((bytes, format, pixels)) = encoded else {
             self.notes.undecodable_images += 1;
@@ -314,8 +317,85 @@ impl<'c> Collector<'c> {
             flip_v,
             clip,
             bounds,
+            ink,
         }));
     }
+}
+
+/// Whether a picture drawn with `transform` over `width` x `height` pixels
+/// covers at least [`INK_MEASURED_AREA`]. O(1).
+fn page_sized(transform: Affine, width: u32, height: u32) -> bool {
+    let (w, h) = (f64::from(width), f64::from(height));
+    let origin = point(transform, 0.0, 0.0);
+    let right = point(transform, w, 0.0);
+    let down = point(transform, 0.0, h);
+    let across = (right.x - origin.x).hypot(right.y - origin.y);
+    let tall = (down.x - origin.x).hypot(down.y - origin.y);
+    across * tall >= INK_MEASURED_AREA
+}
+
+/// The ink bands of decoded samples (`InkBands`). O(pixels).
+fn ink_bands(data: &ImageData) -> Option<InkBands> {
+    let (width, height) = (data.width() as usize, data.height() as usize);
+    if width == 0 || height < 8 {
+        return None;
+    }
+    // Per row: whether any pixel is ink. Sampled every other column.
+    let dark = |y: usize| -> bool {
+        (0..width).step_by(2).any(|x| {
+            let luma = match data {
+                ImageData::Rgb(rgb) => {
+                    let at = (y * width + x) * 3;
+                    match rgb.data.get(at..at + 3) {
+                        Some(&[r, g, b]) => {
+                            (299 * u32::from(r) + 587 * u32::from(g) + 114 * u32::from(b)) / 1000
+                        }
+                        _ => 255,
+                    }
+                }
+                ImageData::Luma(luma) => u32::from(*luma.data.get(y * width + x).unwrap_or(&255)),
+            };
+            luma < 180
+        })
+    };
+    let rows: Vec<bool> = (0..height).map(dark).collect();
+    // A band: ink within the outer quarter, then a blank gap of at least 2%
+    // of the height before any more ink.
+    let gap = (height / 50).max(2);
+    let band = |order: &mut dyn Iterator<Item = usize>| -> Option<usize> {
+        let mut seen = false;
+        let mut blank = 0;
+        let mut last_ink = 0;
+        for (n, y) in order.enumerate() {
+            if rows[y] {
+                if blank >= gap && seen {
+                    break;
+                }
+                seen = true;
+                blank = 0;
+                last_ink = n;
+            } else if seen {
+                blank += 1;
+                if blank >= gap {
+                    return Some(last_ink + 1);
+                }
+            }
+            if !seen && n > height / 4 {
+                return None;
+            }
+        }
+        None
+    };
+    let top = band(&mut (0..height))
+        .filter(|&n| n <= height / 4)
+        .unwrap_or(0);
+    let bottom = band(&mut (0..height).rev())
+        .filter(|&n| n <= height / 4)
+        .map_or(height, |n| height - n);
+    Some(InkBands {
+        top: top as f32 / height as f32,
+        bottom: bottom as f32 / height as f32,
+    })
 }
 
 fn path_commands(path: &BezPath, transform: Affine) -> (Vec<PathCommand>, Bounds) {
@@ -467,6 +547,7 @@ impl<'a> Device<'a> for Collector<'_> {
         let [a, b, c, d, _, _] = first_transform.as_coeffs();
         let size = c.hypot(d) * 1000.0;
         let rotation_degrees = b.atan2(a).to_degrees();
+        let oblique = oblique([a, b, c, d]);
         let along = a.hypot(b);
         let codes = crate::unicode::FontCodes::of(&self.fonts.fonts[font].name);
         let mut glyphs = Vec::with_capacity(run.glyphs().len());
@@ -558,6 +639,7 @@ impl<'a> Device<'a> for Collector<'_> {
             font,
             size,
             rotation_degrees,
+            oblique,
             fill,
             mode: render,
             glyphs,
@@ -599,22 +681,32 @@ impl<'a> Device<'a> for Collector<'_> {
                     && !dict.contains_key(b"Mask")
                     && !dict.contains_key(b"Decode");
                 let mut encoded = None;
+                let mut ink = None;
+                // A page-sized picture's ink bands (a letterhead's logo band)
+                // are measured from its samples, once.
+                let measure = page_sized(props.transform, width, height);
                 if passthrough {
                     encoded = Some((
                         stream.raw_data().into_owned(),
                         ImageFormat::Jpeg,
                         (width, height),
                     ));
+                    if measure {
+                        raster.with_rgba(|data, _| ink = ink_bands(&data), None);
+                    }
                 } else {
                     raster.with_rgba(
                         |data, alpha| {
+                            if measure {
+                                ink = ink_bands(&data);
+                            }
                             encoded = raster_png(&data, alpha.as_ref())
                                 .map(|(bytes, pixels)| (bytes, ImageFormat::Png, pixels));
                         },
                         None,
                     );
                 }
-                self.image_evidence(props.transform, width, height, encoded, codecs);
+                self.image_evidence(props.transform, width, height, encoded, codecs, ink);
             }
             Image::Stencil(stencil) => {
                 let mut encoded = None;
@@ -637,7 +729,14 @@ impl<'a> Device<'a> for Collector<'_> {
                     None,
                 );
                 self.notes.pattern_paints += notes.pattern_paints;
-                self.image_evidence(props.transform, width, height, encoded, vec!["stencil"]);
+                self.image_evidence(
+                    props.transform,
+                    width,
+                    height,
+                    encoded,
+                    vec!["stencil"],
+                    None,
+                );
             }
         }
     }
@@ -660,4 +759,22 @@ impl<'a> Device<'a> for Collector<'_> {
     fn end_marked_content(&mut self) {
         self.marked.pop();
     }
+}
+
+/// Whether a glyph transform's linear part `[a, b, c, d]` (the baseline's
+/// direction is `(a, b)`, the glyph's vertical `(c, d)`) slants the glyphs
+/// as a synthesised italic does: the vertical leans 6 to 30 degrees off the
+/// baseline's perpendicular, whichever way the page's axes run. A rotated
+/// run that is not sheared is upright (its two axes stay perpendicular).
+/// O(1).
+pub(crate) fn oblique([a, b, c, d]: [f64; 4]) -> bool {
+    if a.hypot(b) < 1e-9 || c.hypot(d) < 1e-9 {
+        return false;
+    }
+    let mut between = (d.atan2(c) - b.atan2(a)).to_degrees().abs() % 360.0;
+    if between > 180.0 {
+        between = 360.0 - between;
+    }
+    let slant = (90.0 - between).abs();
+    (6.0..=30.0).contains(&slant)
 }

@@ -20,7 +20,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, gotoEditor, test } from "./fixtures.mjs";
-import { scanPdf } from "./pdf-import-helpers.mjs";
+import { printedPage, scanPdf } from "./pdf-import-helpers.mjs";
 
 const MODELS = fileURLToPath(new URL("../../../docs/assets/ocr/", import.meta.url));
 const OCR_START = "opendoc:pdf-ocr:start";
@@ -57,37 +57,6 @@ async function serveRealModels(page) {
     },
   );
   return { release };
-}
-
-/** A page of printed text as 8-bit grey pixels, drawn by the browser. */
-async function printedPage(page, width, height) {
-  const base64 = await page.evaluate(
-    ({ width, height }) => {
-      const canvas = new OffscreenCanvas(width, height);
-      const g = canvas.getContext("2d");
-      g.fillStyle = "#fff";
-      g.fillRect(0, 0, width, height);
-      g.fillStyle = "#000";
-      g.font = "30px sans-serif";
-      const lines = [
-        "Quarterly report of the northern office",
-        "Revenue grew by twelve percent this year",
-        "The board approved the new budget plan",
-        "Shipping times fell to three working days",
-        "Customer complaints dropped by one half",
-        "Next review is scheduled for the spring",
-      ];
-      lines.forEach((line, i) => g.fillText(line, 70, 120 + i * 70));
-      const rgba = g.getImageData(0, 0, width, height).data;
-      const grey = new Uint8Array(width * height);
-      for (let i = 0; i < grey.length; i += 1) grey[i] = rgba[i * 4];
-      let text = "";
-      for (let i = 0; i < grey.length; i += 0x8000) text += String.fromCharCode(...grey.subarray(i, i + 0x8000));
-      return btoa(text);
-    },
-    { width, height },
-  );
-  return Buffer.from(base64, "base64");
 }
 
 test.describe("text recognition off the main thread", () => {

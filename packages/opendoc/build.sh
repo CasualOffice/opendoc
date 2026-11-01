@@ -8,7 +8,7 @@
 # here is ever committed): pkg/opendoc_bg.wasm and its glue pkg/opendoc.js.
 #
 # Fonts. Unlike the Viewer package, this module embeds the WHOLE bundled face
-# set (Liberation, Carlito, Caladea, Roboto, Noto Emoji): a headless SDK runs
+# set (Liberation, Carlito, Caladea, Roboto, Noto Emoji, Noto Sans Symbols 2): a headless SDK runs
 # on a server or in a build step with no host to serve faces, and the pixels of
 # a render must not depend on what a machine has installed. The cost is the
 # download, which is stated in the README and measured by tools/measure-size.mjs.

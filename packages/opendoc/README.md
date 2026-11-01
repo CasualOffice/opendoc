@@ -168,7 +168,7 @@ section's header and footer until `setLinkedToPrevious(s, "header", false)` give
 
 - A paragraph loop inside a header or footer is reported as an error and not run. Value tags
   work there.
-- The module embeds every bundled face (Liberation, Carlito, Caladea, Roboto, Noto Emoji),
+- The module embeds every bundled face (Liberation, Carlito, Caladea, Roboto, Noto Emoji, Noto Sans Symbols 2),
   so pixels do not depend on the machine. That makes the download large: `npm pack` prints
   its size.
 

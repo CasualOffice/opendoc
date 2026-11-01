@@ -218,3 +218,30 @@ fn ordinary_text_reports_no_coverage_gap() {
         "plain Latin text must not ask a host to fetch anything",
     );
 }
+
+/// The ballot boxes and check marks of forms (☐ ☒ ✓ ✕) draw from the bundled
+/// symbol base. No text face and not the emoji base covers them, so before the
+/// symbol face they shaped to `.notdef` on every target, and an exported PDF
+/// carried boxes that copied as nothing.
+#[test]
+fn form_ballot_boxes_and_check_marks_draw_from_the_bundled_symbol_face() {
+    use casual_doc_layout::fonts::NOTO_SYMBOLS;
+    let shaper = ParleyShaper::without_system_fonts();
+    for text in ["\u{2610}", "\u{2612}", "\u{2713}", "\u{2715}"] {
+        let glyphs = shape(&shaper, text);
+        assert!(!glyphs.is_empty(), "{text:?} shaped to nothing");
+        for (font, glyph) in &glyphs {
+            assert_ne!(glyph.id, 0, "{text:?} shaped to .notdef");
+            assert!(
+                NOTO_SYMBOLS.contains(*font),
+                "{text:?} resolved to {font:?}, not the bundled symbol family"
+            );
+        }
+    }
+    // The emoji base keeps what it already drew: the symbol face is after it.
+    let glyphs = shape(&shaper, "\u{2714}");
+    assert!(
+        glyphs.iter().all(|(font, _)| NOTO_EMOJI.contains(*font)),
+        "a heavy check mark the emoji base covers stays with it: {glyphs:?}"
+    );
+}

@@ -754,6 +754,7 @@ fn optical_run(line: &PageLine, placement: OcrTextPlacement) -> GlyphRunEvidence
         font: OCR_FONT,
         size: em,
         rotation_degrees: line.rotation,
+        oblique: false,
         fill: Some([0, 0, 0, 255]),
         mode: match placement {
             OcrTextPlacement::Visible => RenderMode::Fill,

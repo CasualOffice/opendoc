@@ -754,6 +754,7 @@ export const EN_STRINGS = Object.freeze({
   "break.inserted.column": "Column break inserted",
   "break.inserted.section": "Section break inserted",
   "menuGroup.breaks": "Breaks",
+  "menuGroup.pictures": "Pictures",
   "menuGroup.contentControls": "Content controls",
   "filePane.export.label": "Export",
   // ---- Format names ---------------------------------------------------------
@@ -871,6 +872,8 @@ export const EN_STRINGS = Object.freeze({
   "findings.feature.pdfJustification": "Justified text inferred from line widths",
   "findings.feature.pdfPageBreaks": "Page breaks inferred from where pages end",
   "findings.feature.pdfFloats": "Pictures and drawings floated beside or behind their text",
+  "findings.feature.pdfScanReplaced": "Scanned pages shown as their recognised text (the scan stays in the exact layout)",
+  "findings.feature.pdfDecorations": "Underlines, highlights, shading and borders drawn as shapes put back on their text",
   "findings.feature.pdfVectorsPlaced": "Drawings placed as shapes",
   // A PDF opened as a flowing document, and the characters the reader made
   // fit for editing (`docs/182` §4, §18.8).
@@ -927,6 +930,7 @@ export const EN_STRINGS = Object.freeze({
   "findings.pdfReflow.source": "It was built from the PDF as it was opened: edits made to the PDF's pages are not in it.",
   "pdfOcr.command": "Recognise text in scanned pages",
   "pdfOcr.notPdf": "Text recognition applies to a document opened from a PDF.",
+  "pdfOcr.recognisingPage": "Recognising text on page {page} of {total}…",
   "pdfOcr.noScans": "This PDF has no scanned pages to read.",
   "pdfOcr.done": "The scanned pages of this PDF have already been read.",
   "pdfOcr.noModels": "Text recognition is unavailable: this editor has no recognition models. The site that provides the editor can add them.",

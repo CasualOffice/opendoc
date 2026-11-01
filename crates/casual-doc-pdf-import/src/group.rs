@@ -59,6 +59,9 @@ pub struct Style {
     pub fill: Option<Rgba8>,
     /// Render mode.
     pub mode: RenderMode,
+    /// Slanted by the text matrix: a synthesised italic
+    /// ([`casual_doc_pdf_read::GlyphRunEvidence::oblique`]).
+    pub oblique: bool,
 }
 
 /// One glyph placed on a line.
@@ -144,6 +147,39 @@ pub struct Block {
     pub bottom: f64,
 }
 
+/// The even space a run sets between its letters beyond their widths
+/// (`Tc`), in points, or zero: over adjacent single-character, non-space
+/// glyphs, at least three gaps that agree (each within a third of their
+/// median) on a median of 0.04 to 0.5 em. Kerning is uneven and a word
+/// space wider, so neither reads as tracking. O(glyphs).
+#[must_use]
+pub fn run_tracking(run: &GlyphRunEvidence) -> f64 {
+    let letter = |text: &Option<String>| {
+        text.as_deref()
+            .is_some_and(|t| t.chars().count() == 1 && !t.trim().is_empty())
+    };
+    let mut gaps: Vec<f64> = run
+        .glyphs
+        .windows(2)
+        .filter(|w| letter(&w[0].text) && letter(&w[1].text))
+        .map(|w| w[1].origin.x - (w[0].origin.x + w[0].advance.max(0.0)))
+        .collect();
+    if gaps.len() < 3 {
+        return 0.0;
+    }
+    gaps.sort_by(f64::total_cmp);
+    let median = gaps[gaps.len() / 2];
+    let size = run.size.max(1.0);
+    let agree = gaps
+        .iter()
+        .all(|g| (g - median).abs() <= median.abs() / 3.0);
+    if agree && (0.04 * size..=0.5 * size).contains(&median) {
+        median
+    } else {
+        0.0
+    }
+}
+
 /// Groups upright glyph runs (in paint order) into blocks.
 ///
 /// `runs` must already be filtered to near-zero rotation; rotated runs are
@@ -165,8 +201,13 @@ pub fn blocks_counted(runs: &[&GlyphRunEvidence], params: LayoutParams) -> (Vec<
             half_points: (run.size * 2.0).round().clamp(1.0, 65_534.0) as u32,
             fill: run.fill,
             mode: run.mode,
+            oblique: run.oblique,
         };
-        for glyph in &run.glyphs {
+        // A tracked run's letters stand apart by its letter spacing; only a
+        // gap wider than that by a word margin is a word space, or every
+        // letter of an expanded subtitle would be a word ("E X P A N D").
+        let tracking = run_tracking(run);
+        for (index, glyph) in run.glyphs.iter().enumerate() {
             let c = Char {
                 text: glyph.text.clone().unwrap_or_default(),
                 x0: glyph.origin.x,
@@ -192,7 +233,8 @@ pub fn blocks_counted(runs: &[&GlyphRunEvidence], params: LayoutParams) -> (Vec<
                 let line = lines.last_mut().expect("checked");
                 let last = line.chars.last().expect("a line holds a glyph");
                 let gap = c.x0 - last.x1;
-                let space = gap > params.word_margin * c.size
+                let tracked = if index > 0 { tracking } else { 0.0 };
+                let space = gap > params.word_margin * c.size + tracked
                     && !last.text.ends_with(char::is_whitespace)
                     && !c.text.starts_with(char::is_whitespace);
                 if space {

@@ -1135,6 +1135,100 @@ fn continuous_sections_on_one_page_keep_distinct_anchor_margins() {
     assert_eq!(second_x, Twip(3_000));
 }
 
+/// A behind-text picture in the header that reaches past the middle of the page
+/// is the page's background (a letterhead printed as one page-sized picture), and
+/// the body runs over it from the top margin: reserving it as header content pushed
+/// the body off every page and pagination never ended.
+#[test]
+fn a_page_sized_background_in_the_header_reserves_no_band() {
+    let shaper = ParleyShaper::new();
+    let background = InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+        hyperlink: None,
+        opacity: None,
+        id: node(320),
+        media: MediaId::new(node(321)),
+        // The whole Letter page: 8.5 x 11 in.
+        extent: Extent {
+            width_emu: 7_772_400,
+            height_emu: 10_058_400,
+        },
+        anchor: DrawingAnchor {
+            horizontal: AnchorHorizontal {
+                relative_from: HorizontalAnchor::Page,
+                position: HorizontalPosition::Offset(0),
+            },
+            vertical: AnchorVertical {
+                relative_from: VerticalAnchor::Page,
+                position: VerticalPosition::Offset(0),
+            },
+            wrap: WrapMode::None,
+            wrap_text: None,
+            wrap_distances: Default::default(),
+            wrap_polygon: None,
+            behind_doc: true,
+            allow_overlap: true,
+        },
+        descr: None,
+        relative_height: None,
+        crop: None,
+        border: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+    }));
+    let mut headers = DefinitionMap::default();
+    headers.insert(
+        HeaderFooterId::new(node(300)),
+        ModelHeaderFooter {
+            blocks: vec![paragraph(310, vec![background])],
+        },
+    );
+    let mut media = DefinitionMap::default();
+    media.insert(
+        MediaId::new(node(321)),
+        MediaReference {
+            relationship_id: "rId9".to_owned(),
+            media_type: "image/png".to_owned(),
+            part_name: "word/media/letterhead.png".to_owned(),
+        },
+    );
+    let doc = Document::new(
+        node(1),
+        vec![paragraph(100, vec![run(101, "Body")])],
+        Definitions {
+            sections: vec![section(
+                9,
+                (12_240, 15_840),
+                720,
+                vec![href(HeaderFooterKind::Default, 300)],
+                vec![],
+                false,
+            )],
+            headers,
+            media,
+            ..Definitions::default()
+        },
+    )
+    .unwrap();
+    let layout = paginate_document(&doc, &shaper);
+    assert_eq!(layout.page_count(), 1);
+    // Where the body starts with the header's empty paragraph alone: the
+    // background reserves nothing more.
+    let mut bare = doc.clone();
+    if let Some(header) = bare
+        .definitions_mut()
+        .headers
+        .get_mut(&HeaderFooterId::new(node(300)))
+    {
+        header.blocks = vec![paragraph(310, vec![])];
+    }
+    let without = paginate_document(&bare, &shaper);
+    assert_eq!(
+        layout.pages[0].content_area.origin.y, without.pages[0].content_area.origin.y,
+        "the body runs over the background"
+    );
+}
+
 /// A positioned float in the header part (the SDS positions its title/version/date
 /// text boxes there with page-relative offsets that reach past the top margin) must
 /// push the body content down so it clears the header content, rather than starting

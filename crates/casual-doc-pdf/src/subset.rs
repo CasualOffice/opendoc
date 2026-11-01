@@ -34,10 +34,18 @@ use std::collections::BTreeSet;
 /// overhead once the PDF addresses glyphs by id.
 const COPIED_TABLES: [&[u8; 4]; 3] = [b"cvt ", b"fpgm", b"prep"];
 
-/// The largest font file this module will parse. A face is a document-supplied
-/// blob; this bound is what stops a malformed or hostile one from driving an
+/// The largest font program this module will copy whole into a PDF (a CFF
+/// face, a face that forbids subsetting). A face is a document-supplied blob;
+/// this bound is what stops a malformed or hostile one from driving an
 /// allocation the size of the address space.
 pub(crate) const MAX_FONT_BYTES: usize = 64 * 1024 * 1024;
+
+/// The largest font file this module will parse to subset. Parsing reads the
+/// table directory and the subsetter allocates only for the glyphs a document
+/// uses, so a face larger than [`MAX_FONT_BYTES`] can still be subset: the
+/// system's colour emoji face is 188 MB on macOS, and refusing it had failed
+/// the export of every document with an emoji in it.
+pub(crate) const MAX_SOURCE_BYTES: usize = 1024 * 1024 * 1024;
 
 /// The largest glyph count this module will build tables for. Real faces top
 /// out around 65 535 by format; the bound is stated so the allocation is not
@@ -47,7 +55,8 @@ pub(crate) const MAX_GLYPHS: usize = 65_536;
 /// A structural failure while reading or subsetting a face.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SfntError {
-    /// The blob is larger than [`MAX_FONT_BYTES`].
+    /// The blob is larger than [`MAX_SOURCE_BYTES`], or a program to copy
+    /// whole is larger than [`MAX_FONT_BYTES`].
     TooLarge(usize),
     /// The blob is not a recognizable SFNT, OpenType or TrueType collection.
     NotAFont,
@@ -92,7 +101,7 @@ impl<'a> Face<'a> {
     /// Resolves face `index` of `bytes`, accepting a bare SFNT or a `ttcf`
     /// collection.
     pub(crate) fn parse(bytes: &'a [u8], index: u32) -> Result<Self, SfntError> {
-        if bytes.len() > MAX_FONT_BYTES {
+        if bytes.len() > MAX_SOURCE_BYTES {
             return Err(SfntError::TooLarge(bytes.len()));
         }
         let directory =
@@ -145,6 +154,15 @@ impl<'a> Face<'a> {
             .iter()
             .find(|(candidate, _, _)| candidate == tag)
             .map(|(_, offset, length)| &self.bytes[*offset..*offset + *length])
+    }
+
+    /// Whether this face carries colour glyphs (`sbix` bitmaps, `CBDT`
+    /// bitmaps, `COLR` layers): a PDF font draws their outline (`glyf`)
+    /// glyphs, which are empty or monochrome. O(tables).
+    pub(crate) fn has_colour_glyphs(&self) -> bool {
+        [b"sbix", b"CBDT", b"COLR"]
+            .iter()
+            .any(|tag| self.table(tag).is_some())
     }
 
     /// Whether this face draws with CFF (PostScript) outlines rather than

@@ -67,7 +67,7 @@ await writeFile("report.pdf", doc.toPdf());
 
 The module embeds one family, **Liberation Sans**. Every other face the layout
 can use (Carlito for Calibri, Caladea for Cambria, Liberation Serif and Mono for
-Times New Roman and Courier New, Roboto, Noto Emoji) ships as a plain file in
+Times New Roman and Courier New, Roboto, Noto Emoji, Noto Sans Symbols 2) ships as a plain file in
 `pkg/fonts/`. **You serve those files**; the viewer never fetches from a CDN.
 
 After the first layout the viewer asks your `fontProvider` once per font it

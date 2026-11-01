@@ -128,9 +128,13 @@ test('restoring a version while shared is refused with the reason, never applied
     await expect(restore).toBeVisible();
     await expect(restore).toBeDisabled();
     await expect(restore).toHaveAttribute('title', /shared/);
-    // Still one document, and still in the room.
+    // Still one document, and still in the room. The comparison is made after
+    // Back to current: while the preview is up, the mirror describes the version
+    // on screen, as it must (`showVersionPreview` rebuilds it, 4cc151a4), so it
+    // reads the old text by design and is not the live copy.
     await expect(a.locator('#collabSync')).toBeVisible();
     expect(new URL(a.url()).searchParams.has('room')).toBe(true);
+    await a.locator('#versionPreviewBack').click();
     expect((await converged(a, b))[0]).toBe(`${PARAGRAPHS[0]} v2`);
   } finally { await close(); }
 });

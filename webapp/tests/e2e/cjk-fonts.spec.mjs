@@ -175,9 +175,11 @@ test("a Latin-only document never asks for a script fallback face at all", async
 // Every test above fails the font request on purpose, so not one of them proves
 // that a face actually arrives, verifies, registers and repaints. Proving that
 // needs a face present on this origin in every environment, CI included, and a
-// committed one is exactly that. `☐` (U+2610) is covered by no bundled face and
-// routes to the committed `symbols` bucket, so inserting one exercises the
-// complete path:
+// committed one is exactly that. `ก` (U+0E01, THAI CHARACTER KO KAI) is covered
+// by no bundled face and routes to the committed `thai` bucket, so inserting
+// one exercises the complete path. (It was `☐`, through the `symbols` bucket,
+// until the engine bundled a symbol face that draws `☐` itself: the chain
+// under test is the same, only the character that needs it changed.)
 //
 //   missingCoverage() → fallbackKeysFor → fetch from OUR origin → SHA-256
 //   verify → registerFallbackFont → re-paginate → repaint
@@ -191,7 +193,7 @@ test("a committed face arrives from our own origin, verifies, and registers", as
 }) => {
   const responses = [];
   page.on("response", (response) => {
-    if (/NotoSansSymbols2-Regular\.ttf$/.test(response.url())) {
+    if (/NotoSansThai-Regular\.ttf$/.test(response.url())) {
       responses.push({ url: response.url(), status: response.status() });
     }
   });
@@ -200,8 +202,8 @@ test("a committed face arrives from our own origin, verifies, and registers", as
   await clickIntoFirstPage(page);
   expect(responses).toEqual([]); // coverage-driven: not yet needed
 
-  await page.keyboard.insertText("☐");
-  await expect(page.locator("#a11yDocument")).toContainText("☐");
+  await page.keyboard.insertText("ก");
+  await expect(page.locator("#a11yDocument")).toContainText("ก");
 
   await expect
     .poll(() => responses.length, { timeout: 20_000 })
@@ -222,12 +224,12 @@ test("reopening the same filename registers its fallback on the new document", a
   let requests = 0;
   let release;
   const held = new Promise((resolve) => { release = resolve; });
-  await page.route("**/NotoSansSymbols2-Regular.ttf", async (route) => {
+  await page.route("**/NotoSansThai-Regular.ttf", async (route) => {
     if (++requests === 2) await held;
     await route.continue();
   });
   await gotoEditor(page);
-  const file = { name: "symbols.txt", mimeType: "text/plain", buffer: Buffer.from("☐") };
+  const file = { name: "thai.txt", mimeType: "text/plain", buffer: Buffer.from("ก") };
   const canvas = page.locator(".page-wrap canvas").first();
 
   await page.locator("#file").setInputFiles(file);
@@ -250,18 +252,18 @@ test("a pending fallback survives replacement without touching the freed documen
   let requests = 0;
   let release;
   const held = new Promise((resolve) => { release = resolve; });
-  await page.route("**/NotoSansSymbols2-Regular.ttf", async (route) => {
+  await page.route("**/NotoSansThai-Regular.ttf", async (route) => {
     requests++;
     await held;
     await route.continue();
   });
   await gotoEditor(page);
-  const file = (text) => ({ name: "symbols.txt", mimeType: "text/plain", buffer: Buffer.from(text) });
+  const file = (text) => ({ name: "thai.txt", mimeType: "text/plain", buffer: Buffer.from(text) });
 
-  await page.locator("#file").setInputFiles(file("First ☐"));
+  await page.locator("#file").setInputFiles(file("First ก"));
   await expect.poll(() => requests).toBe(1);
-  await page.locator("#file").setInputFiles(file("Second ☐"));
-  await expect(page.locator("#a11yDocument")).toContainText("Second ☐");
+  await page.locator("#file").setInputFiles(file("Second ก"));
+  await expect(page.locator("#a11yDocument")).toContainText("Second ก");
   await expect(page.locator("body")).not.toHaveAttribute("data-fonts-ready", "true");
   const canvas = page.locator(".page-wrap canvas").first();
   const before = await canvas.evaluate((element) => element.toDataURL());
@@ -269,7 +271,7 @@ test("a pending fallback survives replacement without touching the freed documen
 
   await expect(page.locator("body")).toHaveAttribute("data-fonts-ready", "true");
   expect(await canvas.evaluate((element) => element.toDataURL())).not.toBe(before);
-  await expect(page.locator("#a11yDocument")).toContainText("Second ☐");
+  await expect(page.locator("#a11yDocument")).toContainText("Second ก");
   expect(requests).toBe(1);
   expect(consoleErrors).toEqual([]);
 });

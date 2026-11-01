@@ -306,8 +306,39 @@ test("pointer cancellation discards the resize preview without creating history"
   expect(consoleErrors).toEqual([]);
 });
 
-// QUARANTINED (2026-10-31), named and temporary: an object resizes by 16px in Suggesting mode.
-test.fixme("object resize is blocked (fail-closed) in Suggesting mode", async ({
+/** Everything that could explain an outline changing size, read in the page:
+ *  the outline's rect, the review mode actually in force, the page scale (the
+ *  sheet's painted width against its CSS width), the grip's box and what is
+ *  really under the pointer at its centre, and any resize preview left behind.
+ *  The quarantine this test came out of ("resizes by 16px in Suggesting mode",
+ *  CI only, never reproduced on macOS) had none of this, so CI's next red
+ *  carries it in the assertion message. */
+async function resizeDiagnostic(page, handleIndex) {
+  return page.evaluate((index) => {
+    const round = (r) => r && { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+    const outline = document.querySelector(".overlay .object-outline");
+    const handle = document.querySelector(`.overlay .object-handle[data-handle="${index}"]`);
+    const wrap = document.querySelector(".page-wrap");
+    const hr = handle?.getBoundingClientRect();
+    const under = hr ? document.elementFromPoint(hr.x + hr.width / 2, hr.y + hr.height / 2) : null;
+    return {
+      outline: round(outline?.getBoundingClientRect()),
+      reviewMode:
+        document.querySelector('#reviewModeControl [aria-checked="true"], #reviewModeControl [aria-pressed="true"]')
+          ?.dataset.reviewMode ?? null,
+      objectMode: document.getElementById("pages")?.dataset.objectMode ?? null,
+      pageScale: wrap ? Math.round((wrap.getBoundingClientRect().width / (wrap.offsetWidth || 1)) * 1000) / 1000 : null,
+      pageWidth: wrap ? Math.round(wrap.getBoundingClientRect().width) : null,
+      handle: hr ? { ...round(hr), visible: hr.width > 0 } : null,
+      underHandle: under ? `${under.tagName.toLowerCase()}${under.id ? `#${under.id}` : ""}.${String(under.className).split(" ")[0]}` : null,
+      previews: document.querySelectorAll(".object-resize-preview").length,
+      status: document.getElementById("status")?.textContent ?? "",
+      viewport: { w: window.innerWidth, h: window.innerHeight },
+    };
+  }, handleIndex);
+}
+
+test("object resize is blocked (fail-closed) in Suggesting mode", async ({
   page,
   consoleErrors,
 }) => {
@@ -316,14 +347,17 @@ test.fixme("object resize is blocked (fail-closed) in Suggesting mode", async ({
   await page.locator('#reviewModeControl [data-review-mode="suggesting"]').click();
   await selectImage(page);
   const before = await outlineSize(page);
+  const beforeState = await resizeDiagnostic(page, 4);
 
   await dragHandle(page, 4, 60, 60);
 
   // No mutation: the size is unchanged and the block is reported.
   const after = await outlineSize(page);
-  expect(Math.abs(after.w - before.w)).toBeLessThanOrEqual(3);
-  expect(Math.abs(after.h - before.h)).toBeLessThanOrEqual(3);
-  await expect(page.locator("#status")).toContainText("switch to Editing");
+  const afterState = await resizeDiagnostic(page, 4);
+  const diagnostic = `before ${JSON.stringify(beforeState)}\nafter ${JSON.stringify(afterState)}`;
+  expect(Math.abs(after.w - before.w), `width moved in Suggesting mode\n${diagnostic}`).toBeLessThanOrEqual(3);
+  expect(Math.abs(after.h - before.h), `height moved in Suggesting mode\n${diagnostic}`).toBeLessThanOrEqual(3);
+  await expect(page.locator("#status"), diagnostic).toContainText("switch to Editing");
 
   expect(consoleErrors).toEqual([]);
 });

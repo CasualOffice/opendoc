@@ -481,7 +481,7 @@ impl Default for ParleyShaper {
 
 /// Whether two bundled [`FontId`]s address faces in the same bundled family.
 ///
-/// Complexity: O(bundled families) — a fixed seven-entry table.
+/// Complexity: O(bundled families) — a fixed eight-entry table.
 fn same_bundled_family(a: FontId, b: FontId) -> bool {
     crate::fonts::FAMILIES
         .iter()

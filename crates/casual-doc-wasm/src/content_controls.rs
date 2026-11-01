@@ -431,6 +431,37 @@ fn inline_control_at(
     None
 }
 
+/// Where the inline control `id` starts in `inlines` (a byte offset in the
+/// paragraph, counted as `collect_controls` counts it), or `None`. Its start is
+/// inside it for `contentControlAt`, whose spans are end-inclusive. O(the
+/// paragraph's inlines).
+fn inline_control_start(inlines: &[InlineNode], id: NodeId, seen: &mut u32) -> Option<u32> {
+    for inline in inlines {
+        let start = *seen;
+        let end = start + inline_text_len(inline);
+        match inline {
+            InlineNode::Sdt(sdt) => {
+                if sdt.id == id {
+                    return Some(start);
+                }
+                let mut inner = start;
+                if let Some(found) = inline_control_start(&sdt.inlines, id, &mut inner) {
+                    return Some(found);
+                }
+            }
+            InlineNode::Hyperlink(link) => {
+                let mut inner = start;
+                if let Some(found) = inline_control_start(&link.inlines, id, &mut inner) {
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+        *seen = end;
+    }
+    None
+}
+
 /// The innermost block control holding `paragraph`, with its site, in the body.
 /// O(body blocks).
 fn block_control_holding(document: &Document, paragraph: NodeId) -> Option<(BlockSdt, BlockSite)> {
@@ -1514,6 +1545,12 @@ impl WasmDocument {
         let (ops, caret) =
             if let Some(paragraph) = paragraph_of_inline_control(&self.document, control) {
                 let paragraph_id = paragraph.id;
+                // The caret stays IN the control, as Word leaves it: its start
+                // does not move when its properties (or its placeholder text)
+                // change. It was the paragraph's start, which put the caret
+                // outside every control not opening the paragraph, so Alt+Down,
+                // Fill and Properties stopped finding the control just edited.
+                let start = inline_control_start(&paragraph.inlines, control, &mut 0).unwrap_or(0);
                 let mut inlines = paragraph.inlines.clone();
                 with_inline_control(&mut inlines, control, &mut |sdt| {
                     edit(&mut sdt.properties, Some(&mut sdt.inlines));
@@ -1523,7 +1560,7 @@ impl WasmDocument {
                         node: paragraph_id,
                         inlines,
                     }],
-                    Pos::new(paragraph_id, 0),
+                    Pos::new(paragraph_id, start),
                 )
             } else if let Some((mut sdt, site)) = block_control(&self.document, control) {
                 edit(&mut sdt.properties, None);

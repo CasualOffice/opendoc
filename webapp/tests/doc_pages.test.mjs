@@ -573,24 +573,29 @@ test("how much English the reference pages put on the site, measured and publish
   // points at `docs/182`, one fewer text node on `reference/pdf-export-and-print.html`.
   // MEASURED from this assertion's failure output in CI.
   //
-  // 2685 -> 4013 with `docs/176` published as `reference/three-sdk-products.html`
+  // 2685 -> 2698 with the PDF export rows of #922 (`docs/98`: a face over the
+  // copy limit, an unwritable face, colour glyphs, and the `/ActualText` row for
+  // multi-glyph clusters): their code spans and bold runs are text nodes on
+  // `reference/pdf-export-and-print.html`. MEASURED from this assertion's failure
+  // output in CI.
+  // 2698 -> 4026 with `docs/176` published as `reference/three-sdk-products.html`
   // (the SDK page cites it as the record behind its claims). MEASURED from this
   // assertion's failure output: 1,313 on the new page, and the rest is the new
   // rail entry, "Three SDK products", which every reference page carries. Any
   // edit to docs/176 moves this figure; re-measure it then.
-  // 4013 -> 4016: docs/176 §12.3 records the importer fix (RM-46). MEASURED.
-  // 4016 -> 4024: docs/176 §12.10 records the per-call cost fix. MEASURED.
-  // 4024 -> 4113: docs/176 §12.12 records editing pictures, headers and footers, notes and sections. MEASURED.
-  // 4113 -> 4142: docs/176 §12.13 records SVG pages. MEASURED.
-  // 4142 -> 4157: docs/176 §12.14 records the C ABI fuzz target. MEASURED.
+  // 4026 -> 4029: docs/176 §12.3 records the importer fix (RM-46). MEASURED.
+  // 4029 -> 4037: docs/176 §12.10 records the per-call cost fix. MEASURED.
+  // 4037 -> 4126: docs/176 §12.12 records editing pictures, headers and footers, notes and sections. MEASURED.
+  // 4126 -> 4155: docs/176 §12.13 records SVG pages. MEASURED.
+  // 4155 -> 4170: docs/176 §12.14 records the C ABI fuzz target. MEASURED.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    4157,
-    `the fourteen reference pages carry ${total} unrouted English strings (was 4157). That ` +
+    4170,
+    `the fourteen reference pages carry ${total} unrouted English strings (was 4170). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose, or a page was published. Regenerate the pages, then MEASURE and record ` +
       `the new figure here — do not calculate it. Per page: ` +

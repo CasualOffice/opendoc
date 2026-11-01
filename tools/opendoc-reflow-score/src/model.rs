@@ -3,6 +3,7 @@
 //! level and dominant run formatting; tables; pictures; header and footer;
 //! notes; sections. O(document).
 
+use casual_doc_model::v1::{Alignment, LineRule, Spacing};
 use casual_doc_model::v1::{
     BlockNode, Definitions, Document, FieldKind, InlineNode, ParagraphProperties, RunProperties,
     StyleId,
@@ -23,6 +24,15 @@ pub struct Para {
     pub italic: bool,
     /// Majority size (half points).
     pub size: u32,
+    /// Alignment through the style chain: 0 start, 1 centre, 2 end, 3 both.
+    pub align: u8,
+    /// Line pitch in points, through the style chain (`auto` lines as
+    /// `percent` of 1.15 em of its size; `exact` and `atLeast` their height).
+    pub pitch: f64,
+    /// Space before, in points, through the style chain.
+    pub before: f64,
+    /// Space after, in points, through the style chain.
+    pub after: f64,
 }
 
 /// One table.
@@ -94,6 +104,17 @@ fn chain<T>(
     None
 }
 
+/// The paragraph's style: its own, else the document's default paragraph
+/// style (Normal), which applies to every paragraph that names none. O(styles).
+fn own_style(defs: &Definitions, p: &ParagraphProperties) -> Option<StyleId> {
+    p.style_ref.or_else(|| {
+        defs.styles
+            .iter()
+            .find(|(_, s)| s.is_default && s.kind == casual_doc_model::v1::StyleKind::Paragraph)
+            .map(|(id, _)| *id)
+    })
+}
+
 fn heading_of(defs: &Definitions, p: &ParagraphProperties) -> Option<u8> {
     if let Some(level) = p.outline_level.filter(|l| *l < 9) {
         return Some(level + 1);
@@ -129,6 +150,64 @@ fn list_of(defs: &Definitions, p: &ParagraphProperties) -> Option<u8> {
     })
 }
 
+/// The alignment, line pitch, and space before and after of a paragraph of
+/// majority size `size` (half points), through its style chain and the
+/// document defaults. O(style chain).
+fn layout_of(defs: &Definitions, p: &ParagraphProperties, size: u32) -> (u8, f64, f64, f64) {
+    let spacing = |get: &dyn Fn(&Spacing) -> Option<i32>| -> Option<i32> {
+        p.spacing
+            .as_ref()
+            .and_then(get)
+            .or_else(|| {
+                chain(defs, own_style(defs, p), |s| {
+                    s.paragraph
+                        .as_ref()
+                        .and_then(|pp| pp.spacing.as_ref())
+                        .and_then(get)
+                })
+            })
+            .or_else(|| {
+                defs.document_defaults
+                    .as_ref()
+                    .and_then(|d| d.paragraph.as_ref())
+                    .and_then(|pp| pp.spacing.as_ref())
+                    .and_then(get)
+            })
+    };
+    let align = p.alignment.or_else(|| {
+        chain(defs, own_style(defs, p), |s| {
+            s.paragraph.as_ref().and_then(|pp| pp.alignment)
+        })
+    });
+    let align = match align {
+        Some(Alignment::Center) => 1,
+        Some(Alignment::End) => 2,
+        Some(Alignment::Justify) => 3,
+        _ => 0,
+    };
+    let em = f64::from(size) / 2.0;
+    let rule = spacing(&|s| {
+        s.line_rule.map(|r| match r {
+            LineRule::Exact => 2,
+            LineRule::AtLeast => 1,
+            LineRule::Auto => 0,
+        })
+    });
+    let twips = spacing(&|s| s.line_twips);
+    let pitch = match (rule, twips) {
+        (Some(2), Some(t)) => f64::from(t) / 20.0,
+        (Some(1), Some(t)) => (f64::from(t) / 20.0).max(1.15 * em),
+        _ => {
+            f64::from(spacing(&|s| s.line_percent.map(i32::from)).unwrap_or(100)) / 100.0
+                * 1.15
+                * em
+        }
+    };
+    let before = f64::from(spacing(&|s| s.before_twips).unwrap_or(0)) / 20.0;
+    let after = f64::from(spacing(&|s| s.after_twips).unwrap_or(0)) / 20.0;
+    (align, pitch, before, after)
+}
+
 /// Bold, italic and size of a run, through its run style, the paragraph
 /// style chain and the document defaults.
 fn run_format(
@@ -139,7 +218,11 @@ fn run_format(
     let from_chain = |get: &dyn Fn(&RunProperties) -> Option<u32>| -> Option<u32> {
         get(run)
             .or_else(|| chain(defs, run.style_ref, |s| s.run.as_ref().and_then(get)))
-            .or_else(|| chain(defs, para.style_ref, |s| s.run.as_ref().and_then(get)))
+            .or_else(|| {
+                chain(defs, own_style(defs, para), |s| {
+                    s.run.as_ref().and_then(get)
+                })
+            })
             .or_else(|| {
                 defs.document_defaults
                     .as_ref()
@@ -225,6 +308,7 @@ fn blocks(
                 let text = collapse(&walk.text);
                 if !in_table && !text.is_empty() {
                     let (bold, italic, size) = majority(&walk.formats);
+                    let (align, pitch, before, after) = layout_of(defs, &p.properties, size);
                     sum.paras.push(Para {
                         text,
                         heading: heading_of(defs, &p.properties),
@@ -232,6 +316,10 @@ fn blocks(
                         bold,
                         italic,
                         size,
+                        align,
+                        pitch,
+                        before,
+                        after,
                     });
                 }
             }

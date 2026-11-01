@@ -15,9 +15,11 @@ publish = false
 # tests can run a real import through this crate and open its package.
 crate-type = ["cdylib", "rlib"]
 
-# Same size pass as the main module (`crates/casual-doc-wasm/Cargo.toml`).
+# Same size pass as the main module (`crates/casual-doc-wasm/Cargo.toml`), plus
+# `--enable-simd`: `webapp/build.sh` builds this module with `simd128` so rten's
+# OCR kernels vectorise (HF-414), and `wasm-opt` must be told to accept them.
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = ['-Oz', '--enable-bulk-memory', '--enable-sign-ext', '--enable-nontrapping-float-to-int']
+wasm-opt = ['-Oz', '--enable-bulk-memory', '--enable-sign-ext', '--enable-nontrapping-float-to-int', '--enable-simd']
 
 [dependencies]
 # What this module is: the reader, the importer and OCR (`docs/182` §17a). The

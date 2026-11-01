@@ -81,6 +81,11 @@ async function enterRunningBand(page, region) {
   // Let the caret settle before the first keystroke: entering re-renders, and a
   // key pressed mid-render is dropped, which showed up as a rare false red.
   await expect(page.locator(".overlay .caret")).toHaveCount(1);
+  // Entering a header or footer selects the contextual Header & Footer tab, as
+  // Word does; Find, alignment and lists are on Home, so go there the way a
+  // person would. Switching tabs does not leave the band.
+  await page.locator("#tabHome").click();
+  await expect.poll(() => page.locator("#pages").getAttribute("data-running-edit")).toBe(region);
   return null;
 }
 
