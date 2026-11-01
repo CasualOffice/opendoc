@@ -873,6 +873,7 @@ export const EN_STRINGS = Object.freeze({
   "findings.feature.pdfPageBreaks": "Page breaks inferred from where pages end",
   "findings.feature.pdfFloats": "Pictures and drawings floated beside or behind their text",
   "findings.feature.pdfScanReplaced": "Scanned pages shown as their recognised text (the scan stays in the exact layout)",
+  "findings.feature.pdfWatermark": "Watermarks recognised and set as the document's watermark",
   // Editing the text in a picture (`image_text_edit.mjs`, `docs/182` §20b).
   "findings.feature.pdfImageTextBoxes": "Lines read from scanned pages and pictures, editable over the original pixels",
   "imageText.fill.command": "Erase text under edits: fill",
