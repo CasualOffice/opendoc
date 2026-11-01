@@ -391,11 +391,18 @@ test.describe("every ribbon control acts or explains itself", () => {
       await page.locator(`.ribbon-tab[data-tab="${tab}"]`).click();
       const buttons = await page.$$eval(`${panel} button`, (list) =>
         list
+          // `index` is the button's place among ALL of the panel's buttons,
+          // taken before the filter, because the click below is
+          // `${panel} button`.nth(index) over that same unfiltered list. Taken
+          // after it, every hidden button shifted the visible ones' indices and
+          // the sweep clicked the hidden one instead (Review ▸ Add-ins, hidden
+          // until a plugin runs, timed the Review tab out three times on #923).
+          .map((button, index) => ({ button, index }))
           // Only what a user can actually reach: the ribbon carries popovers
           // (colour grids, the table size picker) whose buttons live in the
           // panel but are not on screen until their own control is opened.
-          .filter((button) => button.offsetParent !== null)
-          .map((button, index) => ({
+          .filter(({ button }) => button.offsetParent !== null)
+          .map(({ button, index }) => ({
             index,
             id: button.dataset.command ?? button.dataset.commandId ?? button.id ?? "",
             disabled: button.disabled,
