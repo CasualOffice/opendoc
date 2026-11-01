@@ -4668,6 +4668,13 @@ feature has no agent surface.
 6. **`rewrite_block`** (rewrite one block, the engine diffs and lowers the difference) joins
    the vocabulary, because models rewrite better than they patch.
 
+**2026-11-01 amendment (HF-418, #926).** The four picture-text erase and restore
+commands raise `UI_NOT_EXPOSED_CEILING` from 96 to 100. They consume the source
+picture's pixels and produce a bounded raster patch under an OCR line; no agent
+command accepts that input or has the same lowering. Their host contract
+requires document-mutation authority. They remain explicit exceptions until
+the registry can expose an equivalent bounded command.
+
 **Rejected.**
 
 - One hand-written MCP tool per feature (tool sprawl; a second registry, VS Code's split).

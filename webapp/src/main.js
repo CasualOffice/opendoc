@@ -2360,7 +2360,7 @@ async function runEdit(thunk, { typing = false, text = false, gate = false, keep
   if (blockMutationInViewing()) return false;
   if (!typing) breakTypingSession();
   if (gate && blockUntrackedInSuggesting()) return false;
-  if ((typing || text) && !(await prepareImageTextEdit())) return false; let res; // an unedited picture line first (`docs/182` §20b)
+  if (typing || text) { const ready = prepareImageTextEdit(); if (ready !== true && !(await ready)) return false; } let res;
   try {
     res = thunk();
   } catch (err) {

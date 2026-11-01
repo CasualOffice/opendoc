@@ -1160,7 +1160,10 @@ mod tests {
         let ink = [20, 24, 90, 255];
         let (page, paper) = gradient_with_text(320, 40, ink, 4);
         let patch = make_patch(&page, &geometry_of(320, 40), mode).expect("a patch");
-        assert!(patch.ink_pixels > 1000, "{mode:?}: the stems were found as ink");
+        assert!(
+            patch.ink_pixels > 1000,
+            "{mode:?}: the stems were found as ink"
+        );
         for p in patch.image.pixels.chunks_exact(4) {
             let near = (0..3).map(|c| p[c].abs_diff(ink[c])).max().unwrap_or(0);
             assert!(

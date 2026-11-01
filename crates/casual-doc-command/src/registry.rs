@@ -1054,6 +1054,7 @@ const UI_PARAGRAPH: &str = "Alignment, indents, spacing, tab stops and drop caps
 const UI_LISTS: &str = "Numbering on/off, level, format and restart arrive with the lists family (docs/181 §4.2 step 3).";
 const UI_STYLE_DEFINITIONS: &str = "Redefining a style changes every paragraph that uses it; agents apply styles and do not define them yet (docs/181 §4.2 step 2).";
 const UI_OBJECTS: &str = "Inserting shapes and text boxes, and arranging objects (position, order, grouping, rotation, flips, inline or floating), are not offered to agents yet; pictures, alt text, size, wrap, crop, fill, outline and deletion are.";
+const UI_IMAGE_TEXT: &str = "Erasing or restoring OCR text in a picture needs the source pixels and a bounded raster patch; no agent command accepts that image-text edit yet (docs/182 §20b).";
 const UI_OBJECT_MENU: &str = "The object menus are one contract family; its members that change a picture or shape (object.altText, object.crop, object.delete, object.fill, object.outline, object.wrap) are named by the objects commands, the rest are arrangement.";
 const UI_NOTE_SETTINGS: &str = "Footnote and endnote options are a person's layout choice in the Footnote and Endnote dialog; no agent command offers them yet (docs/181 §3).";
 const UI_CONTENT_CONTROLS: &str = "Content controls are authored, configured and filled through the editor's content-control methods (casual-doc-wasm content_controls.rs); no agent command offers them yet (docs/181 §3).";
@@ -1142,6 +1143,10 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
     ("layout.arrange.inLine", UI_OBJECTS),
     ("layout.arrange.addText", UI_OBJECTS),
     ("object.", UI_OBJECT_MENU),
+    ("imageText.fill", UI_IMAGE_TEXT),
+    ("imageText.blur", UI_IMAGE_TEXT),
+    ("imageText.pixelate", UI_IMAGE_TEXT),
+    ("imageText.restore", UI_IMAGE_TEXT),
     ("table.", UI_TABLES),
     ("table.move.rowUp", UI_TABLES),
     ("table.move.rowDown", UI_TABLES),
@@ -1195,4 +1200,6 @@ pub const UI_NOT_EXPOSED: &[(&str, &str)] = &[
 /// recorded in `docs/181` §3.
 /// 94 -> 96 with `insert.symbolByCode` and `insert.textFromFile` (`docs/153`
 /// text.unicode-code-toggle, page.textFromFile), recorded in `docs/181` §3.
-pub const UI_NOT_EXPOSED_CEILING: usize = 96;
+/// 96 -> 100 with the four image-text patch commands (`109` HF-418), recorded
+/// in ADR-075 and `docs/181` §3.
+pub const UI_NOT_EXPOSED_CEILING: usize = 100;

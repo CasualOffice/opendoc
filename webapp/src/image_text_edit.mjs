@@ -101,7 +101,7 @@ export function createImageTextEdit(ed, { applyEditResult }) {
     atCaret,
     /** Before a text edit at the caret: makes an unedited line box editable.
      *  Always lets the edit go on (a refusal is said, not silent). */
-    async prepare() {
+    prepare() {
       const doc = ed.doc;
       const selection = ed.selection;
       if (!doc || !selection || typeof doc.caretTextUnpainted !== "function") return true;
@@ -110,6 +110,7 @@ export function createImageTextEdit(ed, { applyEditResult }) {
       // edit removes or keeps, each in its own box).
       const ends = [selection.focus];
       if (selection.anchor && selection.anchor.node !== selection.focus.node) ends.push(selection.anchor);
+      const unedited = [];
       for (const at of ends) {
         let unpainted = false;
         try {
@@ -117,9 +118,16 @@ export function createImageTextEdit(ed, { applyEditResult }) {
         } catch {
           unpainted = false;
         }
-        if (unpainted && stateOf(at.node) === "unedited") await edit(imageTextMode(), at);
+        if (unpainted && stateOf(at.node) === "unedited") unedited.push(at);
       }
-      return true;
+      // Ordinary typing must stay synchronous until the edit thunk runs. An
+      // unconditional async boundary lets a burst of keydowns all observe the
+      // same selected range, so only the first character survives.
+      if (unedited.length === 0) return true;
+      return (async () => {
+        for (const at of unedited) await edit(imageTextMode(), at);
+        return true;
+      })();
     },
     /** The registry rows: the palette and the right-click menu. */
     commands(state = atCaret()) {

@@ -150,6 +150,11 @@ fn a_scan_opens_with_its_text_when_the_host_supplies_ocr() {
     let read = ViewerDocument::open_with(&scan, &options).expect("opens");
     let text = read.plain_text();
     assert!(text.contains("Scanned"), "{text}");
+    let page_text = read.page_text(0).expect("page text");
+    assert_eq!(
+        page_text, text,
+        "one scanned page reads the same by page or body"
+    );
 }
 
 /// `docs/182` §4: a PDF opens as a flowing document by default; "Keep exact

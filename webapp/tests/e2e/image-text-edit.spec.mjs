@@ -130,6 +130,14 @@ test.describe("editing the text in a scanned page", () => {
     // The recognised line is text: select it in its line box and delete it.
     await findAndClose(page, "budget");
     await page.keyboard.press("Home");
+    await page.keyboard.press("Shift+F10");
+    await expect(page.locator(".editor-context-menu")).toBeVisible();
+    const pictureCommands = await page.locator(".editor-context-menu [data-command-id]")
+      .evaluateAll((rows) => rows.map((row) => row.dataset.commandId));
+    expect(pictureCommands).toEqual(expect.arrayContaining([
+      "imageText.fill", "imageText.blur", "imageText.pixelate", "imageText.restore",
+    ]));
+    await page.keyboard.press("Escape");
     await page.keyboard.press("Shift+End");
     await page.keyboard.press("Backspace");
     await shot(page, "1b-line-deleted");

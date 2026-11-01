@@ -59,9 +59,9 @@ test("a selection from one line box into another makes both editable before the 
   assert.equal(doc.calls.edits.length, 2);
 });
 
-test("body text is never touched, and the box lookup is asked once per revision", async () => {
+test("body text is never touched, and the box lookup is asked once per revision", () => {
   const { doc, imageText } = editor({ anchor: at("p", 0), focus: at("p", 0) });
-  await imageText.prepare();
+  assert.equal(imageText.prepare(), true, "ordinary typing must reach the edit without an async pause");
   assert.equal(doc.calls.edits.length, 0);
   assert.equal(doc.calls.state, 0, "the O(1) unpainted gate keeps typing off the walk");
   imageText.commands();

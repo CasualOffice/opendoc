@@ -1285,6 +1285,11 @@ box (same offset, size and turn), and the text is painted in the ink's measured
 colour, height and weight. The original picture is never changed; the patch's
 alt text keeps the recognised line, which Restore puts back; each step is one
 undo. Saved as DOCX the group is the picture, the patches and the text boxes.
+The four Fill/Blur/Pixelate/Restore commands require the host's document-mutation
+grant. Ordinary typing takes a synchronous fast path when the caret is outside
+an unedited picture-text box, so a burst of keys replaces a selection once.
+The Viewer SDK includes those nested line boxes in both `plain_text()` and
+`page_text()`, in group order, for indexing and search.
 
 **The erase** (`casual_doc_render::image_text`, inpainting): Otsu's threshold
 per box, the smaller class is ink, dilated 1-2 px; 4-8 px tiles take the mean of

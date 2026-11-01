@@ -385,6 +385,13 @@ const PALETTE_ONLY = new Map([
   ["reference.updateToc.entire", "the Update Table dialog's radio; band control opens it"],
 ]);
 
+// These rows have a durable right-click surface only when the caret is inside
+// OCR text over a picture. This generic sweep uses an ordinary paragraph, so
+// the contextual surface is measured in image-text-edit.spec.mjs on a scan.
+const CONTEXTUAL_COMMANDS = new Set([
+  "imageText.fill", "imageText.blur", "imageText.pixelate", "imageText.restore",
+]);
+
 test("no command is reachable from the command palette alone", async ({
   page,
   consoleErrors,
@@ -494,7 +501,7 @@ test("no command is reachable from the command palette alone", async ({
 
   const orphans = registry
     .map((r) => r.id)
-    .filter((id) => !durable.has(id) && !PALETTE_ONLY.has(id) && !isValueRow(id));
+    .filter((id) => !durable.has(id) && !PALETTE_ONLY.has(id) && !CONTEXTUAL_COMMANDS.has(id) && !isValueRow(id));
   expect(
     orphans,
     "these commands are reachable from the command palette and nowhere else. " +

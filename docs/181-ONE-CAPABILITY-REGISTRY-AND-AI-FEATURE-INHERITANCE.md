@@ -254,6 +254,13 @@ commands added, none changed; 73 in all).
 `SetNumberingInstance`, `SetMediaReference`) that already exist. An agent writes a character
 with `insert_text`, and does not hold another file's bytes, so neither has an agent twin yet.
 
+**Raised (2026-11-01, HF-418):** `UI_NOT_EXPOSED_CEILING` 96 → 100 for
+`imageText.fill`, `imageText.blur`, `imageText.pixelate` and `imageText.restore`.
+Each edits the raster patch under an OCR line box; the agent vocabulary has no
+command that receives that source picture and bounds the pixel work. The editor
+commands require the host's mutation grant and remain listed explicitly until
+an agent command has the same bounded lowering (ADR-075 amendment).
+
 **What "a feature inherits MCP" therefore means, concretely.** A developer adding, say,
 footnote insertion writes `InsertFootnote: Command` with its `lower()` (moved out of
 `lib.rs:4658`), adds one line to `commands!`, and points the editor's method at it. With no
