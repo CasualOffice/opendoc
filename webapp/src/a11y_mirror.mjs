@@ -12,7 +12,8 @@
  * engine's `accessibilityTree()` projection so a screen reader can read the
  * canvas (which paints pixels only, exposing no structure). Headings become
  * `h1`–`h6` (levels 7–9 clamp to `h6`), list items group into `ul`/`ol`,
- * tables become real `table`/`tr`/`td`, form checkboxes become
+ * tables become real `table`/`tr`/`td` (a nested table a real `table` inside
+ * its cell), form checkboxes become
  * `role="checkbox"` with an `aria-checked` state and a name (`docs/120`), and
  * everything else is a `p`. This is never an editing surface — the model stays
  * the source of truth (docs/67 Open Risks). Rebuilt on the same coalesced
@@ -89,6 +90,103 @@ function appendCheckbox(parent, node, onToggle) {
     });
   }
   parent.appendChild(box);
+}
+
+/**
+ * One projected table as a `<table>`, nested tables inside its cells included.
+ *
+ * `selected` is the cell rectangle to expose as an ARIA grid selection, or
+ * `null`. Recursion is bounded by the engine, which stops projecting nested
+ * tables as blocks at its own nesting limit (`MAX_A11Y_NESTING`).
+ */
+function buildTable(node, selected, onToggleCheckbox) {
+  const table = document.createElement("table");
+  // A cell selection turns THIS table into an ARIA grid for as long as it
+  // lasts. `aria-selected` is only meaningful on a `gridcell`, so the roles
+  // and the selection state are one decision, not two — and a table with no
+  // selection keeps its plain `<table>` semantics, which is what a reader
+  // wants for reading rather than for selecting.
+  if (selected) {
+    table.setAttribute("role", "grid");
+    table.setAttribute("aria-multiselectable", "true");
+  }
+  // A table's header geometry is what lets a reader say "Revenue, Q3" while
+  // moving through cells instead of reading a bare grid of numbers. The
+  // engine now reports which rows are headers (`w:tblHeader`, `cnfStyle`, or
+  // `tblLook`) and whether the first column heads its row.
+  const headerRows = new Set(
+    (Array.isArray(node.headerRows) ? node.headerRows : []).map(Number),
+  );
+  const rowHeaderColumn = node.rowHeaderColumn === true;
+  if (typeof node.caption === "string" && node.caption.trim()) {
+    const caption = document.createElement("caption");
+    caption.textContent = node.caption;
+    table.appendChild(caption);
+  }
+  if (typeof node.description === "string" && node.description.trim()) {
+    table.setAttribute("aria-description", node.description);
+  }
+  const thead = document.createElement("thead");
+  const tbody = document.createElement("tbody");
+  const rows = Array.isArray(node.rows) ? node.rows : [];
+  for (const [index, row] of rows.entries()) {
+    const tr = document.createElement("tr");
+    const isHeaderRow = headerRows.has(index);
+    if (selected) tr.setAttribute("role", "row");
+    for (const [column, cell] of (Array.isArray(row) ? row : []).entries()) {
+      // A header ROW heads its column; a header COLUMN heads its row.
+      const heads = isHeaderRow || (rowHeaderColumn && column === 0);
+      const el = document.createElement(heads ? "th" : "td");
+      if (heads) el.setAttribute("scope", isHeaderRow ? "col" : "row");
+      if (selected) {
+        el.setAttribute("role", heads ? (isHeaderRow ? "columnheader" : "rowheader") : "gridcell");
+        // Measured in GRID columns, as the rectangle is (`docs/171`): a cell's
+        // index in the row is its grid column only until something spans.
+        const gridColumn = Number.isInteger(cell?.gridColumn) ? cell.gridColumn : column;
+        const inside =
+          index >= selected.firstRow &&
+          index <= selected.lastRow &&
+          gridColumn >= selected.firstColumn &&
+          gridColumn + (cell?.colSpan ?? 1) - 1 <= selected.lastColumn;
+        el.setAttribute("aria-selected", inside ? "true" : "false");
+      }
+      // A cell is `{ text, checkboxes, blocks? }`: a form puts its controls in
+      // cells, and a string can carry a control's glyph but not its role,
+      // its state or its name. Older payloads sent a bare string.
+      const blocks = Array.isArray(cell?.blocks) ? cell.blocks : [];
+      if (blocks.length > 0) {
+        // The cell holds a nested table (`HF-416`): its content arrives as
+        // blocks, so the inner grid is a real `<table>` inside this cell and
+        // a screen reader announces it as one, instead of reading "Outer
+        // Nested A Nested B" as a single run of text. A nested table never
+        // carries the caret's cell selection: that rectangle is the outer
+        // table's, in the outer table's grid.
+        for (const block of blocks) {
+          if (block?.kind === "table") {
+            el.appendChild(buildTable(block, null, onToggleCheckbox));
+          } else {
+            const paragraph = document.createElement("p");
+            paragraph.textContent = String(block?.text ?? "");
+            el.appendChild(paragraph);
+          }
+        }
+      } else {
+        el.textContent = String((typeof cell === "string" ? cell : cell?.text) ?? "");
+      }
+      // A merged cell is ONE cell to a reader, over the grid cells it covers
+      // (`docs/171`); the engine already left out the continuations it covers.
+      if (cell?.colSpan > 1) el.colSpan = cell.colSpan;
+      if (cell?.rowSpan > 1) el.rowSpan = cell.rowSpan;
+      for (const box of Array.isArray(cell?.checkboxes) ? cell.checkboxes : []) {
+        appendCheckbox(el, box, onToggleCheckbox);
+      }
+      tr.appendChild(el);
+    }
+    (isHeaderRow ? thead : tbody).appendChild(tr);
+  }
+  if (thead.childElementCount > 0) table.appendChild(thead);
+  table.appendChild(tbody);
+  return table;
 }
 
 /**
@@ -249,75 +347,8 @@ export function renderAccessibilityMirror(doc, focusNode, cellSelection = null, 
       appendCheckbox(wrap, node, onToggleCheckbox);
       frag.appendChild(wrap);
     } else if (node.kind === "table") {
-      const table = document.createElement("table");
-      // A cell selection turns THIS table into an ARIA grid for as long as it
-      // lasts. `aria-selected` is only meaningful on a `gridcell`, so the roles
-      // and the selection state are one decision, not two — and a table with no
-      // selection keeps its plain `<table>` semantics, which is what a reader
-      // wants for reading rather than for selecting.
       const selected = blockIndex === caretIndex ? cellSelection : null;
-      if (selected) {
-        table.setAttribute("role", "grid");
-        table.setAttribute("aria-multiselectable", "true");
-      }
-      // A table's header geometry is what lets a reader say "Revenue, Q3" while
-      // moving through cells instead of reading a bare grid of numbers. The
-      // engine now reports which rows are headers (`w:tblHeader`, `cnfStyle`, or
-      // `tblLook`) and whether the first column heads its row.
-      const headerRows = new Set(
-        (Array.isArray(node.headerRows) ? node.headerRows : []).map(Number),
-      );
-      const rowHeaderColumn = node.rowHeaderColumn === true;
-      if (typeof node.caption === "string" && node.caption.trim()) {
-        const caption = document.createElement("caption");
-        caption.textContent = node.caption;
-        table.appendChild(caption);
-      }
-      if (typeof node.description === "string" && node.description.trim()) {
-        table.setAttribute("aria-description", node.description);
-      }
-      const thead = document.createElement("thead");
-      const tbody = document.createElement("tbody");
-      const rows = Array.isArray(node.rows) ? node.rows : [];
-      for (const [index, row] of rows.entries()) {
-        const tr = document.createElement("tr");
-        const isHeaderRow = headerRows.has(index);
-        if (selected) tr.setAttribute("role", "row");
-        for (const [column, cell] of (Array.isArray(row) ? row : []).entries()) {
-          // A header ROW heads its column; a header COLUMN heads its row.
-          const heads = isHeaderRow || (rowHeaderColumn && column === 0);
-          const el = document.createElement(heads ? "th" : "td");
-          if (heads) el.setAttribute("scope", isHeaderRow ? "col" : "row");
-          if (selected) {
-            el.setAttribute("role", heads ? (isHeaderRow ? "columnheader" : "rowheader") : "gridcell");
-            // Measured in GRID columns, as the rectangle is (`docs/171`): a cell's
-            // index in the row is its grid column only until something spans.
-            const gridColumn = Number.isInteger(cell?.gridColumn) ? cell.gridColumn : column;
-            const inside =
-              index >= selected.firstRow &&
-              index <= selected.lastRow &&
-              gridColumn >= selected.firstColumn &&
-              gridColumn + (cell?.colSpan ?? 1) - 1 <= selected.lastColumn;
-            el.setAttribute("aria-selected", inside ? "true" : "false");
-          }
-          // A cell is `{ text, checkboxes }`: a form puts its controls in
-          // cells, and a string can carry a control's glyph but not its role,
-          // its state or its name. Older payloads sent a bare string.
-          el.textContent = String((typeof cell === "string" ? cell : cell?.text) ?? "");
-          // A merged cell is ONE cell to a reader, over the grid cells it covers
-          // (`docs/171`); the engine already left out the continuations it covers.
-          if (cell?.colSpan > 1) el.colSpan = cell.colSpan;
-          if (cell?.rowSpan > 1) el.rowSpan = cell.rowSpan;
-          for (const box of Array.isArray(cell?.checkboxes) ? cell.checkboxes : []) {
-            appendCheckbox(el, box, onToggleCheckbox);
-          }
-          tr.appendChild(el);
-        }
-        (isHeaderRow ? thead : tbody).appendChild(tr);
-      }
-      if (thead.childElementCount > 0) table.appendChild(thead);
-      table.appendChild(tbody);
-      frag.appendChild(table);
+      frag.appendChild(buildTable(node, selected, onToggleCheckbox));
     } else {
       const paragraph = document.createElement("p");
       paragraph.textContent = String(node.text ?? "");

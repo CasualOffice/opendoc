@@ -45,18 +45,20 @@ async function modelCells(page, mark = MARK) {
   }, mark);
 }
 
-// Read two ways, neither of which is the nested `<table>` the first version of
-// this test looked for: the accessibility projection (`accessibility_tree`) has
-// never nested a table — a cell is its plain text, so the `rich` fixture's own
-// nested table reads "Outer Nested A Nested B" — and that test could not pass.
+// Read two ways:
 //   * the PAINT: the new table's active cell lies inside the outer cell's
 //     column and is narrower than it (two columns share that cell's width),
 //     where a body-level 2 x 2 table's cell is as wide as the outer one;
-//   * the MODEL, through the mirror: one table holds the mark, and its first
-//     cell holds both marks as separate blocks (the nested table's cell text),
-//     not one run typed twice into one paragraph.
-// Mutation: make `table_insertion_point` return the body branch for a caret in
-// a cell; the new table lands after the outer one, full width, and this goes red.
+//   * the MODEL, through the screen-reader mirror: the outer table's first
+//     cell holds its own mark AND a real nested `<table>` whose first cell holds
+//     the second mark, so a screen reader announces the inner grid as a table.
+//     Until HF-416 the projection flattened a nested table into its cell's
+//     text (the `rich` fixture's read "Outer Nested A Nested B"), and this half
+//     could only check that the cell's text held both marks.
+// Mutations: make `table_insertion_point` return the body branch for a caret in
+// a cell (the new table lands after the outer one, full width: red); and make
+// `a11y_row_cells` never set `blocks` (the cell is flat text again, no nested
+// `<table>`: red on the mirror half).
 test("Insert table from inside a cell nests the new table in that cell", async ({ page }) => {
   await insertTable(page, 2, 2);
   const outerCell = await stableBox(page.locator(".cell-outline"));
@@ -65,16 +67,22 @@ test("Insert table from inside a cell nests the new table in that cell", async (
   expect(innerCell.x, "the new table starts inside the outer cell").toBeGreaterThanOrEqual(outerCell.x - 1);
   expect(innerCell.x + innerCell.width, "and ends inside it").toBeLessThanOrEqual(outerCell.x + outerCell.width + 1);
   expect(innerCell.width, "and its cell shares the outer cell's width").toBeLessThan(outerCell.width * 0.75);
-  const reading = await page.evaluate((needle) => {
-    const tables = [...document.querySelectorAll("#a11yDocument table")].filter((table) =>
-      table.textContent.includes(needle),
-    );
-    return { tables: tables.length, firstCell: tables[0]?.querySelector("td")?.textContent ?? "" };
-  }, MARK);
-  expect(reading, "the second table sits inside the first table's cell").toEqual({
-    tables: 1,
-    firstCell: `${MARK} ${MARK}`,
-  });
+  await expect
+    .poll(() =>
+      page.evaluate((needle) => {
+        // Top-level mirror tables only: the nested one must be INSIDE a cell.
+        const outer = [...document.querySelectorAll("#a11yDocument table")].filter(
+          (table) => !table.parentElement?.closest("table") && table.textContent.includes(needle),
+        );
+        const cell = outer[0]?.querySelector(":scope > tbody > tr > td, :scope > thead > tr > th");
+        const nested = cell ? [...cell.querySelectorAll(":scope > table")] : [];
+        const own = cell ? [...cell.querySelectorAll(":scope > p")].map((p) => p.textContent.trim()) : [];
+        const innerFirst = nested[0]?.querySelector("td, th")?.textContent.trim() ?? "";
+        const innerRows = nested[0]?.querySelectorAll(":scope > tbody > tr").length ?? 0;
+        return { outerTables: outer.length, nestedTables: nested.length, own, innerFirst, innerRows };
+      }, MARK),
+    )
+    .toEqual({ outerTables: 1, nestedTables: 1, own: [MARK], innerFirst: MARK, innerRows: 2 });
 });
 
 // Mutation: drop the `insert.tableDialog` row from INSERT_SURFACE; the ribbon
