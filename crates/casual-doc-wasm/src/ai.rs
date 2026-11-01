@@ -154,10 +154,15 @@ fn add_in_author(name: &str) -> Option<String> {
 
 impl WasmDocument {
     /// The author an assistant's suggestions carry: `casual_doc_ai::AI_AUTHOR`,
-    /// never the plan's say and never the person's name (owner, 2026-10-29).
-    #[allow(clippy::unused_self)]
-    fn ai_author(&self) -> String {
-        casual_doc_ai::AI_AUTHOR.to_owned()
+    /// never the plan's say and never the person's name (owner, 2026-10-29). In a
+    /// shared room whose relay named this participant it is the AGENT PRINCIPAL,
+    /// "Casual AI on behalf of <their name>" (`docs/178` §10): the one AI author
+    /// every replica's conform keeps rather than restamping to the person. O(name).
+    pub(crate) fn ai_author(&self) -> String {
+        self.room_author().map_or_else(
+            || casual_doc_ai::AI_AUTHOR.to_owned(),
+            |(name, _, _)| casual_doc_edit::authorship::agent_author(&name),
+        )
     }
 
     /// A `casual-doc-ai` session over this editor's document and allocators.

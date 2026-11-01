@@ -1376,6 +1376,21 @@ impl crate::presence::WasmRoster {
         head: &str,
         head_offset: u32,
     ) -> Result<Option<Vec<u8>>, String> {
+        self.caret_frame_with_agent_inner(document, anchor, anchor_offset, head, head_offset, None)
+    }
+
+    /// [`Self::caret_frame_inner`] with this participant's assistant writing at `agent`
+    /// (`docs/178` §10): the AI's caret rides in the person's own payload. O(document) for
+    /// the block index, as a caret frame already is.
+    pub(crate) fn caret_frame_with_agent_inner(
+        &mut self,
+        document: &crate::WasmDocument,
+        anchor: &str,
+        anchor_offset: u32,
+        head: &str,
+        head_offset: u32,
+        agent: Option<(&str, u32)>,
+    ) -> Result<Option<Vec<u8>>, String> {
         use casual_doc_transaction::presence::{Caret, CaretEnd};
         use casual_doc_transaction::{Affinity, BlockTarget, Position};
         self.sync(document);
@@ -1392,10 +1407,12 @@ impl crate::presence::WasmRoster {
                 container,
             ))
         };
-        let caret = Caret {
-            anchor: end(anchor, anchor_offset)?,
-            head: end(head, head_offset)?,
+        let agent = match agent {
+            Some((node, offset)) => Some(end(node, offset)?),
+            None => None,
         };
+        let caret =
+            Caret::new(end(anchor, anchor_offset)?, end(head, head_offset)?).with_agent(agent);
         let update = self
             .sender
             .send_caret(caret)

@@ -34,6 +34,16 @@
 //!    back a mark somebody else made, and it keeps the author it carries. Without this rule an
 //!    undo of "accept" would hand the restored suggestion to whoever pressed undo.
 //!
+//! **The agent principal (`docs/178` §10, `docs/183` §24).** An introduced item may instead
+//! carry [`agent_author`] of the stamp's name, "Casual AI on behalf of Ada Lovelace", and then
+//! keeps it: the assistant a participant ran wrote it. The principal is DERIVED from the
+//! attested stamp, never stated by the sender, so a participant can attribute work to their
+//! own assistant and to nobody else's: "Casual AI on behalf of Bob Stone" from Ada's
+//! connection is restamped to "Ada Lovelace" like any other forgery. The agent label is one
+//! fixed name, [`AGENT_NAME`], not a free prefix, so "Bob Stone on behalf of Ada Lovelace" is
+//! not a principal either. Every replica runs the same check on the same stamp, so the agent
+//! author converges as the person's name does.
+//!
 //! The date of an introduced item is kept as authored: it is display data, Word lets it be
 //! anything, and a relay clock would be one more value to trust (`docs/175` §5.2).
 //!
@@ -63,6 +73,40 @@ use casual_doc_model::{IdSpace, NodeId};
 use crate::Operation;
 use crate::containers::{contained_inlines, contained_inlines_mut};
 
+/// The one agent this engine knows as a principal: the product's own assistant. Written
+/// into documents as is (an author name, never translated), like a person's name.
+pub const AGENT_NAME: &str = "Casual AI";
+
+/// The comment initials the agent principal's comments carry.
+pub const AGENT_INITIALS: &str = "AI";
+
+const ON_BEHALF_OF: &str = " on behalf of ";
+
+/// The author the agent principal writes under for `person`: "Casual AI on behalf of Ada
+/// Lovelace". O(name).
+#[must_use]
+pub fn agent_author(person: &str) -> String {
+    format!("{AGENT_NAME}{ON_BEHALF_OF}{person}")
+}
+
+/// Whether `author` is the agent principal acting for `person`. O(name), no allocation.
+#[must_use]
+pub fn is_agent_for(author: &str, person: &str) -> bool {
+    author
+        .strip_prefix(AGENT_NAME)
+        .and_then(|rest| rest.strip_prefix(ON_BEHALF_OF))
+        == Some(person)
+}
+
+/// The person an agent-principal author acts for, if `author` is one. O(name).
+#[must_use]
+pub fn agent_principal(author: &str) -> Option<&str> {
+    author
+        .strip_prefix(AGENT_NAME)
+        .and_then(|rest| rest.strip_prefix(ON_BEHALF_OF))
+        .filter(|person| !person.is_empty())
+}
+
 /// Who the order says wrote an operation: the stamp [`conform`] writes onto what it introduces.
 #[derive(Clone, Copy, Debug)]
 pub struct Stamp<'a> {
@@ -74,6 +118,14 @@ pub struct Stamp<'a> {
     pub initials: &'a str,
     /// The id space the sender mints in, which is what tells "introduced" from "restored".
     pub space: IdSpace,
+}
+
+impl Stamp<'_> {
+    /// Whether an introduced item may keep `author`: the stamp's own name, or its agent
+    /// principal's. O(name).
+    fn admits(&self, author: Option<&str>) -> bool {
+        author.is_some_and(|author| author == self.name || is_agent_for(author, self.name))
+    }
 }
 
 /// What [`conform`] changed, for a caller that wants to report it. Zero on an honest arrival.
@@ -140,6 +192,24 @@ pub fn conform(document: &Document, operation: &mut Operation, stamp: &Stamp<'_>
                             comment.initials.clone_from(&prior.initials);
                             comment.person.clone_from(&prior.person);
                             out.restored += 1;
+                        }
+                    } else if stamp.space.holds(id.node_id())
+                        && comment
+                            .author
+                            .as_deref()
+                            .is_some_and(|author| is_agent_for(author, stamp.name))
+                    {
+                        // The participant's own assistant: it keeps its principal, with the
+                        // agent's initials and no `people.xml` join to somebody else.
+                        let person_ok =
+                            comment.person.is_none() || comment.person == comment.author;
+                        let initials = Some(AGENT_INITIALS.to_owned());
+                        if comment.initials != initials || !person_ok {
+                            comment.initials = initials;
+                            if !person_ok {
+                                comment.person = None;
+                            }
+                            out.restamped += 1;
                         }
                     } else if stamp.space.holds(id.node_id()) {
                         let name = Some(stamp.name.to_owned());
@@ -265,7 +335,7 @@ fn settle(
             slot.clone_from(prior);
             out.restored += 1;
         }
-        None if stamp.space.holds(minted) && slot.as_deref() != Some(stamp.name) => {
+        None if stamp.space.holds(minted) && !stamp.admits(slot.as_deref()) => {
             *slot = Some(stamp.name.to_owned());
             out.restamped += 1;
         }
@@ -286,7 +356,7 @@ fn conform_inlines(
             let prior = held.get(&(mark, id));
             let wanted = match prior {
                 Some(prior) => author != prior.as_ref(),
-                None => stamp.space.holds(minted) && author.map(String::as_str) != Some(stamp.name),
+                None => stamp.space.holds(minted) && !stamp.admits(author.map(String::as_str)),
             };
             if wanted && let Some(slot) = author_slot(inline) {
                 settle(slot, minted, prior, stamp, out);

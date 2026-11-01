@@ -718,7 +718,7 @@ offers under a permissive licence.
 | 5 | **Review this document** (clarity, consistency, terminology, factual claims flagged) | Review ▸ Add-ins ▸ Review with AI | Comments and suggestions authored "Casual AI", previewed as one card, grouped by kind |
 | 6 | **Comment helpers:** draft a reply, summarise a thread, resolve-with-edit | A ✦ in each comment's actions | Reply draft in the comment box (the person sends it); resolve-with-edit through the card |
 | 7 | **Grammar and style** (LanguageTool plugin, host-configured server) | Review band, live underlines like spell check | Suggestions from rule hits, previewed; no model needed |
-| 8 | **Diagrams from text** (Mermaid plugin) | Insert ▸ Add-ins ▸ Diagram | A picture with its source kept for re-editing |
+| 8 | **Diagrams from text** (Mermaid plugin). **Not to be built (owner, 2026-11-01)**, see §18 | — | — |
 | 9 | **Ask across files** (host collections, RAG) | `@` in the chat box | Citations to host URIs |
 | 10 | **Tools from MCP servers** | Settings ▸ AI ▸ Connected tools | Per-server grant prompt; results shown as steps |
 
@@ -962,7 +962,8 @@ being refused as "the first runtime npm dependency"), and Mermaid with its rende
 dependencies would be several megabytes of vendored code, and a diagram can only be inserted as
 a picture, which the engine does not track as a suggestion (`insert_image` is not trackable, so
 an add-in could insert one only under a host's direct grant). **Mermaid is therefore not built;
-the owner's call** (vendoring a library and an untracked insert path). In its place:
+the owner's call** (vendoring a library and an untracked insert path), **confirmed by the owner on
+2026-11-01: Mermaid is not to be built.** Row 8 of §13 is closed on that decision. In its place:
 **Readability**, which needs no third-party code and fits the suggestion model.
 
 - **LanguageTool** (`webapp/plugins/languagetool/`): `read`, `suggest`, `network` to
@@ -1399,8 +1400,74 @@ kept, Stop, Reject all, one undo step, a mid-stream injection rolled back with n
 undo, the five role and mode rows, and both table actions end to end. Each was driven red by a
 mutation (the commit message lists them).
 
-**Open.** The co-editor is per mount; in a shared room the AI's commits are this replica's own and
-travel as the person's (`docs/175` §5.2: the relay's attested name wins at commit), so the "Casual
-AI" author does not survive there until `docs/178` §10's agent principal exists, and other
-participants see the text arrive but not the pointer. Header, footer and note bodies take the
-same writes, but the actions only start from body paragraphs.
+**Open (closed in §24).** Header, footer and note bodies take the same writes, but the actions
+only start from body paragraphs. The shared-room gap this paragraph recorded is closed in §24.1.
+
+## 24. Built: the agent principal, a tracked text-to-table, and turns that cannot cross (RM-52, 2026-11-01)
+
+The three gaps #923 shipped with, closed on `program/ai-main-rebased`.
+
+### 24.1 Casual AI in a shared room: an agent principal, through the same OT path
+
+Before: in a room every replica conforms the authorship an arrival introduces to the relay's
+attested stamp (`docs/175` §5.2), so the AI's "Casual AI" suggestions became the person's, and the
+other participants saw text arrive with no pointer. Now (`docs/178` §10, without a headless
+replica or a seat of its own):
+
+- **Identity, derived and not claimed.** In a room whose relay named the participant, the AI
+  writes as `casual_doc_edit::authorship::agent_author(<their attested name>)`, "Casual AI on
+  behalf of Ada Lovelace" (`WasmDocument::ai_author`, used by the live turn and the preview).
+  `conform` keeps an introduced mark or comment whose author is exactly that form of the STAMP's
+  own name; anything else is restamped as before. So a participant can attribute work to their
+  own assistant and to nobody else's ("Casual AI on behalf of Bob" from Ada's connection becomes
+  "Ada Lovelace"), and the agent label is the one fixed `AGENT_NAME`, not a free prefix. Every
+  replica runs the same function on the same stamp, so the agent author converges as a name does.
+  An agent comment carries initials `AI`. Outside a room the author is "Casual AI", unchanged.
+- **One op set.** The AI's batches are this replica's own transactions (`apply_group`, the
+  ADR-033 path); nothing new travels but the author string.
+- **Presence.** The AI's caret rides in its person's own presence payload: `presence::Caret`
+  gained `agent: Option<CaretEnd>` (absent from the encoding when `None`, so a caret without one
+  is byte for byte the old frame and an older reader ignores it; `PROTOCOL_VERSION` does not
+  move). `Roster::rebase` maps it with the caret and withdraws it ALONE when its paragraph goes.
+  The engine gains `caretFrameWithAgent`, and `remoteSelections` returns `agent: {caret}`. The
+  co-editor tells the room when its anchor moves (`ai_live.mjs` `aiLiveMoved` / `aiLiveAnchor`);
+  `collab_presence.mjs` sends the frame with the agent end while a turn writes and paints the
+  remote AI's caret and flag through the same `paintCaretFlag`, labelled "Casual AI · <person>"
+  in the AI's colour. No provider, no turn: the frame is exactly what it was.
+- **Bounded.** Presence frames stay throttled at 100 ms; the AI's batches are 80 ms, so a turn
+  costs the room about ten small frames a second, no more than a person's caret while typing.
+
+What it does not do: the AI is not a member of the room (no chip in the people strip, no grant of
+its own); the relay's per-agent operation budget of `docs/178` §10 is still the M5 design.
+
+### 24.2 Convert text to table, tracked
+
+`table_review::suggest_text_to_table`: the table is a tracked insertion (`w:trPr/w:ins` on every
+row, cell text `w:ins`) placed before the source paragraphs, which stay struck (their text
+`w:del`, their marks deleted up to the following paragraph). Reject restores exactly the original
+paragraphs; Accept leaves only the table; both survive a DOCX round trip. Ids the conversion
+reused from a source are minted fresh. Sources that already carry tracked changes, or hold
+anything but text and tabs, are refused by name in Suggesting mode. `text_to_table` is
+`Trackable::Yes`; the planner and the Convert Text to Table dialog use it while suggesting. Two
+engine defects on every cross-paragraph tracked deletion were fixed with it: a suggest-only
+participant could not strike a paragraph mark (`is_tracked_only`), and a mark `w:rPr` holding only
+its `w:del` was imported as an empty mark run that outlived a rejection.
+
+### 24.3 Turn ids
+
+A turn's revisions were found by author and `w:date`, which is second-granular, and its id
+restarted at 1 once a turn was decided: two turns could decide each other's edits. The engine id
+is now monotonic per document and a turn owns exactly the revision serials its own commits
+allocated; the editor's public handle is `ai-turn-<uuid>` (`web_crypto.mjs`, so plain HTTP works).
+
+### 24.4 Evidence
+
+Rust: `authorship_tests` (the agent kept; somebody else's agent, a dressed-up person and bare
+"Casual AI" restamped), `presence` (the agent end encoded, rebased and withdrawn alone),
+`collab_tests` (the AI in a room writes as its principal; its caret reaches the other replica and
+moves with the text), `ai_turn_tests` (same-second turns, a decided turn's id), `table_tools` and
+`casual-doc-ai`'s every-trackable-command round trip. E2E: `ai-coediting-room.spec.mjs`, two
+browsers in a granted room: Bob sees "Casual AI · Ada Lovelace" move while Ada's assistant writes,
+the caret goes when the turn ends, both pages hold the same text, the suggestion card reads
+"Casual AI on behalf of Ada Lovelace" on both, and Reject all clears it on Bob's page. The
+mutations are in the commit messages.

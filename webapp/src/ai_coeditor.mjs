@@ -36,6 +36,7 @@ import { participantDisplay } from "./presence_strip.mjs";
 import { paintCaretFlag } from "./collab_presence.mjs";
 import { admits } from "./ai_edit_mode.mjs";
 import { randomUuid } from "./web_crypto.mjs";
+import { AI_COLOR, aiLiveMoved } from "./ai_live.mjs";
 
 /** How long deltas are buffered before one batch is written. */
 export const FLUSH_MS = 80;
@@ -45,7 +46,7 @@ export const TURN_LIMITS = Object.freeze({ bytes: 256 * 1024, breaks: 400, cellB
 export const HIGHLIGHT_MS = 450;
 /** The AI's colour: one fixed hue so it is recognisable across sessions, with
  *  the ink the presence seam measures for it (`participantDisplay`). */
-export const AI_COLOR = "#7c3aed";
+export { AI_COLOR };
 
 const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F‪-‮⁦-⁩]/;
 
@@ -181,10 +182,13 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
     el.style.transform = `translate(${Math.round(point.x)}px, ${Math.round(point.y)}px)`;
     el.dataset.node = at.node;
     el.dataset.offset = String(at.offset);
+    // The AI moved (not just the page under it): a shared room tells the others.
+    if (glide) aiLiveMoved();
   }
 
   function hidePointer() {
     if (pointer) pointer.hidden = true;
+    aiLiveMoved();
   }
 
   function currentAnchor() {
@@ -378,6 +382,12 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
   }
 
   const coeditor = {
+    /** Where the AI is writing, `{node, offset}`, while a turn writes; else
+     *  null. A shared room puts it in this participant's caret frame. */
+    writingAnchor() {
+      return turn?.writing ? currentAnchor() : null;
+    },
+
     /** The live turn's id and state, or null. */
     current() {
       return turn ? { turn: turn.id, mode: turn.mode, writing: turn.writing, decided: turn.decided, batches: turn.batches, pending: turn.pending.length, written: turn.written, timer: !!turn.timer } : null;

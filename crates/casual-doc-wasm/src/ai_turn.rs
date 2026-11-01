@@ -262,8 +262,10 @@ impl WasmDocument {
         Ok(())
     }
 
+    /// The author the turn's suggestions and comments carry: "Casual AI", or in a shared
+    /// room the agent principal acting for this participant (`ai_author`, `docs/178` §10).
     fn turn_author(&self) -> Option<String> {
-        Some(casual_doc_ai::AI_AUTHOR.to_owned())
+        Some(self.ai_author())
     }
 
     fn turn_result(&mut self, caret: Pos, ops: &[Operation]) -> EditResult {
@@ -706,7 +708,7 @@ impl WasmDocument {
             end,
             text,
             author,
-            Some("AI".to_owned()),
+            Some(casual_doc_edit::authorship::AGENT_INITIALS.to_owned()),
             Some(held.date),
         )?;
         self.turn_commit(turn, &lowered.operations)?;
