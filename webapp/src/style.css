@@ -14241,3 +14241,11 @@ body.phone-mode .plugin-panel { height: 55vh; }
 .dialog-card.settings-dialog {
   max-height: min(45rem, calc(100vh - 1.5rem));
 }
+
+/* The AI provider and Add-ins buttons make Settings' action row wider than a
+   phone. Let its button group shrink to the card so the existing wrap can put
+   buttons on another line instead of making the footer scroll sideways. */
+.settings-dialog > .dialog-foot .dialog-actions {
+  flex: 1 1 auto;
+  min-width: 0;
+}
