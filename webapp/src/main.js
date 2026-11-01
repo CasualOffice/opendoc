@@ -2823,9 +2823,10 @@ const pagesPanelView = createPagesPanel({
   getBandModel: () => pageBandModel,
   pageInView,
   bandTop: () => bandTopInScroller,
+  // Pages is a left-hand panel: it replaces the Outline (same side) and leaves
+  // the right side open (one panel per side, approved design P1).
   onExclusive: () => {
     closeFlankingPanel(outlinePanel, railOutline);
-    if (!reviewSidebar.hidden) toggleReview(false);
     reanchorPageOverlays();
   },
   onJumped: () => {

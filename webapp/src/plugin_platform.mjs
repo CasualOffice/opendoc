@@ -408,11 +408,10 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
     panelClose.setAttribute("aria-label", t("plugins.panel.close", { name: nameOf(record.manifest) }));
     panelClose.title = panelClose.getAttribute("aria-label");
     if (panelMore) panelMore.hidden = panelMenuRows(record).length === 0;
-    // One side panel at a time, as the outline and the review sidebar already
-    // agree between themselves (`editor_outline.mjs`).
+    // One panel per side (approved design P1, 2026-11-02): this panel is on
+    // the right, so it replaces the other right-hand one (the review sidebar)
+    // and leaves a left-hand Outline or Pages open.
     if (ed.reviewSidebar && !ed.reviewSidebar.hidden) ed.toggleReview?.(false);
-    ed.closeFlankingPanel?.(ed.outlinePanel, ed.railOutline);
-    ed.closeFlankingPanel?.(ed.pagesPanel, ed.railPages);
     panel.hidden = false;
     doc.body.classList.add("plugin-panel-open");
     sizer?.reclamp();

@@ -61,16 +61,33 @@ export function createOutline(ed) {
 
   function toggleOutline() {
     ed.outlinePanel.hidden = !ed.outlinePanel.hidden;
-    // Outline (left) and the review sidebar (right) are mutually exclusive so the
-    // canvas is never squeezed from both sides at once. Opening the outline closes
-    // the review sidebar; the reverse is enforced in renderReviewMarginItems.
-    if (!ed.outlinePanel.hidden && !ed.reviewSidebar.hidden) ed.toggleReview(false);
+    // One panel per side (approved design P1, 2026-11-02): the outline replaces
+    // the other left-hand panel (Pages) and leaves the right side alone; the
+    // page re-centres between them and scrolls sideways when both are open.
     if (!ed.outlinePanel.hidden) closeFlankingPanel(ed.pagesPanel, ed.railPages);
     ed.railOutline.setAttribute("aria-pressed", String(!ed.outlinePanel.hidden));
     buildOutline();
     reanchorPageOverlays();
   }
   ed.railOutline.addEventListener("click", toggleOutline);
+
+  // With a panel on each side the page can be wider than the space between
+  // them; the viewport then scrolls sideways. Keep the page centred in view
+  // when that space changes (a panel opened, closed or resized), as Docs does,
+  // instead of showing the left gutter with the page cut off under the right
+  // panel. Only when the width changed, so the reader's own sideways scroll is
+  // left alone. O(1) per resize.
+  let lastViewportWidth = 0;
+  if (typeof ResizeObserver === "function" && ed.viewportEl) {
+    new ResizeObserver(() => {
+      const v = ed.viewportEl;
+      const width = v.clientWidth;
+      if (width === lastViewportWidth) return;
+      lastViewportWidth = width;
+      const overflow = v.scrollWidth - width;
+      v.scrollLeft = overflow > 0 ? Math.round(overflow / 2) : 0;
+    }).observe(ed.viewportEl);
+  }
   ed.outlineClose.addEventListener("click", toggleOutline);
 
   /** The Pages navigator. Its behaviour lives in `pages_panel.mjs` (HF-085): six
