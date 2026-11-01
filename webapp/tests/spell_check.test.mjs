@@ -303,6 +303,24 @@ test("the word under the caret is not flagged, and reappears when the caret leav
   assert.deepEqual(h.flags(), ["qzxaa", "qzxbb"]);
 });
 
+// Moving the caret is not an edit and schedules no scan, so the paint has to
+// read the caret as it is NOW. It read the offset the last scan recorded, and a
+// word a click had put the caret in stayed unmarked after the caret left it,
+// until the next keystroke (HF-417; the e2e audit found it when "move the caret
+// off, then assert" still saw no mark). No `settle` between the move and the
+// paint: that is the whole point.
+test("a word is marked again the moment the caret leaves it, with no rescan", async () => {
+  const engine = fakeEngine();
+  const h = harness(engine);
+  h.setCaret({ node: "p1b", offset: 12 }); // inside "qzxaa"
+  await settle(h);
+  assert.deepEqual(h.flags(), ["qzxbb"], "the word under the caret is not marked");
+  h.setCaret({ node: "p1b", offset: 0 });
+  assert.deepEqual(h.flags(), ["qzxaa", "qzxbb"], "and it is marked on the next paint");
+  h.setCaret({ node: "p1b", offset: 12 });
+  assert.deepEqual(h.flags(), ["qzxbb"], "and unmarked again when the caret comes back");
+});
+
 test("Ignore all clears the word everywhere; Ignore once clears only that occurrence", async () => {
   const engine = fakeEngine();
   const h = harness(engine);
