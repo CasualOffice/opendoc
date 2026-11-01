@@ -58,7 +58,7 @@ wasm-bindgen = { version = "0.2", optional = true }
 quick-xml.workspace = true
 # Rasterizes the SVG pages to compare them with the PNG pages (`tests/svg.rs`);
 # the same version and features `casual-doc-render` already links.
-resvg = { version = "0.45", default-features = false }
+resvg = { version = "0.49", default-features = false }
 zip.workspace = true
 
 [lints]
