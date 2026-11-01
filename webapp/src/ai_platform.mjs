@@ -126,8 +126,7 @@ export function startAiPlatform(ed, { assistant = null, view = globalThis } = {}
     const doc = view.document;
     const settings = doc?.getElementById("settingsPanel");
     if (settings?.hidden) doc.getElementById("settingsBtn")?.click();
-    const section = doc?.getElementById("settingsAiSection");
-    section?.scrollIntoView({ block: "start", behavior: "smooth" });
+    ed.showSettingsPage?.("ai");
     const first = doc?.getElementById("aiProviderPreset");
     if (first && !first.disabled) first.focus({ preventScroll: true });
   }

@@ -14418,7 +14418,7 @@ body.phone-mode .plugin-panel { height: 55vh; }
   font-size: var(--fs-md);
   font-weight: var(--fw-semibold);
   color: var(--accent-ink-on-surface, var(--accent));
-  min-block-size: 1.5rem;
+  min-block-size: var(--h-dense);
   display: flex;
   align-items: center;
 }
@@ -14557,3 +14557,71 @@ body.phone-mode .plugin-panel { height: 55vh; }
 .ai-help-write .ms { font-size: var(--icon-sm); color: var(--accent-text); }
 .ai-help-write:hover { background: var(--accent-soft); color: var(--accent-text); }
 .ai-help-write:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Settings with a left navigation (approved design D3; Word Options). The
+   body is nav + one page; only the chosen page's sections show. */
+#settingsPanel .settings-dialog {
+  width: min(var(--dialog-width-l), 100%);
+}
+#settingsPanel .settings-body {
+  display: grid;
+  grid-template-columns: 11rem minmax(0, 1fr);
+  column-gap: var(--dlg-gap);
+  row-gap: var(--dlg-gap);
+  align-content: start;
+  columns: auto;
+  min-block-size: 26rem;
+}
+#settingsPanel .settings-body > .settings-nav {
+  grid-column: 1;
+  grid-row: 1 / span 20;
+  display: grid;
+  align-content: start;
+  gap: 0.125rem;
+  padding-inline-end: var(--space-3);
+  border-inline-end: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+}
+#settingsPanel .settings-nav button {
+  display: flex;
+  align-items: center;
+  min-block-size: var(--h-input);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-md);
+  text-align: start;
+  cursor: pointer;
+}
+#settingsPanel .settings-nav button:hover { background: var(--hover, var(--surface-2)); color: var(--ink); }
+#settingsPanel .settings-nav button[aria-selected="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: var(--fw-medium);
+}
+#settingsPanel .settings-nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+#settingsPanel .settings-body > [data-settings-page] {
+  grid-column: 2;
+  margin: 0;
+  break-inside: auto;
+}
+#settingsPanel .settings-body:not([data-settings-page="general"]) > [data-settings-page="general"],
+#settingsPanel .settings-body:not([data-settings-page="proofing"]) > [data-settings-page="proofing"],
+#settingsPanel .settings-body:not([data-settings-page="saving"]) > [data-settings-page="saving"],
+#settingsPanel .settings-body:not([data-settings-page="ai"]) > [data-settings-page="ai"] {
+  display: none;
+}
+#settingsPanel .settings-body > .settings-ai {
+  border-top: 0;
+  padding-top: 0;
+}
+#settingsPanel .dialog-foot .dialog-button-utility { margin-inline-end: auto; }
+@media (max-width: 40rem) {
+  #settingsPanel .settings-body { grid-template-columns: minmax(0, 1fr); }
+  #settingsPanel .settings-body > .settings-nav { grid-row: auto; grid-auto-flow: column; overflow-x: auto; border: 0; padding: 0; position: static; }
+  #settingsPanel .settings-body > [data-settings-page] { grid-column: 1; }
+}

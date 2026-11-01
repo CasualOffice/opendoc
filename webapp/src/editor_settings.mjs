@@ -186,6 +186,44 @@ export function createSettings(ed) {
     toggleSettings();
   });
   settingsClose.addEventListener("click", () => toggleSettings(false));
+  document.getElementById("settingsDone")?.addEventListener("click", () => toggleSettings(false));
+
+  // Settings pages (approved design D3, Word Options' left navigation): one
+  // topic on screen at a time instead of every section in two long columns.
+  // Tabs with arrow-key movement; the chosen page is remembered for the
+  // session. Works in the dialog and in the File page's Settings pane, which
+  // are the same element.
+  const settingsBody = settingsPanel.querySelector(".settings-body");
+  const settingsTabs = [...settingsPanel.querySelectorAll("[data-settings-tab]")];
+  function showSettingsPage(page, focus = false) {
+    if (!settingsBody || !settingsTabs.length) return;
+    const known = settingsTabs.some((tab) => tab.dataset.settingsTab === page);
+    const current = known ? page : settingsTabs[0].dataset.settingsTab;
+    settingsBody.dataset.settingsPage = current;
+    for (const tab of settingsTabs) {
+      const on = tab.dataset.settingsTab === current;
+      tab.setAttribute("aria-selected", String(on));
+      tab.tabIndex = on ? 0 : -1;
+      if (on && focus) tab.focus();
+    }
+    settingsBody.scrollTop = 0;
+  }
+  for (const tab of settingsTabs) {
+    tab.addEventListener("click", () => showSettingsPage(tab.dataset.settingsTab));
+    tab.addEventListener("keydown", (e) => {
+      const i = settingsTabs.indexOf(tab);
+      const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
+      if (step) {
+        e.preventDefault();
+        showSettingsPage(settingsTabs[(i + step + settingsTabs.length) % settingsTabs.length].dataset.settingsTab, true);
+      } else if (e.key === "Home" || e.key === "End") {
+        e.preventDefault();
+        showSettingsPage(settingsTabs[e.key === "Home" ? 0 : settingsTabs.length - 1].dataset.settingsTab, true);
+      }
+    });
+  }
+  showSettingsPage("general");
+  ed.showSettingsPage = showSettingsPage;
   applySettings();
   // After `applySettings`, so the picker is built against the settings that were
   // actually loaded, and awaited nowhere: the editor draws in English and the

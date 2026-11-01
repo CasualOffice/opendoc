@@ -289,7 +289,7 @@
           <!-- Ask Casual AI, always reachable without a selection (owner, 2026-11-02;
                Gemini's "Ask Gemini" sits here in Google Docs). Hidden until an AI
                provider is set up and the assistant runs (plugin_platform reflectChrome). -->
-          <button data-i18n-title="plugins.assistant.command.ask" id="aiHeaderBtn" type="button" class="ai-header-btn" title="Ask Casual AI" hidden><span class="ms" aria-hidden="true">auto_awesome</span><span data-i18n="plugins.assistant.command.ask" class="ai-header-text">Ask Casual AI</span></button>
+          <button id="aiHeaderBtn" type="button" class="ai-header-btn" title="Ask Casual AI" hidden><span class="ms" aria-hidden="true">auto_awesome</span><span class="ai-header-text">Ask Casual AI</span></button>
           <!-- The editing mode, at the top right: where all three references put
                it — ONLYOFFICE at the right of the tab row, Google Docs at the
                right of the toolbar ("Editing ▾"), Word at the right of the ribbon
@@ -427,7 +427,13 @@
           </button>
         </header>
         <div class="dialog-body settings-body">
-      <div class="settings-section">
+        <nav class="settings-nav" role="tablist" aria-label="Settings" aria-orientation="vertical">
+          <button type="button" role="tab" data-settings-tab="general" data-i18n="settingsNav.general">General</button>
+          <button type="button" role="tab" data-settings-tab="proofing" data-i18n="settingsNav.proofing">Proofing</button>
+          <button type="button" role="tab" data-settings-tab="saving" data-i18n="settingsNav.saving">Saving</button>
+          <button type="button" role="tab" data-settings-tab="ai" data-i18n="settingsNav.ai">AI and add-ins</button>
+        </nav>
+      <div class="settings-section" data-settings-page="general">
         <div data-i18n="settingsPanel.theme" class="settings-label">Theme</div>
         <div data-i18n-label="settingsPanel.theme.label" class="segmented" id="themeSeg" role="radiogroup" aria-label="Theme">
           <button data-i18n="themeSeg.system" type="button" data-theme="system">System</button>
@@ -440,7 +446,7 @@
            cannot read the dialog needs to reach this control without reading
            the dialog, so it is at the top and its options name themselves
            (docs/124 §5). -->
-      <div class="settings-section">
+      <div class="settings-section" data-settings-page="general">
         <div class="settings-label" data-i18n="settings.language.label">Language</div>
         <select id="languageSelect" class="dialog-select" data-i18n-label="settings.language.label" aria-label="Language"></select>
         <p class="settings-note" id="languageNote" data-i18n="settings.language.note">Translations other than English are machine-produced and have not been reviewed by a native speaker.</p>
@@ -464,12 +470,12 @@
            discover it — `docs/99` §9.6: understating is as false as overstating,
            and a preference that silently governs some surfaces and not others is
            worse than one that says which. -->
-      <div class="settings-section">
+      <div class="settings-section" data-settings-page="general">
         <div class="settings-label" data-i18n="settings.units.label" id="measurementUnitLabel">Measurement units</div>
         <select id="measurementUnitSelect" class="dialog-select" aria-labelledby="measurementUnitLabel"></select>
         <p class="settings-note" data-i18n="settings.units.note">Used by Page setup. The ruler still draws inch ticks whatever is chosen here.</p>
       </div>
-      <div class="settings-section">
+      <div class="settings-section" data-settings-page="general">
         <div data-i18n="settingsPanel.accent" class="settings-label">Accent</div>
         <div class="swatches" id="accentSwatches">
           <button data-i18n-title="accentSwatches.orange.title" data-i18n-label="accentSwatches.orange.label" type="button" class="acc" data-accent="#e2622a" style="--c:#e2622a" title="Orange" aria-label="Orange"></button>
@@ -483,7 +489,7 @@
           </label>
         </div>
       </div>
-      <div class="settings-section">
+      <div class="settings-section" data-settings-page="general">
         <div data-i18n="settingsPanel.reviewerIdentity" class="settings-label">Reviewer identity</div>
         <div class="dialog-field-grid">
           <label data-i18n="settingsPanel.name" class="dialog-field">Name<input data-i18n-placeholder="settingsPanel.you.placeholder" id="authorName" type="text" maxlength="255" placeholder="You" autocomplete="off" /></label>
@@ -498,7 +504,7 @@
       <!-- Autosave. The retention posture D-1 required be written down before
            any document bytes were kept on-device is stated HERE, next to the
            control that turns it off, rather than only in docs/112. -->
-      <div class="settings-section">
+      <div class="settings-section" data-settings-page="saving">
         <div data-i18n="settingsPanel.autosave" class="settings-label">Autosave</div>
         <label class="dialog-check">
           <input id="autosaveToggle" type="checkbox" checked />
@@ -512,7 +518,7 @@
            because "spell check" is a phrase people reasonably assume means a
            server. It also says where a word added to the dictionary goes,
            since there is no surface yet that can take one back out. -->
-      <div class="settings-section">
+      <div class="settings-section" data-settings-page="proofing">
         <div data-i18n="settingsPanel.spelling" class="settings-label">Spelling</div>
         <label class="dialog-check">
           <input id="spellCheckToggle" type="checkbox" checked />
@@ -530,7 +536,7 @@
       <!-- AutoCorrect (docs/174 TA-05, TA-06): Word's "AutoFormat As You Type"
            switches. Each is also a command-palette switch; `autocorrect.mjs`
            owns all three. -->
-      <div class="settings-section">
+      <div class="settings-section" data-settings-page="proofing">
         <div data-i18n="settingsPanel.autoCorrect" class="settings-label">AutoCorrect</div>
         <label class="dialog-check">
           <input id="smartQuotesToggle" type="checkbox" checked />
@@ -548,7 +554,7 @@
              editable lists live in the AutoCorrect options dialog. -->
         <button data-i18n="settingsPanel.autoCorrectOptions" type="button" id="settingsAutoCorrectOptions" class="dialog-button" aria-haspopup="dialog">AutoCorrect options…</button>
       </div>
-          <section id="settingsAiSection" class="settings-section settings-ai" aria-labelledby="settingsAiLabel">
+          <section id="settingsAiSection" class="settings-section settings-ai" data-settings-page="ai" aria-labelledby="settingsAiLabel">
             <div id="settingsAiLabel" class="settings-label" data-i18n="aiProviderDialog.title">AI provider</div>
             <p id="aiProviderManaged" class="dialog-field-note" hidden></p>
           <div id="aiProviderForm">
@@ -586,18 +592,15 @@
             <p id="aiEditAsNote" class="dialog-field-note"></p>
           </div>
           <p id="aiProviderStatus" class="dialog-field-note" role="status" aria-live="polite"></p>
-            <div class="settings-ai-actions"><button data-i18n="aiProviderDialog.forget" id="aiProviderForget" type="button" class="dialog-button dialog-button-utility">Forget</button><button data-i18n="aiProviderDialog.test" id="aiProviderTest" type="button" class="dialog-button dialog-button-utility">Test connection</button><button data-i18n="aiProviderDialog.save" id="aiProviderSave" type="button" class="dialog-button dialog-button-primary">Save</button></div>
+            <div class="settings-ai-actions"><button data-i18n="settingsPanel.addinsManage" type="button" id="settingsAddinsBtn" class="dialog-button dialog-button-utility">Manage add-ins…</button><button data-i18n="aiProviderDialog.forget" id="aiProviderForget" type="button" class="dialog-button dialog-button-utility">Forget</button><button data-i18n="aiProviderDialog.test" id="aiProviderTest" type="button" class="dialog-button dialog-button-utility">Test connection</button><button data-i18n="aiProviderDialog.save" id="aiProviderSave" type="button" class="dialog-button dialog-button-primary">Save</button></div>
           </section>
         </div>
         <footer class="dialog-foot">
-          <!-- AI provider and Add-ins (docs/183 §6.5): in the action row, not a body
-               group, so Settings still fits a 1280x720 laptop (dialog-fit). The
-               note says before anything is sent where text would go. -->
-          <span data-i18n="settingsPanel.aiProviderNote" id="aiProviderSummary" class="dialog-note">No AI provider is set up, so no text is sent anywhere.</span>
+          <span data-i18n="settingsPanel.aiProviderNote" id="aiProviderSummary" class="dialog-note" hidden>No AI provider is set up, so no text is sent anywhere.</span>
+          <button data-i18n="settingsPanel.aiProviderSetUp" type="button" id="aiProviderSettingsBtn" class="dialog-button" hidden>AI provider settings…</button>
+          <button data-i18n="settingsPanel.resetDefaults" type="button" id="settingsReset" class="dialog-button dialog-button-utility">Reset to defaults</button>
           <div class="dialog-actions">
-            <button data-i18n="settingsPanel.aiProviderSetUp" type="button" id="aiProviderSettingsBtn" class="dialog-button">AI provider settings…</button>
-            <button data-i18n="settingsPanel.addinsManage" type="button" id="settingsAddinsBtn" class="dialog-button">Manage add-ins…</button>
-            <button data-i18n="settingsPanel.resetDefaults" type="button" id="settingsReset" class="dialog-button">Reset to defaults</button>
+            <button data-i18n="bookmarkDialog.done" type="button" id="settingsDone" class="dialog-button dialog-button-primary">Done</button>
           </div>
         </footer>
       </section>
@@ -811,7 +814,7 @@
                the assistant runs; opens its panel with nothing selected. -->
           <div class="rgroup" data-group="ai" id="homeAiGroup" hidden>
             <div class="rgroup-ctl">
-              <button data-i18n-title="plugins.assistant.command.ask" data-i18n-label="plugins.assistant.command.ask" id="homeAiBtn" type="button" class="fmt fmt-big" title="Ask Casual AI" aria-label="Ask Casual AI"><span class="ms" aria-hidden="true">auto_awesome</span><span data-i18n="plugins.assistant.name" class="fmt-big-label">Casual AI</span></button>
+              <button id="homeAiBtn" type="button" class="fmt fmt-big" title="Ask Casual AI" aria-label="Ask Casual AI"><span class="ms" aria-hidden="true">auto_awesome</span><span class="fmt-big-label">Casual AI</span></button>
             </div>
           </div>
         </div>

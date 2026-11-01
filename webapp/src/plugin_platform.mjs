@@ -1127,6 +1127,17 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
     // AI plugin runs (no provider, no AI chrome — owner rule, 2026-10-31).
     if (aiHeaderBtn) aiHeaderBtn.hidden = !selectionRows;
     if (homeAiGroup) homeAiGroup.hidden = !selectionRows;
+    // Labelled here rather than in markup: the keys are declared in
+    // en_strings.mjs, and t() is safe because the buttons only show now.
+    if (selectionRows) {
+      const ask = has("plugins.assistant.command.ask") ? t("plugins.assistant.command.ask") : "Ask Casual AI";
+      const name = has("plugins.assistant.name") ? t("plugins.assistant.name") : "Casual AI";
+      aiHeaderBtn?.querySelector(".ai-header-text")?.replaceChildren(ask);
+      aiHeaderBtn?.setAttribute("title", ask);
+      homeAiBtn?.querySelector(".fmt-big-label")?.replaceChildren(name);
+      homeAiBtn?.setAttribute("title", ask);
+      homeAiBtn?.setAttribute("aria-label", ask);
+    }
   }
 
   // ---- The registry --------------------------------------------------------
