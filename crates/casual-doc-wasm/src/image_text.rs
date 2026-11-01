@@ -45,10 +45,12 @@
 
 use casual_doc_edit::{Operation, Pos};
 use casual_doc_model::NodeId;
+// Own line: the edited line's face.
 use casual_doc_model::v1::{
     BlockNode, Color, GroupChild, GroupPicture, GroupTextBox, InlineNode, MediaId, MediaReference,
     Paragraph, RgbColor, Run, RunProperties, WordprocessingGroup,
 };
+use casual_doc_model::v1::{FontName, FontRef};
 use casual_doc_render::image_text::{self, BoxGeometry, FillMode};
 use wasm_bindgen::prelude::*;
 
@@ -57,6 +59,11 @@ use crate::{EditResult, HistoryKind, WasmDocument, to_js};
 /// The em of a line's text against its ink's height, ascender to
 /// descender: the importer's `EM_PER_LINE_BOX`.
 const EM_PER_INK: f64 = 1.1;
+
+/// Layouts [`WasmDocument::fit_to_line`] may take.
+const FIT_PASSES: usize = 4;
+/// The smallest share of the measured size the fit shrinks a line to.
+const MIN_FIT_SHARE: f64 = 0.6;
 
 /// Why an image-text command refused, as a catalogue key the host shows.
 pub(crate) const NOT_IMAGE_TEXT: &str = "imageText.refused.notImageText";
@@ -420,6 +427,13 @@ impl WasmDocument {
                         if let Some(size) = size {
                             properties.size_half_points = Some(size);
                         }
+                        // The nearest bundled face to the ink's (stroke
+                        // contrast for serif, an even pitch for mono).
+                        let family = Some(FontRef::Named(FontName {
+                            name: style.face.family().to_owned(),
+                        }));
+                        properties.font_ref.clone_from(&family);
+                        properties.font_ref_h_ansi = family;
                         run.properties = properties.into();
                     }
                 }
@@ -446,7 +460,8 @@ impl WasmDocument {
                 .children
                 .insert(m.text_box, GroupChild::Picture(patch));
         }
-        self.apply_action_caret_as(
+        let revealing = m.patch.is_none();
+        let result = self.apply_action_caret_as(
             vec![
                 declare,
                 Operation::SetInlines {
@@ -456,7 +471,116 @@ impl WasmDocument {
             ],
             Pos::new(paragraph, offset),
             HistoryKind::ImageText,
-        )
+        )?;
+        if !revealing {
+            return Ok(result);
+        }
+        Ok(self
+            .fit_to_line(&located, paragraph, offset)?
+            .unwrap_or(result))
+    }
+
+    /// The edited line set on one line, as the scan's was: while the laid-out
+    /// text wraps, its size shrinks by the overflow (a substitute face sets
+    /// wider than the scan's), down to [`MIN_FIT_SHARE`] of the measured
+    /// size, in the same undo step as the edit. At most [`FIT_PASSES`]
+    /// layouts. `None` when it already fits.
+    fn fit_to_line(
+        &mut self,
+        located: &Located,
+        paragraph: NodeId,
+        offset: u32,
+    ) -> Result<Option<EditResult>, String> {
+        let mut last = None;
+        let mut floor = None;
+        for _ in 0..FIT_PASSES {
+            let Some(text_box) = self.text_box(located) else {
+                break;
+            };
+            let length: usize = runs_of(&text_box).map(|r| r.text.len()).sum();
+            let id = paragraph.to_string();
+            let rects =
+                self.selection_rects(&id, 0, &id, u32::try_from(length).unwrap_or(u32::MAX));
+            let lines: std::collections::BTreeSet<i32> =
+                rects.chunks_exact(5).map(|r| r[2]).collect();
+            if lines.len() <= 1 {
+                break;
+            }
+            let used: i64 = rects.chunks_exact(5).map(|r| i64::from(r[3])).sum();
+            let scale = self.group_scale(located).unwrap_or(1.0);
+            let room = (text_box.extent.width_emu
+                - i64::from(text_box.body_properties.insets.left_emu)
+                - i64::from(text_box.body_properties.insets.right_emu))
+                as f64
+                / 635.0
+                * scale;
+            let share = (room / used.max(1) as f64 * 0.97).min(0.97);
+            let mut inlines = self
+                .anchor_inlines(located.anchor)
+                .ok_or_else(|| NOT_IMAGE_TEXT.to_owned())?;
+            let group =
+                group_mut(&mut inlines, located.group).ok_or_else(|| NOT_IMAGE_TEXT.to_owned())?;
+            let mut changed = false;
+            for child in &mut group.children {
+                let GroupChild::TextBox(boxed) = child else {
+                    continue;
+                };
+                if boxed.id != located.text_box {
+                    continue;
+                }
+                for block in &mut boxed.blocks {
+                    let BlockNode::Paragraph(p) = block else {
+                        continue;
+                    };
+                    for inline in &mut p.inlines {
+                        if let InlineNode::Run(run) = inline {
+                            let mut properties: RunProperties = (*run.properties).clone();
+                            let size = f64::from(properties.size_half_points.unwrap_or(22));
+                            let least = *floor.get_or_insert((size * MIN_FIT_SHARE).max(8.0));
+                            let next = (size * share).floor().max(least);
+                            if next < size {
+                                properties.size_half_points = Some(next as u32);
+                                run.properties = properties.into();
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+            let ops = vec![Operation::SetInlines {
+                node: located.anchor,
+                inlines,
+            }];
+            self.apply_group(
+                &ops,
+                HistoryKind::ImageText.label(),
+                casual_doc_transaction::Coalesce::Continue,
+                crate::Origin::Edit,
+            )?;
+            last =
+                Some(self.finish_edit_with(Pos::new(paragraph, offset), &crate::damage_of(&ops)));
+        }
+        Ok(last)
+    }
+
+    /// The located text box, as it is now.
+    fn text_box(&self, located: &Located) -> Option<GroupTextBox> {
+        let mut inlines = self.anchor_inlines(located.anchor)?;
+        let group = group_mut(&mut inlines, located.group)?;
+        group.children.iter().find_map(|c| match c {
+            GroupChild::TextBox(t) if t.id == located.text_box => Some(t.clone()),
+            _ => None,
+        })
+    }
+
+    /// How much the group scales its child space onto the page.
+    fn group_scale(&self, located: &Located) -> Option<f64> {
+        let mut inlines = self.anchor_inlines(located.anchor)?;
+        let group = group_mut(&mut inlines, located.group)?;
+        Some(group.extent.width_emu as f64 / group.transform.child_extent.width_emu.max(1) as f64)
     }
 
     /// [`restore_image_text`](Self::restore_image_text) without `JsValue`.
@@ -701,6 +825,10 @@ mod tests {
     }
 
     fn document() -> WasmDocument {
+        document_with("First recognised line")
+    }
+
+    fn document_with(first: &str) -> WasmDocument {
         let media = MediaId::new(id(900));
         let mut definitions = casual_doc_model::v1::Definitions::default();
         definitions.media.insert(
@@ -760,7 +888,7 @@ mod tests {
                     flip_v: false,
                     rotation: None,
                 }),
-                line_box(20, 100, "First recognised line"),
+                line_box(20, 100, first),
                 line_box(30, 200, "Second line"),
             ],
         };
@@ -866,6 +994,55 @@ mod tests {
         // Undo is exact.
         doc.undo_inner().expect("undo");
         assert_eq!(doc.document, before);
+    }
+
+    /// The edited line is set on one line, as the scan's was: a substitute
+    /// face that sets wider than the ink shrinks, in the same undo step.
+    #[test]
+    fn an_edited_line_that_would_wrap_is_shrunk_onto_one_line() {
+        let long = "A longer recognised line, wider";
+        let mut doc = document_with(long);
+        let before = doc.document.clone();
+        doc.edit_image_text_inner(&id(21).to_string(), 0, "fill")
+            .unwrap();
+        let id21 = id(21).to_string();
+        let rects = doc.selection_rects(&id21, 0, &id21, long.len() as u32);
+        let lines: std::collections::BTreeSet<i32> = rects.chunks_exact(5).map(|r| r[2]).collect();
+        assert_eq!(lines.len(), 1, "the line wraps: {rects:?}");
+        let group = first_group(&doc.document).unwrap();
+        let GroupChild::TextBox(boxed) = &group.children[2] else {
+            panic!("the box");
+        };
+        let size = runs_of(boxed)
+            .next()
+            .unwrap()
+            .properties
+            .size_half_points
+            .unwrap();
+        assert!(size < 36, "shrunk from the measured 18 pt: {size}");
+        // One undo takes the edit and the fit away together.
+        doc.undo_inner().expect("undo");
+        assert_eq!(doc.document, before);
+    }
+
+    /// The face is the nearest bundled one to the ink's: the synthetic
+    /// scan's stems stand on an even pitch, so it is set in Liberation Mono.
+    #[test]
+    fn the_edited_line_takes_the_nearest_bundled_face() {
+        let mut doc = document();
+        doc.edit_image_text_inner(&id(21).to_string(), 0, "fill")
+            .unwrap();
+        let group = first_group(&doc.document).unwrap();
+        let GroupChild::TextBox(boxed) = &group.children[2] else {
+            panic!("the box");
+        };
+        let run = runs_of(boxed).next().unwrap();
+        assert_eq!(
+            run.properties.font_ref,
+            Some(FontRef::Named(FontName {
+                name: "Liberation Mono".to_owned()
+            }))
+        );
     }
 
     #[test]

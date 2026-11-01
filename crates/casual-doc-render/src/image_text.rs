@@ -73,6 +73,9 @@ pub const INPAINT_SWEEPS: usize = 48;
 /// (root mean square, 0-255) make the box textured: [`Method::Inpaint`].
 pub const TEXTURE_RMS: f64 = 9.0;
 
+/// Stem width against the line's ink height from which a face is bold.
+pub const BOLD_STEM: f64 = 0.18;
+
 /// Feathered rim of a tile-filled patch, in pixels.
 const FEATHER: usize = 2;
 
@@ -218,7 +221,42 @@ pub struct LineStyle {
     pub stroke: f64,
     /// Stroke against height says the face is bold.
     pub bold: bool,
+    /// The kind of face the ink looks set in.
+    pub face: Face,
 }
+
+/// The kind of face a line's ink looks set in: what picks the nearest
+/// bundled face (Liberation Sans, Serif or Mono) for the edited text.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Face {
+    /// Even strokes, no serifs (Helvetica, Arial).
+    #[default]
+    Sans,
+    /// Stroke contrast: vertical stems markedly heavier than the horizontal
+    /// strokes (Times), which is where serifs and bracketed joins come from.
+    Serif,
+    /// Glyphs on an even pitch (Courier, a typewriter).
+    Mono,
+}
+
+impl Face {
+    /// The bundled family that draws this kind of face.
+    #[must_use]
+    pub const fn family(self) -> &'static str {
+        match self {
+            Self::Sans => "Liberation Sans",
+            Self::Serif => "Liberation Serif",
+            Self::Mono => "Liberation Mono",
+        }
+    }
+}
+
+/// Vertical stems heavier than horizontal strokes by this much make a
+/// serif face (Times measures about 2.3, Helvetica about 1.1).
+pub const SERIF_CONTRAST: f64 = 1.6;
+/// Glyph starts this even (coefficient of variation of their pitch) make a
+/// monospaced face; proportional text varies by a third or more.
+pub const MONO_PITCH_CV: f64 = 0.12;
 
 /// A patch: the box without its text, and what its text looked like.
 #[derive(Clone, Debug, PartialEq)]
@@ -701,6 +739,7 @@ pub fn line_style(image: &Rgba, ink: &[bool]) -> LineStyle {
             ink_top: 0,
             stroke: 0.0,
             bold: false,
+            face: Face::Sans,
         };
     }
     // The core of the ink, not its anti-aliased rim: the half of the ink
@@ -774,14 +813,64 @@ pub fn line_style(image: &Rgba, ink: &[bool]) -> LineStyle {
     }
     runs.sort_unstable();
     let stroke = runs.get(runs.len() / 2).copied().unwrap_or(0) as f64;
+    // Horizontal strokes: vertical runs of ink shorter than a third of the
+    // line (bars, serifs and bowls' tops, not the stems).
+    let mut bars = Vec::new();
+    for x in 0..w {
+        let mut run = 0usize;
+        for y in 0..=h {
+            if y < h && covered(y * w + x) {
+                run += 1;
+            } else {
+                if run > 0 && run * 3 < ink_height {
+                    bars.push(run);
+                }
+                run = 0;
+            }
+        }
+    }
+    bars.sort_unstable();
+    let bar = bars.get(bars.len() / 2).copied().unwrap_or(0) as f64;
+    // Glyph starts: the first column of each run of inked columns.
+    let mut starts = Vec::new();
+    let mut inked_before = false;
+    for x in 0..w {
+        let inked = (0..h).any(|y| covered(y * w + x));
+        if inked && !inked_before {
+            starts.push(x as f64);
+        }
+        inked_before = inked;
+    }
+    let pitches: Vec<f64> = starts.windows(2).map(|p| p[1] - p[0]).collect();
+    let cv = if pitches.len() >= 5 {
+        let mean = pitches.iter().sum::<f64>() / pitches.len() as f64;
+        let var = pitches.iter().map(|p| (p - mean).powi(2)).sum::<f64>() / pitches.len() as f64;
+        if mean > 0.0 {
+            var.sqrt() / mean
+        } else {
+            f64::INFINITY
+        }
+    } else {
+        f64::INFINITY
+    };
+    let face = if cv < MONO_PITCH_CV {
+        Face::Mono
+    } else if bar > 0.0 && stroke / bar >= SERIF_CONTRAST {
+        Face::Serif
+    } else {
+        Face::Sans
+    };
     LineStyle {
+        face,
         ink: ink_color,
         ink_height,
         ink_top: rows.0,
         stroke,
-        // Regular text faces stem at about 0.08-0.09 of the line's ink height
-        // (ascender to descender), bold ones at 0.13-0.15.
-        bold: ink_height > 0 && stroke / ink_height as f64 >= 0.115,
+        // Measured on scanner and browser rasters, a regular sans line's
+        // median stem reads up to about 0.15 of its ink height once bowls and
+        // anti-aliasing are counted; only a clearly heavier stem is bold, as a
+        // wrong bold reads worse than a missed one.
+        bold: ink_height > 0 && stroke / ink_height as f64 >= BOLD_STEM,
     }
 }
 
@@ -1063,14 +1152,55 @@ mod tests {
         );
         assert_eq!(style.ink_height, 25);
         assert!(!style.bold, "2-pixel stems on a 25-pixel line are regular");
-        let (heavy, _) = gradient_with_text(400, 50, [0, 0, 0, 255], 4);
+        let (heavy, _) = gradient_with_text(400, 50, [0, 0, 0, 255], 5);
         let b = sample_box(&heavy, &geometry_of(400, 50)).unwrap();
         let style = line_style(&b, &ink_mask(&b));
         assert!(
             style.bold,
-            "4-pixel stems on a 25-pixel line are bold ({})",
+            "5-pixel stems on a 25-pixel line are bold ({})",
             style.stroke
         );
+    }
+
+    /// Glyph-like marks at `starts`: a stem `stem` wide and a bar across the
+    /// top `bar` thick, on white.
+    fn glyphs(starts: &[usize], stem: usize, bar: usize) -> Rgba {
+        let mut page = Rgba::filled(400, 40, [250, 250, 250, 255]);
+        for &x in starts {
+            for y in 10..30 {
+                for xx in x..x + stem {
+                    page.set(xx, y, [0, 0, 0, 255]);
+                }
+            }
+            for y in 10..10 + bar {
+                for xx in x..x + 9 {
+                    page.set(xx, y, [0, 0, 0, 255]);
+                }
+            }
+        }
+        page
+    }
+
+    #[test]
+    fn the_face_is_read_from_pitch_and_stroke_contrast() {
+        let uneven = [10, 24, 33, 51, 60, 81, 92, 113, 121, 140];
+        let style = |page: Rgba| {
+            let b = sample_box(&page, &geometry_of(400, 40)).unwrap();
+            line_style(&b, &ink_mask(&b))
+        };
+        assert_eq!(
+            style(glyphs(&uneven, 4, 1)).face,
+            Face::Serif,
+            "heavy stems, hairline bars"
+        );
+        assert_eq!(
+            style(glyphs(&uneven, 3, 3)).face,
+            Face::Sans,
+            "even strokes"
+        );
+        let even: Vec<usize> = (0..10).map(|i| 10 + i * 16).collect();
+        assert_eq!(style(glyphs(&even, 3, 3)).face, Face::Mono, "an even pitch");
+        assert_eq!(Face::Serif.family(), "Liberation Serif");
     }
 
     #[test]

@@ -66,19 +66,31 @@ const LINE_BOX_PAD: f64 = 0.12;
 
 /// Marks every run in `inlines` as laid out and not painted
 /// (`RunProperties::no_text_fill`). O(inlines).
-fn unpainted(inlines: &mut [InlineNode]) {
+/// `cap` (half-points), when given, is the largest size a run may keep, so
+/// the unpainted line does not wrap inside its box. O(inlines).
+fn unpainted(inlines: &mut [InlineNode], cap: Option<u32>) {
     for inline in inlines {
         match inline {
             InlineNode::Run(run) => {
                 let mut properties = (*run.properties).clone();
                 properties.no_text_fill = Some(true);
+                if let Some(cap) = cap {
+                    let size = properties.size_half_points.unwrap_or(22).min(cap);
+                    properties.size_half_points = Some(size.max(2));
+                }
                 run.properties = properties.into();
             }
-            InlineNode::Hyperlink(link) => unpainted(&mut link.inlines),
+            InlineNode::Hyperlink(link) => unpainted(&mut link.inlines, cap),
             _ => {}
         }
     }
 }
+
+/// A substitute face's mean advance, in ems, generously: what the size of an
+/// unpainted line is capped by so it stays on one line in its box (the caret
+/// walks it as the line it is; the size is set from the ink when it is
+/// edited).
+const MEAN_ADVANCE_EM: f64 = 0.6;
 
 /// Word's default distance between a square-wrapped float and the text
 /// beside it (`distL`/`distR`, 0.125 in).
@@ -435,7 +447,14 @@ impl Emitter<'_> {
         for line in lines {
             let (chars, _) = text::join(&[line]);
             let mut inlines = self.inlines(&chars, None)?;
-            unpainted(&mut inlines);
+            // At most the size whose mean advance fits the line's width.
+            let count = chars
+                .iter()
+                .map(|c| c.text.chars().count())
+                .sum::<usize>()
+                .max(1);
+            let cap = ((line.x1 - line.x0) / (count as f64 * MEAN_ADVANCE_EM) * 2.0).floor();
+            unpainted(&mut inlines, (cap >= 2.0).then_some(cap as u32));
             let height = (line.bottom - line.top).max(1.0);
             let pad = (height * LINE_BOX_PAD).max(0.5);
             let (x0, y0, x1, y1) = (

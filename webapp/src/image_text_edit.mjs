@@ -61,21 +61,30 @@ export function imageTextRefusal(command, state) {
 export function createImageTextEdit(ed, { applyEditResult }) {
   const caret = () => ed.selection?.focus ?? null;
 
-  /** The state of the line box at the caret (O(document), so never per
-   *  keystroke: only when a menu or the palette is built). */
-  function atCaret() {
-    const at = caret();
-    if (!ed.doc || !at || typeof ed.doc.imageTextState !== "function") return "";
+  /** The state of the line box holding paragraph `node`. The engine finds the
+   *  box with one walk of the top-level paragraphs, so the answer is kept per
+   *  (document revision, paragraph): a menu or the palette built twice at the
+   *  same caret asks once, and typing never asks (`prepare` gates on the
+   *  O(1) `caretTextUnpainted` first). */
+  let memo = { key: "", state: "" };
+  function stateOf(node) {
+    if (!ed.doc || node == null || typeof ed.doc.imageTextState !== "function") return "";
+    const key = `${ed.currentRevision}|${node}`;
+    if (memo.key === key) return memo.state;
+    let state = "";
     try {
-      return ed.doc.imageTextState(at.node) || "";
+      state = ed.doc.imageTextState(node) || "";
     } catch {
-      return "";
+      state = "";
     }
+    memo = { key, state };
+    return state;
   }
+  const atCaret = () => stateOf(caret()?.node);
 
-  /** Erases the ink under the caret's line box by `mode`; the caret stays. */
-  async function edit(mode) {
-    const at = caret();
+  /** Erases the ink under the line box at `at` (the caret by default) by
+   *  `mode`; the selection stays. */
+  async function edit(mode, at = caret()) {
     if (!ed.doc || !at) return false;
     let res;
     try {
@@ -93,17 +102,23 @@ export function createImageTextEdit(ed, { applyEditResult }) {
     /** Before a text edit at the caret: makes an unedited line box editable.
      *  Always lets the edit go on (a refusal is said, not silent). */
     async prepare() {
-      const at = caret();
       const doc = ed.doc;
-      if (!doc || !at || typeof doc.caretTextUnpainted !== "function") return true;
-      let unpainted = false;
-      try {
-        unpainted = doc.caretTextUnpainted(at.node, at.offset);
-      } catch {
-        return true;
+      const selection = ed.selection;
+      if (!doc || !selection || typeof doc.caretTextUnpainted !== "function") return true;
+      // Both ends of a selection: a range from one line box into another
+      // makes both editable (the lines between them are whole paragraphs the
+      // edit removes or keeps, each in its own box).
+      const ends = [selection.focus];
+      if (selection.anchor && selection.anchor.node !== selection.focus.node) ends.push(selection.anchor);
+      for (const at of ends) {
+        let unpainted = false;
+        try {
+          unpainted = doc.caretTextUnpainted(at.node, at.offset);
+        } catch {
+          unpainted = false;
+        }
+        if (unpainted && stateOf(at.node) === "unedited") await edit(imageTextMode(), at);
       }
-      if (!unpainted || atCaret() !== "unedited") return true;
-      await edit(imageTextMode());
       return true;
     },
     /** The registry rows: the palette and the right-click menu. */

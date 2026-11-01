@@ -1299,11 +1299,26 @@ No new dependency.
 for grouping; its box is turned back by the same angle about the centre of the
 line's ink, so the patch covers the ink it replaces.
 
-**Not built yet:** fitting the edited text to the line's width (a substitute
-face can wrap a line), moving large patches off the main thread, a box spanning
-a selection across two boxes, opened PNG/JPG files and "Edit text in picture"
-for any picture in a DOCX (same engine: OCR the picture, then these boxes). The
-row is `docs/109` HF-415.
+**Fit, face and reach.** An edited line is set on one line as the scan's was:
+while its laid-out text wraps, its size shrinks by the overflow, to no less than
+60% of the measured size, in the same undo step. An unedited line's size is
+capped so its unpainted text does not wrap in its box (the caret walks it as one
+line). The face is the nearest bundled one: Liberation Mono for glyphs on an
+even pitch, Liberation Serif for stems markedly heavier than the horizontal
+strokes, else Liberation Sans; bold only for a clearly heavy stem. A selection
+from one line box into another makes both editable. The commands are on the
+right-click menu over a line box and in the palette, whose state is asked once
+per revision and caret paragraph, never per keystroke. Guarded on the painted
+page by `e2e/image-text-edit.spec.mjs` (a synthetic scan read by the committed
+models: deleting a line erases its glyphs, the next line is unchanged, and the
+DOCX round trip keeps both).
+
+**Not built yet:** large patches still run on the main thread (bounded by
+`MAX_PATCH_PIXELS`, unmeasured); text typed past the line's width wraps, as in
+Word; ODT export of unpainted text; a clipped scan picture is treated as
+unclipped; opened PNG/JPG files and "Edit text in picture" for any picture in a
+DOCX (same engine: OCR the picture, then these boxes). The row is `docs/109`
+HF-418.
 
 ## 20a. The host's OCR, wired (io, viewer, AI sessions, MCP)
 
