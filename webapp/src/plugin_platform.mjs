@@ -135,6 +135,27 @@ export const PLUGIN_TOKENS = Object.freeze([
   "--shadow-sm",
   "--shadow-popover",
   "--brand-font",
+  // Design system v2 (`docs/63` §7, `109` UX-052). The pre-v2 names above stay
+  // published as aliases of these, so a plugin written against either reads the
+  // same values; new plugin CSS uses these.
+  "--fs-xs",
+  "--fs-sm",
+  "--fs-md",
+  "--fs-lg",
+  "--fw-regular",
+  "--fw-medium",
+  "--fw-semibold",
+  "--r-xs",
+  "--r-sm",
+  "--r-md",
+  "--r-lg",
+  "--r-pill",
+  "--h-dense",
+  "--h-tool",
+  "--h-ctl",
+  "--e1",
+  "--e2",
+  "--e3",
 ]);
 
 /** A short, stable, opaque key for a string (FNV-1a, 32-bit, hex). Pure. */

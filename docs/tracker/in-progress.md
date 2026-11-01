@@ -25,7 +25,7 @@ currently assigned. Rows stay in their queue order.
 | 92 | CQ-003 | P1 | Guards that cannot fail | Partly fixed |
 | 97 | FID-L-07 | P1 | Floating tables (`w:tblpPr`) render inline | Partly fixed (#589) |
 | 98 | OO-002 | P1 | No recent files — New, templates and the backstage all shipped | Partly fixed (#542, #596) |
-| 109 | UX-052 | P1 | Design system v2, phase 1: the chrome had no scale in practice — 30 font sizes, 9 weights, 31 radii, 42 shadows and two primary colours in `style.css` — so every surface was tuned locally | In progress — phase 1 of 4 done on `program/ui-v2` |
+| 109 | UX-052 | P1 | Design system v2, phase 1: the chrome had no scale in practice — 30 font sizes, 9 weights, 31 radii, 42 shadows and two primary colours in `style.css` — so every surface was tuned locally | In progress — phase 1 of 4 done on `program/ui-v2` (completed on `program/ui-v2-complete`) |
 | 110 | OO-006 | P2 | Hyphenation lacks line breaking; drop-cap advanced options are incomplete | Partly fixed |
 | 111 | OO-023 | P2 | Version history writes rows for documents that did not change, and a row does not say what changed | Open — reproduction in flight |
 | 118 | FID-L-14 | P2 | Emphasis marks, outline, shadow, emboss, imprint and run borders are modeled and cascaded but unpainted | Partly fixed (#541) |

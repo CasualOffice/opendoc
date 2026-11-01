@@ -107,6 +107,9 @@ export function declarations(source) {
           property: decl.slice(0, colon).trim().toLowerCase(),
           value: source.slice(at + colon + 1, at + decl.length).trim(),
           line: lineOf(at),
+          // Where the value sits in `source`, so a fixer can rewrite it in place.
+          start: at + colon + 1,
+          end: at + decl.length,
           document: top.document,
         });
       }

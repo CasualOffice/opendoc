@@ -185,3 +185,109 @@ test("the guard catches each kind of drift, and spares the document and previews
   assert.match(found[3], /\.card/);
   assert.match(found[4], /\.tip/);
 });
+
+// ---- Spacing, control heights, and the plugin contract's old names ----------
+//
+// Phase 1 also puts spacing on the grid and the heights that already equal a
+// rung on the rung's token. The grid is 4px with a 2px half-step for the inside
+// of dense controls (docs/63 §7.1); an odd pixel is never on it. A 1px length
+// is a hairline (a border's width, an `.sr-only` clip), not spacing, and stays.
+// Lengths inside a function (`calc`, `clamp`, a `var` fallback) are arithmetic
+// on tokens and are not read.
+const SPACING = /^(?:padding|margin|gap|row-gap|column-gap)(?:-[a-z-]+)?$/;
+const HEIGHT = /^(?:height|min-height|block-size|min-block-size)$/;
+const HEIGHT_RUNGS = { "1.5rem": "--h-dense", "1.75rem": "--h-tool", "2rem": "--h-ctl", "2.75rem": "--h-touch" };
+/** A height equal to a rung that is NOT a control's height, each with why. */
+const NOT_CONTROLS = [
+  // The About dialog's customer logo is a 28px image, sized as artwork.
+  [/^\.about-customer-mark$/, "logo artwork"],
+];
+/** The pre-v2 names `style.css` still declares, ONLY as aliases for the plugin
+ *  contract (`PLUGIN_TOKENS`, `docs/183`). No editor rule may read one. */
+const PLUGIN_ALIASES = [
+  "--radius",
+  "--radius-sm",
+  "--radius-md",
+  "--radius-popover",
+  "--fs-body",
+  "--fs-small",
+  "--fs-caption",
+  "--shadow-popover",
+];
+const ALIAS_READ = new RegExp(`var\\(\\s*(?:${PLUGIN_ALIASES.join("|")})\\s*[,)]`);
+
+function gridOffenders(source, sheet) {
+  const out = [];
+  for (const d of declarations(source)) {
+    if (d.document || d.property.startsWith("--")) continue;
+    const where = `${sheet}:${d.line} ${d.selector.slice(0, 90)} { ${d.property}: ${d.value} }`;
+    if (ALIAS_READ.test(d.value)) {
+      out.push(`${where} — a pre-v2 name is a plugin-contract alias; use its v2 token`);
+    }
+    if (SPACING.test(d.property)) {
+      let depth = 0;
+      for (const token of d.value.split(/(\(|\)|\s+)/)) {
+        if (token === "(") depth += 1;
+        else if (token === ")") depth -= 1;
+        const m = depth === 0 && token.match(/^-?(\d*\.?\d+)(rem|px)$/);
+        if (!m) continue;
+        const px = m[2] === "rem" ? Number(m[1]) * 16 : Number(m[1]);
+        if (px !== 1 && Math.abs(px / 2 - Math.round(px / 2)) > 1e-9) {
+          out.push(`${where} — spacing is on the 4px grid (2px half-step): ${px}px is not`);
+          break;
+        }
+      }
+    }
+    if (HEIGHT.test(d.property)) {
+      const v = d.value.replace(/\s*!important$/, "");
+      const named = splitTop(d.selector, ",").every((part) => NOT_CONTROLS.some(([re]) => re.test(part.trim())));
+      if (HEIGHT_RUNGS[v] && !named) {
+        out.push(`${where} — ${v} is a height rung: write var(${HEIGHT_RUNGS[v]})`);
+      }
+    }
+  }
+  return out;
+}
+
+test("chrome spacing is on the grid, rung heights use their token, no rule reads an alias", () => {
+  const bad = [];
+  for (const sheet of SHEETS) bad.push(...gridOffenders(read(sheet), sheet));
+  assert.deepEqual(bad, [], `docs/63 §7.1:\n  ${bad.join("\n  ")}`);
+});
+
+test("every token the plugin platform publishes is declared, aliases included", () => {
+  // A token a plugin is promised but the editor never declares reaches the
+  // plugin as nothing at all: `tokens()` drops an empty value, and the plugin's
+  // `var(--fs-body)` falls back to the UA default. That is exactly what merging
+  // v2 (which deleted the pre-v2 names) with the plugin platform (which
+  // publishes them) produced, with every other test green.
+  const platform = readFileSync(new URL("../src/plugin_platform.mjs", import.meta.url), "utf8");
+  const list = platform.match(/PLUGIN_TOKENS = Object\.freeze\(\[([\s\S]*?)\]\)/)?.[1] ?? "";
+  const names = [...list.matchAll(/"(--[\w-]+)"/g)].map((m) => m[1]);
+  assert.ok(names.length > 30, `read PLUGIN_TOKENS, got ${names.length}`);
+  const css = read("style.css").replace(/\/\*[\s\S]*?\*\//g, "");
+  // `--brand-font` is a white-label seam a HOST sets (docs/126); every reader
+  // carries a fallback, so it is unset by design until a host names a face.
+  const HOST_SET = ["--brand-font"];
+  const missing = names.filter((n) => !HOST_SET.includes(n) && !new RegExp(`(?:^|[\\s;{])${n}\\s*:`).test(css));
+  assert.deepEqual(missing, [], "PLUGIN_TOKENS names a token style.css never declares");
+  for (const alias of PLUGIN_ALIASES) assert.ok(names.includes(alias), `${alias} is kept only for PLUGIN_TOKENS`);
+});
+
+test("the grid guard catches each kind of drift", () => {
+  const mutated = [
+    ".a { padding: 0.3125rem 0.5rem; }",
+    ".b { gap: 0.4375rem; }",
+    ".c { margin: 0 0 0.5625rem; }",
+    ".d { min-height: 2rem; }",
+    ".e { font-size: var(--fs-body); }",
+    ".ok { padding: 0.375rem 0.5rem; margin: -1px; gap: calc(0.3125rem + 1px); height: var(--h-ctl); }",
+    ".about-customer-mark { height: 1.75rem; }",
+    ".overlay .x { padding: 0.3125rem; }",
+  ].join("\n");
+  const found = gridOffenders(mutated, "mutation.css");
+  assert.equal(found.length, 5, found.join("\n"));
+  for (const [i, sel] of ["\\.a", "\\.b", "\\.c", "\\.d", "\\.e"].entries()) {
+    assert.match(found[i], new RegExp(sel));
+  }
+});

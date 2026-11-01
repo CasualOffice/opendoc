@@ -188,7 +188,7 @@ px figures below are at the 16px root that holds from 1280 to 1440px.
 | Icon | `--icon-sm` `--icon-md` `--icon-lg` | 16 / 20 / 24 | status bar, chips, menu trailing · toolbar, menus, panel actions · big ribbon buttons, mobile |
 | Radius | `--r-xs` `--r-sm` `--r-md` `--r-lg` `--r-pill` | 4 / 6 / 8 / 12 / pill | checkbox, chip, swatch · buttons, inputs, tool buttons · menus, popovers, cards, panels, toolbar card · dialogs, sheets · avatars, mode chip |
 | Height | `--h-dense` `--h-tool` `--h-ctl` `--h-touch` | 24 / 28 / 32 / 44 | status items, chips · toolbar and ribbon buttons · dialog buttons, inputs, selects · coarse pointer |
-| Space | `--space-1`..`--space-6` | 4 / 8 / 12 / 16 / 20 / 24 | the 4px grid |
+| Space | `--space-1`..`--space-6` | 4 / 8 / 12 / 16 / 20 / 24 | the 4px grid; a 2px half-step inside dense controls; never an odd pixel (1px is a hairline, not spacing) |
 | Elevation | `--e1` `--e2` `--e3` | card · menu/popover · dialog | light: hairline plus soft shadow; dark: `none` / hairline ring only |
 | State | `--hover` `--press` `--selected` `--selected-ink` | ink 6% / 10% · accent 12% | washes every control shares |
 | Roles | `--surface-raised` `--icon` `--line-control` `--ink-disabled` `--scrim` | | dialogs over panels · toolbar glyphs · input boundary (3:1, WCAG 1.4.11) · disabled text · modal backdrop |
@@ -215,8 +215,31 @@ font size, weight, radius or blurred shadow outside the scale. The document regi
 `chrome_units.test.mjs`) is out of scope, and so are named content previews (the
 drop-cap sample, the Styles gallery, the symbol grid, the font list), each listed
 with its reason. The old token names (`--fs-body`, `--radius-popover`,
-`--shadow-dialog`, `--icon-control`, ...) were swept and deleted, not aliased:
-an alias nobody may use is a second name for the same thing.
+`--shadow-dialog`, `--icon-control`, ...) were swept off every editor rule.
+Eight survive as aliases of their v2 rung, and only because the plugin platform
+publishes them: `PLUGIN_TOKENS` (`plugin_platform.mjs`, `docs/183`) hands
+`--radius`, `--radius-sm`, `--radius-md`, `--radius-popover`, `--fs-body`,
+`--fs-small`, `--fs-caption` and `--shadow-popover` to every plugin page, and a
+third-party plugin may already read them. `PLUGIN_TOKENS` now publishes the v2
+names too, and the bundled plugin SDK stylesheet (`plugins/sdk/`) reads only
+those. The guard refuses an editor rule that reads an alias, and a second test
+refuses a published token the stylesheet does not declare (the plugin platform
+and v2 landed in parallel, and the merge silently handed plugins seven empty
+values). Drop the aliases when the plugin API takes a version that removes them.
+
+The same test holds spacing and heights: a padding, margin or gap length in a
+chrome rule is on the grid above (no odd pixel; 100 declarations were snapped to
+the nearest 4px rung, each move 1px), and a height that equals a rung (24, 28,
+32, 44) is written as its token, not as a literal.
+
+**Left for the next phases, on purpose.** Three pre-v2 height tokens are still
+off the scale: `--h-control` (30px: ribbon and toolbar `.fmt` buttons, `.btn`,
+panel and dialog close buttons), `--h-search` (34px: the search trigger, dialog
+buttons) and `--h-field` (36px: dialog inputs and selects). Moving them to
+`--h-tool`/`--h-ctl` resizes every dialog and the whole ribbon, which is the
+dialog pass (UX-053) and the shell pass (UX-054), and each needs its own
+screenshots and ribbon-budget measurement. Until then they are the only
+off-scale lengths the guard does not refuse.
 
 ### 7.3 What v2 deliberately keeps
 
