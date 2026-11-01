@@ -18,7 +18,7 @@
 //! **Complexity.** O(tile pixels) per fallback item; the tile is bounded by the
 //! item's own device box clipped to the page.
 
-use casual_doc_layout::display::{DisplayList, PaintItem, PathCommand, ShapeGeometry};
+use casual_doc_layout::display::{DisplayList, PaintItem, ShapeGeometry};
 use casual_doc_layout::units::{Point, Rect, Twip};
 use casual_doc_render::{GlyphSource, MediaSource, Surface, render};
 use vello_common::kurbo::{Point as KPoint, Rect as KRect};
@@ -74,7 +74,7 @@ pub(crate) fn rasterize(
     let (w, h) = (w as u32, h as u32);
 
     let mut moved = item.clone();
-    translate_item(&mut moved, Twip(-ox), Twip(-oy));
+    moved.translate(Twip(-ox), Twip(-oy));
     let mut list = DisplayList::new();
     list.push(moved);
     let mut surface = Surface::transparent(w, h).ok()?;
@@ -241,96 +241,6 @@ fn device_bounds(item: &PaintItem, dpi: f32) -> Option<KRect> {
 
 fn transformed_box(rect: KRect, transform: vello_common::kurbo::Affine) -> KRect {
     transform.transform_rect_bbox(rect)
-}
-
-fn shift_point(point: &mut Point, dx: Twip, dy: Twip) {
-    point.x = Twip(point.x.0.saturating_add(dx.0));
-    point.y = Twip(point.y.0.saturating_add(dy.0));
-}
-
-fn shift_rect(rect: &mut Rect, dx: Twip, dy: Twip) {
-    shift_point(&mut rect.origin, dx, dy);
-}
-
-/// Moves every coordinate `item` carries by `(dx, dy)` twips. Sizes, radii and
-/// advances are lengths and stay put.
-pub(crate) fn translate_item(item: &mut PaintItem, dx: Twip, dy: Twip) {
-    match item {
-        PaintItem::Glyphs { run } => shift_point(&mut run.origin, dx, dy),
-        PaintItem::Rect { rect, .. }
-        | PaintItem::Ellipse { rect, .. }
-        | PaintItem::RoundedRect { rect, .. }
-        | PaintItem::PushClip(rect) => shift_rect(rect, dx, dy),
-        PaintItem::Polygon { points, .. } => {
-            for point in points {
-                shift_point(point, dx, dy);
-            }
-        }
-        PaintItem::Image {
-            rect, transform, ..
-        } => {
-            shift_rect(rect, dx, dy);
-            if let Some(transform) = transform {
-                shift_point(&mut transform.center, dx, dy);
-            }
-        }
-        PaintItem::Line { from, to, .. } => {
-            shift_point(from, dx, dy);
-            shift_point(to, dx, dy);
-        }
-        PaintItem::Shape {
-            geometry,
-            transform,
-            ..
-        } => {
-            match geometry {
-                ShapeGeometry::Rect { rect }
-                | ShapeGeometry::Ellipse { rect }
-                | ShapeGeometry::RoundedRect { rect, .. } => shift_rect(rect, dx, dy),
-                ShapeGeometry::Path { commands, .. } => {
-                    for command in commands {
-                        match command {
-                            PathCommand::MoveTo { point } | PathCommand::LineTo { point } => {
-                                shift_point(point, dx, dy);
-                            }
-                            PathCommand::CubicTo {
-                                control1,
-                                control2,
-                                point,
-                            } => {
-                                shift_point(control1, dx, dy);
-                                shift_point(control2, dx, dy);
-                                shift_point(point, dx, dy);
-                            }
-                            PathCommand::QuadTo { control, point } => {
-                                shift_point(control, dx, dy);
-                                shift_point(point, dx, dy);
-                            }
-                            PathCommand::Close => {}
-                        }
-                    }
-                }
-                ShapeGeometry::Line { from, to } => {
-                    shift_point(from, dx, dy);
-                    shift_point(to, dx, dy);
-                }
-            }
-            if let Some(transform) = transform {
-                shift_point(&mut transform.center, dx, dy);
-            }
-        }
-        PaintItem::Shadow {
-            geometry,
-            transform,
-            ..
-        } => {
-            *geometry = geometry.translated(dx, dy);
-            if let Some(transform) = transform {
-                shift_point(&mut transform.center, dx, dy);
-            }
-        }
-        PaintItem::PopClip | PaintItem::PushLayer { .. } | PaintItem::PopLayer => {}
-    }
 }
 
 #[cfg(test)]
