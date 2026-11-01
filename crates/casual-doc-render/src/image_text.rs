@@ -39,9 +39,10 @@
 //!    glyph shows through.
 //!
 //! [`FillMode::Blur`] and [`FillMode::Pixelate`] are the other two choices a
-//! user has (Acrobat and Google Photos offer the same): a box blur or a block
-//! average of the box as it is, ink included, for when what is under the text
-//! should stay recognisably there but unreadable.
+//! user has (Acrobat and Google Photos offer the same): a box blur, or a block
+//! average, of the box *without its ink* (steps 1-3 first, exactly as Fill),
+//! for a softer or blockier background. No mode reads an ink pixel's own
+//! colour, so the text's colour never enters any average.
 //!
 //! [`make_patch`] also measures the line ([`LineStyle`]): the ink's colour
 //! (the median of its core pixels), its height (for the font size), and its
@@ -85,9 +86,10 @@ pub enum FillMode {
     /// The background reconstructed without the ink (the default).
     #[default]
     Fill,
-    /// The box blurred, ink and all.
+    /// The ink-free background (as [`FillMode::Fill`]) blurred.
     Blur,
-    /// The box as coarse blocks, ink and all.
+    /// The ink-free background (as [`FillMode::Fill`]) as coarse blocks,
+    /// each the mean of that background, never of ink.
     Pixelate,
 }
 
@@ -894,17 +896,14 @@ pub fn make_patch(
     // The anti-aliased rim: 1 pixel for a small line, 2 from 24 pixels tall.
     let radius = if h >= 24 { 2 } else { 1 };
     let ink = dilate(&core, w, h, radius);
+    // Every mode starts from the box without its ink: no mode reads an ink
+    // pixel's own colour, so the text's colour never smears into a blur or a
+    // block mean (owner rule, 2026-11-01).
+    let (clean, fill_method) = ink_free(&boxed, &ink);
     let (mut image, method) = match mode {
-        FillMode::Fill => {
-            let model = tile_background(&boxed, &ink);
-            if paper_residual(&boxed, &model, &ink) > TEXTURE_RMS {
-                (inpaint(&boxed, &ink, &model), Method::Inpaint)
-            } else {
-                (model, Method::Tiles)
-            }
-        }
-        FillMode::Blur => (box_blur(&boxed, (h / 4).max(2)), Method::Filter),
-        FillMode::Pixelate => (pixelate(&boxed, (h / 3).max(3)), Method::Filter),
+        FillMode::Fill => (clean, fill_method),
+        FillMode::Blur => (box_blur(&clean, (h / 4).max(2)), Method::Filter),
+        FillMode::Pixelate => (pixelate(&clean, (h / 3).max(3)), Method::Filter),
     };
     if method == Method::Tiles {
         feather(&mut image, &ink);
@@ -915,6 +914,19 @@ pub fn make_patch(
         style,
         ink_pixels,
     })
+}
+
+/// `boxed` with its `ink` pixels replaced from the paper alone: the tile
+/// model of the paper pixels, or, on textured paper, the paper kept and the
+/// ink inpainted from it. The base of every [`FillMode`]. O(box pixels), plus
+/// O(ink × [`INPAINT_SWEEPS`]) when inpainted.
+fn ink_free(boxed: &Rgba, ink: &[bool]) -> (Rgba, Method) {
+    let model = tile_background(boxed, ink);
+    if paper_residual(boxed, &model, ink) > TEXTURE_RMS {
+        (inpaint(boxed, ink, &model), Method::Inpaint)
+    } else {
+        (model, Method::Tiles)
+    }
 }
 
 /// Ramps the alpha of the patch's outer [`FEATHER`] pixels, where they are
@@ -1136,6 +1148,60 @@ mod tests {
                 .unwrap_or(0);
             assert!(darkest > 40, "{mode:?} left solid ink ({darkest})");
         }
+    }
+
+    /// The owner's rule for every mode: no ink pixel's colour enters any
+    /// average. On a gradient paper with dark-blue stems, the patch is the
+    /// true paper within `tolerance`, holds no pixel near the ink's colour,
+    /// and is no darker on average than the paper (the text adds no
+    /// darkness). Fed the box with its ink, a blur or a block mean darkens by
+    /// a quarter of the ink's contrast and fails all but the first.
+    fn assert_ink_never_averaged(mode: FillMode, tolerance: u8) {
+        let ink = [20, 24, 90, 255];
+        let (page, paper) = gradient_with_text(320, 40, ink, 4);
+        let patch = make_patch(&page, &geometry_of(320, 40), mode).expect("a patch");
+        assert!(patch.ink_pixels > 1000, "{mode:?}: the stems were found as ink");
+        for p in patch.image.pixels.chunks_exact(4) {
+            let near = (0..3).map(|c| p[c].abs_diff(ink[c])).max().unwrap_or(0);
+            assert!(
+                near > 100,
+                "{mode:?}: a pixel within {near} levels of the ink: {p:?}"
+            );
+        }
+        let error = max_channel_error(&patch.image, &paper);
+        assert!(
+            error <= tolerance,
+            "{mode:?}: the patch strays {error} levels from the true background"
+        );
+        let mean_luma = |image: &Rgba| {
+            let n = (image.width * image.height) as f64;
+            image
+                .pixels
+                .chunks_exact(4)
+                .map(|p| f64::from(luma([p[0], p[1], p[2], 255])))
+                .sum::<f64>()
+                / n
+        };
+        let (got, truth) = (mean_luma(&patch.image), mean_luma(&paper));
+        assert!(
+            got >= truth - 2.0,
+            "{mode:?}: the text darkened the patch (mean luma {got:.1}, paper {truth:.1})"
+        );
+    }
+
+    #[test]
+    fn fill_averages_no_ink() {
+        assert_ink_never_averaged(FillMode::Fill, 6);
+    }
+
+    #[test]
+    fn blur_blurs_the_ink_free_background_only() {
+        assert_ink_never_averaged(FillMode::Blur, 6);
+    }
+
+    #[test]
+    fn pixelate_averages_the_ink_free_background_only() {
+        assert_ink_never_averaged(FillMode::Pixelate, 6);
     }
 
     #[test]

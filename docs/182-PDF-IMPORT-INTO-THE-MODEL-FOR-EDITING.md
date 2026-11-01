@@ -1292,7 +1292,10 @@ their paper pixels only (no ink pixel ever enters an average), tiles with none
 borrow from neighbours, pixels interpolate bilinearly between tile centres, and
 the rim is feathered. When paper pixels stray from that model by more than 9
 levels RMS (texture, grain) the paper is kept and only the ink is solved by
-Laplacian relaxation. Blur and Pixelate are the other two modes. O(box pixels).
+Laplacian relaxation. Blur and Pixelate are the other two modes, and both start
+from that same ink-free background: Blur blurs it, Pixelate takes each block's
+mean of it. No mode reads an ink pixel's own colour, so the text's colour never
+enters any average. O(box pixels).
 No new dependency.
 
 **Skew.** A line read turned (at most 5°, `record::SKEW_DEGREES`) is laid level
