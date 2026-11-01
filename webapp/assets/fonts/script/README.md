@@ -25,14 +25,14 @@ party.
 `../../../tests/web_fonts.test.mjs` asserts that no **committed** face's primary
 URL reaches a third-party host, that every committed file matches its declared
 hash, and that a deployment which declares the remaining four provisioned serves
-every one of the 24 itself.
+every one of the 23 itself.
 
 ## What is committed here, and what is not
 
 | Group | Faces | Bytes | Committed? |
 | --- | --- | --- | --- |
 | Named Latin/Greek/Cyrillic | Roboto, Noto Sans, Noto Serif (upright + italic variable) | 9,726,952 | **yes** |
-| Script fallbacks, small | Arabic, Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam, Sinhala, Hebrew, Thai, Symbols 2 | 2,504,980 | **yes** |
+| Script fallbacks, small | Arabic, Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam, Sinhala, Hebrew, Thai | 1,833,412 | **yes** |
 | CJK | Noto Sans CJK JP / KR / SC | 49,338,212 | no — provisioned |
 | Colour emoji | Noto Color Emoji (COLRv1) | 4,991,984 | no — provisioned |
 
