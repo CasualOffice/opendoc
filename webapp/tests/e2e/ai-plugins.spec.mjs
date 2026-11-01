@@ -23,8 +23,11 @@ function requests(page) {
 async function openSettingsRow(page) {
   await page.locator("#settingsBtn").click();
   await expect(page.locator("#settingsPanel")).toBeVisible();
-  await page.locator("#aiProviderSettingsBtn").click();
-  await expect(page.locator("#aiProviderDialog")).toBeVisible();
+  // The provider form is a page of Settings, never a second dialog on top
+  // (owner, 2026-11-02; approved design D3).
+  await page.locator('#settingsPanel [data-settings-tab="ai"]').click();
+  await expect(page.locator("#settingsAiSection")).toBeVisible();
+  await expect(page.locator("#aiProviderStatus")).toHaveText(/saved/i);
 }
 
 test("with no provider set up, nothing is sent and Settings says so", async ({ page }) => {
@@ -69,11 +72,11 @@ test("bring your own key: test, save, the disclosure names the endpoint, and the
   expect(JSON.stringify(asked[0].body.messages)).not.toContain("Lorem");
   expect(asked[0].body.max_completion_tokens).toBe(16);
   await page.locator("#aiProviderSave").click();
-  await expect(page.locator("#aiProviderDialog")).toBeHidden();
   await expect(page.locator("#aiProviderSummary")).toHaveText(`Text you send to AI features goes to ${host}.`);
 
   // Reopened, the key is not written back into the form.
-  await page.locator("#aiProviderSettingsBtn").click();
+  await page.locator("#settingsDone").click();
+  await openSettingsRow(page);
   await expect(page.locator("#aiProviderKey")).toHaveValue("");
   await expect(page.locator("#aiProviderKeyNote")).toHaveText("A key is saved on this device. Leave the field empty to keep it.");
   // Forget removes it.

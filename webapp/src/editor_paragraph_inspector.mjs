@@ -136,6 +136,10 @@ export function createParagraphInspector(ed) {
       if (body) body.scrollTop = 0;
       queueMicrotask(() => {
         const target = focusTarget?.();
+        // A deep link into "More options" (list settings, style management)
+        // opens that disclosure first, or the field would be unreachable.
+        const disclosure = target?.closest?.("details");
+        if (disclosure && !disclosure.open) disclosure.open = true;
         if (target) target.focus();
         else ed.paraPanelStyle.focus({ preventScroll: true });
       });

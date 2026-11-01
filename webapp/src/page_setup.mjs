@@ -361,8 +361,13 @@ export function createPageSetup(io) {
   }
 
   const modal = io.registerModal(pageSetupMenu, {
-    initialFocus: () =>
-      focusIntent?.() ?? orientationGroup.selected(),
+    // Layout ▸ Columns lands on a field inside Advanced: open it first.
+    initialFocus: () => {
+      const target = focusIntent?.() ?? orientationGroup.selected();
+      const disclosure = target?.closest?.("details");
+      if (disclosure && !disclosure.open) disclosure.open = true;
+      return target;
+    },
     fallbackFocus: () => pageSetupBtn,
   });
 
