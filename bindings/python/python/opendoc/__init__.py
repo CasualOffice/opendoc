@@ -22,6 +22,7 @@ operation, applied all or nothing (docs/176 section 12.8).
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 from dataclasses import dataclass, field
@@ -38,6 +39,11 @@ __all__ = [
     "Cell",
     "Section",
     "HeaderFooter",
+    "InlineShape",
+    "Note",
+    "Settings",
+    "WD_SECTION",
+    "WD_ORIENT",
     "CoreProperties",
     "Comment",
     "Template",
@@ -177,6 +183,37 @@ class RGBColor(tuple):
 
     def __str__(self) -> str:
         return "%02X%02X%02X" % tuple(self)
+
+
+class WD_SECTION:  # noqa: N801 - python-docx's name (WD_SECTION_START)
+    """How a section starts: ``section.start_type`` and ``add_section``."""
+
+    NEW_PAGE = "nextPage"
+    CONTINUOUS = "continuous"
+    EVEN_PAGE = "evenPage"
+    ODD_PAGE = "oddPage"
+    NEW_COLUMN = "nextColumn"
+
+
+class WD_ORIENT:  # noqa: N801 - python-docx's name
+    """A section's orientation."""
+
+    PORTRAIT = "portrait"
+    LANDSCAPE = "landscape"
+
+
+def _image_base64(image: Source) -> str:
+    data, _ = _read_source(image)
+    return base64.b64encode(data).decode("ascii")
+
+
+def _points(length: Optional[Union["Length", float]]) -> Optional[float]:
+    """A python-docx Length (EMU) or a plain number of points, as points."""
+    if length is None:
+        return None
+    if isinstance(length, Length):
+        return length.pt
+    return float(length)
 
 
 class WD_ALIGN_PARAGRAPH:  # noqa: N801 - python-docx's name
@@ -434,11 +471,65 @@ class Document:
             raise OpenDocError("invalid-argument", "add_table applies 'Table Grid'; other table styles are not settable by edit yet")
         return Table(self, tid)
 
-    def add_picture(self, *_: Any, **__: Any) -> None:
-        raise OpenDocError(
-            "invalid-argument",
-            "inserting a picture into an existing document is not built yet (docs/176 section 12.3); build the document with pictures through opendoc.build",
-        )
+    def add_picture(self, image_path_or_stream: Source, width: Optional[Union["Length", float]] = None, height: Optional[Union["Length", float]] = None) -> "InlineShape":
+        """python-docx's ``add_picture``: a new paragraph holding the picture.
+        Give one of ``width``/``height`` and the other keeps the image's
+        proportions; neither, and it takes the image's own size at 96 dpi.
+        PNG, JPEG, GIF, BMP, TIFF or WebP."""
+        return self.add_paragraph().add_run().add_picture(image_path_or_stream, width, height)
+
+    @property
+    def inline_shapes(self) -> List["InlineShape"]:
+        """Every picture in the body, in order (python-docx ``inline_shapes``)."""
+        out: List[InlineShape] = []
+        for paragraph in self.paragraphs:
+            for raw in paragraph._view()["runs"]:
+                if raw.get("kind") == "image":
+                    out.append(InlineShape(self, raw["id"]))
+        return out
+
+    def _picture(self, picture_id: str) -> Dict[str, Any]:
+        for paragraph in self._all_paragraph_views():
+            for run in paragraph.get("runs", []):
+                if run.get("id") == picture_id and run.get("kind") == "image":
+                    return run
+        raise OpenDocError("invalid-argument", f"picture {picture_id} is no longer in the document")
+
+    def _all_paragraph_views(self) -> Iterable[Dict[str, Any]]:
+        def visit(blocks: Iterable[Dict[str, Any]]) -> Iterable[Dict[str, Any]]:
+            for block in blocks:
+                if block["type"] == "paragraph":
+                    yield block
+                elif block["type"] == "table":
+                    for row in block["rows"]:
+                        for cell in row["cells"]:
+                            yield from visit(cell["blocks"])
+                elif block["type"] == "contentControl":
+                    yield from visit(block["blocks"])
+
+        yield from visit(self._body()[0])
+        for story in self.headers_footers:
+            yield from visit(story["blocks"])
+        for note in self.notes:
+            yield from visit(note["blocks"])
+
+    @property
+    def footnotes(self) -> List["Note"]:
+        return [Note(self, n["id"]) for n in self.notes if n["kind"] == "footnote"]
+
+    @property
+    def endnotes(self) -> List["Note"]:
+        return [Note(self, n["id"]) for n in self.notes if n["kind"] == "endnote"]
+
+    def add_section(self, start_type: str = WD_SECTION.NEW_PAGE) -> "Section":
+        """python-docx's ``add_section``: a new section at the end, inheriting
+        the last one's page setup, headers and footers."""
+        (index,) = self._edit({"op": "addSection", "start": start_type})
+        return self.sections[int(index)]
+
+    @property
+    def settings(self) -> "Settings":
+        return Settings(self)
 
     def add_comment(self, runs: Union["Run", Sequence["Run"]], text: str, author: Optional[str] = None, initials: Optional[str] = None) -> "Comment":
         """python-docx 1.2's ``add_comment``: anchored on a run or a contiguous
@@ -516,6 +607,11 @@ class Document:
 
     def render_page_png(self, index: int, dpi: float = 96.0) -> bytes:
         return _call(self._native.render_page_png, index, dpi)
+
+    def render_page_svg(self, index: int) -> str:
+        """One page as SVG, from the same layout as the PNG and the PDF: glyph
+        outlines, a transparent real-text layer, pictures embedded."""
+        return str(_call(self._native.render_page_svg, index))
 
     def render_page(self, index: int, dpi: float = 96.0) -> Tuple[int, int, bytes]:
         return _call(self._native.render_page, index, dpi)
@@ -597,6 +693,22 @@ class Paragraph:
     def insert_paragraph_before(self, text: str = "", style: Optional[str] = None) -> "Paragraph":
         (pid,) = self._document._edit({"op": "insertParagraph", "before": self.id, "text": text, "style": style})
         return Paragraph(self._document, pid)
+
+    def add_field(self, kind: str, result: str = "") -> None:
+        """Appends a field: ``"page"``, ``"numpages"``, ``"date"``, ``"time"``,
+        ``"filename"`` or ``"author"`` (``page``/``numpages`` are computed at
+        layout; the others show ``result``)."""
+        self._document._edit({"op": "insertField", "paragraph": self.id, "offset": len(self.text), "kind": kind, "result": result})
+
+    def add_footnote(self, text: str) -> "Note":
+        """A footnote whose mark goes at the end of this paragraph."""
+        (nid,) = self._document._edit({"op": "insertNote", "kind": "footnote", "paragraph": self.id, "offset": len(self.text), "text": text})
+        return Note(self._document, nid)
+
+    def add_endnote(self, text: str) -> "Note":
+        """An endnote whose mark goes at the end of this paragraph."""
+        (nid,) = self._document._edit({"op": "insertNote", "kind": "endnote", "paragraph": self.id, "offset": len(self.text), "text": text})
+        return Note(self._document, nid)
 
     def __repr__(self) -> str:
         return "<opendoc.Paragraph %r>" % self.text[:40]
@@ -752,8 +864,100 @@ class Run:
     def hyperlink(self) -> Optional[str]:
         return self._get("hyperlink")
 
+    def add_picture(self, image_path_or_stream: Source, width: Optional[Union["Length", float]] = None, height: Optional[Union["Length", float]] = None) -> "InlineShape":
+        """python-docx's ``run.add_picture``: the picture goes at the end of this
+        run. Sizes are python-docx Lengths (``Inches(2)``) or points."""
+        (pid,) = self._document._edit({
+            "op": "insertPicture",
+            "paragraph": self._paragraph,
+            "offset": self._end,
+            "image": _image_base64(image_path_or_stream),
+            "widthPt": _points(width),
+            "heightPt": _points(height),
+        })
+        return InlineShape(self._document, pid)
+
     def __repr__(self) -> str:
         return "<opendoc.Run %r>" % self.text[:40]
+
+
+class InlineShape:
+    """A picture (python-docx ``InlineShape``): ``width`` and ``height`` are
+    readable and settable Lengths; ``alt_text``, ``replace`` and ``delete`` are
+    additions."""
+
+    def __init__(self, document: Document, picture_id: str) -> None:
+        self._document = document
+        self.id = picture_id
+
+    def _image(self) -> Dict[str, Any]:
+        return self._document._picture(self.id).get("image") or {}
+
+    @property
+    def width(self) -> Length:
+        return Pt(self._image().get("widthPt") or 0)
+
+    @width.setter
+    def width(self, value: Union[Length, float]) -> None:
+        self._resize(_points(value), self.height.pt)
+
+    @property
+    def height(self) -> Length:
+        return Pt(self._image().get("heightPt") or 0)
+
+    @height.setter
+    def height(self, value: Union[Length, float]) -> None:
+        self._resize(self.width.pt, _points(value))
+
+    def _resize(self, width_pt: Optional[float], height_pt: Optional[float]) -> None:
+        self._document._edit({"op": "resizePicture", "picture": self.id, "widthPt": width_pt, "heightPt": height_pt})
+
+    @property
+    def alt_text(self) -> Optional[str]:
+        return self._image().get("description")
+
+    @alt_text.setter
+    def alt_text(self, value: Optional[str]) -> None:
+        self._document._edit({"op": "setAltText", "picture": self.id, "text": value or None})
+
+    def replace(self, image_path_or_stream: Source) -> None:
+        """Replaces the image, keeping the picture's frame, position and alt text."""
+        self._document._edit({"op": "replacePicture", "picture": self.id, "image": _image_base64(image_path_or_stream)})
+
+    def delete(self) -> None:
+        self._document._edit({"op": "deletePicture", "picture": self.id})
+
+
+class Note:
+    """A footnote or endnote: ``text`` readable and settable, ``delete()``."""
+
+    def __init__(self, document: Document, note_id: str) -> None:
+        self._document = document
+        self.id = note_id
+
+    def _raw(self) -> Dict[str, Any]:
+        for note in self._document.notes:
+            if note["id"] == self.id:
+                return note
+        raise OpenDocError("invalid-argument", f"note {self.id} is no longer in the document")
+
+    @property
+    def kind(self) -> str:
+        return str(self._raw()["kind"])
+
+    @property
+    def text(self) -> str:
+        return str(self._raw()["text"])
+
+    @text.setter
+    def text(self, value: str) -> None:
+        self._document._edit({"op": "setNoteText", "note": self.id, "text": value})
+
+    def delete(self) -> None:
+        self._document._edit({"op": "deleteNote", "note": self.id})
+
+    def __repr__(self) -> str:
+        return "<opendoc.Note %s %r>" % (self.kind, self.text[:40])
 
 
 class Cell:
@@ -845,53 +1049,163 @@ class Table:
         return Row(self._document, self.id, len(shape) - 1, shape[-1])
 
 
-@dataclass(frozen=True)
 class HeaderFooter:
-    """A header or footer, read-only (``paragraphs``, ``text``)."""
+    """A section's header or footer (python-docx ``_Header``/``_Footer``):
+    ``paragraphs`` are editable Paragraphs, ``add_paragraph`` appends one, and
+    ``is_linked_to_previous`` reads and sets Word's Link to Previous. A
+    section with no band of its own shows the previous section's, as in Word;
+    editing that edits the previous section's, as python-docx does, until
+    ``is_linked_to_previous = False`` gives it its own copy."""
 
-    id: str
-    text: str
-    blocks: List[Dict[str, Any]] = field(default_factory=list)
+    def __init__(self, document: Document, section: int, part: str, kind: str = "default") -> None:
+        self._document = document
+        self._section = section
+        self._part = part
+        self._kind = kind
+
+    def _own(self) -> Optional[Dict[str, Any]]:
+        raw = json.loads(self._document._native.sections())[self._section]
+        refs = raw["headers" if self._part == "header" else "footers"]
+        wanted = next((r["id"] for r in refs if r["kind"] == self._kind), None)
+        if wanted is None:
+            return None
+        return next((s for s in self._document.headers_footers if s["id"] == wanted and s["part"] == self._part), None)
+
+    def _story(self) -> Optional[Dict[str, Any]]:
+        own = self._own()
+        if own is not None or self._section == 0:
+            return own
+        return HeaderFooter(self._document, self._section - 1, self._part, self._kind)._story()
 
     @property
-    def paragraphs(self) -> List[str]:
-        return [b.get("text", "") for b in self.blocks if b.get("type") == "paragraph"]
+    def id(self) -> Optional[str]:
+        story = self._story()
+        return None if story is None else str(story["id"])
+
+    @property
+    def is_linked_to_previous(self) -> bool:
+        return self._own() is None
+
+    @is_linked_to_previous.setter
+    def is_linked_to_previous(self, value: bool) -> None:
+        if self._section == 0 and value:
+            self._document._edit({"op": "removeHeaderFooter", "section": 0, "region": self._part, "kind": self._kind})
+        elif value:
+            self._document._edit({"op": "setLinkedToPrevious", "section": self._section, "region": self._part, "kind": self._kind, "linked": True})
+        else:
+            self._document._edit({"op": "headerFooter", "section": self._section, "region": self._part, "kind": self._kind})
+
+    def _ensure(self) -> Dict[str, Any]:
+        story = self._story()
+        if story is None:
+            self._document._edit({"op": "headerFooter", "section": self._section, "region": self._part, "kind": self._kind})
+            story = self._story()
+        if story is None:
+            raise OpenDocError("edit", "the header or footer was not created")
+        return story
+
+    @property
+    def paragraphs(self) -> List[Paragraph]:
+        return [Paragraph(self._document, b["id"]) for b in self._ensure()["blocks"] if b.get("type") == "paragraph"]
+
+    @property
+    def text(self) -> str:
+        story = self._story()
+        return "" if story is None else str(story["text"])
+
+    def add_paragraph(self, text: str = "", style: Optional[str] = None) -> Paragraph:
+        last = self.paragraphs[-1]
+        (pid,) = self._document._edit({"op": "insertParagraph", "after": last.id, "text": text, "style": style})
+        return Paragraph(self._document, pid)
+
+    def remove(self) -> None:
+        """The section shows no band of this kind (an addition)."""
+        self._document._edit({"op": "removeHeaderFooter", "section": self._section, "region": self._part, "kind": self._kind})
+
+
+class Settings:
+    """python-docx's ``document.settings``."""
+
+    def __init__(self, document: Document) -> None:
+        self._document = document
+
+    @property
+    def odd_and_even_pages_header_footer(self) -> bool:
+        sections = json.loads(self._document._native.sections())
+        return bool(sections and sections[0].get("evenAndOddHeaders"))
+
+    @odd_and_even_pages_header_footer.setter
+    def odd_and_even_pages_header_footer(self, value: bool) -> None:
+        self._document._edit({"op": "setDifferentOddEven", "on": bool(value)})
 
 
 class Section:
-    """A section's page setup (python-docx ``Section``), read-only."""
+    """A section (python-docx ``Section``): page size, orientation, margins,
+    start type and columns are readable and settable; ``header``, ``footer``
+    and their first-page and even-page variants are editable."""
 
     def __init__(self, document: Document, raw: Dict[str, Any]) -> None:
         self._document = document
         self._raw = raw
 
-    page_width = property(lambda self: Pt(self._raw["pageWidthPt"]))
-    page_height = property(lambda self: Pt(self._raw["pageHeightPt"]))
-    orientation = property(lambda self: self._raw["orientation"])
-    left_margin = property(lambda self: Pt(self._raw["marginsPt"]["left"]))
-    right_margin = property(lambda self: Pt(self._raw["marginsPt"]["right"]))
-    top_margin = property(lambda self: Pt(self._raw["marginsPt"]["top"]))
-    bottom_margin = property(lambda self: Pt(self._raw["marginsPt"]["bottom"]))
+    @property
+    def _index(self) -> int:
+        for index, raw in enumerate(json.loads(self._document._native.sections())):
+            if raw["id"] == self._raw["id"]:
+                return index
+        raise OpenDocError("invalid-argument", "the section is no longer in the document")
 
-    def _story(self, part: str, kind: str = "default") -> Optional[HeaderFooter]:
-        refs = self._raw["headers" if part == "header" else "footers"]
-        wanted = next((r["id"] for r in refs if r["kind"] == kind), None)
-        for story in self._document.headers_footers:
-            if story["id"] == wanted and story["part"] == part:
-                return HeaderFooter(story["id"], story["text"], story["blocks"])
-        return None
+    def _fresh(self) -> Dict[str, Any]:
+        return dict(json.loads(self._document._native.sections())[self._index])
+
+    def _setup(self, **setup: Any) -> None:
+        index = self._index
+        self._document._edit({"op": "setPageSetup", "section": index, "setup": setup})
+        self._raw = json.loads(self._document._native.sections())[index]
+
+    page_width = property(lambda self: Pt(self._fresh()["pageWidthPt"]), lambda self, v: self._setup(widthPt=_points(v)))
+    page_height = property(lambda self: Pt(self._fresh()["pageHeightPt"]), lambda self, v: self._setup(heightPt=_points(v)))
+    orientation = property(lambda self: self._fresh()["orientation"], lambda self, v: self._setup(orientation=v))
+    left_margin = property(lambda self: Pt(self._fresh()["marginsPt"]["left"]), lambda self, v: self._setup(leftPt=_points(v)))
+    right_margin = property(lambda self: Pt(self._fresh()["marginsPt"]["right"]), lambda self, v: self._setup(rightPt=_points(v)))
+    top_margin = property(lambda self: Pt(self._fresh()["marginsPt"]["top"]), lambda self, v: self._setup(topPt=_points(v)))
+    bottom_margin = property(lambda self: Pt(self._fresh()["marginsPt"]["bottom"]), lambda self, v: self._setup(bottomPt=_points(v)))
+    header_distance = property(lambda self: Pt(self._fresh()["marginsPt"].get("header") or 36), lambda self, v: self._setup(headerPt=_points(v)))
+    footer_distance = property(lambda self: Pt(self._fresh()["marginsPt"].get("footer") or 36), lambda self, v: self._setup(footerPt=_points(v)))
 
     @property
-    def header(self) -> Optional[HeaderFooter]:
-        return self._story("header")
+    def columns(self) -> int:
+        """Text columns (an addition; python-docx has none)."""
+        return int(self._fresh()["columns"])
+
+    @columns.setter
+    def columns(self, count: int) -> None:
+        self._setup(columns=int(count))
 
     @property
-    def footer(self) -> Optional[HeaderFooter]:
-        return self._story("footer")
+    def start_type(self) -> str:
+        return str(self._fresh()["start"])
+
+    @start_type.setter
+    def start_type(self, value: str) -> None:
+        index = self._index
+        self._document._edit({"op": "setSectionStart", "section": index, "start": value})
+        self._raw = json.loads(self._document._native.sections())[index]
 
     @property
-    def first_page_header(self) -> Optional[HeaderFooter]:
-        return self._story("header", "first")
+    def different_first_page_header_footer(self) -> bool:
+        return bool(self._fresh()["titlePage"])
+
+    @different_first_page_header_footer.setter
+    def different_first_page_header_footer(self, value: bool) -> None:
+        self._document._edit({"op": "setDifferentFirstPage", "section": self._index, "on": bool(value)})
+
+    header = property(lambda self: HeaderFooter(self._document, self._index, "header"))
+    footer = property(lambda self: HeaderFooter(self._document, self._index, "footer"))
+    first_page_header = property(lambda self: HeaderFooter(self._document, self._index, "header", "first"))
+    first_page_footer = property(lambda self: HeaderFooter(self._document, self._index, "footer", "first"))
+    even_page_header = property(lambda self: HeaderFooter(self._document, self._index, "header", "even"))
+    even_page_footer = property(lambda self: HeaderFooter(self._document, self._index, "footer", "even"))
 
 
 class CoreProperties:

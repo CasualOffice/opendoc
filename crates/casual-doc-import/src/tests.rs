@@ -4480,6 +4480,71 @@ fn complex_field_maps_instrtext_and_result_runs() {
     assert_eq!(text, "Section 2");
 }
 
+/// `docs/109` RM-46: a one-entry linked table of contents whose field begins and
+/// ends in ONE paragraph, around the entry's hyperlink. Word writes a field
+/// range instead; other producers write this, and it failed the whole open
+/// because a field's result may not hold a hyperlink. It now opens with the
+/// entry, its link and its text, and the dropped instruction is reported.
+#[test]
+fn a_single_paragraph_field_around_a_hyperlink_degrades_to_its_result() {
+    let complex = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+            <w:r><w:instrText> TOC \o "1-3" \h </w:instrText></w:r>
+            <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+            <w:hyperlink w:anchor="_Toc1">
+                <w:r><w:t>Introduction</w:t></w:r>
+                <w:r><w:tab/></w:r>
+                <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+                <w:r><w:instrText> PAGEREF _Toc1 \h </w:instrText></w:r>
+                <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                <w:r><w:t>1</w:t></w:r>
+                <w:r><w:fldChar w:fldCharType="end"/></w:r>
+            </w:hyperlink>
+            <w:r><w:fldChar w:fldCharType="end"/></w:r>
+        </w:p>
+        <w:p><w:r><w:t>Body</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let simple = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:fldSimple w:instr=" TOC \o &quot;1-3&quot; \h ">
+                <w:hyperlink w:anchor="_Toc1"><w:r><w:t>Introduction</w:t></w:r></w:hyperlink>
+            </w:fldSimple>
+        </w:p>
+    </w:body></w:document>"#;
+    for (xml, element) in [(&complex[..], "fldChar"), (&simple[..], "fldSimple")] {
+        let import = import_main_document_xml(xml, ImportConfig::default())
+            .expect("the document opens instead of failing");
+        let para = paragraph(&import, 0);
+        let link = para
+            .inlines
+            .iter()
+            .find_map(|inline| match inline {
+                InlineNode::Hyperlink(link) => Some(link),
+                _ => None,
+            })
+            .expect("the entry keeps its hyperlink");
+        assert!(matches!(
+            &link.target,
+            HyperlinkTarget::Internal(target) if target.anchor == "_Toc1"
+        ));
+        let mut text = String::new();
+        para.inlines.iter().for_each(|c| inline_text(c, &mut text));
+        assert!(text.starts_with("Introduction"), "{element}: {text:?}");
+        assert!(
+            !para
+                .inlines
+                .iter()
+                .any(|i| matches!(i, InlineNode::Field(_))),
+            "{element}: the TOC field cannot hold its hyperlink"
+        );
+        assert!(
+            features(&import).contains(&element),
+            "{element}: the dropped instruction is reported"
+        );
+    }
+}
+
 #[test]
 fn complex_field_without_separate_has_empty_result() {
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>

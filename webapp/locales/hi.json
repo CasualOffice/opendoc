@@ -1957,6 +1957,7 @@
   "site.header.playground": "प्रयोग क्षेत्र",
   "site.header.preRelease": "पूर्व-रिलीज़",
   "site.header.primaryNavigation": "मुख्य नेविगेशन",
+  "site.header.sdk": "SDK",
   "spacing.addSpaceAfter": "अनुच्छेद के बाद जगह जोड़ें",
   "spacing.addSpaceBefore": "अनुच्छेद से पहले जगह जोड़ें",
   "spacing.fromStyleHint": "यह अनुच्छेद अपनी पंक्ति-दूरी अपनी शैली से लेता है। यहाँ तय करने के लिए कोई मान लिखें।",

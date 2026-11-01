@@ -1,0 +1,7 @@
+# SVG page hashes (FNV-1a) and lengths; bundled faces only.
+# Blessed on macos aarch64 by `OPENDOC_BLESS=1 cargo test -p opendoc --test svg`.
+# Checked in CI on Linux x64 (test), macOS arm64 and Windows x64 (platform).
+sample.docx page 0 142681 bytes 3a279c8a9595fc0e
+sample.docx page 1 181777 bytes 9a3abe140918f0eb
+sample.docx page 2 180882 bytes 993b2d7ee1a7abf8
+built page 0 29835 bytes 851c05717270a9d2

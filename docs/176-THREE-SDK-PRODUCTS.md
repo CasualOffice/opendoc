@@ -106,7 +106,7 @@ Node uses the same module through `@casualoffice/opendoc-viewer/node`, which rea
 | `text`, `pageText(i)` | (none) | **Existing**. Body only: headers, footers and notes are not included yet |
 | `outline()` | (none) | **Existing**: level, text and page of each body heading, by the editor's heading rule |
 | `fontNeeds()`, `missingCodePoints()`, `registerFonts`, `registerFallbackFont`, `fontProvider` | §10 `ResourceRequest::Font` | **Existing**: the host font hook (§10, Q2) |
-| Page to SVG | (none) | **Not built**: the engine has no SVG backend, so it is not cheap. A vector page is the PDF |
+| Page to SVG | (none) | **Existing** since 2026-10-31: `casual_doc_render::svg`, from the same display list as the PNG and PDF (§12.13) |
 | `importReport()`: what was degraded or dropped | (none) | **Partial**: `CompatibilityReport` exists in `casual-doc-import`/`-io`, but it is not exposed |
 | `metadata()` | (none) | **Partial**: in `casual-doc-wasm`, not in the cut |
 | `search(query)` → page rectangles | (none) | **Partial**: Find in the editor; geometry needs a hit-test-free rect query |
@@ -727,11 +727,7 @@ type.
   cached until the next edit. It uses bundled faces by default (`RenderOptions` adds faces or
   allows OS fonts).
 - **Not built (stated, not hidden):**
-  - inserting pictures, headers, footers or notes by edit (the builder writes all four);
-  - page or section edits;
   - paragraph loops inside headers and footers (value tags work there);
-  - SVG (no backend, §3.1);
-  - opening HTML or Markdown (export-only adapters).
 
 **One defect class found and handled in the SDK.** A comment's anchor from
 `casual_doc_review` is measured in the layout anchor stream, which counts a footnote
@@ -740,16 +736,18 @@ returned `"noted "` for a comment on `" noted"` after a footnote. `Document::com
 `revisions` now map anchors through both length functions (`ParagraphSpace`). The engine-side
 disagreement is the one recorded on `casual_doc_review::body::inline_anchor_len`.
 
-**An engine limit the builder found (open for the import lane).** A complex field whose
-begin and end sit in **one** paragraph, with a hyperlink in its cached result, fails the
-whole DOCX open. Model validation refuses a hyperlink inside a `Field`'s inlines (a field's
-result is leaf-only), and the importer turns that into "a fault in the document engine".
-A one-entry linked table of contents written that way is a valid file. The builder now
-writes Word's own shape: the field's end goes in a paragraph after the last entry, so the
-TOC is a field range (`a_linked_table_of_contents_opens_and_lists_each_heading`). The
-importer still refuses the single-paragraph shape from any other producer. The fix belongs
-in `casual-doc-import`: degrade the field, as its result text, instead of failing the
-document. It is `docs/109` RM-46's open item.
+**An engine limit the builder found, now fixed in the importer.** A complex field whose
+begin and end sit in **one** paragraph, with a hyperlink in its cached result, failed the
+whole DOCX open: model validation refuses a hyperlink inside a `Field`'s inlines (a field's
+result is leaf-only), and the importer turned that into "a fault in the document engine".
+A one-entry linked table of contents written that way is a valid file. The builder writes
+Word's own shape, a field range (`a_linked_table_of_contents_opens_and_lists_each_heading`).
+`casual-doc-import` now degrades such a field to its result (`commit_field`,
+`segments_are_field_leaves`): the entry, its hyperlink and its text are kept, and the dropped
+instruction is reported as `fldChar` or `fldSimple`. Guard:
+`a_single_paragraph_field_around_a_hyperlink_degrades_to_its_result`, for both encodings.
+Mutation: with the leaf check forced true, the open failed again with
+`Model(NestedHyperlink(..))`.
 
 ### 12.4 Guards (S1)
 
@@ -877,9 +875,8 @@ The local wheel (`opendoc-0.1.0-cp39-abi3-macosx_11_0_arm64.whl`) is 17.1 MB on
   `py.typed` ships, and `mypy python/opendoc` reports no issues.
 - **Errors.** `OpenDocError.code` is the stable code. `TemplateError.errors` lists every
   issue, in docxtemplater's ids.
-- **Not built.** `add_picture` into an existing document raises with the reason. Character
-  styles on runs and table styles other than Table Grid cannot be set. Headers and footers
-  are read-only.
+- **Not built.** Character styles on runs and table styles other than Table Grid cannot be
+  set. Pictures, headers and footers, notes and sections are edits (§12.12).
 - **Guards.** `bindings/python/tests/test_opendoc.py` has 9 tests. One is python-docx's
   quickstart, run unchanged apart from `add_picture`, then reopened and checked run by run.
   - **Mutation.** `core_properties.author` mapped to `subject` turned
@@ -907,7 +904,7 @@ version 1 (`opendoc_abi_version`) and a header, `include/opendoc.h`.
   block is a boundary read with a `SAFETY` comment.
 - **Not built.** The header is hand-written, because cbindgen is not installed here.
   `the_header_declares_every_export` fails if an export is missing from it. The boundary is
-  not fuzzed yet (P4).
+  fuzzed, and its handles are checked (§12.14).
 
 **`bindings/java`** uses the Foreign Function & Memory API (JEP 454, final in JDK 22) over
 that ABI, with no JNI glue and no dependency. `Json.java` is a 200-line reader and writer.
@@ -983,8 +980,25 @@ committed.
   Both bindings now look tables up as tables and keep the table's shape, which `createRow`
   and `add_row` update. The core's step cost is guarded by
   `a_builder_step_costs_the_same_on_a_document_twice_as_long` (n against 2n, SKILL §8).
-  What is left is linear in the document: `casual_doc_edit::find_table`, and the engine's
-  cold route for a newly inserted paragraph. That cost is engine-side and on `docs/109` RM-46.
+  The two costs that were left, both engine-side, are now O(1) in document size
+  (2026-10-31), by the route-cache pattern `casual_doc_model::v1::locate` already used for
+  paragraphs (memoization validated on use, `docs/109` HF-184):
+  - **A table by id.** `Document::table`/`table_mut` keep a direct-mapped cache of table
+    routes, validated on every use. `casual_doc_edit::find_table` and the six row, column and
+    table-property operations that walked twice (`blocks_owning_mut`, then `find_table_mut`)
+    use it.
+  - **The first edit to a block just inserted.** `InsertBlocks` into the body records the
+    route of each block it placed (`Document::hint_body_block`), and the SDK's
+    `set_cell_text` reaches the cell's paragraph through its table's route
+    (`Document::hint_cell_paragraph`). A stale hint is a miss, never a wrong answer.
+
+  Guard: `a_new_paragraphs_first_edit_and_a_table_lookup_cost_the_same_at_n_and_2n` puts a
+  table after n and 2n paragraphs and compares the engine's block-visit meter for a new
+  paragraph's first run, and for two `set_cell_text` calls and an `add_row`. Its control, a
+  lookup of an id that is not a table, must double, so equal numbers cannot come from a meter
+  that counts nothing. Mutations, each red: the insert's hint removed (512 visits at n, 1,012
+  at 2n); the table hint disabled (4,039 against 8,039); the cell-paragraph hint removed
+  (1,021 against 2,021).
 - docx-preview needs a DOM, so it is not measured here. docx4j is not measured. LibreOffice
   is in the suite (`--soffice`), but the copy on the measuring machine is a broken install,
   so its column is empty. The round-trip table shows python-docx keeping every package part,
@@ -1054,6 +1068,177 @@ Measured on darwin arm64 25.3.0, Apple M4 (10 cores, 16 GB), Node v24.22.1; medi
 - Round trip: an empty `docProps/custom.xml` (no properties) is not rewritten by an OpenDoc save, which `partsKept` counts as a dropped part although nothing is lost. `partsKept` counts the input's package parts present in the output; `textSame` re-opens the output with OpenDoc and compares the body text; `losses` is OpenDoc's own save report (no other library reports loss).
 
 <!-- sdk-bench:end -->
+
+### 12.11 The site page
+
+`webapp/sdk.html` (from `webapp/sdk.page.html`) is the SDK's public page: the three products,
+install per language, one example per language, the familiarity table, the benchmark with
+its losses, and the format table. It is in the header nav, the docs rail and the home page,
+and this document is published beside it as `reference/three-sdk-products.html`.
+
+- **Generated, not typed.** `webapp/tools/build-sdk-page.mjs` copies every code panel whole
+  from a file a test runs (`packages/opendoc/test/examples.test.mjs`,
+  `bindings/python/tests/test_opendoc.py`, `bindings/java/build.sh`,
+  `crates/opendoc/tests/sdk.rs`), renders the benchmark table and its list of losses from
+  `benchmarks/sdk/results.json`, and reads the format table from the `casual-doc-io`
+  descriptors. `webapp/build.sh` runs its `--check`.
+- **Guards.** `webapp/tests/sdk_page.test.mjs` re-derives the ratios, the loss count and the
+  format counts independently of the generator, checks each panel is verbatim in its file
+  and that the file it names as the runner runs it, and checks every API name in the
+  familiarity table exists in the binding. `webapp/tests/e2e/sdk-page.spec.mjs` checks the
+  chrome, every route, no horizontal scroll at 390 px and WCAG AA.
+- **Mutation.** A docxtemplater time in `results.json` changed from 10.34 to 30 made the
+  page stale (`--check` red) and, with the page regenerated, the loss list one shorter;
+  the guard's independent count went red against a hand-edited claim.
+
+### 12.12 Pictures, headers and footers, notes and sections, by edit
+
+The builder could write all four; an opened document could not get any of them. Now each is
+an edit in every binding, lowered by `casual_doc_command` (the capability registry the editor
+and the agent front doors share, `docs/181`) and applied through the batch's choke point
+(ADR-030 I1): the same operations as the editor's own gestures, all or nothing per batch,
+with the batch's exact undo. `crates/opendoc/src/edit/objects.rs` holds them.
+
+| Edit | Rust (`Editor`) and JSON (`op`) | JavaScript | Python (python-docx names) | Java (POI names) |
+| --- | --- | --- | --- | --- |
+| Insert a picture | `insert_picture` / `insertPicture` | `addPicture`, `insertPicture` | `add_picture`, `run.add_picture` | `OpenRun.addPicture(InputStream, int, String, int, int)` |
+| Replace, resize, alt text, delete | `replace_picture`, `resize_picture`, `set_alt_text`, `delete_picture` | `replacePicture`, `resizePicture`, `setAltText`, `deletePicture` | `InlineShape.replace`, `.width`/`.height`, `.alt_text`, `.delete()` | `OpenPicture.replace`, `setSize`, `setDescription`, `remove` |
+| A header or footer (default, first, even) | `header_footer` / `headerFooter` | `header`, `footer` | `section.header`, `first_page_header`, `even_page_footer`, … | `createHeader(HeaderFooterType)`, `createFooter` |
+| Remove, link to previous | `remove_header_footer`, `set_linked_to_previous` | `removeHeader`, `setLinkedToPrevious` | `HeaderFooter.remove()`, `is_linked_to_previous` | `OpenHeaderFooter.remove()` |
+| Different first page, odd and even | `set_different_first_page`, `set_different_odd_even` | `setDifferentFirstPage`, `setDifferentOddEven` | `different_first_page_header_footer`, `settings.odd_and_even_pages_header_footer` | `OpenSection.setTitlePage`, `setEvenAndOddHeaders` |
+| A field (page, numpages, date, time, filename, author) | `insert_field` / `insertField` | `insertField` | `Paragraph.add_field` | `OpenParagraph.addField` |
+| Footnotes and endnotes | `insert_note`, `set_note_text`, `delete_note` | `addFootnote`, `addEndnote`, `setNoteText`, `deleteNote` | `Paragraph.add_footnote`, `add_endnote`, `Note.text`, `Note.delete()` | `OpenParagraph.addFootnote`, `addEndnote`, `OpenNote` |
+| Add a section, a break, its start | `add_section`, `insert_section_break`, `set_section_start` | `addSection`, `insertSectionBreak`, `setSectionStart` | `add_section`, `section.start_type` | `addSection`, `insertSectionBreak`, `OpenSection.setStart` |
+| Page size, orientation, margins, columns | `set_page_setup` / `setPageSetup` | `setPageSetup` | `page_width`, `orientation`, `left_margin`, …, `columns` | `OpenSection.setPageSize`, `setOrientation`, `setMargins`, `setColumns` |
+
+The C ABI reaches all of them through `opendoc_call(doc, "edit", json)`, the JSON vocabulary
+the other bindings send (`crates/opendoc-ffi/tests/abi.rs`).
+
+**Decisions, and where this differs.**
+
+- **Units.** Points in Rust, JSON, JavaScript and Java's additions; python-docx `Length`s in
+  Python; EMU in POI's own `addPicture` signature, as POI takes them.
+- **Pictures.** The format is read from the bytes (PNG, JPEG, GIF, BMP, TIFF, WebP). Give one
+  side and the other keeps the image's proportions; give neither for its own size at 96 dpi.
+  The bytes join the document's resources only when the batch applies. Replace keeps the
+  picture's id, position, wrap and alt text and fits the new image inside the old frame, as
+  Word's Change Picture does.
+- **Headers and footers** are named by `(section index, header|footer, default|first|even)`.
+  Asking for a band the section does not have creates it; a section that showed the previous
+  section's band gets its own copy first (Word's unlink). `First` and `Even` show only with a
+  different first page or odd and even pages; Java's `createHeader(FIRST|EVEN)` turns those on,
+  as POI does. A paragraph after one in a header, footer or note is inserted by splitting it
+  (Enter), because only the body and cells take blocks by position.
+- **A new section** (by `add_section` or a break) shows the previous section's header and
+  footer by inheritance rather than naming the same bodies: it renders the same, and it is
+  what python-docx writes, so "linked to previous" is true until unlinked.
+- **A section's start.** The operation set has no single "set start" operation, so it is the
+  existing set in one step: a boundary carrying the new start is spliced in beside the old,
+  the paragraph that ends the section is pointed at it, its form protection moves, and the
+  old boundary is removed. The section's id changes; its index, content and bands do not.
+- **Orientation** swaps width and height when they disagree with it, as Word does; python-docx
+  sets only the flag.
+
+**Guards.**
+
+- `crates/opendoc/tests/objects.rs` (6 tests): every edit applied, read back, saved and
+  reopened with no loss, undone, and refused as a whole batch; the JSON commands.
+- `packages/opendoc/test/objects.test.mjs`, `bindings/python/tests/test_objects.py`,
+  `ConformanceTest` (Java) and `crates/opendoc-ffi/tests/abi.rs` drive the same edits
+  through each binding.
+- **Mutations**, each red then restored: the picture's bytes not handed to the resources
+  ("the bytes are in the package"); the orientation swap removed ("turning swaps the size, as
+  Word does").
+
+### 12.13 SVG pages
+
+A page renders as SVG from the same display list the PNG raster and the PDF writer paint:
+`casual_doc_render::svg::render_svg`, reached as `ViewerDocument::render_page_svg`,
+`Document::render_page_svg` (Rust), `renderPageSvg` (JavaScript), `render_page_svg`
+(Python), `renderPageSvg` (Java), `opendoc_render_svg` (C ABI) and
+`opendoc render --format svg` (CLI).
+
+- **Glyphs** are outlines from the exact face the layout measured with (skrifa, as the
+  raster draws them), each distinct glyph defined once and placed with `<use>`. A page
+  therefore looks the same in every viewer whatever fonts it has.
+- **Real text.** Over each run lies a transparent `<text>` carrying the run's characters,
+  recovered from the paragraph through the glyphs' cluster offsets (the PDF writer's
+  `ToUnicode` mechanism) and stretched to the run's advance, so the text can be selected,
+  searched and read aloud. A run with no source paragraph (a list marker, a tab leader)
+  has the outline alone.
+- **Pictures** are embedded as `data:` URIs: PNG, JPEG, GIF and WebP as their own bytes,
+  BMP and TIFF re-encoded as PNG under the raster backend's decode ceilings, anything
+  undecodable as the raster's crossed placeholder. Crops, rotation, flips and opacity
+  carry over.
+- **Shapes, clips, layers, gradients and shadows** map to SVG paths, `clipPath`, groups
+  (a multiplied layer as `mix-blend-mode: multiply`), gradients and `feGaussianBlur`.
+- **Not drawn yet (stated, not hidden):** colour glyphs (COLR and bitmap emoji) are drawn
+  from their outline glyph when the face has one, in the run's colour, else omitted;
+  arrowheads on lines; glyph ink effects (shadow, emboss, outline).
+- **Determinism.** Coordinates are the list's twips with one decimal, ids are assigned in
+  paint order, so the same document gives the same bytes on every platform with the
+  bundled faces.
+
+**Guards** (`crates/opendoc/tests/svg.rs`):
+
+- `an_svg_page_is_well_formed_sized_and_carries_real_text` parses the page and reads its
+  text layer back, `&` and `<` included.
+- `an_svg_page_draws_what_the_png_page_draws` rasterizes the SVG with an independent
+  renderer (resvg, no text stack) and compares it with the engine's own PNG of the page:
+  mean channel difference under 1.0 and under 0.2% of pixels visibly different, on a
+  built page and on the sample's second page (no pictures: this resvg build decodes none).
+  The residue is antialiasing and the raster's stroke widths, which are device pixels at
+  the render resolution where the PDF writer and the SVG read them as pixels at 96 dpi.
+- `svg_pages_are_the_same_bytes_on_every_platform` holds `tests/svg.golden`: FNV-1a and
+  length of the first three sample pages and one built page. It was blessed on macOS
+  arm64 (`OPENDOC_BLESS=1 cargo test -p opendoc --test svg`, recorded in its `#` lines);
+  CI's Linux `test` job and the macOS and Windows `platform` jobs are its cross-platform
+  check. `.gitattributes` keeps it LF.
+- Each binding renders a page and finds its text (`objects.test.mjs`,
+  `test_objects.py`, `ConformanceTest`, `abi.rs`, `cli.rs`).
+- **Mutations**, each red then restored: glyph outlines not flipped (the raster
+  comparison, 0.439% of pixels visibly different, and the golden); the text layer
+  dropped ("the text layer reads \"Vector pages\": \"\"").
+
+### 12.14 Fuzzing the C ABI, and checked handles
+
+`fuzz/fuzz_targets/ffi_calls.rs` drives `crates/opendoc-ffi` with arbitrary call sequences.
+Each input is a short program: documents opened from arbitrary bytes with honest but wrong
+lengths (all, half, zero, a null pointer with a length) and arbitrary options, JSON and
+non-JSON arguments, real and made-up method names (and edit commands aimed at a real
+paragraph id read back from `body`), page numbers and resolutions out of range (NaN, zero,
+negative, infinite, 10⁹ dpi), and handles and buffers that are null, live, freed already,
+of the wrong kind, freed out of order and freed twice. Every handle still live at the end
+is freed. It does not hand the library a pointer to fewer bytes than the length it states,
+or a string without its NUL: no ABI can check those.
+
+**What it found.** Against the ABI as it stood, a heap-use-after-free within about 1,700
+runs (AddressSanitizer, in the drop of a freed document reached through a stale handle):
+the ABI trusted every pointer, so a stale or double-freed handle was undefined behaviour.
+**The fix:** every handle and buffer the library returns is recorded in a registry
+(`DOCUMENTS`, `BUFFERS`, by address), every export checks the pointer against it first, and
+the frees remove before they free. A freed, double-freed, foreign or wrong-kind pointer is
+now a coded `invalid-argument` error (`NULL`), or a no-op for the two frees and the buffer
+accessors. One hash lookup per call. The ownership rule and the ABI version are unchanged;
+the header says what is now checked and what is still the caller's promise.
+
+**Armed.** CI's `fuzz-build` job builds the target and runs it for 120 seconds on every
+change (`.github/workflows/ci.yml`); `the_abi_fuzz_target_is_armed_in_ci`
+(`crates/opendoc-ffi/tests/abi.rs`) fails if the job stops building or running it. The
+fuzz workspace's lockfile starts from the main one, so it fuzzes the engine versions that
+ship.
+
+**Evidence.** A 300-second local run after the fix (70,568 executions, 37,006 coverage
+edges, a 1,322-input corpus): no crash, leak report or timeout.
+
+**Guards and mutations.**
+- `stale_double_freed_and_foreign_handles_are_refused_not_dereferenced` uses a freed handle,
+  frees it twice, reads and frees a freed buffer twice, and passes a buffer as a document.
+  Mutation: the registry check skipped in `live_document`; the test died with `SIGSEGV`.
+- The fuzz target itself, run against the ABI with the registry disabled: the
+  heap-use-after-free above, in under five seconds.
+- `the_abi_fuzz_target_is_armed_in_ci`. Mutation: `fuzz run ffi_calls` renamed in the job;
+  red, "fuzz-build does not run ffi_calls".
 
 [poi]: https://poi.apache.org/components/document/
 [pydocx]: https://python-docx.readthedocs.io/en/latest/api/text.html

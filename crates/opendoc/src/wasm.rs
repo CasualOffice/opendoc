@@ -354,6 +354,16 @@ impl WasmDocument {
         self.inner.render_page_png(index as usize, dpi).map_err(js)
     }
 
+    /// One page as SVG, from the same layout as the PNG and the PDF.
+    ///
+    /// # Errors
+    ///
+    /// Past the last page.
+    #[wasm_bindgen(js_name = renderPageSvg)]
+    pub fn render_page_svg(&self, index: u32) -> Result<String, JsError> {
+        self.inner.render_page_svg(index as usize).map_err(js)
+    }
+
     /// One page as RGBA; its size is `lastRenderWidth`/`lastRenderHeight`.
     ///
     /// # Errors

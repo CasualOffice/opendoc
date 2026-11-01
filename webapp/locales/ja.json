@@ -1956,6 +1956,7 @@
   "site.header.playground": "プレイグラウンド",
   "site.header.preRelease": "プレリリース",
   "site.header.primaryNavigation": "メインナビゲーション",
+  "site.header.sdk": "SDK",
   "spacing.addSpaceAfter": "段落後に間隔を追加",
   "spacing.addSpaceBefore": "段落前に間隔を追加",
   "spacing.fromStyleHint": "この段落は行間をスタイルから継承しています。ここで設定するには値を入力してください。",

@@ -18,6 +18,7 @@
 
 // The drop-shadow raster (`object.shape-shadow`).
 mod shadow;
+pub mod svg;
 
 use std::collections::HashMap;
 use std::io::Cursor;

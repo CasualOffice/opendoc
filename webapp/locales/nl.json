@@ -1957,6 +1957,7 @@
   "site.header.playground": "Speeltuin",
   "site.header.preRelease": "Voorlopige versie",
   "site.header.primaryNavigation": "Hoofdnavigatie",
+  "site.header.sdk": "SDK",
   "spacing.addSpaceAfter": "Witruimte na alinea toevoegen",
   "spacing.addSpaceBefore": "Witruimte vóór alinea toevoegen",
   "spacing.fromStyleHint": "Deze alinea neemt de regelafstand over uit haar stijl. Typ een waarde om die hier vast te leggen.",

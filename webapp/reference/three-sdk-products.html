@@ -1,0 +1,2211 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Three SDK products on one engine: Viewer, Editor, Native — OpenDoc</title>
+    <meta name="description" content="OpenDoc's three SDK products on one engine (Viewer, Editor, Native), the familiar APIs each language gets, and the measured benchmark against the incumbents." />
+    <meta name="author" content="CasualOffice" />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+    <meta name="theme-color" content="#fbfaf8" />
+    <link rel="icon" href="../opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="../apple-touch-icon.png" />
+    <link rel="manifest" href="../site.webmanifest" />
+    <link rel="canonical" href="https://opendoc.casualoffice.org/reference/three-sdk-products.html" />
+    <link rel="stylesheet" href="../src/fonts.css" />
+    <script src="../src/analytics.js"></script>
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="OpenDoc" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:title" content="Three SDK products on one engine: Viewer, Editor, Native" />
+    <meta property="og:description" content="OpenDoc's three SDK products on one engine (Viewer, Editor, Native), the familiar APIs each language gets, and the measured benchmark against the incumbents." />
+    <meta property="og:url" content="https://opendoc.casualoffice.org/reference/three-sdk-products.html" />
+    <meta property="og:image" content="https://opendoc.casualoffice.org/social/reference.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="OpenDoc: Architecture, SDK and design documents. Generated from the repository's own Markdown, so a page and its source cannot disagree." />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Three SDK products on one engine: Viewer, Editor, Native" />
+    <meta name="twitter:description" content="OpenDoc's three SDK products on one engine (Viewer, Editor, Native), the familiar APIs each language gets, and the measured benchmark against the incumbents." />
+    <meta name="twitter:image" content="https://opendoc.casualoffice.org/social/reference.png" />
+    <meta name="twitter:image:alt" content="OpenDoc: Architecture, SDK and design documents. Generated from the repository's own Markdown, so a page and its source cannot disagree." />
+
+    <link rel="stylesheet" href="../src/marketing.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "TechArticle",
+            "@id": "https://opendoc.casualoffice.org/reference/three-sdk-products.html#webpage",
+            "url": "https://opendoc.casualoffice.org/reference/three-sdk-products.html",
+            "name": "Three SDK products on one engine: Viewer, Editor, Native — OpenDoc",
+            "headline": "Three SDK products on one engine: Viewer, Editor, Native",
+            "description": "OpenDoc's three SDK products on one engine (Viewer, Editor, Native), the familiar APIs each language gets, and the measured benchmark against the incumbents.",
+            "inLanguage": "en",
+            "isPartOf": {
+              "@id": "https://opendoc.casualoffice.org/#website"
+            },
+            "about": {
+              "@id": "https://opendoc.casualoffice.org/#software"
+            },
+            "publisher": {
+              "@id": "https://opendoc.casualoffice.org/#organization"
+            },
+            "license": "https://www.apache.org/licenses/LICENSE-2.0"
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://opendoc.casualoffice.org/reference/three-sdk-products.html#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "OpenDoc",
+                "item": "https://opendoc.casualoffice.org/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Documentation",
+                "item": "https://opendoc.casualoffice.org/docs.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "Reference",
+                "item": "https://opendoc.casualoffice.org/reference/index.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 4,
+                "name": "Three SDK products on one engine: Viewer, Editor, Native",
+                "item": "https://opendoc.casualoffice.org/reference/three-sdk-products.html"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="brand" href="../" aria-label="OpenDoc home" data-i18n-label="site.header.opendocHome">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
+          <span class="brand-badge" data-i18n="site.header.preRelease">Pre-release</span>
+        </a>
+        <nav class="site-nav" aria-label="Primary navigation" data-i18n-label="site.header.primaryNavigation">
+          <a href="../" data-nav="overview" data-i18n="site.header.overview">Overview</a>
+          <a href="../editor.html" data-nav="editor" data-i18n="site.header.editor">Editor</a>
+          <a href="../playground.html" data-nav="playground" data-i18n="site.header.playground">Playground</a>
+          <a href="../embedding.html" data-nav="embedding" data-i18n="site.header.embedding">Embedding</a>
+          <a href="../sdk.html" data-nav="sdk" data-i18n="site.header.sdk">SDK</a>
+          <a href="../docs.html" data-nav="docs" aria-current="page" data-i18n="site.header.docs">Docs</a>
+          <a href="../fidelity.html" data-nav="fidelity" data-i18n="site.header.fidelity">Fidelity</a>
+        </nav>
+        <div class="site-header-actions">
+          <!-- The language control. The markup carries only the automatic entry —
+               the one option with words in it, so the one that goes through the seam
+               like every other label here. The nineteen languages are appended by
+               `site_locale.mjs` from `locales.mjs`, because an endonym is a proper
+               noun that must never be translated and so does not belong in a
+               catalogue at all. The control stays `hidden` until that script has
+               run: a picker offering one choice is a dead control (docs/99 §10), and
+               a site whose scripts did not run is English with nothing to choose. -->
+          <label class="site-lang" hidden>
+            <span class="site-lang-icon ms" aria-hidden="true">language</span>
+            <select id="siteLanguage" aria-label="Language" data-i18n-label="site.header.language">
+              <option value="" data-i18n="site.header.languageAutomatic">Automatic</option>
+            </select>
+          </label>
+          <a class="header-link" href="https://github.com/CasualOffice/opendoc" data-i18n="site.header.github">GitHub</a>
+          <a class="header-cta" href="../editor.html" data-i18n="site.header.openEditor">Open the editor</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="doc-reader is-reference">
+      <article class="doc-article">
+        <p class="doc-eyebrow">Reference</p>
+        <h1 id="three-sdk-products-on-one-engine-viewer-editor-native">Three SDK products on one engine: Viewer, Editor, Native</h1>
+        <p class="doc-lede">Owner scope clarification, same day, binding on the Viewer and Native SDKs. Both are API design only: no editing UX, no chrome, no UI work.</p>
+        <p class="doc-provenance">
+          Generated from this repository's own design document:
+          <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/176-THREE-SDK-PRODUCTS.md"><code>docs/176-THREE-SDK-PRODUCTS.md</code></a>
+        </p>
+        <div class="doc-prose">
+        <p class="doc-body"><strong>Status:</strong> Design, proposed 2026-10-23; Viewer SDK phase 1 built 2026-10-24 (§11.1); Native SDK core, JS package, CLI, Python and Java bindings built 2026-10-30 (§12), none published. <strong>Decides:</strong> ADR-071 (proposed). <strong>Row:</strong> <code>docs/109</code> RM-46. <strong>Built:</strong> the measured viewer cut (V0), then the Viewer SDK's stable read-only API, <code>crates/opendoc-viewer</code> (it was <code>crates/casual-doc-viewer</code>), and the <code>@casualoffice/opendoc-viewer</code> package (<code>packages/opendoc-viewer</code>, not published). The Editor SDK is not changed by this document. <strong>Builds on:</strong> <code>05</code> (SDK API), <code>83</code> (packaging), <code>126</code> (embeddability, three phases), ADR-030 and <code>45</code> (extensibility invariants), ADR-005 (transactions), <code>98</code> (one layout for every output), <code>40</code> (fonts).</p>
+        <p class="doc-body"><strong>Owner decision, 2026-10-23.</strong> Split OpenDoc into three products on one engine, and market each one against named competitors:</p>
+        <ol class="doc-list">
+        <li><strong>Viewer SDK.</strong> Read-only preview, in the browser (WASM + JS) and on a server. Competes with docx-preview and mammoth.js.</li>
+        <li><strong>Editor SDK.</strong> Today's <code>&lt;opendoc-editor&gt;</code>. Competes with ONLYOFFICE Docs.</li>
+        <li><strong>Native/headless SDK.</strong> Create, read, modify and convert documents in code, from Java, Python, .NET and C. Competes with Apache POI (XWPF), python-docx, docx4j, the Open XML SDK and Aspose.Words.</li>
+        </ol>
+        <p class="doc-body"><strong>Owner scope clarification, same day, binding on the Viewer and Native SDKs.</strong> Both are API design only: no editing UX, no chrome, no UI work. Both are batch, request in and result out (open → read or modify → save, render or convert). Neither needs interactive re-layout or real-time re-render. <strong>Both must be light</strong>: they exclude the shell, selection, caret, hit-testing, the incremental-paint machinery and collaboration. The Editor SDK stays as it is and appears here only for contrast.</p>
+        <hr class="doc-rule" />
+        <h2 class="doc-h2" id="1-the-finding-that-shapes-the-design">1. The finding that shapes the design</h2>
+        <p class="doc-body"><code>docs/83</code> §2 designed preview as a <code>readOnly</code> <strong>mode</strong> of the editor runtime: mutation entry points are bypassed at run time. That saves the reader nothing, because the bytes are already downloaded. The browser artefact is <code>casual-doc-wasm</code>, and every host gets all of it: 25,955,980 B, of which 12,044,435 B is code (§4.1). That code includes the caret, selection, hit-testing, the galley cache, the windowed body, the transaction log, diff and the collaboration client, whether the host edits or not.</p>
+        <p class="doc-body">So a product here is a <strong>dependency cut</strong>, not a run-time mode. The cut is measured below, and it removes 64% of the code.</p>
+        <h2 class="doc-h2" id="2-scope-of-each-product">2. Scope of each product</h2>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th></th>
+        <th>Viewer SDK</th>
+        <th>Editor SDK</th>
+        <th>Native/headless SDK</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>Job</td>
+        <td>Show a document exactly as laid out; thumbnails; PDF; text for search</td>
+        <td>Edit it, with chrome, review and co-editing</td>
+        <td>Create, read, modify, save and convert in code</td>
+        </tr>
+        <tr>
+        <td>Runs in</td>
+        <td>Browser (WASM), Node/Deno/Bun (the same WASM), server (native Rust)</td>
+        <td>Browser</td>
+        <td>JVM, CPython, .NET, C/C++, Rust; server and desktop</td>
+        </tr>
+        <tr>
+        <td>Interaction</td>
+        <td>None. A host blits pixels or shows a PNG</td>
+        <td>Full</td>
+        <td>None</td>
+        </tr>
+        <tr>
+        <td>Layout</td>
+        <td>Once per open (and once per host font registration)</td>
+        <td>Incremental, per keystroke</td>
+        <td>Once per render or convert call, after edits</td>
+        </tr>
+        <tr>
+        <td>Mutation</td>
+        <td>None</td>
+        <td>Transactions (ADR-005)</td>
+        <td>Closed operation set through <code>casual_doc_edit::apply</code> (ADR-030 I1)</td>
+        </tr>
+        <tr>
+        <td>Output</td>
+        <td>RGBA, PNG, PDF, plain text, the import report</td>
+        <td>The DOCX/ODT/… the editor saves</td>
+        <td>DOCX (loss-aware), ODT, HTML, Markdown, TXT, PDF, PNG</td>
+        </tr>
+        <tr>
+        <td>UI</td>
+        <td>None in scope (Q8)</td>
+        <td><code>&lt;opendoc-editor&gt;</code>, chrome, white-label</td>
+        <td>None</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <h3 class="doc-h3" id="2-1-what-deterministic-pixels-means-here">2.1 What &quot;deterministic pixels&quot; means here</h3>
+        <p class="doc-body">The viewer cut opens with <strong>only the bundled faces and the ones a host registers</strong> (<code>ParleyShaper::without_system_fonts</code>, <code>crates/casual-doc-viewer/src/lib.rs</code> <code>ViewerOptions</code>). The same bytes then lay out to the same pages and pixels on a laptop, a CI runner and a server. OS fallback (CJK, symbols from the machine) is an explicit <code>ViewerOptions::with_system_fonts(true)</code>, and the host accepts that the pixels then depend on the machine. This is the browser's configuration already. It was made the default here after a measured failure (§9 R3).</p>
+        <h2 class="doc-h2" id="3-public-api-surface">3. Public API surface</h2>
+        <p class="doc-body">Each product gets the <strong>minimum stable surface</strong> that does its job. The mapping column refers to <code>docs/05</code>. <em>Existing</em> means a host can call it today. <em>Partial</em> means the capability exists in the engine but not in this product's API. <em>Missing</em> means it is not built.</p>
+        <h3 class="doc-h3" id="3-1-viewer-sdk">3.1 Viewer SDK</h3>
+        <p class="doc-body">Browser and Node, <code>@casualoffice/opendoc-viewer</code> (name decided, §10). The shape below is what <code>packages/opendoc-viewer/src/index.js</code> exports, over the wasm-bindgen façade in <code>crates/opendoc-viewer/src/web.rs</code>:</p>
+        <div class="code-panel">
+        <div class="code-panel-head"><span>ts</span></div>
+        <pre><code>import { openDocument, packageFontProvider } from &quot;@casualoffice/opendoc-viewer&quot;;
+        const doc = await openDocument(bytes, {                  // rejects with a sentence on a bad file
+          fontProvider: packageFontProvider(&quot;/fonts/&quot;),          // the host serves pkg/fonts/ (§10, Q2)
+        });
+        for (let i = 0; i &lt; doc.pageCount; i++) {
+          const { widthPt, heightPt } = doc.pageSize(i);
+          const { width, height, rgba } = doc.renderPage(i, { dpi: 96 * devicePixelRatio });
+          const png = doc.renderPagePng(i, { dpi: 24 });         // thumbnail
+          const text = doc.pageText(i);                          // the pages concatenate to doc.text()
+        }
+        doc.outline();                                           // [{ level, text, page }]
+        doc.fontNeeds();                                         // [{ requested, substitute, substituteAvailable }]
+        const pdf = doc.toPdf();                                 // shipped in the package build</code></pre>
+        </div>
+        <p class="doc-body">Node uses the same module through <code>@casualoffice/opendoc-viewer/node</code>, which reads the <code>.wasm</code> and the face files from disk. The server shape is the same crate used natively (<code>ViewerDocument::open</code>/<code>open_with</code>, <code>page_sizes_twips</code>, <code>render_page</code>, <code>render_page_png</code>, <code>page_text</code>, <code>plain_text</code>, <code>outline</code>, <code>font_needs</code>, <code>register_fonts</code>, <code>to_pdf</code>, <code>document()</code>).</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Call</th>
+        <th><code>docs/05</code></th>
+        <th>Status</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td><code>open(bytes, options)</code> (DOCX)</td>
+        <td>§4 <code>Engine::open_docx</code></td>
+        <td><strong>Existing</strong> in <code>opendoc-viewer</code>; options: faces to register before the first layout, OS fonts (native)</td>
+        </tr>
+        <tr>
+        <td><code>open</code> for ODT, RTF, TXT, JSON</td>
+        <td>§4</td>
+        <td><strong>Existing</strong> behind <code>formats</code>. It costs 3.6 MB until P1 (§4.2)</td>
+        </tr>
+        <tr>
+        <td><code>pageCount</code>, <code>pageSize</code>, <code>pageSizes</code></td>
+        <td>§5 <code>scene</code> (subset)</td>
+        <td><strong>Existing</strong></td>
+        </tr>
+        <tr>
+        <td><code>renderPage</code> (RGBA), <code>renderPagePng</code></td>
+        <td>§5 <code>scene</code></td>
+        <td><strong>Existing</strong></td>
+        </tr>
+        <tr>
+        <td><code>toPdf</code></td>
+        <td>§13</td>
+        <td><strong>Existing</strong> behind <code>pdf</code></td>
+        </tr>
+        <tr>
+        <td><code>text</code>, <code>pageText(i)</code></td>
+        <td>(none)</td>
+        <td><strong>Existing</strong>. Body only: headers, footers and notes are not included yet</td>
+        </tr>
+        <tr>
+        <td><code>outline()</code></td>
+        <td>(none)</td>
+        <td><strong>Existing</strong>: level, text and page of each body heading, by the editor's heading rule</td>
+        </tr>
+        <tr>
+        <td><code>fontNeeds()</code>, <code>missingCodePoints()</code>, <code>registerFonts</code>, <code>registerFallbackFont</code>, <code>fontProvider</code></td>
+        <td>§10 <code>ResourceRequest::Font</code></td>
+        <td><strong>Existing</strong>: the host font hook (§10, Q2)</td>
+        </tr>
+        <tr>
+        <td>Page to SVG</td>
+        <td>(none)</td>
+        <td><strong>Existing</strong> since 2026-10-31: <code>casual_doc_render::svg</code>, from the same display list as the PNG and PDF (§12.13)</td>
+        </tr>
+        <tr>
+        <td><code>importReport()</code>: what was degraded or dropped</td>
+        <td>(none)</td>
+        <td><strong>Partial</strong>: <code>CompatibilityReport</code> exists in <code>casual-doc-import</code>/<code>-io</code>, but it is not exposed</td>
+        </tr>
+        <tr>
+        <td><code>metadata()</code></td>
+        <td>(none)</td>
+        <td><strong>Partial</strong>: in <code>casual-doc-wasm</code>, not in the cut</td>
+        </tr>
+        <tr>
+        <td><code>search(query)</code> → page rectangles</td>
+        <td>(none)</td>
+        <td><strong>Partial</strong>: Find in the editor; geometry needs a hit-test-free rect query</td>
+        </tr>
+        <tr>
+        <td><code>links()</code> per page</td>
+        <td>(none)</td>
+        <td><strong>Partial</strong>: <code>linkAt</code> in the editor uses hit-testing; the viewer needs a per-page list instead</td>
+        </tr>
+        <tr>
+        <td>Pages of a huge document (windowed)</td>
+        <td>(none)</td>
+        <td><strong>Missing</strong> in the cut: <code>WindowedBody</code> lives in <code>casual-doc-wasm</code> (R4)</td>
+        </tr>
+        <tr>
+        <td><code>&lt;opendoc-viewer&gt;</code> element (scroll, zoom)</td>
+        <td>§3</td>
+        <td><strong>Missing</strong>, and out of scope under the &quot;no UI&quot; rule (Q8)</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">Deliberately <strong>absent</strong>: <code>execute</code>, <code>selection</code>, <code>handle_key/pointer/ime</code>, <code>set_viewport</code>, <code>subscribe</code>, <code>save_docx</code>. These are <code>docs/05</code> §5's interactive members, and they belong to the Editor.</p>
+        <h3 class="doc-h3" id="3-2-editor-sdk-for-contrast-only">3.2 Editor SDK, for contrast only</h3>
+        <p class="doc-body">Unchanged except its npm name: <code>@casualoffice/opendoc-editor</code> (built from <code>packages/opendoc-embed</code>), the <code>&lt;opendoc-editor&gt;</code> element, the host contract (ADR-036), white-labelling (ADR-039), roles and presets (<code>docs/126</code>). It keeps <code>casual-doc-wasm</code> and the whole of <code>docs/05</code> §5. Nothing in this document moves a byte of it.</p>
+        <h3 class="doc-h3" id="3-3-native-headless-sdk">3.3 Native/headless SDK</h3>
+        <p class="doc-body">One Rust API, projected through one C ABI (§6), with idiomatic thin wrappers per language. It covers four call families. All of them are batch calls.</p>
+        <div class="code-panel">
+        <div class="code-panel-head"><span>rust</span></div>
+        <pre><code>// Open / create
+        let mut doc = opendoc::Document::open(&amp;bytes, OpenOptions::default())?; // any registered format
+        let mut doc = opendoc::Document::create_blank()?;
+        let report = doc.import_report();          // the loss-aware edge: what did not map, and how
+
+        // Read: an immutable view over the normalized model, stable ids, no model structs exposed
+        for block in doc.body() {
+            match block {
+                Block::Paragraph(p) =&gt; { p.id(); p.style_name(); p.text(); for r in p.runs() { r.text(); r.bold(); } }
+                Block::Table(t)     =&gt; { for row in t.rows() { for cell in row.cells() { cell.blocks(); } } }
+                Block::ContentControl(c) =&gt; { c.tag(); c.blocks(); }
+                Block::Other(o)     =&gt; { o.kind(); }   // preserved, reported, never silently dropped
+            }
+        }
+        doc.sections(); doc.styles(); doc.comments(); doc.revisions(); doc.properties(); doc.media();
+        doc.headers(); doc.footers(); doc.notes();
+
+        // Modify: a batch of typed edits, lowered to casual_doc_edit::Operation and applied in order
+        doc.edit(|e| {
+            e.insert_text(at, &quot;Quarterly report&quot;)?;
+            e.apply_paragraph_style(paragraph, &quot;Heading 1&quot;)?;
+            e.set_run_format(range, RunFormat::bold())?;
+            e.insert_table(after, 3, 4)?;
+            e.replace_all(&quot;ACME&quot;, &quot;Contoso&quot;)?;
+            e.accept_all_revisions()?;
+            Ok(())
+        })?;                                       // all or nothing; returns the inverse batch
+
+        // Save, render, convert
+        let (docx, save_report) = doc.save(Format::Docx, SaveMode::PreserveWhenSafe)?;
+        let odt = doc.save(Format::Odt, SaveMode::Semantic)?;
+        let pdf = doc.to_pdf(PdfOptions::default())?;      // paginates the current state once
+        let png = doc.render_page_png(0, 150.0)?;</code></pre>
+        </div>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Family</th>
+        <th><code>docs/05</code></th>
+        <th>Status</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td><code>Engine::new</code>, <code>create_blank</code></td>
+        <td>§4</td>
+        <td><strong>Existing</strong>: <code>opendoc::Document::create</code> and <code>from_spec</code> (§12.3)</td>
+        </tr>
+        <tr>
+        <td><code>open</code> DOCX/ODT/RTF/TXT/JSON</td>
+        <td>§4 <code>open_docx</code></td>
+        <td><strong>Existing</strong>: <code>opendoc::Document::open</code> through the <code>casual-doc-io</code> registry; PDF with <code>pdf-import</code> (§12.3)</td>
+        </tr>
+        <tr>
+        <td><code>import_report</code></td>
+        <td>(none)</td>
+        <td><strong>Existing</strong>: <code>Document::import_report</code>, report schema 1 (P7, §12.3)</td>
+        </tr>
+        <tr>
+        <td>Read view (<code>body</code>, <code>runs</code>, <code>sections</code>, <code>styles</code>, <code>comments</code>, <code>revisions</code>)</td>
+        <td>§5 <code>snapshot</code></td>
+        <td><strong>Existing</strong>: <code>opendoc::view</code>, plus headers, footers, notes, media and properties (§12.3)</td>
+        </tr>
+        <tr>
+        <td>Modify (<code>edit</code> batch)</td>
+        <td>§5 <code>execute</code>, §7 catalog</td>
+        <td><strong>Existing</strong> for text, formatting, links, paragraph styles, tables, comments, suggestions, accept/reject and properties (§12.3). <strong>Missing</strong>: pictures, headers, footers, notes and sections by edit</td>
+        </tr>
+        <tr>
+        <td>Save DOCX with exact/preserve/semantic modes and a report</td>
+        <td>§5 <code>save_docx</code></td>
+        <td><strong>Existing</strong>: <code>Document::save(Format, SaveMode)</code> with a <code>SaveReport</code> (§12.3)</td>
+        </tr>
+        <tr>
+        <td>Save ODT, HTML, Markdown, TXT</td>
+        <td>§13</td>
+        <td><strong>Existing</strong>: the same <code>save</code> (§12.3)</td>
+        </tr>
+        <tr>
+        <td><code>to_pdf</code>, <code>render_page_png</code></td>
+        <td>(none)</td>
+        <td><strong>Existing</strong> in <code>opendoc</code> and <code>opendoc-viewer</code></td>
+        </tr>
+        <tr>
+        <td>C ABI</td>
+        <td>§1 &quot;C ABI&quot;</td>
+        <td><strong>Existing</strong>: <code>crates/opendoc-ffi</code>, ABI 1 (§12.9). Not fuzzed yet</td>
+        </tr>
+        <tr>
+        <td>Java, Python, .NET packages</td>
+        <td>§13</td>
+        <td><strong>Existing, unpublished</strong>: Python (§12.8) and Java (§12.9), plus the JS package (§12.5a). <strong>Missing</strong>: .NET</td>
+        </tr>
+        <tr>
+        <td>Plugins</td>
+        <td>§11</td>
+        <td><strong>Missing</strong>, and not in this product's first cut</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">Deliberately <strong>absent</strong> from the Native SDK: selection, caret, viewport, input, events, undo and redo stacks, collaboration and diff. <code>edit</code> returns the inverse batch, so a host that wants undo has it without a history object.</p>
+        <p class="doc-body"><strong>Why edits go through <code>Operation</code>, not a writable DOM.</strong> A DOM of mutable model structs would make every model field a public API. It would also bypass ADR-030 I1, the single mutation choke point, and with it the invariants the operation set enforces: ids, section and list integrity, review marks and protection. POI's own page warns of the cost of a writable low-level surface: &quot;Error checking may be missing in places, so it may be possible to accidentally generate invalid files&quot; ([POI document page][poi]). The read view is a projection, and every write is a typed operation.</p>
+        <h2 class="doc-h2" id="4-measured-what-the-viewer-needs-and-what-it-costs">4. Measured: what the viewer needs, and what it costs</h2>
+        <h3 class="doc-h3" id="4-1-the-cut-and-its-size">4.1 The cut and its size</h3>
+        <p class="doc-body"><strong>What the viewer links:</strong> <code>casual-doc-model</code>, <code>casual-doc-package</code>, <code>casual-doc-ooxml</code>, <code>casual-doc-import</code>, <code>casual-doc-layout</code> (with parley, fontique, skrifa, harfrust, ICU) and <code>casual-doc-render</code> (tiny-skia, image, resvg).</p>
+        <p class="doc-body"><strong>What it drops:</strong> <code>casual-doc-edit</code>, <code>casual-doc-transaction</code>, <code>casual-doc-selection</code>, <code>casual-doc-diff</code>, <code>casual-doc-wasm</code>, <code>casual-doc-sdk</code>, <code>casual-doc-export</code>, <code>casual-doc-odf</code>, <code>casual-doc-rtf</code> and <code>casual-doc-io</code>. Of these, <code>pdf</code> adds back <code>casual-doc-pdf</code> and <code>casual-doc-edit</code>, and <code>formats</code> adds back <code>casual-doc-io</code> with every writer.</p>
+        <p class="doc-body">The measurement was taken on 2026-10-23 at <code>cc37ca40</code> plus this branch, on macOS arm64, with Rust 1.96.0 and wasm-pack 0.14.0. Every artefact was built with <strong>exactly <code>webapp/build.sh</code>'s settings</strong>: <code>CARGO_PROFILE_RELEASE_OPT_LEVEL=z</code>, the root <code>Cargo.toml</code> per-package <code>opt-level = 3</code> overrides, <code>wasm-opt -Oz</code> with the same enable flags, <code>web-host-fonts</code>, and <code>CARGO_INCREMENTAL=0</code>. Compression is <code>gzip -9</code> and <code>brotli -q 11</code>. Sections are read from the module headers.</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Artefact</th>
+        <th style="text-align:right"><code>.wasm</code> raw</th>
+        <th style="text-align:right">gzip -9</th>
+        <th style="text-align:right">brotli 11</th>
+        <th style="text-align:right">code section</th>
+        <th style="text-align:right">data section</th>
+        <th style="text-align:right">JS glue raw / gz</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td><strong>Editor</strong>, <code>casual-doc-wasm</code> (today)</td>
+        <td style="text-align:right">25,955,980</td>
+        <td style="text-align:right">11,914,308</td>
+        <td style="text-align:right">8,609,764</td>
+        <td style="text-align:right">12,044,435</td>
+        <td style="text-align:right">13,868,329</td>
+        <td style="text-align:right">684,766 / 109,806</td>
+        </tr>
+        <tr>
+        <td><strong>Viewer A</strong>: DOCX only</td>
+        <td style="text-align:right">17,886,063</td>
+        <td style="text-align:right">9,204,063</td>
+        <td style="text-align:right">6,887,319</td>
+        <td style="text-align:right">4,352,016</td>
+        <td style="text-align:right">13,525,450</td>
+        <td style="text-align:right">13,786 / 3,059</td>
+        </tr>
+        <tr>
+        <td>Viewer B: A + <code>pdf</code></td>
+        <td style="text-align:right">18,313,433</td>
+        <td style="text-align:right">9,364,062</td>
+        <td style="text-align:right">6,987,004</td>
+        <td style="text-align:right">4,738,736</td>
+        <td style="text-align:right">13,564,722</td>
+        <td style="text-align:right">14,630 / 3,105</td>
+        </tr>
+        <tr>
+        <td>Viewer C: B + <code>formats</code></td>
+        <td style="text-align:right">21,951,615</td>
+        <td style="text-align:right">10,557,246</td>
+        <td style="text-align:right">7,767,166</td>
+        <td style="text-align:right">8,224,710</td>
+        <td style="text-align:right">13,711,408</td>
+        <td style="text-align:right">14,630 / 3,105</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">Viewer A against the editor:</p>
+        <ul class="doc-list">
+        <li>8,069,917 B smaller raw (−31.1%) and 2,710,245 B smaller gzipped (−22.7%);</li>
+        <li><strong>−63.9% code</strong>: 7,692,419 B less for the browser to compile before the first page;</li>
+        <li>−98.0% JS glue (13,786 B against 684,766 B).</li>
+        </ul>
+        <p class="doc-body"><strong>What dominates now is fonts, not code.</strong> The bundled faces that <code>web-host-fonts</code> keeps add up to 9,317,548 B: Liberation × 12, Carlito × 4, Caladea × 4 and Noto Emoji. That is the sum of the files <code>crates/casual-doc-layout/src/fonts.rs</code> includes. It is <strong>52% of Viewer A</strong> and 69% of its data section, and font bytes barely compress. Without them, about 4.2 MB of data would remain (13,525,450 − 9,317,548 = 4,207,902 B). That figure is subtraction, not a build. Taking the fonts out is the next lever, and it is an owner call (Q2), because these faces are the metric-compatible substitutes the offline layout depends on.</p>
+        <h3 class="doc-h3" id="4-2-what-each-feature-costs">4.2 What each feature costs</h3>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Feature</th>
+        <th style="text-align:right">Raw</th>
+        <th style="text-align:right">gzip</th>
+        <th>Why</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td><code>pdf</code></td>
+        <td style="text-align:right">+427,370</td>
+        <td style="text-align:right">+159,999</td>
+        <td><code>casual-doc-pdf</code>, plus <code>casual-doc-edit</code> pulled in for <code>ParagraphIndex</code> alone (P2)</td>
+        </tr>
+        <tr>
+        <td><code>formats</code></td>
+        <td style="text-align:right">+3,638,182</td>
+        <td style="text-align:right">+1,193,184</td>
+        <td>The <code>casual-doc-io</code> registry registers readers <strong>and writers</strong> together, so opening ODT links the DOCX semantic writer, the ODT writer, HTML, Markdown and PDF (P1)</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <h3 class="doc-h3" id="4-3-native-artefact-memory-and-time">4.3 Native artefact, memory and time</h3>
+        <p class="doc-body">The binary is the <code>convert</code> example (<code>crates/casual-doc-viewer/examples/convert.rs</code>): open, render every page to PNG at 96 dpi, and optionally write a PDF. It is a native release build with the workspace profile, which is opt-level 3, thin LTO and stripped. On native, the render crate also links OS font discovery.</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Binary</th>
+        <th style="text-align:right">Raw</th>
+        <th style="text-align:right">gzip -9</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td><code>convert</code>, DOCX only</td>
+        <td style="text-align:right">21,933,200</td>
+        <td style="text-align:right">11,661,544</td>
+        </tr>
+        <tr>
+        <td><code>convert --features pdf</code></td>
+        <td style="text-align:right">22,515,072</td>
+        <td style="text-align:right">11,931,252</td>
+        </tr>
+        <tr>
+        <td><code>convert --features pdf,formats</code></td>
+        <td style="text-align:right">27,489,232</td>
+        <td style="text-align:right">14,146,425</td>
+        </tr>
+        <tr>
+        <td><code>opendoc-render</code> (the existing corpus tool, same pipeline)</td>
+        <td style="text-align:right">21,899,856</td>
+        <td style="text-align:right">11,657,478</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">Peak resident set (<code>/usr/bin/time -l</code>) and wall time, three runs each. Every run is reported, and the spread is the first run's cold cache:</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Document</th>
+        <th style="text-align:right">Pages</th>
+        <th>Binary</th>
+        <th>Peak RSS</th>
+        <th>Open</th>
+        <th>Render all pages</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td><code>sample.docx</code> (75,267 B)</td>
+        <td style="text-align:right">14</td>
+        <td>DOCX only</td>
+        <td>54.6–56.8 MB</td>
+        <td>13–42 ms</td>
+        <td>63–68 ms</td>
+        </tr>
+        <tr>
+        <td><code>sample.docx</code></td>
+        <td style="text-align:right">14</td>
+        <td><code>pdf</code>, writing the PDF</td>
+        <td>56.0–58.0 MB</td>
+        <td>13–42 ms</td>
+        <td>63–69 ms</td>
+        </tr>
+        <tr>
+        <td><code>fixtures/corpus/real-producer-rich.docx</code> (5,524 B)</td>
+        <td style="text-align:right">1</td>
+        <td>DOCX only</td>
+        <td>41.3–41.4 MB</td>
+        <td>1–2 ms</td>
+        <td>1 ms</td>
+        </tr>
+        <tr>
+        <td><code>fixtures/corpus/real-producer-rich.docx</code></td>
+        <td style="text-align:right">1</td>
+        <td><code>pdf</code></td>
+        <td>42.3–42.5 MB</td>
+        <td>1–2 ms</td>
+        <td>1 ms</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">About 41 MB is the floor for a one-page file, and most of it is the font bundle mapped into the process. Memory <strong>inside the browser</strong> was not measured. The native RSS is a proxy, not a browser number.</p>
+        <h3 class="doc-h3" id="4-4-reproduce">4.4 Reproduce</h3>
+        <div class="code-panel">
+        <div class="code-panel-head"><span>sh</span></div>
+        <pre><code>df -h /                                   # stop under 8 GB free
+        export CARGO_INCREMENTAL=0 CARGO_PROFILE_RELEASE_OPT_LEVEL=z
+        # the editor, exactly as webapp/build.sh builds it
+        wasm-pack build crates/casual-doc-wasm --target web --out-dir /tmp/sdk/editor \
+          --out-name casual_doc_wasm -- --features web-host-fonts
+        # the viewer variants
+        wasm-pack build crates/casual-doc-viewer --target web --out-dir /tmp/sdk/viewer-a \
+          --out-name casual_doc_viewer -- --no-default-features --features wasm,web-host-fonts
+        #   viewer-b: --features wasm,web-host-fonts,pdf
+        #   viewer-c: --features wasm,web-host-fonts,pdf,formats
+        stat -f %z /tmp/sdk/*/*_bg.wasm; gzip -9 -c FILE | wc -c; brotli -q 11 -c FILE | wc -c
+        # native
+        unset CARGO_PROFILE_RELEASE_OPT_LEVEL
+        cargo build --release --locked -p casual-doc-viewer --example convert [--features pdf[,formats]]
+        /usr/bin/time -l target/release/examples/convert sample.docx /tmp/out --pdf</code></pre>
+        </div>
+        <p class="doc-body">The tables above are the V0 measurement of 2026-10-23, before the owner's font decision, and they stay as the record of that cut. What the package ships now is §4.5.</p>
+        <h3 class="doc-h3" id="4-5-the-viewer-sdk-package-as-built-v1">4.5 The Viewer SDK package as built (V1)</h3>
+        <p class="doc-body"><code>packages/opendoc-viewer/build.sh</code> builds <code>@casualoffice/opendoc-viewer</code> with the owner's decisions (§10): DOCX only, <code>pdf</code> on, and the <code>core-fonts</code> policy, which embeds Liberation Sans alone and ships every other face as a file in <code>pkg/fonts/</code> that the host serves through the font hook. The table below is <strong>generated</strong>: <code>tools/measure-size.mjs</code> writes <code>size.json</code> from the build and renders this block from it, and <code>test/size_record.test.mjs</code> fails if the two disagree. The CI job <code>viewer-package</code> rebuilds the module on every change and <code>test/size_budget.test.mjs</code> holds it under a ceiling.</p>
+        <p class="doc-body">&lt;!-- viewer-size:begin (generated by packages/opendoc-viewer/tools/measure-size.mjs; do not edit) --&gt;</p>
+        <p class="doc-body">Built by <code>packages/opendoc-viewer/build.sh</code> with features <code>wasm,core-fonts,pdf</code>, Rust 1.96.0, wasm-bindgen 0.2.129; gzip level 9 and brotli quality 11 (Node zlib).</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Artefact</th>
+        <th style="text-align:right">Raw</th>
+        <th style="text-align:right">gzip</th>
+        <th style="text-align:right">brotli</th>
+        <th style="text-align:right">code section</th>
+        <th style="text-align:right">data section</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td><code>opendoc_viewer_bg.wasm</code> (engine + core font)</td>
+        <td style="text-align:right">11,172,897</td>
+        <td style="text-align:right">5,493,049</td>
+        <td style="text-align:right">4,198,359</td>
+        <td style="text-align:right">5,013,436</td>
+        <td style="text-align:right">6,148,897</td>
+        </tr>
+        <tr>
+        <td><code>opendoc_viewer.js</code> (glue)</td>
+        <td style="text-align:right">23,611</td>
+        <td style="text-align:right">4,227</td>
+        <td style="text-align:right">3,737</td>
+        <td style="text-align:right"></td>
+        <td style="text-align:right"></td>
+        </tr>
+        <tr>
+        <td><code>pkg/fonts/</code> (21 host-served faces, fetched only when a document needs them)</td>
+        <td style="text-align:right">9,763,176</td>
+        <td style="text-align:right">5,144,368</td>
+        <td style="text-align:right">4,237,221</td>
+        <td style="text-align:right"></td>
+        <td style="text-align:right"></td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">&lt;!-- viewer-size:end --&gt;</p>
+        <h2 class="doc-h2" id="5-packaging-versioning-and-the-feature-gating-plan">5. Packaging, versioning and the feature-gating plan</h2>
+        <h3 class="doc-h3" id="5-1-crates-and-features">5.1 Crates and features</h3>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Crate</th>
+        <th style="text-align:center">Viewer (browser)</th>
+        <th style="text-align:center">Viewer (server)</th>
+        <th style="text-align:center">Editor</th>
+        <th style="text-align:center">Native</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td><code>casual-doc-model</code>, <code>-package</code>, <code>-ooxml</code>, <code>-import</code></td>
+        <td style="text-align:center">✓</td>
+        <td style="text-align:center">✓</td>
+        <td style="text-align:center">✓</td>
+        <td style="text-align:center">✓</td>
+        </tr>
+        <tr>
+        <td><code>casual-doc-layout</code>, <code>-render</code></td>
+        <td style="text-align:center">✓</td>
+        <td style="text-align:center">✓</td>
+        <td style="text-align:center">✓</td>
+        <td style="text-align:center">✓</td>
+        </tr>
+        <tr>
+        <td><code>casual-doc-pdf</code></td>
+        <td style="text-align:center"><code>pdf</code></td>
+        <td style="text-align:center"><code>pdf</code></td>
+        <td style="text-align:center">✓</td>
+        <td style="text-align:center">✓</td>
+        </tr>
+        <tr>
+        <td><code>casual-doc-odf</code>, <code>-rtf</code>, readers in <code>-io</code></td>
+        <td style="text-align:center"><code>formats</code></td>
+        <td style="text-align:center"><code>formats</code></td>
+        <td style="text-align:center">✓</td>
+        <td style="text-align:center">✓</td>
+        </tr>
+        <tr>
+        <td><code>casual-doc-export</code> and the writers in <code>-io</code></td>
+        <td style="text-align:center">—</td>
+        <td style="text-align:center">—</td>
+        <td style="text-align:center">✓</td>
+        <td style="text-align:center">✓</td>
+        </tr>
+        <tr>
+        <td><code>casual-doc-edit</code></td>
+        <td style="text-align:center">— (after P2)</td>
+        <td style="text-align:center">— (after P2)</td>
+        <td style="text-align:center">✓</td>
+        <td style="text-align:center">✓ (modify)</td>
+        </tr>
+        <tr>
+        <td><code>casual-doc-transaction</code>, <code>-selection</code>, <code>-diff</code></td>
+        <td style="text-align:center">—</td>
+        <td style="text-align:center">—</td>
+        <td style="text-align:center">✓</td>
+        <td style="text-align:center">— (Q4)</td>
+        </tr>
+        <tr>
+        <td><code>casual-doc-wasm</code></td>
+        <td style="text-align:center">—</td>
+        <td style="text-align:center">—</td>
+        <td style="text-align:center">✓</td>
+        <td style="text-align:center">—</td>
+        </tr>
+        <tr>
+        <td><code>casual-doc-viewer</code></td>
+        <td style="text-align:center">✓</td>
+        <td style="text-align:center">✓</td>
+        <td style="text-align:center">—</td>
+        <td style="text-align:center">✓ (render/convert)</td>
+        </tr>
+        <tr>
+        <td><code>casual-doc-ffi</code> (new, §6)</td>
+        <td style="text-align:center">—</td>
+        <td style="text-align:center">—</td>
+        <td style="text-align:center">—</td>
+        <td style="text-align:center">✓</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">Rules:</p>
+        <ol class="doc-list">
+        <li><strong>Features add, never subtract.</strong> <code>default = []</code> is the smallest useful thing (DOCX → pixels). A feature that removed capability would make <code>--all-features</code>, which CI lints, the smallest build, which is backwards.</li>
+        <li><strong>One engine version.</strong> Every crate and package carries the workspace version, so a Viewer page and an Editor page render one document identically when both are on <code>x.y.z</code>.</li>
+        <li><strong>The editor is never a consumer of the viewer crate.</strong> If it were, a viewer refactor could move editor bytes. The two share the engine crates below them, not each other.</li>
+        </ol>
+        <h3 class="doc-h3" id="5-2-distribution">5.2 Distribution</h3>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Channel</th>
+        <th>Viewer</th>
+        <th>Editor</th>
+        <th>Native</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>npm</td>
+        <td><code>@casualoffice/opendoc-viewer</code> (WASM + <code>.d.ts</code>, runs in Node too)</td>
+        <td><code>@casualoffice/opendoc-editor</code>, from <code>packages/opendoc-embed</code> (pre-releases, §8.3)</td>
+        <td>—</td>
+        </tr>
+        <tr>
+        <td>crates.io</td>
+        <td><code>opendoc-viewer</code></td>
+        <td>—</td>
+        <td><code>opendoc</code> (one façade crate; the <code>casual-doc-*</code> crates stay internal)</td>
+        </tr>
+        <tr>
+        <td>Maven Central</td>
+        <td>—</td>
+        <td>—</td>
+        <td><code>org.casualoffice:opendoc</code>, one jar with per-platform natives</td>
+        </tr>
+        <tr>
+        <td>PyPI</td>
+        <td>—</td>
+        <td>—</td>
+        <td><code>opendoc</code>: abi3 wheels for manylinux/musllinux x64 and arm64, macOS universal2, Windows x64 and arm64</td>
+        </tr>
+        <tr>
+        <td>NuGet</td>
+        <td>—</td>
+        <td>—</td>
+        <td><code>CasualOffice.OpenDoc</code>, with <code>runtimes/{rid}/native/</code></td>
+        </tr>
+        <tr>
+        <td>Release asset</td>
+        <td><code>opendoc</code> CLI (<code>convert</code>, <code>render</code>)</td>
+        <td>—</td>
+        <td><code>libopendoc</code> + <code>opendoc.h</code></td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">All names are proposals (Q1). Every crate is <code>publish = false</code> today, so crates.io needs a façade crate first, which is the reason for one public <code>opendoc</code> crate rather than eighteen.</p>
+        <h3 class="doc-h3" id="5-3-versioning">5.3 Versioning</h3>
+        <p class="doc-body">SemVer, <code>0.y</code> until the owner declares an API stable, and <code>docs/05</code> §12's policy from 1.0. There are three version numbers, and each one is independent:</p>
+        <ul class="doc-list">
+        <li>the <strong>engine/package version</strong>, one for every product;</li>
+        <li>the <strong>C ABI version</strong> (<code>opendoc_abi_version()</code>), bumped only when a symbol's signature or ownership rule changes, so a Java jar can refuse a mismatched native;</li>
+        <li>the <strong>schema versions</strong> (normalized JSON, <code>docs/05</code> §12).</li>
+        </ul>
+        <h2 class="doc-h2" id="6-binding-strategy-recommendation">6. Binding strategy: recommendation</h2>
+        <p class="doc-body"><strong>Recommended: one handle-based C ABI (<code>casual-doc-ffi</code>) as the single contract, with a generated header, and thin hand-written idiomatic wrappers per language.</strong></p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Option</th>
+        <th>For</th>
+        <th>Against</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td><strong>C ABI + generated header (cbindgen), wrappers per language</strong></td>
+        <td>One unsafe surface, one ownership rule (opaque handles, <code>opendoc_free_*</code>, error as code plus message). It serves C/C++, which <code>docs/05</code> §1 promises, and every runtime can call C: Java FFM, .NET <code>LibraryImport</code>, Python <code>ctypes</code>/<code>cffi</code></td>
+        <td>The wrappers are hand-written. Mitigation: a conformance suite run through every language against the same fixtures</td>
+        </tr>
+        <tr>
+        <td>PyO3 (Python), JNI (Java), a .NET-specific binding</td>
+        <td>Most idiomatic per language</td>
+        <td>Three bindings written against Rust directly, three unsafe surfaces, three release pipelines, and still no C</td>
+        </tr>
+        <tr>
+        <td>UniFFI</td>
+        <td>Generated idiomatic bindings</td>
+        <td>Officially &quot;Kotlin, Swift and Python&quot; ([UniFFI][uniffi]). Java and C# are third-party generators ([UniFFI README][uniffi-readme]: <code>IronCoreLabs/uniffi-bindgen-java</code>, <code>NordSecurity/uniffi-bindgen-cs</code>). There is no C output</td>
+        </tr>
+        <tr>
+        <td>WASM everywhere (Wasmtime/Chicory hosts)</td>
+        <td>One artefact</td>
+        <td>A WASM runtime dependency in every JVM/.NET host, and slower than native. Unmeasured, so not recommended without a measurement</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body"><strong>Java:</strong> the Foreign Function &amp; Memory API was finalized in <strong>JDK 22</strong>, and its JEP's goal is to &quot;Replace the brittle machinery of <code>native</code> methods and the Java Native Interface&quot; ([JEP 454][jep454]). Java 8–21 users would need a JNI shim over the same C ABI. Whether to carry that shim is Q3.</p>
+        <p class="doc-body"><strong>The <code>unsafe</code> exception.</strong> The workspace sets <code>unsafe_code = &quot;forbid&quot;</code>. A C ABI needs <code>#[unsafe(no_mangle)]</code> and raw pointers, so <code>casual-doc-ffi</code> must be the one crate with a recorded exception (a crate-level <code>[lints]</code> override), fuzzed at the boundary, and nothing else may relax the rule (P4).</p>
+        <h2 class="doc-h2" id="7-competitive-positioning">7. Competitive positioning</h2>
+        <p class="doc-body">Competitor claims are quoted from each project's own public page, linked. Anything the cited page does not state is marked <em>not stated</em>. That means unverified, not absent. OpenDoc cells say <strong>today</strong> only for what this repository ships, and say <em>planned</em> otherwise.</p>
+        <h3 class="doc-h3" id="7-1-viewer-sdk-against-docx-preview-and-mammoth-js">7.1 Viewer SDK against docx-preview and mammoth.js</h3>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th></th>
+        <th>OpenDoc Viewer</th>
+        <th>docx-preview ([docxjs][docxjs])</th>
+        <th>mammoth.js ([mammoth][mammoth])</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>Licence</td>
+        <td>Apache-2.0</td>
+        <td>Apache-2.0</td>
+        <td>BSD-2-Clause</td>
+        </tr>
+        <tr>
+        <td>Goal</td>
+        <td>The laid-out page</td>
+        <td>&quot;render/convert DOCX document into HTML document with keeping HTML semantic as much as possible&quot;</td>
+        <td>&quot;simple and clean HTML by using semantic information in the document, and ignoring other details&quot;</td>
+        </tr>
+        <tr>
+        <td>Pagination</td>
+        <td><strong>Today</strong>: its own pagination engine, the same one the editor uses</td>
+        <td>Breaks only at manual breaks, <code>lastRenderedPageBreak</code> and section changes. &quot;Realtime page breaking is not implemented&quot;</td>
+        <td>Not stated. Output is &quot;an HTML fragment&quot;</td>
+        </tr>
+        <tr>
+        <td>Styling fidelity</td>
+        <td><strong>Today</strong>: fonts, sizes, colours, borders, drawings and charts drawn from the display list</td>
+        <td>&quot;limited by HTML capabilities&quot;</td>
+        <td>Ignores &quot;font, text size, colour&quot; by design. Table borders &quot;currently ignored&quot;</td>
+        </tr>
+        <tr>
+        <td>Thumbnails</td>
+        <td><strong>Today</strong>: <code>renderPagePng</code></td>
+        <td>&quot;it can't be efficiently used for thumbnails&quot;</td>
+        <td>Not stated</td>
+        </tr>
+        <tr>
+        <td>PDF</td>
+        <td><strong>Today</strong>: real-text vector PDF (<code>pdf</code> feature)</td>
+        <td>Not stated</td>
+        <td>Not stated</td>
+        </tr>
+        <tr>
+        <td>Deterministic pixels across machines</td>
+        <td><strong>Today</strong>: bundled faces by default (§2.1)</td>
+        <td>Not stated: it is browser HTML/CSS layout</td>
+        <td>Not stated</td>
+        </tr>
+        <tr>
+        <td>Server-side</td>
+        <td><strong>Today</strong>: the same crate natively, or the WASM in Node</td>
+        <td>Not stated</td>
+        <td>Not stated</td>
+        </tr>
+        <tr>
+        <td>Formats</td>
+        <td>DOCX; ODT, RTF and TXT behind <code>formats</code></td>
+        <td>DOCX</td>
+        <td>DOCX</td>
+        </tr>
+        <tr>
+        <td>Download</td>
+        <td>9.2 MB gzip (§4.1), mostly fonts</td>
+        <td>Not measured here</td>
+        <td>Not measured here</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body"><strong>Our weakness, said plainly:</strong> both rivals are far smaller downloads. We did not measure them, so no ratio is claimed. The answer to that is P3 and Q2, not a claim.</p>
+        <h3 class="doc-h3" id="7-2-editor-sdk-against-onlyoffice-docs">7.2 Editor SDK against ONLYOFFICE Docs</h3>
+        <p class="doc-body">Unchanged from <code>docs/126</code> and <code>.claude/skills/opendoc/references/why.md</code> §1: Apache-2.0 against AGPL-3.0, local-first with no server against <code>x2t</code> with no WASM build, and host customisation ungated against <code>_applyCustomization</code> gated on <code>_licensed</code>. Not restated here.</p>
+        <h3 class="doc-h3" id="7-3-native-sdk-against-poi-python-docx-docx4j-open-xml-sdk-and-aspose-words">7.3 Native SDK against POI, python-docx, docx4j, Open XML SDK and Aspose.Words</h3>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th></th>
+        <th>OpenDoc Native</th>
+        <th>Apache POI XWPF ([POI][poi])</th>
+        <th>python-docx ([docs][pydocx], [licence][pydocx-gh])</th>
+        <th>docx4j ([README][docx4j])</th>
+        <th>Open XML SDK ([README][oxsdk])</th>
+        <th>Aspose.Words ([layout][aspose-layout], [products][aspose])</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>Licence</td>
+        <td>Apache-2.0</td>
+        <td>Apache-2.0</td>
+        <td>MIT</td>
+        <td>Apache-2.0</td>
+        <td>MIT</td>
+        <td>Commercial (&quot;Pricing&quot;, &quot;Buy Now&quot;); terms not read</td>
+        </tr>
+        <tr>
+        <td>Languages</td>
+        <td>Rust today. C, Java, Python and .NET <em>planned</em> (§6)</td>
+        <td>Java</td>
+        <td>Python</td>
+        <td>Java</td>
+        <td>.NET</td>
+        <td>.NET, Java, C++, &quot;Python via .NET&quot;, &quot;Node.js via .NET&quot;</td>
+        </tr>
+        <tr>
+        <td>Read/write DOCX</td>
+        <td>Read <strong>today</strong> (normalized model). Write <strong>today</strong> in <code>casual-doc-io</code>. SDK surface <em>planned</em> (§3.3)</td>
+        <td>&quot;covers many common use cases for reading and writing .docx files&quot;; &quot;moderately functional&quot;</td>
+        <td>&quot;creating and updating Microsoft Word (.docx) files&quot;</td>
+        <td>&quot;creating, editing, and saving OpenXML&quot;</td>
+        <td>Typed markup and package operations</td>
+        <td>Yes</td>
+        </tr>
+        <tr>
+        <td>Page layout</td>
+        <td><strong>Today</strong>: own pagination engine</td>
+        <td>Not stated for XWPF</td>
+        <td>None: &quot;it has no rendering function&quot;</td>
+        <td>Not stated</td>
+        <td>Not stated; &quot;not intended to directly provide higher-level abstractions&quot;</td>
+        <td>&quot;implements its own page layout engine&quot; that &quot;mimics the way Microsoft Word's page layout engine works&quot;</td>
+        </tr>
+        <tr>
+        <td>PDF</td>
+        <td><strong>Today</strong>: real-text vector PDF from that layout</td>
+        <td>Word-to-FO converters, PDF &quot;when using with Apache FOP&quot; (HWPF only)</td>
+        <td>Not stated</td>
+        <td>&quot;Export as PDF, including charts; choice of 3 strategies&quot;</td>
+        <td>Not stated (third-party OfficeIMO)</td>
+        <td>PDF, XPS, PostScript, PCL</td>
+        </tr>
+        <tr>
+        <td>Page images</td>
+        <td><strong>Today</strong>: PNG/RGBA per page</td>
+        <td>Not stated</td>
+        <td>Not stated</td>
+        <td>Not stated</td>
+        <td>Not stated</td>
+        <td>&quot;BMP, PNG or JPEG&quot;</td>
+        </tr>
+        <tr>
+        <td>Loss-aware round trip</td>
+        <td><strong>Today</strong> in the engine: per-feature <code>CompatibilityReport</code> + <code>PreservationLedger</code>, export modes <code>exact_if_unchanged</code>/<code>preserve_when_safe</code>/<code>semantic</code>. SDK accessor <em>planned</em></td>
+        <td>Not stated; &quot;may be possible to accidentally generate invalid files&quot;</td>
+        <td>Not stated</td>
+        <td>Not stated</td>
+        <td>Not stated</td>
+        <td>Not stated</td>
+        </tr>
+        <tr>
+        <td>Needs Word installed</td>
+        <td>No</td>
+        <td>Not stated</td>
+        <td>Not stated</td>
+        <td>Not stated (one module is &quot;conversion-via-microsoft-graph&quot;)</td>
+        <td>Not stated</td>
+        <td>&quot;does not utilize Microsoft Word&quot;</td>
+        </tr>
+        <tr>
+        <td>ODT</td>
+        <td><strong>Today</strong> (read and write, <code>formats</code>)</td>
+        <td>Not stated</td>
+        <td>Not stated</td>
+        <td>Not stated</td>
+        <td>Not stated</td>
+        <td>Not stated in the cited pages</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body"><strong>The edge, stated precisely.</strong> Among the permissive libraries above, only OpenDoc both <strong>lays the document out</strong> and <strong>reports what a round trip lost</strong>. python-docx says outright that it cannot lay out. The pages cited for POI, docx4j and the Open XML SDK do not claim a layout engine. Aspose.Words has one and is commercial. Our gap is that <strong>none of the non-Rust bindings exist yet</strong>. Until §8's N1 ships, the edge holds in Rust only.</p>
+        <h2 class="doc-h2" id="8-prerequisites-and-phased-plan">8. Prerequisites and phased plan</h2>
+        <h3 class="doc-h3" id="8-1-prerequisites">8.1 Prerequisites</h3>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>#</th>
+        <th>What</th>
+        <th>Why</th>
+        <th>Size</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>P1</td>
+        <td>Split <code>casual-doc-io</code> into reader and writer features</td>
+        <td><code>formats</code> costs 3.6 MB raw because opening ODT links every writer (§4.2)</td>
+        <td>M</td>
+        </tr>
+        <tr>
+        <td>P2</td>
+        <td>Move <code>ParagraphIndex</code> out of <code>casual-doc-edit</code>, into model or layout</td>
+        <td><code>casual-doc-pdf</code> depends on the edit crate for it alone</td>
+        <td>S</td>
+        </tr>
+        <tr>
+        <td>P3</td>
+        <td>A host-fonts mode for <strong>all</strong> bundled faces, not just Roboto</td>
+        <td>Fonts are 52% of the viewer. This is the font-provisioning lane's call (Q2)</td>
+        <td>M</td>
+        </tr>
+        <tr>
+        <td>P4</td>
+        <td><code>casual-doc-ffi</code> with a recorded <code>unsafe</code> exception, cbindgen header, fuzzed boundary</td>
+        <td>§6</td>
+        <td>L</td>
+        </tr>
+        <tr>
+        <td>P5</td>
+        <td>One publishable façade crate (<code>opendoc</code>); everything else stays <code>publish = false</code></td>
+        <td>§5.2</td>
+        <td>S</td>
+        </tr>
+        <tr>
+        <td>P6</td>
+        <td>PDF export with OS fonts on must survive a giant system face</td>
+        <td>§9 R3: a 188,589,668 B macOS face fails <code>MAX_FONT_BYTES</code> (64 MiB) and aborts the whole PDF</td>
+        <td>M</td>
+        </tr>
+        <tr>
+        <td>P7</td>
+        <td>Expose <code>CompatibilityReport</code> as a stable, versioned value</td>
+        <td>It is the edge (§7.3), and no SDK exposes it</td>
+        <td>S</td>
+        </tr>
+        <tr>
+        <td>P8</td>
+        <td>A windowed (bounded-memory) layout in the cut, or a stated page/block ceiling</td>
+        <td><code>WindowedBody</code> lives in <code>casual-doc-wasm</code> (R4)</td>
+        <td>M</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <h3 class="doc-h3" id="8-2-phases-viewer-first">8.2 Phases: Viewer first</h3>
+        <p class="doc-body">The Viewer goes first because its API is the smallest, it has no mutation contract to get wrong, and the Native SDK's render and convert half <strong>is</strong> the viewer cut behind a C ABI.</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Phase</th>
+        <th>What a host gets</th>
+        <th>Exit gate (a host does it, in this repo)</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td><strong>V0</strong>: this change</td>
+        <td><code>casual-doc-viewer</code>, measured</td>
+        <td>The tables in §4, and tests that fail when render or PDF breaks (§11)</td>
+        </tr>
+        <tr>
+        <td><strong>V1</strong>: Viewer SDK</td>
+        <td><code>@casualoffice/opendoc-viewer</code> on npm; <code>importReport</code>, <code>outline</code>, <code>metadata</code>, <code>links</code>, <code>search</code> rects; P1, P2, P7; a CI size ceiling for the viewer module</td>
+        <td>A static page in the repo opens a DOCX and shows every page and a PDF with the package alone; <code>wasm_size</code>-style guard on the viewer artefact. <strong>Phase 1 built (§11.1)</strong>: the package, the example page, <code>outline</code>, per-page text, the font hook, the size ceiling. Still open: <code>importReport</code> (P7), <code>metadata</code>, <code>links</code>, <code>search</code> rects, P1, P2. Publishing is built (§8.3, pre-releases under <code>next</code>)</td>
+        </tr>
+        <tr>
+        <td><strong>V2</strong>: server viewer</td>
+        <td><code>opendoc</code> CLI and crate; deterministic-render golden across Linux and macOS</td>
+        <td>The same DOCX renders byte-identical PNGs on both CI platforms</td>
+        </tr>
+        <tr>
+        <td><strong>N1</strong>: Native read + convert</td>
+        <td>C ABI (P4) and Python, Java and .NET packages for open, read view, <code>import_report</code>, render, PDF and save-as</td>
+        <td>One conformance suite of fixtures, run through all four languages, with identical outputs</td>
+        </tr>
+        <tr>
+        <td><strong>N2</strong>: Native modify</td>
+        <td><code>edit</code> batches over <code>Operation</code>; DOCX save with a report</td>
+        <td>A program in each language creates a document with a heading, a table and a tracked change, saves it, and the reopened file matches</td>
+        </tr>
+        <tr>
+        <td><strong>E</strong>: Editor</td>
+        <td>Unchanged: <code>docs/126</code> and <code>109</code> HF-109</td>
+        <td>—</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <h3 class="doc-h3" id="8-3-releasing-to-npm-pre-releases">8.3 Releasing to npm (pre-releases)</h3>
+        <p class="doc-body"><code>.github/workflows/npm-publish.yml</code> publishes <code>@casualoffice/opendoc-viewer</code> (<code>packages/opendoc-viewer</code>) and <code>@casualoffice/opendoc-editor</code> (<code>packages/opendoc-embed</code>). It runs only when dispatched by hand, and only ever publishes a <strong>pre-release</strong> under the npm <code>next</code> tag; <code>latest</code> is never touched, so <code>npm install &lt;name&gt;</code> without a version does not resolve to a pre-release. <code>webapp/tests/npm_publish_workflow.test.mjs</code> asserts each of those properties.</p>
+        <p class="doc-body">Inputs: <code>package</code> (<code>viewer</code>, <code>editor</code> or <code>both</code>), <code>version</code> (semver <strong>with</strong> a pre-release part, for example <code>0.1.0-alpha.1</code>; <code>0.1.0</code> is refused) and <code>dry_run</code> (default <code>true</code>).</p>
+        <p class="doc-body">What a run does, per package: build (the viewer through <code>packages/opendoc-viewer/build.sh</code>, Rust from <code>rust-toolchain.toml</code>, wasm-pack 0.15.0), run the package's own tests, set the version with <code>npm version --no-git-tag-version</code> in the runner's checkout (the editor also regenerates <code>src/release.mjs</code>, which reports the installed version), <code>npm pack --dry-run</code>, then <code>npm publish --tag next --access public --provenance</code>, with <code>--dry-run</code> when <code>dry_run</code> is true. The version is never committed: the tree stays at <code>0.1.0</code>.</p>
+        <p class="doc-body">Auth: npm trusted publishing (OIDC) with npm 11.6.2, through the <code>github-pages</code> environment, which holds the npm credentials. If that environment's secret <code>NPM_PASSWORD</code> is set (an npm access token), only the publish steps receive it as <code>NODE_AUTH_TOKEN</code>. A package's <strong>first</strong> publish needs that token, because npm lets a trusted publisher be configured only on a package that exists; after it, add the trusted publisher on npmjs.com (repository <code>CasualOffice/opendoc</code>, workflow <code>npm-publish.yml</code>, environment <code>github-pages</code>) and the token can be removed. A real publish runs from <code>main</code> only.</p>
+        <p class="doc-body">Steps:</p>
+        <ol class="doc-list">
+        <li>Dry run from <code>main</code>, and read the <code>npm pack --dry-run</code> file list in the log: <code>gh workflow run npm-publish.yml --ref main -f package=both -f version=0.1.0-alpha.1 -f dry_run=true</code></li>
+        <li>Publish: the same command with <code>-f dry_run=false</code>.</li>
+        <li>Check: <code>npm view @casualoffice/opendoc-viewer dist-tags</code> shows the version under <code>next</code> and no <code>latest</code>. A version number can never be reused, even after an unpublish, so the next attempt takes the next pre-release number (<code>0.1.0-alpha.2</code>).</li>
+        </ol>
+        <h2 class="doc-h2" id="9-risks">9. Risks</h2>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>#</th>
+        <th>Risk</th>
+        <th>Mitigation</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>R1</td>
+        <td><strong>Two front doors drift</strong>: the viewer opens a file the editor refuses, or the reverse</td>
+        <td>The cut calls the same importer and the same ceilings (<code>package_limits</code> mirrors <code>casual-doc-wasm</code>'s <code>viewer_limits</code>). V1 adds a parity test over the corpus: same page count, and same pixels</td>
+        </tr>
+        <tr>
+        <td>R2</td>
+        <td>The viewer's size win is eaten by fonts</td>
+        <td>P3 and Q2. Until then, say &quot;9.2 MB gzip, 52% fonts&quot; and not &quot;small&quot;</td>
+        </tr>
+        <tr>
+        <td>R3</td>
+        <td><strong>Measured: native PDF fails with OS fonts on.</strong> On this Mac, <code>ParleyShaper::new()</code> resolved a 188,589,668 B system face and <code>to_pdf</code> returned <code>font … is unusable: font file is 188589668 bytes, over the limit</code></td>
+        <td>The default is deterministic (§2.1). P6 makes the PDF writer subset from collections or skip a face with a finding, not abort</td>
+        </tr>
+        <tr>
+        <td>R4</td>
+        <td>Huge documents: the cut lays the whole body out, and the editor's windowed path is not in it</td>
+        <td>P8. Until then the viewer inherits the whole-layout memory profile, which is measured only on small files here</td>
+        </tr>
+        <tr>
+        <td>R5</td>
+        <td>An <code>unsafe</code> C boundary in a <code>forbid(unsafe_code)</code> workspace</td>
+        <td>One crate, a recorded exception, fuzzing and handle validation (P4)</td>
+        </tr>
+        <tr>
+        <td>R6</td>
+        <td>Four language packages are four release pipelines</td>
+        <td>One C ABI, one conformance suite, and wrappers kept thin enough to generate later</td>
+        </tr>
+        <tr>
+        <td>R7</td>
+        <td><strong>Overclaiming against competitors</strong></td>
+        <td>§7 quotes their own pages, and marks the rest <em>not stated</em>. No competitor size or speed is claimed, because none was measured</td>
+        </tr>
+        <tr>
+        <td>R8</td>
+        <td>The Native read view freezes model internals into a public API</td>
+        <td>The view is a projection with its own types (<code>docs/05</code>: &quot;Internal model and transaction types are not re-exported&quot;)</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <h2 class="doc-h2" id="10-owner-decisions-2026-10-23-and-what-is-still-open">10. Owner decisions (2026-10-23), and what is still open</h2>
+        <p class="doc-body"><strong>Decided:</strong></p>
+        <ul class="doc-list">
+        <li><strong>Build order: Viewer first.</strong> It is the smallest step from today's code, competes directly with docx-preview, and forces the stable read API the Native SDK also needs.</li>
+        <li><strong>Viewer fonts (Q2): a small core inside the package, the rest supplied by the host</strong> through the existing font-registry seam. No CDN fetch by default. Pixels stay deterministic when the host serves the same faces.</li>
+        <li><strong>Viewer formats (Q5): DOCX only by default.</strong> ODT, RTF and TXT are opt-in features, because they add about 3.6 MB today through the format registry's writers.</li>
+        <li><strong>Java (Q3): both.</strong> The FFM API (JDK 22+) first; a JNI shim for JDK 8-21 later, if customers ask.</li>
+        </ul>
+        <ul class="doc-list">
+        <li><strong>Package names (Q1), decided 2026-10-23</strong> (each checked free on its registry that day):</li>
+        <ul class="doc-list">
+        <li>npm: <code>@casualoffice/opendoc-viewer</code> (Viewer), <code>@casualoffice/opendoc-editor</code> (Editor; today's <code>packages/opendoc-embed</code> publishes under this name).</li>
+        <li>crates.io: <code>opendoc-viewer</code> (Viewer) and <code>opendoc</code> (the Native/headless facade).</li>
+        <li>PyPI: <code>opendoc</code>. Maven: <code>org.casualoffice:opendoc</code>. NuGet: <code>CasualOffice.OpenDoc</code>.</li>
+        <li>Reserve every name before the first release, so nobody squats them. The npm credentials live in the repository's <code>github-pages</code> environment (owner, 2026-10-24; §8.3); the other registries' credentials are still for the owner.</li>
+        </ul>
+        </ul>
+        <p class="doc-body"><strong>Still open:</strong> Q1 (non-npm registry credentials only), Q4 (whether Native batch edits need the transaction log), Q6 (native platform list), Q7 (whether Node needs a native addon or WASM is enough) and Q8 (a minimal <code>&lt;opendoc-viewer&gt;</code> element).</p>
+        <h3 class="doc-h3" id="original-open-questions-for-reference">Original open questions (for reference)</h3>
+        <ul class="doc-list">
+        <li><strong>Q1. Names and registry ownership.</strong> Are <code>@casualoffice/opendoc-viewer</code>, crate <code>opendoc</code>, Maven <code>org.casualoffice:opendoc</code>, PyPI <code>opendoc</code> and NuGet <code>CasualOffice.OpenDoc</code> right, and who holds those registry credentials?</li>
+        <li><strong>Q2. Fonts in the viewer.</strong> Keep the 9.3 MB bundle (offline, deterministic) or fetch the faces from the host (smaller, needs a network or a host font set)? Or ship two builds?</li>
+        <li><strong>Q3. Minimum Java.</strong> FFM requires JDK 22+. Do we carry a JNI shim for Java 8, 11, 17 and 21?</li>
+        <li><strong>Q4. Transactions in the headless SDK.</strong> Is <code>casual_doc_edit::apply</code> (ADR-030 I1) enough for batch edits, or does ADR-005 require the <code>casual-doc-transaction</code> log there too? That log would add the collaboration session to a binary that does not collaborate.</li>
+        <li><strong>Q5. Default formats for the Viewer.</strong> DOCX only (smallest), or every format (+3.6 MB raw until P1)?</li>
+        <li><strong>Q6. Native platform matrix.</strong> Linux x64/arm64 (glibc and musl), macOS arm64/x64 and Windows x64/arm64. Is any of these out?</li>
+        <li><strong>Q7. Node.</strong> Is the WASM package enough on servers running Node, or do we also ship a native Node addon?</li>
+        <li><strong>Q8. A viewer element.</strong> Under &quot;no UI work&quot;, is a minimal <code>&lt;opendoc-viewer&gt;</code> (scroll, zoom, no chrome) part of the Viewer SDK later, or is it the host's job forever?</li>
+        </ul>
+        <h2 class="doc-h2" id="11-what-this-change-built-and-its-evidence">11. What this change built, and its evidence</h2>
+        <ul class="doc-list">
+        <li><code>crates/casual-doc-viewer</code>: <code>ViewerDocument</code> (<code>open</code>, <code>open_with</code>, <code>page_count</code>, <code>page_size_twips</code>, <code>render_page</code>, <code>render_page_png</code>, <code>plain_text</code>, <code>register_font</code>, <code>to_pdf</code>), the <code>WasmViewer</code> façade and the <code>convert</code> example. It is additive: no editor crate depends on it, and <code>casual-doc-wasm</code> is untouched.</li>
+        <li>Tests (<code>cargo test -p casual-doc-viewer</code>, default and <code>--all-features</code>):</li>
+        <ul class="doc-list">
+        <li>every page renders and is not blank;</li>
+        <li>a page past the end is refused with the count;</li>
+        <li>a thumbnail is a PNG;</li>
+        <li>the plain text carries the body;</li>
+        <li>garbage is refused (DOCX only), or opens as text (<code>formats</code>);</li>
+        <li>the default leaves OS fonts off and renders repeatably;</li>
+        <li>the PDF has one page object per laid-out page.</li>
+        </ul>
+        <li>Mutations, each seen red:</li>
+        <ul class="doc-list">
+        <li>With the <code>render</code> call removed, <code>a_docx_opens_paginates_and_renders_every_page</code> fails with &quot;page 0 rendered blank&quot;.</li>
+        <li>With the default shaper switched to <code>ParleyShaper::new()</code>, <code>the_pdf_has_one_page_per_laid_out_page</code> fails with <code>Encode(&quot;pdf: font 268435464 is unusable: font file is 188589668 bytes, over the limit&quot;)</code>. This is R3, and it is machine-dependent: the test is red only where such a face is installed.</li>
+        </ul>
+        </ul>
+        <h3 class="doc-h3" id="11-1-viewer-sdk-phase-1-2026-10-24">11.1 Viewer SDK phase 1 (2026-10-24)</h3>
+        <ul class="doc-list">
+        <li><strong>Crate.</strong> <code>crates/opendoc-viewer</code> (renamed from <code>casual-doc-viewer</code>, §10 Q1) adds <code>open_with</code> faces, <code>page_sizes_twips</code>, <code>page_text</code>, <code>outline</code>, <code>font_needs</code>, <code>missing_code_points</code>, <code>register_fonts</code> (one re-layout for any number of faces) and <code>register_fallback_font</code>, and refuses a non-positive DPI. Still no editing crate.</li>
+        <li><strong>Font policy (§10, Q2).</strong> <code>casual-doc-layout</code>'s <code>viewer-core-fonts</code> feature, <code>wasm32</code> only like <code>external-web-fonts</code>, embeds Liberation Sans alone; every other family keeps its <code>FontId</code> block and resolver identity with empty placeholders, and the shaper uses a host-registered face under the family's own name. Native builds, <code>--all-features</code> included, keep the whole bundle, so no native test or golden moves. The shaper now records the requested families it could not find; that list is <code>font_needs</code>.</li>
+        <li><strong>A defect the policy exposed, fixed for the class.</strong> A field value (<code>PAGE</code>, <code>NUMPAGES</code>) is re-shaped at pagination, and its run kept the face id of its source run instead of the face that shaped it. With Carlito served by the host, the value was shaped in Carlito and outlined from Liberation Sans: <code>sample.docx</code>'s footer &quot;2 of 14&quot; painted as &quot;Ï of ãÕ&quot;. The run now carries the shaping face (<code>casual-doc-layout</code> <code>shape_field_run</code>); on the bundled path the two ids are the same, so native output does not change.</li>
+        <li><strong>Package.</strong> <code>packages/opendoc-viewer</code>: <code>build.sh</code> (DOCX only, <code>pdf</code> on, <code>core-fonts</code>, the host-served faces and their licences in <code>pkg/fonts/</code>), the JS API <code>src/index.js</code> and its types, <code>src/node.js</code> for Node, <code>examples/browser/index.html</code> (a page that opens a DOCX and shows every page, the outline and the PDF with the package alone) and <code>examples/node/render.mjs</code>. Not published.</li>
+        <li><strong>Guards.</strong> <code>crates/opendoc-viewer/tests/api.rs</code> (render determinism per page across opens and repeats, page text concatenating to the body text, page text across a page break, the outline's levels and pages, a missing family reported and filled by a host face, the PDF's page count and byte determinism) and <code>packages/opendoc-viewer/test/</code> in the CI job <code>viewer-package</code> (the same API through the built module in Node, the core-font policy on the shipped artefact, the field-face defect, the size budget, and the generated size record). Each was seen red; the mutations are in the commit message.</li>
+        </ul>
+        <h2 class="doc-h2" id="12-the-native-sdk-s-api-research-then-decision-owner-2026-10-30">12. The Native SDK's API: research, then decision (owner, 2026-10-30)</h2>
+        <p class="doc-body"><strong>Owner goal, 2026-10-30.</strong> Make OpenDoc ready to beat docx-js, Apache POI and the paid SDKs (Aspose.Words and others) at handling DOCX and other formats, both as a headless SDK and as a rendering and preview engine. <strong>Language order</strong>, by usage and by how readily AI agents adopt a library: JavaScript/TypeScript (Node and the browser, headless) first, then Python, then Java; .NET later. <strong>API rule:</strong> research the popular libraries first, and make ours standard and familiar, because similarity drives adoption.</p>
+        <h3 class="doc-h3" id="12-1-what-the-incumbents-apis-look-like">12.1 What the incumbents' APIs look like</h3>
+        <p class="doc-body">Read from each project's public documentation on 2026-10-30. Anything a page did not show is marked <em>unverified</em>. The fetch tool returns pages paraphrased with short verbatim fragments, so the snippets below are rebuilt from those fragments, not pasted whole.</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Library</th>
+        <th>Licence</th>
+        <th>Create / modify idiom</th>
+        <th>Open existing</th>
+        <th>Layout, PDF, images</th>
+        <th>Source</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td><strong>docx</strong> (docx-js)</td>
+        <td>MIT</td>
+        <td>Declarative tree: <code>new Document({ sections: [{ properties, headers: { default: new Header({children}) }, footers, children: [new Paragraph({ children: [new TextRun({ text, bold: true })] })] }] })</code>, then <code>Packer.toBuffer(doc)</code> / <code>toBlob</code>. <code>Table</code> → <code>TableRow</code> → <code>TableCell({children})</code>; <code>HeadingLevel.HEADING_1</code>; <code>ImageRun({ type, data, transformation: { width, height } })</code> in pixels; <code>PageBreak</code>; <code>ExternalHyperlink({ children, link })</code>; <code>numbering: { config: [{ reference, levels: [{ level, format, text, alignment }] }] }</code>; <code>styles: { paragraphStyles: [{ id, name, basedOn, run, paragraph }] }</code>; comments through <code>CommentRangeStart</code>/<code>End</code>/<code>Reference</code></td>
+        <td>No reader. <code>patchDocument({ data, patches })</code> fills <code>{{placeholder}}</code>s; an unmatched patch is silently skipped</td>
+        <td>None stated</td>
+        <td>[README][docxjs-readme], [usage docs][docxjs-docs]</td>
+        </tr>
+        <tr>
+        <td><strong>docxtemplater</strong></td>
+        <td>MIT or GPL-3.0 core; paid modules</td>
+        <td><code>new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true })</code>, <code>doc.render(data)</code>, <code>doc.toBuffer()</code>. Tags <code>{name}</code>, loops/conditions <code>{#x}…{/x}</code> (or <code>{/}</code>), inverted <code>{^x}</code>, <code>{.}</code>; options <code>delimiters</code>, <code>nullGetter</code>, <code>parser</code></td>
+        <td>Template only</td>
+        <td>None. Images, HTML, tables, charts, footnotes, ODT, subtemplates and more are <strong>paid modules</strong> (€500/yr per module up to €9000/yr)</td>
+        <td>[tag types][dt-tags], [configuration][dt-config], [errors][dt-errors], [pricing][dt-pricing]</td>
+        </tr>
+        <tr>
+        <td><strong>mammoth.js</strong></td>
+        <td>BSD-2-Clause</td>
+        <td>Read only: <code>convertToHtml({ path | buffer | arrayBuffer }, { styleMap })</code>, <code>extractRawText</code>; result <code>{ value, messages: [{ type, message }] }</code></td>
+        <td>Yes, to HTML</td>
+        <td>&quot;simple and clean HTML&quot;; ignores font, size and colour; writes no DOCX</td>
+        <td>[README][mammoth]</td>
+        </tr>
+        <tr>
+        <td><strong>docx-preview</strong></td>
+        <td>Apache-2.0</td>
+        <td>Render only: <code>renderAsync(data, bodyContainer, styleContainer, options)</code> (<code>breakPages</code>, <code>ignoreLastRenderedPageBreak</code>, <code>renderHeaders</code>, <code>renderComments</code>, …)</td>
+        <td>Yes, to DOM</td>
+        <td>Pages break only at explicit or last-rendered breaks; fields (so a TOC) unsupported</td>
+        <td>[README][docxjs]</td>
+        </tr>
+        <tr>
+        <td><strong>python-docx</strong></td>
+        <td>MIT</td>
+        <td>Imperative: <code>Document()</code>, <code>add_heading(text, level)</code>, <code>add_paragraph(text, style)</code>, <code>p.add_run(text).bold = True</code>, <code>add_table(rows, cols)</code>, <code>table.cell(r, c).text</code>, <code>add_picture(path, width=Inches(1.25))</code>, <code>add_page_break()</code>, <code>save(path)</code>; <code>document.add_comment(runs, text, author, initials)</code> (body only, no replies)</td>
+        <td><code>Document(path | file)</code>; <code>paragraphs</code>, <code>tables</code>, <code>sections[i].header.paragraphs</code>, <code>core_properties</code></td>
+        <td>None found</td>
+        <td>[docs][pydocx-home], [quickstart][pydocx-quick], [comments][pydocx-comments]</td>
+        </tr>
+        <tr>
+        <td><strong>docxtpl</strong></td>
+        <td>LGPL-2.1</td>
+        <td><code>DocxTemplate(path)</code>, <code>render(context)</code>, <code>save()</code>; Jinja2 <code>{{ }}</code>, <code>{%p %}</code>, <code>{%tr %}</code>, <code>{%tc %}</code></td>
+        <td>Template only</td>
+        <td>Plain tags must sit in one run</td>
+        <td>[docs][docxtpl]</td>
+        </tr>
+        <tr>
+        <td><strong>Apache POI XWPF</strong></td>
+        <td>Apache-2.0 (ASF; not restated on the pages read)</td>
+        <td><code>new XWPFDocument()</code>, <code>createParagraph()</code>, <code>createRun()</code>, <code>XWPFRun.setText/setBold/setFontSize</code>, <code>createTable(rows, cols)</code>, <code>createHeader(HeaderFooterType.DEFAULT)</code>, <code>write(OutputStream)</code></td>
+        <td><code>new XWPFDocument(InputStream)</code>, <code>getParagraphs()</code>, <code>getTables()</code>, <code>XWPFWordExtractor.getText()</code></td>
+        <td>&quot;moderately functional&quot;; may &quot;generate invalid files&quot;; no XWPF layout; FO/PDF only for old <code>.doc</code></td>
+        <td>[component][poi], [XWPFDocument][poi-doc], [XWPFRun][poi-run]</td>
+        </tr>
+        <tr>
+        <td><strong>docx4j</strong></td>
+        <td>Apache-2.0 (+ commercial edition)</td>
+        <td><code>WordprocessingMLPackage.createPackage()</code>, <code>getMainDocumentPart().addStyledParagraphOfText(&quot;Title&quot;, …)</code>, <code>addParagraphOfText</code>, <code>save(File)</code></td>
+        <td><code>Docx4J.load</code>; JAXB object model</td>
+        <td><code>Docx4J.toPDF</code> (&quot;3 strategies&quot;, XSL-FO)</td>
+        <td>[README][docx4j], [Docx4J.java][docx4j-api], [blog][docx4j-blog]</td>
+        </tr>
+        <tr>
+        <td><strong>Aspose.Words</strong></td>
+        <td>Commercial</td>
+        <td><code>new Document()</code>, <code>DocumentBuilder</code> (<code>write</code>, <code>writeln</code>, <code>insertBreak(BreakType.PAGE_BREAK)</code>, <code>startTable</code>/<code>insertCell</code>/<code>endRow</code>/<code>endTable</code>, <code>moveToHeaderFooter</code>, <code>insertImage</code>, <code>insertHyperlink</code>, <code>insertField</code>)</td>
+        <td><code>new Document(path)</code>, <code>getText()</code>, <code>getPageCount()</code>, <code>getRange().replace(a, b)</code>, <code>acceptAllRevisions()</code>, <code>compare</code>, <code>mailMerge</code></td>
+        <td>Own layout engine; <code>save(&quot;out.pdf&quot;)</code> infers the format from the extension; <code>LayoutCollector</code> page indices</td>
+        <td>[Document][aspose-doc], [DocumentBuilder][aspose-builder], [Range.Replace][aspose-replace], [LayoutCollector][aspose-layout-collector]</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body"><strong>What the table says.</strong> Each permissive library does one of the jobs: generate (docx-js), fill (docxtemplater, docxtpl), read and modify (python-docx, POI, docx4j), convert to HTML (mammoth) or preview in a browser (docx-preview). Only Aspose lays a document out and prints it, and it is commercial. Among the permissive ones, docx4j's PDF goes through XSL-FO, not a layout engine.</p>
+        <h3 class="doc-h3" id="12-2-decision-one-engine-familiar-front-doors">12.2 Decision: one engine, familiar front doors</h3>
+        <p class="doc-body">We <strong>adopt each ecosystem's dominant idiom verbatim</strong>, so a user changes the import and little else. Underneath, every front door lowers to the same Rust core (<code>crates/opendoc</code>), so the languages cannot drift.</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Layer</th>
+        <th>Idiom adopted</th>
+        <th>Where it is built</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td><strong>JS generation</strong></td>
+        <td>docx-js's declarative tree, the same class names and the same option names (<code>new Document({ sections })</code>, <code>Paragraph</code>, <code>TextRun({ bold, italics, size, color, font, underline })</code>, <code>HeadingLevel</code>, <code>Table</code>/<code>TableRow</code>/<code>TableCell({ columnSpan, rowSpan })</code>, <code>ImageRun({ data, transformation })</code>, <code>ExternalHyperlink</code>, <code>InternalHyperlink</code>, <code>Bookmark</code>, <code>PageBreak</code>, <code>FootnoteReferenceRun</code>, <code>PageNumber</code>, <code>TableOfContents</code>, <code>numbering.config</code>, <code>styles.paragraphStyles</code>, <code>comments.children</code>, <code>Packer.toBuffer/toBlob/toBase64String</code>). A docx-js user's object literal is, field for field, a valid spec</td>
+        <td><code>packages/opendoc/src/builder.js</code> serialises to <code>DocumentSpec</code> JSON; <code>crates/opendoc/src/builder.rs</code> writes the package</td>
+        </tr>
+        <tr>
+        <td><strong>JS templating</strong></td>
+        <td>docxtemplater's tags (<code>{x}</code>, <code>{#x}…{/x}</code>, <code>{^x}</code>, <code>{.}</code>, dotted paths), options (<code>delimiters</code>, <code>nullGetter</code> as a constant, <code>paragraphLoop</code> and <code>linebreaks</code> always on) and error shape (<code>properties.errors[]</code> with <code>id</code> and <code>explanation</code>)</td>
+        <td><code>crates/opendoc/src/template.rs</code>; <code>doc.render(data)</code> in JS</td>
+        </tr>
+        <tr>
+        <td><strong>JS read, modify, convert</strong></td>
+        <td>python-docx-like readable names in camelCase (<code>doc.paragraphs</code>, <code>doc.tables</code>, <code>doc.sections</code>, <code>doc.comments</code>), mammoth's result shape for conversion messages (<code>{ value, messages }</code>), Aspose's one-call <code>save(format)</code> with the format named</td>
+        <td><code>packages/opendoc/src/index.js</code></td>
+        </tr>
+        <tr>
+        <td><strong>Python</strong></td>
+        <td>python-docx's surface (<code>Document()</code>, <code>Document(path)</code>, <code>add_heading</code>, <code>add_paragraph(text, style)</code>, <code>add_run(text).bold = True</code>, <code>add_table(rows, cols)</code>, <code>cell(r, c).text</code>, <code>add_page_break</code>, <code>paragraphs</code>, <code>tables</code>, <code>sections</code>, <code>core_properties</code>, <code>save</code>), plus docxtpl's <code>render(context)</code> with docxtemplater tags</td>
+        <td><code>bindings/python</code> (PyO3)</td>
+        </tr>
+        <tr>
+        <td><strong>Java</strong></td>
+        <td>POI XWPF's naming (<code>OpenDocument</code> ≈ <code>XWPFDocument</code>: <code>createParagraph()</code>, <code>createRun()</code>, <code>setText</code>, <code>setBold</code>, <code>getParagraphs()</code>, <code>getTables()</code>, <code>write(OutputStream)</code>) and Aspose's <code>save(path)</code> by extension</td>
+        <td><code>bindings/java</code> (Panama FFM over <code>crates/opendoc-ffi</code>)</td>
+        </tr>
+        <tr>
+        <td><strong>Rust</strong></td>
+        <td>The <code>docs/176</code> §3.3 shape: <code>Document::open</code>, a read projection, <code>doc.edit(|e| …)</code> batches, <code>save(Format, SaveMode)</code> with a report</td>
+        <td><code>crates/opendoc</code></td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body"><strong>What we add that none of them has in one permissive package</strong>, each of which is a test in this repository:</p>
+        <ol class="doc-list">
+        <li><strong>Layout, page images and real-text PDF</strong> from the editor's own pagination (<code>render_page_png</code>, <code>to_pdf</code>, <code>page_count</code>, <code>page_text</code>, <code>outline</code>). This is Aspose's capability, under Apache-2.0.</li>
+        <li><strong>A loss report on every open and every save</strong> (<code>import_report</code>, <code>SaveReport.losses</code>) and three save modes: <code>exact</code> returns the original bytes when the document is unchanged, <code>preserve</code> keeps verbatim-retained parts, <code>semantic</code> regenerates. No library in §12.1 reports loss.</li>
+        <li><strong>Templating in the same package</strong>, with images, tables, footnotes and headers kept because the engine edits the document rather than the XML text. docxtemplater charges for several of these as modules.</li>
+        <li><strong>Every edit goes through the engine's checked operation set</strong> (ADR-030 I1): ids, protection (a read-only document refuses), atomic batches and an exact undo. POI warns it &quot;may be possible to accidentally generate invalid files&quot;; here a batch either applies whole or not at all.</li>
+        <li><strong>The same engine everywhere.</strong> The Node package, the CLI, Python, Java and the in-browser editor lay out one document to the same pages. Deterministic pixels across platforms are a CI gate (§12.5).</li>
+        </ol>
+        <p class="doc-body"><strong>Deliberately not copied.</strong></p>
+        <ul class="doc-list">
+        <li>docx-js's silent skip of an unknown option. Here an unknown spec field is an error naming the field, except inside <code>TextRun</code> and <code>Paragraph</code>, whose options flatten into one object.</li>
+        <li>docxtemplater's default <code>nullGetter</code>, which prints <code>undefined</code>. Here a missing value prints <code>&quot;&quot;</code>, or is an <code>undefined_value</code> error with <code>strict</code>.</li>
+        <li>python-docx's writable proxies over the XML. Here a run's <code>bold = True</code> is a typed edit.</li>
+        </ul>
+        <p class="doc-body"><strong>Offsets.</strong> Edits address text by <strong>character</strong> (Unicode scalar) offsets into a paragraph's <code>text</code>, which is a Python <code>str</code> index. JavaScript UTF-16 indices differ only outside the BMP, and the JS package converts.</p>
+        <h3 class="doc-h3" id="12-3-the-rust-core-s1-as-built">12.3 The Rust core (S1), as built</h3>
+        <p class="doc-body"><code>crates/opendoc</code> is the one public façade (<code>docs/176</code> §5.2). It re-exports no <code>casual-doc-*</code> type.</p>
+        <ul class="doc-list">
+        <li><strong>Open and create.</strong> <code>Document::open</code> / <code>open_with(bytes, OpenOptions)</code> go through the <code>casual-doc-io</code> registry: DOCX, ODT, RTF, TXT and JSON, plus PDF with the <code>pdf-import</code> feature. The source is retained, so an exact save works. <code>Document::create()</code> and <code>from_spec(DocumentSpec, media)</code> build a WordprocessingML package and open it. It carries Word's built-in style ids and names (Normal, Title, Heading 1-6, List Bullet, List Number, Quote, Caption, Table Grid, Hyperlink, the TOC and note styles), an A4 page and Calibri 11 pt, which the bundled Carlito lays out metric-identically.</li>
+        <li><strong>Read view</strong> (<code>opendoc::view</code>): <code>body()</code> returns <code>Block::{Paragraph, Table, ContentControl, Other}</code> with stable ids. Paragraphs carry their style name, text, heading level, alignment, list membership and runs. Runs carry text, direct formatting, hyperlink, tracked change, field, image and note/comment references. Also <code>paragraphs()</code>, <code>tables()</code>, <code>sections()</code>, <code>styles()</code>, <code>comments()</code> (with anchors), <code>revisions()</code>, <code>headers_footers()</code>, <code>notes()</code>, <code>media()</code> plus <code>media_bytes()</code>, <code>properties()</code> and <code>text()</code>. Everything serialises to the camelCase JSON every binding reads.</li>
+        <li><strong>Edit</strong> (<code>doc.edit(|e| …)</code>, or <code>edit_commands(&amp;[EditCommand])</code> from JSON). The text, format, hyperlink and paragraph calls lower to <code>casual_doc_edit::Operation</code> and apply through <code>casual_doc_edit::apply</code> after <code>refuse_if_protected</code>. They are: <code>insert_text</code>, <code>delete_text</code>, <code>replace_text</code>, <code>replace_all</code>, <code>set_run_format</code>, <code>clear_formatting</code>, <code>set_hyperlink</code>, <code>set_paragraph_style</code>, <code>set_alignment</code>, <code>set_page_break_before</code>, <code>insert_paragraph</code>, <code>append_paragraph</code>, <code>append_heading</code>, <code>append_run</code>, <code>delete_block</code>. Tables: <code>insert_table</code>, <code>set_cell_text</code>, <code>add_row</code>, <code>delete_row</code>. Review edits lower through <code>casual_doc_review::lower</code>, the editor's own lowering: <code>add_comment</code>, <code>suggest_insert</code>, <code>suggest_delete</code>, <code>suggest_replace</code>, <code>accept_all_revisions</code>, <code>reject_all_revisions</code>. Properties: <code>set_properties</code>. The batch runs on a copy and replaces the document only if every call succeeded. It returns an exact <code>Undo</code>, which <code>doc.undo</code> applies and which returns the redo.</li>
+        <li><strong>Template:</strong> <code>render_template(data, TemplateOptions)</code> and <code>template_tags()</code>, the docxtemplater idiom of §12.2 lowered to <code>InsertText</code>, <code>DeleteText</code>, <code>InsertBlocks</code>, <code>DeleteBlocks</code>, <code>InsertRow</code>, <code>DeleteRow</code> and <code>SetInlines</code>.</li>
+        <li><strong>Save:</strong> <code>save(Format, SaveMode) -&gt; (bytes, SaveReport)</code> to DOCX, DOTX, ODT, TXT, JSON, HTML, Markdown or PDF. A same-format save honours the mode. A cross-format save is semantic and its report says <code>lossyByNature</code> for the renditions. <code>opendoc::convert(bytes, to)</code> does both steps in one call.</li>
+        <li><strong>Render:</strong> <code>page_count</code>, <code>page_sizes</code>, <code>page_text</code>, <code>render_page</code> (RGBA), <code>render_page_png</code>, <code>to_pdf</code>, <code>outline</code> and <code>font_needs</code>. One layout serves all of them, cached until the next edit. It uses bundled faces by default (<code>RenderOptions</code> adds faces or allows OS fonts).</li>
+        <li><strong>Not built (stated, not hidden):</strong></li>
+        <ul class="doc-list">
+        <li>paragraph loops inside headers and footers (value tags work there);</li>
+        </ul>
+        </ul>
+        <p class="doc-body"><strong>One defect class found and handled in the SDK.</strong> A comment's anchor from <code>casual_doc_review</code> is measured in the layout anchor stream, which counts a footnote reference's printed number. The read view's <code>text</code> does not count it, so the first build returned <code>&quot;noted &quot;</code> for a comment on <code>&quot; noted&quot;</code> after a footnote. <code>Document::comments</code> and <code>revisions</code> now map anchors through both length functions (<code>ParagraphSpace</code>). The engine-side disagreement is the one recorded on <code>casual_doc_review::body::inline_anchor_len</code>.</p>
+        <p class="doc-body"><strong>An engine limit the builder found, now fixed in the importer.</strong> A complex field whose begin and end sit in <strong>one</strong> paragraph, with a hyperlink in its cached result, failed the whole DOCX open: model validation refuses a hyperlink inside a <code>Field</code>'s inlines (a field's result is leaf-only), and the importer turned that into &quot;a fault in the document engine&quot;. A one-entry linked table of contents written that way is a valid file. The builder writes Word's own shape, a field range (<code>a_linked_table_of_contents_opens_and_lists_each_heading</code>). <code>casual-doc-import</code> now degrades such a field to its result (<code>commit_field</code>, <code>segments_are_field_leaves</code>): the entry, its hyperlink and its text are kept, and the dropped instruction is reported as <code>fldChar</code> or <code>fldSimple</code>. Guard: <code>a_single_paragraph_field_around_a_hyperlink_degrades_to_its_result</code>, for both encodings. Mutation: with the leaf check forced true, the open failed again with <code>Model(NestedHyperlink(..))</code>.</p>
+        <h3 class="doc-h3" id="12-4-guards-s1">12.4 Guards (S1)</h3>
+        <p class="doc-body"><code>crates/opendoc/tests/sdk.rs</code> (19 tests) and <code>tests/deterministic_pixels.rs</code>. These run in CI's <code>test</code> job (Linux) and <code>platform</code> job (macOS arm64, Windows x64). Builder and template unit tests are in the crate.</p>
+        <ul class="doc-list">
+        <li><strong>Mutation:</strong> <code>layout()</code> forced to <code>with_system_fonts(true)</code>. <code>pages_render_the_same_pixels_on_every_platform</code> went red: <code>sample.docx page 1 … fc24f2a86aa20ddb</code> against the golden's <code>9305778ed26f9531</code>. It was green again once restored.</li>
+        <li><strong>Mutation (red before the fix):</strong> without the anchor mapping, <code>a_docx_js_shaped_spec_builds_every_story</code> failed with <code>left: &quot;noted &quot; right: &quot; noted&quot;</code>.</li>
+        </ul>
+        <h3 class="doc-h3" id="12-5-the-deterministic-pixels-gate-v2">12.5 The deterministic-pixels gate (V2)</h3>
+        <p class="doc-body"><code>tests/pixels.golden</code> holds an FNV-1a hash of each page's <strong>RGBA</strong> (not the PNG, so an encoder change cannot move it) for the first three pages of the committed <code>sample.docx</code> and for one built document, at 72 dpi with the bundled faces. It is written by <code>OPENDOC_BLESS=1 cargo test -p opendoc --test deterministic_pixels</code> and never by hand. It was blessed on macOS arm64. CI's Linux <code>test</code> job and the Windows <code>platform</code> job are its first cross-platform check, and a red on one platform alone is exactly the finding the gate exists to make.</p>
+        <h3 class="doc-h3" id="12-5a-the-javascript-package-s2-as-built">12.5a The JavaScript package (S2), as built</h3>
+        <p class="doc-body"><code>packages/opendoc</code>, npm name <code>@casualoffice/opendoc</code> (proposed; the owner decides it with the other registry names, §10 Q1). It is the wasm build of <code>crates/opendoc</code> (feature <code>wasm</code>, no DOM, no <code>web-sys</code>) and is not published.</p>
+        <ul class="doc-list">
+        <li><strong>Entry points.</strong> <code>.</code> resolves to <code>src/node.js</code> under Node, which loads the module from disk with a top-level await, so every call is synchronous. Elsewhere it resolves to <code>src/index.js</code>; call <code>await init()</code> first. <code>./docx</code> is the docx-js-familiar builder. <code>./node</code> adds <code>openFile</code> and <code>saveFile</code>.</li>
+        <li><strong>Surfaces.</strong></li>
+        <ul class="doc-list">
+        <li>The <code>Document</code> class: reads, python-docx-like edits, <code>edit(commands)</code> batches with undo, <code>render(data)</code> templates, <code>save(format, { mode })</code> with its report, and render, PDF and page text.</li>
+        <li><code>Template</code>, docxtemplater's facade.</li>
+        <li><code>convertToHtml</code>, <code>extractRawText</code> and <code>convertToMarkdown</code>, in mammoth's <code>{ value, messages }</code> shape.</li>
+        <li><code>convert</code>, <code>formats</code> and <code>version</code>.</li>
+        <li><code>OpenDocError</code>, with a stable <code>code</code>; template errors also carry docxtemplater's <code>multi_error</code> shape.</li>
+        </ul>
+        <li><strong>Types.</strong> <code>types/index.d.ts</code>, <code>node.d.ts</code> and <code>docx.d.ts</code>. <code>examples/typescript</code> is type-checked with <code>tsc --noEmit</code> against an installed tarball.</li>
+        <li><strong>Fonts.</strong> Every bundled face is embedded, so a headless render does not depend on the machine. The cost is the download (<code>npm pack</code>: 12.7 MB packed, 27.1 MB unpacked on 2026-10-30). This number is not published elsewhere: P3's host-served faces apply to this package as they do to the Viewer.</li>
+        <li><strong>Guards.</strong> <code>packages/opendoc/test/</code> runs in the new CI job <code>sdk-package</code>. It covers the API, docx-js's README example unchanged, every builder construct read back, templates and their errors, the <code>npm pack</code> contents and export paths, and the benchmark record (§12.10).</li>
+        </ul>
+        <h3 class="doc-h3" id="12-6-the-cli-s3-opendoc-also-the-server-preview-engine">12.6 The CLI (S3): <code>opendoc</code>, also the server preview engine</h3>
+        <p class="doc-body"><code>tools/opendoc-cli</code> builds one binary, <code>opendoc</code>, over <code>crates/opendoc</code> with PDF import on:</p>
+        <div class="code-panel">
+        <div class="code-panel-head"><span>text</span></div>
+        <pre><code>opendoc convert  IN OUT [--to FMT] [--mode exact|preserve|semantic] [--report FILE] [--strict-loss]
+        opendoc render   IN [--out DIR] [--format png|pdf] [--dpi N] [--pages 1-3,5]
+        opendoc info     IN [--json]
+        opendoc diff     OLD NEW [--json]          # the editor's Compare (casual-doc-diff), as JSON or a summary
+        opendoc template TEMPLATE DATA.json OUT [--delimiters &quot;[[,]]&quot;] [--strict] [--null TEXT]
+        opendoc build    SPEC.json OUT [--media FILE]...
+        opendoc formats
+        common: --system-fonts  --font FILE  --author NAME</code></pre>
+        </div>
+        <ul class="doc-list">
+        <li><strong>Exit codes.</strong> 0 is success. 1 is a document or engine error, and the message starts with its stable code (<code>open:</code>, <code>template:</code>, …). 2 is a usage error. 3 means <code>convert --strict-loss</code> refused a save that would lose content.</li>
+        <li><strong>As a preview server.</strong> <code>render</code> lays out with the bundled faces only, unless <code>--system-fonts</code> is given. The same document then gives the same PNG bytes on every run; <code>render_writes_deterministic_pngs_for_the_pages_asked</code> checks that within one machine. The cross-platform half of V2 is the pixel golden of §12.5: the CLI draws through the same <code>Document::render_page_png</code>.</li>
+        <li><strong>Guards.</strong> <code>tools/opendoc-cli/tests/cli.rs</code> runs the binary end to end for convert (every format, an exact save byte-identical to the input, a JSON report), render, info, build, template, diff and the exit codes. Mutation: the usage exit code changed from 2 to 1 turned <code>usage_errors_exit_2_and_document_errors_exit_1</code> red (<code>left: Some(1) right: Some(2)</code>).</li>
+        </ul>
+        <h3 class="doc-h3" id="12-6a-the-core-s-edit-cost">12.6a The core's edit cost</h3>
+        <p class="doc-body">A batch used to run on a copy of the whole model, so it could be all or nothing. That makes a python-docx-style loop quadratic, because each <code>add_paragraph</code> is one batch and copied the document. <code>Document::edit</code> now applies to the live model and, on a refusal, rolls back through the inverses <code>casual_doc_edit::apply</code> returned. That is the engine's own exact undo, so a batch costs O(the batch) and not O(document). <code>Document::paragraph(id)</code> and <code>table(id)</code> project one node, so a binding does not re-project the body per call.</p>
+        <ul class="doc-list">
+        <li><strong>Guard.</strong> <code>a_failed_batch_leaves_the_document_unchanged</code> compares the whole model's JSON snapshot before and after a refused batch that had replaced text and inserted a table.</li>
+        <li><strong>Mutation.</strong> With the rollback skipped, that test went red: the text still read <code>THE</code>.</li>
+        </ul>
+        <h3 class="doc-h3" id="12-8-python-s4">12.8 Python (S4)</h3>
+        <p class="doc-body"><code>bindings/python</code> is PyO3 0.30 under maturin: an abi3 wheel for Python 3.9 and later. It is its own Cargo workspace whose lockfile starts from the main one (same engine versions), because PyO3 links a Python interpreter, which the main workspace's <code>cargo test --workspace</code> must not need. It is built locally only; nothing goes to PyPI. The local wheel (<code>opendoc-0.1.0-cp39-abi3-macosx_11_0_arm64.whl</code>) is 17.1 MB on 2026-10-30, measured by <code>ls</code>. This figure appears nowhere else.</p>
+        <ul class="doc-list">
+        <li><strong>API: python-docx's.</strong></li>
+        <ul class="doc-list">
+        <li><code>Document()</code> and <code>Document(path | bytes | file)</code>.</li>
+        <li><code>add_heading</code>, <code>add_paragraph(text, style)</code>, <code>p.add_run(text).bold = True</code>.</li>
+        <li><code>run.font.size = Pt(12)</code>, <code>run.font.color.rgb = RGBColor(…)</code>, <code>run.font.name</code>.</li>
+        <li><code>p.style</code>, <code>p.alignment</code> and <code>p.text</code>, each readable and settable; <code>insert_paragraph_before</code>.</li>
+        <li><code>add_table(rows, cols)</code>, <code>table.rows[i].cells</code>, <code>table.cell(r, c).text = …</code>, <code>table.add_row()</code>.</li>
+        <li><code>add_page_break</code>, <code>core_properties</code> (readable and settable), <code>sections</code> (page size, margins, <code>header</code>/<code>footer</code> paragraphs), <code>comments</code>, and python-docx 1.2's <code>add_comment(runs, text, author)</code>.</li>
+        <li><code>save(path | stream)</code>, with the format taken from the extension.</li>
+        </ul>
+        <li><strong>Added.</strong></li>
+        <ul class="doc-list">
+        <li><code>save</code> to PDF, ODT, HTML, Markdown, TXT and JSON, returning a <code>SaveReport</code>; <code>to_bytes</code>; <code>import_report</code>.</li>
+        <li><code>page_count</code>, <code>page_text</code>, <code>render_page_png</code>, <code>render_page</code> and <code>to_pdf</code>.</li>
+        <li><code>render(context)</code> for templates, plus the <code>Template</code> class.</li>
+        <li><code>replace</code>, <code>accept_all_revisions</code>/<code>reject_all_revisions</code>, <code>revisions</code>, <code>compare</code>.</li>
+        <li><code>edit([...])</code>, the shared JSON command vocabulary.</li>
+        <li><code>opendoc.build(spec)</code>, the docx-js-shaped spec, and <code>opendoc.convert(src, dst)</code>.</li>
+        </ul>
+        <li><strong>Typed.</strong> The package code is annotated, and <code>_opendoc.pyi</code> stubs the native module. <code>py.typed</code> ships, and <code>mypy python/opendoc</code> reports no issues.</li>
+        <li><strong>Errors.</strong> <code>OpenDocError.code</code> is the stable code. <code>TemplateError.errors</code> lists every issue, in docxtemplater's ids.</li>
+        <li><strong>Not built.</strong> Character styles on runs and table styles other than Table Grid cannot be set. Pictures, headers and footers, notes and sections are edits (§12.12).</li>
+        <li><strong>Guards.</strong> <code>bindings/python/tests/test_opendoc.py</code> has 9 tests. One is python-docx's quickstart, run unchanged apart from <code>add_picture</code>, then reopened and checked run by run.</li>
+        <ul class="doc-list">
+        <li><strong>Mutation.</strong> <code>core_properties.author</code> mapped to <code>subject</code> turned <code>test_core_properties_read_and_write</code> red: <code>('Sub', 'Sub') == ('Lin', 'Sub')</code>. The first version of that test set and read through one mapping, so it stayed green under the same mutation. It now reads the file's own fields.</li>
+        </ul>
+        </ul>
+        <h3 class="doc-h3" id="12-9-the-c-abi-and-java-s5">12.9 The C ABI and Java (S5)</h3>
+        <p class="doc-body"><strong><code>crates/opendoc-ffi</code></strong> is the §6 recommendation, built. It is one handle-based C ABI with version 1 (<code>opendoc_abi_version</code>) and a header, <code>include/opendoc.h</code>.</p>
+        <ul class="doc-list">
+        <li><strong>Ownership rule.</strong> Every <code>OdDocument *</code> and <code>OdBuffer *</code> belongs to the caller, who frees it once. Inputs are borrowed for the call and copied.</li>
+        <li><strong>Errors.</strong> A failure returns <code>NULL</code> and records a thread-local message that starts with the stable code. A panic is caught at the boundary and becomes an <code>engine</code> error.</li>
+        <li><strong>Surface.</strong></li>
+        <ul class="doc-list">
+        <li>Bytes: <code>opendoc_open</code>, <code>opendoc_create</code>, <code>opendoc_from_spec</code>, <code>opendoc_save</code>, <code>opendoc_render_png</code>, <code>opendoc_to_pdf</code>, <code>opendoc_compare</code>, <code>opendoc_convert</code>.</li>
+        <li><code>opendoc_call</code>: every read and edit by method name with a JSON argument, which is the JSON the other bindings read.</li>
+        <li>Buffer access and free.</li>
+        </ul>
+        <li><strong>The recorded <code>unsafe</code> exception</strong> (P4, R5). This is the only crate whose <code>[lints]</code> are not <code>workspace = true</code>. It copies every workspace lint except <code>unsafe_code</code>. Each unsafe block is a boundary read with a <code>SAFETY</code> comment.</li>
+        <li><strong>Not built.</strong> The header is hand-written, because cbindgen is not installed here. <code>the_header_declares_every_export</code> fails if an export is missing from it. The boundary is fuzzed, and its handles are checked (§12.14).</li>
+        </ul>
+        <p class="doc-body"><strong><code>bindings/java</code></strong> uses the Foreign Function &amp; Memory API (JEP 454, final in JDK 22) over that ABI, with no JNI glue and no dependency. <code>Json.java</code> is a 200-line reader and writer. The naming is POI XWPF's:</p>
+        <ul class="doc-list">
+        <li><code>OpenDocument</code> (<code>XWPFDocument</code>): <code>new OpenDocument()</code>, <code>new OpenDocument(InputStream)</code>, <code>createParagraph</code>, <code>createTable(rows, cols)</code>, <code>getParagraphs</code>, <code>getTables</code>, <code>getText</code>, <code>write(OutputStream)</code>.</li>
+        <li><code>OpenParagraph</code>: <code>createRun</code>, <code>setStyle</code>, <code>setAlignment(ParagraphAlignment)</code>, <code>getRuns</code>.</li>
+        <li><code>OpenRun</code>: <code>setText</code>, <code>setBold</code>, <code>setItalic</code>, <code>setUnderline</code>, <code>setStrike</code>, <code>setFontSize</code>, <code>setFontFamily</code>, <code>setColor</code>. Formatting can be set before the text, as in POI.</li>
+        <li><code>OpenTable</code>: <code>getRow(i).getCell(j).setText</code>, <code>createRow</code>.</li>
+        </ul>
+        <p class="doc-body">Aspose's <code>save(path)</code> takes the format from the extension, and its <code>getPageCount</code> and <code>replace</code> are kept. The binding adds <code>toPdf</code>, <code>renderPagePng</code>, <code>renderTemplate</code>, <code>acceptAllRevisions</code>, <code>compare</code>, <code>getImportReport</code> and <code>getLastSaveReport</code>. It is built locally only (<code>bindings/java/build.sh</code>), against JDK 22 or later; JDK 8-21 would need the JNI shim of Q3, which is not built. Nothing goes to Maven Central.</p>
+        <ul class="doc-list">
+        <li><strong>Guards.</strong></li>
+        <ul class="doc-list">
+        <li><code>crates/opendoc-ffi/tests/abi.rs</code> (4 tests) calls the ABI through raw pointers: open/read/edit/save/render/free, <code>NULL</code> and coded errors (a null pointer with a length is refused), convert and compare, and the header check.</li>
+        <li><code>bindings/java/.../ConformanceTest.java</code> makes 21 checks run by <code>build.sh</code>.</li>
+        </ul>
+        <li><strong>Mutation.</strong> Formatting set before the text not applied: <code>ConformanceTest</code> failed at &quot;format set before the text lands on it&quot; (<code>NoSuchElementException</code>, because the <code>12%</code> run never split out).</li>
+        </ul>
+        <h3 class="doc-h3" id="12-10-benchmark-and-conformance-suite">12.10 Benchmark and conformance suite</h3>
+        <p class="doc-body"><code>benchmarks/sdk/run.mjs</code> runs the same inputs through OpenDoc and through the permissive competitors installed on the machine, each library and task in its own process:</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Task</th>
+        <th>OpenDoc is measured against</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>Generation</td>
+        <td>docx-js, running the same program</td>
+        </tr>
+        <tr>
+        <td>Templating</td>
+        <td>docxtemplater, with the same template</td>
+        </tr>
+        <tr>
+        <td>DOCX to HTML and to text</td>
+        <td>mammoth</td>
+        </tr>
+        <tr>
+        <td>DOCX to PDF</td>
+        <td>LibreOffice headless, when installed</td>
+        </tr>
+        <tr>
+        <td>Round trip</td>
+        <td>python-docx, when given</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">The suite measures time, peak memory, page counts, and round-trip survival (package parts kept, body text unchanged, OpenDoc's own loss report). It writes <code>benchmarks/sdk/results.json</code>. The table below is rendered from that file by <code>benchmarks/sdk/report.mjs</code>, and <code>packages/opendoc/test/bench_record.test.mjs</code> fails if the two disagree. To run it: <code>node benchmarks/sdk/run.mjs --deps DIR [--python PY] [--soffice PATH]</code>, on an idle machine. DIR holds an <code>npm install</code> of docx, mammoth, docxtemplater and pizzip. Nothing from it is committed.</p>
+        <p class="doc-body"><strong>Read it honestly.</strong> The table makes six points.</p>
+        <ul class="doc-list">
+        <li>In JavaScript, OpenDoc is faster than mammoth at HTML and text, and level with or faster than docx-js at generation. It is slower than docxtemplater at filling a template.</li>
+        <li>In JavaScript it uses more memory in most tasks, because the module carries a layout engine and every bundled face. Its floor is the module itself, and docx-js passes it on the largest input. The Python and Java bindings link the same engine natively and use less memory than python-docx and POI in most rows.</li>
+        <li><strong>Python</strong> generation is several times faster than python-docx, at every size measured. Reading is level with or faster than python-docx.</li>
+        <li><strong>Java</strong> generation is faster than POI on a small document and slower at 1,000 paragraphs. Reading is faster than POI on the smaller file and level on the large one.</li>
+        <li><strong>A defect the first run found, fixed for the class.</strong> The first full run (2026-10-30) had Java generation 7.1× slower than POI at 1,000 paragraphs and Python losing to python-docx at 5,000, with the gap growing with the document. Measured in the Rust core, a paragraph step was constant (3.5 µs at 1,000 and at 4,000 paragraphs), so the cost was in the bindings, for two reasons:</li>
+        <ul class="doc-list">
+        <li>every table access went to the paragraph locator first, and a table id is a cold miss there that walks the document;</li>
+        <li>every <code>getRow</code>, <code>getCell</code>, <code>cells</code> and <code>cell(r, c)</code> re-projected the whole table to check bounds, which is O(rows) per cell and O(rows²) per table.</li>
+        </ul>
+        </ul>
+        <p class="doc-body">Both bindings now look tables up as tables and keep the table's shape, which <code>createRow</code> and <code>add_row</code> update. The core's step cost is guarded by <code>a_builder_step_costs_the_same_on_a_document_twice_as_long</code> (n against 2n, SKILL §8). The two costs that were left, both engine-side, are now O(1) in document size (2026-10-31), by the route-cache pattern <code>casual_doc_model::v1::locate</code> already used for paragraphs (memoization validated on use, <code>docs/109</code> HF-184):</p>
+        <ul class="doc-list">
+        <li><strong>A table by id.</strong> <code>Document::table</code>/<code>table_mut</code> keep a direct-mapped cache of table routes, validated on every use. <code>casual_doc_edit::find_table</code> and the six row, column and table-property operations that walked twice (<code>blocks_owning_mut</code>, then <code>find_table_mut</code>) use it.</li>
+        <li><strong>The first edit to a block just inserted.</strong> <code>InsertBlocks</code> into the body records the route of each block it placed (<code>Document::hint_body_block</code>), and the SDK's <code>set_cell_text</code> reaches the cell's paragraph through its table's route (<code>Document::hint_cell_paragraph</code>). A stale hint is a miss, never a wrong answer.</li>
+        </ul>
+        <p class="doc-body">Guard: <code>a_new_paragraphs_first_edit_and_a_table_lookup_cost_the_same_at_n_and_2n</code> puts a table after n and 2n paragraphs and compares the engine's block-visit meter for a new paragraph's first run, and for two <code>set_cell_text</code> calls and an <code>add_row</code>. Its control, a lookup of an id that is not a table, must double, so equal numbers cannot come from a meter that counts nothing. Mutations, each red: the insert's hint removed (512 visits at n, 1,012 at 2n); the table hint disabled (4,039 against 8,039); the cell-paragraph hint removed (1,021 against 2,021).</p>
+        <ul class="doc-list">
+        <li>docx-preview needs a DOM, so it is not measured here. docx4j is not measured. LibreOffice is in the suite (<code>--soffice</code>), but the copy on the measuring machine is a broken install, so its column is empty. The round-trip table shows python-docx keeping every package part, because it rewrites the zip it was given. OpenDoc keeps the text in every fixture and reports what its writer regenerates.</li>
+        </ul>
+        <p class="doc-body">&lt;!-- sdk-bench:begin (generated by benchmarks/sdk/report.mjs from benchmarks/sdk/results.json; do not edit) --&gt;</p>
+        <p class="doc-body">Measured on darwin arm64 25.3.0, Apple M4 (10 cores, 16 GB), Node v24.22.1; median of 5 runs after a warm-up, each library and task in its own process. Versions: opendoc 0.0.1, docx 9.15.0, docxtemplater 3.71.1, mammoth 1.13.0, python-docx 1.2.0.</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Task</th>
+        <th>Input</th>
+        <th style="text-align:right">OpenDoc</th>
+        <th style="text-align:right">Competitor</th>
+        <th>OpenDoc speed</th>
+        <th style="text-align:right">OpenDoc peak RSS</th>
+        <th style="text-align:right">Competitor peak RSS</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>Generate DOCX (the same docx-js program)</td>
+        <td>100 paragraphs + table</td>
+        <td style="text-align:right">4.04 ms</td>
+        <td style="text-align:right">docx-js: 4.26 ms</td>
+        <td>1.1× faster</td>
+        <td style="text-align:right">234.4 MB</td>
+        <td style="text-align:right">87.8 MB</td>
+        </tr>
+        <tr>
+        <td>Generate DOCX (the same docx-js program)</td>
+        <td>1000 paragraphs + table</td>
+        <td style="text-align:right">18.09 ms</td>
+        <td style="text-align:right">docx-js: 17.28 ms</td>
+        <td>1.0× slower</td>
+        <td style="text-align:right">278.8 MB</td>
+        <td style="text-align:right">150.8 MB</td>
+        </tr>
+        <tr>
+        <td>Generate DOCX (the same docx-js program)</td>
+        <td>5000 paragraphs + table</td>
+        <td style="text-align:right">60.24 ms</td>
+        <td style="text-align:right">docx-js: 75.47 ms</td>
+        <td>1.3× faster</td>
+        <td style="text-align:right">332.2 MB</td>
+        <td style="text-align:right">410.7 MB</td>
+        </tr>
+        <tr>
+        <td>Fill a template (the same template and data)</td>
+        <td>100-item loop</td>
+        <td style="text-align:right">2.57 ms</td>
+        <td style="text-align:right">docxtemplater: 2.53 ms</td>
+        <td>1.0× slower</td>
+        <td style="text-align:right">271.4 MB</td>
+        <td style="text-align:right">93.2 MB</td>
+        </tr>
+        <tr>
+        <td>Fill a template (the same template and data)</td>
+        <td>1000-item loop</td>
+        <td style="text-align:right">17.68 ms</td>
+        <td style="text-align:right">docxtemplater: 10.34 ms</td>
+        <td>1.7× slower</td>
+        <td style="text-align:right">319.1 MB</td>
+        <td style="text-align:right">111 MB</td>
+        </tr>
+        <tr>
+        <td>DOCX to HTML</td>
+        <td>sample</td>
+        <td style="text-align:right">16.42 ms</td>
+        <td style="text-align:right">mammoth: 34.99 ms</td>
+        <td>2.1× faster</td>
+        <td style="text-align:right">335.7 MB</td>
+        <td style="text-align:right">231 MB</td>
+        </tr>
+        <tr>
+        <td>DOCX to HTML</td>
+        <td>scale</td>
+        <td style="text-align:right">26.1 ms</td>
+        <td style="text-align:right">mammoth: 53.78 ms</td>
+        <td>2.1× faster</td>
+        <td style="text-align:right">310.1 MB</td>
+        <td style="text-align:right">288.4 MB</td>
+        </tr>
+        <tr>
+        <td>DOCX to plain text</td>
+        <td>sample</td>
+        <td style="text-align:right">12.53 ms</td>
+        <td style="text-align:right">mammoth: 30.58 ms</td>
+        <td>2.4× faster</td>
+        <td style="text-align:right">332 MB</td>
+        <td style="text-align:right">228.7 MB</td>
+        </tr>
+        <tr>
+        <td>DOCX to plain text</td>
+        <td>scale</td>
+        <td style="text-align:right">17.24 ms</td>
+        <td style="text-align:right">mammoth: 41.51 ms</td>
+        <td>2.4× faster</td>
+        <td style="text-align:right">317.6 MB</td>
+        <td style="text-align:right">273.9 MB</td>
+        </tr>
+        <tr>
+        <td>DOCX to PDF</td>
+        <td>sample</td>
+        <td style="text-align:right">55.21 ms</td>
+        <td style="text-align:right">libreoffice: —</td>
+        <td>—</td>
+        <td style="text-align:right">362.2 MB</td>
+        <td style="text-align:right">—</td>
+        </tr>
+        <tr>
+        <td>DOCX to PDF</td>
+        <td>scale</td>
+        <td style="text-align:right">261.39 ms</td>
+        <td style="text-align:right">libreoffice: —</td>
+        <td>—</td>
+        <td style="text-align:right">362 MB</td>
+        <td style="text-align:right">—</td>
+        </tr>
+        <tr>
+        <td>Generate DOCX (the same python-docx program)</td>
+        <td>100 paragraphs + table (Python)</td>
+        <td style="text-align:right">2.6 ms</td>
+        <td style="text-align:right">python-docx: 16.2 ms</td>
+        <td>6.2× faster</td>
+        <td style="text-align:right">18.4 MB</td>
+        <td style="text-align:right">44.2 MB</td>
+        </tr>
+        <tr>
+        <td>Generate DOCX (the same python-docx program)</td>
+        <td>1000 paragraphs + table (Python)</td>
+        <td style="text-align:right">24.39 ms</td>
+        <td style="text-align:right">python-docx: 92.43 ms</td>
+        <td>3.8× faster</td>
+        <td style="text-align:right">19.8 MB</td>
+        <td style="text-align:right">63.8 MB</td>
+        </tr>
+        <tr>
+        <td>Generate DOCX (the same python-docx program)</td>
+        <td>5000 paragraphs + table (Python)</td>
+        <td style="text-align:right">187.96 ms</td>
+        <td style="text-align:right">python-docx: 667.32 ms</td>
+        <td>3.6× faster</td>
+        <td style="text-align:right">26.8 MB</td>
+        <td style="text-align:right">81 MB</td>
+        </tr>
+        <tr>
+        <td>Open and read every paragraph (Python)</td>
+        <td>sample (Python)</td>
+        <td style="text-align:right">7.17 ms</td>
+        <td style="text-align:right">python-docx: 7.2 ms</td>
+        <td>1.0× faster</td>
+        <td style="text-align:right">26.4 MB</td>
+        <td style="text-align:right">52.3 MB</td>
+        </tr>
+        <tr>
+        <td>Open and read every paragraph (Python)</td>
+        <td>scale (Python)</td>
+        <td style="text-align:right">43.26 ms</td>
+        <td style="text-align:right">python-docx: 66.88 ms</td>
+        <td>1.5× faster</td>
+        <td style="text-align:right">44.1 MB</td>
+        <td style="text-align:right">56.2 MB</td>
+        </tr>
+        <tr>
+        <td>Generate DOCX (Java, POI-style calls)</td>
+        <td>100 paragraphs + table (Java)</td>
+        <td style="text-align:right">4.94 ms</td>
+        <td style="text-align:right">poi: 10.15 ms</td>
+        <td>2.1× faster</td>
+        <td style="text-align:right">98.6 MB</td>
+        <td style="text-align:right">142.5 MB</td>
+        </tr>
+        <tr>
+        <td>Generate DOCX (Java, POI-style calls)</td>
+        <td>1000 paragraphs + table (Java)</td>
+        <td style="text-align:right">30.9 ms</td>
+        <td style="text-align:right">poi: 20.85 ms</td>
+        <td>1.5× slower</td>
+        <td style="text-align:right">200.4 MB</td>
+        <td style="text-align:right">186.7 MB</td>
+        </tr>
+        <tr>
+        <td>Open and read every paragraph (Java)</td>
+        <td>sample (Java)</td>
+        <td style="text-align:right">14.59 ms</td>
+        <td style="text-align:right">poi: 34.9 ms</td>
+        <td>2.4× faster</td>
+        <td style="text-align:right">103.8 MB</td>
+        <td style="text-align:right">217.1 MB</td>
+        </tr>
+        <tr>
+        <td>Open and read every paragraph (Java)</td>
+        <td>scale (Java)</td>
+        <td style="text-align:right">96.38 ms</td>
+        <td style="text-align:right">poi: 92.45 ms</td>
+        <td>1.0× slower</td>
+        <td style="text-align:right">217.4 MB</td>
+        <td style="text-align:right">242.7 MB</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body"><strong>Round trip</strong> (open, save, reopen; <code>kept</code> is input package parts present in the output, <code>text</code> whether the body text survived, <code>losses</code> OpenDoc's own report):</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Fixture</th>
+        <th style="text-align:right">Parts</th>
+        <th>OpenDoc preserve: kept / text / losses</th>
+        <th>OpenDoc semantic: kept / text / losses</th>
+        <th>python-docx: kept / text</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>sample.docx</td>
+        <td style="text-align:right">24</td>
+        <td>24 / same / 1</td>
+        <td>18 / same / 5</td>
+        <td>24 / same</td>
+        </tr>
+        <tr>
+        <td>real-producer-footnotes.docx</td>
+        <td style="text-align:right">12</td>
+        <td>11 / same / 0</td>
+        <td>11 / same / 0</td>
+        <td>12 / same</td>
+        </tr>
+        <tr>
+        <td>real-producer-header-footer.docx</td>
+        <td style="text-align:right">13</td>
+        <td>12 / same / 0</td>
+        <td>12 / same / 0</td>
+        <td>13 / same</td>
+        </tr>
+        <tr>
+        <td>real-producer-hyperlinks.docx</td>
+        <td style="text-align:right">9</td>
+        <td>9 / same / 0</td>
+        <td>9 / same / 0</td>
+        <td>9 / same</td>
+        </tr>
+        <tr>
+        <td>real-producer-libreoffice.docx</td>
+        <td style="text-align:right">9</td>
+        <td>9 / same / 0</td>
+        <td>9 / same / 0</td>
+        <td>9 / same</td>
+        </tr>
+        <tr>
+        <td>real-producer-rich.docx</td>
+        <td style="text-align:right">10</td>
+        <td>10 / same / 0</td>
+        <td>10 / same / 0</td>
+        <td>10 / same</td>
+        </tr>
+        <tr>
+        <td>real-producer-table-list.docx</td>
+        <td style="text-align:right">10</td>
+        <td>10 / same / 0</td>
+        <td>10 / same / 0</td>
+        <td>10 / same</td>
+        </tr>
+        <tr>
+        <td>real-producer-table-merges.docx</td>
+        <td style="text-align:right">9</td>
+        <td>9 / same / 0</td>
+        <td>9 / same / 0</td>
+        <td>9 / same</td>
+        </tr>
+        <tr>
+        <td>synthetic-rich-metadata.docx</td>
+        <td style="text-align:right">7</td>
+        <td>7 / same / 0</td>
+        <td>7 / same / 0</td>
+        <td>6 / same</td>
+        </tr>
+        <tr>
+        <td>synthetic-declared-family-substitution.docx</td>
+        <td style="text-align:right">6</td>
+        <td>6 / same / 0</td>
+        <td>6 / same / 0</td>
+        <td>6 / same</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body"><strong>Pages</strong> (OpenDoc's layout):</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Fixture</th>
+        <th style="text-align:right">OpenDoc pages</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>sample.docx</td>
+        <td style="text-align:right">14</td>
+        </tr>
+        <tr>
+        <td>real-producer-footnotes.docx</td>
+        <td style="text-align:right">1</td>
+        </tr>
+        <tr>
+        <td>real-producer-header-footer.docx</td>
+        <td style="text-align:right">1</td>
+        </tr>
+        <tr>
+        <td>real-producer-hyperlinks.docx</td>
+        <td style="text-align:right">1</td>
+        </tr>
+        <tr>
+        <td>real-producer-libreoffice.docx</td>
+        <td style="text-align:right">1</td>
+        </tr>
+        <tr>
+        <td>real-producer-rich.docx</td>
+        <td style="text-align:right">1</td>
+        </tr>
+        <tr>
+        <td>real-producer-table-list.docx</td>
+        <td style="text-align:right">1</td>
+        </tr>
+        <tr>
+        <td>real-producer-table-merges.docx</td>
+        <td style="text-align:right">1</td>
+        </tr>
+        <tr>
+        <td>synthetic-rich-metadata.docx</td>
+        <td style="text-align:right">1</td>
+        </tr>
+        <tr>
+        <td>synthetic-declared-family-substitution.docx</td>
+        <td style="text-align:right">1</td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <ul class="doc-list">
+        <li><code>scale</code> is 3,000 paragraphs and 30 headings written by docx-js at run time.</li>
+        <li>Java peak memory is the whole JVM process's maximum resident set (<code>/usr/bin/time</code>), for both libraries.</li>
+        <li>LibreOffice was not given (--soffice), so its PDF timings and page counts are absent.</li>
+        <li>Round trip: an empty <code>docProps/custom.xml</code> (no properties) is not rewritten by an OpenDoc save, which <code>partsKept</code> counts as a dropped part although nothing is lost. <code>partsKept</code> counts the input's package parts present in the output; <code>textSame</code> re-opens the output with OpenDoc and compares the body text; <code>losses</code> is OpenDoc's own save report (no other library reports loss).</li>
+        </ul>
+        <p class="doc-body">&lt;!-- sdk-bench:end --&gt;</p>
+        <h3 class="doc-h3" id="12-11-the-site-page">12.11 The site page</h3>
+        <p class="doc-body"><code>webapp/sdk.html</code> (from <code>webapp/sdk.page.html</code>) is the SDK's public page: the three products, install per language, one example per language, the familiarity table, the benchmark with its losses, and the format table. It is in the header nav, the docs rail and the home page, and this document is published beside it as <code>reference/three-sdk-products.html</code>.</p>
+        <ul class="doc-list">
+        <li><strong>Generated, not typed.</strong> <code>webapp/tools/build-sdk-page.mjs</code> copies every code panel whole from a file a test runs (<code>packages/opendoc/test/examples.test.mjs</code>, <code>bindings/python/tests/test_opendoc.py</code>, <code>bindings/java/build.sh</code>, <code>crates/opendoc/tests/sdk.rs</code>), renders the benchmark table and its list of losses from <code>benchmarks/sdk/results.json</code>, and reads the format table from the <code>casual-doc-io</code> descriptors. <code>webapp/build.sh</code> runs its <code>--check</code>.</li>
+        <li><strong>Guards.</strong> <code>webapp/tests/sdk_page.test.mjs</code> re-derives the ratios, the loss count and the format counts independently of the generator, checks each panel is verbatim in its file and that the file it names as the runner runs it, and checks every API name in the familiarity table exists in the binding. <code>webapp/tests/e2e/sdk-page.spec.mjs</code> checks the chrome, every route, no horizontal scroll at 390 px and WCAG AA.</li>
+        <li><strong>Mutation.</strong> A docxtemplater time in <code>results.json</code> changed from 10.34 to 30 made the page stale (<code>--check</code> red) and, with the page regenerated, the loss list one shorter; the guard's independent count went red against a hand-edited claim.</li>
+        </ul>
+        <h3 class="doc-h3" id="12-12-pictures-headers-and-footers-notes-and-sections-by-edit">12.12 Pictures, headers and footers, notes and sections, by edit</h3>
+        <p class="doc-body">The builder could write all four; an opened document could not get any of them. Now each is an edit in every binding, lowered by <code>casual_doc_command</code> (the capability registry the editor and the agent front doors share, <code>docs/181</code>) and applied through the batch's choke point (ADR-030 I1): the same operations as the editor's own gestures, all or nothing per batch, with the batch's exact undo. <code>crates/opendoc/src/edit/objects.rs</code> holds them.</p>
+        <div class="doc-table-scroll">
+        <table class="doc-table">
+        <thead>
+        <tr>
+        <th>Edit</th>
+        <th>Rust (<code>Editor</code>) and JSON (<code>op</code>)</th>
+        <th>JavaScript</th>
+        <th>Python (python-docx names)</th>
+        <th>Java (POI names)</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>Insert a picture</td>
+        <td><code>insert_picture</code> / <code>insertPicture</code></td>
+        <td><code>addPicture</code>, <code>insertPicture</code></td>
+        <td><code>add_picture</code>, <code>run.add_picture</code></td>
+        <td><code>OpenRun.addPicture(InputStream, int, String, int, int)</code></td>
+        </tr>
+        <tr>
+        <td>Replace, resize, alt text, delete</td>
+        <td><code>replace_picture</code>, <code>resize_picture</code>, <code>set_alt_text</code>, <code>delete_picture</code></td>
+        <td><code>replacePicture</code>, <code>resizePicture</code>, <code>setAltText</code>, <code>deletePicture</code></td>
+        <td><code>InlineShape.replace</code>, <code>.width</code>/<code>.height</code>, <code>.alt_text</code>, <code>.delete()</code></td>
+        <td><code>OpenPicture.replace</code>, <code>setSize</code>, <code>setDescription</code>, <code>remove</code></td>
+        </tr>
+        <tr>
+        <td>A header or footer (default, first, even)</td>
+        <td><code>header_footer</code> / <code>headerFooter</code></td>
+        <td><code>header</code>, <code>footer</code></td>
+        <td><code>section.header</code>, <code>first_page_header</code>, <code>even_page_footer</code>, …</td>
+        <td><code>createHeader(HeaderFooterType)</code>, <code>createFooter</code></td>
+        </tr>
+        <tr>
+        <td>Remove, link to previous</td>
+        <td><code>remove_header_footer</code>, <code>set_linked_to_previous</code></td>
+        <td><code>removeHeader</code>, <code>setLinkedToPrevious</code></td>
+        <td><code>HeaderFooter.remove()</code>, <code>is_linked_to_previous</code></td>
+        <td><code>OpenHeaderFooter.remove()</code></td>
+        </tr>
+        <tr>
+        <td>Different first page, odd and even</td>
+        <td><code>set_different_first_page</code>, <code>set_different_odd_even</code></td>
+        <td><code>setDifferentFirstPage</code>, <code>setDifferentOddEven</code></td>
+        <td><code>different_first_page_header_footer</code>, <code>settings.odd_and_even_pages_header_footer</code></td>
+        <td><code>OpenSection.setTitlePage</code>, <code>setEvenAndOddHeaders</code></td>
+        </tr>
+        <tr>
+        <td>A field (page, numpages, date, time, filename, author)</td>
+        <td><code>insert_field</code> / <code>insertField</code></td>
+        <td><code>insertField</code></td>
+        <td><code>Paragraph.add_field</code></td>
+        <td><code>OpenParagraph.addField</code></td>
+        </tr>
+        <tr>
+        <td>Footnotes and endnotes</td>
+        <td><code>insert_note</code>, <code>set_note_text</code>, <code>delete_note</code></td>
+        <td><code>addFootnote</code>, <code>addEndnote</code>, <code>setNoteText</code>, <code>deleteNote</code></td>
+        <td><code>Paragraph.add_footnote</code>, <code>add_endnote</code>, <code>Note.text</code>, <code>Note.delete()</code></td>
+        <td><code>OpenParagraph.addFootnote</code>, <code>addEndnote</code>, <code>OpenNote</code></td>
+        </tr>
+        <tr>
+        <td>Add a section, a break, its start</td>
+        <td><code>add_section</code>, <code>insert_section_break</code>, <code>set_section_start</code></td>
+        <td><code>addSection</code>, <code>insertSectionBreak</code>, <code>setSectionStart</code></td>
+        <td><code>add_section</code>, <code>section.start_type</code></td>
+        <td><code>addSection</code>, <code>insertSectionBreak</code>, <code>OpenSection.setStart</code></td>
+        </tr>
+        <tr>
+        <td>Page size, orientation, margins, columns</td>
+        <td><code>set_page_setup</code> / <code>setPageSetup</code></td>
+        <td><code>setPageSetup</code></td>
+        <td><code>page_width</code>, <code>orientation</code>, <code>left_margin</code>, …, <code>columns</code></td>
+        <td><code>OpenSection.setPageSize</code>, <code>setOrientation</code>, <code>setMargins</code>, <code>setColumns</code></td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        <p class="doc-body">The C ABI reaches all of them through <code>opendoc_call(doc, &quot;edit&quot;, json)</code>, the JSON vocabulary the other bindings send (<code>crates/opendoc-ffi/tests/abi.rs</code>).</p>
+        <p class="doc-body"><strong>Decisions, and where this differs.</strong></p>
+        <ul class="doc-list">
+        <li><strong>Units.</strong> Points in Rust, JSON, JavaScript and Java's additions; python-docx <code>Length</code>s in Python; EMU in POI's own <code>addPicture</code> signature, as POI takes them.</li>
+        <li><strong>Pictures.</strong> The format is read from the bytes (PNG, JPEG, GIF, BMP, TIFF, WebP). Give one side and the other keeps the image's proportions; give neither for its own size at 96 dpi. The bytes join the document's resources only when the batch applies. Replace keeps the picture's id, position, wrap and alt text and fits the new image inside the old frame, as Word's Change Picture does.</li>
+        <li><strong>Headers and footers</strong> are named by <code>(section index, header|footer, default|first|even)</code>. Asking for a band the section does not have creates it; a section that showed the previous section's band gets its own copy first (Word's unlink). <code>First</code> and <code>Even</code> show only with a different first page or odd and even pages; Java's <code>createHeader(FIRST|EVEN)</code> turns those on, as POI does. A paragraph after one in a header, footer or note is inserted by splitting it (Enter), because only the body and cells take blocks by position.</li>
+        <li><strong>A new section</strong> (by <code>add_section</code> or a break) shows the previous section's header and footer by inheritance rather than naming the same bodies: it renders the same, and it is what python-docx writes, so &quot;linked to previous&quot; is true until unlinked.</li>
+        <li><strong>A section's start.</strong> The operation set has no single &quot;set start&quot; operation, so it is the existing set in one step: a boundary carrying the new start is spliced in beside the old, the paragraph that ends the section is pointed at it, its form protection moves, and the old boundary is removed. The section's id changes; its index, content and bands do not.</li>
+        <li><strong>Orientation</strong> swaps width and height when they disagree with it, as Word does; python-docx sets only the flag.</li>
+        </ul>
+        <p class="doc-body"><strong>Guards.</strong></p>
+        <ul class="doc-list">
+        <li><code>crates/opendoc/tests/objects.rs</code> (6 tests): every edit applied, read back, saved and reopened with no loss, undone, and refused as a whole batch; the JSON commands.</li>
+        <li><code>packages/opendoc/test/objects.test.mjs</code>, <code>bindings/python/tests/test_objects.py</code>, <code>ConformanceTest</code> (Java) and <code>crates/opendoc-ffi/tests/abi.rs</code> drive the same edits through each binding.</li>
+        <li><strong>Mutations</strong>, each red then restored: the picture's bytes not handed to the resources (&quot;the bytes are in the package&quot;); the orientation swap removed (&quot;turning swaps the size, as Word does&quot;).</li>
+        </ul>
+        <h3 class="doc-h3" id="12-13-svg-pages">12.13 SVG pages</h3>
+        <p class="doc-body">A page renders as SVG from the same display list the PNG raster and the PDF writer paint: <code>casual_doc_render::svg::render_svg</code>, reached as <code>ViewerDocument::render_page_svg</code>, <code>Document::render_page_svg</code> (Rust), <code>renderPageSvg</code> (JavaScript), <code>render_page_svg</code> (Python), <code>renderPageSvg</code> (Java), <code>opendoc_render_svg</code> (C ABI) and <code>opendoc render --format svg</code> (CLI).</p>
+        <ul class="doc-list">
+        <li><strong>Glyphs</strong> are outlines from the exact face the layout measured with (skrifa, as the raster draws them), each distinct glyph defined once and placed with <code>&lt;use&gt;</code>. A page therefore looks the same in every viewer whatever fonts it has.</li>
+        <li><strong>Real text.</strong> Over each run lies a transparent <code>&lt;text&gt;</code> carrying the run's characters, recovered from the paragraph through the glyphs' cluster offsets (the PDF writer's <code>ToUnicode</code> mechanism) and stretched to the run's advance, so the text can be selected, searched and read aloud. A run with no source paragraph (a list marker, a tab leader) has the outline alone.</li>
+        <li><strong>Pictures</strong> are embedded as <code>data:</code> URIs: PNG, JPEG, GIF and WebP as their own bytes, BMP and TIFF re-encoded as PNG under the raster backend's decode ceilings, anything undecodable as the raster's crossed placeholder. Crops, rotation, flips and opacity carry over.</li>
+        <li><strong>Shapes, clips, layers, gradients and shadows</strong> map to SVG paths, <code>clipPath</code>, groups (a multiplied layer as <code>mix-blend-mode: multiply</code>), gradients and <code>feGaussianBlur</code>.</li>
+        <li><strong>Not drawn yet (stated, not hidden):</strong> colour glyphs (COLR and bitmap emoji) are drawn from their outline glyph when the face has one, in the run's colour, else omitted; arrowheads on lines; glyph ink effects (shadow, emboss, outline).</li>
+        <li><strong>Determinism.</strong> Coordinates are the list's twips with one decimal, ids are assigned in paint order, so the same document gives the same bytes on every platform with the bundled faces.</li>
+        </ul>
+        <p class="doc-body"><strong>Guards</strong> (<code>crates/opendoc/tests/svg.rs</code>):</p>
+        <ul class="doc-list">
+        <li><code>an_svg_page_is_well_formed_sized_and_carries_real_text</code> parses the page and reads its text layer back, <code>&amp;</code> and <code>&lt;</code> included.</li>
+        <li><code>an_svg_page_draws_what_the_png_page_draws</code> rasterizes the SVG with an independent renderer (resvg, no text stack) and compares it with the engine's own PNG of the page: mean channel difference under 1.0 and under 0.2% of pixels visibly different, on a built page and on the sample's second page (no pictures: this resvg build decodes none). The residue is antialiasing and the raster's stroke widths, which are device pixels at the render resolution where the PDF writer and the SVG read them as pixels at 96 dpi.</li>
+        <li><code>svg_pages_are_the_same_bytes_on_every_platform</code> holds <code>tests/svg.golden</code>: FNV-1a and length of the first three sample pages and one built page. It was blessed on macOS arm64 (<code>OPENDOC_BLESS=1 cargo test -p opendoc --test svg</code>, recorded in its <code>#</code> lines); CI's Linux <code>test</code> job and the macOS and Windows <code>platform</code> jobs are its cross-platform check. <code>.gitattributes</code> keeps it LF.</li>
+        <li>Each binding renders a page and finds its text (<code>objects.test.mjs</code>, <code>test_objects.py</code>, <code>ConformanceTest</code>, <code>abi.rs</code>, <code>cli.rs</code>).</li>
+        <li><strong>Mutations</strong>, each red then restored: glyph outlines not flipped (the raster comparison, 0.439% of pixels visibly different, and the golden); the text layer dropped (&quot;the text layer reads \&quot;Vector pages\&quot;: \&quot;\&quot;&quot;).</li>
+        </ul>
+        <h3 class="doc-h3" id="12-14-fuzzing-the-c-abi-and-checked-handles">12.14 Fuzzing the C ABI, and checked handles</h3>
+        <p class="doc-body"><code>fuzz/fuzz_targets/ffi_calls.rs</code> drives <code>crates/opendoc-ffi</code> with arbitrary call sequences. Each input is a short program: documents opened from arbitrary bytes with honest but wrong lengths (all, half, zero, a null pointer with a length) and arbitrary options, JSON and non-JSON arguments, real and made-up method names (and edit commands aimed at a real paragraph id read back from <code>body</code>), page numbers and resolutions out of range (NaN, zero, negative, infinite, 10⁹ dpi), and handles and buffers that are null, live, freed already, of the wrong kind, freed out of order and freed twice. Every handle still live at the end is freed. It does not hand the library a pointer to fewer bytes than the length it states, or a string without its NUL: no ABI can check those.</p>
+        <p class="doc-body"><strong>What it found.</strong> Against the ABI as it stood, a heap-use-after-free within about 1,700 runs (AddressSanitizer, in the drop of a freed document reached through a stale handle): the ABI trusted every pointer, so a stale or double-freed handle was undefined behaviour. <strong>The fix:</strong> every handle and buffer the library returns is recorded in a registry (<code>DOCUMENTS</code>, <code>BUFFERS</code>, by address), every export checks the pointer against it first, and the frees remove before they free. A freed, double-freed, foreign or wrong-kind pointer is now a coded <code>invalid-argument</code> error (<code>NULL</code>), or a no-op for the two frees and the buffer accessors. One hash lookup per call. The ownership rule and the ABI version are unchanged; the header says what is now checked and what is still the caller's promise.</p>
+        <p class="doc-body"><strong>Armed.</strong> CI's <code>fuzz-build</code> job builds the target and runs it for 120 seconds on every change (<code>.github/workflows/ci.yml</code>); <code>the_abi_fuzz_target_is_armed_in_ci</code> (<code>crates/opendoc-ffi/tests/abi.rs</code>) fails if the job stops building or running it. The fuzz workspace's lockfile starts from the main one, so it fuzzes the engine versions that ship.</p>
+        <p class="doc-body"><strong>Evidence.</strong> A 300-second local run after the fix (70,568 executions, 37,006 coverage edges, a 1,322-input corpus): no crash, leak report or timeout.</p>
+        <p class="doc-body"><strong>Guards and mutations.</strong></p>
+        <ul class="doc-list">
+        <li><code>stale_double_freed_and_foreign_handles_are_refused_not_dereferenced</code> uses a freed handle, frees it twice, reads and frees a freed buffer twice, and passes a buffer as a document. Mutation: the registry check skipped in <code>live_document</code>; the test died with <code>SIGSEGV</code>.</li>
+        <li>The fuzz target itself, run against the ABI with the registry disabled: the heap-use-after-free above, in under five seconds.</li>
+        <li><code>the_abi_fuzz_target_is_armed_in_ci</code>. Mutation: <code>fuzz run ffi_calls</code> renamed in the job; red, &quot;fuzz-build does not run ffi_calls&quot;.</li>
+        </ul>
+        <p class="doc-body">[poi]: https://poi.apache.org/components/document/ [pydocx]: https://python-docx.readthedocs.io/en/latest/api/text.html [pydocx-gh]: https://github.com/python-openxml/python-docx [docx4j]: https://github.com/plutext/docx4j [oxsdk]: https://github.com/dotnet/Open-XML-SDK [aspose-layout]: https://docs.aspose.com/words/net/rendering/ [aspose]: https://products.aspose.com/words/ [docxjs]: https://github.com/VolodymyrBaydalka/docxjs [mammoth]: https://github.com/mwilliamson/mammoth.js [uniffi]: https://mozilla.github.io/uniffi-rs/latest/ [uniffi-readme]: https://github.com/mozilla/uniffi-rs [jep454]: https://openjdk.org/jeps/454</p>
+        <p class="doc-body">[docxjs-readme]: https://raw.githubusercontent.com/dolanmiu/docx/master/README.md [docxjs-docs]: https://github.com/dolanmiu/docx/tree/master/docs/usage [dt-tags]: https://docxtemplater.com/docs/tag-types/ [dt-config]: https://docxtemplater.com/docs/configuration/ [dt-errors]: https://docxtemplater.com/docs/errors/ [dt-pricing]: https://docxtemplater.com/pricing/ [pydocx-home]: https://python-docx.readthedocs.io/en/latest/ [pydocx-quick]: https://python-docx.readthedocs.io/en/latest/user/quickstart.html [pydocx-comments]: https://python-docx.readthedocs.io/en/latest/user/comments.html [docxtpl]: https://docxtpl.readthedocs.io/en/latest/ [poi-doc]: https://poi.apache.org/apidocs/dev/org/apache/poi/xwpf/usermodel/XWPFDocument.html [poi-run]: https://poi.apache.org/apidocs/dev/org/apache/poi/xwpf/usermodel/XWPFRun.html [docx4j-api]: https://raw.githubusercontent.com/plutext/docx4j/master/docx4j-core/src/main/java/org/docx4j/Docx4J.java [docx4j-blog]: https://www.docx4java.org/blog/?p=148 [aspose-doc]: https://reference.aspose.com/words/java/com.aspose.words/document/ [aspose-builder]: https://reference.aspose.com/words/net/aspose.words/documentbuilder/ [aspose-replace]: https://reference.aspose.com/words/net/aspose.words/range/replace/ [aspose-layout-collector]: https://reference.aspose.com/words/java/com.aspose.words/layoutcollector/</p>
+        </div>
+      </article>
+      <aside class="doc-rail" aria-label="Reference documentation">
+        <div class="doc-rail-inner">
+          <p class="doc-rail-title">Reference</p>
+          <ul class="doc-rail-list">
+            <li><a href="./index.html">All reference docs</a></li>
+          </ul>
+          <p class="doc-rail-title">Architecture</p>
+          <ul class="doc-rail-list">
+            <li><a href="./architecture.html">Target architecture</a></li>
+            <li><a href="./docx-package-reader.html">DOCX package reader</a></li>
+            <li><a href="./disposition-taxonomy.html">Import dispositions</a></li>
+            <li><a href="./pdf-export-and-print.html">PDF export and print</a></li>
+            <li><a href="./deployment-containers-and-configuration.html">Deployment and containers</a></li>
+          </ul>
+          <p class="doc-rail-title">SDK</p>
+          <ul class="doc-rail-list">
+            <li><a href="./sdk-api-spec.html">SDK API specification</a></li>
+            <li><a href="./error-code-registry.html">Error code registry</a></li>
+            <li><a href="./embeddability-plan.html">Embeddability, in three phases</a></li>
+            <li><a class="is-active" href="./three-sdk-products.html">Three SDK products</a></li>
+          </ul>
+          <p class="doc-rail-title">Editor</p>
+          <ul class="doc-rail-list">
+            <li><a href="./command-registry.html">Command registry</a></li>
+          </ul>
+          <p class="doc-rail-title">Project</p>
+          <ul class="doc-rail-list">
+            <li><a href="./glossary.html">Glossary</a></li>
+            <li><a href="./contributing.html">Contributing</a></li>
+            <li><a href="./security.html">Security policy</a></li>
+          </ul>
+        </div>
+      </aside>
+      <aside class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <p class="doc-toc-title">On this page</p>
+          <ul class="doc-toc-list">
+            <li><a href="#1-the-finding-that-shapes-the-design">1. The finding that shapes the design</a></li>
+            <li><a href="#2-scope-of-each-product">2. Scope of each product</a></li>
+            <li><a href="#3-public-api-surface">3. Public API surface</a></li>
+            <li><a href="#4-measured-what-the-viewer-needs-and-what-it-costs">4. Measured: what the viewer needs, and what it costs</a></li>
+            <li><a href="#5-packaging-versioning-and-the-feature-gating-plan">5. Packaging, versioning and the feature-gating plan</a></li>
+            <li><a href="#6-binding-strategy-recommendation">6. Binding strategy: recommendation</a></li>
+            <li><a href="#7-competitive-positioning">7. Competitive positioning</a></li>
+            <li><a href="#8-prerequisites-and-phased-plan">8. Prerequisites and phased plan</a></li>
+            <li><a href="#9-risks">9. Risks</a></li>
+            <li><a href="#10-owner-decisions-2026-10-23-and-what-is-still-open">10. Owner decisions (2026-10-23), and what is still open</a></li>
+            <li><a href="#11-what-this-change-built-and-its-evidence">11. What this change built, and its evidence</a></li>
+            <li><a href="#12-the-native-sdk-s-api-research-then-decision-owner-2026-10-30">12. The Native SDK's API: research, then decision (owner, 2026-10-30)</a></li>
+          </ul>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <div class="site-footer-brand">
+          <a class="brand" href="../" aria-label="OpenDoc home" data-i18n-label="site.header.opendocHome">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
+          </a>
+          <p class="site-footer-tagline" data-i18n="site.footer.tagline">An Apache-2.0 document editor and engine you can embed, run locally and edit together.</p>
+        </div>
+        <nav class="site-footer-cols" aria-label="Footer" data-i18n-label="site.footer.navigation">
+          <div class="site-footer-col">
+            <p class="site-footer-head" data-i18n="site.footer.product">Product</p>
+            <a href="../editor.html" data-i18n="site.header.editor">Editor</a>
+            <a href="../playground.html" data-i18n="site.header.playground">Playground</a>
+            <a href="../embedding.html" data-i18n="site.header.embedding">Embedding</a>
+            <a href="../sdk.html" data-i18n="site.header.sdk">SDK</a>
+          </div>
+          <div class="site-footer-col">
+            <p class="site-footer-head" data-i18n="site.footer.learn">Learn</p>
+            <a href="../docs.html" data-i18n="site.header.docs">Docs</a>
+            <a href="../fidelity.html" data-i18n="site.header.fidelity">Fidelity</a>
+            <a href="../reference/index.html" data-i18n="site.footer.reference">Reference</a>
+          </div>
+          <div class="site-footer-col">
+            <p class="site-footer-head" data-i18n="site.footer.project">Project</p>
+            <a href="https://github.com/CasualOffice/opendoc" data-i18n="site.footer.github">GitHub</a>
+            <a href="../reference/security.html" data-i18n="site.footer.security">Security</a>
+            <a href="../reference/contributing.html" data-i18n="site.footer.contributing">Contributing</a>
+          </div>
+        </nav>
+        <div class="site-footer-base">
+          <span class="site-footer-copy" data-i18n="site.footer.copyright">© 2026 CasualOffice — developed by the CasualOffice Team</span>
+          <span class="site-footer-copy" data-i18n="site.footer.licence">Apache-2.0 · contributions welcome under the same licence</span>
+        </div>
+      </div>
+    </footer>
+    <script>
+      // Warm the engine on INTENT, not on arrival. The editor's wasm is the largest
+      // thing this project ships, and it cannot start downloading until the editor
+      // page is navigated to and its module graph resolves. Prefetching it when a
+      // visitor hovers or focuses a link to the editor moves that transfer into the
+      // seconds they spend deciding, so the editor has it in cache on arrival.
+      //
+      // Deliberately not unconditional: a visitor who only reads the docs should
+      // never pay for the engine. `prefetch` is also the low-priority hint, so it
+      // yields to anything this page still needs, and `save-data` opts out entirely.
+      (() => {
+        if (navigator.connection?.saveData) return;
+        let warmed = false;
+        const warm = () => {
+          if (warmed) return;
+          warmed = true;
+          const link = document.createElement("link");
+          link.rel = "prefetch";
+          link.as = "fetch";
+          link.crossOrigin = "anonymous";
+          link.href = "../pkg/casual_doc_wasm_bg.wasm";
+          document.head.appendChild(link);
+        };
+        for (const anchor of document.querySelectorAll('a[href*="editor.html"]')) {
+          anchor.addEventListener("pointerenter", warm, { once: true, passive: true });
+          anchor.addEventListener("focus", warm, { once: true, passive: true });
+          anchor.addEventListener("touchstart", warm, { once: true, passive: true });
+        }
+      })();
+    </script>
+    <script type="module" src="../src/site_locale.mjs"></script>
+    <script type="module" src="../src/site_motion.mjs"></script>
+  </body>
+</html>

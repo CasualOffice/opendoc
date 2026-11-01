@@ -32,9 +32,40 @@ try (OpenDocument doc = new OpenDocument()) {             // or new OpenDocument
     }
     doc.save(Path.of("out.pdf"));                           // Aspose-style: the format from the extension
     byte[] png = doc.renderPagePng(0, 150f);
+    String svg = doc.renderPageSvg(0);                       // the same page as SVG, selectable text
     int pages = doc.getPageCount();
 }
 ```
+
+## Pictures, headers and footers, notes, sections
+
+```java
+OpenRun r = doc.createParagraph().createRun();
+OpenPicture logo = r.addPicture(Files.newInputStream(Path.of("logo.png")),
+        Document.PICTURE_TYPE_PNG, "logo.png", Units.toEMU(96), Units.toEMU(32)); // POI's signature
+logo.setSize(144, 48);                                       // additions: setSize (points), setDescription,
+logo.setDescription("Company logo");                         // replace(InputStream) and remove()
+
+doc.createHeader(HeaderFooterType.DEFAULT).createParagraph().createRun().setText("Quarterly report");
+OpenParagraph footer = doc.createFooter(HeaderFooterType.DEFAULT).createParagraph();
+footer.createRun().setText("Page ");
+footer.addField("page");                                     // numpages, date, time, filename, author
+doc.createHeader(HeaderFooterType.FIRST)                     // turns the different first page on, as POI does
+   .createParagraph().createRun().setText("Cover");
+
+OpenNote note = doc.getParagraphs().get(0).addFootnote("Source"); // addEndnote too
+note.setText("Source, p. 4");
+
+OpenSection landscape = doc.addSection(SectionStart.NEXT_PAGE);
+landscape.setOrientation("landscape");                      // the page turns, as in Word
+landscape.setMargins(36, 36, 54, 54);                        // points
+landscape.setColumns(2, 18);
+landscape.setStart(SectionStart.ODD_PAGE);
+```
+
+`Document.PICTURE_TYPE_PNG` and `Units` above are POI's; here the format is read from the bytes,
+so any `int` will do. POI exposes sections only as raw `CTSectPr`; `OpenSection` is the Page
+Setup dialog's fields.
 
 ## What POI does not do
 
@@ -49,7 +80,5 @@ edits. POI's own documentation warns that its low-level API "may" write invalid 
 
 ## Not built yet
 
-- Pictures, headers, footers and notes cannot be added by edit. `OpenDocument.fromSpec(json)`
-  builds them from a docx-js-shaped spec.
 - Run character styles and table styles cannot be set.
 - Java 8 to 21 would need a JNI shim over the same C ABI (`docs/176` Q3). It is not built.

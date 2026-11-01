@@ -1956,6 +1956,7 @@
   "site.header.playground": "Area uji coba",
   "site.header.preRelease": "Pra-rilis",
   "site.header.primaryNavigation": "Navigasi utama",
+  "site.header.sdk": "SDK",
   "spacing.addSpaceAfter": "Tambahkan jarak setelah paragraf",
   "spacing.addSpaceBefore": "Tambahkan jarak sebelum paragraf",
   "spacing.fromStyleHint": "Paragraf ini mengambil jarak barisnya dari gayanya. Ketikkan nilai untuk menetapkannya di sini.",

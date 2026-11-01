@@ -65,6 +65,7 @@ and those grades are hand-checked rather than CI-enforced.
 - [Embed the editor — OpenDoc](https://opendoc.casualoffice.org/embedding.html): Embed the OpenDoc editor in your own page: the <opendoc-editor> custom element and a capability contract resolved before the frame's first navigation.
 - [DOCX fidelity support matrix — OpenDoc](https://opendoc.casualoffice.org/fidelity.html): OpenDoc's DOCX fidelity, graded per construct against a LibreOffice oracle. Grades are hand-checked; layout geometry is gated in CI.
 - [Embed configuration playground — OpenDoc](https://opendoc.casualoffice.org/playground.html): Change a role, withhold a capability, hide a chrome region or set a brand colour, and watch an embedded OpenDoc editor change, then copy the configuration.
+- [The OpenDoc SDK — OpenDoc](https://opendoc.casualoffice.org/sdk.html): Create, edit, template, convert and render documents in code from JavaScript, Python, Java and Rust, with familiar APIs, page layout and a loss report.
 - [Target Architecture — OpenDoc](https://opendoc.casualoffice.org/reference/architecture.html): OpenDoc's target architecture: a headless Rust document engine with host adapters, where the DOM, canvas and app state are projections of its model.
 - [Context Menu and Shared Command Descriptors — OpenDoc](https://opendoc.casualoffice.org/reference/command-registry.html): The design of OpenDoc's shared command descriptors: one source for the context menu and command palette, with keyboard access and stated disabled reasons.
 - [Contributing — OpenDoc](https://opendoc.casualoffice.org/reference/contributing.html): How to contribute to OpenDoc: the development contract, pull request requirements, quality bar, local checks, commit style and Apache-2.0 licensing.
@@ -78,6 +79,7 @@ and those grades are hand-checked rather than CI-enforced.
 - [PDF Export and Print Design — OpenDoc](https://opendoc.casualoffice.org/reference/pdf-export-and-print.html): The design and implementation status of OpenDoc's PDF export and print path: real-text PDF written from the same display list the editor paints.
 - [SDK API Specification — OpenDoc](https://opendoc.casualoffice.org/reference/sdk-api-spec.html): The OpenDoc SDK API: the target v1 facade for sessions, commands, snapshots and events, with the Phase 0 subset implemented today marked as such.
 - [Security Policy — OpenDoc](https://opendoc.casualoffice.org/reference/security.html): How to report a vulnerability in OpenDoc privately, which versions receive security fixes, and the security boundaries the document engine enforces.
+- [Three SDK products on one engine: Viewer, Editor, Native — OpenDoc](https://opendoc.casualoffice.org/reference/three-sdk-products.html): OpenDoc's three SDK products on one engine (Viewer, Editor, Native), the familiar APIs each language gets, and the measured benchmark against the incumbents.
 
 ## Other primary links
 

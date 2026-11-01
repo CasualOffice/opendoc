@@ -142,6 +142,7 @@ Myers
 NOTEREF
 NUL
 NUMPAGES
+NaN
 Namespace
 NodeId
 NodeIds
@@ -599,6 +600,7 @@ resizable
 restamped
 restorable
 resumable
+resvg
 retryable
 reviewable
 revisioned

@@ -251,6 +251,141 @@ public final class OpenDocument implements AutoCloseable {
         return Boolean.TRUE.equals(edit(cmd("op", "rejectAllRevisions")).get(0));
     }
 
+    // --- headers, footers, notes, sections, pictures (docs/176 section 12.12) ---
+
+    /**
+     * The first section's header of {@code type} ({@code createHeader(HeaderFooterType)}).
+     * As in POI, a {@code FIRST} header turns the section's different first page on
+     * and an {@code EVEN} one turns different odd and even pages on.
+     */
+    public OpenHeaderFooter createHeader(HeaderFooterType type) {
+        return createHeader(0, type);
+    }
+
+    /** Section {@code section}'s header of {@code type}. */
+    public OpenHeaderFooter createHeader(int section, HeaderFooterType type) {
+        return band(section, "header", type);
+    }
+
+    /** The first section's footer of {@code type} ({@code createFooter(HeaderFooterType)}). */
+    public OpenHeaderFooter createFooter(HeaderFooterType type) {
+        return createFooter(0, type);
+    }
+
+    /** Section {@code section}'s footer of {@code type}. */
+    public OpenHeaderFooter createFooter(int section, HeaderFooterType type) {
+        return band(section, "footer", type);
+    }
+
+    private OpenHeaderFooter band(int section, String region, HeaderFooterType type) {
+        List<Map<String, Object>> commands = new ArrayList<>();
+        if (type == HeaderFooterType.FIRST) {
+            commands.add(cmd("op", "setDifferentFirstPage", "section", section, "on", true));
+        } else if (type == HeaderFooterType.EVEN) {
+            commands.add(cmd("op", "setDifferentOddEven", "on", true));
+        }
+        commands.add(cmd("op", "headerFooter", "section", section, "region", region, "kind", type.value()));
+        editList(commands);
+        return new OpenHeaderFooter(this, section, region, type);
+    }
+
+    /** Footnotes and endnotes, with their text. */
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> getNotes() {
+        return (List<Map<String, Object>>) call("notes", null);
+    }
+
+    /** The footnotes ({@code getFootnotes}). */
+    public List<OpenNote> getFootnotes() {
+        return notesOf("footnote");
+    }
+
+    /** The endnotes. */
+    public List<OpenNote> getEndnotes() {
+        return notesOf("endnote");
+    }
+
+    private List<OpenNote> notesOf(String kind) {
+        List<OpenNote> out = new ArrayList<>();
+        for (Map<String, Object> note : getNotes()) {
+            if (kind.equals(note.get("kind"))) {
+                out.add(new OpenNote(this, (String) note.get("id")));
+            }
+        }
+        return out;
+    }
+
+    /** The sections, by index ({@code getSections} returns their raw views). */
+    public List<OpenSection> getSectionList() {
+        List<OpenSection> out = new ArrayList<>();
+        for (int i = 0; i < getSections().size(); i++) {
+            out.add(new OpenSection(this, i));
+        }
+        return out;
+    }
+
+    /** Adds a section at the end, inheriting the last one's page setup; returns it. */
+    public OpenSection addSection(SectionStart start) {
+        int index = ((Number) edit(cmd("op", "addSection", "start", start.value())).get(0)).intValue();
+        return new OpenSection(this, index);
+    }
+
+    /** Different odd and even page headers and footers, document-wide. */
+    public void setEvenAndOddHeaders(boolean on) {
+        edit(cmd("op", "setDifferentOddEven", "on", on));
+    }
+
+    /** Every picture in the body, headers, footers and notes, in order. */
+    public List<OpenPicture> getAllPictures() {
+        List<OpenPicture> out = new ArrayList<>();
+        for (Map<String, Object> run : allRuns()) {
+            if ("image".equals(run.get("kind"))) {
+                out.add(new OpenPicture(this, (String) run.get("id")));
+            }
+        }
+        return out;
+    }
+
+    /** Every run of every paragraph, body first, then headers and footers, then notes. */
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> allRuns() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        collect((List<Object>) call("body", null), out);
+        for (Map<String, Object> story : getHeadersFooters()) {
+            collect((List<Object>) story.get("blocks"), out);
+        }
+        for (Map<String, Object> note : getNotes()) {
+            collect((List<Object>) note.get("blocks"), out);
+        }
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void collect(List<Object> blocks, List<Map<String, Object>> out) {
+        for (Object raw : blocks) {
+            Map<String, Object> block = (Map<String, Object>) raw;
+            Object type = block.get("type");
+            if ("paragraph".equals(type)) {
+                for (Object run : (List<Object>) block.get("runs")) {
+                    out.add((Map<String, Object>) run);
+                }
+            } else if ("table".equals(type)) {
+                for (Object row : (List<Object>) block.get("rows")) {
+                    for (Object cell : (List<Object>) ((Map<String, Object>) row).get("cells")) {
+                        collect((List<Object>) ((Map<String, Object>) cell).get("blocks"), out);
+                    }
+                }
+            } else if ("contentControl".equals(type)) {
+                collect((List<Object>) block.get("blocks"), out);
+            }
+        }
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    final List<Object> editList(List<Map<String, Object>> commands) {
+        return edit(commands.toArray(new Map[0]));
+    }
+
     /** Runs edit commands (the JSON vocabulary every binding shares) as one atomic batch. */
     @SafeVarargs
     public final List<Object> editCommands(Map<String, Object>... commands) {
@@ -306,6 +441,11 @@ public final class OpenDocument implements AutoCloseable {
     /** One page as PNG. */
     public byte[] renderPagePng(int page, float dpi) {
         return Native.renderPng(handle(), page, dpi);
+    }
+
+    /** One page as SVG, from the same layout as the PNG and the PDF (glyph outlines, a transparent real-text layer). */
+    public String renderPageSvg(int page) {
+        return new String(Native.renderSvg(handle(), page), java.nio.charset.StandardCharsets.UTF_8);
     }
 
     /** A real-text PDF from the same layout. */

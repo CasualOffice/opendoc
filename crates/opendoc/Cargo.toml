@@ -38,6 +38,9 @@ pdf-import = ["casual-doc-io/pdf-import", "opendoc-viewer/pdf-import"]
 wasm-opt = ['-Oz', '--enable-bulk-memory', '--enable-sign-ext', '--enable-nontrapping-float-to-int']
 
 [dependencies]
+# The lowerings the editor and the agent front doors share (`docs/181`): pictures,
+# notes, headers and footers, fields and section breaks go through them.
+casual-doc-command.workspace = true
 casual-doc-diff.workspace = true
 casual-doc-edit.workspace = true
 casual-doc-io.workspace = true
@@ -51,6 +54,11 @@ zip.workspace = true
 wasm-bindgen = { version = "0.2", optional = true }
 
 [dev-dependencies]
+# The SVG test parses every page it renders (`tests/svg.rs`).
+quick-xml.workspace = true
+# Rasterizes the SVG pages to compare them with the PNG pages (`tests/svg.rs`);
+# the same version and features `casual-doc-render` already links.
+resvg = { version = "0.45", default-features = false }
 zip.workspace = true
 
 [lints]

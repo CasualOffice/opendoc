@@ -1,0 +1,1006 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title data-i18n="site.sdk.title">The OpenDoc SDK — OpenDoc</title>
+    <meta
+      name="description"
+      content="Create, edit, template, convert and render documents in code from JavaScript, Python, Java and Rust, with familiar APIs, page layout and a loss report."
+    />
+    <meta name="author" content="CasualOffice" />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+    <meta name="theme-color" content="#fbfaf8" />
+    <link rel="icon" href="./opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="manifest" href="./site.webmanifest" />
+    <link rel="canonical" href="https://opendoc.casualoffice.org/sdk.html" />
+    <link rel="stylesheet" href="./src/fonts.css" />
+    <script src="./src/analytics.js"></script>
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="OpenDoc" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:title" content="The OpenDoc SDK" />
+    <meta
+      property="og:description"
+      content="One Apache-2.0 engine behind docx-js, docxtemplater, mammoth, python-docx and POI-shaped APIs, with page layout, PDF and a loss report."
+    />
+    <meta property="og:url" content="https://opendoc.casualoffice.org/sdk.html" />
+    <meta property="og:image" content="https://opendoc.casualoffice.org/social/sdk.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="OpenDoc: Documents in code, laid out by the engine. Create, read, edit, convert and render from JavaScript, Python, Java and Rust." />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="The OpenDoc SDK" />
+    <meta
+      name="twitter:description"
+      content="Familiar document APIs for JavaScript, Python and Java over one engine that lays pages out, writes PDF and reports loss."
+    />
+    <meta name="twitter:image" content="https://opendoc.casualoffice.org/social/sdk.png" />
+    <meta name="twitter:image:alt" content="OpenDoc: Documents in code, laid out by the engine. Create, read, edit, convert and render from JavaScript, Python, Java and Rust." />
+
+    <link rel="stylesheet" href="./src/marketing.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "TechArticle",
+            "@id": "https://opendoc.casualoffice.org/sdk.html#webpage",
+            "url": "https://opendoc.casualoffice.org/sdk.html",
+            "name": "The OpenDoc SDK — OpenDoc",
+            "headline": "The OpenDoc SDK",
+            "description": "Create, edit, template, convert and render documents in code from JavaScript, Python, Java and Rust, with familiar APIs, page layout and a loss report.",
+            "inLanguage": "en",
+            "isPartOf": { "@id": "https://opendoc.casualoffice.org/#website" },
+            "about": { "@id": "https://opendoc.casualoffice.org/#software" },
+            "publisher": { "@id": "https://opendoc.casualoffice.org/#organization" },
+            "license": "https://www.apache.org/licenses/LICENSE-2.0"
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://opendoc.casualoffice.org/sdk.html#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "OpenDoc",
+                "item": "https://opendoc.casualoffice.org/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Documentation",
+                "item": "https://opendoc.casualoffice.org/docs.html"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "The OpenDoc SDK",
+                "item": "https://opendoc.casualoffice.org/sdk.html"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="brand" href="./" aria-label="OpenDoc home" data-i18n-label="site.header.opendocHome">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
+          <span class="brand-badge" data-i18n="site.header.preRelease">Pre-release</span>
+        </a>
+        <nav class="site-nav" aria-label="Primary navigation" data-i18n-label="site.header.primaryNavigation">
+          <a href="./" data-nav="overview" data-i18n="site.header.overview">Overview</a>
+          <a href="./editor.html" data-nav="editor" data-i18n="site.header.editor">Editor</a>
+          <a href="./playground.html" data-nav="playground" data-i18n="site.header.playground">Playground</a>
+          <a href="./embedding.html" data-nav="embedding" data-i18n="site.header.embedding">Embedding</a>
+          <a href="./sdk.html" data-nav="sdk" aria-current="page" data-i18n="site.header.sdk">SDK</a>
+          <a href="./docs.html" data-nav="docs" data-i18n="site.header.docs">Docs</a>
+          <a href="./fidelity.html" data-nav="fidelity" data-i18n="site.header.fidelity">Fidelity</a>
+        </nav>
+        <div class="site-header-actions">
+          <!-- The language control. The markup carries only the automatic entry —
+               the one option with words in it, so the one that goes through the seam
+               like every other label here. The nineteen languages are appended by
+               `site_locale.mjs` from `locales.mjs`, because an endonym is a proper
+               noun that must never be translated and so does not belong in a
+               catalogue at all. The control stays `hidden` until that script has
+               run: a picker offering one choice is a dead control (docs/99 §10), and
+               a site whose scripts did not run is English with nothing to choose. -->
+          <label class="site-lang" hidden>
+            <span class="site-lang-icon ms" aria-hidden="true">language</span>
+            <select id="siteLanguage" aria-label="Language" data-i18n-label="site.header.language">
+              <option value="" data-i18n="site.header.languageAutomatic">Automatic</option>
+            </select>
+          </label>
+          <a class="header-link" href="https://github.com/CasualOffice/opendoc" data-i18n="site.header.github">GitHub</a>
+          <a class="header-cta" href="./editor.html" data-i18n="site.header.openEditor">Open the editor</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="doc-reader">
+      <aside class="doc-rail" aria-label="Documentation sections" data-i18n-label="site.sdk.documentationSections">
+        <div class="doc-rail-inner">
+          <p class="doc-rail-title" data-i18n="site.sdk.guides">Guides</p>
+          <ul class="doc-rail-list">
+            <li><a href="./docs.html" data-i18n="site.sdk.importDocument">Import a document</a></li>
+            <li><a href="./embedding.html" data-i18n="site.sdk.embedEditor">Embed the editor</a></li>
+            <li><a class="is-active" href="./sdk.html" data-i18n="site.sdk.nativeSdk">The OpenDoc SDK</a></li>
+          </ul>
+
+          <p class="doc-rail-title" data-i18n="site.sdk.reference">Reference</p>
+          <ul class="doc-rail-list">
+            <li>
+              <a href="./reference/three-sdk-products.html" data-i18n="site.sdk.designDocument">The SDK's design document</a>
+            </li>
+            <li><a href="https://github.com/CasualOffice/opendoc/tree/main/packages/opendoc" data-i18n="site.sdk.jsPackage">The JavaScript package</a></li>
+            <li><a href="https://github.com/CasualOffice/opendoc/tree/main/bindings/python" data-i18n="site.sdk.pythonBinding">The Python binding</a></li>
+            <li><a href="https://github.com/CasualOffice/opendoc/tree/main/bindings/java" data-i18n="site.sdk.javaBinding">The Java binding</a></li>
+            <li><a href="https://github.com/CasualOffice/opendoc/tree/main/benchmarks/sdk" data-i18n="site.sdk.benchmarkSuite">The benchmark suite</a></li>
+          </ul>
+        </div>
+      </aside>
+
+      <article class="doc-article">
+        <p class="doc-eyebrow" data-i18n="site.sdk.eyebrow">Guides · SDK · Native and headless</p>
+        <h1 id="sdk" data-i18n="site.sdk.nativeSdk">The OpenDoc SDK</h1>
+        <p class="doc-lede" data-i18n="site.sdk.lede">
+          Create, read, edit, template, convert and render word-processing documents in code.
+          One Rust engine sits behind every language, and each language gets the API its
+          developers already know, so moving a program here is mostly a change of import. The
+          engine lays the pages out itself, so the same call that writes a DOCX also writes a
+          real-text PDF or a page image, and every open and every save reports what it could not
+          carry.
+        </p>
+        <div class="doc-callout">
+          <p class="doc-callout-label" data-i18n="site.sdk.notPublishedLabel">Not published yet</p>
+          <p data-i18n="site.sdk.notPublished">
+            Nothing here is on npm, PyPI, Maven Central or crates.io yet: publishing is a
+            separate decision for the owner. Every install below builds from a checkout of this
+            repository, and the commands are the ones the SDK's own CI jobs run.
+          </p>
+        </div>
+
+        <h2 id="products" class="doc-h2" data-i18n="site.sdk.threeProducts">Three products, one engine</h2>
+        <p class="doc-body" data-i18n="site.sdk.threeProductsBody">
+          OpenDoc ships as three products over the same engine, cut by what a host needs rather
+          than switched by a mode at run time. A page the Viewer shows, a page the Editor shows
+          and a page this SDK renders are the same page.
+        </p>
+        <div class="disp-table">
+          <div class="disp-row head">
+            <div data-i18n="site.sdk.column.product">Product</div>
+            <div data-i18n="site.sdk.column.runsIn">Runs in</div>
+            <div data-i18n="site.sdk.column.whatFor">What it is for</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>@casualoffice/opendoc-viewer</code></div>
+            <div class="disp-cell" data-i18n="site.sdk.viewerRunsIn">A browser or Node (WebAssembly), or a server (native Rust)</div>
+            <div class="disp-cell" data-i18n="site.sdk.viewerFor">Show a document exactly as laid out: page images, thumbnails, PDF and text for search. Read-only, with no editing code in it.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>@casualoffice/opendoc-editor</code></div>
+            <div class="disp-cell" data-i18n="site.sdk.editorRunsIn">A browser</div>
+            <div class="disp-cell"><span data-i18n="site.sdk.editorFor">The full editor inside your product, with review and co-editing. It has its own guide:</span> <a href="./embedding.html" data-i18n="site.sdk.embedEditor">Embed the editor</a>.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>@casualoffice/opendoc</code></div>
+            <div class="disp-cell" data-i18n="site.sdk.nativeRunsIn">Node and the browser (headless), Python, Java, Rust, C, and a command line</div>
+            <div class="disp-cell" data-i18n="site.sdk.nativeFor">This page. Create, read, edit and convert documents in code, with no UI: open, change, then save, render or convert.</div>
+          </div>
+        </div>
+
+        <h2 id="install" class="doc-h2" data-i18n="site.sdk.install">Install it</h2>
+        <p class="doc-body">
+          <b data-i18n="site.sdk.installJsLabel">JavaScript and TypeScript.</b>
+          <span data-i18n="site.sdk.installJs">The npm name will be
+          <code>@casualoffice/opendoc</code>, which is not published yet. It is the WebAssembly
+          build of the engine, with every bundled font inside it, so a render in Node needs
+          nothing from the machine:</span>
+        </p>
+        <!-- @generated sdk-install-js -->
+        <div class="code-panel">
+          <div class="code-panel-head"><span>packages/opendoc/README.md</span> — <span data-i18n="site.sdk.panel.installJs">build and pack it from a checkout</span></div>
+          <pre><code>./packages/opendoc/build.sh                      # wasm-pack; needs Rust and wasm-pack
+cd packages/opendoc &amp;&amp; npm test &amp;&amp; npm pack</code></pre>
+        </div>
+        <!-- @end sdk-install-js -->
+        <p class="doc-body">
+          <b data-i18n="site.sdk.installPythonLabel">Python.</b>
+          <span data-i18n="site.sdk.installPython">A wheel for Python 3.9 and later, built with maturin over PyO3:</span>
+        </p>
+        <!-- @generated sdk-install-python -->
+        <div class="code-panel">
+          <div class="code-panel-head"><span>bindings/python/README.md</span> — <span data-i18n="site.sdk.panel.installPython">build the wheel locally</span></div>
+          <pre><code>python -m venv .venv &amp;&amp; . .venv/bin/activate
+pip install maturin pytest
+cd bindings/python
+maturin develop --release        # or: maturin build --release (wheel in target/wheels)
+pytest tests</code></pre>
+        </div>
+        <!-- @end sdk-install-python -->
+        <p class="doc-body">
+          <b data-i18n="site.sdk.installJavaLabel">Java.</b>
+          <span data-i18n="site.sdk.installJava">JDK 22 or later, through the Foreign Function and Memory API, so there is no
+          JNI glue and the jar has no dependencies. Run with
+          <code>--enable-native-access=ALL-UNNAMED</code>:</span>
+        </p>
+        <!-- @generated sdk-install-java -->
+        <div class="code-panel">
+          <div class="code-panel-head"><span>bindings/java/README.md</span> — <span data-i18n="site.sdk.panel.installJava">build the jar and its native library</span></div>
+          <pre><code>./bindings/java/build.sh     # cargo build -p opendoc-ffi --release, javac, jar, conformance test</code></pre>
+        </div>
+        <!-- @end sdk-install-java -->
+        <p class="doc-body">
+          <b data-i18n="site.sdk.installRustLabel">Rust and the command line.</b>
+          <span data-i18n="site.sdk.installRust">The crate is <code>opendoc</code> in
+          <code>crates/opendoc</code>, used as a path or git dependency until it is published.
+          The CLI is <code>cargo build -p opendoc-cli --release</code>, which builds one binary,
+          <code>opendoc</code>. C and other languages call the engine's C ABI,
+          <code>crates/opendoc-ffi</code>, whose header is <code>include/opendoc.h</code>.</span>
+        </p>
+
+        <h2 id="examples" class="doc-h2" data-i18n="site.sdk.examples">One example per language</h2>
+        <p class="doc-body" data-i18n="site.sdk.examplesBody">
+          Each panel is a whole file from this repository, copied by
+          <code>webapp/tools/build-sdk-page.mjs</code>, and a test runs each of those files. A
+          guard fails the build if a panel and its file disagree.
+        </p>
+        <h3 id="example-js" class="doc-h3" data-i18n="site.sdk.exampleJs">JavaScript: open, edit and save four formats</h3>
+        <!-- @generated sdk-example-js -->
+        <div class="code-panel">
+          <div class="code-panel-head"><span>packages/opendoc/examples/read-modify-convert.mjs</span> — <span data-i18n="site.sdk.panel.exampleJs">run by packages/opendoc/test/examples.test.mjs</span></div>
+          <pre><code>// Open any DOCX/ODT/RTF, read it, change it, and save it four ways, with the
+// loss report the save returns.
+//
+//   node examples/read-modify-convert.mjs input.docx out-dir
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+
+import { openFile, saveFile } from "@casualoffice/opendoc/node";
+
+const [input, out = "out"] = process.argv.slice(2);
+if (!input) throw new Error("usage: node read-modify-convert.mjs input.docx [out-dir]");
+await mkdir(out, { recursive: true });
+
+const doc = await openFile(input);
+console.log(`${doc.sourceFormat}: ${doc.paragraphs.length} paragraphs, ${doc.tables.length} tables, ${doc.pageCount} pages`);
+console.log("not carried at open:", doc.importReport.findings.filter((f) =&gt; f.loss).map((f) =&gt; f.feature));
+for (const p of doc.paragraphs.filter((p) =&gt; p.headingLevel !== undefined)) {
+  console.log(`${"  ".repeat(Math.max(0, p.headingLevel - 1))}${p.text}`);
+}
+
+const replaced = doc.replaceAll("Draft", "Final");
+const note = doc.addParagraph("Reviewed by the OpenDoc SDK.", { style: "Quote" });
+doc.addComment(note, 0, 8, "Automated review");
+console.log(`replaced ${replaced}; ${doc.comments.length} comment(s)`);
+
+for (const ext of ["docx", "odt", "pdf", "md"]) {
+  const report = await saveFile(doc, join(out, `output.${ext}`));
+  console.log(`output.${ext}: ${report.losses.length ? report.losses.map((l) =&gt; l.feature).join(", ") : "nothing lost"}`);
+}</code></pre>
+        </div>
+        <!-- @end sdk-example-js -->
+        <h3 id="example-docx" class="doc-h3" data-i18n="site.sdk.exampleDocx">JavaScript: a docx-js program, then a PDF</h3>
+        <!-- @generated sdk-example-docx -->
+        <div class="code-panel">
+          <div class="code-panel-head"><span>packages/opendoc/examples/build-report.mjs</span> — <span data-i18n="site.sdk.panel.exampleDocx">run by packages/opendoc/test/examples.test.mjs</span></div>
+          <pre><code>// A docx-js program, unchanged apart from its import, that also renders.
+//
+//   node examples/build-report.mjs out-dir
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import {
+  AlignmentType,
+  Document,
+  Footer,
+  HeadingLevel,
+  Packer,
+  PageNumber,
+  Paragraph,
+  Table,
+  TableCell,
+  TableOfContents,
+  TableRow,
+  TextRun,
+  WidthType,
+} from "@casualoffice/opendoc/docx";
+
+const out = process.argv[2] ?? "out";
+await mkdir(out, { recursive: true });
+
+const rows = [
+  ["Region", "Q1", "Q2"],
+  ["North", "1,200", "1,350"],
+  ["South", "980", "1,105"],
+];
+
+const doc = new Document({
+  creator: "Finance",
+  title: "Quarterly report",
+  features: { updateFields: true },
+  sections: [
+    {
+      footers: {
+        default: new Footer({
+          children: [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [new TextRun({ children: ["Page ", PageNumber.CURRENT, " of ", PageNumber.TOTAL_PAGES] })],
+            }),
+          ],
+        }),
+      },
+      children: [
+        new Paragraph({ text: "Quarterly report", heading: HeadingLevel.TITLE }),
+        new TableOfContents("Contents", { hyperlink: true, headingStyleRange: "1-2" }),
+        new Paragraph({ text: "Summary", heading: HeadingLevel.HEADING_1 }),
+        new Paragraph({
+          children: [
+            new TextRun("Revenue grew "),
+            new TextRun({ text: "12%", bold: true, color: "2E7D32" }),
+            new TextRun(" quarter on quarter."),
+          ],
+        }),
+        new Paragraph({ text: "By region", heading: HeadingLevel.HEADING_1 }),
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: rows.map(
+            (cells, index) =&gt;
+              new TableRow({
+                tableHeader: index === 0,
+                children: cells.map(
+                  (text) =&gt;
+                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text, bold: index === 0 })] })] }),
+                ),
+              }),
+          ),
+        }),
+      ],
+    },
+  ],
+});
+
+await writeFile(join(out, "report.docx"), await Packer.toBuffer(doc));
+// What docx-js cannot do: the same document, laid out.
+await writeFile(join(out, "report.pdf"), await Packer.toPdf(doc));
+await writeFile(join(out, "report-page-1.png"), await Packer.toPng(doc, { page: 0, dpi: 96 }));
+console.log(`wrote report.docx, report.pdf and report-page-1.png to ${out}`);</code></pre>
+        </div>
+        <!-- @end sdk-example-docx -->
+        <h3 id="example-python" class="doc-h3" data-i18n="site.sdk.examplePython">Python: python-docx calls, then a PDF</h3>
+        <!-- @generated sdk-example-python -->
+        <div class="code-panel">
+          <div class="code-panel-head"><span>bindings/python/examples/quickstart.py</span> — <span data-i18n="site.sdk.panel.examplePython">run by bindings/python/tests/test_opendoc.py</span></div>
+          <pre><code># SPDX-License-Identifier: Apache-2.0
+"""python-docx code, then what python-docx cannot do: a PDF and a page image.
+
+    python examples/quickstart.py out-dir
+
+tests/test_opendoc.py runs this file, so it cannot rot.
+"""
+import pathlib
+import sys
+
+from opendoc import Document, Pt
+
+out = pathlib.Path(sys.argv[1] if len(sys.argv) &gt; 1 else "out")
+out.mkdir(parents=True, exist_ok=True)
+
+document = Document()
+document.add_heading("Quarterly report", 0)
+p = document.add_paragraph("Revenue grew ")
+p.add_run("12%").bold = True
+p.add_run(" quarter on quarter.")
+p.runs[1].font.size = Pt(14)
+table = document.add_table(rows=1, cols=2)
+table.rows[0].cells[0].text = "Region"
+table.rows[0].cells[1].text = "Q2"
+table.add_row().cells[0].text = "North"
+
+report = document.save(out / "report.docx")
+print("report.docx:", "nothing lost" if report.is_lossless else report.losses)
+document.save(out / "report.pdf")
+(out / "page-1.png").write_bytes(document.render_page_png(0, dpi=96))
+print(f"{document.page_count} page(s) laid out by the engine")</code></pre>
+        </div>
+        <!-- @end sdk-example-python -->
+        <h3 id="example-java" class="doc-h3" data-i18n="site.sdk.exampleJava">Java: POI calls, then a PDF</h3>
+        <!-- @generated sdk-example-java -->
+        <div class="code-panel">
+          <div class="code-panel-head"><span>bindings/java/src/examples/java/org/casualoffice/opendoc/examples/Quickstart.java</span> — <span data-i18n="site.sdk.panel.exampleJava">run by bindings/java/build.sh</span></div>
+          <pre><code>// SPDX-License-Identifier: Apache-2.0
+package org.casualoffice.opendoc.examples;
+
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+import org.casualoffice.opendoc.OpenDocument;
+import org.casualoffice.opendoc.OpenParagraph;
+import org.casualoffice.opendoc.OpenRun;
+import org.casualoffice.opendoc.OpenTable;
+import org.casualoffice.opendoc.ParagraphAlignment;
+
+/** POI XWPF calls, then what POI cannot do: a PDF and a page image. build.sh runs it. */
+public final class Quickstart {
+    private Quickstart() {}
+
+    public static void main(String[] args) throws Exception {
+        Path out = Files.createDirectories(Path.of(args.length &gt; 0 ? args[0] : "out"));
+        try (OpenDocument doc = new OpenDocument()) {
+            OpenParagraph title = doc.createParagraph();
+            title.setAlignment(ParagraphAlignment.CENTER);
+            OpenRun run = title.createRun();
+            run.setBold(true);
+            run.setText("Quarterly report");
+            OpenTable table = doc.createTable(2, 2);
+            table.getRow(0).getCell(0).setText("Region");
+            table.getRow(1).getCell(0).setText("North");
+            try (OutputStream stream = Files.newOutputStream(out.resolve("report.docx"))) {
+                doc.write(stream);
+            }
+            doc.save(out.resolve("report.pdf"));
+            Files.write(out.resolve("page-1.png"), doc.renderPagePng(0, 96f));
+            System.out.println(doc.getPageCount() + " page(s); lost on save: "
+                + doc.getLastSaveReport().get("losses"));
+        }
+    }
+}</code></pre>
+        </div>
+        <!-- @end sdk-example-java -->
+        <h3 id="example-rust" class="doc-h3" data-i18n="site.sdk.exampleRust">Rust: an edit batch, three outputs</h3>
+        <!-- @generated sdk-example-rust -->
+        <div class="code-panel">
+          <div class="code-panel-head"><span>crates/opendoc/examples/quickstart.rs</span> — <span data-i18n="site.sdk.panel.exampleRust">run by crates/opendoc/tests/sdk.rs</span></div>
+          <pre><code>// SPDX-License-Identifier: Apache-2.0
+
+//! Build a document, edit it in one all-or-nothing batch, then save it as DOCX
+//! with a loss report, as PDF and as a page image, all from one layout.
+//!
+//! `cargo run -p opendoc --example quickstart -- out-dir`. `tests/sdk.rs` runs
+//! the same `run` function, so this file cannot rot.
+
+use std::path::Path;
+
+use opendoc::{Document, Error, ErrorCode, Format, Position, RunFormat, SaveMode};
+
+/// Writes `report.docx`, `report.pdf` and `page-1.png` into `out`; returns
+/// the page count and the features the DOCX save lost (none here).
+pub fn run(out: &amp;Path) -&gt; opendoc::Result&lt;(usize, Vec&lt;String&gt;)&gt; {
+    let mut doc = Document::create()?;
+    doc.edit(|e| {
+        e.append_heading("Quarterly report", 1)?;
+        let p = e.append_paragraph("Revenue grew ", None)?;
+        e.append_run(&amp;p, "12%", &amp;RunFormat::bold())?;
+        e.insert_table(&amp;Position::End, 2, 2, &amp;[vec!["Region".into(), "Q2".into()]])?;
+        Ok(())
+    })?;
+
+    let (docx, report) = doc.save(Format::Docx, SaveMode::PreserveWhenSafe)?;
+    let write = |name: &amp;str, bytes: &amp;[u8]| {
+        std::fs::create_dir_all(out)
+            .and_then(|()| std::fs::write(out.join(name), bytes))
+            .map_err(|e| Error::new(ErrorCode::InvalidArgument, e.to_string()))
+    };
+    write("report.docx", &amp;docx)?;
+    write("report.pdf", &amp;doc.to_pdf()?)?;
+    write("page-1.png", &amp;doc.render_page_png(0, 96.0)?)?;
+    let lost = report.losses.iter().map(|l| l.feature.clone()).collect();
+    Ok((doc.page_count(), lost))
+}
+
+#[allow(dead_code)]
+fn main() -&gt; opendoc::Result&lt;()&gt; {
+    let out = std::env::args().nth(1).unwrap_or_else(|| "out".to_owned());
+    run(Path::new(&amp;out)).map(|_| ())
+}</code></pre>
+        </div>
+        <!-- @end sdk-example-rust -->
+        <h3 id="example-cli" class="doc-h3" data-i18n="site.sdk.exampleCli">The command line</h3>
+        <!-- @generated sdk-example-cli -->
+        <div class="code-panel">
+          <div class="code-panel-head"><span>tools/opendoc-cli/src/main.rs</span> — <span data-i18n="site.sdk.panel.exampleCli">the usage the binary prints</span></div>
+          <pre><code>usage:
+  opendoc convert  IN OUT [--to FMT] [--mode exact|preserve|semantic] [--report FILE] [--strict-loss]
+  opendoc render   IN [--out DIR] [--format png|svg|pdf] [--dpi N] [--pages 1-3,5]
+  opendoc info     IN [--json]
+  opendoc diff     OLD NEW [--json]
+  opendoc template TEMPLATE DATA.json OUT [--delimiters "[[,]]"] [--strict] [--null TEXT]
+  opendoc build    SPEC.json OUT [--media FILE]...
+  opendoc formats
+common: --system-fonts  --font FILE  --author NAME
+formats: docx dotx odt rtf txt json html md pdf</code></pre>
+        </div>
+        <!-- @end sdk-example-cli -->
+
+        <h2 id="familiar" class="doc-h2" data-i18n="site.sdk.familiar">The API you already know</h2>
+        <p class="doc-body" data-i18n="site.sdk.familiarBody">
+          Each language's front door copies the most-used library's names and options, and
+          lowers to the same engine underneath. A guard checks that every name in the right-hand
+          column exists in the file that row names.
+        </p>
+        <div class="doc-table-scroll">
+          <table class="doc-table">
+            <thead>
+              <tr>
+                <th data-i18n="site.sdk.column.ifYouUse">If you use</th>
+                <th data-i18n="site.sdk.column.theirs">You write</th>
+                <th data-i18n="site.sdk.column.ours">Here you write</th>
+                <th data-i18n="site.sdk.column.youGain">What you gain</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>docx</code> (docx-js)</td>
+                <td><code>new Document({ sections })</code>, <code>Packer.toBuffer(doc)</code></td>
+                <td data-source="packages/opendoc/src/docx.js"><code>Document</code>, <code>Paragraph</code>, <code>TextRun</code>, <code>Packer.toBuffer</code>, <code>Packer.toPdf</code>, <code>Packer.toPng</code></td>
+                <td data-i18n="site.sdk.gainDocx">The same classes and options, plus a PDF and page images; an unknown option is an error rather than a silent skip.</td>
+              </tr>
+              <tr>
+                <td><code>docxtemplater</code></td>
+                <td><code>doc.render(data)</code>, <code>{#items}…{/items}</code></td>
+                <td data-source="packages/opendoc/src/template.js"><code>Template</code>, <code>render</code>, <code>toBuffer</code></td>
+                <td data-i18n="site.sdk.gainTemplate">The same tags with no zip library; pictures, tables, headers and footnotes in the template are kept.</td>
+              </tr>
+              <tr>
+                <td><code>mammoth</code></td>
+                <td><code>convertToHtml({ buffer })</code></td>
+                <td data-source="packages/opendoc/src/engine.js"><code>convertToHtml</code>, <code>extractRawText</code>, <code>convertToMarkdown</code></td>
+                <td data-i18n="site.sdk.gainMammoth">The same result shape; the messages are the save's loss report, and fonts, sizes and colours are kept.</td>
+              </tr>
+              <tr>
+                <td><code>python-docx</code></td>
+                <td><code>Document()</code>, <code>add_paragraph</code>, <code>add_run(...).bold = True</code></td>
+                <td data-source="bindings/python/python/opendoc/__init__.py"><code>Document</code>, <code>add_heading</code>, <code>add_paragraph</code>, <code>add_run</code>, <code>add_table</code>, <code>render_page_png</code></td>
+                <td data-i18n="site.sdk.gainPython">The same calls; every edit is an engine operation, applied whole or not at all, and a save can be a PDF.</td>
+              </tr>
+              <tr>
+                <td><code>Apache POI</code> (XWPF)</td>
+                <td><code>XWPFDocument</code>, <code>createParagraph()</code>, <code>createRun()</code></td>
+                <td data-source="bindings/java/src/main/java/org/casualoffice/opendoc"><code>OpenDocument</code>, <code>createParagraph</code>, <code>createRun</code>, <code>setText</code>, <code>write</code>, <code>renderPagePng</code></td>
+                <td data-i18n="site.sdk.gainPoi">POI's names with an XWPF prefix swapped for Open; PDF, ODT and page images, and a loss report on every save.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="benchmarks" class="doc-h2" data-i18n="site.sdk.benchmarks">Measured against them</h2>
+        <p class="doc-body">
+          <span data-i18n="site.sdk.benchmarksBody">The same inputs through OpenDoc and through each library, each library and task in its own process, as the median of</span>
+          <span data-claim="bench-iterations">5</span>
+          <span data-i18n="site.sdk.benchmarksRuns">runs after a warm-up, on</span>
+          <span data-claim="bench-machine">Apple M4 (10 cores, 16 GB), darwin arm64 25.3.0</span>,
+          <span data-i18n="site.sdk.benchmarksNode">Node</span> <span data-claim="bench-node">v24.22.1</span>.
+          <span data-i18n="site.sdk.benchmarksSource">Every figure below is generated from</span>
+          <code>benchmarks/sdk/results.json</code>.
+        </p>
+        <!-- @generated sdk-bench -->
+        <div class="doc-table-scroll">
+          <table class="doc-table">
+            <thead>
+              <tr>
+                <th data-i18n="site.sdk.column.task">Task</th>
+                <th data-i18n="site.sdk.column.input">Input</th>
+                <th data-i18n="site.sdk.column.opendoc">OpenDoc</th>
+                <th data-i18n="site.sdk.column.competitor">Competitor</th>
+                <th data-i18n="site.sdk.column.speed">OpenDoc speed</th>
+                <th data-i18n="site.sdk.column.opendocMemory">OpenDoc peak memory</th>
+                <th data-i18n="site.sdk.column.competitorMemory">Competitor peak memory</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span data-i18n="site.sdk.task.generate">Generate a DOCX (the same docx-js program)</span></td>
+                <td>100 paragraphs + table</td>
+                <td>4.04 ms</td>
+                <td><code>docx-js</code> 4.26 ms</td>
+                <td><b>1.1× faster</b></td>
+                <td>234.4 MB</td>
+                <td>87.8 MB</td>
+              </tr>
+              <tr>
+                <td><span data-i18n="site.sdk.task.generate">Generate a DOCX (the same docx-js program)</span></td>
+                <td>1000 paragraphs + table</td>
+                <td>18.09 ms</td>
+                <td><code>docx-js</code> 17.28 ms</td>
+                <td><b>1.0× slower</b></td>
+                <td>278.8 MB</td>
+                <td>150.8 MB</td>
+              </tr>
+              <tr>
+                <td><span data-i18n="site.sdk.task.generate">Generate a DOCX (the same docx-js program)</span></td>
+                <td>5000 paragraphs + table</td>
+                <td>60.24 ms</td>
+                <td><code>docx-js</code> 75.47 ms</td>
+                <td><b>1.3× faster</b></td>
+                <td>332.2 MB</td>
+                <td>410.7 MB</td>
+              </tr>
+              <tr>
+                <td><span data-i18n="site.sdk.task.template">Fill a template (the same template and data)</span></td>
+                <td>100-item loop</td>
+                <td>2.57 ms</td>
+                <td><code>docxtemplater</code> 2.53 ms</td>
+                <td><b>1.0× slower</b></td>
+                <td>271.4 MB</td>
+                <td>93.2 MB</td>
+              </tr>
+              <tr>
+                <td><span data-i18n="site.sdk.task.template">Fill a template (the same template and data)</span></td>
+                <td>1000-item loop</td>
+                <td>17.68 ms</td>
+                <td><code>docxtemplater</code> 10.34 ms</td>
+                <td><b>1.7× slower</b></td>
+                <td>319.1 MB</td>
+                <td>111 MB</td>
+              </tr>
+              <tr>
+                <td><span data-i18n="site.sdk.task.html">DOCX to HTML</span></td>
+                <td>sample</td>
+                <td>16.42 ms</td>
+                <td><code>mammoth</code> 34.99 ms</td>
+                <td><b>2.1× faster</b></td>
+                <td>335.7 MB</td>
+                <td>231 MB</td>
+              </tr>
+              <tr>
+                <td><span data-i18n="site.sdk.task.html">DOCX to HTML</span></td>
+                <td>scale</td>
+                <td>26.1 ms</td>
+                <td><code>mammoth</code> 53.78 ms</td>
+                <td><b>2.1× faster</b></td>
+                <td>310.1 MB</td>
+                <td>288.4 MB</td>
+              </tr>
+              <tr>
+                <td><span data-i18n="site.sdk.task.text">DOCX to plain text</span></td>
+                <td>sample</td>
+                <td>12.53 ms</td>
+                <td><code>mammoth</code> 30.58 ms</td>
+                <td><b>2.4× faster</b></td>
+                <td>332 MB</td>
+                <td>228.7 MB</td>
+              </tr>
+              <tr>
+                <td><span data-i18n="site.sdk.task.text">DOCX to plain text</span></td>
+                <td>scale</td>
+                <td>17.24 ms</td>
+                <td><code>mammoth</code> 41.51 ms</td>
+                <td><b>2.4× faster</b></td>
+                <td>317.6 MB</td>
+                <td>273.9 MB</td>
+              </tr>
+              <tr>
+                <td><span data-i18n="site.sdk.task.pdf">DOCX to PDF</span></td>
+                <td>sample</td>
+                <td>55.21 ms</td>
+                <td><code>libreoffice</code> —</td>
+                <td>—</td>
+                <td>362.2 MB</td>
+                <td>—</td>
+              </tr>
+              <tr>
+                <td><span data-i18n="site.sdk.task.pdf">DOCX to PDF</span></td>
+                <td>scale</td>
+                <td>261.39 ms</td>
+                <td><code>libreoffice</code> —</td>
+                <td>—</td>
+                <td>362 MB</td>
+                <td>—</td>
+              </tr>
+              <tr>
+                <td><span data-i18n="site.sdk.task.pyGenerate">Generate a DOCX (the same python-docx program)</span></td>
+                <td>100 paragraphs + table (Python)</td>
+                <td>2.6 ms</td>
+                <td><code>python-docx</code> 16.2 ms</td>
+                <td><b>6.2× faster</b></td>
+                <td>18.4 MB</td>
+                <td>44.2 MB</td>
+              </tr>
+              <tr>
+                <td><span data-i18n="site.sdk.task.pyGenerate">Generate a DOCX (the same python-docx program)</span></td>
+                <td>1000 paragraphs + table (Python)</td>
+                <td>24.39 ms</td>
+                <td><code>python-docx</code> 92.43 ms</td>
+                <td><b>3.8× faster</b></td>
+                <td>19.8 MB</td>
+                <td>63.8 MB</td>
+              </tr>
+              <tr>
+                <td><span data-i18n="site.sdk.task.pyGenerate">Generate a DOCX (the same python-docx program)</span></td>
+                <td>5000 paragraphs + table (Python)</td>
+                <td>187.96 ms</td>
+                <td><code>python-docx</code> 667.32 ms</td>
+                <td><b>3.6× faster</b></td>
+                <td>26.8 MB</td>
+                <td>81 MB</td>
+              </tr>
+              <tr>
+                <td><span data-i18n="site.sdk.task.pyRead">Open and read every paragraph (Python)</span></td>
+                <td>sample (Python)</td>
+                <td>7.17 ms</td>
+                <td><code>python-docx</code> 7.2 ms</td>
+                <td><b>1.0× faster</b></td>
+                <td>26.4 MB</td>
+                <td>52.3 MB</td>
+              </tr>
+              <tr>
+                <td><span data-i18n="site.sdk.task.pyRead">Open and read every paragraph (Python)</span></td>
+                <td>scale (Python)</td>
+                <td>43.26 ms</td>
+                <td><code>python-docx</code> 66.88 ms</td>
+                <td><b>1.5× faster</b></td>
+                <td>44.1 MB</td>
+                <td>56.2 MB</td>
+              </tr>
+              <tr>
+                <td><span data-i18n="site.sdk.task.javaGenerate">Generate a DOCX (POI-style calls, Java)</span></td>
+                <td>100 paragraphs + table (Java)</td>
+                <td>4.94 ms</td>
+                <td><code>poi</code> 10.15 ms</td>
+                <td><b>2.1× faster</b></td>
+                <td>98.6 MB</td>
+                <td>142.5 MB</td>
+              </tr>
+              <tr>
+                <td><span data-i18n="site.sdk.task.javaGenerate">Generate a DOCX (POI-style calls, Java)</span></td>
+                <td>1000 paragraphs + table (Java)</td>
+                <td>30.9 ms</td>
+                <td><code>poi</code> 20.85 ms</td>
+                <td><b>1.5× slower</b></td>
+                <td>200.4 MB</td>
+                <td>186.7 MB</td>
+              </tr>
+              <tr>
+                <td><span data-i18n="site.sdk.task.javaRead">Open and read every paragraph (Java)</span></td>
+                <td>sample (Java)</td>
+                <td>14.59 ms</td>
+                <td><code>poi</code> 34.9 ms</td>
+                <td><b>2.4× faster</b></td>
+                <td>103.8 MB</td>
+                <td>217.1 MB</td>
+              </tr>
+              <tr>
+                <td><span data-i18n="site.sdk.task.javaRead">Open and read every paragraph (Java)</span></td>
+                <td>scale (Java)</td>
+                <td>96.38 ms</td>
+                <td><code>poi</code> 92.45 ms</td>
+                <td><b>1.0× slower</b></td>
+                <td>217.4 MB</td>
+                <td>242.7 MB</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <!-- @end sdk-bench -->
+        <h3 id="losses" class="doc-h3" data-i18n="site.sdk.whereItLoses">Where it loses</h3>
+        <p class="doc-body">
+          <span data-i18n="site.sdk.lossesBody">Of the</span>
+          <span data-claim="bench-row-count">20</span>
+          <span data-i18n="site.sdk.lossesRows">rows above,</span>
+          <span data-claim="bench-loss-count">14</span>
+          <span data-i18n="site.sdk.lossesCount">entries below are a loss, in speed or in memory. The list is generated, so none can be left out. In JavaScript the module carries a layout engine and every bundled face, which is most of the memory.</span>
+        </p>
+        <!-- @generated sdk-bench-losses -->
+        <ul class="doc-body">
+          <li><span data-i18n="site.sdk.loss.memory">More memory:</span> <span data-i18n="site.sdk.task.generate">Generate a DOCX (the same docx-js program)</span>, 100 paragraphs + table, <code>docx-js</code> — 234.4 MB against 87.8 MB</li>
+          <li><span data-i18n="site.sdk.loss.slower">Slower:</span> <span data-i18n="site.sdk.task.generate">Generate a DOCX (the same docx-js program)</span>, 1000 paragraphs + table, <code>docx-js</code> — 1.0× slower</li>
+          <li><span data-i18n="site.sdk.loss.memory">More memory:</span> <span data-i18n="site.sdk.task.generate">Generate a DOCX (the same docx-js program)</span>, 1000 paragraphs + table, <code>docx-js</code> — 278.8 MB against 150.8 MB</li>
+          <li><span data-i18n="site.sdk.loss.slower">Slower:</span> <span data-i18n="site.sdk.task.template">Fill a template (the same template and data)</span>, 100-item loop, <code>docxtemplater</code> — 1.0× slower</li>
+          <li><span data-i18n="site.sdk.loss.memory">More memory:</span> <span data-i18n="site.sdk.task.template">Fill a template (the same template and data)</span>, 100-item loop, <code>docxtemplater</code> — 271.4 MB against 93.2 MB</li>
+          <li><span data-i18n="site.sdk.loss.slower">Slower:</span> <span data-i18n="site.sdk.task.template">Fill a template (the same template and data)</span>, 1000-item loop, <code>docxtemplater</code> — 1.7× slower</li>
+          <li><span data-i18n="site.sdk.loss.memory">More memory:</span> <span data-i18n="site.sdk.task.template">Fill a template (the same template and data)</span>, 1000-item loop, <code>docxtemplater</code> — 319.1 MB against 111 MB</li>
+          <li><span data-i18n="site.sdk.loss.memory">More memory:</span> <span data-i18n="site.sdk.task.html">DOCX to HTML</span>, sample, <code>mammoth</code> — 335.7 MB against 231 MB</li>
+          <li><span data-i18n="site.sdk.loss.memory">More memory:</span> <span data-i18n="site.sdk.task.html">DOCX to HTML</span>, scale, <code>mammoth</code> — 310.1 MB against 288.4 MB</li>
+          <li><span data-i18n="site.sdk.loss.memory">More memory:</span> <span data-i18n="site.sdk.task.text">DOCX to plain text</span>, sample, <code>mammoth</code> — 332 MB against 228.7 MB</li>
+          <li><span data-i18n="site.sdk.loss.memory">More memory:</span> <span data-i18n="site.sdk.task.text">DOCX to plain text</span>, scale, <code>mammoth</code> — 317.6 MB against 273.9 MB</li>
+          <li><span data-i18n="site.sdk.loss.slower">Slower:</span> <span data-i18n="site.sdk.task.javaGenerate">Generate a DOCX (POI-style calls, Java)</span>, 1000 paragraphs + table (Java), <code>poi</code> — 1.5× slower</li>
+          <li><span data-i18n="site.sdk.loss.memory">More memory:</span> <span data-i18n="site.sdk.task.javaGenerate">Generate a DOCX (POI-style calls, Java)</span>, 1000 paragraphs + table (Java), <code>poi</code> — 200.4 MB against 186.7 MB</li>
+          <li><span data-i18n="site.sdk.loss.slower">Slower:</span> <span data-i18n="site.sdk.task.javaRead">Open and read every paragraph (Java)</span>, scale (Java), <code>poi</code> — 1.0× slower</li>
+        </ul>
+        <!-- @end sdk-bench-losses -->
+
+        <h2 id="formats" class="doc-h2" data-i18n="site.sdk.formats">Formats, and what a save loses</h2>
+        <p class="doc-body">
+          <span data-i18n="site.sdk.formatsBody">This build opens</span>
+          <span data-claim="format-open-count">7</span>
+          <span data-i18n="site.sdk.formatsSaves">formats and saves</span>
+          <span data-claim="format-save-count">8</span><span data-i18n="site.sdk.formatsSource">, read from the format descriptors of the registry every open and save goes through,</span>
+          <code>crates/casual-doc-io/src</code>.
+        </p>
+        <!-- @generated sdk-formats -->
+        <div class="doc-table-scroll">
+          <table class="doc-table">
+            <thead>
+              <tr>
+                <th data-i18n="site.sdk.column.format">Format</th>
+                <th data-i18n="site.sdk.column.open">Open</th>
+                <th data-i18n="site.sdk.column.save">Save</th>
+                <th data-i18n="site.sdk.column.wholeDocument">Carries the whole document</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Office Open XML Document <code>.docx</code></td>
+                <td><span data-i18n="site.sdk.format.yes">Yes</span></td>
+                <td><span data-i18n="site.sdk.format.yes">Yes</span></td>
+                <td><span data-i18n="site.sdk.format.yes">Yes</span></td>
+              </tr>
+              <tr>
+                <td>Word Template <code>.dotx</code></td>
+                <td><span data-i18n="site.sdk.format.no">No</span></td>
+                <td><span data-i18n="site.sdk.format.yes">Yes</span></td>
+                <td><span data-i18n="site.sdk.format.yes">Yes</span></td>
+              </tr>
+              <tr>
+                <td>OpenDocument Text <code>.odt</code></td>
+                <td><span data-i18n="site.sdk.format.yes">Yes</span></td>
+                <td><span data-i18n="site.sdk.format.yes">Yes</span></td>
+                <td><span data-i18n="site.sdk.format.yes">Yes</span></td>
+              </tr>
+              <tr>
+                <td>Rich Text Format <code>.rtf</code></td>
+                <td><span data-i18n="site.sdk.format.yes">Yes</span></td>
+                <td><span data-i18n="site.sdk.format.no">No</span></td>
+                <td>—</td>
+              </tr>
+              <tr>
+                <td>PDF <code>.pdf</code></td>
+                <td><span data-i18n="site.sdk.format.pdfImport">With the pdf-import feature (the CLI has it)</span></td>
+                <td><span data-i18n="site.sdk.format.yes">Yes</span></td>
+                <td><span data-i18n="site.sdk.format.rendition">No: a rendition, and its save report says lossyByNature</span></td>
+              </tr>
+              <tr>
+                <td>Web Page <code>.html</code> <code>.htm</code></td>
+                <td><span data-i18n="site.sdk.format.yes">Yes</span></td>
+                <td><span data-i18n="site.sdk.format.yes">Yes</span></td>
+                <td><span data-i18n="site.sdk.format.rendition">No: a rendition, and its save report says lossyByNature</span></td>
+              </tr>
+              <tr>
+                <td>Markdown <code>.md</code> <code>.markdown</code></td>
+                <td><span data-i18n="site.sdk.format.yes">Yes</span></td>
+                <td><span data-i18n="site.sdk.format.yes">Yes</span></td>
+                <td><span data-i18n="site.sdk.format.rendition">No: a rendition, and its save report says lossyByNature</span></td>
+              </tr>
+              <tr>
+                <td>Plain Text <code>.txt</code> <code>.text</code></td>
+                <td><span data-i18n="site.sdk.format.yes">Yes</span></td>
+                <td><span data-i18n="site.sdk.format.yes">Yes</span></td>
+                <td><span data-i18n="site.sdk.format.rendition">No: a rendition, and its save report says lossyByNature</span></td>
+              </tr>
+              <tr>
+                <td>OpenDoc Normalized JSON <code>.json</code></td>
+                <td><span data-i18n="site.sdk.format.yes">Yes</span></td>
+                <td><span data-i18n="site.sdk.format.yes">Yes</span></td>
+                <td><span data-i18n="site.sdk.format.yes">Yes</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <!-- @end sdk-formats -->
+        <p class="doc-body">
+          <b data-i18n="site.sdk.lossReportLabel">The loss report.</b>
+          <span data-i18n="site.sdk.lossReport">Every open returns an import report that names what the engine
+          did not carry, and every save returns a report whose <code>losses</code> name what the
+          file will not hold. A same-format save has three modes: <code>exact</code> returns the
+          original bytes when nothing changed, <code>preserve</code> regenerates and keeps the
+          source parts the engine retained verbatim, and <code>semantic</code> regenerates from
+          the model alone. None of the libraries in the table above reports loss.</span>
+        </p>
+
+        <h2 id="not-yet" class="doc-h2" data-i18n="site.sdk.notYet">What this does not do yet</h2>
+        <ul class="doc-body">
+          <li data-i18n="site.sdk.notYetPublished">No release on any registry; build from a checkout.</li>
+          <li data-i18n="site.sdk.notYetDotnet">No .NET binding. C# can call the C ABI directly; a familiar API over it is later work.</li>
+          <li data-i18n="site.sdk.notYetJava">Java 8 to 21 would need a JNI shim over the same C ABI, which is not built.</li>
+        </ul>
+
+        <nav class="doc-pager" aria-label="Related guides" data-i18n-label="site.sdk.relatedGuides">
+          <a class="prev" href="./embedding.html">
+            <div class="doc-pager-dir" data-i18n="site.sdk.previous">← Previous</div>
+            <div class="doc-pager-title" data-i18n="site.sdk.embedEditor">Embed the editor</div>
+          </a>
+          <a class="next" href="./fidelity.html">
+            <div class="doc-pager-dir" data-i18n="site.sdk.next">Next →</div>
+            <div class="doc-pager-title" data-i18n="site.sdk.fidelity">Fidelity, graded by construct</div>
+          </a>
+        </nav>
+      </article>
+
+      <aside class="doc-toc" aria-label="On this page" data-i18n-label="site.sdk.onThisPage">
+        <div class="doc-toc-inner">
+          <p class="doc-toc-title" data-i18n="site.sdk.onThisPage">On this page</p>
+          <ul class="doc-toc-list">
+            <li><a href="#sdk" aria-current="true" data-i18n="site.sdk.nativeSdk">The OpenDoc SDK</a></li>
+            <li><a href="#products" data-i18n="site.sdk.threeProducts">Three products, one engine</a></li>
+            <li><a href="#install" data-i18n="site.sdk.install">Install it</a></li>
+            <li><a href="#examples" data-i18n="site.sdk.examples">One example per language</a></li>
+            <li><a href="#familiar" data-i18n="site.sdk.familiar">The API you already know</a></li>
+            <li><a href="#benchmarks" data-i18n="site.sdk.benchmarks">Measured against them</a></li>
+            <li><a href="#formats" data-i18n="site.sdk.formats">Formats, and what a save loses</a></li>
+            <li><a href="#not-yet" data-i18n="site.sdk.notYet">What this does not do yet</a></li>
+          </ul>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <div class="site-footer-brand">
+          <a class="brand" href="./" aria-label="OpenDoc home" data-i18n-label="site.header.opendocHome">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
+          </a>
+          <p class="site-footer-tagline" data-i18n="site.footer.tagline">An Apache-2.0 document editor and engine you can embed, run locally and edit together.</p>
+        </div>
+        <nav class="site-footer-cols" aria-label="Footer" data-i18n-label="site.footer.navigation">
+          <div class="site-footer-col">
+            <p class="site-footer-head" data-i18n="site.footer.product">Product</p>
+            <a href="./editor.html" data-i18n="site.header.editor">Editor</a>
+            <a href="./playground.html" data-i18n="site.header.playground">Playground</a>
+            <a href="./embedding.html" data-i18n="site.header.embedding">Embedding</a>
+            <a href="./sdk.html" data-i18n="site.header.sdk">SDK</a>
+          </div>
+          <div class="site-footer-col">
+            <p class="site-footer-head" data-i18n="site.footer.learn">Learn</p>
+            <a href="./docs.html" data-i18n="site.header.docs">Docs</a>
+            <a href="./fidelity.html" data-i18n="site.header.fidelity">Fidelity</a>
+            <a href="./reference/index.html" data-i18n="site.footer.reference">Reference</a>
+          </div>
+          <div class="site-footer-col">
+            <p class="site-footer-head" data-i18n="site.footer.project">Project</p>
+            <a href="https://github.com/CasualOffice/opendoc" data-i18n="site.footer.github">GitHub</a>
+            <a href="./reference/security.html" data-i18n="site.footer.security">Security</a>
+            <a href="./reference/contributing.html" data-i18n="site.footer.contributing">Contributing</a>
+          </div>
+        </nav>
+        <div class="site-footer-base">
+          <span class="site-footer-copy" data-i18n="site.footer.copyright">© 2026 CasualOffice — developed by the CasualOffice Team</span>
+          <span class="site-footer-copy" data-i18n="site.footer.licence">Apache-2.0 · contributions welcome under the same licence</span>
+        </div>
+      </div>
+    </footer>
+    <script>
+      // Warm the engine on INTENT, not on arrival. The editor's wasm is the largest
+      // thing this project ships, and it cannot start downloading until the editor
+      // page is navigated to and its module graph resolves. Prefetching it when a
+      // visitor hovers or focuses a link to the editor moves that transfer into the
+      // seconds they spend deciding, so the editor has it in cache on arrival.
+      //
+      // Deliberately not unconditional: a visitor who only reads the docs should
+      // never pay for the engine. `prefetch` is also the low-priority hint, so it
+      // yields to anything this page still needs, and `save-data` opts out entirely.
+      (() => {
+        if (navigator.connection?.saveData) return;
+        let warmed = false;
+        const warm = () => {
+          if (warmed) return;
+          warmed = true;
+          const link = document.createElement("link");
+          link.rel = "prefetch";
+          link.as = "fetch";
+          link.crossOrigin = "anonymous";
+          link.href = "./pkg/casual_doc_wasm_bg.wasm";
+          document.head.appendChild(link);
+        };
+        for (const anchor of document.querySelectorAll('a[href*="editor.html"]')) {
+          anchor.addEventListener("pointerenter", warm, { once: true, passive: true });
+          anchor.addEventListener("focus", warm, { once: true, passive: true });
+          anchor.addEventListener("touchstart", warm, { once: true, passive: true });
+        }
+      })();
+    </script>
+    <script type="module" src="./src/site_locale.mjs"></script>
+    <script type="module" src="./src/site_motion.mjs"></script>
+  </body>
+</html>

@@ -130,6 +130,67 @@ public final class ConformanceTest {
             List<String> texts = doc.getParagraphs().stream().map(OpenParagraph::getText).toList();
             check(texts.equals(List.of("Dear Ada,", "- one", "- two")), "a template fills values and loops");
         }
+        // Pictures, headers and footers, notes and sections (docs/176 section 12.12).
+        byte[] png;
+        try (OpenDocument blank = new OpenDocument()) {
+            png = blank.renderPagePng(0, 4f);
+        }
+        byte[] objects;
+        try (OpenDocument doc = new OpenDocument()) {
+            OpenParagraph p = doc.createParagraph();
+            OpenRun r = p.createRun();
+            r.setText("Logo: ");
+            OpenPicture picture = r.addPicture(new ByteArrayInputStream(png), 6, "logo.png", 914400, 0);
+            check(Math.abs(picture.getWidth() - 72) < 0.01, "addPicture sizes in EMU, as POI does");
+            picture.setSize(144, 36);
+            picture.setDescription("Logo");
+            check(picture.getDepth() == 36 && "Logo".equals(picture.getDescription()), "a picture resizes and takes alt text");
+            picture.replace(new ByteArrayInputStream(png));
+            check(doc.getAllPictures().size() == 1, "replace keeps one picture");
+
+            OpenHeaderFooter header = doc.createHeader(HeaderFooterType.DEFAULT);
+            header.createParagraph().createRun().setText("Quarterly report");
+            OpenParagraph footer = doc.createFooter(HeaderFooterType.DEFAULT).createParagraph();
+            footer.createRun().setText("Page ");
+            footer.addField("page");
+            doc.createHeader(HeaderFooterType.FIRST).createParagraph().createRun().setText("Cover");
+            check("Quarterly report".equals(header.getText()), "a header takes text");
+            check(doc.getSectionList().get(0).getTitlePage(), "a FIRST header turns the different first page on, as in POI");
+
+            OpenNote note = p.addFootnote("Source");
+            note.setText("Source, p. 4");
+            check("Source, p. 4".equals(doc.getFootnotes().get(0).getText()), "a footnote is added and edited");
+            p.addEndnote("Later").remove();
+            check(doc.getEndnotes().isEmpty(), "an endnote is removed");
+
+            OpenSection second = doc.addSection(SectionStart.CONTINUOUS);
+            doc.createParagraph().createRun().setText("Landscape");
+            second.setOrientation("landscape");
+            second.setMargins(36, 36, 54, 54);
+            second.setColumns(2, 18);
+            second.setStart(SectionStart.ODD_PAGE);
+            check(second.getPageWidth() > second.getPageHeight(), "a section turns to landscape");
+            check(second.getColumns() == 2 && second.getStart() == SectionStart.ODD_PAGE, "columns and the start type are set");
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            doc.write(out);
+            objects = out.toByteArray();
+            check(((List<?>) doc.getLastSaveReport().get("losses")).isEmpty(), "nothing is lost on save");
+            picture.remove();
+            check(doc.getAllPictures().isEmpty(), "a picture is removed");
+        }
+        try (OpenDocument back = new OpenDocument(objects)) {
+            check(back.getAllPictures().size() == 1, "the picture survives a save");
+            check(back.getFootnotes().size() == 1, "the footnote survives a save");
+            check(back.getSectionList().size() == 2 && "landscape".equals(back.getSectionList().get(1).getOrientation()), "the sections survive a save");
+            check(back.getHeadersFooters().stream().anyMatch(h -> "Cover".equals(h.get("text"))), "the first-page header survives a save");
+        }
+
+        try (OpenDocument doc = new OpenDocument()) {
+            doc.createParagraph().createRun().setText("Vector page");
+            String svg = doc.renderPageSvg(0);
+            check(svg.startsWith("<svg ") && svg.contains(">Vector page</text>"), "a page renders as SVG with its text");
+        }
+
         byte[] text = OpenDocument.convert(sampleBytes, "txt");
         check(text.length > 0, "convert writes text");
         check(!OpenDocument.version().isEmpty(), "the engine reports its version");

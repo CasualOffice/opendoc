@@ -1957,6 +1957,7 @@
   "site.header.playground": "Deneme alanı",
   "site.header.preRelease": "Ön sürüm",
   "site.header.primaryNavigation": "Ana gezinme",
+  "site.header.sdk": "SDK",
   "spacing.addSpaceAfter": "Paragraftan sonra boşluk ekle",
   "spacing.addSpaceBefore": "Paragraftan önce boşluk ekle",
   "spacing.fromStyleHint": "Bu paragraf satır aralığını stilinden alır. Burada belirlemek için bir değer yazın.",

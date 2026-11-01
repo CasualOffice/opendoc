@@ -20,13 +20,24 @@
 //! **Panics** never cross the boundary: each export catches an unwind and turns
 //! it into an `engine` error.
 //!
+//! **Handles are checked, not trusted** (`docs/176` §12.14). Every handle and
+//! buffer the library hands out is recorded in a registry; every call checks
+//! the pointer it is given against it first. A freed handle, a handle freed
+//! twice, a buffer passed as a document or a pointer this library never
+//! returned is then a coded `invalid-argument` error (or, for the two frees and
+//! the buffer accessors, a no-op), never a use-after-free. The registry costs
+//! one hash lookup per call. It cannot make a pointer to too few bytes safe:
+//! `data`/`len` and NUL-terminated strings remain the caller's promise.
+//!
 //! The ABI version (`opendoc_abi_version`) changes only when a symbol's
 //! signature or ownership rule changes (`docs/176` §5.3); a binding refuses a
 //! library whose version it was not written for.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::ffi::{CStr, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::{LazyLock, Mutex, MutexGuard};
 
 use opendoc::{
     Document, EditCommand, Error, Format, OpenOptions, RenderOptions, SaveMode, TemplateOptions,
@@ -58,8 +69,28 @@ pub struct OdBuffer {
     bytes: Vec<u8>,
 }
 
+/// The live handles and buffers, by address. A box's address is unique while
+/// it lives, so membership answers "did this library return this pointer, and
+/// is it still live" exactly.
+static DOCUMENTS: LazyLock<Mutex<HashSet<usize>>> = LazyLock::new(Mutex::default);
+static BUFFERS: LazyLock<Mutex<HashSet<usize>>> = LazyLock::new(Mutex::default);
+
+/// A registry, usable even after a panic poisoned it: it holds addresses only,
+/// so a panic cannot leave it half-updated.
+fn registry(set: &'static LazyLock<Mutex<HashSet<usize>>>) -> MutexGuard<'static, HashSet<usize>> {
+    set.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn buffer(bytes: Vec<u8>) -> *mut OdBuffer {
-    Box::into_raw(Box::new(OdBuffer { bytes }))
+    let pointer = Box::into_raw(Box::new(OdBuffer { bytes }));
+    registry(&BUFFERS).insert(pointer as usize);
+    pointer
+}
+
+/// Whether `buf` is a live buffer from this library.
+fn live_buffer(buf: *const OdBuffer) -> bool {
+    !buf.is_null() && registry(&BUFFERS).contains(&(buf as usize))
 }
 
 /// Runs `body`, turning an error or a panic into `NULL` plus a recorded message.
@@ -114,18 +145,34 @@ unsafe fn str_in(text: *const c_char) -> Result<Option<String>, String> {
 ///
 /// `doc` is null or a live handle from this library.
 unsafe fn doc_mut<'a>(doc: *mut OdDocument) -> Result<&'a mut OdDocument, String> {
-    if doc.is_null() {
-        return Err("invalid-argument: a null document handle".to_owned());
-    }
-    // SAFETY: the caller promises a live, unaliased handle.
+    live_document(doc)?;
+    // SAFETY: the registry says this is a live box this library allocated; the
+    // caller promises not to use one handle from two threads at once.
     Ok(unsafe { &mut *doc })
 }
 
+/// `Ok` when `doc` is a live handle from this library, else the error naming why
+/// not.
+fn live_document(doc: *const OdDocument) -> Result<(), String> {
+    if doc.is_null() {
+        return Err("invalid-argument: a null document handle".to_owned());
+    }
+    if !registry(&DOCUMENTS).contains(&(doc as usize)) {
+        return Err(
+            "invalid-argument: not a live document handle (freed already, or not from this library)"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
 fn handle(doc: Document) -> *mut OdDocument {
-    Box::into_raw(Box::new(OdDocument {
+    let pointer = Box::into_raw(Box::new(OdDocument {
         doc,
         last_report: "null".to_owned(),
-    }))
+    }));
+    registry(&DOCUMENTS).insert(pointer as usize);
+    pointer
 }
 
 /// The ABI version this library implements.
@@ -211,17 +258,25 @@ pub unsafe extern "C" fn opendoc_from_spec(spec_json: *const c_char) -> *mut OdD
     })
 }
 
-/// Frees a document handle. `NULL` is a no-op.
+/// Frees a document handle. `NULL` is a no-op. A handle that is not live (freed
+/// already, or not from this library) is not touched; the call records an
+/// `invalid-argument` error instead.
 ///
 /// # Safety
 ///
-/// `doc` is null or a handle from this library not yet freed.
+/// No other thread is using `doc`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn opendoc_free(doc: *mut OdDocument) {
-    if !doc.is_null() {
-        // SAFETY: the caller promises a live handle, freed once.
-        drop(unsafe { Box::from_raw(doc) });
+    if doc.is_null() {
+        return;
     }
+    if !registry(&DOCUMENTS).remove(&(doc as usize)) {
+        set_error("invalid-argument: opendoc_free of a handle that is not live".to_owned());
+        return;
+    }
+    // SAFETY: the registry held it, so it is a live box from `handle`, and
+    // removing it first means no other free reaches it.
+    drop(unsafe { Box::from_raw(doc) });
 }
 
 fn to<T: serde::Serialize>(value: &T) -> Result<Value, String> {
@@ -385,6 +440,24 @@ pub unsafe extern "C" fn opendoc_render_png(
     })
 }
 
+/// One page as SVG (UTF-8), from the same layout as the PNG and the PDF.
+///
+/// # Safety
+///
+/// `doc` is a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn opendoc_render_svg(doc: *mut OdDocument, page: u32) -> *mut OdBuffer {
+    guard(|| {
+        // SAFETY: forwarded caller contract.
+        let od = unsafe { doc_mut(doc) }?;
+        od.doc
+            .render_page_svg(page as usize)
+            .map(String::into_bytes)
+            .map(buffer)
+            .map_err(sdk)
+    })
+}
+
 /// A real-text PDF.
 ///
 /// # Safety
@@ -410,10 +483,9 @@ pub unsafe extern "C" fn opendoc_compare(
     newer: *mut OdDocument,
 ) -> *mut OdBuffer {
     guard(|| {
-        if older.is_null() || newer.is_null() {
-            return Err("invalid-argument: a null document handle".to_owned());
-        }
-        // SAFETY: the caller promises two live handles; both are only read.
+        live_document(older)?;
+        live_document(newer)?;
+        // SAFETY: both are live boxes from this library; both are only read.
         let (a, b) = unsafe { (&*older, &*newer) };
         a.doc
             .compare(&b.doc)
@@ -454,10 +526,10 @@ pub unsafe extern "C" fn opendoc_convert(
 /// `buf` is a live buffer from this library.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn opendoc_buffer_data(buf: *const OdBuffer) -> *const u8 {
-    if buf.is_null() {
+    if !live_buffer(buf) {
         return std::ptr::null();
     }
-    // SAFETY: the caller promises a live buffer.
+    // SAFETY: the registry holds it: a live buffer from this library.
     unsafe { (*buf).bytes.as_ptr() }
 }
 
@@ -468,22 +540,25 @@ pub unsafe extern "C" fn opendoc_buffer_data(buf: *const OdBuffer) -> *const u8 
 /// `buf` is a live buffer from this library.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn opendoc_buffer_len(buf: *const OdBuffer) -> usize {
-    if buf.is_null() {
+    if !live_buffer(buf) {
         return 0;
     }
-    // SAFETY: the caller promises a live buffer.
+    // SAFETY: the registry holds it: a live buffer from this library.
     unsafe { (*buf).bytes.len() }
 }
 
-/// Frees a buffer. `NULL` is a no-op.
+/// Frees a buffer. `NULL`, and a buffer that is not live (freed already, or
+/// not from this library), are no-ops.
 ///
 /// # Safety
 ///
-/// `buf` is null or a buffer from this library not yet freed.
+/// No other thread is using `buf`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn opendoc_buffer_free(buf: *mut OdBuffer) {
-    if !buf.is_null() {
-        // SAFETY: the caller promises a live buffer, freed once.
-        drop(unsafe { Box::from_raw(buf) });
+    if buf.is_null() || !registry(&BUFFERS).remove(&(buf as usize)) {
+        return;
     }
+    // SAFETY: the registry held it, so it is a live box from `buffer`, and
+    // removing it first means no other free reaches it.
+    drop(unsafe { Box::from_raw(buf) });
 }

@@ -45,6 +45,17 @@ export async function ensureReady() {
   return init();
 }
 
+/** Picture bytes (or a base64 string) as the base64 an edit command carries. */
+function imageBase64(data) {
+  if (typeof data === "string") return data;
+  const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
+  if (!(bytes instanceof Uint8Array)) throw new TypeError("a picture is a Uint8Array, an ArrayBuffer or a base64 string");
+  if (typeof Buffer !== "undefined") return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
 function assertReady() {
   if (!ready) throw new OpenDocError("not-initialised", "call `await init()` (or import from @casualoffice/opendoc/node) first");
 }
@@ -354,6 +365,125 @@ export class Document {
     this.#one({ op: "setProperties", properties });
   }
 
+  // -- pictures (docs/176 §12.12) --------------------------------------------
+
+  /**
+   * Appends a paragraph holding a picture; returns the picture's id. python-docx
+   * `add_picture`. `data` is bytes (PNG, JPEG, GIF, BMP, TIFF, WebP) or base64.
+   * Sizes are points; give one and the other keeps the image's proportions,
+   * give neither for its own size at 96 dpi.
+   */
+  addPicture(data, { widthPt, heightPt, style } = {}) {
+    const paragraph = this.addParagraph("", { style });
+    return this.insertPicture(paragraph, 0, data, { widthPt, heightPt });
+  }
+  /** Inserts a picture at a code-point offset of a paragraph; returns its id. */
+  insertPicture(paragraph, offset, data, { widthPt, heightPt } = {}) {
+    return this.#one({ op: "insertPicture", paragraph, offset, image: imageBase64(data), widthPt, heightPt });
+  }
+  /** Replaces a picture's image, keeping its id, frame, position and alt text. */
+  replacePicture(picture, data) {
+    this.#one({ op: "replacePicture", picture, image: imageBase64(data) });
+  }
+  /** Resizes a picture, in points. */
+  resizePicture(picture, widthPt, heightPt) {
+    this.#one({ op: "resizePicture", picture, widthPt, heightPt });
+  }
+  /** Sets (or, with `""`/`null`, clears) a picture's alternative text. */
+  setAltText(picture, text) {
+    this.#one({ op: "setAltText", picture, text: text ?? undefined });
+  }
+  /** Deletes a picture. */
+  deletePicture(picture) {
+    this.#one({ op: "deletePicture", picture });
+  }
+
+  // -- headers and footers ---------------------------------------------------
+
+  /**
+   * The first paragraph of a section's header, created (or, when the section
+   * showed the previous section's, copied) on first use; returns its id. Edit
+   * it with `insertText`, `addRun`, `insertField` and `insertParagraph({ after })`.
+   * `kind` is `"default"`, `"first"` or `"even"` (docx-js `headers: { default, first, even }`).
+   */
+  header(section = 0, { kind = "default" } = {}) {
+    return this.#one({ op: "headerFooter", section, region: "header", kind });
+  }
+  /** As `header`, for the footer. */
+  footer(section = 0, { kind = "default" } = {}) {
+    return this.#one({ op: "headerFooter", section, region: "footer", kind });
+  }
+  /** Removes a section's header (`kind` as for `header`). */
+  removeHeader(section = 0, { kind = "default" } = {}) {
+    this.#one({ op: "removeHeaderFooter", section, region: "header", kind });
+  }
+  /** Removes a section's footer. */
+  removeFooter(section = 0, { kind = "default" } = {}) {
+    this.#one({ op: "removeHeaderFooter", section, region: "footer", kind });
+  }
+  /** Links a section's header or footer to the previous section's, or unlinks it with a copy. */
+  setLinkedToPrevious(section, region, linked, { kind = "default" } = {}) {
+    this.#one({ op: "setLinkedToPrevious", section, region, kind, linked });
+  }
+  /** A different first-page header and footer for a section (docx-js `titlePage`). */
+  setDifferentFirstPage(section, on = true) {
+    this.#one({ op: "setDifferentFirstPage", section, on });
+  }
+  /** Different odd and even page headers and footers, document-wide (docx-js `evenAndOddHeaderAndFooters`). */
+  setDifferentOddEven(on = true) {
+    this.#one({ op: "setDifferentOddEven", on });
+  }
+  /**
+   * Inserts a field at a code-point offset; returns its id. `kind` is `"page"`,
+   * `"numpages"` (docx-js `PageNumber.CURRENT` / `TOTAL_PAGES`), `"date"`,
+   * `"time"`, `"filename"` or `"author"`.
+   */
+  insertField(paragraph, offset, kind, { result = "" } = {}) {
+    return this.#one({ op: "insertField", paragraph, offset, kind, result });
+  }
+
+  // -- notes -----------------------------------------------------------------
+
+  /** Inserts a footnote whose mark sits at a code-point offset; returns the note id. */
+  addFootnote(paragraph, offset, text) {
+    return this.#one({ op: "insertNote", kind: "footnote", paragraph, offset, text });
+  }
+  /** Inserts an endnote; returns the note id. */
+  addEndnote(paragraph, offset, text) {
+    return this.#one({ op: "insertNote", kind: "endnote", paragraph, offset, text });
+  }
+  /** Replaces a note's text. */
+  setNoteText(note, text) {
+    this.#one({ op: "setNoteText", note, text });
+  }
+  /** Deletes a note and its mark. */
+  deleteNote(note) {
+    this.#one({ op: "deleteNote", note });
+  }
+
+  // -- sections --------------------------------------------------------------
+
+  /** Adds a section at the end; returns its index. `start`: `nextPage`, `continuous`, `evenPage`, `oddPage`. */
+  addSection(start = "nextPage") {
+    return this.#one({ op: "addSection", start });
+  }
+  /** Inserts a section break at a code-point offset of a body paragraph; returns the new section's index. */
+  insertSectionBreak(paragraph, offset, start = "nextPage") {
+    return this.#one({ op: "insertSectionBreak", paragraph, offset, start });
+  }
+  /** Changes how a section starts. */
+  setSectionStart(section, start) {
+    this.#one({ op: "setSectionStart", section, start });
+  }
+  /**
+   * Changes a section's page setup; omitted values stay. Points throughout:
+   * `{ widthPt, heightPt, orientation, topPt, bottomPt, leftPt, rightPt, headerPt, footerPt, columns, columnSpacingPt }`.
+   * Turning the page swaps width and height, as Word does.
+   */
+  setPageSetup(section, setup) {
+    this.#one({ op: "setPageSetup", section, setup });
+  }
+
   /**
    * Fills docxtemplater tags (`{x}`, `{#items}…{/items}`, `{^x}`, `{.}`) with
    * `data`, through the engine. Throws a `TemplateError` listing every issue
@@ -404,6 +534,10 @@ export class Document {
   renderPage(index, { dpi = 96 } = {}) {
     const rgba = call(() => this.#doc.renderPageRgba(index, dpi));
     return { width: this.#doc.lastRenderWidth(), height: this.#doc.lastRenderHeight(), rgba };
+  }
+  /** One page as SVG text: glyph outlines and a transparent real-text layer, from the same layout as the PNG and PDF. */
+  renderPageSvg(index) {
+    return call(() => this.#doc.renderPageSvg(index));
   }
   /** One page as PNG bytes. */
   renderPagePng(index, { dpi = 96 } = {}) {

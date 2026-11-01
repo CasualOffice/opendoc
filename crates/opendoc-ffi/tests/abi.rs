@@ -152,3 +152,154 @@ fn the_header_declares_every_export() {
     assert!(declared >= exports.len());
     assert!(header.contains(&format!("#define OPENDOC_ABI_VERSION {ABI_VERSION}")));
 }
+
+#[test]
+fn pictures_headers_notes_and_sections_are_edits_through_the_abi() {
+    // docs/176 §12.12: the C ABI reaches the new edits through `edit`, the same
+    // JSON vocabulary every binding sends.
+    let png = opendoc::Document::create()
+        .unwrap()
+        .render_page_png(0, 4.0)
+        .unwrap();
+    let doc = opendoc_create();
+    assert!(!doc.is_null(), "{}", last_error());
+    let added = call(
+        doc,
+        "edit",
+        Some(r#"[{"op":"insertParagraph","text":"Hello"}]"#),
+    );
+    let p = added["results"][0].as_str().unwrap().to_owned();
+    let batch = serde_json::json!([
+        {"op": "insertPicture", "paragraph": p, "offset": 5,
+         "image": opendoc::base64::encode(&png), "widthPt": 40},
+        {"op": "headerFooter", "section": 0, "region": "header"},
+        {"op": "insertNote", "kind": "footnote", "paragraph": p, "offset": 1, "text": "n1"},
+        {"op": "addSection", "start": "continuous"},
+        {"op": "setPageSetup", "section": 1, "setup": {"orientation": "landscape"}}
+    ]);
+    let results = call(doc, "edit", Some(&batch.to_string()));
+    let picture = results["results"][0].as_str().unwrap().to_owned();
+    let header = results["results"][1].as_str().unwrap().to_owned();
+    let follow = serde_json::json!([
+        {"op": "insertText", "paragraph": header, "offset": 0, "text": "Top"},
+        {"op": "setAltText", "picture": picture, "text": "Logo"}
+    ]);
+    call(doc, "edit", Some(&follow.to_string()));
+    let sections = call(doc, "sections", None);
+    assert_eq!(sections[1]["orientation"], "landscape");
+    assert_eq!(sections[1]["start"], "continuous");
+    assert_eq!(call(doc, "notes", None)[0]["text"], "n1");
+    let headers = call(doc, "headersFooters", None);
+    assert!(
+        headers
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|h| h["text"] == "Top")
+    );
+    let paragraph = call(
+        doc,
+        "paragraph",
+        Some(&serde_json::json!({ "id": p }).to_string()),
+    );
+    assert!(
+        paragraph["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["id"] == picture.as_str() && r["image"]["description"] == "Logo")
+    );
+    // A refused batch is refused whole, with a coded error.
+    let method = CString::new("edit").unwrap();
+    let arg = CString::new(
+        r#"[{"op":"addSection"},{"op":"setSectionStart","section":9,"start":"oddPage"}]"#,
+    )
+    .unwrap();
+    // SAFETY: a live handle and NUL-terminated strings.
+    let refused = unsafe { opendoc_call(doc, method.as_ptr(), arg.as_ptr()) };
+    assert!(refused.is_null());
+    assert!(last_error().contains("section 9"));
+    assert_eq!(
+        call(doc, "sections", None).as_array().unwrap().len(),
+        2,
+        "nothing applied"
+    );
+    // SAFETY: freed once.
+    unsafe { opendoc_free(doc) };
+}
+
+#[test]
+fn a_page_renders_as_svg_through_the_abi() {
+    // SAFETY: SAMPLE is a live slice; options are NULL.
+    let doc = unsafe { opendoc_open(SAMPLE.as_ptr(), SAMPLE.len(), std::ptr::null()) };
+    assert!(!doc.is_null(), "{}", last_error());
+    // SAFETY: a live handle.
+    let svg = take(unsafe { opendoc_render_svg(doc, 0) });
+    assert!(svg.starts_with(b"<svg "));
+    // SAFETY: a live handle; a page past the end is a coded error, not a crash.
+    let past = unsafe { opendoc_render_svg(doc, 999) };
+    assert!(past.is_null());
+    assert!(!last_error().is_empty());
+    // SAFETY: freed once.
+    unsafe { opendoc_free(doc) };
+}
+
+#[test]
+fn stale_double_freed_and_foreign_handles_are_refused_not_dereferenced() {
+    // docs/176 §12.14: the registry turns a use-after-free into a coded error.
+    // Without it each line below is undefined behaviour; the fuzz target
+    // `ffi_calls` drives these sequences at random.
+    let doc = opendoc_create();
+    assert!(!doc.is_null());
+    let text = CString::new("text").unwrap();
+    // SAFETY: each call is made through the ABI's own checks; the handle and
+    // buffer may be stale on purpose, which is what is under test.
+    unsafe {
+        opendoc_free(doc);
+        assert!(opendoc_call(doc, text.as_ptr(), std::ptr::null()).is_null());
+        assert!(last_error().contains("not a live document handle"));
+        opendoc_free(doc); // a double free: refused, not freed again
+        assert!(last_error().contains("not live"));
+        assert!(opendoc_render_svg(doc, 0).is_null());
+        assert!(opendoc_compare(doc, doc).is_null());
+
+        let buf = opendoc_version();
+        assert!(opendoc_buffer_len(buf) > 0);
+        opendoc_buffer_free(buf);
+        assert_eq!(opendoc_buffer_len(buf), 0, "a freed buffer reads as empty");
+        assert!(opendoc_buffer_data(buf).is_null());
+        opendoc_buffer_free(buf); // a double free: a no-op
+
+        // A buffer passed where a document belongs.
+        let other = opendoc_version();
+        assert!(opendoc_call(other.cast(), text.as_ptr(), std::ptr::null()).is_null());
+        assert!(last_error().contains("not a live document handle"));
+        opendoc_buffer_free(other);
+    }
+}
+
+#[test]
+fn the_abi_fuzz_target_is_armed_in_ci() {
+    // SKILL §9.2: a gate the docs call CI-enforced must be seen armed. The
+    // `ffi_calls` target exists in the fuzz workspace, drives this crate, and
+    // CI's `fuzz-build` job both builds and runs it.
+    let manifest = include_str!("../../../fuzz/Cargo.toml");
+    let target = include_str!("../../../fuzz/fuzz_targets/ffi_calls.rs");
+    let ci = include_str!("../../../.github/workflows/ci.yml");
+    assert!(manifest.contains("name = \"ffi_calls\""));
+    assert!(manifest.contains("opendoc-ffi = { path = \"../crates/opendoc-ffi\""));
+    assert!(target.contains("opendoc_free(") && target.contains("opendoc_buffer_free("));
+    let start = ci.find("\n  fuzz-build:").expect("the fuzz-build job");
+    let end = ci[start + 1..]
+        .find("\n  docs:")
+        .map_or(ci.len(), |at| start + 1 + at);
+    let job = &ci[start..end];
+    assert!(
+        job.contains("fuzz build ffi_calls"),
+        "fuzz-build does not build ffi_calls"
+    );
+    assert!(
+        job.contains("fuzz run ffi_calls"),
+        "fuzz-build does not run ffi_calls"
+    );
+}
