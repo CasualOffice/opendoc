@@ -93,7 +93,7 @@ function buildDialog(view) {
   overlay.setAttribute("aria-modal", "true");
   overlay.setAttribute("aria-labelledby", `${ID}Title`);
   overlay.setAttribute("aria-describedby", `${ID}Description`);
-  const card = make("section", { className: "dialog-card pdf-import-dialog" });
+  const card = make("section", { className: "dialog-card dialog-card-compact pdf-import-dialog" });
   const head = make("header", { className: "dialog-head" });
   const heading = make("div", { className: "dialog-heading" });
   const words = make("div");

@@ -153,6 +153,7 @@ export const PLUGIN_TOKENS = Object.freeze([
   "--h-dense",
   "--h-tool",
   "--h-ctl",
+  "--h-input",
   "--e1",
   "--e2",
   "--e3",

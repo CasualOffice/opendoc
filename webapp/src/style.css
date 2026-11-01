@@ -218,8 +218,12 @@
      Type: five sizes and three weights. 11 is the floor (chips, shortcut
      hints, big-button labels), 12 meta and status, 13 body, 15 titles, 20 the
      File page heading. 450/550/650/750 cannot be told apart at UI sizes and
-     render differently per platform, so they are gone. */
-  --fs-xs: 0.6875rem;
+     render differently per platform, so they are gone.
+
+     UX-056 (docs/184 D7, approved 2026-11-01) raised the floor: no chrome text
+     is under 12px, so `--fs-xs` is 12px like `--fs-sm`. The name stays because
+     the plugin contract publishes it and the two roles may part again. */
+  --fs-xs: 0.75rem;
   --fs-sm: 0.75rem;
   --fs-md: 0.8125rem;
   --fs-lg: 0.9375rem;
@@ -248,6 +252,12 @@
   --h-tool: 1.75rem;
   --h-ctl: 2rem;
   --h-touch: 2.75rem;
+  /* The ONE dialog control height (UX-053, docs/184 D1): every input, select,
+     button and segmented control in a dialog is 36px, so a field and the
+     button beside it share a baseline. It replaced three off-scale heights
+     (`--h-field` 36, `--h-search` 34, `--h-control` 30 on dialog closes); the
+     coarse-pointer rung raises it to the 44px touch floor (D7). */
+  --h-input: 2.25rem;
   /* Spacing is the 4px grid the --space-* rungs below already are, with a 2px
      half-step for the inside of dense controls (docs/63 §7.1). An odd pixel
      is never on it; `design_scale.test.mjs` refuses one in a chrome rule.
@@ -269,8 +279,10 @@
   --shadow-popover: var(--e2);
 
   --h-control: 1.875rem;
-  --h-search: 2.125rem;
-  --h-field: 2.25rem;
+  /* Plugin-contract aliases (`PLUGIN_TOKENS`), like the ones above: no editor
+     rule reads them (`design_scale.test.mjs`). */
+  --h-search: var(--h-input);
+  --h-field: var(--h-input);
   /* The ribbon tab strip, now that it shares the header with the document
      title. 28px is ONLYOFFICE's `@toolbar-height-tabs-top-title`
      (`apps/common/main/resources/less/variables.less:104`) — the height they
@@ -341,17 +353,20 @@
      guards the budget. */
   --chrome-card-inset-x: clamp(0.125rem, 0.3vw, 0.625rem);
 
-  /* Dialog rhythm. One scale for every dialog and panel, so tightening the
-     density is one edit rather than thirty. The old values were a flat 18-20px
-     on head, body and foot alike, which made every dialog tall without making
-     any of it more legible. */
-  /* Dialog rhythm. These were declared and referenced NOWHERE — every dialog
-     hardcoded `18px var(--space-5) 14px` instead — so the responsive padding
-     the design called for never reached a pixel. They are wired into
-     .dialog-head/.dialog-body/.dialog-foot below, and `dialog_density`
-     fails if a dialog goes back to hardcoding its chrome padding. */
-  --dlg-pad-x: clamp(0.875rem, 2.2vw, 1.375rem);
-  --dlg-pad-y: clamp(0.625rem, 1.4vh, 1rem);
+  /* Dialog anatomy v2 (UX-053, docs/184 D1, approved by the owner 2026-11-01).
+     The audit measured 8 header heights (22-116px), 11 section gaps and a
+     body inset of 11.2px 22px; every dialog now takes ONE rhythm: a 24px
+     inset on all four sides of the card, 8px under the title, 12px from the
+     title block to the first group, 24px between groups, 12px inside a group
+     and 6px from a label to its field. Fixed rem rather than the old
+     viewport-relative clamp(): the root itself already follows the screen
+     (`chrome_units.test.mjs`), and a second curve inside it is what produced
+     the 11.2px figure. `dialog_density.test.mjs` fails if a band hardcodes
+     its padding instead of reading these. */
+  --dlg-pad-x: var(--space-6);
+  --dlg-pad-y: var(--space-6);
+  --dlg-gap: var(--space-6);
+  --dlg-gap-in: var(--space-3);
   /* PANEL rhythm — the same mechanism as the dialog pair above, for the side
      panels, which had no shared shell at all.
    *
@@ -396,16 +411,16 @@
      group and its "⋯" overflow button can never end up underneath a panel
      (HF-084). Redefined below for the collapsed ribbon, where the band is gone. */
   --chrome-bottom: calc(var(--h-header) + var(--h-ribbon-band));
-  /* The dialog width scale. Four rungs, and the fourth is here because
-     `.settings-dialog` had already invented it in raw pixels (960px) while
-     `--dialog-width-wide` was declared and referenced nowhere — a scale with a
-     dead rung and an undeclared one is not a scale. `dialog_density.test.mjs`
-     now fails on ANY unused token in this family rather than on a two-name
-     list, which is what let the dead rung sit here. */
-  --dialog-width-compact: 23.75rem;
-  --dialog-width-standard: 40rem;
-  --dialog-width-wide: 47.5rem;
-  --dialog-width-xwide: 60rem;
+  /* The dialog width scale: THREE rungs (UX-053, docs/184 D1). The audit
+     measured 51 dialogs in 16 widths — four tokens, a dozen `ch` ceilings and
+     `fit-content` cards, so no two dialogs lined up. Small 400px for a
+     confirmation or a two-field form, medium 560px for an ordinary form, large
+     720px for a table or a navigated page (Settings, shortcuts). A dialog
+     names its rung; `dialog_anatomy.test.mjs` refuses any other width on a
+     card and `e2e/dialog-anatomy.spec.mjs` measures it. */
+  --dialog-width-s: 25rem;
+  --dialog-width-m: 35rem;
+  --dialog-width-l: 45rem;
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
@@ -799,7 +814,7 @@ input {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  height: var(--h-search);
+  height: var(--h-ctl);
   padding: 0 0.625rem;
   margin-left: 0.375rem;
   border: 1px solid var(--line-strong);
@@ -1511,7 +1526,6 @@ button.compatibility-status:hover {
    the editor's accent on its line colour; indeterminate until the page count is
    known, which is only after admission. */
 .pdf-import-dialog {
-  max-width: 27.5rem;
 }
 
 .pdf-import-bar {
@@ -1830,8 +1844,6 @@ button.compatibility-status:hover {
  * declared and unused — so the scale had a dead rung and this dialog had an
  * unnamed one. Same number, stated in the scale. */
 .dialog-card.settings-dialog {
-  width: min(var(--dialog-width-xwide), 100%);
-  max-inline-size: min(100%, var(--dialog-width-xwide));
 }
 
 /* Six topics, read down one column then down the next.
@@ -2000,13 +2012,23 @@ body.modal-open {
   overflow: hidden;
 }
 
+/* A finger gets the 44px floor on every dialog control (UX-056 D7). */
+@media (pointer: coarse) {
+  :root {
+    --h-input: var(--h-touch);
+  }
+}
+
 .dialog-overlay {
   position: fixed;
   inset: 0;
   z-index: var(--z-modal);
   display: grid;
   place-items: center;
-  padding: var(--space-6);
+  /* 2rem all round, so the card's ceiling (`100dvh - 4rem`) is exactly the
+     space inside this padding. */
+  padding: var(--space-6) var(--space-6);
+  padding-block: 2rem;
   /* No `backdrop-filter`. A 2px blur over a full-viewport scrim is re-rasterised
      on every frame that anything above it scrolls, and the scrim (`--scrim`) is already
      what separates the dialog from the document — the blur was decoration
@@ -2020,8 +2042,13 @@ body.modal-open {
 
 .dialog-card {
   display: flex;
-  width: min(var(--dialog-width-standard), 100%);
-  max-height: min(45rem, calc(100vh - 3rem));
+  /* The medium rung is the default; a card opts into the small or large rung
+     with `.dialog-card-compact` / `.dialog-card-wide` (below) and in no other
+     way (UX-053 D1). */
+  width: min(var(--dialog-width-m), 100%);
+  /* The card is never taller than the screen less 2rem each side; only the
+     BODY scrolls, so the title and the action row are always on screen. */
+  max-height: calc(100dvh - 4rem);
   flex-direction: column;
   overflow: hidden;
   /* No border. A card that carries BOTH a 1px outline and a 72px drop shadow is
@@ -2034,7 +2061,11 @@ body.modal-open {
 }
 
 .dialog-card-compact {
-  width: min(var(--dialog-width-compact), 100%);
+  width: min(var(--dialog-width-s), 100%);
+}
+
+.dialog-card-wide {
+  width: min(var(--dialog-width-l), 100%);
 }
 
 /* Two of the compact cards are smaller than the 380px constant and one is
@@ -2060,8 +2091,6 @@ body.modal-open {
  * rather than making the phone rule shout `!important`.
  * `e2e/phone-dialog-sheet.spec.mjs` measures every dialog's left edge. */
 body:not(.phone-mode) #splitCellDialog .dialog-card {
-  width: fit-content;
-  max-inline-size: min(100%, 46ch);
 }
 
 #splitCellDialog .dialog-field-grid {
@@ -2089,8 +2118,6 @@ body:not(.phone-mode) #splitCellDialog .dialog-card {
  * builds still fits on one line. */
 /* Desktop-qualified for the reason `#splitCellDialog` above is. */
 body:not(.phone-mode) #confirmDialog .dialog-card {
-  width: fit-content;
-  max-inline-size: min(100%, 56ch);
 }
 
 /* `hidden` is the weakest promise in the platform: it is a UA `display: none`,
@@ -2130,8 +2157,11 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  flex: 0 0 auto;
   gap: var(--space-4);
-  padding: var(--dlg-pad-y) var(--dlg-pad-x);
+  /* 24px on three sides and 8px under the title block (UX-053 D1): the body
+     adds its own 12px, so title-to-first-group is 20px wherever you look. */
+  padding: var(--dlg-pad-y) var(--dlg-pad-x) var(--space-2);
 }
 
 .dialog-heading {
@@ -2173,22 +2203,26 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
   overflow-wrap: anywhere;
 }
 
-.dialog-heading h2 {
+.dialog-head h2 {
   margin: 0;
   color: var(--ink);
   /* One step down from `--fs-title`. A dialog title names a task in a box the
      user already chose to open; it is not a page heading and does not need to
      compete with the document. Word and Docs both set theirs at body weight
      plus a little. */
-  font-size: var(--fs-md);
-  font-weight: 600;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  line-height: 1.3;
   letter-spacing: -0.01em;
 }
 
+/* The optional one-line description under the title (UX-053 D1): 13px in the
+   secondary ink. Longer explanations belong behind a "Learn more" disclosure,
+   not here. */
 .dialog-heading p {
-  margin: 0.125rem 0 0;
+  margin: 0.25rem 0 0;
   color: var(--muted);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-md);
 }
 
 /* A confirmation has no `.dialog-body`: its whole message IS this paragraph, so
@@ -2208,9 +2242,11 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 
 .dialog-close {
   display: grid;
-  width: var(--h-control);
-  height: var(--h-control);
-  flex: 0 0 var(--h-control);
+  width: var(--h-input);
+  height: var(--h-input);
+  flex: 0 0 var(--h-input);
+  /* Optically on the title's first line, and flush with the card's inset. */
+  margin: -0.25rem -0.5rem 0 0;
   place-items: center;
   padding: 0;
   border: none;
@@ -2245,8 +2281,9 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
  * the theme by construction and adds no colour literal to feature CSS. */
 .dialog-body {
   min-height: 0;
+  flex: 1 1 auto;
   overflow: auto;
-  padding: var(--dlg-pad-y) var(--dlg-pad-x);
+  padding: var(--space-3) var(--dlg-pad-x) var(--dlg-pad-y);
   overscroll-behavior: contain;
   background:
     linear-gradient(var(--surface) 30%, transparent) top / 100% 1.125rem no-repeat local,
@@ -2291,7 +2328,6 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
  * shortcuts is in `dialog-fit`'s roster now — with all 23 of them — so neither
  * the overflow nor the single column can come back unnoticed. */
 .shortcuts-dialog {
-  width: min(var(--dialog-width-xwide), 100%);
   /* A 0.75rem margin top and bottom instead of `.dialog-card`'s 1.5rem: this is
      the one card whose BODY is a reference meant to be read whole, and at
      1280x720 the keymap #918 grew ran 8px past the shared cap on CI's metrics
@@ -2309,18 +2345,15 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
    keeps it honest at every viewport, including 390px. */
 .about-dialog {
   /* `fit-content`, NOT `min(fit-content, 100%)` — see `.field-dialog`. */
-  width: fit-content;
   /* Three facts and three links. A `ch` ceiling keeps the description from
      dragging the card out to the 640px standard constant, which is nearly
      three times what the content needs. */
-  max-inline-size: min(100%, 46ch);
 }
 
 /* Two columns: term and value on one line, the way a properties sheet reads.
    `auto auto` so neither column is wider than the text it holds. */
 /* Accessibility check (HF-064): Word's checker pane, as a list of findings. */
 .a11y-check-dialog {
-  width: min(100%, 60ch);
 }
 
 .a11y-check-list {
@@ -2356,11 +2389,9 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
    grow, so they scroll inside the card rather than pushing it past 720px. */
 .control-props-dialog,
 .form-roles-dialog {
-  width: min(100%, 56ch);
 }
 
 .control-fill-dialog {
-  width: min(100%, 40ch);
 }
 
 .control-item-list,
@@ -2415,8 +2446,6 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 /* Page borders (HF-193): the four edges read across, as Word's preview buttons
    sit around one page. */
 .page-borders-dialog {
-  width: fit-content;
-  max-inline-size: min(100%, 60ch);
 }
 
 .page-borders-edges {
@@ -2428,8 +2457,6 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 /* Word count (HF-051): a figures table, numbers right-aligned in tabular
    figures so the columns compare at a glance, as Word's dialog does. */
 .word-count-dialog {
-  width: fit-content;
-  max-inline-size: min(100%, 52ch);
   /* fit-content sizes the card to its widest word; a long filename in the title
      must wrap inside the 52ch cap rather than push the card wider. */
   overflow-wrap: anywhere;
@@ -2489,8 +2516,6 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
    whole in its column. A STATED width rather than `fit-content`, which a
    multicol box resolves as one column. */
 .autocorrect-dialog {
-  width: min(38.75rem, 100%);
-  max-inline-size: min(100%, 76ch);
 }
 
 .autocorrect-body {
@@ -2787,17 +2812,17 @@ body.phone-mode .autocorrect-body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  /* The action row WRAPS rather than clipping. With `nowrap` the note and the
-     two buttons were squeezed into one line of a 380px compact card and the
-     labels broke inside boxes that could not grow (see `.dialog-button`). */
+  flex: 0 0 auto;
+  /* The action row WRAPS rather than clipping a label (see `.dialog-button`). */
   flex-wrap: wrap;
-  gap: var(--space-4);
-  /* The action row needs less vertical air than the body: it holds one line of
-     buttons. On the compact dialogs head+foot were eating 55% of the card.
-     No fill and no rule (see `.dialog-head`): the buttons sit on the card, as
-     they do in Word and in Google Docs. The extra bottom padding is what now
-     separates them from the edge — it was the grey band doing that before. */
-  padding: calc(var(--dlg-pad-y) * 0.8) var(--dlg-pad-x) var(--dlg-pad-y);
+  gap: var(--space-2) var(--space-4);
+  /* ONE finish for every dialog (UX-053 D1; the audit counted seven): a
+     hairline, then 16px 24px. Utility actions (Reset, Delete all, Forget,
+     Test connection) sit on the LEFT in text style, then Cancel, then the
+     primary verb on the right. The hairline is back because the body now
+     scrolls under a pinned footer, and the edge must read at rest. */
+  border-top: 1px solid var(--line);
+  padding: var(--space-4) var(--dlg-pad-x);
 }
 
 .dialog-note {
@@ -2828,7 +2853,7 @@ body.phone-mode .autocorrect-body {
      line was simply not painted. `nowrap` keeps the normal case on one line —
      the rendering is unchanged for every label that already fitted — and
      `min-height` lets the box grow instead of cutting anything that does not. */
-  min-height: var(--h-search);
+  min-height: var(--h-input);
   flex: 0 0 auto;
   white-space: nowrap;
   min-width: 5rem;
@@ -2864,6 +2889,35 @@ body.phone-mode .autocorrect-body {
 .dialog-button:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+/* A UTILITY action (Reset to defaults, Delete all, Forget, Test connection,
+   Set as default): text style, pushed to the footer's left edge, so the eye
+   finds Cancel and the primary verb in the same place in every dialog
+   (UX-053 D1, Word's and Google Docs' footers). */
+.dialog-button-utility {
+  min-width: 0;
+  padding: 0 var(--space-2);
+  border-color: transparent;
+  background: transparent;
+  color: var(--accent-text);
+  font-weight: var(--fw-medium);
+}
+
+.dialog-button-utility:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--hover);
+}
+
+/* Utilities come first in the markup; the first ordinary button after them
+   takes the free space, so they hold the left edge and Cancel/primary the
+   right. */
+.dialog-actions:has(> .dialog-button-utility) {
+  flex: 1 1 auto;
+}
+
+.dialog-actions > .dialog-button-utility + .dialog-button:not(.dialog-button-utility) {
+  margin-inline-start: auto;
 }
 
 .dialog-button-primary {
@@ -2910,7 +2964,6 @@ body.phone-mode .autocorrect-body {
      the width: two 268px tracks and the gap floor need 556px and the body has
      596px, so the split costs nothing on the horizontal and a wider card would
      only take more of the screen for the same content. */
-  width: min(var(--dialog-width-standard), 100%);
 }
 
 .properties-body {
@@ -2998,7 +3051,7 @@ body.phone-mode .autocorrect-body {
 }
 
 .dialog-field > input {
-  height: var(--h-field);
+  height: var(--h-input);
   padding: 0 0.625rem;
 }
 
@@ -3095,7 +3148,6 @@ body.phone-mode .autocorrect-body {
      this card to its content, and what this dialog needs is the opposite — a
      stated width wide enough to hold two columns of groups. The declaration below
      is the one that applies. */
-  width: min(fit-content, 100%);
   /* A STATED width. MEASURED, on a 1280x720 laptop: the body held 602px of
      content in a 560px box, so 42px of this dialog — the bottom of the Columns
      group — was already below the fold before this round added anything, and
@@ -3121,14 +3173,12 @@ body.phone-mode .autocorrect-body {
      back in a column. Result: 485px of content in 485px of box, card 596px tall.
      Page setup is in `dialog-fit`'s roster now, so neither the overflow nor the
      width can come back unnoticed. */
-  width: min(47.25rem, 100%);
-  /* The stated ceiling, from the scale rather than from a `ch` count that
+    /* The stated ceiling, from the scale rather than from a `ch` count that
      happened to land near it: `--dialog-width-wide` IS the 760px this comment
      already names, and `header-menu.spec.mjs` asserts this card stays under it.
      It does not bind (the width above caps at 756), so nothing renders
      differently — but the token is now read where the prose already relied on
      it, which is the point of a scale (HF-265 D8). */
-  max-inline-size: min(100%, var(--dialog-width-wide));
 }
 
 /* `min(fit-content, 100%)` IS NOT VALID CSS, and it is written on five cards in
@@ -3152,8 +3202,6 @@ body.phone-mode .autocorrect-body {
  * Insert field is a six-row picker whose widest row measures 313px; at the
  * inherited constant, 69px of the card and 69px of every row were empty. */
 .field-dialog {
-  width: fit-content;
-  max-inline-size: min(100%, 52ch);
 }
 
 .page-setup-body {
@@ -3422,8 +3470,6 @@ body.phone-mode .autocorrect-body {
   /* `fit-content` on its own, NOT `min(fit-content, 100%)` — see `.field-dialog`
      for why that spelling never parsed. `fit-content` already cannot exceed the
      available space, so the `min()` bought nothing even in intent. */
-  width: fit-content;
-  max-inline-size: min(100%, 56ch);
 }
 
 /* ---- Header and footer settings ------------------------------------------- */
@@ -3438,8 +3484,6 @@ body.phone-mode .autocorrect-body {
      four groups are short and the card was narrow, so the fix is the same balanced
      two-column flow Page setup now uses, and that needs a width that fits two
      `.dialog-field-grid` cells per column (2 x 144px plus the gaps). */
-  width: min(38.75rem, 100%);
-  max-inline-size: min(100%, 76ch);
 }
 
 /* Balanced across two columns, for the reason `.page-setup-fields` records: a grid
@@ -3451,7 +3495,7 @@ body.phone-mode .autocorrect-body {
 }
 
 .header-footer-settings-body > .dialog-group {
-  margin-bottom: 1.25rem;
+  margin-bottom: var(--dlg-gap);
   break-inside: avoid;
 }
 
@@ -3494,8 +3538,6 @@ body.phone-mode .autocorrect-body {
 /* ---- Drop cap ------------------------------------------------------------- */
 .drop-cap-dialog {
   /* `fit-content`, not the unparseable `min()` — see `.field-dialog`. */
-  width: fit-content;
-  max-inline-size: min(100%, 52ch);
 }
 
 .drop-cap-body {
@@ -3696,7 +3738,7 @@ body.phone-mode .autocorrect-body {
   /* A swatch, not a field: it has no text to fit, so it is sized by the
      ~3.5rem of colour a user needs to see rather than by the cell around it. */
   inline-size: 3.5rem;
-  height: var(--h-field);
+  height: var(--h-input);
   padding: 0.125rem;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
@@ -3746,7 +3788,7 @@ body.phone-mode .autocorrect-body {
 .dialog-select,
 .dialog-field select {
   width: 100%;
-  height: var(--h-field);
+  height: var(--h-input);
   padding: 0 1.875rem 0 0.625rem;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
@@ -3782,6 +3824,9 @@ body.phone-mode .autocorrect-body {
 }
 
 .dialog-body .segmented button {
+  /* The track's 4px inset on each side makes the whole control --h-input
+     tall, the same as the field and the button beside it (UX-053 D1). */
+  height: calc(var(--h-input) - 0.5rem);
   flex: 0 1 auto;
   padding: 0 0.875rem;
 }
@@ -3858,8 +3903,6 @@ body.phone-mode .autocorrect-body {
  * max-content contribution, so without the ceiling one long name would set the
  * card width. */
 .bookmark-dialog {
-  width: fit-content;
-  max-inline-size: min(100%, 46ch);
 }
 
 .bookmark-body {
@@ -3873,8 +3916,6 @@ body.phone-mode .autocorrect-body {
    the columns are headed and a screen reader reads "Proofing, Installed" from the
    header association rather than from a guess. */
 .proof-lang-dialog {
-  width: fit-content;
-  max-inline-size: min(100%, 60ch);
 }
 
 .proof-lang-body {
@@ -4149,7 +4190,6 @@ body.phone-mode .autocorrect-body {
 
 /* ---- Insert/edit link dialog --------------------------------------------- */
 .link-dialog {
-  width: min(28.75rem, 100%);
 }
 
 /* One rhythm for a stacked form, shared with `.bookmark-add` below.
@@ -4213,7 +4253,7 @@ body.phone-mode .autocorrect-body {
 .link-body input,
 .link-body select {
   width: 100%;
-  height: var(--h-field);
+  height: var(--h-input);
   padding: 0 0.625rem;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
@@ -4257,7 +4297,7 @@ body.phone-mode .autocorrect-body {
 
 .link-mode-tab {
   flex: 0 1 auto;
-  height: var(--h-search);
+  height: var(--h-input);
   padding: 0 0.625rem;
   border: 1px solid transparent;
   border-radius: var(--r-sm);
@@ -4323,7 +4363,7 @@ body.phone-mode .autocorrect-body {
 .bookmark-add-row > input {
   flex: 1 1 auto;
   min-width: 0;
-  height: var(--h-field);
+  height: var(--h-input);
   padding: 0 0.625rem;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
@@ -4536,6 +4576,17 @@ body.phone-mode .autocorrect-body {
   border: none;
 }
 
+/* The anatomy's two gaps (UX-053 D1): 24px between groups, 12px between the
+   rows of one group. A sibling margin rather than a flex gap on the body, so a
+   dialog that lays its body out as a grid or in columns keeps doing so. */
+.dialog-group + .dialog-group {
+  margin-top: var(--dlg-gap);
+}
+
+.dialog-group > :not(legend) + :not(legend) {
+  margin-top: var(--dlg-gap-in);
+}
+
 /* The contents dialog's style list: one row per paragraph style, which a
    Word-authored file can carry by the hundred, so it scrolls inside the dialog
    rather than pushing the buttons off a phone screen (`docs/153` RM-25). */
@@ -4581,7 +4632,7 @@ body.phone-mode .autocorrect-body {
      of content in the 60px box that produced, so the last digit was cut off.
      Same defect as the dialog button below: a fixed box, a label that grew. */
   grid-template-columns: calc(5ch + 2.25rem) 2rem;
-  height: var(--h-field);
+  height: var(--h-input);
   overflow: hidden;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
@@ -5236,7 +5287,7 @@ body.phone-mode .autocorrect-body {
 .find-panel input[type="text"] {
   width: 100%;
   min-width: 0;
-  height: var(--h-field);
+  height: var(--h-input);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
   background: var(--surface);
@@ -9418,7 +9469,6 @@ body.is-format-painting .page-wrap * {
 .object-bar-btn.danger:hover { background: var(--danger-soft); border-color: var(--danger); }
 
 /* ---- Object alt-text / crop dialogs -------------------------------------- */
-.object-dialog { width: min(27.5rem, 100%); }
 /* The third hand-built stacked form, on `.link-body`'s rhythm for the same
    reason: a flat 12px gap put the alt-text label exactly as far from its own
    textarea as from the note under it. */
@@ -9440,7 +9490,6 @@ body.is-format-painting .page-wrap * {
   font-weight: 600;
 }
 .object-dialog-body textarea {
-  width: 100%;
   min-height: 5.25rem;
   padding: 0.5rem 0.625rem;
   border: 1px solid var(--line-strong);
@@ -10537,7 +10586,7 @@ body.phone-mode .header-mode {
   /* The sheet's toggle row floats over the document, so it takes the same
      floor as the bar it opened from; six of them are 276px of a 320px sheet. */
   .compact-command-menu .menu-toggle { min-width: 2.75rem; height: var(--h-touch); }
-  .chrome-mode-btn { height: 2.25rem; padding: 0 0.875rem; }
+  .chrome-mode-btn { height: var(--h-input); padding: 0 0.875rem; }
 }
 
 .overlay .ime-preedit {
@@ -11075,8 +11124,8 @@ body:not(.doc-loaded) .drop-title {
   }
 
   .search-trigger {
-    flex: 0 0 var(--h-search);
-    width: var(--h-search);
+    flex: 0 0 var(--h-ctl);
+    width: var(--h-ctl);
     padding: 0;
     justify-content: center;
   }
@@ -11230,10 +11279,6 @@ body:not(.doc-loaded) .drop-title {
     height: 2.125rem;
     flex-basis: 2.125rem;
     font-size: var(--icon-md);
-  }
-
-  .dialog-heading h2 {
-    font-size: var(--fs-lg);
   }
 
   .dialog-heading p {
@@ -11525,7 +11570,7 @@ body.phone-mode:has(#appMenuPopover:not([hidden])) .app-menu-bar.is-open {
    with a mouse they keep the dense 36px the rest of this rung's menus use. */
 body.phone-mode .app-menu-bar.is-open .app-menu-button {
   height: auto;
-  min-height: 2.25rem;
+  min-height: var(--h-input);
   padding: 0.375rem 0.75rem;
   border-radius: var(--r-sm);
   line-height: normal;
@@ -13566,8 +13611,6 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
 }
 
 .chart-data-overlay .chart-data-card {
-  width: min(45rem, calc(100vw - 2rem));
-  max-width: none;
 }
 
 .chart-data-body {

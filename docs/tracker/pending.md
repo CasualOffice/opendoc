@@ -97,77 +97,77 @@ currently assigned. Rows stay in their queue order.
 | 106 | OO-001 | P1 | No table of contents, and no table of figures | Open |
 | 107 | OO-005 | P1 | No captions and no cross-references | Open |
 | 108 | UX-050 | P1 | Behaviour gaps against ONLYOFFICE Docs 10.0.0 found by running both editors (`docs/174`) that no lane is building yet: TA-02 select-all cannot clear a document that starts with a table; TA-03 incremental find lands on the last match so Replace hits the wrong one; TA-04 no all-match highlight; TA-05 no list auto-format while typing; TA-06 autocorrect is smart quotes only; TA-07 undo does not restore the selection; TA-08 selected text cannot be dragged; TA-09 double-click-drag does not extend by words; TA-10 caret leaves the viewport horizontally when zoomed; TA-11 HTML paste drops headings and font family silently; TA-12 copied HTML is flat; OL-05 wrap ignores rotation; OL-06 no built-in table styles or style options; OL-07 header/footer "Link to previous" cannot be changed; RC-09 version history is per browser | Open |
-| 112 | UX-027 | P2 | Nothing decides whether a capability gets a dialog, a panel, a popover or a menu row | Open — audit done (#743), fixes to follow |
-| 113 | UX-008 | P2 | `insert.table` is two different products behind one command id | Open |
-| 114 | UX-013 | P2 | Print has no visible chrome | Open |
-| 115 | UX-049 | P2 | Version history still has eight UX gaps a normal user meets, found by the 2026-10-09 audit and not fixed with UX-048 | Open |
-| 116 | UX-023 | P2 | Invalid and mismatched ARIA on popup triggers | Open |
-| 117 | CQ-009 | P2 | Design documents no longer describe the implementation | Re-opened (#542) |
-| 119 | FID-L-15 | P2 | No OpenType feature control, and the `w:kern` threshold is unapplied | Open |
-| 122 | UX-012 | P2 | No Table menu on the menu bar, and the palette hides table commands on complex tables | Open |
-| 124 | UX-024 | P2 | Focus and target-size gaps | Open |
-| 125 | UX-029 | P2 | Symbol, emoji, shape and text-box insertion is a modal panel that hides the document it is inserting into | Open |
-| 126 | FID-L-10 | P2 | Watermarks do not appear | Open |
-| 127 | FID-L-11 | P2 | `nextColumn` is treated as `continuous` | Open |
-| 129 | FID-L-17 | P2 | `w:kinsoku` is cascaded and never consumed | Open |
-| 130 | FID-L-21 | P2 | `rich` and `table-merges` bottom edge diverges ~240 twips from LibreOffice | Open |
-| 131 | FID-L-23 | P2 | The line breaker splits a line that fits its measure exactly, so a cell can wrap one line short of its own intrinsic width | Open |
-| 132 | FID-L-26 | P2 | The line breaker keeps a word that ends past the right margin, so a paragraph comes out a line short of LibreOffice's | Open |
-| 133 | FID-L-27 | P2 | Font-parity residue against LibreOffice on the Calibri/Cambria substitutes: a different Carlito build, short Caladea lines, and an unexplained wrap in the font-families fixture | Open |
-| 134 | FID-L-28 | P2 | A document that declares no font at all is shaped with Roboto here and Carlito by LibreOffice, so it is not oracle-comparable | Open |
-| 136 | OO-008 | P2 | Table formulas are 4 functions over 2 directions; ONLYOFFICE has 18 over 4 | Open |
-| 137 | OO-010 | P2 | No print dialog — no range, duplex, colour/mono, margins or preview | Open |
-| 138 | OO-011 | P2 | No document protection, password, or digital signature | Open |
-| 139 | OO-012 | P2 | No content-control authoring | Open |
-| 140 | OO-024 | P2 | Note options are not authorable: no footnote/endnote conversion, no number format, restart or placement control | Open |
-| 141 | OO-025 | P2 | A named style cannot be created or updated — the gallery applies styles the document already has | Open |
-| 142 | OO-020 | P2 | Ribbon and UI breadth rows worth copying cheaply | Open |
-| 143 | OO-021 | P2 | Specific Home and Insert controls absent here | Open |
-| 144 | FID-L-07b | P2 | The rest of floating tables: nested/running-content positioning, and page splitting | Open |
-| 145 | CQ-008 | P2 | A dependency port is blocked at scale — 910 measured quick-xml 0.42 compile errors | Open (`M-009`) |
-| 146 | FID-R-08 | P2 | Charts, SmartArt and OLE are preserved but never drawn | Open |
-| 147 | OO-007 | P2 | No document comparison or combine | Open |
-| 148 | OO-009 | P2 | No equation editor | Open |
-| 150 | FID-SH-01 | P2 | Text in a non-rectangular shape is laid out in the whole box, not the geometry's text rectangle (`a:rect`) | Open |
-| 151 | FID-SH-04 | P2 | `insertShape` offers only the 22 typed presets, though every one of the 187 now draws | Open |
-| 152 | FID-R-07 | P3 | Sub-part "retention" is not byte-exact | Open |
-| 153 | UX-028 | P3 | Nothing asserts a `class="ms"` icon ligature exists in the self-hosted subset | Open |
-| 154 | UX-039 | P3 | Word's built-in style names are shown in English in every locale | Open |
-| 155 | UX-046 | P3 | The Keyboard shortcuts card is at capacity on a 1280x720 laptop — the next chord pushes it below the fold | Open |
-| 156 | FID-L-19 | P3 | Character-grid snapping is not applied | Open |
-| 157 | OO-016 | P3 | AutoCorrect has no math codes (`\alpha` → α) and no lettered or outline list triggers; list auto-format (HF-321) and dashes, symbols, typos and sentence capitalisation (HF-322) are built | Open |
-| 158 | OO-019 | P3 | No freehand drawing (Draw tab) | Open |
-| 159 | UX-045 | P3 | Ctrl+Alt+N refuses on a document that does not define Heading N; Word instantiates the built-in | Open |
-| 160 | FID-L-20 | P3 | EMF/WMF metafiles and browser-build SVG paint a placeholder | Open |
-| 161 | OO-013 | P3 | No mail merge | Open |
-| 162 | OO-017 | P3 | No plugin or macro surface | Open |
-| 163 | FID-L-24 | P3 | The `docs/44-COVERAGE-GAP-AUDIT.md` Tier-4 long tail is preserved opaque and never semantically modelled | Open |
-| 165 | FID-SH-03 | P3 | ODF export writes a preset or freeform shape as its bounding `draw:rect` | Open |
-| 166 | FID-AT-12 | P3 | An edited save leaves out an `app.xml` statistic the editor refreshed when its current value happens to equal the source's, and names it stale | Open |
-| 167 | FID-AT-13 | P3 | Under forms protection, a section whose `w:formProt` is false admits typing and paragraph edits but refuses a table, a block paste or an object outside a paragraph | Open |
-| 168 | Q2 | — | Decide how to acquire a rights-cleared **Word-produced** corpus | Open |
-| 169 | Q6 | — | Decide the mobile commitment — fund it, or downgrade the support matrix | Open |
-| 170 | Q1 | — | Reconcile the D-6 embed-contract decision with the shipped host contract and the remaining in-process mount | Open — decision recorded in `docs/125` §8; queue closure pending |
-| 171 | Q3 | — | Decide charts and SmartArt scope — render, or preserve-and-disclose | Open |
-| 172 | Q7 | — | Decide the `.docm` policy — currently rejected at open, undecided | Open |
-| 173 | Q8 | — | Decide the six architecture questions `99` §5 still lists as pending, which no ADR has answered | Open (owner decision) |
-| 174 | RM-01 | — | Field evaluation engine — host-provided evaluation context, recalculation, Update field, Toggle field codes | Open |
-| 175 | RM-02 | — | Consolidate the editor-proven commands and errors into a versioned public SDK boundary | Open |
-| 176 | RM-03 | — | Host storage contract, in the opencalc shape | Open |
-| 177 | RM-05 | — | Complete ODT beyond the current bounded subset | Open |
-| 179 | RM-07 | — | Tagged PDF and PDF/A | Open |
-| 181 | FOLD-003 | P2 | A windowed body cannot be folded at all, so folding is withheld on exactly the documents an outline matters most for | Open |
-| 182 | FOLD-005 | P2 | RTF import drops every heading's identity, so the outline panel, folding, the TOC field and Go-to-heading are all empty on an imported `.rtf` | Open |
-| 198 | RM-33 | P2 | Fields: field catalogue and date formats; Update all fields; Operate dropdown form fields; Cached field results wrap like text; Insert text from a file | Open |
-| 200 | RM-35 | P2 | Charts: chart type gallery and change type; Edit the data; Chart elements; Remaining chart families and 3-D | Open |
-| 201 | RM-36 | P2 | Hyphenation: pattern hyphenator honouring zone, limit and caps; Hyphenation control; Optional hyphens shown and honoured | Open |
-| 203 | RM-38 | P2 | Rendering fidelity: line numbers in table cells; Forced paragraph base level and embedding depth; SmartArt drawn from the cached drawing Word stores; VML positioning and custom paths; math typesetting; SVG text in the browser, EMF/WMF; shape effects and text rectangles (with the drawing lane) | Open |
-| 204 | RM-39 | P2 | Editing complex objects: equation editing; Insert SmartArt; edit its text; WordArt and the picture watermark; Edit a VML shape by converting it; Embed fonts on save; drop-cap options; links on pictures | Open |
-| 212 | RM-11 | P3 | No container image, compose file or deployment guide | Open |
-| 213 | RM-12 | P3 | No desktop shell: Tauri and OS host fonts are deliberately after the browser-first work, and still unstarted | Open |
-| 214 | RM-13 | P3 | No worker threading: layout and import run on the main thread, which is what makes every O(document) row a frozen tab | Open |
-| 216 | FOLD-002 | P3 | A positioned table inside a collapsed heading's range is still placed, so a fold leaves one object behind | Open |
-| 217 | FOLD-006 | P3 | The in-body fold chevron can only stay live by walking the document, so it paints while the outline panel is open and not before | Open |
-| 219 | RM-41 | P3 | Compare and versions: compare writes a merged document of tracked changes; Show what changed between two versions; Combine documents | Open |
-| 221 | RM-43 | P3 | View and navigation: ruler, status bar and formatting marks toggles; Regular-expression search; Several pages side by side; dark page; Ruler in the chosen unit; Rebind keyboard shortcuts | Open |
-| 222 | RM-44 | P3 | Print and export: print preview and options; print the selection; RTF writer; PDF/A; EPUB | Open |
+| 116 | UX-027 | P2 | Nothing decides whether a capability gets a dialog, a panel, a popover or a menu row | Open — audit done (#743), fixes to follow |
+| 117 | UX-008 | P2 | `insert.table` is two different products behind one command id | Open |
+| 118 | UX-013 | P2 | Print has no visible chrome | Open |
+| 119 | UX-049 | P2 | Version history still has eight UX gaps a normal user meets, found by the 2026-10-09 audit and not fixed with UX-048 | Open |
+| 120 | UX-023 | P2 | Invalid and mismatched ARIA on popup triggers | Open |
+| 121 | CQ-009 | P2 | Design documents no longer describe the implementation | Re-opened (#542) |
+| 123 | FID-L-15 | P2 | No OpenType feature control, and the `w:kern` threshold is unapplied | Open |
+| 126 | UX-012 | P2 | No Table menu on the menu bar, and the palette hides table commands on complex tables | Open |
+| 128 | UX-024 | P2 | Focus and target-size gaps | Open |
+| 129 | UX-029 | P2 | Symbol, emoji, shape and text-box insertion is a modal panel that hides the document it is inserting into | Open |
+| 130 | FID-L-10 | P2 | Watermarks do not appear | Open |
+| 131 | FID-L-11 | P2 | `nextColumn` is treated as `continuous` | Open |
+| 133 | FID-L-17 | P2 | `w:kinsoku` is cascaded and never consumed | Open |
+| 134 | FID-L-21 | P2 | `rich` and `table-merges` bottom edge diverges ~240 twips from LibreOffice | Open |
+| 135 | FID-L-23 | P2 | The line breaker splits a line that fits its measure exactly, so a cell can wrap one line short of its own intrinsic width | Open |
+| 136 | FID-L-26 | P2 | The line breaker keeps a word that ends past the right margin, so a paragraph comes out a line short of LibreOffice's | Open |
+| 137 | FID-L-27 | P2 | Font-parity residue against LibreOffice on the Calibri/Cambria substitutes: a different Carlito build, short Caladea lines, and an unexplained wrap in the font-families fixture | Open |
+| 138 | FID-L-28 | P2 | A document that declares no font at all is shaped with Roboto here and Carlito by LibreOffice, so it is not oracle-comparable | Open |
+| 140 | OO-008 | P2 | Table formulas are 4 functions over 2 directions; ONLYOFFICE has 18 over 4 | Open |
+| 141 | OO-010 | P2 | No print dialog — no range, duplex, colour/mono, margins or preview | Open |
+| 142 | OO-011 | P2 | No document protection, password, or digital signature | Open |
+| 143 | OO-012 | P2 | No content-control authoring | Open |
+| 144 | OO-024 | P2 | Note options are not authorable: no footnote/endnote conversion, no number format, restart or placement control | Open |
+| 145 | OO-025 | P2 | A named style cannot be created or updated — the gallery applies styles the document already has | Open |
+| 146 | OO-020 | P2 | Ribbon and UI breadth rows worth copying cheaply | Open |
+| 147 | OO-021 | P2 | Specific Home and Insert controls absent here | Open |
+| 148 | FID-L-07b | P2 | The rest of floating tables: nested/running-content positioning, and page splitting | Open |
+| 149 | CQ-008 | P2 | A dependency port is blocked at scale — 910 measured quick-xml 0.42 compile errors | Open (`M-009`) |
+| 150 | FID-R-08 | P2 | Charts, SmartArt and OLE are preserved but never drawn | Open |
+| 151 | OO-007 | P2 | No document comparison or combine | Open |
+| 152 | OO-009 | P2 | No equation editor | Open |
+| 154 | FID-SH-01 | P2 | Text in a non-rectangular shape is laid out in the whole box, not the geometry's text rectangle (`a:rect`) | Open |
+| 155 | FID-SH-04 | P2 | `insertShape` offers only the 22 typed presets, though every one of the 187 now draws | Open |
+| 156 | FID-R-07 | P3 | Sub-part "retention" is not byte-exact | Open |
+| 157 | UX-028 | P3 | Nothing asserts a `class="ms"` icon ligature exists in the self-hosted subset | Open |
+| 158 | UX-039 | P3 | Word's built-in style names are shown in English in every locale | Open |
+| 159 | UX-046 | P3 | The Keyboard shortcuts card is at capacity on a 1280x720 laptop — the next chord pushes it below the fold | Open |
+| 160 | FID-L-19 | P3 | Character-grid snapping is not applied | Open |
+| 161 | OO-016 | P3 | AutoCorrect has no math codes (`\alpha` → α) and no lettered or outline list triggers; list auto-format (HF-321) and dashes, symbols, typos and sentence capitalisation (HF-322) are built | Open |
+| 162 | OO-019 | P3 | No freehand drawing (Draw tab) | Open |
+| 163 | UX-045 | P3 | Ctrl+Alt+N refuses on a document that does not define Heading N; Word instantiates the built-in | Open |
+| 164 | FID-L-20 | P3 | EMF/WMF metafiles and browser-build SVG paint a placeholder | Open |
+| 165 | OO-013 | P3 | No mail merge | Open |
+| 166 | OO-017 | P3 | No plugin or macro surface | Open |
+| 167 | FID-L-24 | P3 | The `docs/44-COVERAGE-GAP-AUDIT.md` Tier-4 long tail is preserved opaque and never semantically modelled | Open |
+| 169 | FID-SH-03 | P3 | ODF export writes a preset or freeform shape as its bounding `draw:rect` | Open |
+| 170 | FID-AT-12 | P3 | An edited save leaves out an `app.xml` statistic the editor refreshed when its current value happens to equal the source's, and names it stale | Open |
+| 171 | FID-AT-13 | P3 | Under forms protection, a section whose `w:formProt` is false admits typing and paragraph edits but refuses a table, a block paste or an object outside a paragraph | Open |
+| 172 | Q2 | — | Decide how to acquire a rights-cleared **Word-produced** corpus | Open |
+| 173 | Q6 | — | Decide the mobile commitment — fund it, or downgrade the support matrix | Open |
+| 174 | Q1 | — | Reconcile the D-6 embed-contract decision with the shipped host contract and the remaining in-process mount | Open — decision recorded in `docs/125` §8; queue closure pending |
+| 175 | Q3 | — | Decide charts and SmartArt scope — render, or preserve-and-disclose | Open |
+| 176 | Q7 | — | Decide the `.docm` policy — currently rejected at open, undecided | Open |
+| 177 | Q8 | — | Decide the six architecture questions `99` §5 still lists as pending, which no ADR has answered | Open (owner decision) |
+| 178 | RM-01 | — | Field evaluation engine — host-provided evaluation context, recalculation, Update field, Toggle field codes | Open |
+| 179 | RM-02 | — | Consolidate the editor-proven commands and errors into a versioned public SDK boundary | Open |
+| 180 | RM-03 | — | Host storage contract, in the opencalc shape | Open |
+| 181 | RM-05 | — | Complete ODT beyond the current bounded subset | Open |
+| 183 | RM-07 | — | Tagged PDF and PDF/A | Open |
+| 185 | FOLD-003 | P2 | A windowed body cannot be folded at all, so folding is withheld on exactly the documents an outline matters most for | Open |
+| 186 | FOLD-005 | P2 | RTF import drops every heading's identity, so the outline panel, folding, the TOC field and Go-to-heading are all empty on an imported `.rtf` | Open |
+| 202 | RM-33 | P2 | Fields: field catalogue and date formats; Update all fields; Operate dropdown form fields; Cached field results wrap like text; Insert text from a file | Open |
+| 204 | RM-35 | P2 | Charts: chart type gallery and change type; Edit the data; Chart elements; Remaining chart families and 3-D | Open |
+| 205 | RM-36 | P2 | Hyphenation: pattern hyphenator honouring zone, limit and caps; Hyphenation control; Optional hyphens shown and honoured | Open |
+| 207 | RM-38 | P2 | Rendering fidelity: line numbers in table cells; Forced paragraph base level and embedding depth; SmartArt drawn from the cached drawing Word stores; VML positioning and custom paths; math typesetting; SVG text in the browser, EMF/WMF; shape effects and text rectangles (with the drawing lane) | Open |
+| 208 | RM-39 | P2 | Editing complex objects: equation editing; Insert SmartArt; edit its text; WordArt and the picture watermark; Edit a VML shape by converting it; Embed fonts on save; drop-cap options; links on pictures | Open |
+| 216 | RM-11 | P3 | No container image, compose file or deployment guide | Open |
+| 217 | RM-12 | P3 | No desktop shell: Tauri and OS host fonts are deliberately after the browser-first work, and still unstarted | Open |
+| 218 | RM-13 | P3 | No worker threading: layout and import run on the main thread, which is what makes every O(document) row a frozen tab | Open |
+| 220 | FOLD-002 | P3 | A positioned table inside a collapsed heading's range is still placed, so a fold leaves one object behind | Open |
+| 221 | FOLD-006 | P3 | The in-body fold chevron can only stay live by walking the document, so it paints while the outline panel is open and not before | Open |
+| 223 | RM-41 | P3 | Compare and versions: compare writes a merged document of tracked changes; Show what changed between two versions; Combine documents | Open |
+| 225 | RM-43 | P3 | View and navigation: ruler, status bar and formatting marks toggles; Regular-expression search; Several pages side by side; dark page; Ruler in the chosen unit; Rebind keyboard shortcuts | Open |
+| 226 | RM-44 | P3 | Print and export: print preview and options; print the selection; RTF writer; PDF/A; EPUB | Open |

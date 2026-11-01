@@ -23,6 +23,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
+import { declarations, splitTop } from "./css_regions.mjs";
+
 const css = readFileSync(new URL("../src/style.css", import.meta.url), "utf8");
 
 /** EVERY rule body whose selector list matches `selector`, in source order.
@@ -203,31 +205,77 @@ test("the review column reads the panel pair rather than a literal that matches 
   }
 });
 
-test("a dialog that shrank its contents is allowed to shrink", () => {
-  // Page setup's preview and spinners were cut to their content; if the card
-  // stays pinned to the "wide" constant the dialog is still as big and no more
-  // useful, which is the complaint in one sentence.
-  for (const selector of [
-    ".field-dialog",
-    ".about-dialog",
-    ".bookmark-dialog",
-    // Desktop-qualified so the phone bottom-sheet rung, which is (0,2,0), is
-    // not outranked by an ID selector (HF-265 D5).
-    "body:not(.phone-mode) #splitCellDialog .dialog-card",
-    "body:not(.phone-mode) #confirmDialog .dialog-card",
-  ]) {
-    const body = rule(selector);
-    assert.match(
-      body,
-      /width:\s*fit-content\s*;/,
-      `${selector} must be sized by its content, not by a width constant`,
-    );
-    assert.match(
-      body,
-      /max-inline-size:.*(ch|100%)/,
-      `${selector} needs a ceiling so one long label cannot stretch it back out`,
-    );
+// THREE WIDTHS (UX-053, docs/184 D1, approved by the owner 2026-11-01). The
+// audit measured 51 dialogs in 16 widths: four tokens, a dozen `ch` ceilings
+// and nine `fit-content` cards, each tuned to its own content, so no two
+// dialogs lined up and the eye re-measured every one. The approved anatomy has
+// three rungs — S 25rem, M 35rem, L 45rem — and a card picks one by class
+// (`.dialog-card` is M, `.dialog-card-compact` S, `.dialog-card-wide` L).
+//
+// So no rule whose SUBJECT is a dialog card may state a width of its own. The
+// subject list is derived, not maintained: every class that sits beside
+// `dialog-card` on an element in `editor.html` or in a module that builds one.
+// The only values allowed are a rung token, or `100%`/`none`/`auto` (the phone
+// bottom sheet and the File page, which lay a card out full-width).
+const html = readFileSync(new URL("../editor.html", import.meta.url), "utf8");
+const modules = ["chart_data.mjs", "pdf_import.mjs", "compat_findings.mjs"].map((m) =>
+  readFileSync(new URL(`../src/${m}`, import.meta.url), "utf8"),
+);
+
+/** The classes that name a dialog CARD. */
+function cardClasses() {
+  const names = new Set(["dialog-card"]);
+  for (const text of [html, ...modules]) {
+    for (const m of text.matchAll(/class(?:Name)?\s*(?:=|:)\s*"(dialog-card(?:\s[^"]*)?)"/g)) {
+      for (const c of m[1].split(/\s+/)) if (c) names.add(c);
+    }
   }
+  return names;
+}
+
+const WIDTH_PROPS = /^(?:width|max-width|min-width|inline-size|max-inline-size|min-inline-size)$/;
+const RUNG = /^(?:min\(var\(--dialog-width-[sml]\), 100%\)|100%|none|auto|0)$/;
+
+/** Offending width declarations on a dialog card in `source`. */
+function cardWidthOffenders(source, classes) {
+  const out = [];
+  for (const d of declarations(source)) {
+    if (!WIDTH_PROPS.test(d.property)) continue;
+    for (const selector of splitTop(d.selector, ",")) {
+      const parts = splitTop(selector.trim(), " >+~").filter((p) => p.trim());
+      const subject = parts[parts.length - 1] ?? "";
+      const named = [...subject.matchAll(/\.([\w-]+)/g)].map((m) => m[1]);
+      if (!named.some((c) => classes.has(c))) continue;
+      if (!RUNG.test(d.value)) out.push(`style.css:${d.line} ${selector.trim()} { ${d.property}: ${d.value} }`);
+    }
+  }
+  return out;
+}
+
+test("a dialog card is one of three widths, chosen by class", () => {
+  const classes = cardClasses();
+  assert.ok(classes.size > 30, `expected the dialog cards' classes, found ${classes.size}`);
+  const stated = { s: "25rem", m: "35rem", l: "45rem" };
+  for (const [rung, value] of Object.entries(stated)) {
+    assert.match(css, new RegExp(`--dialog-width-${rung}:\\s*${value};`));
+  }
+  const bad = cardWidthOffenders(css, classes);
+  assert.deepEqual(
+    bad,
+    [],
+    "a dialog card takes its width from `.dialog-card` (M), `.dialog-card-compact` (S) or " +
+      "`.dialog-card-wide` (L) and from nothing else (docs/184 D1):\n  " +
+      bad.join("\n  "),
+  );
+  // The mutation, every run: the pre-v2 spelling on a real card is caught, and
+  // a width on something INSIDE a card is not.
+  const mutated = cardWidthOffenders(
+    ".watermark-dialog { width: fit-content; max-inline-size: min(100%, 56ch); }\n" +
+      "body:not(.phone-mode) #splitCellDialog .dialog-card { width: fit-content; }\n" +
+      ".watermark-dialog .dialog-field { width: 3rem; }",
+    classes,
+  );
+  assert.equal(mutated.length, 3, mutated.join("\n"));
 });
 
 // `min()` takes <length-percentage> terms. `fit-content` is a sizing KEYWORD,
@@ -258,7 +306,7 @@ test("a dialog that shrank its contents is allowed to shrink", () => {
 // The ratchet arms the rule for everything else immediately: no NEW card can be
 // written this way. A ceiling nobody lowers stops being a ratchet and becomes a
 // comment, so the test also fails if the count drops below it.
-const MIN_FIT_CONTENT_RATCHET = 1;
+const MIN_FIT_CONTENT_RATCHET = 0;
 
 test("no new card asks for `min(fit-content, …)`, which is not valid CSS", () => {
   // Comments first: the rules above explain this defect in prose, and a guard

@@ -137,7 +137,7 @@ test("the scale tokens are declared once, at the values the design states", () =
   const css = read("style.css").replace(/\/\*[\s\S]*?\*\//g, "");
   const value = (name) => css.match(new RegExp(`\\n\\s*${name}:\\s*([^;]+);`))?.[1]?.trim();
   const STATED = {
-    "--fs-xs": "0.6875rem",
+    "--fs-xs": "0.75rem",
     "--fs-sm": "0.75rem",
     "--fs-md": "0.8125rem",
     "--fs-lg": "0.9375rem",
@@ -156,6 +156,7 @@ test("the scale tokens are declared once, at the values the design states", () =
     "--h-tool": "1.75rem",
     "--h-ctl": "2rem",
     "--h-touch": "2.75rem",
+    "--h-input": "2.25rem",
   };
   for (const [name, expected] of Object.entries(STATED)) {
     assert.equal(value(name), expected, `${name} is the design's ${expected}`);
@@ -196,11 +197,20 @@ test("the guard catches each kind of drift, and spares the document and previews
 // on tokens and are not read.
 const SPACING = /^(?:padding|margin|gap|row-gap|column-gap)(?:-[a-z-]+)?$/;
 const HEIGHT = /^(?:height|min-height|block-size|min-block-size)$/;
-const HEIGHT_RUNGS = { "1.5rem": "--h-dense", "1.75rem": "--h-tool", "2rem": "--h-ctl", "2.75rem": "--h-touch" };
+const HEIGHT_RUNGS = {
+  "1.5rem": "--h-dense",
+  "1.75rem": "--h-tool",
+  "2rem": "--h-ctl",
+  "2.25rem": "--h-input",
+  "2.75rem": "--h-touch",
+};
 /** A height equal to a rung that is NOT a control's height, each with why. */
 const NOT_CONTROLS = [
   // The About dialog's customer logo is a 28px image, sized as artwork.
   [/^\.about-customer-mark$/, "logo artwork"],
+  // A dialog's heading icon is a 36px tile of artwork beside the title, not a control.
+  [/^\.dialog-heading-icon$/, "icon tile"],
+  [/^\.about-mark$/, "product mark artwork"],
 ];
 /** The pre-v2 names `style.css` still declares, ONLY as aliases for the plugin
  *  contract (`PLUGIN_TOKENS`, `docs/183`). No editor rule may read one. */
@@ -213,6 +223,8 @@ const PLUGIN_ALIASES = [
   "--fs-small",
   "--fs-caption",
   "--shadow-popover",
+  "--h-field",
+  "--h-search",
 ];
 const ALIAS_READ = new RegExp(`var\\(\\s*(?:${PLUGIN_ALIASES.join("|")})\\s*[,)]`);
 

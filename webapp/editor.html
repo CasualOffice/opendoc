@@ -410,7 +410,7 @@
          other dialog here uses — which is also the shell the File page already
          knows how to borrow. -->
     <div id="settingsPanel" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="settingsTitle" aria-describedby="settingsDescription">
-      <section class="dialog-card settings-dialog">
+      <section class="dialog-card dialog-card-wide settings-dialog">
         <header class="dialog-head">
           <div class="dialog-heading">
                         <div>
@@ -1461,7 +1461,7 @@
          registry and from `NAVIGATION_SHORTCUTS`, so a shortcut cannot be listed
          here without existing, or exist without being listed. -->
     <div id="shortcutsDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="shortcutsTitle" aria-describedby="shortcutsDescription">
-      <section class="dialog-card shortcuts-dialog">
+      <section class="dialog-card dialog-card-wide shortcuts-dialog">
         <header class="dialog-head">
           <div class="dialog-heading">
                         <div>
@@ -1579,7 +1579,7 @@
          (`content_controls.mjs`). A dialog rather than Word's in-place list, so it is
          keyboard- and screen-reader-operable on every surface, a phone included. -->
     <div id="controlFillDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="controlFillTitle">
-      <section class="dialog-card control-fill-dialog">
+      <section class="dialog-card dialog-card-compact control-fill-dialog">
         <header class="dialog-head">
           <div class="dialog-heading">
             <div>
@@ -1631,7 +1631,7 @@
     </div>
 
     <div id="wordCountDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="wordCountTitle" aria-describedby="wordCountScope">
-      <section class="dialog-card word-count-dialog">
+      <section class="dialog-card dialog-card-compact word-count-dialog">
         <header class="dialog-head">
           <h2 data-i18n="wordCountDialog.title" id="wordCountTitle">Word count</h2>
           <button data-word-count-dismiss data-i18n-title="wordCountDialog.close.title" data-i18n-label="wordCountDialog.close.label" id="wordCountClose" type="button" class="dialog-close" title="Close" aria-label="Close word count">
@@ -1689,7 +1689,7 @@
         </div>
         <footer class="dialog-foot">
           <div class="dialog-actions">
-            <button data-i18n="dictionaryDialog.clear" id="dictionaryClear" type="button" class="dialog-button">Delete all</button>
+            <button data-i18n="dictionaryDialog.clear" id="dictionaryClear" type="button" class="dialog-button dialog-button-utility">Delete all</button>
             <button data-dictionary-dismiss data-i18n="dictionaryDialog.done" id="dictionaryDone" type="button" class="dialog-button dialog-button-primary">Close</button>
           </div>
         </footer>
@@ -1703,7 +1703,7 @@
          first-letter exceptions, both lists per language. Changes apply at once,
          as ONLYOFFICE's do, so the dialog has Close and not OK/Cancel. -->
     <div id="autoCorrectDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="autoCorrectTitle" aria-describedby="autoCorrectDescription">
-      <section class="dialog-card autocorrect-dialog">
+      <section class="dialog-card dialog-card-wide autocorrect-dialog">
         <header class="dialog-head">
           <div class="dialog-heading">
             <div>
@@ -1793,7 +1793,7 @@
       </section>
     </div>
     <div id="aboutDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="aboutTitle" aria-describedby="aboutDescription">
-      <section class="dialog-card about-dialog">
+      <section class="dialog-card dialog-card-compact about-dialog">
         <header class="dialog-head">
           <div class="dialog-heading">
             <img class="about-mark" src="./opendoc-mark.svg" alt="" width="36" height="36" />
@@ -3286,7 +3286,7 @@
           </div>
           <p id="aiProviderStatus" class="dialog-field-note" role="status" aria-live="polite"></p>
         </div>
-        <footer class="dialog-foot"><button data-i18n="aiProviderDialog.forget" id="aiProviderForget" type="button" class="dialog-button">Forget</button><div class="dialog-actions"><button data-i18n="aiProviderDialog.test" id="aiProviderTest" type="button" class="dialog-button">Test connection</button><button data-i18n="aiProviderDialog.save" id="aiProviderSave" type="button" class="dialog-button dialog-button-primary">Save</button></div></footer>
+        <footer class="dialog-foot"><div class="dialog-actions"><button data-i18n="aiProviderDialog.forget" id="aiProviderForget" type="button" class="dialog-button dialog-button-utility">Forget</button><button data-i18n="aiProviderDialog.test" id="aiProviderTest" type="button" class="dialog-button dialog-button-utility">Test connection</button><button data-i18n="aiProviderDialog.save" id="aiProviderSave" type="button" class="dialog-button dialog-button-primary">Save</button></div></footer>
       </section>
     </div>
 
@@ -3442,7 +3442,7 @@
         <footer class="dialog-foot">
           <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
-            <button data-i18n="noteSettings.convert" id="noteSettingsConvert" type="button" class="dialog-button">Convert…</button>
+            <button data-i18n="noteSettings.convert" id="noteSettingsConvert" type="button" class="dialog-button dialog-button-utility">Convert…</button>
             <button data-i18n="watermarkDialog.cancel" id="noteSettingsCancel" type="button" class="dialog-button">Cancel</button>
             <button data-i18n="watermarkDialog.apply" id="noteSettingsApply" type="button" class="dialog-button dialog-button-primary">Apply</button>
           </div>
@@ -3552,7 +3552,7 @@
           <div class="dialog-actions">
             <!-- Word's Stop Protection, as its own button while a restriction is
                  in force; the "No restriction" row above reaches the same state. -->
-            <button data-i18n="protect.stop" id="restrictEditingStop" type="button" class="dialog-button" hidden>Stop protection</button>
+            <button data-i18n="protect.stop" id="restrictEditingStop" type="button" class="dialog-button dialog-button-utility" hidden>Stop protection</button>
             <button data-i18n="watermarkDialog.cancel" id="restrictEditingCancel" type="button" class="dialog-button">Cancel</button>
             <button data-i18n="watermarkDialog.apply" id="restrictEditingApply" type="button" class="dialog-button dialog-button-primary">Apply</button>
           </div>
