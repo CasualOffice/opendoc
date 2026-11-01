@@ -14775,3 +14775,62 @@ body:not(.phone-mode) .workarea > .side-panel.plugin-panel {
   padding-top: var(--space-5);
   margin-top: var(--space-5);
 }
+
+/* Borders and shading (approved design D8): presets as one segmented row,
+   the preview beside a 2×2 grid of pen settings, shading as one row with its
+   No fill toggle; every field the shared control height, colour inputs
+   full-width swatches like Page setup's. */
+#tableBordersDialog .dialog-card { width: min(var(--dialog-width-m), 100%); }
+#tableBordersDialog .table-borders-presets {
+  display: inline-flex;
+  gap: 0.125rem;
+  padding: 0.125rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunken, var(--hover));
+  inline-size: max-content;
+}
+#tableBordersDialog .table-borders-presets .chip-btn {
+  block-size: var(--h-ctl);
+  min-inline-size: 4.5rem;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  font-size: var(--fs-md);
+}
+#tableBordersDialog .table-borders-presets .chip-btn[aria-pressed="true"] {
+  background: var(--surface);
+  box-shadow: var(--e1);
+}
+#tableBordersDialog .table-borders-layout {
+  display: grid;
+  grid-template-columns: 10rem minmax(0, 1fr);
+  gap: var(--dlg-gap);
+  align-items: start;
+}
+#tableBordersDialog .table-borders-pen {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--dlg-gap-in);
+}
+#tableBordersDialog .table-borders-pen .dialog-select { inline-size: 100%; }
+#tableBordersDialog input[type="color"] {
+  inline-size: 100%;
+  block-size: var(--h-input);
+  padding: 0.125rem;
+  border: 1px solid var(--line-control, var(--line));
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+#tableBordersDialog .dialog-body > .dialog-field-grid {
+  display: grid;
+  grid-template-columns: 10rem auto;
+  gap: var(--dlg-gap);
+  align-items: end;
+  padding-top: var(--dlg-gap-in);
+  border-top: 1px solid var(--line);
+}
+#tableBordersDialog .dialog-body > .dialog-field-grid .dialog-check { min-block-size: var(--h-input); align-items: center; }
+@media (max-width: 30rem) {
+  #tableBordersDialog .table-borders-layout { grid-template-columns: minmax(0, 1fr); }
+}
