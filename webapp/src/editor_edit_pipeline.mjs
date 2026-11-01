@@ -3,6 +3,7 @@
 // Suggesting. Moved out of `main.js` unchanged (docs/177); it reaches the
 // rest of the editor only through the context `ed`.
 import { readRevision } from "./edit_errors.mjs";
+import { createImageTextEdit } from "./image_text_edit.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -195,8 +196,14 @@ export function createEditPipeline(ed) {
 
 
   /** The column a run of vertical caret moves is aiming at (HF-164). */
+  // Editing the text in a picture (`docs/182` §20b): before a text edit or a
+  // format at the caret, an unedited image-text line box is made editable
+  // (its ink erased under it, its text painted), as its own undo step.
+  const imageText = createImageTextEdit(ed, { applyEditResult });
+  const prepareImageTextEdit = () => imageText.prepare();
+
   return {
-    applyEditResult, blockUntrackedInSuggesting, breakTypingSession, paintArrival,
-    typingSessionForKey,
+    applyEditResult, blockUntrackedInSuggesting, breakTypingSession, imageText, paintArrival,
+    prepareImageTextEdit, typingSessionForKey,
   };
 }

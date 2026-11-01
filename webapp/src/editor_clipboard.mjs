@@ -34,7 +34,7 @@ export function createClipboard(ed) {
     }
     await ed.runEdit(() => ed.reviewMode === "suggesting" && anchor.node === focus.node
       ? ed.doc.suggestDelete(anchor.node, Math.min(anchor.offset, focus.offset), Math.max(anchor.offset, focus.offset), undefined, new Date().toISOString())
-      : ed.doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset));
+      : ed.doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset), { text: true });
   }
 
   async function pasteText(text, actionKind = "paste") {
@@ -58,14 +58,14 @@ export function createClipboard(ed) {
       const end = Math.max(anchor.offset, focus.offset);
       await ed.runEdit(() => end > start
         ? ed.doc.suggestReplace(anchor.node, start, end, text, undefined, new Date().toISOString())
-        : ed.doc.suggestInsert(anchor.node, start, text, undefined, new Date().toISOString()));
+        : ed.doc.suggestInsert(anchor.node, start, text, undefined, new Date().toISOString()), { text: true });
       return;
     }
     if (ed.reviewMode === "suggesting") {
       ed.setStatus("Multi-paragraph paste cannot be tracked yet; switch to Editing to paste it", "error");
       return;
     }
-    const landed = await ed.runEdit(() => ed.doc.insertPlainTextAs(anchor.node, anchor.offset, focus.node, focus.offset, text, actionKind));
+    const landed = await ed.runEdit(() => ed.doc.insertPlainTextAs(anchor.node, anchor.offset, focus.node, focus.offset, text, actionKind), { text: true });
     // A pasted lone address becomes a link, as its own undo step (RM-19).
     if (landed && actionKind === "paste") await ed.autoCorrect.afterPaste(text);
   }
@@ -184,7 +184,7 @@ export function createClipboard(ed) {
     const { anchor, focus } = ed.selection;
     await ed.runEdit(() =>
       ed.doc.pasteRichRuns(anchor.node, anchor.offset, focus.node, focus.offset, runsJson),
-    );
+    { text: true });
   }
 
   /** Tries to paste `html` as a rich fragment: the internal round-trip marker

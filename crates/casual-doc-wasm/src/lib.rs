@@ -338,6 +338,9 @@ mod print_selection;
 // Insert ▸ Text from file: another document merged at the caret (`docs/153` page.textFromFile).
 mod insert_file;
 
+// Edit the text in a picture: a scan's line boxes and the patch an edit erases the ink with (`docs/182` §20b).
+mod image_text;
+
 use window::BodyLayout;
 use window::WindowedBody;
 
@@ -949,6 +952,8 @@ enum HistoryKind {
     ObjectAltText,
     ObjectDelete,
     ObjectInsert,
+    /// Edit or restore the text in a picture (`image_text`, `docs/182` §20b).
+    ImageText,
     ChartInsert,
     DocumentProperties,
     PageSetup,
@@ -989,6 +994,7 @@ impl HistoryKind {
             Self::ObjectCopy => "Copy object",
             Self::ObjectCrop => "Crop",
             Self::ObjectAltText => "Alt text",
+            Self::ImageText => "Edit text in picture",
             Self::ObjectDelete => "Delete object",
             Self::ObjectInsert => "Insert image",
             // Its own label, not `ObjectInsert`'s: that one reads "Insert image", and an

@@ -694,6 +694,10 @@ fn repeated_objects(
     let mut seen: BTreeMap<ObjectKey, (BTreeSet<usize>, Vec<usize>)> = BTreeMap::new();
     for (i, e) in elements.iter().enumerate() {
         *work += 1;
+        // A picture with line boxes over it is the text of its page.
+        if !e.labels.is_empty() && matches!(e.kind, EKind::Image(_)) {
+            continue;
+        }
         let Some(page) = pages.get(e.page) else {
             continue;
         };
@@ -1429,6 +1433,7 @@ fn furniture(
     state: &PdfSourceState,
     findings: &mut Findings,
     work: &mut u64,
+    line_boxes: bool,
 ) -> (Vec<BTreeSet<usize>>, Furniture) {
     let pages = state.pages.len();
     let mut out = vec![BTreeSet::new(); pages];
@@ -1454,6 +1459,11 @@ fn furniture(
                 .iter()
                 .any(|&(x0, y0, x1, y1)| cx > x0 && cx < x1 && cy > y0 && cy < y1)
             {
+                continue;
+            }
+            // Text read from a scan stays over the scan, in its line boxes: a
+            // running head printed on every scanned page is in the picture.
+            if line_boxes && optical_block(bb) {
                 continue;
             }
             let top_band = bb.bottom <= FURNITURE_BAND * page.height * 1.5
@@ -1745,8 +1755,34 @@ fn attach_markers(elements: &mut [Vec<ILine>], work: &mut u64) -> u32 {
     attached
 }
 
-/// Reflows the import. Pure: reads `state` and `resources`, returns a new
-/// document. O(document log document).
+/// What becomes of text OCR read out of a picture (`docs/182` §20b, the
+/// owner's decision of 2026-11-01).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ScanText {
+    /// The picture stays where it was, and each line read from it is an
+    /// editable line box over its ink, its text laid out but not painted
+    /// (`RunProperties::no_text_fill`): the page shows the picture's own
+    /// pixels, a misread shows only once that line is edited, and editing a
+    /// line erases the ink under it (`casual_doc_render::image_text`). A
+    /// scanned page is its picture on a page of its own, its lines over it.
+    /// Reported `pdf.import.image_text_boxes`.
+    #[default]
+    LineBoxes,
+    /// The text reflows as the document's own paragraphs and a scanned page's
+    /// picture is left to the exact layout (`pdf.import.scan_replaced_by_text`):
+    /// the behaviour before 2026-11-01, kept as an opt-in.
+    Reflow,
+}
+
+/// How [`build_with`] reconstructs. `Default` is what every host opens.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ReflowOptions {
+    /// What becomes of text read from pictures.
+    pub scan_text: ScanText,
+}
+
+/// Reflows the import with the default [`ReflowOptions`]. Pure: reads
+/// `state` and `resources`, returns a new document. O(document log document).
 ///
 /// # Errors
 ///
@@ -1757,6 +1793,21 @@ pub fn build(
     resources: &BTreeMap<String, Vec<u8>>,
     namespace: u64,
 ) -> Result<Reflowed, PdfImportError> {
+    build_with(state, resources, namespace, ReflowOptions::default())
+}
+
+/// [`build`] with explicit options. O(document log document).
+///
+/// # Errors
+///
+/// As [`build`].
+pub fn build_with(
+    state: &PdfSourceState,
+    resources: &BTreeMap<String, Vec<u8>>,
+    namespace: u64,
+    options: ReflowOptions,
+) -> Result<Reflowed, PdfImportError> {
+    let line_boxes = options.scan_text == ScanText::LineBoxes;
     let mut findings = Findings::default();
     let mut work = ReflowWork::default();
     // The watermark leaves the pages first: its stamps are no text and its
@@ -1764,7 +1815,8 @@ pub fn build(
     let (state, found) = watermark::extract(state, &mut findings);
     let state: &PdfSourceState = &state;
     let key = key_of(state);
-    let (furniture_blocks, mut furniture) = furniture(state, &mut findings, &mut work.furniture);
+    let (furniture_blocks, mut furniture) =
+        furniture(state, &mut findings, &mut work.furniture, line_boxes);
 
     // Structure leaves by (page, mcid), when tagged.
     let mut leaves: BTreeMap<(usize, i32), usize> = BTreeMap::new();
@@ -1823,6 +1875,7 @@ pub fn build(
     };
     let mut masks = 0;
     let mut scans_replaced = 0;
+    let mut image_lines = 0;
     let mut vectors_placed = 0;
     let mut floats = 0;
     let mut rotated = 0;
@@ -2249,12 +2302,52 @@ pub fn build(
                 labelled.push((figure, lines, pictures));
             }
         }
+        // A picture with text OCR read from it keeps that text over it, one
+        // line box per line (`ScanText::LineBoxes`): before the floats are
+        // placed, so no float hangs on a line that leaves the flow.
+        let mut loose = loose;
+        let mut image_texts: Vec<(SourceImage, Vec<ILine>)> = Vec::new();
+        if line_boxes {
+            let mut rest = Vec::with_capacity(loose.len());
+            for image in loose {
+                work.graphics += elements.len() as u64;
+                let lines = claim_optical_lines(&image, &elements, &mut taken);
+                if lines.is_empty() {
+                    rest.push(image);
+                } else {
+                    image_texts.push((image, lines));
+                }
+            }
+            loose = rest;
+        }
         let text_rects: Vec<(usize, Rect)> = elements
             .iter()
             .enumerate()
             .filter(|(i, e)| matches!(e.kind, EKind::Text(_)) && !taken[*i])
             .map(|(i, e)| (i, e.rect))
             .collect();
+        for (image, lines) in image_texts {
+            image_lines += lines.len() as u32;
+            let b = image.bounds;
+            elements.push(Element {
+                page: page.index,
+                rect: Rect {
+                    x0: b.x0,
+                    y0: b.y0,
+                    x1: b.x1,
+                    y1: b.y1,
+                },
+                kind: EKind::Image(image),
+                leaf: None,
+                struct_element: None,
+                role: None,
+                region: None,
+                lineage: Vec::new(),
+                floats: Vec::new(),
+                labels: lines,
+                pictures: Vec::new(),
+            });
+        }
         for (figure, lines, pictures) in labelled {
             let b = figure.bounds;
             vectors_placed += 1;
@@ -2318,7 +2411,7 @@ pub fn build(
                             .all(|c| c.style.font == crate::ocr::OCR_FONT),
                         _ => false,
                     });
-                if over.is_some() && optical {
+                if over.is_some() && optical && !line_boxes {
                     scans_replaced += 1;
                     continue;
                 }
@@ -2589,6 +2682,7 @@ pub fn build(
         scans_replaced,
         None,
     );
+    findings.record(report::IMAGE_TEXT_BOXES, Outcome::Mapped, image_lines, None);
     findings.record(report::VECTOR_PLACED, Outcome::Mapped, vectors_placed, None);
     findings.record(report::FLOAT_INFERRED, Outcome::Mapped, floats, None);
     findings.record(report::TEXT_ROTATED, Outcome::Degraded, rotated, None);
@@ -2628,6 +2722,45 @@ pub fn build_for_import(
     import_namespace: u64,
 ) -> Result<Reflowed, PdfImportError> {
     build(state, resources, import_namespace ^ crate::REFLOW_NAMESPACE)
+}
+
+/// Whether every character of `block` is OCR's (`crate::ocr::OCR_FONT`).
+/// O(characters).
+fn optical_block(block: &group::Block) -> bool {
+    let mut chars = block.lines.iter().flat_map(|l| l.chars.iter()).peekable();
+    chars.peek().is_some() && chars.all(|c| c.style.font == crate::ocr::OCR_FONT)
+}
+
+/// Takes out of the flow the text elements OCR read from `image`: each one
+/// whose every character is the recogniser's and whose centre lies on the
+/// picture. Their lines are returned in order, for the picture's line boxes.
+/// O(elements).
+fn claim_optical_lines(
+    image: &SourceImage,
+    elements: &[Element],
+    taken: &mut [bool],
+) -> Vec<ILine> {
+    let b = image.bounds;
+    let mut lines = Vec::new();
+    for (i, e) in elements.iter().enumerate() {
+        if taken.get(i).copied().unwrap_or(true) {
+            continue;
+        }
+        let EKind::Text(text) = &e.kind else {
+            continue;
+        };
+        let (cx, cy) = ((e.rect.x0 + e.rect.x1) / 2.0, (e.rect.y0 + e.rect.y1) / 2.0);
+        if !(cx > b.x0 && cx < b.x1 && cy > b.y0 && cy < b.y1) {
+            continue;
+        }
+        let mut chars = text.iter().flat_map(|l| l.chars.iter()).peekable();
+        if chars.peek().is_none() || !chars.all(|c| c.style.font == crate::ocr::OCR_FONT) {
+            continue;
+        }
+        lines.extend(text.iter().cloned());
+        taken[i] = true;
+    }
+    lines
 }
 
 /// Sorts one annotation into links, comments or the omitted count.

@@ -195,6 +195,7 @@ PTS
 PUA
 PaddleOCR
 Pageless
+Pixelate
 Plass
 PowerPoint
 Pre
