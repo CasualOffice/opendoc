@@ -7,6 +7,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+// Own line: the section watermark.
+use casual_doc_model::v1::{Watermark, WatermarkContent, WatermarkLayout, WatermarkPicture};
+
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Bookmark, BookmarkEnd,
     BookmarkId, BookmarkStart, Color, Comment, CommentId, CommentRangeEnd, CommentRangeStart,
@@ -618,7 +621,7 @@ impl Emitter<'_> {
         if let Some(f) = wanted
             && (f - inherited).abs() > SINGLE_TOLERANCE
         {
-            spacing.line_percent = Some((f * 100.0).round().clamp(80.0, 300.0) as u16);
+            spacing.line_percent = Some(snap_percent(f * 100.0).clamp(80.0, 300.0) as u16);
             set = true;
         }
         let normal = r.body_after.unwrap_or(r.body_size * 0.6);
@@ -851,8 +854,8 @@ impl Emitter<'_> {
                 });
             }
         } else if para.heading.is_none() {
-            let start = para.rest_x0.unwrap_or(para.first_x0) - para.column_left;
-            let first = para.rest_x0.map(|rest| para.first_x0 - rest);
+            let start = snap_indent(para.rest_x0.unwrap_or(para.first_x0) - para.column_left);
+            let first = para.rest_x0.map(|rest| snap_indent(para.first_x0 - rest));
             if start > 6.0 || first.is_some_and(|f| f.abs() > 1.0) {
                 properties.indentation = Some(Indentation {
                     start_twips: (start > 6.0).then(|| indent_twips(start)),
@@ -1068,10 +1071,13 @@ impl Emitter<'_> {
                             numbers.map(|(p, t, _)| (p, t, varying.as_slice())),
                         )?;
                         let mut properties = cell_paragraph();
-                        if centred_in(chunk, cell.x0, cell.x1) {
-                            let mut centred = (*properties).clone();
-                            centred.alignment = Some(Alignment::Center);
-                            properties = centred.into();
+                        let align = cell.align.or_else(|| {
+                            centred_in(chunk, cell.x0, cell.x1).then_some(Alignment::Center)
+                        });
+                        if let Some(align @ (Alignment::Center | Alignment::End)) = align {
+                            let mut aligned = (*properties).clone();
+                            aligned.alignment = Some(align);
+                            properties = aligned.into();
                         }
                         blocks.push(BlockNode::Paragraph(Paragraph {
                             id,
@@ -1438,8 +1444,16 @@ fn shape(
             .iter()
             .all(|l| ((l.x0 + l.x1) / 2.0 - centre).abs() < 3.0)
         && right < column_right - 3.0;
-    let end_aligned =
-        indented && !centred && lines.iter().all(|l| (l.x1 - column_right).abs() < 2.0);
+    // Every line stands in from the column's left (a first-line indent
+    // alone is no end alignment: its other lines start at the column, and
+    // the full ones of a ragged-right paragraph end within 2 pt of the
+    // column's right too, so such paragraphs had read as right-aligned and
+    // lost their first-line indent).
+    let all_indented = lines.iter().all(|l| ink(l) > column_left + 0.05 * width);
+    let end_aligned = indented
+        && all_indented
+        && !centred
+        && lines.iter().all(|l| (l.x1 - column_right).abs() < 2.0);
     (
         first_x0,
         rest_x0,
@@ -1499,6 +1513,9 @@ pub(crate) fn emit(
     work: &mut ReflowWork,
     namespace: u64,
 ) -> Result<Reflowed, PdfImportError> {
+    // The watermark (`watermark`), stamped on every section as Word's
+    // dialog does.
+    let found = flow.watermark.clone();
     let mut items: Vec<Item> = Vec::new();
     let mut joins = 0;
     let mut dehyphenated = 0;
@@ -1569,6 +1586,23 @@ pub(crate) fn emit(
                             };
                             prev.chars = glued;
                             prev.lines += refs.len() - usize::from(same_line);
+                            // Lines that carry the paragraph on below its
+                            // first: where they start is its body's indent,
+                            // and lines back at the column's left make an
+                            // indented first line a first-line indent, not
+                            // end or centre alignment (a first line that
+                            // stood alone as its own segment had read as
+                            // right-aligned when it ran to the column's
+                            // right, and lost its indent).
+                            if !same_line {
+                                let rest = refs.iter().map(|l| l.x0).fold(f64::INFINITY, f64::min);
+                                prev.rest_x0 = Some(prev.rest_x0.map_or(rest, |r| r.min(rest)));
+                                let width = (prev.column_right - prev.column_left).max(1.0);
+                                if rest <= prev.column_left + 0.05 * width {
+                                    prev.end_aligned = false;
+                                    prev.centred = false;
+                                }
+                            }
                             if !same_line && let Some(last) = prev.last_line.as_ref() {
                                 let mut more = steps(&[last, refs[0]]);
                                 more.extend(steps(&refs));
@@ -1636,7 +1670,8 @@ pub(crate) fn emit(
                             })
                             .filter(|(page, _)| *page == element.page)
                             .map(|(_, bottom)| refs[0].top - bottom)
-                            .filter(|gap| (0.0..=72.0).contains(gap)),
+                            .filter(|gap| (0.0..=72.0).contains(gap))
+                            .map(snap_space),
                         first_x0,
                         rest_x0,
                         column_left,
@@ -2537,6 +2572,23 @@ pub(crate) fn emit(
         );
     }
 
+    let mark = match found {
+        Some(super::watermark::Found::Text(mark)) => Some(mark),
+        Some(super::watermark::Found::Picture(image)) => Some(Watermark {
+            content: WatermarkContent::Picture(WatermarkPicture {
+                media: emitter.media(&image)?,
+                scale_percent: None,
+                washout: true,
+            }),
+            layout: WatermarkLayout::Horizontal,
+            semi_transparent: false,
+        }),
+        None => None,
+    };
+    for section in &mut sections {
+        section.watermark.clone_from(&mark);
+    }
+
     // Definitions.
     let mut definitions = std::mem::take(&mut emitter.definitions);
     for (id, style) in std::mem::take(&mut emitter.styles) {
@@ -2585,6 +2637,80 @@ pub const SINGLE_LINE_EMS: f64 = 1.15;
 /// A measured leading within this share of single is single (no direct
 /// value): the rounding of a PDF's positions is not a spacing choice.
 const SINGLE_TOLERANCE: f64 = 0.05;
+
+/// The share of the em a text face's descent takes below the baseline
+/// (Arial and Liberation Sans 0.212, Times New Roman 0.216, Calibri 0.25;
+/// 0.21 within a quarter point at body sizes).
+const DESCENT_EMS: f64 = 0.21;
+
+/// The baseline-to-baseline distance two paragraphs' line boxes take with
+/// no space between them: the rest of `a`'s last line below its baseline,
+/// then `b`'s first line down to its baseline. Each is `(size, ratio)`, the
+/// ratio its line pitch over its size. A line box `ratio x size` tall puts
+/// its extra leading half above and half below a single line (the layout's
+/// `auto` multiple, as CSS and parley do), so the inverse of the layout is
+/// `a`'s descent plus half its extra, plus `b`'s ascent plus half its
+/// extra. Taking `b`'s whole line instead (the earlier measure) is the same
+/// between two paragraphs set alike, but under a 16 pt heading followed by
+/// a 1.5-line body paragraph it lost 4 pt of the space after the heading.
+/// O(1).
+fn line_boxes(a: (f64, f64), b: (f64, f64)) -> f64 {
+    let (sa, ra) = a;
+    let (sb, rb) = b;
+    sa * (DESCENT_EMS + (ra - SINGLE_LINE_EMS) / 2.0)
+        + sb * (SINGLE_LINE_EMS - DESCENT_EMS + (rb - SINGLE_LINE_EMS) / 2.0)
+}
+
+/// An indent snapped: to a quarter inch's multiple (18 pt, where ruler
+/// tabs and Word's indent buttons put it) within a point, else to the half
+/// point. A first-line indent measured 35.7 pt on one paragraph and 36.2 on
+/// the next was two values; the author set one. O(1).
+pub(super) fn snap_indent(points: f64) -> f64 {
+    let quarter = (points / 18.0).round() * 18.0;
+    if (points - quarter).abs() <= 1.0 {
+        quarter
+    } else {
+        (points * 2.0).round() / 2.0
+    }
+}
+
+/// The space values a word processor's dialog offers and authors pick,
+/// in points: a measured space within [`SPACE_SNAP`] of one is that one.
+const COMMON_SPACES: [f64; 17] = [
+    0.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 9.0, 10.0, 12.0, 14.0, 15.0, 16.0, 18.0, 20.0, 24.0, 36.0,
+];
+/// How far (points) a measured space may sit from a common value and be it.
+const SPACE_SNAP: f64 = 0.75;
+
+/// A measured space snapped: to a common value within [`SPACE_SNAP`], else
+/// to the half point (the PDF's coordinates carry rounding no author set).
+/// So two paragraphs the PDF spaced alike (5.96 and 6.04 pt) get one value,
+/// and the body's space after is the 6 pt its author chose. O(1).
+pub(super) fn snap_space(points: f64) -> f64 {
+    COMMON_SPACES
+        .iter()
+        .copied()
+        .find(|c| (points - c).abs() <= SPACE_SNAP)
+        .unwrap_or_else(|| (points * 2.0).round() / 2.0)
+}
+
+/// Line spacing multiples authors pick, in percent of single: a measured
+/// one within [`PERCENT_SNAP`] of one of these is that one.
+const COMMON_PERCENTS: [f64; 9] = [
+    100.0, 108.0, 115.0, 120.0, 125.0, 150.0, 175.0, 200.0, 300.0,
+];
+/// How far (percentage points) a measured multiple may sit from a common one.
+const PERCENT_SNAP: f64 = 3.0;
+
+/// A measured line multiple (percent) snapped to a common one, else to the
+/// nearest whole percent. O(1).
+pub(super) fn snap_percent(percent: f64) -> f64 {
+    COMMON_PERCENTS
+        .iter()
+        .copied()
+        .find(|c| (percent - c).abs() <= PERCENT_SNAP)
+        .unwrap_or_else(|| percent.round())
+}
 
 /// The document's vertical rhythm as the PDF set it: line spacing for
 /// Normal, the space after a body paragraph, before and after each heading
@@ -2709,7 +2835,7 @@ fn rhythm(items: &[Item], body: Option<&FontKey>) -> (Rhythm, Vec<Option<f64>>) 
     let line_percent = ratio
         .map(|r| r / SINGLE_LINE_EMS)
         .filter(|f| (f - 1.0).abs() > SINGLE_TOLERANCE)
-        .map(|f| (f * 100.0).round().clamp(80.0, 300.0) as u16);
+        .map(|f| snap_percent(f * 100.0).clamp(80.0, 300.0) as u16);
     let body_ratio =
         line_percent.map_or(SINGLE_LINE_EMS, |p| f64::from(p) / 100.0 * SINGLE_LINE_EMS);
     let mut body_gaps = Vec::new();
@@ -2743,7 +2869,17 @@ fn rhythm(items: &[Item], body: Option<&FontKey>) -> (Rhythm, Vec<Option<f64>>) 
             (true, None) if at_body(b) => body_ratio,
             _ => SINGLE_LINE_EMS,
         };
-        let gap = b.first_baseline - last.baseline - size * line;
+        // The line `a` ends with, the same way: its own leading as it is
+        // emitted (a heading or a list item sets single).
+        let size_a = size_of(a).unwrap_or(body_size);
+        let line_a = match (plain(a), a.pitch.map(|p| p / size_a.max(1.0))) {
+            (true, Some(ratio)) if (0.8..=3.5).contains(&ratio) => ratio,
+            (true, _) if at_body(a) => body_ratio,
+            _ => SINGLE_LINE_EMS,
+        };
+        let gap = snap_space(
+            b.first_baseline - last.baseline - line_boxes((size_a, line_a), (size, line)),
+        );
         // A gap of more than six body lines is a page's or a figure's space,
         // not the paragraph's.
         if !(-0.5 * body_size..=6.0 * body_size * body_ratio).contains(&gap) {

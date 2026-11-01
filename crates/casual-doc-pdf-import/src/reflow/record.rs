@@ -107,6 +107,71 @@ pub struct SourceImage {
     /// A page-sized picture's ink bands (`casual_doc_pdf_read::InkBands`):
     /// where a letterhead's logo band ends and its footer band starts.
     pub ink: Option<casual_doc_pdf_read::InkBands>,
+    /// The opacity it was drawn at (`ImageEvidence::opacity`): a faint
+    /// picture repeated on the pages is a watermark (`watermark`).
+    pub opacity: f32,
+}
+
+/// A glyph run that may be a watermark's text (`watermark`): turned well
+/// off level (a diagonal stamp), or light or translucent and large. It is
+/// kept out of the text blocks until the watermark pass has looked at every
+/// page; one that is no watermark goes back as the text it was. O(1) each.
+#[derive(Clone, Debug)]
+pub struct Stamp {
+    /// Its text.
+    pub text: String,
+    /// Clockwise rotation of its baseline, in degrees (page space, y down:
+    /// Word's diagonal stamp, rising left to right, is -45).
+    pub rotation: f64,
+    /// Its em size, in points.
+    pub size: f64,
+    /// Its fill, when flat.
+    pub fill: Option<Rgba8>,
+    /// The middle of its baseline, in page space.
+    pub center: casual_doc_pdf_read::Point,
+    /// Where its baseline starts, for ordering pieces of one stamp.
+    pub origin: casual_doc_pdf_read::Point,
+    /// Its font (an index into the document's fonts).
+    pub font: usize,
+    /// The run as text, laid level, for when it is no watermark.
+    pub blocks: Vec<SourceBlock>,
+    /// Whether it was rotated text (reported as such if it goes back).
+    pub rotated: bool,
+}
+
+/// Turned at least this far (and at most its complement to 90) is a
+/// diagonal stamp's angle.
+pub const STAMP_DEGREES: (f64, f64) = (20.0, 70.0);
+/// A light stamp's size floor, in points.
+pub const STAMP_LIGHT_SIZE: f64 = 24.0;
+/// A diagonal stamp's size floor, in points.
+pub const STAMP_DIAGONAL_SIZE: f64 = 14.0;
+
+/// Whether a fill is light or translucent: alpha at most 70%, or a
+/// luminance of at least 160 of 255 (silver, a pale tint). O(1).
+#[must_use]
+pub fn light(fill: Option<Rgba8>) -> bool {
+    fill.is_some_and(|[r, g, b, a]| {
+        let luminance = 0.299 * f64::from(r) + 0.587 * f64::from(g) + 0.114 * f64::from(b);
+        f64::from(a) <= 0.7 * 255.0 || luminance >= 160.0
+    })
+}
+
+/// Whether a rotation (degrees) is a diagonal: 20 to 70 off level either
+/// way, upside down included. O(1).
+#[must_use]
+pub fn diagonal(rotation: f64) -> bool {
+    let turned = rotation.rem_euclid(180.0);
+    let off = turned.min(180.0 - turned);
+    (STAMP_DEGREES.0..=STAMP_DEGREES.1).contains(&off)
+}
+
+/// Whether a run may be a watermark's text. O(1).
+fn stamp_candidate(run: &GlyphRunEvidence) -> bool {
+    !run.glyphs.is_empty()
+        && run.mode != casual_doc_pdf_read::RenderMode::Invisible
+        && ((diagonal(run.rotation_degrees) && run.size >= STAMP_DIAGONAL_SIZE)
+            || (light(run.fill) && run.size >= STAMP_LIGHT_SIZE))
 }
 
 /// Vector art: a maximal run of consecutive paths that are not rules, in
@@ -514,6 +579,49 @@ impl PdfSourceState {
                 }
             }
             match item {
+                PaintEvidence::Glyphs(run) if stamp_candidate(run) => {
+                    let rotated = run.rotation_degrees.abs() > UPRIGHT_DEGREES;
+                    let flat = level(run);
+                    let (blocks, n) = group::blocks_counted(&[&flat], params);
+                    comparisons += n;
+                    let origin = run.glyphs.first().map(|g| g.origin).unwrap_or_default();
+                    let end = run
+                        .glyphs
+                        .last()
+                        .map(|g| {
+                            let (sin, cos) = run.rotation_degrees.to_radians().sin_cos();
+                            casual_doc_pdf_read::Point {
+                                x: g.origin.x + g.advance * cos,
+                                y: g.origin.y + g.advance * sin,
+                            }
+                        })
+                        .unwrap_or(origin);
+                    out.stamps.push(Stamp {
+                        text: run
+                            .glyphs
+                            .iter()
+                            .filter_map(|g| g.text.as_deref())
+                            .collect(),
+                        rotation: run.rotation_degrees,
+                        size: run.size,
+                        fill: run.fill,
+                        center: casual_doc_pdf_read::Point {
+                            x: (origin.x + end.x) / 2.0,
+                            y: (origin.y + end.y) / 2.0,
+                        },
+                        origin,
+                        font: run.font,
+                        blocks: blocks
+                            .into_iter()
+                            .map(|block| SourceBlock {
+                                block,
+                                mcid: run.mcid,
+                                artifact: run.artifact,
+                            })
+                            .collect(),
+                        rotated,
+                    });
+                }
                 PaintEvidence::Glyphs(run) => {
                     let run = levelled[at].as_ref().unwrap_or(run);
                     if run.rotation_degrees.abs() > UPRIGHT_DEGREES {

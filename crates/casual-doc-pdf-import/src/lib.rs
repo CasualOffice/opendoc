@@ -521,11 +521,14 @@ impl ImportJob {
         sidecar.fonts = self.source.fonts().clone();
         sidecar.font_family = builder.font_family.clone();
         sidecar.font_programs = builder.programs.clone();
-        for (page, bounds, media, ink) in std::mem::take(&mut builder.placed_images) {
+        for (page, bounds, media, ink, opacity) in std::mem::take(&mut builder.placed_images) {
             if let Some(record) = sidecar.pages.get_mut(page) {
-                record
-                    .images
-                    .push(reflow::SourceImage { bounds, media, ink });
+                record.images.push(reflow::SourceImage {
+                    bounds,
+                    media,
+                    ink,
+                    opacity,
+                });
             }
         }
         let (document, resources, report) = builder.finish()?;

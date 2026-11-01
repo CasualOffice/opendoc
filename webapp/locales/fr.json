@@ -2663,6 +2663,7 @@
   "findings.feature.pdfPageBreaks": "Sauts de page déduits de la fin des pages",
   "findings.feature.pdfFloats": "Images et dessins flottants à côté ou derrière leur texte",
   "findings.feature.pdfScanReplaced": "Pages numérisées affichées comme leur texte reconnu (la numérisation reste dans la mise en page exacte)",
+  "findings.feature.pdfWatermark": "Filigranes reconnus et définis comme filigrane du document",
   "findings.feature.pdfDecorations": "Soulignements, surlignages, trames et bordures dessinés comme des formes rendus à leur texte",
   "findings.feature.pdfVectorsPlaced": "Dessins placés sous forme de formes",
   "pdfImport.title": "Ouverture de {name}",

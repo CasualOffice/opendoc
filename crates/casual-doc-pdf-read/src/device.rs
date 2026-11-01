@@ -42,6 +42,10 @@ pub(crate) struct Collector<'c> {
     index: &'c mut BTreeMap<u128, usize>,
     programs_tried: &'c mut BTreeSet<usize>,
     clips: Vec<Option<Bounds>>,
+    /// The opacity of every transparency group open around the paint, the
+    /// product of the stack (`ca` of the graphics state an image is drawn
+    /// under, a form's group alpha): what makes a picture a faint stamp.
+    opacity: Vec<f32>,
     marked: Vec<Mark>,
     items: Vec<PaintEvidence>,
     notes: PageNotes,
@@ -161,6 +165,7 @@ impl<'c> Collector<'c> {
             index,
             programs_tried,
             clips: vec![Some(page)],
+            opacity: vec![1.0],
             marked: Vec::new(),
             items: Vec::new(),
             notes: PageNotes::default(),
@@ -318,6 +323,7 @@ impl<'c> Collector<'c> {
             clip,
             bounds,
             ink,
+            opacity: self.opacity.last().copied().unwrap_or(1.0),
         }));
     }
 }
@@ -523,6 +529,8 @@ impl<'a> Device<'a> for Collector<'_> {
         blend_mode: BlendMode,
     ) {
         self.note_transparency(opacity < 0.999, mask.is_some(), blend_mode);
+        let outer = self.opacity.last().copied().unwrap_or(1.0);
+        self.opacity.push(outer * opacity.clamp(0.0, 1.0));
     }
 
     fn draw_glyph_run(&mut self, run: &GlyphRun<'_, 'a>, props: DrawProps<'a>, mode: &DrawMode) {
@@ -747,7 +755,11 @@ impl<'a> Device<'a> for Collector<'_> {
         }
     }
 
-    fn pop_transparency_group(&mut self) {}
+    fn pop_transparency_group(&mut self) {
+        if self.opacity.len() > 1 {
+            self.opacity.pop();
+        }
+    }
 
     fn begin_marked_content(&mut self, tag: &[u8], mcid: Option<i32>) {
         self.marked.push(match crate::content::show_of_tag(tag) {

@@ -158,6 +158,7 @@ pub const FEATURES: &[&str] = &[
     VECTOR_OMITTED,
     VECTOR_PLACED,
     VECTOR_SPLIT,
+    WATERMARK_INFERRED,
 ];
 
 /// JavaScript, launch and other non-navigation actions: never run.
@@ -292,6 +293,11 @@ pub const IMAGE_TEXT_BOXES: &str = "pdf.import.image_text_boxes";
 /// places under lines that now run differently, is kept by the exact layout
 /// only.
 pub const SCAN_REPLACED_BY_TEXT: &str = "pdf.import.scan_replaced_by_text";
+/// Reflow: a stamp repeated on the pages (diagonal or faint text, or a
+/// faint centred picture) became the sections' watermark, Word's Design ▸
+/// Watermark; degraded where a stamp looked like one but the reader was
+/// unsure, and it stayed text (`reflow::watermark`).
+pub const WATERMARK_INFERRED: &str = "pdf.import.watermark_inferred";
 /// Reflow: font clusters became the style sheet (Normal and Heading n).
 pub const STYLE_INFERRED: &str = "pdf.import.style_inferred";
 /// Reflow: a ruling-line grid, or whitespace-aligned columns above the

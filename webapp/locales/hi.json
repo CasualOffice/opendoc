@@ -2652,6 +2652,7 @@
   "findings.feature.pdfPageBreaks": "पृष्ठों के अंत से अनुमानित पृष्ठ विराम",
   "findings.feature.pdfFloats": "चित्र और ड्रॉइंग अपने पाठ के बगल में या पीछे रखे गए",
   "findings.feature.pdfScanReplaced": "स्कैन किए गए पृष्ठ उनके पहचाने गए पाठ के रूप में दिखाए गए (स्कैन सटीक लेआउट में रहता है)",
+  "findings.feature.pdfWatermark": "वॉटरमार्क पहचाने गए और दस्तावेज़ के वॉटरमार्क के रूप में सेट किए गए",
   "findings.feature.pdfDecorations": "आकृतियों के रूप में बने रेखांकन, हाइलाइट, छायांकन और किनारे अपने पाठ पर लौटाए गए",
   "findings.feature.pdfVectorsPlaced": "ड्रॉइंग आकृतियों के रूप में रखी गईं",
   "pdfImport.title": "{name} खोला जा रहा है",

@@ -1169,3 +1169,356 @@ fn a_caption_beside_a_chart_is_not_one_of_its_labels() {
         assert_eq!(super::caption_text(text), caption, "{text}");
     }
 }
+
+/// One line at `size` at (`x`, `y`) (PDF space, y up).
+fn line_at(font: &str, size: f64, x: f64, y: f64, line: &str) -> String {
+    text(font, size, x, y, 0.0, &[line])
+}
+
+/// A 16 pt Courier Bold heading, then paragraphs of 11 pt Courier set at
+/// one and a half lines (19.1 pt, 151% of single) with 6 pt between them,
+/// each opening with a 6-character first-line indent; every line, the
+/// indented first included, runs to the column's right edge. The PDF's
+/// positions carry the rounding a real producer's do: the gaps are 5.8 to
+/// 6.2 pt. Two headings, so the heading is a level.
+fn spacing_pdf() -> Vec<u8> {
+    let pitch = 19.1;
+    let mut content = String::new();
+    let mut y = 720.0;
+    let gaps = [5.8, 6.2, 6.3];
+    for section in 0..2 {
+        content.push_str(&line_at("F2", 16.0, 72.0, y, &format!("Heading {section}")));
+        // 6 pt after the heading: its descent, then the body line's ascent
+        // and half its extra leading (`emit::line_boxes`).
+        y -= 6.0 + 16.0 * 0.21 + 11.0 * (1.15 - 0.21 + (1.725 - 1.15) / 2.0);
+        for (k, gap) in gaps.iter().enumerate() {
+            let seed = ["alpha", "beta", "gamma"][k];
+            content.push_str(&line_at("F1", 11.0, 72.0 + 39.6, y, &full(seed)[..54]));
+            y -= pitch;
+            content.push_str(&line_at("F1", 11.0, 72.0, y, &full(seed)));
+            y -= pitch;
+            content.push_str(&line_at("F1", 11.0, 72.0, y, &full(seed)));
+            y -= pitch + gap;
+        }
+        y -= 24.0;
+    }
+    synth::document(&[Page::new(content)], COURIER, "")
+}
+
+#[test]
+fn spacing_is_measured_against_the_line_boxes_and_snapped() {
+    let reflowed = reflow_of(spacing_pdf());
+    let document = &reflowed.document;
+    let normal = normal_spacing(document);
+    // 150% (measured 151%), and exactly 6 pt after from gaps of 5.8, 6.2
+    // and 6.3 (a median of 6.2).
+    assert_eq!(normal.line_percent, Some(150), "{normal:?}");
+    assert_eq!(normal.after_twips, Some(120), "{normal:?}");
+    // The heading's space after is the 6 pt the PDF left, not what is left
+    // after the next line's whole box (3.9 pt).
+    let heading = paragraphs(document)
+        .into_iter()
+        .find(|p| para_text(p).starts_with("Heading 0"))
+        .expect("the heading");
+    let style = heading
+        .properties
+        .style_ref
+        .and_then(|id| document.definitions().styles.get(&id))
+        .expect("a heading style");
+    let after = style
+        .paragraph
+        .as_ref()
+        .and_then(|p| p.spacing)
+        .and_then(|s| s.after_twips)
+        .expect("space after the heading");
+    assert_eq!(after, 120, "{style:?}");
+}
+
+#[test]
+fn a_first_line_indent_with_full_lines_is_not_right_aligned() {
+    let reflowed = reflow_of(spacing_pdf());
+    let body: Vec<&Paragraph> = paragraphs(&reflowed.document)
+        .into_iter()
+        .filter(|p| para_text(p).contains("alpha"))
+        .collect();
+    assert_eq!(body.len(), 2, "one per section");
+    for p in body {
+        assert_eq!(p.properties.alignment, None, "{:?}", p.properties);
+        let indent = p.properties.indentation.as_ref().expect("an indent");
+        // 6 Courier characters at 11 pt, 39.6 pt, to the half point.
+        assert_eq!(indent.first_line_twips, Some(790), "{indent:?}");
+        assert_eq!(indent.start_twips, None, "{indent:?}");
+    }
+}
+
+/// `text` turned 45 degrees (rising left to right), `size` pt, in grey
+/// `gray` (0 black, 1 white), its baseline centred on (306, 396).
+fn stamp(text_: &str, size: f64, gray: f64) -> String {
+    // Courier advances 0.6 em; start so the baseline's middle is centred.
+    let half = 0.6 * size * text_.len() as f64 / 2.0;
+    let (c, s) = (
+        std::f64::consts::FRAC_1_SQRT_2,
+        std::f64::consts::FRAC_1_SQRT_2,
+    );
+    let (x, y) = (306.0 - half * c, 396.0 - half * s);
+    format!(
+        "q {gray} g BT /F1 {size} Tf {c:.5} {s:.5} {:.5} {c:.5} {x:.2} {y:.2} Tm ({}) Tj ET Q\n",
+        -s,
+        synth::literal(text_)
+    )
+}
+
+/// `pages` pages of prose under `mark` (drawn first, as Word's header
+/// watermark is), with a heading on each so headings are a level.
+fn stamped_pdf(pages: usize, mark: &str) -> Vec<u8> {
+    let prose = full("prose");
+    let lines: Vec<&str> = std::iter::repeat_n(prose.as_str(), 12).collect();
+    let all: Vec<Page> = (0..pages)
+        .map(|p| {
+            Page::new(format!(
+                "{mark}{}{}",
+                line_at(
+                    "F2",
+                    16.0,
+                    72.0,
+                    700.0 - 30.0 * p as f64,
+                    ["Opening", "Middle", "Closing", "Annex"][p % 4]
+                ),
+                text("F1", 11.0, 72.0, 580.0, 14.0, &lines)
+            ))
+        })
+        .collect();
+    synth::document(&all, COURIER, "")
+}
+
+fn section_watermark(document: &Document) -> Option<&casual_doc_model::v1::Watermark> {
+    document
+        .definitions()
+        .sections
+        .iter()
+        .find_map(|s| s.watermark.as_ref())
+}
+
+fn finding(reflowed: &Reflowed, outcome: crate::PdfModelOutcome) -> u32 {
+    reflowed
+        .report
+        .findings
+        .iter()
+        .filter(|e| e.feature == crate::report::WATERMARK_INFERRED && e.outcome == outcome)
+        .map(|e| e.occurrences)
+        .sum()
+}
+
+#[test]
+fn a_diagonal_stamp_on_every_page_is_the_sections_watermark() {
+    let reflowed = reflow_of(stamped_pdf(3, &stamp("DRAFT", 96.0, 0.75)));
+    let document = &reflowed.document;
+    let mark = section_watermark(document).expect("a watermark");
+    let casual_doc_model::v1::WatermarkContent::Text(text) = &mark.content else {
+        panic!("{mark:?}");
+    };
+    assert_eq!(text.text, "DRAFT");
+    assert_eq!(text.size_half_points, Some(192));
+    assert_eq!(mark.layout, casual_doc_model::v1::WatermarkLayout::Diagonal);
+    // Every section carries it, and no page's body holds the stamp.
+    assert!(
+        document
+            .definitions()
+            .sections
+            .iter()
+            .all(|s| s.watermark.is_some())
+    );
+    assert!(
+        paragraphs(document)
+            .iter()
+            .all(|p| !para_text(p).contains("DRAFT")),
+        "{:?}",
+        paragraphs(document)
+            .iter()
+            .map(|p| para_text(p))
+            .collect::<Vec<_>>()
+    );
+    // The chapters are still the first heading level.
+    let chapter = paragraphs(document)
+        .into_iter()
+        .find(|p| para_text(p).starts_with("Opening"))
+        .expect("the chapter");
+    assert_eq!(style_name(document, chapter).as_deref(), Some("heading 1"));
+    assert_eq!(finding(&reflowed, crate::PdfModelOutcome::Mapped), 3);
+}
+
+#[test]
+fn a_lone_light_diagonal_stamp_is_a_watermark_and_a_dark_one_stays_text() {
+    let reflowed = reflow_of(stamped_pdf(1, &stamp("CONFIDENTIAL", 60.0, 0.8)));
+    assert!(section_watermark(&reflowed.document).is_some());
+    // Dark: the reader is unsure; the words stay, and it says so.
+    let reflowed = reflow_of(stamped_pdf(1, &stamp("CONFIDENTIAL", 60.0, 0.0)));
+    assert!(section_watermark(&reflowed.document).is_none());
+    assert!(
+        paragraphs(&reflowed.document)
+            .iter()
+            .any(|p| para_text(p).contains("CONFIDENTIAL"))
+    );
+    assert_eq!(finding(&reflowed, crate::PdfModelOutcome::Degraded), 1);
+}
+
+#[test]
+fn a_faint_centred_picture_on_every_page_is_a_picture_watermark() {
+    let mut pdf = synth::Pdf::default();
+    let image = pdf.stream(
+        "/Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceGray /BitsPerComponent 8",
+        &[60u8; 16],
+    );
+    let prose = full("prose");
+    let lines: Vec<&str> = std::iter::repeat_n(prose.as_str(), 12).collect();
+    let page = |faint: bool| {
+        Page::new(format!(
+            "q {} 200 0 0 200 206 296 cm /Im1 Do Q\n{}",
+            if faint { "/Faint gs" } else { "" },
+            text("F1", 11.0, 72.0, 660.0, 14.0, &lines)
+        ))
+    };
+    let resources =
+        format!("{COURIER} /XObject << /Im1 {image} 0 R >> /ExtGState << /Faint << /ca 0.25 >> >>");
+    let faint = synth::document_in(&mut pdf, &[page(true), page(true)], &resources, "", |_| {
+        String::new()
+    });
+    let reflowed = reflow_of(faint);
+    let mark = section_watermark(&reflowed.document).expect("a watermark");
+    assert!(
+        matches!(
+            mark.content,
+            casual_doc_model::v1::WatermarkContent::Picture(p) if p.washout
+        ),
+        "{mark:?}"
+    );
+    assert_eq!(
+        graphics(&reflowed.document),
+        0,
+        "the picture is not also placed"
+    );
+    // The same picture drawn opaque is a picture in the text, no watermark.
+    let mut pdf = synth::Pdf::default();
+    let image = pdf.stream(
+        "/Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceGray /BitsPerComponent 8",
+        &[60u8; 16],
+    );
+    let resources =
+        format!("{COURIER} /XObject << /Im1 {image} 0 R >> /ExtGState << /Faint << /ca 0.25 >> >>");
+    let opaque = synth::document_in(
+        &mut pdf,
+        &[page(false), page(false)],
+        &resources,
+        "",
+        |_| String::new(),
+    );
+    assert!(section_watermark(&reflow_of(opaque).document).is_none());
+}
+
+/// Where text of `n` Courier characters at 11 pt starts to sit `align`ed
+/// at `at` (its left, middle or right).
+fn courier_x(text_: &str, align: char, at: f64) -> f64 {
+    let width = 6.6 * text_.len() as f64;
+    match align {
+        'r' => at - width,
+        'c' => at - width / 2.0,
+        _ => at,
+    }
+}
+
+/// A borderless table of figures at the body's own pitch (14 pt): labels
+/// left at 77.4, amounts right-aligned at 303.6 and 397.2, a status centred
+/// on 438.9, codes left at 480.6, a header row centred over its columns;
+/// then the paragraph under it, set at the same pitch, full width.
+fn figures_pdf() -> Vec<u8> {
+    let header = [
+        ("Account", 144.0),
+        ("Budget", 262.8),
+        ("Actual", 356.4),
+        ("Status", 438.9),
+        ("Code", 500.0),
+    ];
+    let rows = [
+        ["Salaries", "1,250,000.00", "1,198,442.50", "Under", "A-101"],
+        ["Travel", "84,500.00", "91,207.25", "Over", "A-205"],
+        ["Equipment", "310,000.00", "7,880.00", "Under", "B-310"],
+        ["Training", "45,000.00", "44,999.99", "Met", "B-412"],
+    ];
+    let places = [
+        ('l', 77.4),
+        ('r', 303.6),
+        ('r', 397.2),
+        ('c', 438.9),
+        ('l', 480.6),
+    ];
+    let mut content = String::new();
+    let mut y = 700.0;
+    content.push_str(&line_at("F1", 11.0, 72.0, y, &full("before")));
+    y -= 20.0;
+    for (label, middle) in header {
+        content.push_str(&line_at(
+            "F2",
+            11.0,
+            courier_x(label, 'c', middle),
+            y,
+            label,
+        ));
+    }
+    for row in rows {
+        y -= 14.0;
+        for (cell, (align, at)) in row.iter().zip(places) {
+            content.push_str(&line_at("F1", 11.0, courier_x(cell, align, at), y, cell));
+        }
+    }
+    for seed in ["after", "still", "ends."] {
+        y -= 14.0;
+        content.push_str(&line_at("F1", 11.0, 72.0, y, &full(seed)));
+    }
+    synth::document(&[Page::new(content)], COURIER, "")
+}
+
+fn cell_align(cell: &casual_doc_model::v1::TableCell) -> Option<Alignment> {
+    cell.blocks.iter().find_map(|b| match b {
+        BlockNode::Paragraph(p) => Some(p.properties.alignment),
+        _ => None,
+    })?
+}
+
+#[test]
+fn a_borderless_table_of_figures_keeps_its_alignment_grid_and_the_text_under_it() {
+    let reflowed = reflow_of(figures_pdf());
+    let document = &reflowed.document;
+    let table = document
+        .body()
+        .iter()
+        .find_map(|b| match b {
+            BlockNode::Table(t) => Some(t),
+            _ => None,
+        })
+        .expect("a table");
+    assert_eq!(table.rows.len(), 5, "a header and four rows");
+    assert!(table.rows.iter().all(|r| r.cells.len() == 5), "{table:?}");
+    // The paragraph under it, set at the table's pitch, is text again:
+    // none of its lines is in a cell.
+    let body: Vec<String> = paragraphs(document).iter().map(|p| para_text(p)).collect();
+    for seed in ["after", "still", "ends."] {
+        assert!(body.iter().any(|t| t.contains(seed)), "{seed}: {body:?}");
+    }
+    // Labels start, amounts end, the status and the header are centred.
+    let row = &table.rows[1].cells;
+    assert_eq!(cell_align(&row[0]), None);
+    assert_eq!(cell_align(&row[1]), Some(Alignment::End));
+    assert_eq!(cell_align(&row[2]), Some(Alignment::End));
+    assert_eq!(cell_align(&row[3]), Some(Alignment::Center));
+    assert_eq!(cell_align(&row[4]), None);
+    for cell in &table.rows[0].cells[1..4] {
+        assert_eq!(cell_align(cell), Some(Alignment::Center), "{cell:?}");
+    }
+    // The amounts' column ends where they do: the grid from the labels'
+    // left edge (77.4) to the first amounts' right (303.6).
+    let width = |k: usize| f64::from(table.grid[k].width_twips.unwrap_or(0)) / 20.0;
+    let end = 77.4 + width(0) + width(1);
+    assert!((end - 303.6).abs() <= 1.0, "{end}");
+    let end = end + width(2);
+    assert!((end - 397.2).abs() <= 1.0, "{end}");
+}

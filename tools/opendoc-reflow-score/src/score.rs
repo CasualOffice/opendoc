@@ -154,6 +154,13 @@ pub fn score(src: &Summary, out: &Summary) -> Value {
     // the space down to the next paragraph (after plus the next one's
     // before, as Word adds them; within 3 pt or a quarter of it).
     let (mut aligned, mut pitched, mut spaced, mut laid) = (0, 0, 0, 0);
+    // Strict spacing (pitch within 3%, the space below within 1.5 pt),
+    // indents (start and first line within 2 pt, outside lists) and exact
+    // sizes (the same half point).
+    let (mut tight_pitch, mut tight_space) = (0, 0);
+    let (mut indented, mut indent_ok, mut exact_size) = (0, 0, 0);
+    let mut size_misses = Vec::new();
+    let mut indent_misses = Vec::new();
     let mut layout_misses = Vec::new();
     let gap =
         |s: &Summary, k: usize| s.paras[k].after + s.paras.get(k + 1).map_or(0.0, |n| n.before);
@@ -168,6 +175,27 @@ pub fn score(src: &Summary, out: &Summary) -> Value {
             aligned += usize::from(align);
             pitched += usize::from(pitch);
             spaced += usize::from(space);
+            tight_pitch += usize::from((a.pitch - b.pitch).abs() <= 0.03 * a.pitch.max(1.0));
+            tight_space += usize::from((ga - gb).abs() <= 1.5);
+            exact_size += usize::from(a.size == b.size);
+            if a.size != b.size && size_misses.len() < 12 {
+                size_misses.push(json!({
+                    "text": a.text.chars().take(30).collect::<String>(),
+                    "size": [f64::from(a.size) / 2.0, f64::from(b.size) / 2.0],
+                }));
+            }
+            if a.list.is_none() && b.list.is_none() && a.align != 1 {
+                indented += 1;
+                let ok = (a.indent.0 - b.indent.0).abs() <= 2.0
+                    && (a.indent.1 - b.indent.1).abs() <= 2.0;
+                indent_ok += usize::from(ok);
+                if !ok && indent_misses.len() < 12 {
+                    indent_misses.push(json!({
+                        "text": a.text.chars().take(30).collect::<String>(),
+                        "indent": [[a.indent.0, a.indent.1], [b.indent.0, b.indent.1]],
+                    }));
+                }
+            }
             if !(align && pitch && space) && layout_misses.len() < 12 {
                 layout_misses.push(json!({
                     "text": a.text.chars().take(30).collect::<String>(),
@@ -257,6 +285,66 @@ pub fn score(src: &Summary, out: &Summary) -> Value {
             .sum::<f64>()
             / src_multi.len().max(out_multi.len()) as f64
     };
+    // Table geometry over the aligned multi-cell tables of the same shape:
+    // each column's share of the table's width (within 2 points of the
+    // source's share of its own) and each cell's alignment.
+    let (mut columns, mut columns_ok, mut cells_aligned, mut cells_total) = (0, 0, 0, 0);
+    let mut table_misses = Vec::new();
+    for &(i, j, _) in &multi_pairs {
+        let (a, b) = (&src_multi[i], &out_multi[j]);
+        let (sa, sb): (f64, f64) = (a.widths.iter().sum(), b.widths.iter().sum());
+        if a.widths.len() == b.widths.len() && sa > 0.0 && sb > 0.0 {
+            for (wa, wb) in a.widths.iter().zip(&b.widths) {
+                columns += 1;
+                columns_ok += usize::from((wa / sa - wb / sb).abs() * sa <= 2.0);
+            }
+        } else {
+            columns += a.widths.len().max(1);
+        }
+        for (r, row) in a.aligns.iter().enumerate() {
+            for (c, &al) in row.iter().enumerate() {
+                if a.cells[r][c].is_empty() {
+                    continue;
+                }
+                cells_total += 1;
+                let got = b.aligns.get(r).and_then(|row| row.get(c)).copied();
+                // Both (justified) reads as start in a one-line cell.
+                let same = got.is_some_and(|g| g == al || (g.max(al) == 3 && g.min(al) == 0));
+                cells_aligned += usize::from(same);
+                if !same && table_misses.len() < 12 {
+                    table_misses.push(json!({
+                        "cell": a.cells[r][c].chars().take(20).collect::<String>(),
+                        "align": [al, got],
+                    }));
+                }
+            }
+        }
+    }
+    let table_layout = if columns + cells_total == 0 {
+        1.0
+    } else {
+        0.5 * share(columns_ok, columns) + 0.5 * share(cells_aligned, cells_total)
+    };
+    // Pictures in order: the extent within 1% (or 1 point).
+    let (mut pictures_exact, pictures_compared) =
+        (0, src.picture_sizes.len().max(out.picture_sizes.len()));
+    for (a, b) in src.picture_sizes.iter().zip(&out.picture_sizes) {
+        let close = |x: f64, y: f64| (x - y).abs() <= (0.01 * x).max(1.0);
+        pictures_exact += usize::from(close(a.0, b.0) && close(a.1, b.1));
+    }
+    let sizes = if laid + pictures_compared == 0 {
+        1.0
+    } else {
+        (exact_size + pictures_exact) as f64 / (laid + pictures_compared) as f64
+    };
+    let watermark = match (&src.watermark, &out.watermark) {
+        (None, None) => 1.0,
+        (Some((ta, da)), Some((tb, db))) => {
+            0.5 + 0.25 * f64::from(u8::from(similarity(ta, tb) >= 0.9))
+                + 0.25 * f64::from(u8::from(da == db))
+        }
+        _ => 0.0,
+    };
     let mut special = 0usize;
     let mut special_total = 0usize;
     for (c, n) in &src.non_ascii {
@@ -304,6 +392,11 @@ pub fn score(src: &Summary, out: &Summary) -> Value {
         "special": share(special, special_total),
         "frames": f64::from(u8::from(out.text_boxes == 0)),
         "layout": if laid == 0 { 0.0 } else { (aligned + pitched + spaced) as f64 / (3 * laid) as f64 },
+        "spacing": if laid == 0 { 0.0 } else { (tight_pitch + tight_space) as f64 / (2 * laid) as f64 },
+        "indents": share(indent_ok, indented),
+        "sizes": sizes,
+        "table_layout": table_layout,
+        "watermark": watermark,
         "evidence": {
             "paragraphs": [src.paras.len(), out.paras.len(), pairs.len(), close],
             "unmatched_source": unmatched_source,
@@ -323,6 +416,14 @@ pub fn score(src: &Summary, out: &Summary) -> Value {
             "formatting": [formatted, bold, italic, size],
             "layout": [laid, aligned, pitched, spaced],
             "layout_misses": layout_misses,
+            "spacing": [laid, tight_pitch, tight_space],
+            "indents": [indented, indent_ok],
+            "indent_misses": indent_misses,
+            "sizes": [laid, exact_size, pictures_compared, pictures_exact],
+            "size_misses": size_misses,
+            "table_layout": [columns, columns_ok, cells_total, cells_aligned],
+            "table_misses": table_misses,
+            "watermark": [src.watermark.clone(), out.watermark.clone()],
             "bad_chars": [out.bad_chars.0, out.bad_chars.1, out.bad_chars.2],
             "missing_special": missing_special,
             "text_boxes": out.text_boxes,

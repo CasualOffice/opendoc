@@ -208,6 +208,10 @@ pub struct ImageEvidence {
     /// picture drawn at least [`INK_MEASURED_AREA`] square points (a page's
     /// background, a letterhead), else `None`.
     pub ink: Option<InkBands>,
+    /// The opacity it is drawn at, `0..=1`: the product of the transparency
+    /// groups open around it (the graphics state's `ca`, a form's group
+    /// alpha). A faint, repeated picture is a watermark (`docs/182` §18.12).
+    pub opacity: f32,
 }
 
 /// The smallest displayed area, in square points, whose ink bands are
