@@ -2290,7 +2290,10 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
   min-height: 0;
   flex: 1 1 auto;
   overflow: auto;
-  padding: var(--space-3) var(--dlg-pad-x) var(--dlg-pad-y);
+  /* 12px under the body, not --dlg-pad-y: the footer right below carries its
+     own padding, and 24px here cost a laptop (1280x720) the last rows of
+     Keyboard shortcuts and Manage add-ins (dialog-fit.spec). */
+  padding: var(--space-3) var(--dlg-pad-x) var(--space-3);
   overscroll-behavior: contain;
   background:
     linear-gradient(var(--surface) 30%, transparent) top / 100% 1.125rem no-repeat local,
@@ -2731,8 +2734,10 @@ body.phone-mode .autocorrect-body {
      column. Multicol preserves reading order, so a split group continues where
      a reader's eye is already going. */
   columns: auto;
-  column-width: 13rem;
-  column-gap: var(--space-6);
+  /* 11rem: five columns on the 960px reference card, which is what keeps the
+     keymap on a 720px-tall laptop screen (dialog-fit.spec). */
+  column-width: 11rem;
+  column-gap: var(--space-4);
 }
 
 /* The GROUP owns the two columns, not each row.
@@ -2764,7 +2769,7 @@ body.phone-mode .autocorrect-body {
      grew, and CI measured 574px in the 560px box at 1280x720 where macOS
      measures 512px — a 62px platform delta. Measured here at 474px, so about
      536px on CI. */
-  row-gap: 0.25rem;
+  row-gap: 0.125rem;
   /* One step down from `--space-5` (HF-265 D3). Eleven groups paid that margin
      eleven times — 220px spread over four columns — and the uppercase group
      heading is what separates the groups anyway, as it always was. Measured:
@@ -5842,6 +5847,12 @@ body.compact-mode {
   min-height: var(--h-ctl);
 }
 
+/* Every band's control row is one height (two 30px rows and their 4px gap),
+   so a tab switch never moves the document: each band used to settle on its
+   own contents' height, and Home's two-row groups came out 1px taller than
+   the rest once the row gap moved onto the 4px grid. */
+.ribbon-panel .rgroup-ctl { min-height: 4rem; }
+
 /* Two small controls stacked beside a big one (Insert ▸ Table: Insert table by
    size, Convert text to table), so the pair costs one control's width. */
 .rgroup-stack {
@@ -6083,7 +6094,10 @@ body.compact-mode {
    ellipsises here and the `title` carries the whole of it, which is the same trade
    `.font-family-trigger` makes and for the same reason. */
 .styles-control {
-  width: 14.1875rem;
+  /* 225px: the group's padding moved onto the 4px grid (3px to 4px a side),
+     and the control gives those 2px back so the group keeps its 234px
+     footprint (ribbon-home.spec). */
+  width: 14.0625rem;
   min-width: 0;
 }
 
@@ -10205,7 +10219,9 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
 .compact-toolbar .ctool {
   min-width: 2.125rem;
   height: 2.125rem;
-  padding: 0 0.5rem;
+  /* 6px a side: an icon button stays the 34px min-width it was; 8px made each
+     36px and folded two groups out of the bar at 1280 (compact-toolbar.spec). */
+  padding: 0 0.375rem;
   border: 0;
   border-radius: var(--r-sm);
   background: transparent;
@@ -14849,7 +14865,7 @@ body:not(.phone-mode) .workarea > .side-panel:not(.plugin-panel, :where(#outline
    1rem a side, and the two reference dialogs whose content sits in columns
    (Document properties, Keyboard shortcuts) keep the ~60rem width they had,
    since at the 45rem L width their columns stacked past the fold. */
-.dialog-overlay .dialog-card { max-height: calc(100dvh - 2rem); }
+.dialog-overlay .dialog-card { max-height: calc(100dvh - 1.5rem); }
 
 /* Settings borrowed into the File page (file_pane.mjs adds .panel-in-page):
    the pane is the scroller there, so the dialog's own nav/pages scrolling and

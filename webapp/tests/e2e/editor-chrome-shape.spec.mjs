@@ -108,7 +108,7 @@ test("the Home band is Word's: captioned groups, and Word's grouping", async ({
   await expect(page.locator("#ribbonOverflowBtn")).toBeHidden();
 
   const band = page.locator('.ribbon-panel[data-panel="home"]');
-  const captions = band.locator(".rgroup > .rgroup-label");
+  const captions = band.locator(".rgroup:not([hidden]) > .rgroup-label");
   await expect(captions).toHaveText(
     ["Undo", "Clipboard", "Font", "Paragraph", "Styles", "Editing"],
   );
@@ -126,7 +126,7 @@ test("the Home band is Word's: captioned groups, and Word's grouping", async ({
   // Each caption sits UNDER its own group's controls, which is what makes it a
   // caption rather than a floating word.
   const placed = await band.evaluate((panel) =>
-    [...panel.querySelectorAll(".rgroup")].map((group) => {
+    [...panel.querySelectorAll(".rgroup:not([hidden])")].map((group) => {
       const label = group.querySelector(".rgroup-label").getBoundingClientRect();
       const controls = group.querySelector(".rgroup-ctl").getBoundingClientRect();
       const box = group.getBoundingClientRect();

@@ -75,7 +75,7 @@ test.describe("the ribbon width budget", () => {
     // quantity the rule is about, and nothing was measuring it.
     const headroom = await page.evaluate(async () => {
       const band = document.querySelector("#panelHome");
-      const groups = [...band.querySelectorAll(".rgroup")];
+      const groups = [...band.querySelectorAll(".rgroup:not([hidden])")];
       const group = groups[groups.length - 1];
       const fits = () => {
         const btn = document.querySelector("#ribbonOverflowBtn");
@@ -141,7 +141,7 @@ test.describe("the ribbon width budget", () => {
       await expect(page.locator(`.ribbon-panel[data-panel="${tab}"]`)).toBeVisible();
       measured[tab] = await page.evaluate(async (name) => {
         const band = document.querySelector(`.ribbon-panel[data-panel="${name}"]`);
-        const groups = [...band.querySelectorAll(".rgroup")];
+        const groups = [...band.querySelectorAll(".rgroup:not([hidden])")];
         const group = groups[groups.length - 1];
         const fits = () => {
           const btn = document.querySelector("#ribbonOverflowBtn");
@@ -194,7 +194,7 @@ test.describe("the ribbon width budget", () => {
 
     const outcome = await page.evaluate(async () => {
       const band = document.querySelector("#panelHome");
-      const groups = [...band.querySelectorAll(".rgroup")];
+      const groups = [...band.querySelectorAll(".rgroup:not([hidden])")];
       const pad = document.createElement("span");
       pad.style.cssText = "display:inline-block;height:1px;width:400px;";
       groups[groups.length - 1].appendChild(pad);
