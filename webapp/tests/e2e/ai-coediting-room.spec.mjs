@@ -13,7 +13,7 @@
 import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { test, expect, stableBox } from "./fixtures.mjs";
+import { test, expect } from "./fixtures.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const TEXT = ["Alpha line the assistant writes after.", "Bravo line in the middle.", "Charlie line at the end."].join("\n");
@@ -133,20 +133,32 @@ test("Casual AI writes into a shared room as its own participant: its caret move
     await a.keyboard.press("End");
     await frame.locator('[data-chip="draft"]').click();
     await frame.locator("#prompt").fill("Write a sentence");
+    // Record every position the AI's caret takes on BOB's screen, frame by frame,
+    // from before the turn starts. Polling from the test every 150 ms missed the
+    // movement on CI, where the whole mock answer streamed between two samples.
+    await b.evaluate(() => {
+      const seen = new Set();
+      window.__aiCaretPositions = seen;
+      const tick = () => {
+        const el = document.querySelector('.remote-caret[data-agent="casual-ai"]');
+        if (el) {
+          const r = el.getBoundingClientRect();
+          seen.add(`${Math.round(r.x)}:${Math.round(r.y)}`);
+        }
+        if (window.__aiCaretPositions === seen) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
     await frame.locator("#prompt").press("Enter");
 
     // On BOB's screen: the AI's caret and flag, named for whom it writes, moving.
     const aiCaret = b.locator('.remote-caret[data-agent="casual-ai"]');
     await expect(aiCaret).toHaveCount(1, { timeout: 30_000 });
     await expect(aiCaret.locator("span")).toHaveText("Casual AI · Ada Lovelace");
-    const positions = new Set();
-    for (let i = 0; i < 40 && positions.size < 3; i += 1) {
-      if (await aiCaret.count() === 0) break;
-      const box = await stableBox(aiCaret).catch(() => null);
-      if (box) positions.add(`${Math.round(box.x)}:${Math.round(box.y)}`);
-      if (await aiCaret.count() === 0) break;
-      await b.waitForTimeout(150);
-    }
+    await expect
+      .poll(() => b.evaluate(() => window.__aiCaretPositions.size), { timeout: 30_000 })
+      .toBeGreaterThanOrEqual(2);
+    const positions = new Set(await b.evaluate(() => [...window.__aiCaretPositions]));
     expect(positions.size, `the AI's caret moved on the other screen: ${[...positions].join(" ")}`).toBeGreaterThanOrEqual(2);
     // Ada's own caret is still Ada's.
     await expect(b.locator('.remote-caret:not([data-agent]) span').first()).toHaveText("Ada Lovelace");

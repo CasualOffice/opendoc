@@ -523,19 +523,6 @@
       <!-- AI provider (docs/183 §3.9). Bring your own key, standalone only; the
            note says, before anything is sent, which endpoint receives text, and
            that nothing is sent at all until a provider is set up. -->
-      <div class="settings-section">
-        <div data-i18n="settingsPanel.aiProvider" class="settings-label">AI provider</div>
-        <p data-i18n="settingsPanel.aiProviderNote" id="aiProviderSummary" class="settings-note">No AI provider is set up, so no text is sent anywhere.</p>
-        <button data-i18n="settingsPanel.aiProviderSetUp" type="button" id="aiProviderSettingsBtn" class="dialog-button">AI provider settings…</button>
-      </div>
-      <!-- Add-ins (docs/183 §6.5): Manage add-ins' durable home. The Review band's
-           Add-ins button appears only once an add-in contributes a row, so with
-           none the editor's chrome is unchanged (owner rule, 2026-10-31). -->
-      <div class="settings-section">
-        <div data-i18n="settingsPanel.addins" class="settings-label">Add-ins</div>
-        <p data-i18n="settingsPanel.addinsNote" class="settings-note">Add-ins belong to this browser, never to a document.</p>
-        <button data-i18n="settingsPanel.addinsManage" type="button" id="settingsAddinsBtn" class="dialog-button">Manage add-ins…</button>
-      </div>
       <!-- AutoCorrect (docs/174 TA-05, TA-06): Word's "AutoFormat As You Type"
            switches. Each is also a command-palette switch; `autocorrect.mjs`
            owns all three. -->
@@ -559,8 +546,13 @@
       </div>
         </div>
         <footer class="dialog-foot">
-          <span data-i18n="settingsPanel.openSourceCustomizable" class="dialog-note">Open-source · customizable</span>
+          <!-- AI provider and Add-ins (docs/183 §6.5): in the action row, not a body
+               group, so Settings still fits a 1280x720 laptop (dialog-fit). The
+               note says before anything is sent where text would go. -->
+          <span data-i18n="settingsPanel.aiProviderNote" id="aiProviderSummary" class="dialog-note">No AI provider is set up, so no text is sent anywhere.</span>
           <div class="dialog-actions">
+            <button data-i18n="settingsPanel.aiProviderSetUp" type="button" id="aiProviderSettingsBtn" class="dialog-button">AI provider settings…</button>
+            <button data-i18n="settingsPanel.addinsManage" type="button" id="settingsAddinsBtn" class="dialog-button">Manage add-ins…</button>
             <button data-i18n="settingsPanel.resetDefaults" type="button" id="settingsReset" class="dialog-button">Reset to defaults</button>
           </div>
         </footer>
@@ -3278,8 +3270,8 @@
           <div class="settings-section ai-edit-as">
             <div data-i18n="aiProviderDialog.editAs" class="settings-label" id="aiEditAsLabel">AI edits as</div>
             <div class="segmented" id="aiEditAs" role="radiogroup" aria-labelledby="aiEditAsLabel" aria-describedby="aiEditAsNote">
-              <button data-i18n="aiProviderDialog.editAs.suggest" type="button" data-ai-edit-as="suggest">Suggestions</button>
-              <button data-i18n="aiProviderDialog.editAs.direct" type="button" data-ai-edit-as="direct">Direct edits</button>
+              <button data-i18n="aiProviderDialog.editAs.suggest" type="button" data-ai-edit-as="suggest" role="radio" aria-checked="true" tabindex="0">Suggestions</button>
+              <button data-i18n="aiProviderDialog.editAs.direct" type="button" data-ai-edit-as="direct" role="radio" aria-checked="false" tabindex="-1">Direct edits</button>
             </div>
             <p id="aiEditAsNote" class="dialog-field-note"></p>
           </div>

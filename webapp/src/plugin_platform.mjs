@@ -875,7 +875,9 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
       const description = doc.createElement("p");
       description.className = "plugins-description";
       description.textContent = localised(manifest, "description", activeLocale(), manifest.description);
-      const perms = doc.createElement("p");
+      // On the source line, not a line of its own: three add-ins each spent a
+      // row on it and pushed Manage add-ins past a 1280x720 laptop (dialog-fit).
+      const perms = doc.createElement("span");
       perms.className = "plugins-permissions";
       perms.textContent = manifest.permissions.length
         ? t("plugins.permissionsList", { list: manifest.permissions.map((p) => t(`plugins.permissionShort.${p}`)).join(", ") })
@@ -901,7 +903,8 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
       if (record.entry.source === "installed" || (record.entry.source !== "host" && !record.entry.hostGrant && grantFor(manifest.id, view))) {
         actions.append(button(record.entry.source === "installed" ? "plugins.remove" : "plugins.forgetGrant", {}, () => remove(record)));
       }
-      item.append(name, meta, description, perms, actions);
+      meta.append(" · ", perms);
+      item.append(name, meta, description, actions);
       rows.push(item);
     }
     if (!rows.length) {
