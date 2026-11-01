@@ -14624,3 +14624,44 @@ body.phone-mode .plugin-panel { height: 55vh; }
   #settingsPanel .settings-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   #settingsPanel .settings-nav { grid-auto-flow: column; overflow-x: auto; border: 0; padding: 0; }
 }
+
+/* Docked side panels (approved design P1; Google Docs). Every panel is docked
+   to the workspace edge at full height: no floating card, no radius, no
+   shadow, one hairline on the side that faces the page. Left = navigate
+   (Outline, Pages, Compare), 16rem. Right = context (Properties, Versions,
+   AI, add-ins, Symbol), 20rem. The page re-centres in what is left and scrolls
+   sideways rather than being covered. */
+body:not(.phone-mode) .workarea > .side-panel {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--surface);
+  align-self: stretch;
+}
+body:not(.phone-mode) .workarea > .side-panel:where(#outlinePanel, #pagesPanel, #comparePanel) {
+  flex: 0 0 16rem;
+  width: 16rem;
+  max-width: 16rem;
+  border-inline-end: 1px solid var(--line);
+}
+body:not(.phone-mode) .workarea > .side-panel:not(:where(#outlinePanel, #pagesPanel, #comparePanel)) {
+  flex: 0 0 20rem;
+  width: 20rem;
+  max-width: 20rem;
+  border-inline-start: 1px solid var(--line);
+}
+body:not(.phone-mode) .workarea > .side-panel.plugin-panel {
+  flex: 0 0 var(--plugin-panel-w, 25rem);
+  width: var(--plugin-panel-w, 25rem);
+  max-width: none;
+}
+.workarea > .side-panel .panel-head {
+  min-block-size: 3.5rem;
+  padding: 0 var(--space-3) 0 var(--space-5);
+  border-block-end: 1px solid var(--line);
+}
+.workarea > .side-panel :is(.panel-title, .panel-head h2, .properties-panel-heading h2) {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+}

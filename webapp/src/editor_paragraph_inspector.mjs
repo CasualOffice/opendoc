@@ -127,7 +127,17 @@ export function createParagraphInspector(ed) {
       ed.toggleTableProperties(false);
       closeAllPopovers();
       reflectParagraphProperties();
-      queueMicrotask(() => (focusTarget?.() ?? ed.paraPanelStyle).focus());
+      // A plain open starts at the top of the panel, as every panel does
+      // (approved design P1): focusing the style field without preventScroll
+      // used to scroll the body ~2000px down on open. A deep link (Layout ▸
+      // Indent / Spacing) still scrolls to the field it asked for.
+      const body = ed.paragraphPropertiesPanel.querySelector(".panel-body");
+      if (body) body.scrollTop = 0;
+      queueMicrotask(() => {
+        const target = focusTarget?.();
+        if (target) target.focus();
+        else ed.paraPanelStyle.focus({ preventScroll: true });
+      });
     } else if (returnFocus) {
       ed.paraOptsBtn.focus({ preventScroll: true });
     }
