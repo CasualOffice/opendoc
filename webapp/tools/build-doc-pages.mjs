@@ -155,6 +155,16 @@ export const PUBLISHED = [
     summaryFrom: "The through-line",
   },
   {
+    // The SDK's design, research and measured benchmark (`docs/176` §12). Published
+    // because `sdk.html` cites it as the record behind every claim on that page.
+    source: "docs/176-THREE-SDK-PRODUCTS.md",
+    description:
+      "OpenDoc's three SDK products on one engine (Viewer, Editor, Native), the familiar APIs each language gets, and the measured benchmark against the incumbents.",
+    slug: "three-sdk-products",
+    group: "SDK",
+    nav: "Three SDK products",
+  },
+  {
     source: "docs/84-CONTEXT-MENU-AND-COMMAND-REGISTRY-DESIGN.md",
     description:
       "The design of OpenDoc's shared command descriptors: one source for the context menu and command palette, with keyboard access and stated disabled reasons.",

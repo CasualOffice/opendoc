@@ -33,7 +33,9 @@ const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 test("every COMMITTED document font is served from our own origin, never a third party", () => {
   const faces = allManifestFaces().filter((face) => face.local);
-  assert.ok(faces.length >= 20, `only ${faces.length} committed faces found`);
+  // 19 since the network Noto Sans Symbols 2 face was removed (HF-415): the
+  // engine bundles the subset that draws those blocks.
+  assert.ok(faces.length >= 19, `only ${faces.length} committed faces found`);
   for (const face of faces) {
     assert.equal(
       face.url,
@@ -421,19 +423,27 @@ test("every common Indic script has its own fallback bucket, not just Devanagari
   );
 });
 
-test("checkbox/dingbat symbols outside Noto Sans's coverage fall back too", () => {
+// Geometric Shapes, Miscellaneous Symbols and Dingbats (U+25A0–27BF) are drawn
+// by the Noto Sans Symbols 2 subset the ENGINE bundles, offline. The 671 KB
+// network face this table once served for them was removed by owner decision
+// (2026-11-01, docs/109 HF-415): no bucket may route these blocks to a fetch, and
+// no manifest entry may come back for them.
+test("checkbox/dingbat symbols need no network face: the bundled subset draws them", () => {
   assert.deepEqual(
     fallbackKeysFor([
       0x25a1, // □ WHITE SQUARE — the sample fixture's table "Result" column
       0x2610, // ☐ BALLOT BOX — unchecked sample checklist rows
       0x2612, // ☒ BALLOT BOX WITH X — checked sample checklist rows
+      0x2713, // ✓ CHECK MARK
+      0x27bf, // ➿ the last scalar of Dingbats
     ]),
-    ["symbols"],
+    [],
   );
-  assert.deepEqual(SCRIPT_FALLBACK_FONTS.symbols.scripts, ["Zyyy", "Latn"]);
-  // The demo fixture's own checklist needs this face, so it is committed: the
-  // editor's first screen must not ask anyone else for its checkbox glyphs.
-  assert.equal(SCRIPT_FALLBACK_FONTS.symbols.local, true);
+  assert.equal(SCRIPT_FALLBACK_FONTS.symbols, undefined);
+  assert.ok(
+    !allManifestFaces().some((face) => /Symbols2/i.test(face.file)),
+    "a Noto Sans Symbols 2 face is back in the web-font manifest",
+  );
 });
 
 // Pictographic emoji are ordinary document content — a .docx authored anywhere
@@ -461,21 +471,21 @@ test("pictographic emoji use the pinned color emoji face", () => {
 });
 
 // An emoji-presentation sequence asks for the COLOUR face, not the monochrome
-// symbols face. U+2764 alone is a dingbat by Unicode default and stays with
-// `symbols`; U+2764 U+FE0F is a red heart. Reading only the base scalar painted
+// dingbat. U+2764 alone is a dingbat by Unicode default and needs no fetch (the
+// bundled symbol subset draws it); U+2764 U+FE0F is a red heart. Reading only the base scalar painted
 // the heart grey and never asked for a colour face at all — which is exactly
 // what was reported.
 test("a variation selector or ZWJ routes a sequence to the colour emoji face", () => {
-  assert.deepEqual(fallbackKeysFor([0x2764, 0xfe0f]).sort(), ["emoji", "symbols"]);
+  assert.deepEqual(fallbackKeysFor([0x2764, 0xfe0f]), ["emoji"]);
   assert.deepEqual(fallbackKeysFor([0x1f469, 0x200d, 0x1f4bb]), ["emoji"]);
-  assert.deepEqual(fallbackKeysFor([0x2764]), ["symbols"]);
+  assert.deepEqual(fallbackKeysFor([0x2764]), []);
 });
 
-// The monochrome symbol blocks must keep resolving to Noto Sans Symbols 2 rather
-// than being swallowed by the new emoji bucket: ☐/☒ checklist markers sit at
-// U+2610/U+2612, immediately below the emoji ranges.
-test("monochrome symbol blocks still resolve to the symbols face, not emoji", () => {
-  assert.deepEqual(fallbackKeysFor([0x2610, 0x2612, 0x25a1, 0x2764]), ["symbols"]);
+// The monochrome symbol blocks must not be swallowed by the emoji bucket:
+// ☐/☒ checklist markers sit at U+2610/U+2612, immediately below the emoji
+// ranges, and asking for the 5 MB colour face for a checkbox is the bug.
+test("monochrome symbol blocks never resolve to the colour emoji face", () => {
+  assert.deepEqual(fallbackKeysFor([0x2610, 0x2612, 0x25a1, 0x2764]), []);
 });
 
 test("every script fallback bucket declares the scripts it covers", () => {

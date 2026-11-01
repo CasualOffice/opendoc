@@ -471,6 +471,265 @@ fn resolve_in_group_mut<'a>(
     }
 }
 
+// ── Tables, and blocks a caller just placed ─────────────────────────────────
+//
+// The same pattern, applied to the two lookups the SDK benchmark found linear in
+// the document (`docs/176` §12.10, `docs/109` RM-46):
+//
+// * **A table by id** (`casual_doc_edit::find_table` and every row/column op's
+//   `find_table_mut(blocks_owning_mut(..))`, two walks). It gets its own direct-
+//   mapped cache of routes, validated on use exactly as a paragraph's is: a table
+//   route is the steps to the table's block, through cells and content controls,
+//   and a route that no longer lands on a table with the id asked for is a miss.
+// * **The first edit to a block that was just inserted.** A new paragraph has no
+//   route yet, so the edit after `InsertBlocks` paid the cold walk. The insert
+//   knows exactly where it put the block, so it records that route
+//   ([`Document::hint_body_block`]): the hint costs O(1) and is validated on use
+//   like any other, so it cannot be wrong, only stale. A table cell's paragraph is
+//   reached through its table's route ([`Document::hint_cell_paragraph`]).
+
+std::thread_local! {
+    /// Table routes, keyed and bounded exactly as `ROUTES` is (see there for why it
+    /// is thread-local and why sharing it between documents is safe).
+    static TABLE_ROUTES: [Cell<Option<Entry>>; SLOTS] =
+        const { [const { Cell::new(None) }; SLOTS] };
+}
+
+fn table_hint(document: NodeId, id: NodeId) -> Option<ParagraphRoute> {
+    match TABLE_ROUTES.with(|slots| slots[slot(document, id)].get()) {
+        Some((owner, cached, route)) if owner == document && cached == id => Some(route),
+        _ => None,
+    }
+}
+
+fn table_record(document: NodeId, id: NodeId, route: ParagraphRoute) {
+    TABLE_ROUTES.with(|slots| slots[slot(document, id)].set(Some((document, id, route))));
+}
+
+impl Document {
+    /// The table `id` names, in the body, a header, a footer or a note, including
+    /// a table nested in a cell or a block content control.
+    ///
+    /// **O(route depth) — O(1) in document size — on a hint hit; O(document) on a
+    /// miss, which records the route.** Covers exactly what
+    /// `casual_doc_edit::find_table` covered (block lists, cells and content
+    /// controls; not text boxes).
+    #[must_use]
+    pub fn table(&self, id: NodeId) -> Option<&Table> {
+        if let Some(route) = table_hint(self.id(), id)
+            && let Some(found) = resolve_table(self, route.surface, route.steps(), id)
+        {
+            return Some(found);
+        }
+        let (surface, steps) = locate_table(self, id)?;
+        if let Some(route) = route_from(surface, &steps) {
+            table_record(self.id(), id, route);
+        }
+        resolve_table(self, surface, &steps, id)
+    }
+
+    /// [`Document::table`] for mutation. Same cost.
+    pub fn table_mut(&mut self, id: NodeId) -> Option<&mut Table> {
+        let document = self.id();
+        let hinted = table_hint(document, id)
+            .filter(|route| resolve_table(self, route.surface, route.steps(), id).is_some());
+        let (surface, steps) = match hinted {
+            Some(route) => (route.surface, route.steps().to_vec()),
+            None => {
+                let (surface, steps) = locate_table(self, id)?;
+                if let Some(route) = route_from(surface, &steps) {
+                    table_record(document, id, route);
+                }
+                (surface, steps)
+            }
+        };
+        let blocks = self.route_blocks_mut(surface)?;
+        let found = resolve_table_in_blocks_mut(blocks, &steps)?;
+        (found.id == id).then_some(found)
+    }
+
+    /// Records where the body block at `index` is, for the paragraph or table it
+    /// holds, so the first lookup of a block a caller just inserted there is a
+    /// hit rather than a walk. **O(1)**. A no-op past the end or for another kind
+    /// of block; a stale hint later is a miss, never a wrong answer.
+    pub fn hint_body_block(&self, index: usize) {
+        let Ok(step) = u32::try_from(index) else {
+            return;
+        };
+        let Some(route) = route_from(RouteSurface::Body, &[step]) else {
+            return;
+        };
+        match self.body().get(index) {
+            Some(BlockNode::Paragraph(paragraph)) => record(self.id(), paragraph.id, route),
+            Some(BlockNode::Table(table)) => table_record(self.id(), table.id, route),
+            _ => {}
+        }
+    }
+
+    /// Records the route to block `block` of cell (`row`, `cell`) of table
+    /// `table`, when that block is a paragraph, and returns its id: the cell
+    /// paragraph a `cell.text = …` edits next is then a hit. **O(1) in document
+    /// size** when the table's own route is cached (one [`Document::table`]
+    /// lookup otherwise).
+    #[must_use]
+    pub fn hint_cell_paragraph(
+        &self,
+        table: NodeId,
+        row: usize,
+        cell: usize,
+        block: usize,
+    ) -> Option<NodeId> {
+        self.table(table)?;
+        let route = table_hint(self.id(), table)?;
+        let mut steps = route.steps().to_vec();
+        steps.extend([
+            u32::try_from(row).ok()?,
+            u32::try_from(cell).ok()?,
+            u32::try_from(block).ok()?,
+        ]);
+        let paragraph = resolve_in_blocks(self.route_blocks(route.surface)?, &steps)?;
+        if let Some(cached) = route_from(route.surface, &steps) {
+            record(self.id(), paragraph.id, cached);
+        }
+        Some(paragraph.id)
+    }
+}
+
+/// The table a route leads to, if it is still the table `id`. **O(route depth)**.
+fn resolve_table<'a>(
+    document: &'a Document,
+    surface: RouteSurface,
+    steps: &[u32],
+    id: NodeId,
+) -> Option<&'a Table> {
+    let found = resolve_table_in_blocks(document.route_blocks(surface)?, steps)?;
+    (found.id == id).then_some(found)
+}
+
+/// Follows a table route: a block index, then (row, cell, block) per enclosing
+/// table, or one more block index per enclosing content control, ending on the
+/// table itself.
+fn resolve_table_in_blocks<'a>(blocks: &'a [BlockNode], steps: &[u32]) -> Option<&'a Table> {
+    let (&first, rest) = steps.split_first()?;
+    match blocks.get(first as usize)? {
+        BlockNode::Table(table) if rest.is_empty() => Some(table),
+        BlockNode::Table(table) => {
+            let (&row, rest) = rest.split_first()?;
+            let (&cell, rest) = rest.split_first()?;
+            let cell = table.rows.get(row as usize)?.cells.get(cell as usize)?;
+            resolve_table_in_blocks(&cell.blocks, rest)
+        }
+        BlockNode::Sdt(sdt) => resolve_table_in_blocks(&sdt.blocks, rest),
+        BlockNode::Paragraph(_) | BlockNode::AltChunk(_) => None,
+    }
+}
+
+/// [`resolve_table_in_blocks`] for mutation.
+fn resolve_table_in_blocks_mut<'a>(
+    blocks: &'a mut [BlockNode],
+    steps: &[u32],
+) -> Option<&'a mut Table> {
+    let (&first, rest) = steps.split_first()?;
+    match blocks.get_mut(first as usize)? {
+        BlockNode::Table(table) => {
+            if rest.is_empty() {
+                return Some(table);
+            }
+            let (&row, rest) = rest.split_first()?;
+            let (&cell, rest) = rest.split_first()?;
+            let cell = table
+                .rows
+                .get_mut(row as usize)?
+                .cells
+                .get_mut(cell as usize)?;
+            resolve_table_in_blocks_mut(&mut cell.blocks, rest)
+        }
+        BlockNode::Sdt(sdt) => resolve_table_in_blocks_mut(&mut sdt.blocks, rest),
+        BlockNode::Paragraph(_) | BlockNode::AltChunk(_) => None,
+    }
+}
+
+/// Where the table `id` is, by walking every surface. **O(document)**, charged to
+/// [`route_block_visits`].
+fn locate_table(document: &Document, id: NodeId) -> Option<(RouteSurface, Vec<u32>)> {
+    fn walk(blocks: &[BlockNode], id: NodeId, steps: &mut Vec<u32>) -> bool {
+        note_blocks(blocks.len());
+        for (index, block) in blocks.iter().enumerate() {
+            let Ok(index) = u32::try_from(index) else {
+                return false;
+            };
+            steps.push(index);
+            match block {
+                BlockNode::Table(table) if table.id == id => return true,
+                BlockNode::Table(table) => {
+                    for (r, row) in table.rows.iter().enumerate() {
+                        for (c, cell) in row.cells.iter().enumerate() {
+                            let (Ok(r), Ok(c)) = (u32::try_from(r), u32::try_from(c)) else {
+                                return false;
+                            };
+                            steps.extend([r, c]);
+                            if walk(&cell.blocks, id, steps) {
+                                return true;
+                            }
+                            steps.truncate(steps.len() - 2);
+                        }
+                    }
+                }
+                BlockNode::Sdt(sdt) => {
+                    if walk(&sdt.blocks, id, steps) {
+                        return true;
+                    }
+                }
+                BlockNode::Paragraph(_) | BlockNode::AltChunk(_) => {}
+            }
+            steps.pop();
+        }
+        false
+    }
+    let mut steps = Vec::with_capacity(MAX_ROUTE_STEPS);
+    for surface in surfaces(document) {
+        let Some(blocks) = document.route_blocks(surface) else {
+            continue;
+        };
+        steps.clear();
+        if walk(blocks, id, &mut steps) {
+            return Some((surface, steps));
+        }
+    }
+    None
+}
+
+/// Every route surface, body first: the order every search here tries them in.
+fn surfaces(document: &Document) -> Vec<RouteSurface> {
+    let definitions = document.definitions();
+    let mut out = vec![RouteSurface::Body];
+    out.extend(
+        definitions
+            .headers
+            .iter()
+            .map(|(key, _)| RouteSurface::Header(*key)),
+    );
+    out.extend(
+        definitions
+            .footers
+            .iter()
+            .map(|(key, _)| RouteSurface::Footer(*key)),
+    );
+    out.extend(
+        definitions
+            .footnotes
+            .iter()
+            .map(|(key, _)| RouteSurface::Footnote(*key)),
+    );
+    out.extend(
+        definitions
+            .endnotes
+            .iter()
+            .map(|(key, _)| RouteSurface::Endnote(*key)),
+    );
+    out
+}
+
 /// Where the paragraph `id` names is, by walking the document. **O(document)**.
 ///
 /// Returns the steps it found at whatever depth they are, so resolution never

@@ -11,6 +11,7 @@ import {
   hostPdfLayout,
   keepLayoutRefusal,
   ocrSummaryOf,
+  pdfLayoutOf,
   recogniseRefusal,
 } from "../src/pdf_commands.mjs";
 import { ocrManifestUrl } from "../src/ocr_models.mjs";
@@ -98,4 +99,65 @@ test("a scanned PDF that recognition will reopen holds its first summary back, s
   const open = readFileSync(new URL("../src/editor_file_open.mjs", import.meta.url), "utf8");
   assert.match(open, /const recognising = origin === "pdf" && pdfCommands\.willAutoRecognise\(\);/);
   assert.match(open, /if \(origin && !ed\.activatingRestore && !recognising\) ed\.compatFindings\.open\(\);/);
+});
+
+// The PDF layout switch (UX-051, owner 2026-11-01): View ▸ Page display ▸ PDF
+// layout, the palette and the status-bar chip all run these two rows. It is
+// SYMMETRIC: from the exact layout, Flowing REOPENS the PDF flowing (keeping
+// the original, so the reader can switch back), not "Convert to flowing
+// document", which builds a document that keeps no PDF.
+test("the PDF layout switch: two radio rows, the current layout checked, symmetric", async () => {
+  const opened = [];
+  const sessionIn = (pdfLayout) => ({
+    doc: { pdfOrigin: true, pdfLayout, pdfOriginal: () => new Uint8Array([37, 80]) },
+    currentName: "report.pdf",
+    confirmDiscardIfEdited: async () => true,
+    setStatus: (text) => opened.push({ status: text }),
+  });
+  const io = {
+    search: () => "",
+    ocrService: null,
+    view: {},
+    pdfImport: { run: (bytes, name, options) => ({ name, options }) },
+    openBytes: async (bytes, name, _a, _b, options) =>
+      opened.push({ name, origin: options.origin, prepared: options.prepare() }),
+  };
+  const rows = (ed) => Object.fromEntries(createPdfCommands(ed, io).layoutCommands().map((row) => [row.id, row]));
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  const fromExact = rows(sessionIn("fixed"));
+  assert.deepEqual(
+    Object.values(fromExact).map((row) => [row.id, row.checked, row.radio, row.enabled]),
+    [
+      ["view.pdfLayout.flowing", false, true, true],
+      ["view.pdfLayout.exact", true, true, true],
+    ],
+  );
+  fromExact["view.pdfLayout.flowing"].run();
+  await tick();
+  const reopened = opened.pop();
+  assert.equal(reopened.origin, "pdf", "Flowing reopens the PDF as a PDF session, so the switch stays");
+  assert.equal(reopened.name, "report.pdf", "under its own name, not as a converted copy");
+  assert.equal(reopened.prepared.options.layout, "flowing");
+  assert.equal(reopened.prepared.options.mode, undefined, "an open, not a reflow conversion that keeps no PDF");
+
+  const fromFlowing = rows(sessionIn("flowing"));
+  assert.equal(fromFlowing["view.pdfLayout.flowing"].checked, true);
+  fromFlowing["view.pdfLayout.exact"].run();
+  await tick();
+  assert.equal(opened.pop().prepared.options.mode, "fixed");
+
+  // The checked row refuses with its reason; a document that is not a PDF
+  // gets both rows disabled with the reason, never absent.
+  fromFlowing["view.pdfLayout.flowing"].run();
+  await tick();
+  assert.ok(opened.pop().status, "the checked row says it is already in that layout");
+  for (const row of Object.values(rows({ doc: { pdfOrigin: false, pdfLayout: "" } }))) {
+    assert.equal(row.enabled, false);
+    assert.equal(row.checked, false);
+    assert.ok(row.disabledReason);
+  }
+  assert.equal(pdfLayoutOf({ pdfOrigin: true, pdfLayout: "fixed" }), "exact");
+  assert.equal(pdfLayoutOf({ pdfOrigin: true, pdfLayout: "flowing" }), "flowing");
+  assert.equal(pdfLayoutOf({ pdfOrigin: false }), "");
 });

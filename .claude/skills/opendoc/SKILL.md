@@ -55,6 +55,11 @@ Locally, scoped (each as its own command):
 - `npm run test:unit` (seconds: it carries the ratchets, locale coverage and tracker guards).
 - The e2e specs the change touches, plus `chrome-raw-keys.spec.mjs` for any chrome change.
 - `df -h /` before any build; under 8 GB free, stop and clear finished build caches.
+- **Before every push: `sh webapp/tools/prepush.sh`** (owner, 2026-11-01). It runs every
+  generator (glossary, locale, parity matrix), `webapp/build.sh` and its `--check`s, the
+  parity and golden tests and `npm run test:unit`, and fails if any committed file is left
+  stale. Commit what it changes. A stale generated file (docs/153, a locale, the embedding
+  page) is the commonest way a locally green PR turns red.
 
 The full list CI runs, for reference only:
 

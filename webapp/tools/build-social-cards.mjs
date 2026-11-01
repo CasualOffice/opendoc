@@ -94,6 +94,15 @@ export const CARDS = [
     ],
   },
   {
+    file: "social/sdk.png",
+    kicker: "OPENDOC SDK",
+    title: ["Documents in code,", "laid out by the engine"],
+    subtitle: [
+      "Create, read, edit, convert and render",
+      "from JavaScript, Python, Java and Rust.",
+    ],
+  },
+  {
     file: "social/fidelity.png",
     kicker: "DOCX FIDELITY",
     title: ["Graded by construct,", "not by feature list"],

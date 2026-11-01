@@ -504,8 +504,21 @@ test("the load-time insertion point exists but paints no caret until the editor 
 // whole-surface: every menu of the bar against every tab of the ribbon. What
 // it protects is "an `insert.*` command is on BOTH navigation axes", which is
 // the reachability rule; where on each axis is the taxonomy's business.
-// QUARANTINED (2026-10-31), named and temporary: insert.symbolByCode and insert.textFromFile have no ribbon face (UI placement for owner review).
-test.fixme("every Insert command has a ribbon face on some tab", async ({ page, consoleErrors }) => {
+//
+// Menu-only by OWNER DECISION (2026-11-01), the one sanctioned way out of this
+// guard. Word itself keeps both off the ribbon: Symbol by code is the Alt+X
+// keystroke (palette and Insert ▸ Symbols menu as its other surfaces), and Text
+// from file lives under Insert ▸ Object in Word, not as its own ribbon button.
+// Each id still has two surfaces (menu + palette, plus Alt+X), so `SKILL §10`
+// reachability holds. Adding an id here needs an owner decision cited beside it;
+// the guard additionally asserts every exemption is still IN a menu and still
+// NOT on the ribbon, so a stale entry cannot hide a real omission.
+const MENU_ONLY_INSERT_COMMANDS = [
+  "insert.symbolByCode", // owner decision 2026-11-01 (docs/109 RM-19)
+  "insert.textFromFile", // owner decision 2026-11-01 (docs/109 RM-33)
+];
+
+test("every Insert command has a ribbon face on some tab", async ({ page, consoleErrors }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await gotoEditor(page);
 
@@ -532,7 +545,12 @@ test.fixme("every Insert command has a ribbon face on some tab", async ({ page, 
     );
 
   expect(menuCommands.length).toBeGreaterThan(0);
-  expect([...new Set(ribbonCommands)].sort()).toEqual([...new Set(menuCommands)].sort());
+  for (const exempt of MENU_ONLY_INSERT_COMMANDS) {
+    expect(menuCommands, `${exempt} is exempted as menu-only but is in no menu`).toContain(exempt);
+    expect(ribbonCommands, `${exempt} has a ribbon face: drop its menu-only exemption`).not.toContain(exempt);
+  }
+  const needRibbon = menuCommands.filter((id) => !MENU_ONLY_INSERT_COMMANDS.includes(id));
+  expect([...new Set(ribbonCommands)].sort()).toEqual([...new Set(needRibbon)].sort());
 
   expect(consoleErrors).toEqual([]);
 });

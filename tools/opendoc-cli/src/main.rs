@@ -29,7 +29,7 @@ use serde_json::{Value, json};
 
 const USAGE: &str = "usage:
   opendoc convert  IN OUT [--to FMT] [--mode exact|preserve|semantic] [--report FILE] [--strict-loss]
-  opendoc render   IN [--out DIR] [--format png|pdf] [--dpi N] [--pages 1-3,5]
+  opendoc render   IN [--out DIR] [--format png|svg|pdf] [--dpi N] [--pages 1-3,5]
   opendoc info     IN [--json]
   opendoc diff     OLD NEW [--json]
   opendoc template TEMPLATE DATA.json OUT [--delimiters \"[[,]]\"] [--strict] [--null TEXT]
@@ -292,7 +292,14 @@ fn render(args: &Args, out: &mut dyn Write) -> Result<(), Failure> {
                 let _ = writeln!(out, "{}", path.display());
             }
         }
-        other => return Err(usage(format!("--format is png or pdf, not {other}"))),
+        "svg" => {
+            for page in pages(args.value("--pages"), doc.page_count())? {
+                let path = dir.join(format!("{stem}-{}.svg", page + 1));
+                write(&path, doc.render_page_svg(page)?.as_bytes())?;
+                let _ = writeln!(out, "{}", path.display());
+            }
+        }
+        other => return Err(usage(format!("--format is png, svg or pdf, not {other}"))),
     }
     Ok(())
 }

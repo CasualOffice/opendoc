@@ -500,7 +500,13 @@ impl Document {
         let mut editor = Editor::new(&mut self.state, self.author.clone());
         match batch(&mut editor) {
             Ok(value) => {
-                let undo = editor.finish();
+                let (undo, media) = editor.finish();
+                // A picture's bytes join the resource map only once its batch
+                // has applied; undo leaves them there (unreferenced bytes are
+                // not written), so a redo still finds them.
+                for (part, bytes) in media {
+                    self.resources.insert(part, bytes);
+                }
                 if !undo.is_empty() {
                     self.changed = true;
                     self.layout = OnceCell::new();
@@ -771,6 +777,21 @@ impl Document {
         self.layout()
             .render_page_png(index, dpi)
             .map_err(|e| Error::new(ErrorCode::Render, e.to_string()))
+    }
+
+    /// One page as SVG, from the same layout [`Document::render_page_png`] and
+    /// [`Document::to_pdf`] draw: glyph outlines from the faces the layout
+    /// measured with, a transparent real-text layer over them for selection and
+    /// search, pictures embedded (`docs/176` §12.13). Deterministic: the same
+    /// document gives the same bytes on every platform with the bundled faces.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorCode::InvalidArgument`] past the last page.
+    pub fn render_page_svg(&self, index: usize) -> Result<String> {
+        self.layout()
+            .render_page_svg(index)
+            .map_err(|e| Error::invalid(e.to_string()))
     }
 
     /// A real-text vector PDF of the current state, from the same layout.

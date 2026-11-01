@@ -46,6 +46,7 @@ await writeFile("out.docx", bytes);
 console.log(report.losses.length ? report.losses : "nothing lost");
 await writeFile("out.pdf", doc.toPdf());
 await writeFile("page1.png", doc.renderPagePng(0, { dpi: 150 }));
+await writeFile("page1.svg", doc.renderPageSvg(0));            // vector, with selectable text
 ```
 
 In a browser or a worker, call `await init()` first (or `init({ wasm: url })`),
@@ -114,6 +115,37 @@ await writeFile("invoice.pdf", t.toPdf());
 - **Errors:** every bad tag is reported at once, in docxtemplater's `multi_error` shape
   (`error.properties.errors[i].properties.id`), and the document stays unchanged.
 
+## Pictures, headers and footers, notes, sections
+
+Every one is an edit like the others: one engine operation set, applied whole or not at
+all, with an undo (`doc.edit([...])` takes the same commands).
+
+```js
+const logo = doc.addPicture(await readFile("logo.png"), { widthPt: 72 }); // or insertPicture(p, offset, data)
+doc.resizePicture(logo, 96, 32);
+doc.setAltText(logo, "Company logo");
+doc.replacePicture(logo, await readFile("logo-2026.png"));                 // keeps id, frame and alt text
+
+doc.insertText(doc.header(0), 0, "Quarterly report");                      // section 0, the default header
+const footer = doc.footer(0);
+doc.insertText(footer, 0, "Page ");
+doc.insertField(footer, 5, "page");                                         // also numpages, date, time, filename, author
+doc.setDifferentFirstPage(0);
+doc.insertText(doc.header(0, { kind: "first" }), 0, "Cover");
+doc.setDifferentOddEven();                                                  // then header(0, { kind: "even" })
+
+const note = doc.addFootnote(p, 6, "Source: annual report");                // addEndnote too
+doc.setNoteText(note, "Source: annual report, p. 4");
+doc.deleteNote(note);
+
+const s = doc.addSection("nextPage");                                       // continuous, evenPage, oddPage
+doc.setPageSetup(s, { orientation: "landscape", topPt: 36, columns: 2 });   // the page turns, as in Word
+doc.setSectionStart(s, "oddPage");
+```
+
+Sizes are points. A section is its index in `doc.sections`. A new section shows the previous
+section's header and footer until `setLinkedToPrevious(s, "header", false)` gives it its own.
+
 ## Formats
 
 <!-- @generated sdk-formats -->
@@ -134,12 +166,8 @@ await writeFile("invoice.pdf", t.toPdf());
 
 ## What it does not do yet
 
-- Edits cannot insert pictures, headers, footers or notes. The builder writes all four.
-- Edits cannot change page or section setup.
 - A paragraph loop inside a header or footer is reported as an error and not run. Value tags
   work there.
-- There is no SVG page output.
-- HTML and Markdown cannot be opened.
 - The module embeds every bundled face (Liberation, Carlito, Caladea, Roboto, Noto Emoji, Noto Sans Symbols 2),
   so pixels do not depend on the machine. That makes the download large: `npm pack` prints
   its size.

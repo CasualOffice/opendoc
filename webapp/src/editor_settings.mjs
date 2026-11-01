@@ -208,6 +208,7 @@ export function createSettings(ed) {
       // Every relabel re-introduces ⌘ from the catalogue (`105` UX-009, #599).
       localizeShortcutGlyphs(document.body, ed.EDITOR_KEYBOARD_PLATFORM);
       ed.reflowView.setEnabled(); // the width button's label is the STEP's, not markup's
+      ed.pdfCommands?.chip?.reflect(); // the PDF layout chip names its layout in a sentence
       if (ed.doc) ed.updateStats();
       // The timeline's rows, day headings and disclosure are all script-built from
       // locale-shaped values, and the View entry's disabled reason is a sentence —

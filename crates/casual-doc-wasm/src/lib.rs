@@ -13688,19 +13688,7 @@ impl WasmDocument {
                         out,
                     );
                 }
-                BlockNode::Table(table) => {
-                    let rows = a11y_table_rows(table);
-                    out.push(A11yBlockJson::Table {
-                        rows,
-                        header_rows: a11y_header_rows(table),
-                        // `w:tblLook@firstColumn` is the "First Column" box in
-                        // Word's Table Design band — the author saying the
-                        // leading cell of each row labels that row.
-                        row_header_column: table.properties.look.first_column,
-                        caption: table.properties.caption.clone(),
-                        description: table.properties.description.clone(),
-                    });
-                }
+                BlockNode::Table(table) => out.push(a11y_table_block(table, depth)),
                 BlockNode::Sdt(sdt) => {
                     self.collect_a11y_blocks_at(&sdt.blocks, cascade, notes, depth, out);
                 }
@@ -19213,9 +19201,17 @@ fn count_a11y_checkboxes(inlines: &[InlineNode]) -> usize {
         .sum()
 }
 
-/// Appends every form checkbox in `blocks` to `out`, across paragraphs and
-/// nested tables — the projection of one table cell's controls.
-fn collect_cell_checkboxes(blocks: &[BlockNode], out: &mut Vec<A11yCheckboxJson>) {
+/// Appends every form checkbox in `blocks` to `out`, across paragraphs and —
+/// when `into_tables` — nested tables: the projection of one table cell's
+/// controls. A cell whose nested tables are projected as tables of their own
+/// (`A11yCellJson::blocks`) passes `false`, because each nested cell then
+/// carries its own controls and walking into them here would announce every
+/// such control twice.
+fn collect_cell_checkboxes(
+    blocks: &[BlockNode],
+    into_tables: bool,
+    out: &mut Vec<A11yCheckboxJson>,
+) {
     fn from_inlines(inlines: &[InlineNode], out: &mut Vec<A11yCheckboxJson>) {
         for inline in inlines {
             match inline {
@@ -19243,13 +19239,15 @@ fn collect_cell_checkboxes(blocks: &[BlockNode], out: &mut Vec<A11yCheckboxJson>
         match block {
             BlockNode::Paragraph(paragraph) => from_inlines(&paragraph.inlines, out),
             BlockNode::Table(table) => {
-                for row in &table.rows {
-                    for cell in &row.cells {
-                        collect_cell_checkboxes(&cell.blocks, out);
+                if into_tables {
+                    for row in &table.rows {
+                        for cell in &row.cells {
+                            collect_cell_checkboxes(&cell.blocks, true, out);
+                        }
                     }
                 }
             }
-            BlockNode::Sdt(sdt) => collect_cell_checkboxes(&sdt.blocks, out),
+            BlockNode::Sdt(sdt) => collect_cell_checkboxes(&sdt.blocks, into_tables, out),
             BlockNode::AltChunk(_) => {}
         }
     }
@@ -19329,27 +19327,46 @@ fn collect_text_box_a11y_text(inlines: &[InlineNode], out: &mut Vec<String>) {
 /// made entirely of unlabelled controls. It never leaves the row, and OOXML
 /// caps a row at 63 grid columns, so the quadratic term is bounded by a
 /// constant rather than by the document.
-fn a11y_row_cells(row: &casual_doc_model::v1::TableRow) -> Vec<A11yCellJson> {
+fn a11y_row_cells(row: &casual_doc_model::v1::TableRow, depth: u32) -> Vec<A11yCellJson> {
     let mut cells: Vec<A11yCellJson> = row
         .cells
         .iter()
         .map(|cell| {
             let mut parts = Vec::new();
             a11y_cell_text(&cell.blocks, &mut parts);
+            let text = join_a11y_parts(&parts);
+            // A nested table is projected as a TABLE inside the cell, so a
+            // screen reader announces "table, 2 columns" instead of reading
+            // "Outer Nested A Nested B" as one run of text (HF-416). Past the
+            // nesting bound the cell keeps the flat reading.
+            let nested = depth < MAX_A11Y_NESTING && cell_holds_table(&cell.blocks);
+            let mut blocks = Vec::new();
+            if nested {
+                a11y_cell_blocks(&cell.blocks, depth, &mut blocks);
+            }
             let mut checkboxes = Vec::new();
-            collect_cell_checkboxes(&cell.blocks, &mut checkboxes);
-            let text = parts
-                .iter()
-                .map(|text| text.trim())
-                .filter(|text| !text.is_empty())
-                .collect::<Vec<_>>()
-                .join(" ");
+            collect_cell_checkboxes(&cell.blocks, !nested, &mut checkboxes);
             if checkboxes.len() == 1 {
-                apply_visible_label(&mut checkboxes[0], &text);
+                // The cell's OWN text labels its own control; a nested table's
+                // text is that table's, and labels that table's controls.
+                let own = if nested {
+                    blocks
+                        .iter()
+                        .filter_map(|block| match block {
+                            A11yBlockJson::Paragraph { text } => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                } else {
+                    text.clone()
+                };
+                apply_visible_label(&mut checkboxes[0], &own);
             }
             A11yCellJson {
                 text,
                 checkboxes,
+                blocks,
                 col_span: 1,
                 row_span: 1,
                 grid_column: 0,
@@ -19508,9 +19525,20 @@ struct A11yCellJson {
     /// The cell's announced text, with any form checkbox's glyph removed.
     #[serde(default)]
     text: String,
-    /// The form checkboxes the cell holds, in document order.
+    /// The form checkboxes the cell holds, in document order. When `blocks`
+    /// is present these are the cell's OWN controls only: a nested table's
+    /// controls ride on that table's cells.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     checkboxes: Vec<A11yCheckboxJson>,
+    /// The cell's content in document order, present only when the cell holds
+    /// a nested table: a [`A11yBlockJson::Paragraph`] per paragraph of its own
+    /// and a [`A11yBlockJson::Table`] per nested table, so the host renders a
+    /// real `<table>` inside the `<td>` and a screen reader announces it as a
+    /// table (HF-416). `text` stays the flat reading for a host that predates
+    /// this field. Omitted for an ordinary cell, so the payload of a document
+    /// without nested tables is unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    blocks: Vec<A11yBlockJson>,
     /// Grid columns a merged cell covers (`colspan`), omitted when 1.
     #[serde(default = "one_span", skip_serializing_if = "is_one_span")]
     col_span: u32,
@@ -19541,14 +19569,17 @@ const fn is_one_span(span: &u32) -> bool {
 /// it, so it is not a cell to a reader; it used to be announced as an empty
 /// cell of its own, and a merged cell was announced as one grid cell, so a
 /// screen reader's "row 3, column 2" did not match what was on the page.
-fn a11y_table_rows(table: &Table) -> Vec<Vec<A11yCellJson>> {
+///
+/// `depth` is how deeply `table` itself is nested (0 for a body table), and it
+/// bounds the recursion into nested tables at `MAX_A11Y_NESTING`.
+fn a11y_table_rows(table: &Table, depth: u32) -> Vec<Vec<A11yCellJson>> {
     let grid = TableGridMap::build(table);
     table
         .rows
         .iter()
         .enumerate()
         .map(|(r, row)| {
-            a11y_row_cells(row)
+            a11y_row_cells(row, depth)
                 .into_iter()
                 .zip(grid.row(r))
                 .filter(|(_, slot)| !slot.continuation)
@@ -19562,6 +19593,68 @@ fn a11y_table_rows(table: &Table) -> Vec<Vec<A11yCellJson>> {
                 .collect()
         })
         .collect()
+}
+
+/// One table as an accessibility node: its cell grid plus the header geometry
+/// a screen reader needs. `depth` is the table's own nesting depth.
+///
+/// Complexity: linear in the table's content, nested tables included (each
+/// cell is walked once for its text, once for its controls and, when it holds a
+/// nested table, once more for its blocks; the depth is bounded).
+fn a11y_table_block(table: &Table, depth: u32) -> A11yBlockJson {
+    A11yBlockJson::Table {
+        rows: a11y_table_rows(table, depth),
+        header_rows: a11y_header_rows(table),
+        // `w:tblLook@firstColumn` is the "First Column" box in Word's Table
+        // Design band — the author saying the leading cell of each row labels
+        // that row.
+        row_header_column: table.properties.look.first_column,
+        caption: table.properties.caption.clone(),
+        description: table.properties.description.clone(),
+    }
+}
+
+/// Whether a cell's blocks hold a table of their own, directly or inside a
+/// block content control. O(blocks of the cell), not of the nested tables.
+fn cell_holds_table(blocks: &[BlockNode]) -> bool {
+    blocks.iter().any(|block| match block {
+        BlockNode::Table(_) => true,
+        BlockNode::Sdt(sdt) => cell_holds_table(&sdt.blocks),
+        BlockNode::Paragraph(_) | BlockNode::AltChunk(_) => false,
+    })
+}
+
+/// The content of a cell that holds a nested table, in document order: one
+/// paragraph node per paragraph with announced text (its text boxes' text
+/// included, as the flat reading has it) and one table node per nested table.
+/// `depth` is the depth of the table the cell belongs to.
+fn a11y_cell_blocks(blocks: &[BlockNode], depth: u32, out: &mut Vec<A11yBlockJson>) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(_) => {
+                let mut parts = Vec::new();
+                a11y_cell_text(std::slice::from_ref(block), &mut parts);
+                let text = join_a11y_parts(&parts);
+                if !text.is_empty() {
+                    out.push(A11yBlockJson::Paragraph { text });
+                }
+            }
+            BlockNode::Table(table) => out.push(a11y_table_block(table, depth + 1)),
+            BlockNode::Sdt(sdt) => a11y_cell_blocks(&sdt.blocks, depth, out),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+/// Trimmed, non-empty announced parts joined with one space: how a cell's
+/// paragraphs read as one cell.
+fn join_a11y_parts(parts: &[String]) -> String {
+    parts
+        .iter()
+        .map(|text| text.trim())
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// One `w14:checkbox` form control, as assistive technology needs it.
@@ -38919,6 +39012,56 @@ mod tests {
                 A11yBlockJson::ListItem { ordered: false, level: 0, text } if *text == plain_text
             )),
             "the converted paragraph is now an unordered list item: {after:?}"
+        );
+    }
+
+    /// A nested table reaches the reader as a TABLE inside its cell (HF-416).
+    /// The rich fixture's outer cell holds "Outer" and a 1 x 2 table of
+    /// "Nested A" | "Nested B"; the projection used to flatten that cell into
+    /// the one string "Outer Nested A Nested B", so a screen reader never said
+    /// "table" for the inner grid. The flat `text` stays for older hosts.
+    #[test]
+    fn a_nested_table_is_projected_as_a_table_inside_its_cell() {
+        let d = open_document(RICH_DOCX).expect("open corpus docx");
+        let nodes: Vec<A11yBlockJson> =
+            serde_json::from_str(&d.accessibility_tree()).expect("typed a11y tree");
+        let cell = nodes
+            .iter()
+            .filter_map(|node| match node {
+                A11yBlockJson::Table { rows, .. } => Some(rows),
+                _ => None,
+            })
+            .flatten()
+            .flatten()
+            .find(|cell| cell.text.starts_with("Outer"))
+            .expect("the outer cell is projected");
+        assert_eq!(
+            cell.text, "Outer Nested A Nested B",
+            "the flat reading is unchanged"
+        );
+        let [
+            A11yBlockJson::Paragraph { text },
+            A11yBlockJson::Table { rows, .. },
+        ] = cell.blocks.as_slice()
+        else {
+            panic!(
+                "the outer cell is its paragraph then a nested table: {:?}",
+                cell.blocks
+            );
+        };
+        assert_eq!(text, "Outer");
+        let inner: Vec<Vec<&str>> = rows
+            .iter()
+            .map(|row| row.iter().map(|cell| cell.text.as_str()).collect())
+            .collect();
+        assert_eq!(inner, vec![vec!["Nested A", "Nested B"]]);
+        // An ordinary cell carries no blocks, so a document without nested
+        // tables projects byte-for-byte what it did before.
+        let json = d.accessibility_tree();
+        assert_eq!(
+            json.matches("\"blocks\"").count(),
+            1,
+            "only the nesting cell: {json}"
         );
     }
 

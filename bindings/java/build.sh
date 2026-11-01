@@ -35,4 +35,16 @@ jar --create --file "$here/build/opendoc.jar" -C "$here/build/classes" .
 java --enable-native-access=ALL-UNNAMED -Dopendoc.library="$native" \
   -cp "$here/build/classes:$here/build/test-classes" \
   org.casualoffice.opendoc.ConformanceTest "$repo/sample.docx"
+
+# The example webapp/sdk.page.html publishes verbatim: compiled and run here, and
+# its three files checked, so the page cannot quote code that does not work.
+mkdir -p "$here/build/example-classes"
+javac --release 22 -Xlint:all,-restricted -Werror -d "$here/build/example-classes" \
+  -cp "$here/build/classes" $(find "$here/src/examples/java" -name '*.java')
+java --enable-native-access=ALL-UNNAMED -Dopendoc.library="$native" \
+  -cp "$here/build/classes:$here/build/example-classes" \
+  org.casualoffice.opendoc.examples.Quickstart "$here/build/example-out"
+for produced in report.docx report.pdf page-1.png; do
+  test -s "$here/build/example-out/$produced" || { echo "the example wrote no $produced" >&2; exit 1; }
+done
 echo "built $here/build/opendoc.jar against $native"
