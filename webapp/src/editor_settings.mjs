@@ -206,7 +206,7 @@ export function createSettings(ed) {
       tab.tabIndex = on ? 0 : -1;
       if (on && focus) tab.focus();
     }
-    settingsBody.scrollTop = 0;
+    settingsPanel.querySelector(".settings-pages")?.scrollTo?.(0, 0);
   }
   for (const tab of settingsTabs) {
     tab.addEventListener("click", () => showSettingsPage(tab.dataset.settingsTab));
