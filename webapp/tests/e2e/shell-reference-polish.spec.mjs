@@ -186,7 +186,10 @@ test("the outline inspector uses the shared rounded panel surface", async ({
       bottomGap: window.innerHeight - bounds.bottom,
     };
   });
-  expect(style.radius).toBe("10px");
+  // 8px since design system v2 (`docs/63` §7, UX-052): panels, menus and
+  // popovers share the one card radius, `--r-md`. It was 10px when floating
+  // surfaces carried a fourth radius of their own.
+  expect(style.radius).toBe("8px");
   expect([
     style.borderTop,
     style.borderRight,

@@ -44,7 +44,7 @@
   overflow: visible;
   clip-path: none;
   padding: 0.5rem 0.75rem;
-  border-radius: 0.375rem;
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
   outline: 2px solid var(--accent);
@@ -94,6 +94,13 @@
   --accent-ink: #ffffff;
   --accent-soft: color-mix(in srgb, var(--accent) 13%, transparent);
   --accent-line: color-mix(in srgb, var(--accent) 42%, transparent);
+  /* v2: the accent is THE primary (owner, 2026-11-01). Apply, OK and every
+     other primary action fill with it; there is no second, graphite primary.
+     Hover and press darken the fill toward black in both themes, because white
+     text sits on it in both themes. */
+  --accent-hover: color-mix(in srgb, var(--accent) 88%, #000000);
+  --accent-press: color-mix(in srgb, var(--accent) 78%, #000000);
+  --on-accent: var(--accent-ink);
 
   /* ---- Paper layer ----------------------------------------------------------
      The document sheet is white in BOTH themes — the editor themes its chrome,
@@ -201,38 +208,48 @@
      user act on chrome the modal has taken control of. */
   --z-tooltip: 1000;
 
-  /* Rounded shell, from the owner's prototype (Downloads/preview (1).html).
-     This SUPERSEDES the earlier near-square pass recorded in docs/63: the shell
-     reads as softly rounded rather than flat-gridded. 6px on controls keeps a
-     34px button in proportion; 8px on surfaces. Floating popovers keep a small radius so they still
-     detach from the surface (and #outlinePanel stays 10px, asserted by
-     shell-reference-polish.spec). */
-  --radius: 0.5rem;
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  /* Floating surfaces keep their own radius so they detach from the flat
-     canvas — and both are asserted by tests (#outlinePanel 10px in
-     shell-reference-polish; dialog cards 12px in header-menu). */
-  --radius-popover: 0.625rem;
-  --radius-dialog: 0.75rem;
-  --shadow-popover: 0 0.625rem 2.125rem rgba(20, 22, 28, 0.24);
-  --shadow-lg: 0 1.125rem 3rem rgba(20, 22, 28, 0.28);
-  /* Two layers, not one 30%-opacity slab: a tight contact shadow that seats the
-     card, plus a wide soft one for depth. The single heavy shadow read as a
-     drop-shadowed box from a decade ago, which is most of why the dialogs felt
-     heavier than the chrome around them. */
-  --shadow-dialog: 0 1px 2px rgba(20, 22, 28, 0.12), 0 1rem 3rem rgba(20, 22, 28, 0.18);
-  /* Named type, control-height, and icon grids from doc 69 §3.3/§4.1/§4.2.
-     Values preserve the existing shell except where the design explicitly
-     consolidates equivalent caption/icon roles. */
-  --fs-micro: 0.5625rem;
-  --fs-caption: 0.625rem;
-  --fs-small: 0.75rem;
-  --fs-body: 0.8125rem;
-  --fs-medium: 0.9375rem;
-  --fs-title: 1rem;
-  --fs-ribbon-caption: 0.65625rem;
-  --fs-ribbon-tab: 0.84375rem;
+  /* ---- Design system v2 (docs/63 §v2, `109` UX-052) ------------------------
+     ONE scale per property, and `tests/design_scale.test.mjs` fails the build
+     on a value outside it. The 2026-11 audit measured 30 font sizes, 9
+     weights, 31 radii and 42 shadows in this sheet: the tokens existed, nothing
+     made a rule use them, so every surface was tuned locally and the product
+     read as many small designs instead of one.
+
+     Type: five sizes and three weights. 11 is the floor (chips, shortcut
+     hints, big-button labels), 12 meta and status, 13 body, 15 titles, 20 the
+     File page heading. 450/550/650/750 cannot be told apart at UI sizes and
+     render differently per platform, so they are gone. */
+  --fs-xs: 0.6875rem;
+  --fs-sm: 0.75rem;
+  --fs-md: 0.8125rem;
+  --fs-lg: 0.9375rem;
+  --fs-xl: 1.25rem;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  /* Icons: 16 (status bar, chips, menu trailing), 20 (toolbar, menus, panel
+     actions — the size Docs and Word use), 24 (big ribbon buttons, mobile). */
+  --icon-sm: 1rem;
+  --icon-md: 1.25rem;
+  --icon-lg: 1.5rem;
+  /* Radius: four rungs and a pill. 4 checkbox/chip/swatch, 6 buttons, inputs
+     and tool buttons, 8 menus, popovers, cards, panels and the toolbar card,
+     12 dialogs and sheets. `--r-pill` is written in rem because a px length in
+     a chrome rule is refused by `chrome_units.test.mjs`. */
+  --r-xs: 0.25rem;
+  --r-sm: 0.375rem;
+  --r-md: 0.5rem;
+  --r-lg: 0.75rem;
+  --r-pill: 62.4375rem;
+  /* Control heights: 24 dense (status bar, chips), 28 tool (toolbar and
+     ribbon buttons), 32 control (buttons, inputs and selects in dialogs and
+     panels), 44 touch (coarse pointer). */
+  --h-dense: 1.5rem;
+  --h-tool: 1.75rem;
+  --h-ctl: 2rem;
+  --h-touch: 2.75rem;
+  /* Spacing is the 4px grid the --space-* rungs below already are. */
+
   --h-control: 1.875rem;
   --h-search: 2.125rem;
   --h-field: 2.25rem;
@@ -283,9 +300,8 @@
   --h-compact-bar: clamp(2.375rem, 3.4vh, 2.875rem);
 
   /* Chrome card: the ribbon band and the compact bar are the same object at
-     different densities, so they share one radius and one inset. Both scale —
-     a fixed 16px reads heavy on a small window and mean on a large one. */
-  --chrome-card-radius: clamp(0.625rem, 1.1vw, 1.125rem);
+     different densities, so they share one inset (and the v2 card radius,
+     `--r-md`; the old 10-18px clamp was a radius family of its own). */
   --chrome-card-inset-y: clamp(1px, 0.25vh, 0.25rem);
   /* ONE height for every ribbon band. It used to be whatever the tallest group
      on the active tab happened to be — Home 79px (two control rows), Insert /
@@ -362,9 +378,6 @@
      group and its "⋯" overflow button can never end up underneath a panel
      (HF-084). Redefined below for the collapsed ribbon, where the band is gone. */
   --chrome-bottom: calc(var(--h-header) + var(--h-ribbon-band));
-  --icon-compact: 1rem;
-  --icon-control: 1.125rem;
-  --icon-rail: 1.25rem;
   /* The dialog width scale. Four rungs, and the fourth is here because
      `.settings-dialog` had already invented it in raw pixels (960px) while
      `--dialog-width-wide` was declared and referenced nowhere — a scale with a
@@ -396,17 +409,17 @@
      Regions separate by SHADE, not by hairline: canvas is the darkest, chrome
      and panels are white on top of it, and the page is white against the darker
      canvas so it reads as paper. Borders are a last resort, not the mechanism. */
-  --bg: #eef1f7;         /* app chrome strip — the header/toolbar band */
-  --bg-2: #f4f6fb;       /* sunken panes and the toolbar pill */
+  --bg: #f3f4f6;         /* app chrome strip — the header/toolbar band */
+  --bg-2: #f6f7f9;       /* sunken panes and the toolbar pill */
   --surface: #ffffff;    /* panels, dialogs, dropdowns, the page */
-  --surface-alt: #f4f6fb;
-  --ink: #1f1f1f;
+  --surface-alt: #f6f7f9;
+  --ink: #1b1e24;
   /* Like their dark counterparts, --muted and --faint are pinned to clear WCAG
      AA (4.5:1) against the darkest surface they are painted on — here --bg-2,
      not --surface. --faint was #6f747c, which passes on white (4.70:1) and fails
      on --bg-2 (4.16:1), so the search box's "⌘⇧P" hint and the footer's "Mode"
      label were the two places it showed. Guarded by theme-contrast.spec.mjs. */
-  --muted: #5f6368;
+  --muted: #555c68;
   /* --faint was #8a8e95 = 3.29:1 on --surface, below the 4.5:1 body-text floor,
      and it is the colour of every menu shortcut hint and empty state — the prose
      a first-time user needs most (docs/104 HF-093). #6f747c measures 4.70:1 on
@@ -414,9 +427,9 @@
   /* #686b70 is the LIGHTEST value that still clears AA (4.5:1) on the darkest
      surface it is painted on — the #eceef1 canvas, where it measures 4.60:1.
      The prototype's own #747775 measures 3.90:1 there and would fail. */
-  --faint: #686b70;
-  --line: #e3e8f1;
-  --line-strong: #cfd6e4;
+  --faint: #656b76;
+  --line: #e6e8ec;
+  --line-strong: #d5d9e0;
   --scrollbar-thumb: rgba(74, 78, 85, 0.3);
   --scrollbar-thumb-hover: rgba(74, 78, 85, 0.52);
   --shadow-sm: 0 1px 2px rgba(20, 22, 26, 0.05);
@@ -424,9 +437,9 @@
   /* Graphite primary action (redesign): the mock's "Open" / "Save .docx" /
      "Apply" buttons are solid ink, not the tinted accent. Kept theme-aware so
      dark mode gets an inverse (light) primary instead of an unreadable dark one. */
-  --primary-bg: #14161a;
-  --primary-bg-hover: #2c2f35;
-  --primary-ink: #fbfaf8;
+  --primary-bg: var(--accent);
+  --primary-bg-hover: var(--accent-hover);
+  --primary-ink: var(--accent-ink);
   /* The accent as foreground/edge on a theme surface. Identical to the fill in
      light mode; the dark blocks mix it toward white so a user-chosen accent
      cannot land unreadable on a dark panel however dark they picked it. */
@@ -457,6 +470,22 @@
   --review-replace-line: var(--info-line);
   --review-format-line: #9334e6;
   --review-move: #0b8043;
+  /* ---- v2 roles (docs/63 §v2) --------------------------------------------
+  The state washes and elevations every surface used to restate locally. In
+  light, elevation is a hairline plus a soft shadow; in dark it is a
+  lighter surface plus a hairline and no shadow, below. */
+  --surface-raised: #ffffff;
+  --ink-disabled: #9aa0a9;
+  --icon: #444a54;
+  --line-control: #8a909a;
+  --hover: color-mix(in srgb, var(--ink) 6%, transparent);
+  --press: color-mix(in srgb, var(--ink) 10%, transparent);
+  --selected: color-mix(in srgb, var(--accent) 12%, transparent);
+  --selected-ink: color-mix(in srgb, var(--accent) 80%, #000000);
+  --scrim: rgba(16, 18, 24, 0.4);
+  --e1: 0 1px 0.125rem rgba(16, 18, 24, 0.06);
+  --e2: 0 0 0 1px rgba(16, 18, 24, 0.06), 0 0.5rem 1.5rem rgba(16, 18, 24, 0.12);
+  --e3: 0 0 0 1px rgba(16, 18, 24, 0.06), 0 1.5rem 3.5rem rgba(16, 18, 24, 0.2);
   color-scheme: light;
 }
 
@@ -482,22 +511,22 @@
    to one and the test fails until it is in the other, and in the light block. */
 @media (prefers-color-scheme: dark) {
 :root:not([data-theme]) {
-    --bg: #141619;
-    --bg-2: #191c20;
-    --surface: #212429;
-    --surface-alt: #282c31;
-    --ink: #e8eaed;
-    --muted: #a8aeb6;
-    --faint: #9aa0a8;
-    --line: #2e323a;
-    --line-strong: #383d46;
+    --bg: #111317;
+    --bg-2: #16181d;
+    --surface: #1d2026;
+    --surface-alt: #252930;
+    --ink: #e7e9ec;
+    --muted: #a6acb5;
+    --faint: #9aa0a9;
+    --line: #2c3037;
+    --line-strong: #3a3f48;
     --scrollbar-thumb: rgba(232, 234, 237, 0.28);
     --scrollbar-thumb-hover: rgba(232, 234, 237, 0.5);
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+    --shadow-sm: none;
     --shadow-page: 0 1px 3px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35);
-    --primary-bg: #e8eaed;
-    --primary-bg-hover: #ffffff;
-    --primary-ink: #16181c;
+    --primary-bg: var(--accent);
+    --primary-bg-hover: var(--accent-hover);
+    --primary-ink: var(--accent-ink);
     --accent-text: color-mix(in srgb, var(--accent) 58%, #ffffff);
     --success: #81c995;
     --success-line: #5bb974;
@@ -520,27 +549,39 @@
     --review-replace-line: var(--info-line);
     --review-format-line: #d7aefb;
     --review-move: #6dd58c;
+    --surface-raised: #252930;
+    --ink-disabled: #6a707a;
+    --icon: #c3c8cf;
+    --line-control: #6f7580;
+    --hover: color-mix(in srgb, var(--ink) 6%, transparent);
+    --press: color-mix(in srgb, var(--ink) 10%, transparent);
+    --selected: color-mix(in srgb, var(--accent-text) 20%, transparent);
+    --selected-ink: var(--accent-text);
+    --scrim: rgba(0, 0, 0, 0.6);
+    --e1: none;
+    --e2: 0 0 0 1px var(--line-strong);
+    --e3: 0 0 0 1px var(--line-strong);
     color-scheme: dark;
   }
 }
 
 :root[data-theme="dark"] {
-  --bg: #141619;
-  --bg-2: #191c20;
-  --surface: #212429;
-  --surface-alt: #282c31;
-  --ink: #e8eaed;
-  --muted: #a8aeb6;
-  --faint: #9aa0a8;
-  --line: #2e323a;
-  --line-strong: #383d46;
+  --bg: #111317;
+  --bg-2: #16181d;
+  --surface: #1d2026;
+  --surface-alt: #252930;
+  --ink: #e7e9ec;
+  --muted: #a6acb5;
+  --faint: #9aa0a9;
+  --line: #2c3037;
+  --line-strong: #3a3f48;
   --scrollbar-thumb: rgba(232, 234, 237, 0.28);
   --scrollbar-thumb-hover: rgba(232, 234, 237, 0.5);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-sm: none;
   --shadow-page: 0 1px 3px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35);
-  --primary-bg: #e8eaed;
-  --primary-bg-hover: #ffffff;
-  --primary-ink: #16181c;
+  --primary-bg: var(--accent);
+  --primary-bg-hover: var(--accent-hover);
+  --primary-ink: var(--accent-ink);
   --accent-text: color-mix(in srgb, var(--accent) 58%, #ffffff);
   --success: #81c995;
   --success-line: #5bb974;
@@ -563,6 +604,18 @@
   --review-replace-line: var(--info-line);
   --review-format-line: #d7aefb;
   --review-move: #6dd58c;
+  --surface-raised: #252930;
+  --ink-disabled: #6a707a;
+  --icon: #c3c8cf;
+  --line-control: #6f7580;
+  --hover: color-mix(in srgb, var(--ink) 6%, transparent);
+  --press: color-mix(in srgb, var(--ink) 10%, transparent);
+  --selected: color-mix(in srgb, var(--accent-text) 20%, transparent);
+  --selected-ink: var(--accent-text);
+  --scrim: rgba(0, 0, 0, 0.6);
+  --e1: none;
+  --e2: 0 0 0 1px var(--line-strong);
+  --e3: 0 0 0 1px var(--line-strong);
   color-scheme: dark;
 }
 
@@ -599,7 +652,7 @@
 ::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
   border: 2px solid transparent;
-  border-radius: 0.5rem;
+  border-radius: var(--r-md);
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
@@ -679,7 +732,7 @@ body {
      chrome has to paint with the network off. Our own stack stays behind it, so a
      face that fails to load leaves readable chrome rather than a system serif. */
   font:
-    var(--fs-body)/1.5 var(--brand-font, "Inter"), -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    var(--fs-md)/1.5 var(--brand-font, "Inter"), -apple-system, BlinkMacSystemFont, "SF Pro Text",
     "Segoe UI", Roboto, sans-serif;
   color: var(--ink);
   background: var(--bg);
@@ -732,7 +785,7 @@ input {
   padding: 0 0.625rem;
   margin-left: 0.375rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--muted);
   cursor: pointer;
@@ -747,7 +800,7 @@ input {
 
 .search-trigger .ms {
   flex: 0 0 auto;
-  font-size: var(--icon-compact);
+  font-size: var(--icon-sm);
 }
 
 .search-trigger .search-label {
@@ -757,15 +810,15 @@ input {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
 }
 
 .search-trigger kbd {
   flex: 0 0 auto;
-  font: 600 var(--fs-caption)/1 inherit;
+  font: 600 var(--fs-xs)/1 inherit;
   color: var(--faint);
   background: var(--bg-2);
-  border-radius: 0.25rem;
+  border-radius: var(--r-xs);
   padding: 0.125rem 0.375rem;
 }
 
@@ -780,7 +833,7 @@ input {
 
 .brand .mark {
   font-weight: 700;
-  font-size: var(--fs-medium);
+  font-size: var(--fs-lg);
   letter-spacing: -0.02em;
 }
 
@@ -799,7 +852,7 @@ input {
 .brand-logo-link {
   display: block;
   line-height: 0;
-  border-radius: var(--radius);
+  border-radius: var(--r-md);
 }
 
 .brand-logo-link:focus-visible {
@@ -864,15 +917,15 @@ input {
   gap: 0.25rem;
   padding: 1px 0.4375rem 1px 0.3125rem;
   border: 1px solid var(--line);
-  border-radius: 0.1875rem;
+  border-radius: var(--r-xs);
   background: var(--surface-alt);
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   white-space: nowrap;
 }
 
 .document-state .ms {
-  font-size: var(--icon-compact);
+  font-size: var(--icon-sm);
 }
 
 .document-state[data-state="edited"] {
@@ -939,7 +992,7 @@ input {
   border-radius: 50%;
   background: var(--presence-color, var(--muted));
   color: var(--presence-ink, var(--surface));
-  font: 600 var(--fs-caption)/1 inherit;
+  font: 600 var(--fs-xs)/1 inherit;
   letter-spacing: -0.02em;
   cursor: pointer;
 }
@@ -1011,10 +1064,10 @@ input {
   overscroll-behavior: contain;
   padding: 0.375rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
-  box-shadow: var(--shadow-popover);
+  box-shadow: var(--e2);
 }
 
 .presence-list[hidden] {
@@ -1024,7 +1077,7 @@ input {
 .presence-list-heading {
   padding: 0.25rem 0.5rem 0.375rem;
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   font-weight: 600;
 }
 
@@ -1042,11 +1095,11 @@ input {
   min-height: 2rem;
   padding: 0.25rem 0.5rem;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   text-align: start;
 }
 
@@ -1078,7 +1131,7 @@ button.presence-row:hover {
 }
 
 .share-btn .ms {
-  font-size: var(--icon-compact);
+  font-size: var(--icon-sm);
 }
 
 /* A remote caret the reader just asked to be shown: its label pulses once. */
@@ -1157,10 +1210,10 @@ button.presence-row:hover {
   height: 1.3125rem;
   padding: 1px 0.4375rem;
   border: 0;
-  border-radius: 0.25rem;
+  border-radius: var(--r-xs);
   background: transparent;
   color: var(--ink);
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
   line-height: 1.1875rem;
   cursor: pointer;
 }
@@ -1187,11 +1240,11 @@ button.presence-row:hover {
   gap: 0.375rem;
   height: var(--h-control);
   padding: 0 0.75rem;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   border: 1px solid var(--line-strong);
   background: var(--surface);
   color: var(--ink);
-  font-weight: 550;
+  font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.12s, border-color 0.12s, opacity 0.12s;
@@ -1200,7 +1253,7 @@ button.presence-row:hover {
 /* Unified icon grid (doc 69 §4.2): header/menu icons are 18px, matching
    .fmt's ribbon icons instead of a separate 17px size. */
 .btn .ms {
-  font-size: var(--icon-control);
+  font-size: var(--icon-md);
 }
 
 .btn:hover:not(:disabled) {
@@ -1235,7 +1288,7 @@ button.presence-row:hover {
   max-width: 8.25rem;
   padding: 0 1.625rem 0 0.5625rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
   cursor: pointer;
@@ -1264,11 +1317,11 @@ button.presence-row:hover {
   max-width: 10.625rem;
   padding: 1px 0.4375rem;
   border: 1px solid var(--line);
-  border-radius: 0.1875rem;
+  border-radius: var(--r-xs);
   background: var(--surface-alt);
   overflow: hidden;
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1300,7 +1353,7 @@ button.compatibility-status:hover {
 
 .findings-group-title {
   margin: 0 0 var(--space-2);
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
   font-weight: 600;
 }
 
@@ -1335,14 +1388,14 @@ button.compatibility-status:hover {
 .findings-feature {
   min-width: 0;
   color: var(--muted);
-  font-size: var(--fs-caption);
+  font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
 
 .findings-count,
 .findings-where {
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1353,7 +1406,7 @@ button.compatibility-status:hover {
 .findings-note {
   margin: 0 0 var(--space-2);
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
 }
 
 /* Word's own bookkeeping: a real disclosure inside its kind group, collapsed
@@ -1371,7 +1424,7 @@ button.compatibility-status:hover {
   min-height: 1.75rem;
   padding: 0.125rem var(--space-1);
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink);
   font: inherit;
@@ -1391,7 +1444,7 @@ button.compatibility-status:hover {
 .findings-disclosure .ms {
   flex: 0 0 auto;
   color: var(--muted);
-  font-size: 1.125rem;
+  font-size: var(--icon-md);
   line-height: 1;
 }
 
@@ -1447,7 +1500,7 @@ button.compatibility-status:hover {
   position: relative;
   height: 0.375rem;
   overflow: hidden;
-  border-radius: 0.1875rem;
+  border-radius: var(--r-xs);
   background: var(--line);
 }
 
@@ -1489,7 +1542,7 @@ button.compatibility-status:hover {
 .pdf-import-phase {
   margin: var(--space-1) 0 0;
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
 }
 
 /* "Keep exact page layout": the checkbox, its label, and the hint below. */
@@ -1515,8 +1568,8 @@ button.compatibility-status:hover {
 
 .doc-title {
   font: inherit;
-  font-size: var(--fs-body);
-  font-weight: 550;
+  font-size: var(--fs-md);
+  font-weight: 500;
   color: var(--ink);
   width: auto;
   max-width: 18.75rem;
@@ -1524,7 +1577,7 @@ button.compatibility-status:hover {
   flex: 1 1 auto;
   padding: 0.1875rem 0.375rem;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: none;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1554,9 +1607,9 @@ button.compatibility-status:hover {
   padding: 0.375rem;
   overflow-y: auto;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-popover);
+  border-radius: var(--r-md);
   background: var(--surface);
-  box-shadow: var(--shadow-popover);
+  box-shadow: var(--e2);
   overscroll-behavior: contain;
 }
 
@@ -1573,7 +1626,7 @@ button.compatibility-status:hover {
   min-height: 1.9375rem;
   padding: 0.3125rem 0.5625rem;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink);
   text-align: left;
@@ -1592,7 +1645,7 @@ button.compatibility-status:hover {
    occupies, so a menu of mixed rows keeps one right edge. */
 .app-menu-item-chevron {
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   line-height: 1;
 }
 
@@ -1617,9 +1670,9 @@ button.compatibility-status:hover {
   padding: 0.375rem;
   overflow-y: auto;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-popover);
+  border-radius: var(--r-md);
   background: var(--surface);
-  box-shadow: var(--shadow-popover);
+  box-shadow: var(--e2);
   overscroll-behavior: contain;
 }
 
@@ -1686,7 +1739,7 @@ button.compatibility-status:hover {
 .app-menu-item-hint {
   margin-left: 1.125rem;
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   white-space: nowrap;
 }
 
@@ -1818,8 +1871,8 @@ button.compatibility-status:hover {
   margin: 0 0 var(--space-2);
   padding: 0;
   color: var(--ink);
-  font-size: var(--fs-body);
-  font-weight: 650;
+  font-size: var(--fs-md);
+  font-weight: 600;
   letter-spacing: normal;
   text-transform: none;
 }
@@ -1829,17 +1882,17 @@ button.compatibility-status:hover {
   gap: 0.125rem;
   padding: 0.1875rem;
   background: var(--bg-2);
-  border-radius: 0.5625rem;
+  border-radius: var(--r-md);
 }
 
 .segmented button {
   flex: 1;
   height: 1.75rem;
   border: none;
-  border-radius: 0.375rem;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--muted);
-  font-weight: 550;
+  font-weight: 500;
   cursor: pointer;
 }
 
@@ -1850,7 +1903,7 @@ button.compatibility-status:hover {
 .segmented button[aria-checked="true"] {
   background: var(--surface);
   color: var(--ink);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--e1);
 }
 
 /* A segmented control laid out as a column, for a radio group whose options are
@@ -1915,7 +1968,7 @@ button.compatibility-status:hover {
 .settings-note {
   margin: 0.5rem 0 0;
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   line-height: 1.4;
 }
 /* A dialog's own refusal (a wrong or unconfirmed password): the danger token,
@@ -1937,10 +1990,10 @@ body.modal-open {
   place-items: center;
   padding: var(--space-6);
   /* No `backdrop-filter`. A 2px blur over a full-viewport scrim is re-rasterised
-     on every frame that anything above it scrolls, and the 42% scrim is already
+     on every frame that anything above it scrolls, and the scrim (`--scrim`) is already
      what separates the dialog from the document — the blur was decoration
      bought at the price of a class of scroll jank. */
-  background: rgba(20, 22, 28, 0.42);
+  background: var(--scrim);
 }
 
 .dialog-overlay[hidden] {
@@ -1957,9 +2010,9 @@ body.modal-open {
      saying the same thing twice, and the ribbon band next to it already
      established the house rule — "white on grey, so it separates by SHADE and
      needs no border". The dialog sits on a scrim, so the shadow alone lifts it. */
-  border-radius: var(--radius-dialog);
+  border-radius: var(--r-lg);
   background: var(--surface);
-  box-shadow: var(--shadow-dialog);
+  box-shadow: var(--e3);
 }
 
 .dialog-card-compact {
@@ -2076,10 +2129,10 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
   height: 2.25rem;
   flex: 0 0 2.25rem;
   place-items: center;
-  border-radius: var(--radius-md);
+  border-radius: var(--r-md);
   background: var(--accent-soft);
   color: var(--accent-text);
-  font-size: var(--icon-rail);
+  font-size: var(--icon-md);
 }
 
 /* Chrome text interpolates user data — filenames, style names, search terms —
@@ -2109,7 +2162,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
      user already chose to open; it is not a page heading and does not need to
      compete with the document. Word and Docs both set theirs at body weight
      plus a little. */
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
   font-weight: 600;
   letter-spacing: -0.01em;
 }
@@ -2117,7 +2170,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 .dialog-heading p {
   margin: 0.125rem 0 0;
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
 }
 
 /* A confirmation has no `.dialog-body`: its whole message IS this paragraph, so
@@ -2131,7 +2184,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 .dialog-card:not(:has(.dialog-body)) .dialog-heading p {
   margin-top: var(--space-2);
   color: var(--ink);
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
   line-height: 1.45;
 }
 
@@ -2143,14 +2196,14 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
   place-items: center;
   padding: 0;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
 }
 
 .dialog-close .ms {
-  font-size: var(--icon-control);
+  font-size: var(--icon-md);
 }
 
 .dialog-close:hover {
@@ -2270,7 +2323,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 }
 
 .a11y-check-severity {
-  font-size: var(--fs-caption, 0.75rem);
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--ink-2, var(--ink));
 }
@@ -2278,7 +2331,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 .a11y-check-fix,
 .a11y-check-where {
   color: var(--ink-2, var(--ink));
-  font-size: var(--fs-caption, 0.75rem);
+  font-size: var(--fs-xs);
 }
 
 /* Content controls and form roles (`109` RM-34). The lists are the parts that
@@ -2327,7 +2380,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 
 .control-fill-option {
   padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius);
+  border-radius: var(--r-md);
   cursor: pointer;
 }
 
@@ -2381,7 +2434,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 
 .word-count-table thead th {
   color: var(--ink-2, var(--ink));
-  font-size: var(--fs-caption, 0.75rem);
+  font-size: var(--fs-xs);
   font-weight: 600;
   border-block-end: 1px solid var(--line);
 }
@@ -2401,7 +2454,7 @@ body:not(.phone-mode) #confirmDialog .dialog-card {
 .word-count-scope {
   margin: var(--space-3) 0 0;
   color: var(--ink-2, var(--ink));
-  font-size: var(--fs-caption, 0.75rem);
+  font-size: var(--fs-xs);
 }
 
 #stats[role="button"] {
@@ -2469,11 +2522,11 @@ body.phone-mode .autocorrect-body {
   appearance: none;
   width: 100%;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
   font: inherit;
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
 }
 
 .dialog-listbox:focus {
@@ -2505,7 +2558,7 @@ body.phone-mode .autocorrect-body {
 
 .about-facts dt {
   color: var(--ink-2, var(--ink));
-  font-size: var(--fs-caption, 0.75rem);
+  font-size: var(--fs-xs);
 }
 
 .about-facts dd {
@@ -2680,8 +2733,8 @@ body.phone-mode .autocorrect-body {
 .shortcuts-group h3 {
   grid-column: 1 / -1;
   margin: 0 0 var(--space-2);
-  font-size: var(--fs-small);
-  font-weight: 650;
+  font-size: var(--fs-sm);
+  font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--faint);
@@ -2706,7 +2759,7 @@ body.phone-mode .autocorrect-body {
 
 .shortcuts-keys {
   flex: 0 0 auto;
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
   color: var(--muted);
   white-space: nowrap;
@@ -2736,7 +2789,7 @@ body.phone-mode .autocorrect-body {
   flex: 1 1 16ch;
   min-width: 0;
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
 }
 
 .dialog-actions {
@@ -2763,7 +2816,7 @@ body.phone-mode .autocorrect-body {
   min-width: 5rem;
   padding: 0 1rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
   font-weight: 600;
@@ -2909,7 +2962,7 @@ body.phone-mode .autocorrect-body {
   flex-direction: column;
   gap: 0.375rem;
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   font-weight: 600;
 }
 
@@ -2918,12 +2971,12 @@ body.phone-mode .autocorrect-body {
   width: 100%;
   min-width: 0;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
   font: inherit;
-  font-size: var(--fs-body);
-  font-weight: 450;
+  font-size: var(--fs-md);
+  font-weight: 400;
 }
 
 .dialog-field > input {
@@ -2980,7 +3033,7 @@ body.phone-mode .autocorrect-body {
 .metadata-facts dt {
   margin-bottom: 0.1875rem;
   color: var(--muted);
-  font-size: var(--fs-caption);
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 
@@ -2988,15 +3041,15 @@ body.phone-mode .autocorrect-body {
   margin: 0;
   overflow: hidden;
   color: var(--ink);
-  font-size: var(--fs-small);
-  font-weight: 550;
+  font-size: var(--fs-sm);
+  font-weight: 500;
   line-height: 1.35;
   text-overflow: ellipsis;
 }
 
 .metadata-facts dd.metadata-empty {
   color: var(--faint);
-  font-weight: 450;
+  font-weight: 400;
 }
 
 .metadata-disclosure:not([open]) summary {
@@ -3128,9 +3181,9 @@ body.phone-mode .autocorrect-body {
   aspect-ratio: var(--page-ratio, 8.27 / 11.69);
   overflow: hidden;
   border: 1px solid var(--line-strong);
-  border-radius: 0.125rem;
+  border-radius: var(--r-xs);
   background: var(--paper);
-  box-shadow: 0 0.25rem 0.875rem rgba(20, 22, 28, 0.13);
+  box-shadow: var(--shadow-page);
   transition: width 0.16s ease, aspect-ratio 0.16s ease;
 }
 
@@ -3156,7 +3209,7 @@ body.phone-mode .autocorrect-body {
   display: block;
   height: 0.125rem;
   margin-inline: 10%;
-  border-radius: 62.4375rem;
+  border-radius: var(--r-pill);
   background: var(--bg-2);
 }
 
@@ -3174,7 +3227,7 @@ body.phone-mode .autocorrect-body {
 
 .page-preview-label {
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
 }
 
@@ -3318,7 +3371,7 @@ body.phone-mode .autocorrect-body {
 
 .caption-preview-label {
   color: var(--muted);
-  font-size: var(--fs-caption);
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -3445,9 +3498,9 @@ body.phone-mode .autocorrect-body {
   gap: var(--space-2);
   padding: var(--space-3);
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-md);
+  border-radius: var(--r-md);
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   cursor: pointer;
 }
 
@@ -3628,7 +3681,7 @@ body.phone-mode .autocorrect-body {
   height: var(--h-field);
   padding: 0.125rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   cursor: pointer;
 }
@@ -3678,11 +3731,11 @@ body.phone-mode .autocorrect-body {
   height: var(--h-field);
   padding: 0 1.875rem 0 0.625rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
   font: inherit;
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
 }
 
 .dialog-select:focus,
@@ -3730,7 +3783,7 @@ body.phone-mode .autocorrect-body {
   align-items: flex-start;
   gap: 0.5625rem;
   color: var(--ink);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   cursor: pointer;
 }
 
@@ -3753,8 +3806,8 @@ body.phone-mode .autocorrect-body {
 .dialog-check small,
 .dialog-field-note {
   color: var(--muted);
-  font-size: var(--fs-caption);
-  font-weight: 450;
+  font-size: var(--fs-xs);
+  font-weight: 400;
   line-height: 1.35;
 }
 
@@ -3815,7 +3868,7 @@ body.phone-mode .autocorrect-body {
 .proof-lang-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
 }
 
 .proof-lang-table th,
@@ -3828,7 +3881,7 @@ body.phone-mode .autocorrect-body {
 .proof-lang-table thead th {
   border-bottom: 1px solid var(--line);
   color: var(--muted);
-  font-size: var(--fs-caption);
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -3840,7 +3893,7 @@ body.phone-mode .autocorrect-body {
 }
 
 .proof-lang-name {
-  font-weight: 550;
+  font-weight: 500;
 }
 
 .proof-lang-state,
@@ -3889,7 +3942,7 @@ body.phone-mode .autocorrect-body {
   width: 100%;
   padding: 0.375rem 0.5rem;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink);
   font: inherit;
@@ -3909,7 +3962,7 @@ body.phone-mode .autocorrect-body {
 .field-choice-icon {
   flex: 0 0 auto;
   color: var(--muted);
-  font-size: 1.1875rem;
+  font-size: var(--icon-md);
 }
 
 .field-choice:hover .field-choice-icon {
@@ -3924,14 +3977,14 @@ body.phone-mode .autocorrect-body {
 }
 
 .field-choice-label {
-  font-size: var(--fs-body);
-  font-weight: 550;
+  font-size: var(--fs-md);
+  font-weight: 500;
 }
 
 .field-choice-note {
   color: var(--muted);
-  font-size: var(--fs-small);
-  font-weight: 450;
+  font-size: var(--fs-sm);
+  font-weight: 400;
 }
 
 /* ---- Insert ▸ Symbol / Emoji pickers ------------------------------------- */
@@ -3960,7 +4013,7 @@ body.phone-mode .autocorrect-body {
 .glyph-panel .panel-head small {
   display: block;
   color: var(--muted);
-  font-size: var(--fs-caption);
+  font-size: var(--fs-xs);
   line-height: 1.3;
 }
 
@@ -3973,7 +4026,7 @@ body.phone-mode .autocorrect-body {
   padding: var(--pnl-pad-y) var(--pnl-pad-x);
   border-top: 1px solid var(--line);
   color: var(--muted);
-  font-size: var(--fs-caption);
+  font-size: var(--fs-xs);
 }
 
 .glyph-body {
@@ -3986,7 +4039,7 @@ body.phone-mode .autocorrect-body {
   width: 100%;
   padding: 0.5rem 0.625rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--bg-2);
   color: var(--ink);
   font: inherit;
@@ -4006,11 +4059,11 @@ body.phone-mode .autocorrect-body {
 .glyph-tab {
   padding: 0.25rem 0.625rem;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--muted);
   font: inherit;
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   line-height: 1.4;
   cursor: pointer;
 }
@@ -4047,7 +4100,7 @@ body.phone-mode .autocorrect-body {
   aspect-ratio: 1 / 1;
   min-height: 2.75rem;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink);
   font-size: 1.375rem;
@@ -4073,7 +4126,7 @@ body.phone-mode .autocorrect-body {
   margin: 0;
   padding: 0.75rem 0.25rem;
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
 }
 
 /* ---- Insert/edit link dialog --------------------------------------------- */
@@ -4113,18 +4166,18 @@ body.phone-mode .autocorrect-body {
 
 .link-body > label {
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   font-weight: 600;
 }
 
 .link-optional {
   color: var(--muted);
-  font-weight: 450;
+  font-weight: 400;
 }
 
 .link-field-label {
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   font-weight: 600;
 }
 
@@ -4145,7 +4198,7 @@ body.phone-mode .autocorrect-body {
   height: var(--h-field);
   padding: 0 0.625rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   /* `background-color`, NOT the `background` shorthand: this rule is (0,1,1) and the
      shared select treatment is (0,1,0), so the shorthand would win on specificity
      regardless of order and reset the caret image to none. `styles-control.spec.mjs`
@@ -4153,8 +4206,8 @@ body.phone-mode .autocorrect-body {
   background-color: var(--surface);
   color: var(--ink);
   font: inherit;
-  font-size: var(--fs-body);
-  font-weight: 450;
+  font-size: var(--fs-md);
+  font-weight: 400;
 }
 
 /* Room on the right for the shared select caret. After the shorthand above, which
@@ -4180,7 +4233,7 @@ body.phone-mode .autocorrect-body {
   gap: 0.25rem;
   padding: 0.1875rem;
   border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+  border-radius: var(--r-md);
   background: var(--bg-2);
 }
 
@@ -4189,11 +4242,11 @@ body.phone-mode .autocorrect-body {
   height: var(--h-search);
   padding: 0 0.625rem;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--muted);
   font: inherit;
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
 }
@@ -4229,18 +4282,18 @@ body.phone-mode .autocorrect-body {
 #linkDialogNote.error,
 #linkPlaceEmpty {
   color: var(--danger);
-  font-weight: 550;
+  font-weight: 500;
 }
 
 #linkPlaceEmpty {
   color: var(--muted);
-  font-weight: 450;
+  font-weight: 400;
 }
 
 /* Layout and rhythm share `.link-body`'s rule above. */
 .bookmark-add > label {
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   font-weight: 600;
 }
 
@@ -4255,12 +4308,12 @@ body.phone-mode .autocorrect-body {
   height: var(--h-field);
   padding: 0 0.625rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
   font: inherit;
-  font-size: var(--fs-body);
-  font-weight: 450;
+  font-size: var(--fs-md);
+  font-weight: 400;
 }
 
 .bookmark-add-row > input:focus {
@@ -4275,7 +4328,7 @@ body.phone-mode .autocorrect-body {
 
 #bookmarkAddNote.error {
   color: var(--danger);
-  font-weight: 550;
+  font-weight: 500;
 }
 
 .bookmark-list-head {
@@ -4284,7 +4337,7 @@ body.phone-mode .autocorrect-body {
   justify-content: space-between;
   gap: var(--space-2);
   color: var(--muted);
-  font-size: var(--fs-caption);
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -4296,11 +4349,11 @@ body.phone-mode .autocorrect-body {
   gap: 0.25rem;
   padding: 0.1875rem 0.4375rem;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--muted);
   font: inherit;
-  font-size: var(--fs-caption);
+  font-size: var(--fs-xs);
   font-weight: 600;
   letter-spacing: 0.02em;
   cursor: pointer;
@@ -4312,7 +4365,7 @@ body.phone-mode .autocorrect-body {
 }
 
 .bookmark-sort .ms {
-  font-size: 0.9375rem;
+  font-size: var(--icon-sm);
 }
 
 .bookmark-list {
@@ -4333,7 +4386,7 @@ body.phone-mode .autocorrect-body {
   gap: var(--space-2);
   padding: 0.25rem 0.25rem 0.25rem 0.5rem;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
 }
 
 .bookmark-row:hover {
@@ -4353,12 +4406,12 @@ body.phone-mode .autocorrect-body {
   min-width: 0;
   padding: 0.3125rem 0.375rem;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink);
   font: inherit;
-  font-size: var(--fs-body);
-  font-weight: 550;
+  font-size: var(--fs-md);
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
 }
@@ -4366,7 +4419,7 @@ body.phone-mode .autocorrect-body {
 .bookmark-goto .ms {
   flex: 0 0 auto;
   color: var(--muted);
-  font-size: 1.0625rem;
+  font-size: var(--icon-sm);
 }
 
 .bookmark-goto:hover {
@@ -4394,12 +4447,12 @@ body.phone-mode .autocorrect-body {
   height: 1.875rem;
   padding: 0 0.5rem;
   border: 1px solid var(--accent-text);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
   font: inherit;
-  font-size: var(--fs-body);
-  font-weight: 550;
+  font-size: var(--fs-md);
+  font-weight: 500;
 }
 
 .bookmark-rename-input:focus {
@@ -4420,14 +4473,14 @@ body.phone-mode .autocorrect-body {
   place-items: center;
   padding: 0;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
 }
 
 .bookmark-action .ms {
-  font-size: 1.0625rem;
+  font-size: var(--icon-sm);
 }
 
 .bookmark-action:hover {
@@ -4452,7 +4505,7 @@ body.phone-mode .autocorrect-body {
      top of it opened a 34px void above one sentence. */
   padding: var(--space-2) 0.25rem var(--space-3);
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   text-align: center;
 }
 
@@ -4494,7 +4547,7 @@ body.phone-mode .autocorrect-body {
 }
 
 .orientation-segmented .ms {
-  font-size: var(--icon-control);
+  font-size: var(--icon-md);
 }
 
 .number-control {
@@ -4513,7 +4566,7 @@ body.phone-mode .autocorrect-body {
   height: var(--h-field);
   overflow: hidden;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
 }
 
@@ -4526,7 +4579,7 @@ body.phone-mode .autocorrect-body {
   background: transparent;
   color: var(--ink);
   font: inherit;
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
   font-variant-numeric: tabular-nums;
 }
 
@@ -4539,12 +4592,12 @@ body.phone-mode .autocorrect-body {
   place-items: center;
   padding-inline-end: 0.125rem;
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   font-weight: 500;
 }
 
 .oss {
-  font-size: var(--fs-caption);
+  font-size: var(--fs-xs);
   color: var(--faint);
 }
 
@@ -4571,8 +4624,8 @@ body.phone-mode .autocorrect-body {
   padding: 0.3125rem;
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-popover);
-  box-shadow: var(--shadow-popover);
+  border-radius: var(--r-md);
+  box-shadow: var(--e2);
   color: var(--ink);
   overscroll-behavior: contain;
 }
@@ -4590,10 +4643,10 @@ body.phone-mode .autocorrect-body {
   text-align: left;
   padding: 0.3125rem 0.5625rem;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink);
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -4619,7 +4672,7 @@ body.phone-mode .autocorrect-body {
 .menu-item-caret {
   justify-self: end;
   color: var(--faint);
-  font-size: 0.9375rem;
+  font-size: var(--icon-sm);
   line-height: 1;
 }
 
@@ -4670,7 +4723,7 @@ body.phone-mode .autocorrect-body {
   max-width: 9.375rem;
   overflow: hidden;
   color: var(--faint);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   text-overflow: ellipsis;
 }
 
@@ -4702,7 +4755,7 @@ body.phone-mode .autocorrect-body {
   gap: 0.5625rem;
   width: 100%;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   padding: 0.4375rem 0.5625rem;
   background: transparent;
   color: var(--ink);
@@ -4720,13 +4773,13 @@ body.phone-mode .autocorrect-body {
   width: 2.625rem;
   overflow: hidden;
   border: 1px solid var(--line-strong);
-  border-radius: 0.1875rem;
+  border-radius: var(--r-xs);
 }
 
 .table-style-swatch i:nth-child(1) { background: var(--accent); }
 .table-style-swatch i:nth-child(2) { background: color-mix(in srgb, var(--accent) 18%, var(--surface)); }
 .table-style-swatch i:nth-child(3) { background: var(--surface-alt); }
-.table-style-clear { font-size: var(--fs-small); }
+.table-style-clear { font-size: var(--fs-sm); }
 
 /* ---- Line & paragraph spacing menu ----------------------------------------- */
 .spacing-menu {
@@ -4742,7 +4795,7 @@ body.phone-mode .autocorrect-body {
   margin: 0;
   padding: 0 0.625rem 0.375rem 2.3125rem;
   color: var(--faint);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   line-height: 1.35;
 }
 
@@ -4766,8 +4819,8 @@ body.phone-mode .autocorrect-body {
 
 .menu-heading {
   padding: 0.25rem 0.625rem 0.375rem;
-  font-size: var(--fs-caption);
-  font-weight: 700;
+  font-size: var(--fs-xs);
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--faint);
@@ -4776,7 +4829,7 @@ body.phone-mode .autocorrect-body {
 .table-context {
   padding: 0 0.625rem 0.375rem;
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
 }
 
@@ -4814,7 +4867,7 @@ body.phone-mode .autocorrect-body {
   align-items: center;
   gap: 0.5rem;
   padding: 0.375rem 0.625rem;
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
   color: var(--ink);
 }
 
@@ -4825,7 +4878,7 @@ body.phone-mode .autocorrect-body {
   padding: 0 0.5rem;
   text-align: right;
   border: 1px solid var(--line-strong);
-  border-radius: 0.375rem;
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
   font: inherit;
@@ -4845,7 +4898,7 @@ body.phone-mode .autocorrect-body {
   height: 1.625rem;
   padding: 0 0.375rem;
   border: 1px solid var(--line-strong);
-  border-radius: 0.375rem;
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
   font: inherit;
@@ -4859,7 +4912,7 @@ body.phone-mode .autocorrect-body {
 
 .menu-unit {
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   width: 0.875rem;
 }
 
@@ -4869,10 +4922,10 @@ body.phone-mode .autocorrect-body {
   align-items: center;
   gap: 0.5625rem;
   padding: 0.375rem 0.625rem;
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
   color: var(--ink);
   cursor: pointer;
-  border-radius: 0.375rem;
+  border-radius: var(--r-sm);
 }
 
 .menu-check-row:hover {
@@ -4902,7 +4955,7 @@ body.phone-mode .autocorrect-body {
   height: 1.625rem;
   padding: 0;
   border: 1px solid var(--line-strong);
-  border-radius: 0.375rem;
+  border-radius: var(--r-sm);
   background: none;
   cursor: pointer;
 }
@@ -4911,11 +4964,11 @@ body.phone-mode .autocorrect-body {
   height: 1.625rem;
   padding: 0 0.75rem;
   border: 1px solid var(--line-strong);
-  border-radius: 0.375rem;
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--muted);
   font: inherit;
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   cursor: pointer;
 }
 
@@ -4945,7 +4998,7 @@ body.phone-mode .autocorrect-body {
   width: 0.9375rem;
   height: 0.9375rem;
   border: 1px solid var(--line-strong);
-  border-radius: 0.125rem;
+  border-radius: var(--r-xs);
   background: var(--surface);
   cursor: pointer;
   padding: 0;
@@ -4959,7 +5012,7 @@ body.phone-mode .autocorrect-body {
 .grid-label {
   margin-top: 0.4375rem;
   text-align: center;
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
@@ -4991,7 +5044,7 @@ body.phone-mode .autocorrect-body {
   justify-content: center;
   align-items: flex-start;
   padding-top: 12vh;
-  background: rgba(20, 22, 28, 0.34);
+  background: var(--scrim);
 }
 
 .cmd-overlay[hidden] {
@@ -5002,8 +5055,8 @@ body.phone-mode .autocorrect-body {
   width: min(35rem, 92vw);
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-popover);
-  box-shadow: var(--shadow-popover);
+  border-radius: var(--r-md);
+  box-shadow: var(--e2);
   overflow: hidden;
 }
 
@@ -5017,7 +5070,7 @@ body.phone-mode .autocorrect-body {
 
 .cmd-search-icon {
   color: var(--muted);
-  font-size: var(--icon-control);
+  font-size: var(--icon-md);
   flex: 0 0 auto;
 }
 
@@ -5036,15 +5089,15 @@ body.phone-mode .autocorrect-body {
   background: none;
   color: var(--ink);
   font: inherit;
-  font-size: var(--fs-medium);
+  font-size: var(--fs-lg);
   outline: none;
 }
 
 .cmd-kbd {
-  font-size: var(--fs-caption);
+  font-size: var(--fs-xs);
   color: var(--faint);
   border: 1px solid var(--line);
-  border-radius: 0.3125rem;
+  border-radius: var(--r-sm);
   padding: 0.125rem 0.375rem;
 }
 
@@ -5062,24 +5115,24 @@ body.phone-mode .autocorrect-body {
   width: 100%;
   padding: 0.5rem 0.625rem;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink);
   font: inherit;
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
   text-align: left;
   cursor: pointer;
 }
 
 .cmd-item .cmd-group {
   color: var(--faint);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
 }
 
 .cmd-item .cmd-hint {
   margin-left: auto;
   color: var(--faint);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
 }
 
 .cmd-item.sel,
@@ -5092,7 +5145,7 @@ body.phone-mode .autocorrect-body {
   padding: 1rem;
   text-align: center;
   color: var(--faint);
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
 }
 
 /* ---- Find / replace -------------------------------------------------------- */
@@ -5108,8 +5161,8 @@ body.phone-mode .autocorrect-body {
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-popover);
-  box-shadow: var(--shadow-popover);
+  border-radius: var(--r-md);
+  box-shadow: var(--e2);
 }
 
 .find-panel[hidden] {
@@ -5142,8 +5195,8 @@ body.phone-mode .autocorrect-body {
 
 .find-panel-title {
   color: var(--ink);
-  font-size: var(--fs-medium);
-  font-weight: 650;
+  font-size: var(--fs-lg);
+  font-weight: 600;
 }
 
 .find-panel-body {
@@ -5167,12 +5220,12 @@ body.phone-mode .autocorrect-body {
   min-width: 0;
   height: var(--h-field);
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
   padding: 0 0.5rem;
   font: inherit;
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
   outline: none;
 }
 
@@ -5187,7 +5240,7 @@ body.phone-mode .autocorrect-body {
 
 .find-status {
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -5213,9 +5266,9 @@ body.phone-mode .autocorrect-body {
   min-height: var(--h-control);
   padding: 0.25rem 0.5625rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
@@ -5265,8 +5318,8 @@ body.phone-mode .autocorrect-body {
   color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-popover);
-  box-shadow: var(--shadow-popover);
+  border-radius: var(--r-md);
+  box-shadow: var(--e2);
 }
 
 .sel-toolbar[hidden] {
@@ -5306,7 +5359,7 @@ body.phone-mode .autocorrect-body {
   height: 1.75rem;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink);
   cursor: pointer;
@@ -5314,13 +5367,13 @@ body.phone-mode .autocorrect-body {
 }
 
 .sel-toolbar .sel-color-btn .color-apply-glyph {
-  font-size: 0.875rem;
-  font-weight: 700;
+  font-size: var(--fs-md);
+  font-weight: 600;
   line-height: 1;
 }
 
 .sel-toolbar .sel-color-btn .ms.color-apply-glyph {
-  font-size: var(--icon-control);
+  font-size: var(--icon-md);
   font-weight: 400;
 }
 
@@ -5353,9 +5406,9 @@ body.phone-mode .autocorrect-body {
   min-width: min(18.75rem, calc(100vw - 1.5rem));
   padding: 0.5rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-popover);
+  border-radius: var(--r-md);
   background: var(--surface);
-  box-shadow: var(--shadow-popover);
+  box-shadow: var(--e2);
 }
 
 .link-chip[hidden] {
@@ -5367,13 +5420,13 @@ body.phone-mode .autocorrect-body {
   width: 1.875rem;
   height: 1.875rem;
   place-items: center;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   color: var(--accent-text);
   background: var(--accent-soft);
 }
 
 .link-chip-icon .ms {
-  font-size: 1.0625rem;
+  font-size: var(--icon-sm);
 }
 
 .link-chip-copy {
@@ -5385,8 +5438,8 @@ body.phone-mode .autocorrect-body {
 
 .link-chip-kind {
   color: var(--faint);
-  font-size: var(--fs-caption);
-  font-weight: 700;
+  font-size: var(--fs-xs);
+  font-weight: 600;
   letter-spacing: 0.045em;
   text-transform: uppercase;
 }
@@ -5394,8 +5447,8 @@ body.phone-mode .autocorrect-body {
 .link-chip-target {
   overflow: hidden;
   color: var(--ink);
-  font-size: var(--fs-small);
-  font-weight: 550;
+  font-size: var(--fs-sm);
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5404,10 +5457,10 @@ body.phone-mode .autocorrect-body {
   height: 1.875rem;
   padding: 0 0.6875rem;
   border: 1px solid var(--accent-line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   color: var(--accent-text);
   background: var(--accent-soft);
-  font-weight: 650;
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -5444,7 +5497,7 @@ body.phone-mode .autocorrect-body {
   height: 1.6875rem;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 0.375rem;
+  border-radius: var(--r-sm);
   background: transparent;
   cursor: pointer;
 }
@@ -5493,7 +5546,7 @@ body.phone-mode .autocorrect-body {
   height: 1.625rem;
   padding: 0;
   border: 1px solid var(--line-strong);
-  border-radius: 0.375rem;
+  border-radius: var(--r-sm);
   background: none;
   cursor: pointer;
 }
@@ -5504,7 +5557,7 @@ body.phone-mode .autocorrect-body {
    above and the workarea below by single hairlines. */
 .ribbon {
   background: var(--bg);
-  border-radius: var(--radius);
+  border-radius: var(--r-md);
   margin: 0;
   border: none;
   border-bottom: 0;
@@ -5566,7 +5619,7 @@ body.phone-mode .autocorrect-body {
   width: 1.75rem;
   height: 1.625rem;
   border: 1px solid transparent;
-  border-radius: 0.375rem;
+  border-radius: var(--r-sm);
   background: none;
   color: var(--muted);
   cursor: pointer;
@@ -5578,7 +5631,7 @@ body.phone-mode .autocorrect-body {
 }
 
 .ribbon-view-toggle .ms {
-  font-size: 1.25rem;
+  font-size: var(--icon-md);
 }
 
 .ribbon.is-collapsed {
@@ -5625,7 +5678,7 @@ body.compact-mode {
   background: none;
   color: var(--muted);
   font: inherit;
-  font-size: var(--fs-ribbon-tab);
+  font-size: var(--fs-md);
   font-weight: 600;
   cursor: pointer;
   border-bottom: 2px solid transparent;
@@ -5658,7 +5711,7 @@ body.compact-mode {
      separates by SHADE and needs no border. */
   background: var(--surface);
   margin: var(--chrome-card-inset-y) var(--chrome-card-inset-x);
-  border-radius: var(--chrome-card-radius);
+  border-radius: var(--r-md);
   /* Vertical padding is free; horizontal padding is not — it comes straight out
      of the band's group budget (see --chrome-card-inset-x). The groups carry
      their own inline padding, so the panel needs only enough to keep the first
@@ -5763,11 +5816,11 @@ body.compact-mode {
   min-width: 0.625rem;
   height: 0.625rem;
   place-items: center;
-  border-radius: 0.1875rem;
+  border-radius: var(--r-xs);
   background: var(--surface);
   color: var(--muted);
   font-size: 0.4375rem;
-  font-weight: 750;
+  font-weight: 600;
   line-height: 1;
 }
 
@@ -5802,7 +5855,7 @@ body.compact-mode {
   max-width: 100%;
   overflow: hidden;
   color: var(--faint);
-  font-size: var(--fs-ribbon-caption);
+  font-size: var(--fs-xs);
   font-weight: 500;
   line-height: 1;
   text-align: center;
@@ -5815,7 +5868,7 @@ body.compact-mode {
 /* …and in the overflow menu it is a SECTION HEADING rather than a caption under
    a group, so it takes the heading treatment and sits above its controls. */
 #ribbonOverflowMenu .rgroup-label {
-  font-size: 0.5625rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -5921,11 +5974,11 @@ body.compact-mode {
 }
 
 .fmt-big .ms {
-  font-size: 1.375rem;
+  font-size: var(--icon-lg);
 }
 
 .fmt-big-label {
-  font-size: var(--fs-ribbon-caption);
+  font-size: var(--fs-xs);
   font-weight: 500;
   line-height: 1;
 }
@@ -5967,10 +6020,10 @@ body.compact-mode {
   height: var(--h-control);
   padding: 0 0.25rem 0 0.5rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
   cursor: pointer;
   transition: border-color 0.11s, background 0.11s;
 }
@@ -6008,7 +6061,7 @@ body.compact-mode {
 
 .styles-trigger-caret {
   flex: 0 0 auto;
-  font-size: 1.125rem;
+  font-size: var(--icon-md);
   line-height: 1;
   color: var(--muted);
 }
@@ -6049,7 +6102,7 @@ body.compact-mode {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-weight: 450;
+  font-weight: 400;
 }
 
 /* The tick uses the chrome's one check mark (`.menu-check`, opacity-toggled) so the
@@ -6098,9 +6151,9 @@ body.compact-mode {
   overflow: auto;
   padding: 0.625rem 0.75rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-popover);
+  border-radius: var(--r-md);
   background: var(--surface);
-  box-shadow: var(--shadow-popover);
+  box-shadow: var(--e2);
   overscroll-behavior: contain;
 }
 
@@ -6150,16 +6203,16 @@ body.compact-mode {
   z-index: var(--z-tooltip);
   max-width: 15rem;
   padding: 0.3125rem 0.5rem;
-  border-radius: 0.375rem;
+  border-radius: var(--r-sm);
   background: var(--ink);
   color: var(--surface);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   line-height: 1.35;
   pointer-events: none;
   opacity: 0;
   transform: translateY(0.125rem);
   transition: opacity 90ms ease, transform 90ms ease;
-  box-shadow: 0 0.25rem 0.875rem rgba(0, 0, 0, 0.24);
+  box-shadow: var(--e2);
 }
 
 .ribbon-tooltip.is-visible {
@@ -6171,10 +6224,10 @@ body.compact-mode {
   display: inline-block;
   margin-left: 0.25rem;
   padding: 0 0.25rem;
-  border-radius: 0.1875rem;
+  border-radius: var(--r-xs);
   background: color-mix(in srgb, var(--surface) 22%, transparent);
   font-family: inherit;
-  font-size: var(--fs-ribbon-caption);
+  font-size: var(--fs-xs);
 }
 
 /* A second line under the name, for a control that opts in with
@@ -6206,14 +6259,14 @@ body.compact-mode {
   transform: translateX(-50%);
   min-width: 1rem;
   padding: 1px 0.25rem;
-  border-radius: 0.1875rem;
+  border-radius: var(--r-xs);
   background: var(--ink);
   color: var(--surface);
-  font-size: var(--fs-ribbon-caption);
-  font-weight: 700;
+  font-size: var(--fs-xs);
+  font-weight: 600;
   line-height: 1.3;
   text-align: center;
-  box-shadow: 0 1px 0.25rem rgba(0, 0, 0, 0.24);
+  box-shadow: var(--e1);
 }
 
 .key-tip[hidden] {
@@ -6229,7 +6282,7 @@ body.compact-mode {
 
 .rgroup-hint {
   max-width: 11.875rem;
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   color: var(--faint);
   line-height: 1.4;
   text-align: center;
@@ -6245,7 +6298,7 @@ body.compact-mode {
 .ctl > input[type="number"] {
   height: var(--h-control);
   padding: 0 1.625rem 0 0.5625rem;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   border: 1px solid var(--line-strong);
   background: var(--surface)
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%236a7078'><path d='M7 10l5 5 5-5z'/></svg>")
@@ -6289,7 +6342,7 @@ body.compact-mode {
 .ctl.is-mixed {
   outline: 1px dashed var(--muted);
   outline-offset: 2px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
 }
 
 /* Text-color swatch */
@@ -6297,13 +6350,13 @@ body.compact-mode {
   gap: 0.125rem;
   height: var(--h-control);
   padding: 0 0.25rem 0 0.4375rem;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   border: 1px solid var(--line-strong);
 }
 
 .ctl.swatch span {
-  font-weight: 700;
-  font-size: 0.875rem;
+  font-weight: 600;
+  font-size: var(--fs-md);
 }
 
 .ctl.swatch input[type="color"] {
@@ -6321,7 +6374,7 @@ body.compact-mode {
 
 .ctl.swatch input[type="color"]::-webkit-color-swatch {
   border: 1px solid var(--line-strong);
-  border-radius: 0.25rem;
+  border-radius: var(--r-xs);
 }
 
 /* Icon toggle buttons */
@@ -6350,7 +6403,7 @@ body.compact-mode {
   width: var(--h-control);
   height: var(--h-control);
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink);
   cursor: pointer;
@@ -6359,7 +6412,7 @@ body.compact-mode {
 }
 
 .fmt .ms {
-  font-size: var(--icon-control);
+  font-size: var(--icon-md);
   display: block;
 }
 
@@ -6386,14 +6439,14 @@ body.compact-mode {
   width: auto;
   min-width: var(--h-control);
   padding: 0 0.375rem;
-  font-size: 0.6875rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
 .format-glyph {
   display: block;
-  font-size: 0.9375rem;
+  font-size: var(--fs-lg);
   line-height: 1;
 }
 
@@ -6407,13 +6460,13 @@ body.compact-mode {
 }
 
 .underline-glyph {
-  font-size: 0.875rem;
+  font-size: var(--fs-md);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
 .strike-glyph {
-  font-size: 0.875rem;
+  font-size: var(--fs-md);
   text-decoration: line-through;
 }
 
@@ -6530,7 +6583,7 @@ body.is-format-painting .page-wrap * {
   justify-content: center;
   padding: 0;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--r-md);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -6546,7 +6599,7 @@ body.is-format-painting .page-wrap * {
 }
 
 .rail-btn .ms {
-  font-size: var(--icon-rail);
+  font-size: var(--icon-md);
   /* One optical weight across the four destinations. Material Symbols is a
      variable font, so the glyphs differ in apparent weight unless `wght` is
      pinned: `auto_stories` and `rate_review` painted noticeably heavier than
@@ -6590,8 +6643,8 @@ body.is-format-painting .page-wrap * {
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-popover);
-  box-shadow: var(--shadow-sm);
+  border-radius: var(--r-md);
+  box-shadow: var(--e1);
 }
 
 .side-panel[hidden] {
@@ -6643,14 +6696,14 @@ body.is-format-painting .page-wrap * {
   width: min(20rem, calc(100vw - 1.5rem));
   padding: 0.75rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-popover);
+  border-radius: var(--r-md);
   background: var(--surface);
   color: var(--ink);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--e3);
 }
 .review-popover-head { display: flex; justify-content: space-between; gap: 0.5rem; align-items: baseline; }
-.review-popover-meta { color: var(--muted); font-size: 0.6875rem; }
-.review-popover-body { margin: 0.5rem 0; font-size: var(--fs-small); line-height: 1.45; white-space: pre-wrap; }
+.review-popover-meta { color: var(--muted); font-size: var(--fs-xs); }
+.review-popover-body { margin: 0.5rem 0; font-size: var(--fs-sm); line-height: 1.45; white-space: pre-wrap; }
 .review-popover-actions { display: flex; flex-wrap: wrap; gap: 0.375rem; }
 /* Inline accept/reject card (review UX v2 Q2): a compact popover surfaced on
    hover/press of a tracked-change marker on the canvas — author, one-line
@@ -6663,21 +6716,21 @@ body.is-format-painting .page-wrap * {
   max-width: min(21.25rem, calc(100vw - 1.5rem));
   padding: 0.625rem 0.75rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-popover);
+  border-radius: var(--r-md);
   background: var(--surface);
   color: var(--ink);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--e3);
   outline: none;
 }
-.review-inline-card:focus-visible { box-shadow: var(--shadow-lg), 0 0 0 2px var(--accent-text); }
+.review-inline-card:focus-visible { box-shadow: var(--e3), 0 0 0 2px var(--accent-text); }
 .review-inline-head { display: flex; align-items: center; gap: 0.5rem; }
 .review-inline-dot { width: 0.625rem; height: 0.625rem; flex: 0 0 0.625rem; border-radius: 50%; background: var(--accent-strong); }
 .review-inline-who { display: grid; gap: 1px; min-width: 0; }
-.review-inline-who strong { font-size: var(--fs-small); font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.review-inline-who small { color: var(--muted); font-size: var(--fs-caption); }
+.review-inline-who strong { font-size: var(--fs-sm); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-inline-who small { color: var(--muted); font-size: var(--fs-xs); }
 .review-inline-body {
   margin: 0.4375rem 0 0.5625rem;
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -6687,16 +6740,16 @@ body.is-format-painting .page-wrap * {
   align-items: center;
   gap: 0.25rem;
   border: 1px solid var(--line);
-  border-radius: 62.4375rem;
+  border-radius: var(--r-pill);
   padding: 0.25rem 0.6875rem 0.25rem 0.5625rem;
   background: transparent;
   color: var(--ink);
   font: inherit;
-  font-size: var(--fs-caption);
+  font-size: var(--fs-xs);
   font-weight: 600;
   cursor: pointer;
 }
-.review-inline-bar button .ms { font-size: 1rem; }
+.review-inline-bar button .ms { font-size: var(--icon-sm); }
 .review-inline-bar button:hover { background: var(--review-insert-soft); border-color: var(--review-insert-line); color: var(--review-insert); }
 .review-inline-bar button:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
 .review-inline-bar button.danger:hover { background: var(--review-delete-soft); border-color: var(--review-delete-line); color: var(--review-delete); }
@@ -6704,9 +6757,9 @@ body.is-format-painting .page-wrap * {
    that are not selected still read as parts of one switch rather than as loose
    words in the status bar. The track was `--bg-2` — the footer's own colour, in
    both themes — which is why only the selected pill was visible. */
-.review-mode-segmented { display: inline-flex; gap: 0; padding: 1px; border: 1px solid var(--line-strong); border-radius: 62.4375rem; background: var(--surface); }
-.review-mode-seg { display: inline-flex; align-items: center; gap: 0.25rem; border: 1px solid transparent; border-radius: 62.4375rem; padding: 0.25rem 0.5625rem; background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-ribbon-caption); font-weight: 600; cursor: pointer; white-space: nowrap; }
-.review-mode-seg .ms { font-size: var(--fs-medium); }
+.review-mode-segmented { display: inline-flex; gap: 0; padding: 1px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); }
+.review-mode-seg { display: inline-flex; align-items: center; gap: 0.25rem; border: 1px solid transparent; border-radius: var(--r-pill); padding: 0.25rem 0.5625rem; background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-xs); font-weight: 600; cursor: pointer; white-space: nowrap; }
+.review-mode-seg .ms { font-size: var(--fs-lg); }
 .review-mode-seg[aria-pressed="true"] { color: var(--review-insert); border-color: var(--review-insert-line); background: var(--review-insert-soft); }
 .review-mode-seg[data-review-mode="viewing"][aria-pressed="true"] { color: var(--ink); border-color: var(--accent-text); background: var(--accent-soft); }
 .review-mode-seg:disabled { opacity: 0.45; cursor: default; }
@@ -6722,21 +6775,21 @@ body.is-format-painting .page-wrap * {
   justify-content: center;
   gap: 0.5rem;
   border: 1px solid color-mix(in srgb, var(--warning-line) 42%, var(--line));
-  border-radius: 0.5rem;
+  border-radius: var(--r-md);
   background: var(--warning-soft);
   color: var(--ink);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
 }
 .suggesting-banner[hidden] { display: none; }
-.suggesting-banner .ms { color: var(--warning); font-size: 1.0625rem; }
+.suggesting-banner .ms { color: var(--warning); font-size: var(--icon-sm); }
 .suggesting-banner button {
   border: 0;
   padding: 0.1875rem 0.375rem;
-  border-radius: 0.3125rem;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--accent-strong);
   font: inherit;
-  font-weight: 650;
+  font-weight: 600;
   cursor: pointer;
 }
 .suggesting-banner button:hover { background: var(--accent-soft); }
@@ -6763,15 +6816,15 @@ body.is-format-painting .page-wrap * {
   align-items: flex-start;
   gap: 0.625rem;
   border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--line));
-  border-radius: 0.5rem;
+  border-radius: var(--r-md);
   background: var(--accent-soft);
   color: var(--ink);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
 }
 .draft-recovery[hidden] { display: none; }
-.draft-recovery-icon { color: var(--accent-strong); font-size: 1.125rem; }
+.draft-recovery-icon { color: var(--accent-strong); font-size: var(--icon-md); }
 .draft-recovery-body { flex: 1 1 auto; min-width: 0; }
-.draft-recovery-title { margin: 0; font-weight: 650; }
+.draft-recovery-title { margin: 0; font-weight: 600; }
 .draft-recovery-list {
   margin: 0.25rem 0 0;
   padding: 0;
@@ -6798,16 +6851,16 @@ body.is-format-painting .page-wrap * {
 .draft-recovery button {
   border: 0;
   padding: 0.1875rem 0.5rem;
-  border-radius: 0.3125rem;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--accent-strong);
   font: inherit;
-  font-weight: 650;
+  font-weight: 600;
   cursor: pointer;
 }
 .draft-recovery button:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .draft-recovery-dismiss { color: var(--muted); flex: 0 0 auto; }
-.draft-recovery-dismiss .ms { font-size: 1.0625rem; }
+.draft-recovery-dismiss .ms { font-size: var(--icon-sm); }
 
 /* Autosave's footer indicator. Muted by default — it is reassurance — and it
    takes the danger colour only in the one state the user may need to act on. */
@@ -6852,7 +6905,7 @@ body.is-format-painting .page-wrap * {
 }
 
 .access-badge .ms {
-  font-size: 0.9375rem;
+  font-size: var(--icon-sm);
   /* The glyph is the one part that may not shrink — a half-drawn icon is worse
      than none — so it is excluded from the squeeze and the text absorbs it. */
   flex: 0 0 auto;
@@ -6914,7 +6967,7 @@ body.is-format-painting .page-wrap * {
 
 .rights-who {
   color: var(--ink);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -6959,24 +7012,24 @@ body.is-format-painting .page-wrap * {
      family that now has a token pair. */
   padding: var(--pnl-pad-y) var(--pnl-pad-x);
   border: 1px solid var(--line);
-  border-radius: 0.625rem;
+  border-radius: var(--r-md);
   background: var(--surface);
-  box-shadow: 0 1px 0.1875rem rgba(0, 0, 0, 0.06);
+  box-shadow: var(--e1);
   display: grid;
   gap: 0.5rem;
 }
 .review-sidebar-headrow { display: flex; align-items: center; gap: 0.5rem; }
-.review-sidebar-title { flex: 1; font-size: var(--fs-small); font-weight: 600; color: var(--ink); }
+.review-sidebar-title { flex: 1; font-size: var(--fs-sm); font-weight: 600; color: var(--ink); }
 .review-sidebar-nav { display: flex; gap: 0.25rem; }
 .review-nav-button {
   width: 1.625rem; height: 1.625rem; padding: 0;
   display: inline-grid; place-items: center;
-  border: 1px solid var(--line); border-radius: 0.375rem;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
   background: transparent; color: var(--ink); cursor: pointer;
 }
 .review-nav-button:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent-text); }
 .review-nav-button:disabled { opacity: 0.4; cursor: default; }
-.review-nav-button .ms { font-size: 1.125rem; }
+.review-nav-button .ms { font-size: var(--icon-md); }
 .review-sidebar-controlrow { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap; }
 .review-sidebar-header .review-bulk-actions { padding: 0; margin: 0; }
 .review-sidebar-header .review-bulk-actions[hidden] { display: none; }
@@ -6988,13 +7041,13 @@ body.is-format-painting .page-wrap * {
 .review-sidebar-empty {
   margin-top: 0.75rem;
   padding: 1.5rem 1rem;
-  border-radius: 0.625rem;
+  border-radius: var(--r-md);
   color: var(--muted);
   background: var(--surface);
   text-align: center;
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   line-height: 1.5;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--e1);
 }
 /* The margin comment affordance — Google Docs' Add-comment button, in the
    right margin, on the line the selection starts on. Positioned by
@@ -7022,7 +7075,7 @@ body.is-format-painting .page-wrap * {
   border-radius: 999px;
   background: var(--surface);
   color: var(--accent-text);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--e1);
   cursor: pointer;
 }
 .review-margin-add[hidden] { display: none; }
@@ -7032,7 +7085,7 @@ body.is-format-painting .page-wrap * {
 .review-margin-add:disabled { opacity: 0.4; cursor: default; }
 .review-margin-add:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent-text); color: var(--accent-text); }
 .review-margin-add:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
-.review-margin-add .ms { font-size: 1.25rem; }
+.review-margin-add .ms { font-size: var(--icon-md); }
 .review-margin-card {
   position: absolute;
   left: 0;
@@ -7043,10 +7096,10 @@ body.is-format-painting .page-wrap * {
      read as one column and were already equal at `8px 10px`. */
   padding: var(--pnl-pad-y) var(--pnl-pad-x);
   border: 0;
-  border-radius: 0.5rem;
+  border-radius: var(--r-md);
   background: var(--bg-2);
   color: var(--ink);
-  box-shadow: 0 1px 0.1875rem rgba(60, 64, 67, 0.2), 0 2px 0.375rem rgba(60, 64, 67, 0.08);
+  box-shadow: var(--e1);
   cursor: pointer;
   transition: top 150ms ease, box-shadow 150ms ease, background 150ms ease;
 }
@@ -7054,7 +7107,7 @@ body.is-format-painting .page-wrap * {
 .review-margin-card.review-margin-composer {
   padding: 0.625rem 0.75rem;
   background: var(--surface);
-  box-shadow: 0 1px 0.1875rem rgba(60, 64, 67, 0.3), 0 0.25rem 0.5rem 0.1875rem rgba(60, 64, 67, 0.15);
+  box-shadow: var(--e2);
 }
 .review-margin-card:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
 .review-margin-card.resolved { opacity: 0.72; }
@@ -7063,11 +7116,11 @@ body.is-format-painting .page-wrap * {
  * stable palette color (`--review-author-color`, set per card) with white text
  * for legible contrast in light and dark themes. Falls back to the theme accent
  * when a card sets no author color. */
-.review-margin-avatar { --review-author-color: var(--accent-strong); width: 1.625rem; height: 1.625rem; flex: 0 0 1.625rem; display: grid; place-items: center; border-radius: 50%; background: var(--review-author-color); color: var(--accent-ink); font-size: 0.6875rem; font-weight: 700; }
+.review-margin-avatar { --review-author-color: var(--accent-strong); width: 1.625rem; height: 1.625rem; flex: 0 0 1.625rem; display: grid; place-items: center; border-radius: 50%; background: var(--review-author-color); color: var(--accent-ink); font-size: var(--fs-xs); font-weight: 600; }
 .review-margin-title { min-width: 0; display: grid; gap: 1px; }
-.review-margin-title strong { font-size: var(--fs-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.review-margin-title small { color: var(--muted); font-size: var(--fs-caption); text-transform: capitalize; }
-.review-margin-card p { margin: 0.5rem 0; font-size: var(--fs-small); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-margin-title strong { font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-margin-title small { color: var(--muted); font-size: var(--fs-xs); text-transform: capitalize; }
+.review-margin-card p { margin: 0.5rem 0; font-size: var(--fs-sm); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .review-margin-revision p { padding-left: 0.5rem; border-left: 3px solid var(--accent-text); }
 .review-margin-insertion p { border-left-color: var(--review-insert-line); color: var(--review-insert); }
 .review-margin-deletion p { border-left-color: var(--review-delete-line); color: var(--review-delete); text-decoration: line-through; }
@@ -7089,7 +7142,7 @@ body.is-format-painting .page-wrap * {
   text-align: left;
   padding: 0.1875rem 0.375rem;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: none;
   color: var(--muted);
   font: inherit;
@@ -7102,9 +7155,9 @@ body.is-format-painting .page-wrap * {
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 .review-move-end[disabled] { cursor: default; opacity: 0.6; }
-.review-move-end b { color: var(--ink); font-size: var(--fs-caption); }
-.review-move-end span { font-size: var(--fs-micro); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.review-move-path > .ms { color: var(--review-move); font-size: var(--fs-medium); }
+.review-move-end b { color: var(--ink); font-size: var(--fs-xs); }
+.review-move-end span { font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.review-move-path > .ms { color: var(--review-move); font-size: var(--fs-lg); }
 .review-margin-revision:has(.review-margin-title small) { border-color: var(--line-strong); }
 .review-margin-card-actions { display: flex; gap: 0.3125rem; flex-wrap: wrap; }
 .review-margin-card:not(.expanded) .review-margin-card-actions,
@@ -7114,15 +7167,15 @@ body.is-format-painting .page-wrap * {
 .review-margin-reply { display: grid; gap: 0.25rem; }
 .review-margin-reply.resolved { opacity: 0.65; }
 .review-margin-reply-head { display: flex; justify-content: space-between; gap: 0.5rem; align-items: baseline; }
-.review-margin-reply-head strong { font-size: 0.6875rem; }
-.review-margin-reply-head small { color: var(--muted); font-size: var(--fs-micro); }
-.review-margin-reply p { margin: 0; padding: 0; border: 0; color: var(--ink); font-size: 0.6875rem; text-decoration: none; }
-.review-margin-action { border: 1px solid var(--line); border-radius: 0.375rem; padding: 0.25rem 0.5rem; background: transparent; color: var(--ink); font: inherit; font-size: var(--fs-caption); cursor: pointer; }
+.review-margin-reply-head strong { font-size: var(--fs-xs); }
+.review-margin-reply-head small { color: var(--muted); font-size: var(--fs-xs); }
+.review-margin-reply p { margin: 0; padding: 0; border: 0; color: var(--ink); font-size: var(--fs-xs); text-decoration: none; }
+.review-margin-action { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 0.25rem 0.5rem; background: transparent; color: var(--ink); font: inherit; font-size: var(--fs-xs); cursor: pointer; }
 .review-margin-action:hover { background: var(--accent-soft); border-color: var(--accent-text); }
 .review-margin-action.danger { color: var(--danger); }
 /* REVIEW-GAP-011: per-reply edit/delete controls; REVIEW-GAP-012: related-comment list. */
 .review-margin-reply-actions { display: flex; gap: 0.375rem; margin-top: 0.125rem; }
-.review-margin-reply-edit { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 0.375rem; padding: 0.25rem 0.375rem; font: inherit; font-size: 0.6875rem; color: var(--ink); background: var(--surface, transparent); }
+.review-margin-reply-edit { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 0.25rem 0.375rem; font: inherit; font-size: var(--fs-xs); color: var(--ink); background: var(--surface, transparent); }
 /* RC-12: the quote of the commented text, kept — and marked — once the text is
    deleted. RC-11: the in-place editor shared by a thread's root and its replies. */
 .review-margin-quote {
@@ -7130,7 +7183,7 @@ body.is-format-painting .page-wrap * {
   padding: 1px 0 1px 0.5rem;
   border-left: 2px solid var(--line-strong);
   color: var(--muted);
-  font-size: var(--fs-caption);
+  font-size: var(--fs-xs);
   display: grid;
   gap: 0.125rem;
 }
@@ -7143,7 +7196,7 @@ body.is-format-painting .page-wrap * {
 }
 .review-margin-card.expanded .review-margin-quote-text { -webkit-line-clamp: 4; }
 .review-margin-quote.deleted .review-margin-quote-text { text-decoration: line-through; }
-.review-margin-quote-state { font-size: var(--fs-micro); font-style: italic; }
+.review-margin-quote-state { font-size: var(--fs-xs); font-style: italic; }
 .review-comment-editor { display: grid; gap: 0.375rem; }
 .review-comment-editor textarea {
   width: 100%;
@@ -7151,21 +7204,21 @@ body.is-format-painting .page-wrap * {
   min-height: 2.125rem;
   padding: 0.375rem 0.5rem;
   border: 1px solid var(--line-strong);
-  border-radius: 0.375rem;
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
   font: inherit;
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   line-height: 1.45;
   resize: none;
   overflow: hidden;
 }
 .review-comment-editor textarea:focus { outline: none; border-color: var(--accent-text); box-shadow: 0 0 0 2px var(--accent-soft); }
 .review-margin-revision-comments { display: grid; gap: 0.375rem; margin: 0.5625rem -0.125rem 0.125rem 2.125rem; padding-left: 0.625rem; border-left: 2px solid var(--line); }
-.review-margin-revision-comments > small { color: var(--muted); font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.04em; }
+.review-margin-revision-comments > small { color: var(--muted); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; }
 .review-margin-revision-comment { display: grid; gap: 0.1875rem; }
-.review-margin-revision-comment strong { font-size: 0.6875rem; }
-.review-margin-revision-comment p { margin: 0; color: var(--ink); font-size: 0.6875rem; }
+.review-margin-revision-comment strong { font-size: var(--fs-xs); }
+.review-margin-revision-comment p { margin: 0; color: var(--ink); font-size: var(--fs-xs); }
 .review-margin-icon-action {
   width: 1.75rem;
   height: 1.75rem;
@@ -7198,12 +7251,12 @@ body.is-format-painting .page-wrap * {
   box-sizing: border-box;
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--line-strong);
-  border-radius: 1.125rem;
+  border-radius: var(--r-lg);
   outline: none;
   background: var(--surface);
   color: var(--ink);
   font: inherit;
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   line-height: 1.45;
   /* Height is driven by JS auto-grow (Q5); no manual resize handle, no
      inner scrollbar until the cap is reached. */
@@ -7229,10 +7282,10 @@ body.is-format-painting .page-wrap * {
   margin: 0.25rem 0;
   padding: 0.25rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
-  box-shadow: var(--shadow-popover);
+  box-shadow: var(--e2);
 }
 
 .mention-list[hidden] {
@@ -7245,7 +7298,7 @@ body.is-format-painting .page-wrap * {
   gap: 0.5rem;
   min-height: 2rem;
   padding: 0.25rem 0.5rem;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   cursor: pointer;
 }
 
@@ -7261,7 +7314,7 @@ body.is-format-painting .page-wrap * {
   height: 1.5rem;
   border-radius: 50%;
   border: 1px solid var(--line-strong);
-  font-size: 0.6875rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 
@@ -7326,8 +7379,8 @@ body.is-format-painting .page-wrap * {
 }
 
 .panel-title {
-  font-weight: 650;
-  font-size: var(--fs-medium);
+  font-weight: 600;
+  font-size: var(--fs-lg);
 }
 
 .panel-close {
@@ -7336,14 +7389,14 @@ body.is-format-painting .page-wrap * {
   display: grid;
   place-items: center;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
 }
 
 .panel-close .ms {
-  font-size: var(--icon-compact);
+  font-size: var(--icon-sm);
 }
 
 .panel-close:hover {
@@ -7419,9 +7472,9 @@ body.is-format-painting .page-wrap * {
 .properties-panel-heading small {
   overflow: hidden;
   color: var(--muted);
-  font-size: var(--fs-caption);
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
-  font-weight: 450;
+  font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -7431,7 +7484,7 @@ body.is-format-painting .page-wrap * {
 .properties-panel-intro {
   margin: 0 0 0.9375rem;
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   line-height: 1.45;
 }
 
@@ -7447,7 +7500,7 @@ body.is-format-painting .page-wrap * {
   gap: 0.6875rem;
   padding: 0.8125rem;
   border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+  border-radius: var(--r-md);
   background: var(--surface);
 }
 
@@ -7476,7 +7529,7 @@ body.is-format-painting .page-wrap * {
 
 .mixed-note {
   color: var(--muted);
-  font-size: var(--fs-caption);
+  font-size: var(--fs-xs);
   font-style: italic;
 }
 
@@ -7487,11 +7540,11 @@ body.is-format-painting .page-wrap * {
   text-align: left;
   padding: 0.3125rem 0.5rem;
   border: none;
-  border-radius: 0.375rem;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink);
   font: inherit;
-  font-size: 0.8125rem;
+  font-size: var(--fs-md);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -7506,7 +7559,7 @@ body.is-format-painting .page-wrap * {
 .outline-item.is-active {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent-text);
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .outline-item.lvl-1 {
@@ -7569,14 +7622,14 @@ body.is-format-painting .page-wrap * {
   height: 1.125rem;
   padding: 0;
   border: none;
-  border-radius: 0.25rem;
+  border-radius: var(--r-xs);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
 }
 
 .outline-twisty .ms {
-  font-size: 1rem;
+  font-size: var(--icon-sm);
   line-height: 1;
 }
 
@@ -7651,7 +7704,7 @@ body.is-format-painting .page-wrap * {
 .outline-empty {
   padding: 0.875rem 0.625rem;
   color: var(--faint);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   line-height: 1.5;
 }
 
@@ -7685,7 +7738,7 @@ body.is-format-painting .page-wrap * {
   gap: 0.5rem;
   min-height: 2rem;
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   cursor: pointer;
 }
 
@@ -7716,8 +7769,8 @@ body.is-format-painting .page-wrap * {
   margin: 0;
   padding: var(--pnl-pad-y) var(--pnl-pad-x) 0.125rem;
   color: var(--ink);
-  font-size: var(--fs-small);
-  font-weight: 650;
+  font-size: var(--fs-sm);
+  font-weight: 600;
 }
 
 .version-shared-status {
@@ -7752,8 +7805,8 @@ body.is-format-painting .page-wrap * {
 .version-group-day {
   padding: 0.375rem 0.5rem 0.1875rem;
   color: var(--muted);
-  font-size: var(--fs-small);
-  font-weight: 650;
+  font-size: var(--fs-sm);
+  font-weight: 600;
 }
 
 /* A grid row: the entry, and the ⋮ that carries the entry's own actions. 44px
@@ -7766,7 +7819,7 @@ body.is-format-painting .page-wrap * {
   align-items: stretch;
   gap: 0.125rem;
   min-height: 2.75rem;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   color: var(--ink);
 }
 
@@ -7778,7 +7831,7 @@ body.is-format-painting .page-wrap * {
   gap: 0.125rem;
   justify-content: center;
   padding: 0.375rem 0.25rem 0.375rem 0.5625rem;
-  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
   cursor: pointer;
 }
 
@@ -7804,14 +7857,14 @@ body.is-format-painting .page-wrap * {
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
 }
 
 .version-item-menu .ms {
-  font-size: var(--icon-compact);
+  font-size: var(--icon-sm);
 }
 
 .version-item:hover .version-item-menu,
@@ -7861,19 +7914,19 @@ body.is-format-painting .page-wrap * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
   font-weight: 600;
 }
 
 .version-item-pin {
-  font-size: var(--icon-compact);
+  font-size: var(--icon-sm);
   color: var(--accent-text);
 }
 
 .version-item-current,
 .version-item-detail {
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
 }
 
 .version-item.is-active .version-item-current,
@@ -8012,7 +8065,7 @@ body.is-format-painting .page-wrap * {
   align-items: baseline;
   padding: 0.375rem 0.5rem;
   border: 1px solid transparent;
-  border-radius: var(--radius);
+  border-radius: var(--r-md);
   background: transparent;
   color: var(--ink);
   font: inherit;
@@ -8025,7 +8078,7 @@ body.is-format-painting .page-wrap * {
   background: var(--accent-soft);
 }
 .compare-change-kind {
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -8046,13 +8099,13 @@ body.is-format-painting .page-wrap * {
 }
 .compare-details {
   margin-top: 0.5rem;
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
 }
 .compare-details summary { cursor: pointer; color: var(--muted); }
 
 .version-foot-line {
   margin: 0 0 0.125rem;
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
 }
 
 .version-foot-muted,
@@ -8062,7 +8115,7 @@ body.is-format-painting .page-wrap * {
 
 .version-foot-note {
   margin: 0 0 0.5rem;
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   line-height: 1.45;
 }
 
@@ -8078,7 +8131,7 @@ body.is-format-painting .page-wrap * {
   margin: 0 0 0.5rem;
   padding: 0.5rem 0.625rem;
   color: var(--faint);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   line-height: 1.45;
   border-bottom: 1px solid var(--line);
 }
@@ -8089,31 +8142,31 @@ body.is-format-painting .page-wrap * {
 /* Compact thumbnails: a single centered column, each card capped below the
    panel width so it reads as a small page preview with breathing room. */
 .page-thumb { display: flex; flex-direction: column; align-items: center; gap: 0.25rem; width: 100%; max-width: 11rem; padding: 0; border: none; background: none; cursor: pointer; }
-.page-thumb-box { position: relative; width: 100%; display: block; overflow: hidden; background: var(--paper); border: 1px solid var(--line-strong); border-radius: 0.1875rem; box-shadow: var(--shadow-sm); }
+.page-thumb-box { position: relative; width: 100%; display: block; overflow: hidden; background: var(--paper); border: 1px solid var(--line-strong); border-radius: var(--r-xs); box-shadow: var(--e1); }
 .page-thumb-canvas { display: block; width: 100%; height: auto; }
 .page-thumb-box.is-empty { aspect-ratio: 51 / 66; }
 .page-thumb:hover .page-thumb-box { border-color: var(--muted); }
 .page-thumb.is-active .page-thumb-box { border-color: var(--accent-text); box-shadow: 0 0 0 2px var(--accent-soft); }
-.page-thumb-num { font: 500 0.625rem/1 "JetBrains Mono", ui-monospace, monospace; color: var(--muted); }
+.page-thumb-num { font: 500 var(--fs-xs)/1 "JetBrains Mono", ui-monospace, monospace; color: var(--muted); }
 .page-thumb.is-active .page-thumb-num { color: var(--accent-strong); }
 
 .review-list { display: grid; gap: 0.625rem; align-content: start; }
 .review-composer { display: grid; gap: 0.375rem; padding: 0.625rem; border-bottom: 1px solid var(--line); }
-.review-composer label { font-size: var(--fs-small); font-weight: 600; }
-.review-composer textarea { width: 100%; box-sizing: border-box; resize: vertical; border: 1px solid var(--line); border-radius: 0.375rem; padding: 0.4375rem; font: inherit; font-size: var(--fs-small); background: var(--surface); color: var(--ink); }
+.review-composer label { font-size: var(--fs-sm); font-weight: 600; }
+.review-composer textarea { width: 100%; box-sizing: border-box; resize: vertical; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 0.4375rem; font: inherit; font-size: var(--fs-sm); background: var(--surface); color: var(--ink); }
 .review-composer-actions { display: flex; justify-content: flex-end; gap: 0.375rem; }
-.review-mode { display: flex; align-items: center; gap: 0.25rem; padding: 0.5rem 0.625rem 0; font-size: 0.6875rem; color: var(--muted); }
-.review-mode-button { border: 1px solid var(--line); border-radius: 62.4375rem; padding: 0.1875rem 0.5rem; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
+.review-mode { display: flex; align-items: center; gap: 0.25rem; padding: 0.5rem 0.625rem 0; font-size: var(--fs-xs); color: var(--muted); }
+.review-mode-button { border: 1px solid var(--line); border-radius: var(--r-pill); padding: 0.1875rem 0.5rem; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
 .review-mode-button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent-text); color: var(--accent-strong); }
 .review-filters { display: flex; gap: 0.25rem; padding: 0.5rem 0.625rem 0; }
-.review-filter { border: 1px solid var(--line); border-radius: 62.4375rem; padding: 0.1875rem 0.5rem; background: transparent; color: var(--muted); font: inherit; font-size: 0.6875rem; cursor: pointer; }
+.review-filter { border: 1px solid var(--line); border-radius: var(--r-pill); padding: 0.1875rem 0.5rem; background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer; }
 .review-filter[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent-text); color: var(--accent-strong); }
-.review-empty, .review-readonly-note { color: var(--muted); font-size: var(--fs-small); line-height: 1.5; }
-.review-card { border: 1px solid var(--line); border-radius: 0.5rem; padding: 0.5625rem 0.625rem; background: var(--surface); }
+.review-empty, .review-readonly-note { color: var(--muted); font-size: var(--fs-sm); line-height: 1.5; }
+.review-card { border: 1px solid var(--line); border-radius: var(--r-md); padding: 0.5625rem 0.625rem; background: var(--surface); }
 .review-card strong, .review-card small { display: block; }
-.review-card small { color: var(--muted); font-size: 0.6875rem; margin-top: 0.125rem; }
-.review-card p { margin: 0.4375rem 0 0; color: var(--ink); font-size: var(--fs-small); line-height: 1.45; white-space: pre-wrap; }
-.review-card-action { margin-top: 0.5rem; border: 1px solid var(--line); border-radius: 0.3125rem; padding: 0.1875rem 0.4375rem; background: transparent; color: var(--ink); font: inherit; font-size: 0.6875rem; cursor: pointer; }
+.review-card small { color: var(--muted); font-size: var(--fs-xs); margin-top: 0.125rem; }
+.review-card p { margin: 0.4375rem 0 0; color: var(--ink); font-size: var(--fs-sm); line-height: 1.45; white-space: pre-wrap; }
+.review-card-action { margin-top: 0.5rem; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 0.1875rem 0.4375rem; background: transparent; color: var(--ink); font: inherit; font-size: var(--fs-xs); cursor: pointer; }
 .review-reply { margin-left: 0.875rem; border-left: 3px solid var(--accent-text); }
 .review-bulk-actions { display: flex; gap: 0.375rem; padding: 0.5rem 0.625rem 0; }
 .review-revision-actions { display: flex; gap: 0.375rem; }
@@ -8280,7 +8333,7 @@ body.is-format-painting .page-wrap * {
   overscroll-behavior: contain;
   background: var(--surface);
   border-top: 1px solid var(--line);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--e3);
   z-index: var(--z-drawer);
 }
 
@@ -8321,12 +8374,12 @@ body.is-format-painting .page-wrap * {
   bottom: 0;
   transform: translate(-0.25rem, -0.25rem);
   padding: 0.125rem 0.375rem;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--accent);
   /* --accent-ink, not #ffffff: accent fills are read against the ink token, and
      a literal here has no dark value by construction (tests/style_tokens). */
   color: var(--accent-ink);
-  font-size: 0.6875rem;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   line-height: 1.4;
   white-space: nowrap;
@@ -8442,7 +8495,7 @@ body.is-format-painting .page-wrap * {
 .ruler-num {
   position: absolute;
   top: 12px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-xs);
   line-height: 1;
   color: var(--muted);
   transform: translateX(-50%);
@@ -9129,10 +9182,10 @@ body.is-format-painting .page-wrap * {
   top: 0;
   transform: translate(-50%, -140%);
   padding: 0.125rem 0.375rem;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--accent);
   color: var(--accent-ink);
-  font-size: 0.6875rem;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   line-height: 1.4;
   white-space: nowrap;
@@ -9189,12 +9242,12 @@ body.is-format-painting .page-wrap * {
   align-items: center;
   gap: 0.25rem;
   padding: 0.25rem;
-  border-radius: var(--radius-popover);
+  border-radius: var(--r-md);
   background: var(--surface);
   color: var(--ink);
   border: 1px solid var(--line);
-  box-shadow: var(--shadow-popover);
-  font-size: var(--fs-small);
+  box-shadow: var(--e2);
+  font-size: var(--fs-sm);
   pointer-events: auto;
   /* Never wider than the window; the bar's own row wraps before anything inside
      it is squeezed. */
@@ -9247,16 +9300,16 @@ body.is-format-painting .page-wrap * {
   min-height: 1.75rem;
   padding: 0.125rem 0.25rem;
   border: 1px solid transparent;
-  border-radius: 0.375rem;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink);
   font: inherit;
-  font-size: 0.6875rem;
+  font-size: var(--fs-xs);
   white-space: nowrap;
   cursor: pointer;
 }
 .object-wrap-btn .ms,
-.object-context-bar .object-bar-btn .ms { font-size: 1.125rem; }
+.object-context-bar .object-bar-btn .ms { font-size: var(--icon-md); }
 .object-wrap-btn:hover,
 .object-context-bar .object-bar-btn:hover { background: var(--accent-soft); }
 .object-wrap-btn:focus-visible,
@@ -9302,15 +9355,15 @@ body.is-format-painting .page-wrap * {
   align-items: center;
   gap: 0.25rem;
   border: 1px solid var(--line);
-  border-radius: 0.375rem;
+  border-radius: var(--r-sm);
   padding: 0.1875rem 0.5rem 0.1875rem 0.375rem;
   background: transparent;
   color: var(--ink);
   font: inherit;
-  font-size: 0.6875rem;
+  font-size: var(--fs-xs);
   cursor: pointer;
 }
-.object-bar-btn .ms { font-size: 0.9375rem; }
+.object-bar-btn .ms { font-size: var(--icon-sm); }
 .object-bar-btn:hover { background: var(--accent-soft); border-color: var(--accent-text); }
 .object-bar-btn.danger { color: var(--danger); }
 .object-bar-btn.danger:hover { background: var(--danger-soft); border-color: var(--danger); }
@@ -9334,7 +9387,7 @@ body.is-format-painting .page-wrap * {
 
 .object-dialog-body > label {
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   font-weight: 600;
 }
 .object-dialog-body textarea {
@@ -9342,12 +9395,12 @@ body.is-format-painting .page-wrap * {
   min-height: 5.25rem;
   padding: 0.5rem 0.625rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
   font: inherit;
-  font-size: var(--fs-body);
-  font-weight: 450;
+  font-size: var(--fs-md);
+  font-weight: 400;
   resize: vertical;
 }
 .object-dialog-body textarea:focus {
@@ -9358,7 +9411,7 @@ body.is-format-painting .page-wrap * {
 #altTextNote.error,
 #cropNote.error {
   color: var(--danger);
-  font-weight: 550;
+  font-weight: 500;
 }
 
 /* 24px wide at most; `paintCaretColumnHandles` sets the exact width, which is
@@ -9417,7 +9470,7 @@ body.is-format-painting .page-wrap * {
   position: absolute;
   pointer-events: auto;
   touch-action: none;
-  border-radius: var(--radius);
+  border-radius: var(--r-md);
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
 }
@@ -9778,7 +9831,7 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
 
 .ribbon-tab-file[aria-selected="true"] {
   background: var(--bg-2);
-  border-radius: var(--radius) var(--radius) 0 0;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
 }
 
 /* Contextual tabs sit at the right-hand end and say so: a permanent-looking tab
@@ -9887,7 +9940,7 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
 .file-page-detail h2 {
   margin: 0 0 0.25rem;
   max-width: var(--file-page-measure);
-  font-size: 1.25rem;
+  font-size: var(--fs-xl);
   font-weight: 600;
   color: var(--ink);
 }
@@ -9928,15 +9981,15 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
 
 .file-page-back .ms {
   margin-right: 0.5rem;
-  font-size: var(--icon-control);
+  font-size: var(--icon-md);
   vertical-align: -0.25rem;
 }
 
 .file-page-item-heading {
   margin: 0.625rem 0 0.125rem;
   padding: 0 0.5rem;
-  font-size: var(--fs-caption);
-  font-weight: 650;
+  font-size: var(--fs-xs);
+  font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--muted);
@@ -9966,7 +10019,7 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   margin-bottom: 0.25rem;
   padding: 0.125rem 0.5rem;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink);
   font: inherit;
@@ -9993,7 +10046,7 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
 .file-page-item-hint {
   flex: 0 0 auto;
   color: var(--muted);
-  font-size: var(--fs-caption);
+  font-size: var(--fs-xs);
 }
 
 .compact-toolbar {
@@ -10001,7 +10054,7 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
      so it separates by SHADE with no border, exactly as Docs and the sister app
      draw it (`rounded-full bg-[--doc-bg-subtle] mx-2 mb-1`). */
   background: var(--surface);
-  border-radius: var(--chrome-card-radius);
+  border-radius: var(--r-md);
   margin: var(--chrome-card-inset-y) var(--chrome-card-inset-x)
     calc(var(--chrome-card-inset-y) + 0.25rem);
   display: flex;
@@ -10049,7 +10102,7 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   height: 2.125rem;
   padding: 0 0.4375rem;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink-2, var(--ink));
   display: inline-flex;
@@ -10069,7 +10122,7 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   outline: 2px solid var(--accent-text);
   outline-offset: -2px;
 }
-.compact-toolbar .ctool .ms { font-size: 1.25rem; line-height: 1; }
+.compact-toolbar .ctool .ms { font-size: var(--icon-md); line-height: 1; }
 .compact-toolbar .cadopted {
   height: 1.875rem;
   flex: 0 0 auto;
@@ -10142,7 +10195,7 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
    hit target — the whole control opens the menu. */
 .compact-toolbar .ctool-menu { padding: 0 0.125rem 0 0.375rem; }
 .compact-toolbar .ctool-menu .ctool-caret {
-  font-size: 1.125rem;
+  font-size: var(--icon-md);
   margin-left: -0.125rem;
   color: var(--muted);
 }
@@ -10188,7 +10241,7 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   height: 2.125rem;
   padding: 0 0.4375rem;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink-2, var(--ink));
   display: inline-flex;
@@ -10197,7 +10250,7 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   flex: 0 0 auto;
   cursor: pointer;
 }
-.compact-command-menu .menu-toggle .ms { font-size: 1.25rem; line-height: 1; }
+.compact-command-menu .menu-toggle .ms { font-size: var(--icon-md); line-height: 1; }
 .compact-command-menu .menu-toggle:hover:not(:disabled) {
   background: var(--hover, color-mix(in srgb, var(--ink) 8%, transparent));
 }
@@ -10240,7 +10293,7 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   height: 2.125rem;
   padding: 0 0.4375rem;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink-2, var(--ink));
   display: inline-flex;
@@ -10250,7 +10303,7 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   flex: 0 0 auto;
 }
 .compact-align-menu .ctool .ms,
-.compact-overflow-menu .ctool .ms { font-size: 1.25rem; line-height: 1; }
+.compact-overflow-menu .ctool .ms { font-size: var(--icon-md); line-height: 1; }
 .compact-align-menu .ctool:hover:not(:disabled),
 .compact-overflow-menu .ctool:hover:not(:disabled) {
   background: var(--hover, color-mix(in srgb, var(--ink) 8%, transparent));
@@ -10299,18 +10352,18 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   height: 1.625rem;
   padding: 0 0.25rem 0 0.5rem;
   border: 1px solid var(--line-strong);
-  border-radius: 62.4375rem;
+  border-radius: var(--r-pill);
   background: var(--surface);
   color: var(--ink);
   font: inherit;
-  font-size: var(--fs-ribbon-caption);
+  font-size: var(--fs-xs);
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
 }
 
 .header-mode-btn .ms {
-  font-size: var(--icon-compact);
+  font-size: var(--icon-sm);
 }
 
 .header-mode-btn:hover,
@@ -10340,7 +10393,7 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
 }
 
 .header-mode-item .ms {
-  font-size: var(--icon-control);
+  font-size: var(--icon-md);
 }
 
 .header-mode-item-text {
@@ -10356,7 +10409,7 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
 
 .header-mode-item-note {
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   white-space: normal;
 }
 
@@ -10400,7 +10453,7 @@ body.phone-mode .header-mode {
   display: inline-flex;
   gap: 0.125rem;
   padding: 0.125rem;
-  border-radius: 62.4375rem;
+  border-radius: var(--r-pill);
   background: var(--surface-2, color-mix(in srgb, var(--ink) 6%, transparent));
   margin-right: 0.5rem;
 }
@@ -10408,10 +10461,10 @@ body.phone-mode .header-mode {
   height: 1.625rem;
   padding: 0 0.6875rem;
   border: 0;
-  border-radius: 62.4375rem;
+  border-radius: var(--r-pill);
   background: transparent;
   color: var(--ink-2, var(--ink));
-  font-size: var(--fs-caption, 0.6875rem);
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 .chrome-mode-btn[aria-checked="true"] {
@@ -10534,13 +10587,13 @@ body:not(.doc-loaded) .drop-icon {
 }
 
 .drop-title {
-  font-size: 1.0625rem;
+  font-size: var(--fs-lg);
   font-weight: 600;
   margin: 0.25rem 0 0.375rem;
 }
 
 body:not(.doc-loaded) .drop-title {
-  font-size: 1.25rem;
+  font-size: var(--fs-xl);
 }
 
 .muted {
@@ -10569,7 +10622,7 @@ body:not(.doc-loaded) .drop-title {
   gap: 1rem;
   height: var(--h-footer);
   padding: 0 0.75rem 0 1rem;
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   color: var(--muted);
   border-top: 0;
   background: var(--bg);
@@ -10610,7 +10663,7 @@ body:not(.doc-loaded) .drop-title {
 
 .footer .review-mode-seg {
   padding: 0.125rem 0.5rem;
-  font-size: var(--fs-ribbon-caption);
+  font-size: var(--fs-xs);
 }
 
 .rgroup-mode .review-mode-seg {
@@ -10668,11 +10721,11 @@ body:not(.doc-loaded) .drop-title {
   max-width: min(26.25rem, calc(100vw - 2 * var(--space-3)));
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
+  border-radius: var(--r-md);
   background: var(--surface);
   color: var(--ink);
-  box-shadow: var(--shadow-lg);
-  font-size: var(--fs-small);
+  box-shadow: var(--e3);
+  font-size: var(--fs-sm);
   pointer-events: none;
   opacity: 0;
   transform: translateY(0.375rem);
@@ -10773,7 +10826,7 @@ body:not(.doc-loaded) .drop-title {
   gap: 0.25rem;
   padding: 0.125rem 0.375rem;
   border: 0;
-  border-radius: 0.25rem;
+  border-radius: var(--r-xs);
   background: none;
   color: inherit;
   font: inherit;
@@ -10786,7 +10839,7 @@ body:not(.doc-loaded) .drop-title {
 }
 
 .footer-language .ms {
-  font-size: 1rem;
+  font-size: var(--icon-sm);
   line-height: 1;
 }
 
@@ -10808,7 +10861,7 @@ body:not(.doc-loaded) .drop-title {
   gap: 0.25rem;
   padding: 0.125rem 0.375rem;
   border: 0;
-  border-radius: 0.25rem;
+  border-radius: var(--r-xs);
   background: none;
   color: inherit;
   font: inherit;
@@ -10825,7 +10878,7 @@ body:not(.doc-loaded) .drop-title {
 }
 
 .text-language-status .ms {
-  font-size: 1rem;
+  font-size: var(--icon-sm);
   line-height: 1;
 }
 
@@ -10852,7 +10905,7 @@ body:not(.doc-loaded) .drop-title {
      12px of a 24px box, so − and + were clipped on their right edge. */
   padding: 0;
   border: none;
-  border-radius: 0.3125rem;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -10862,7 +10915,7 @@ body:not(.doc-loaded) .drop-title {
    matching the other two steps (18px ribbon/menu, 20px rail) instead of a
    fourth one-off 15px size. */
 .zbtn .ms {
-  font-size: var(--icon-compact);
+  font-size: var(--icon-sm);
 }
 
 .zbtn:hover {
@@ -10875,9 +10928,9 @@ body:not(.doc-loaded) .drop-title {
   border: none;
   background: transparent;
   color: var(--ink);
-  border-radius: 0.3125rem;
+  border-radius: var(--r-sm);
   padding: 0 0.125rem;
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   text-align: center;
@@ -10960,7 +11013,7 @@ body:not(.doc-loaded) .drop-title {
 
   .footer .review-mode-seg {
     padding-inline: 0.3125rem;
-    font-size: 0.625rem;
+    font-size: var(--fs-xs);
   }
 }
 
@@ -11005,7 +11058,7 @@ body:not(.doc-loaded) .drop-title {
     width: min(21.25rem, calc(100vw - 2.625rem));
     max-width: none;
     margin: 0;
-    box-shadow: var(--shadow-popover);
+    box-shadow: var(--e2);
   }
 
   .side-panel.glyph-panel {
@@ -11017,7 +11070,7 @@ body:not(.doc-loaded) .drop-title {
     width: min(22.5rem, calc(100vw - 2.625rem));
     max-width: none;
     margin: 0;
-    box-shadow: var(--shadow-popover);
+    box-shadow: var(--e2);
   }
 }
 
@@ -11101,7 +11154,7 @@ body:not(.doc-loaded) .drop-title {
 
   .dialog-card {
     max-height: calc(100vh - 1.25rem);
-    border-radius: var(--radius-dialog);
+    border-radius: var(--r-lg);
   }
 
   /* The narrow rung is stated in the TOKENS, not re-stated on the three
@@ -11127,11 +11180,11 @@ body:not(.doc-loaded) .drop-title {
     width: 2.125rem;
     height: 2.125rem;
     flex-basis: 2.125rem;
-    font-size: var(--icon-control);
+    font-size: var(--icon-md);
   }
 
   .dialog-heading h2 {
-    font-size: var(--fs-title);
+    font-size: var(--fs-lg);
   }
 
   .dialog-heading p {
@@ -11394,9 +11447,9 @@ body.phone-mode .app-menu-bar.is-open {
   overscroll-behavior: contain;
   border: 1px solid var(--line-strong);
   border-bottom: 0;
-  border-radius: var(--chrome-card-radius) var(--chrome-card-radius) 0 0;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
   background: var(--surface);
-  box-shadow: var(--shadow-popover);
+  box-shadow: var(--e2);
   mask-image: none;
   -webkit-mask-image: none;
 }
@@ -11425,7 +11478,7 @@ body.phone-mode .app-menu-bar.is-open .app-menu-button {
   height: auto;
   min-height: 2.25rem;
   padding: 0.375rem 0.75rem;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   line-height: normal;
   text-align: start;
 }
@@ -11636,8 +11689,8 @@ body.phone-mode .side-panel {
   max-width: none;
   max-height: 55vh;
   margin: 0;
-  border-radius: var(--chrome-card-radius) var(--chrome-card-radius) 0 0;
-  box-shadow: var(--shadow-popover);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  box-shadow: var(--e2);
   flex: none;
 }
 
@@ -11657,7 +11710,7 @@ body.phone-mode .dialog-card {
   max-width: 100%;
   max-height: 86vh;
   padding-bottom: env(safe-area-inset-bottom, 0px);
-  border-radius: var(--chrome-card-radius) var(--chrome-card-radius) 0 0;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
 }
 
 /* `popoverPosition` clamps a menu's LEFT edge to the window and then lets a
@@ -11696,7 +11749,7 @@ body.phone-mode .grid-picker {
      root `overscroll-behavior: none` and `style_tokens.test.mjs`'s guard, which
      caught this rule the first time it was written without it). */
   overscroll-behavior: contain;
-  border-radius: var(--chrome-card-radius) var(--chrome-card-radius) 0 0;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
 }
 
 /* The table-size grid joins the sheets above, for the reason they are sheets
@@ -11852,10 +11905,10 @@ body.phone-mode .grid-cells .gc {
   height: var(--h-control);
   padding: 0 0.25rem 0 0.5rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
   cursor: pointer;
   transition: border-color 0.11s, background 0.11s;
 }
@@ -11893,7 +11946,7 @@ body.phone-mode .grid-cells .gc {
 
 .font-family-caret {
   flex: 0 0 auto;
-  font-size: 1.125rem;
+  font-size: var(--icon-md);
   color: var(--muted);
 }
 
@@ -11908,11 +11961,11 @@ body.phone-mode .grid-cells .gc {
   align-items: baseline;
   font-weight: 600;
   line-height: 1;
-  font-size: 0.75rem;
+  font-size: var(--fs-sm);
 }
 
 .grow-shrink .grow-glyph-big {
-  font-size: 1rem;
+  font-size: var(--fs-lg);
 }
 
 .grow-shrink .grow-sign {
@@ -11922,7 +11975,7 @@ body.phone-mode .grid-cells .gc {
 }
 
 .case-glyph {
-  font-size: 0.875rem;
+  font-size: var(--fs-md);
   font-weight: 600;
   letter-spacing: -0.02em;
 }
@@ -11934,7 +11987,7 @@ body.phone-mode .grid-cells .gc {
   gap: 0;
   padding: 0;
   height: var(--h-control);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
 }
 
 .color-apply {
@@ -11948,7 +12001,7 @@ body.phone-mode .grid-cells .gc {
   padding: 0;
   border: 1px solid transparent;
   border-right: 0;
-  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
   background: transparent;
   color: var(--ink);
   cursor: pointer;
@@ -11956,13 +12009,13 @@ body.phone-mode .grid-cells .gc {
 }
 
 .color-apply-glyph {
-  font-size: 0.9375rem;
-  font-weight: 700;
+  font-size: var(--fs-lg);
+  font-weight: 600;
   line-height: 1;
 }
 
 .color-apply .ms.color-apply-glyph {
-  font-size: var(--icon-control);
+  font-size: var(--icon-md);
   font-weight: 400;
 }
 
@@ -11970,7 +12023,7 @@ body.phone-mode .grid-cells .gc {
   display: block;
   width: 1rem;
   height: 0.25rem;
-  border-radius: 1px;
+  border-radius: var(--r-xs);
   background: var(--ink);
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12) inset;
 }
@@ -11990,19 +12043,19 @@ body.phone-mode .grid-cells .gc {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: calc(var(--icon-control) + 1px);
+  width: calc(var(--icon-md) + 1px);
   height: var(--h-control);
   padding: 0;
   border: 1px solid transparent;
   border-left: 0;
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
 }
 
 .color-caret .ms {
-  font-size: 1.125rem;
+  font-size: var(--icon-md);
 }
 
 .color-apply:hover:not(:disabled),
@@ -12020,7 +12073,7 @@ body.phone-mode .grid-cells .gc {
 .color-caret:focus-visible {
   outline: 2px solid var(--accent-text);
   outline-offset: 1px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
 }
 
 .color-caret[aria-expanded="true"] {
@@ -12044,8 +12097,8 @@ body.phone-mode .grid-cells .gc {
 /* The same rule as `.color-caret`: the box holds the glyph. 14px less two
    borders left 12px of an 18px caret on screen. */
 .list-caret {
-  width: calc(var(--icon-control) + 0.125rem);
-  min-width: calc(var(--icon-control) + 0.125rem);
+  width: calc(var(--icon-md) + 0.125rem);
+  min-width: calc(var(--icon-md) + 0.125rem);
   padding: 0;
   color: var(--muted);
   border-top-left-radius: 0;
@@ -12053,7 +12106,7 @@ body.phone-mode .grid-cells .gc {
 }
 
 .list-caret .ms {
-  font-size: 1.125rem;
+  font-size: var(--icon-md);
 }
 
 .list-caret[aria-expanded="true"] {
@@ -12110,7 +12163,7 @@ body.phone-mode .grid-cells .gc {
   height: 2.75rem;
   padding: 0;
   border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface, transparent);
   color: var(--ink);
   cursor: pointer;
@@ -12187,7 +12240,7 @@ body.phone-mode .grid-cells .gc {
   min-height: 1.875rem;
   padding: 0.25rem;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   cursor: pointer;
 }
@@ -12259,7 +12312,7 @@ body[data-shape-draw] .page-wrap * {
   display: block;
   padding: 0.1875rem;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   cursor: pointer;
 }
@@ -12283,7 +12336,7 @@ body[data-shape-draw] .page-wrap * {
   width: 2.125rem;
   height: 2.75rem;
   border: 1px solid var(--line);
-  border-radius: 0.125rem;
+  border-radius: var(--r-xs);
   background: var(--surface);
 }
 
@@ -12292,7 +12345,7 @@ body[data-shape-draw] .page-wrap * {
   width: 0.75rem;
   height: 0.625rem;
   background: var(--accent);
-  border-radius: 1px;
+  border-radius: var(--r-xs);
 }
 
 .object-position-mark.pos-top-left { top: 0.1875rem; left: 0.1875rem; }
@@ -12335,7 +12388,7 @@ body[data-shape-draw] .page-wrap * {
   width: 2.125rem;
   height: var(--w, 1px);
   background: var(--ink);
-  border-radius: 1px;
+  border-radius: var(--r-xs);
   flex: none;
 }
 
@@ -12419,10 +12472,10 @@ body[data-shape-draw] .page-wrap * {
   width: 100%;
   padding: 0.375rem 0.5rem;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink);
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
   text-align: left;
   cursor: pointer;
 }
@@ -12437,7 +12490,7 @@ body[data-shape-draw] .page-wrap * {
 .color-chip {
   width: 0.9375rem;
   height: 0.9375rem;
-  border-radius: 0.1875rem;
+  border-radius: var(--r-xs);
   background: var(--sw, var(--ink));
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2) inset;
 }
@@ -12449,7 +12502,7 @@ body[data-shape-draw] .page-wrap * {
 }
 
 .color-more .ms {
-  font-size: 1rem;
+  font-size: var(--icon-sm);
   color: var(--muted);
 }
 
@@ -12469,7 +12522,7 @@ body[data-shape-draw] .page-wrap * {
   height: 1.125rem;
   padding: 0;
   border: 1px solid rgba(0, 0, 0, 0.14);
-  border-radius: 0.1875rem;
+  border-radius: var(--r-xs);
   /* --sw is written inline per swatch by the colour-menu builder. The fallback
      is the never-happens case made visible: without one the cell would render
      transparent and read as a working control that shows nothing. */
@@ -12508,12 +12561,12 @@ body[data-shape-draw] .page-wrap * {
   padding: 0.25rem 0.5rem;
   margin-bottom: 0.25rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface-alt);
 }
 
 .font-menu-search .ms {
-  font-size: 1rem;
+  font-size: var(--icon-sm);
   color: var(--muted);
 }
 
@@ -12523,7 +12576,7 @@ body[data-shape-draw] .page-wrap * {
   border: 0;
   background: transparent;
   color: var(--ink);
-  font-size: var(--fs-body);
+  font-size: var(--fs-md);
   outline: none;
 }
 
@@ -12540,7 +12593,7 @@ body[data-shape-draw] .page-wrap * {
   width: 100%;
   padding: 0.375rem 0.5rem;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink);
   font-size: 0.9375rem;
@@ -12550,7 +12603,7 @@ body[data-shape-draw] .page-wrap * {
 
 .font-menu-check {
   flex: 0 0 1rem;
-  font-size: 1rem;
+  font-size: var(--icon-sm);
   color: var(--accent-text);
   opacity: 0;
 }
@@ -12578,7 +12631,7 @@ body[data-shape-draw] .page-wrap * {
 .font-menu-empty {
   padding: 0.875rem 0.5rem;
   color: var(--faint);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   text-align: center;
 }
 
@@ -12586,17 +12639,17 @@ body[data-shape-draw] .page-wrap * {
 .zoom-value-control {
   display: inline-flex;
   align-items: center;
-  border-radius: 0.3125rem;
+  border-radius: var(--r-sm);
 }
 
 .zoom-input {
   width: 3.875rem;
   height: 1.375rem;
   border: 1px solid transparent;
-  border-radius: 0.3125rem 0 0 0.3125rem;
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
   background: transparent;
   color: var(--ink);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
   text-align: center;
   cursor: text;
@@ -12623,14 +12676,14 @@ body[data-shape-draw] .page-wrap * {
      item with `overflow: hidden` — shrank into it rather than overflowing. */
   padding: 0;
   border: none;
-  border-radius: 0 0.3125rem 0.3125rem 0;
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
 }
 
 .zoom-caret .ms {
-  font-size: var(--icon-compact);
+  font-size: var(--icon-sm);
 }
 
 .zoom-caret:hover,
@@ -12723,10 +12776,10 @@ body[data-shape-draw] .page-wrap * {
   padding: 0.3125rem 0.375rem 0.3125rem 0.625rem;
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-popover);
-  box-shadow: var(--shadow-popover);
+  border-radius: var(--r-md);
+  box-shadow: var(--e2);
   color: var(--ink);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
 }
 
 .paste-options[hidden] {
@@ -12734,17 +12787,17 @@ body[data-shape-draw] .page-wrap * {
 }
 
 .paste-options-icon {
-  font-size: 1rem;
+  font-size: var(--icon-sm);
   color: var(--muted);
 }
 
 .paste-options-action {
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   padding: 0.25rem 0.5rem;
   background: var(--accent-soft);
   color: var(--accent-text);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
 }
@@ -12762,14 +12815,14 @@ body[data-shape-draw] .page-wrap * {
   width: 1.375rem;
   height: 1.375rem;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
 }
 
 .paste-options-close .ms {
-  font-size: 1rem;
+  font-size: var(--icon-sm);
 }
 
 .paste-options-close:hover {
@@ -12804,7 +12857,7 @@ body[data-shape-draw] .page-wrap * {
   position: absolute;
   left: 4px;
   padding: 1px 6px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--accent);
   color: var(--accent-ink);
   font-size: 10px;
@@ -12830,11 +12883,11 @@ body[data-shape-draw] .page-wrap * {
   z-index: 4;
   padding: 3px 9px;
   border: 1px solid var(--accent-text);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--accent-text);
   font: inherit;
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   line-height: 1.4;
   cursor: pointer;
   box-shadow: 0 1px 3px rgb(0 0 0 / 18%);
@@ -12867,10 +12920,10 @@ body[data-shape-draw] .page-wrap * {
   gap: 6px;
   padding: 2px 4px 2px 8px;
   border: 1px solid var(--accent-text);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   line-height: 1.4;
   box-shadow: 0 1px 3px rgb(0 0 0 / 18%);
 }
@@ -12908,7 +12961,7 @@ body[data-shape-draw] .page-wrap * {
   min-height: 24px;
   padding: 0 8px;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--accent-text);
   font: inherit;
@@ -12931,7 +12984,7 @@ body[data-shape-draw] .page-wrap * {
 }
 
 .running-band-close .ms {
-  font-size: 1rem;
+  font-size: var(--icon-sm);
 }
 
 /* Touch: a finger needs the full target (SKILL §10). */
@@ -12999,7 +13052,7 @@ body[data-shape-draw] .page-wrap * {
   gap: 0.75rem;
   padding: 0.75rem 0.875rem;
   border: 1px solid var(--line);
-  border-radius: 0.375rem;
+  border-radius: var(--r-sm);
   background: var(--bg);
   color: var(--ink);
   font: inherit;
@@ -13021,7 +13074,7 @@ body[data-shape-draw] .page-wrap * {
 /* 28px is ONLYOFFICE's own `@x-huge-btn-icon-size` — the size they give the
    icon on a tall tile, which is what these are. */
 .file-format-icon {
-  font-size: 1.75rem;
+  font-size: var(--icon-lg);
   line-height: 1;
   color: var(--ink-soft, var(--ink));
   opacity: 0.85;
@@ -13037,10 +13090,10 @@ body[data-shape-draw] .page-wrap * {
   justify-content: center;
   min-width: 2.625rem;
   padding: 0.25rem 0.375rem;
-  border-radius: 0.25rem;
+  border-radius: var(--r-xs);
   background: var(--surface-2, var(--surface));
-  font-size: 0.6875rem;
-  font-weight: 700;
+  font-size: var(--fs-xs);
+  font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--ink-soft, var(--ink));
 }
@@ -13049,7 +13102,7 @@ body[data-shape-draw] .page-wrap * {
 .file-page-item-chevron {
   margin-left: auto;
   opacity: 0.55;
-  font-size: 1.125rem;
+  font-size: var(--icon-md);
 }
 
 .file-page-item-category[aria-pressed="true"] {
@@ -13241,7 +13294,7 @@ body[data-shape-draw] .page-wrap * {
 }
 
 .file-template-description {
-  font-size: 0.75rem;
+  font-size: var(--fs-sm);
   color: var(--ink-soft, var(--ink));
   opacity: 0.7;
 }
@@ -13254,12 +13307,12 @@ body[data-shape-draw] .page-wrap * {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 0.1875rem;
+  border-radius: var(--r-xs);
   /* Paper, in both themes: this is a picture of a page, and a page is white
      even when the chrome around it is dark — the same reason `--paper` is a
      fixed light value rather than a themed surface. */
   background: var(--paper);
-  box-shadow: 0 1px 0.1875rem rgb(0 0 0 / 12%);
+  box-shadow: var(--e1);
   flex: none;
 }
 
@@ -13453,14 +13506,14 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
   gap: 0.375rem;
   min-height: 1.5rem;
   color: var(--ink);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   cursor: pointer;
 }
 
 .chart-panel-summary {
   margin: 0 0 var(--space-2);
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
 }
 
 .chart-data-overlay .chart-data-card {
@@ -13478,10 +13531,10 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
   margin: 0;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--bg-2);
   color: var(--ink);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   line-height: 1.45;
 }
 
@@ -13506,7 +13559,7 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
   min-height: 1.5rem;
   padding: 0.3125rem 0.375rem;
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   cursor: pointer;
 }
@@ -13530,7 +13583,7 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
   display: inline-block;
   width: 0.625rem;
   height: 0.875rem;
-  border-radius: 1px;
+  border-radius: var(--r-xs);
 }
 
 .chart-palette-ribbon .chart-palette-dot {
@@ -13555,7 +13608,7 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
   min-height: 1.75rem;
   padding: 0.125rem;
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   cursor: pointer;
 }
@@ -13573,7 +13626,7 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
   min-width: 1.75rem;
   min-height: 1.75rem;
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink);
   cursor: pointer;
@@ -13598,13 +13651,13 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
   max-height: 52vh;
   overflow: auto;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   overscroll-behavior: contain;
 }
 
 .chart-grid {
   border-collapse: collapse;
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
 }
 
 .chart-grid th,
@@ -13689,14 +13742,14 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
   height: 1.5rem;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
 }
 
 .chart-grid-btn .ms {
-  font-size: 1rem;
+  font-size: var(--icon-sm);
 }
 
 .chart-grid-btn:hover:not(:disabled) {
@@ -13722,7 +13775,7 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
   min-height: 1.45em;
   margin: 0;
   color: var(--muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-sm);
   line-height: 1.45;
 }
 
@@ -13732,14 +13785,14 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
 
 /* Remote awareness never intercepts document interaction. */
 .remote-caret { position: absolute; border-left: 2px solid; pointer-events: none; z-index: 6; }
-.remote-caret > span { position: absolute; bottom: 100%; left: -0.125rem; color: white; font: 0.6875rem sans-serif; padding: 0.125rem 0.25rem; white-space: nowrap; border-radius: 0.1875rem; }
+.remote-caret > span { position: absolute; bottom: 100%; left: -0.125rem; color: white; font: 0.6875rem sans-serif; padding: 0.125rem 0.25rem; white-space: nowrap; border-radius: var(--r-xs); }
 /* A claimed name on a caret, drawn as on its chip (`docs/175` §4.2): the dashed
    ring says "unverified", and the flag alone takes the pointer so its tooltip
    can say it in words. The caret line itself stays click-through. */
 .remote-caret > span.is-unverified { outline: 1.5px dashed var(--muted); outline-offset: 1px; pointer-events: auto; cursor: help; }
 .remote-selection { position: absolute; opacity: .18; pointer-events: none; z-index: 5; }
 
-.shared-link-dialog { max-width: min(35rem, 90vw); border: 1px solid var(--line); border-radius: 0.5rem; padding: 1.5rem; }
+.shared-link-dialog { max-width: min(35rem, 90vw); border: 1px solid var(--line); border-radius: var(--r-md); padding: 1.5rem; }
 .shared-link-dialog label { display: block; }
 .shared-link-dialog input { display: block; width: 100%; margin: 0.75rem 0; }
 
@@ -13762,17 +13815,17 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
   max-height: calc(100vh - var(--chrome-bottom) - 2 * var(--space-3));
   padding: var(--space-3);
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-popover);
+  border-radius: var(--r-md);
   background: var(--surface);
   color: var(--ink);
-  box-shadow: var(--shadow-popover);
-  font-size: var(--fs-body);
+  box-shadow: var(--e2);
+  font-size: var(--fs-md);
 }
 .ai-preview[hidden] { display: none; }
-.ai-preview-title { margin: 0; font-size: 0.9375rem; font-weight: 600; }
+.ai-preview-title { margin: 0; font-size: var(--fs-lg); font-weight: 600; }
 .ai-preview-private,
 .ai-preview-mode,
-.ai-preview-blocked { margin: 0; color: var(--muted); font-size: var(--fs-small); line-height: 1.45; }
+.ai-preview-blocked { margin: 0; color: var(--muted); font-size: var(--fs-sm); line-height: 1.45; }
 .ai-preview-blocks {
   flex: 1 1 auto;
   min-height: 0;
@@ -13786,15 +13839,15 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
   margin: 0 0 var(--space-2);
   padding: var(--space-2);
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--paper);
   color: var(--paper-ink);
 }
-.ai-preview-new { display: block; margin-bottom: 0.25rem; color: color-mix(in srgb, var(--paper-ink) 72%, var(--paper)); font-size: var(--fs-small); }
+.ai-preview-new { display: block; margin-bottom: 0.25rem; color: color-mix(in srgb, var(--paper-ink) 72%, var(--paper)); font-size: var(--fs-sm); }
 .ai-preview-text { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
 .ai-preview-text ins { color: var(--paper-insert); text-decoration: underline; }
 .ai-preview-text del { color: var(--paper-delete); text-decoration: line-through; }
-.ai-preview-refusals { margin: 0; padding-left: 1.125rem; color: var(--danger); font-size: var(--fs-small); }
+.ai-preview-refusals { margin: 0; padding-left: 1.125rem; color: var(--danger); font-size: var(--fs-sm); }
 .ai-preview-refusals[hidden],
 .ai-preview-blocked[hidden] { display: none; }
 .ai-preview-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
@@ -13920,7 +13973,7 @@ body[data-table-draw] .page-wrap * {
   position: relative;
   width: 9.5rem;
   height: 7.5rem;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: var(--paper);
   box-shadow: inset 0 0 0 1px var(--line);
 }
@@ -13946,7 +13999,7 @@ body[data-table-draw] .page-wrap * {
   justify-content: center;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   cursor: pointer;
 }

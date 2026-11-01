@@ -129,7 +129,9 @@ test("table properties commit live, undo per interaction, and restore focus", as
       shadow: style.boxShadow,
     };
   });
-  expect(surface.radius).toBe("10px");
+  // 8px since design system v2 (`docs/63` §7, UX-052): side panels take the
+  // card radius `--r-md`, not the old 10px popover radius.
+  expect(surface.radius).toBe("8px");
   expect(surface.borders).toEqual(["1px", "1px", "1px", "1px"]);
   expect(surface.shadow).not.toBe("none");
   const original = await tablePropertyValues(page);
@@ -245,9 +247,12 @@ test("live table properties remain reachable on a narrow viewport", async ({
   // bottom edge, so its radius is "10px 10px 0px 0px" — rounded where it meets
   // the document, square where it meets the window. Asserting a uniform "10px"
   // asserted the floating-card shape this rung deliberately does not use.
+  // Design system v2 (`docs/63` §7, UX-052) re-measured both shapes: a sheet
+  // takes the sheet radius `--r-lg` (12px), a card the card radius `--r-md`
+  // (8px). They were a 10-18px clamp before, which read 10px at this width.
   const radius = await panel.evaluate((el) => getComputedStyle(el).borderRadius);
   expect(radius, "the panel is drawn as a card or a sheet, not a bare rectangle").toMatch(
-    /^10px 10px 0px 0px$|^10px$/,
+    /^12px 12px 0px 0px$|^8px$/,
   );
   await expect(panel).not.toHaveCSS("box-shadow", "none");
   expect(consoleErrors).toEqual([]);
