@@ -145,13 +145,20 @@ const WASM = fileURLToPath(new URL("../pkg/casual_doc_wasm_bg.wasm", import.meta
 // as `.notdef`): a 151,048 B data segment, no code. AN ESTIMATE (measured face
 // bytes added to the ceiling); CI's measurement replaces it. MEASURED by CI
 // (the diagnostic line below) at 28,137,305 B; the ceiling is that plus ~128 KiB.
-const MAX_TOTAL_BYTES = 28_270_000;
+// 28,270,000 -> 28,405,000 for picture text (HF-418, #926: OCR line boxes over a
+// scan, the ink-erasing raster patch and its style probe in `image_text.rs`).
+// MEASURED by CI on #926 merged with main at 28,273,100 B; plus ~128 KiB.
+const MAX_TOTAL_BYTES = 28_405_000;
 /** What the browser then compiles. Measured: 10,594,266 B (#805); 11,585,101 B
  *  after §19; 12,349,976 B with HF-360, whose opt-level-3 build is 14,144,617 B,
  *  so a dropped `z` still lands far outside this. */
 // 13,170,000 -> 13,465,000 for the same work: MEASURED at 13,331,393 B, plus ~128 KiB.
 // 13,465,000 -> 14,020,000 for the same work: MEASURED by CI at 13,887,605 B, plus ~128 KiB.
-const MAX_CODE_BYTES = 14_020_000;
+// 14,020,000 -> 14,155,000 for picture text (HF-418, #926): MEASURED by CI at
+// 14,022,190 B, plus ~128 KiB. Still armed against a dropped `z`: the opt-level-3
+// build ran ~14.5% over the `z` one (14,144,617 vs 12,349,976 B), which is now
+// about 16 MB, far outside this.
+const MAX_CODE_BYTES = 14_155_000;
 /** The engine is actually in here: a stub or a truncated file must not pass. */
 const MIN_CODE_BYTES = 3_000_000;
 

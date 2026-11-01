@@ -17,6 +17,7 @@
 #![forbid(unsafe_code)]
 
 // The drop-shadow raster (`object.shape-shadow`).
+pub mod image_text;
 mod shadow;
 pub mod svg;
 

@@ -1265,6 +1265,69 @@ correctness; the two-run equality test is the evidence.
 - **The time budget in the browser** needs the host's `Interrupt` over
   `performance.now()`; `Deadline` is native-only.
 
+## 20b. Amendment (owner, 2026-11-01): text in pictures is edited where it is, not reflowed
+
+**Decision.** Turning a scan into flowing text is no longer the default. A
+recognised scanned page opens as its picture, on a page of its own, with an
+editable line box over each line OCR read; the boxes' text is laid out but not
+painted (`RunProperties::no_text_fill`, `w14:textFill/w14:noFill`), so an
+unedited page shows the scan's own pixels and a misread appears only once that
+line is edited. A text PDF still reflows, but a picture in it that OCR read text
+from keeps that text the same way, as line boxes over the picture. The previous
+behaviour (`pdf.import.scan_replaced_by_text`) is the opt-in
+`ReflowOptions { scan_text: ScanText::Reflow }`; the default reports
+`pdf.import.image_text_boxes` (lines).
+
+**Editing a line** (`casual-doc-wasm` `image_text.rs`, the editor's
+`image_text_edit.mjs`): before the first text edit or format in an unedited box,
+the ink under the box is erased in a **patch picture** placed directly under the
+box (same offset, size and turn), and the text is painted in the ink's measured
+colour, height and weight. The original picture is never changed; the patch's
+alt text keeps the recognised line, which Restore puts back; each step is one
+undo. Saved as DOCX the group is the picture, the patches and the text boxes.
+The four Fill/Blur/Pixelate/Restore commands require the host's document-mutation
+grant. Ordinary typing takes a synchronous fast path when the caret is outside
+an unedited picture-text box, so a burst of keys replaces a selection once.
+The Viewer SDK includes those nested line boxes in both `plain_text()` and
+`page_text()`, in group order, for indexing and search.
+
+**The erase** (`casual_doc_render::image_text`, inpainting): Otsu's threshold
+per box, the smaller class is ink, dilated 1-2 px; 4-8 px tiles take the mean of
+their paper pixels only (no ink pixel ever enters an average), tiles with none
+borrow from neighbours, pixels interpolate bilinearly between tile centres, and
+the rim is feathered. When paper pixels stray from that model by more than 9
+levels RMS (texture, grain) the paper is kept and only the ink is solved by
+Laplacian relaxation. Blur and Pixelate are the other two modes, and both start
+from that same ink-free background: Blur blurs it, Pixelate takes each block's
+mean of it. No mode reads an ink pixel's own colour, so the text's colour never
+enters any average. O(box pixels).
+No new dependency.
+
+**Skew.** A line read turned (at most 5°, `record::SKEW_DEGREES`) is laid level
+for grouping; its box is turned back by the same angle about the centre of the
+line's ink, so the patch covers the ink it replaces.
+
+**Fit, face and reach.** An edited line is set on one line as the scan's was:
+while its laid-out text wraps, its size shrinks by the overflow, to no less than
+60% of the measured size, in the same undo step. An unedited line's size is
+capped so its unpainted text does not wrap in its box (the caret walks it as one
+line). The face is the nearest bundled one: Liberation Mono for glyphs on an
+even pitch, Liberation Serif for stems markedly heavier than the horizontal
+strokes, else Liberation Sans; bold only for a clearly heavy stem. A selection
+from one line box into another makes both editable. The commands are on the
+right-click menu over a line box and in the palette, whose state is asked once
+per revision and caret paragraph, never per keystroke. Guarded on the painted
+page by `e2e/image-text-edit.spec.mjs` (a synthetic scan read by the committed
+models: deleting a line erases its glyphs, the next line is unchanged, and the
+DOCX round trip keeps both).
+
+**Not built yet:** large patches still run on the main thread (bounded by
+`MAX_PATCH_PIXELS`, unmeasured); text typed past the line's width wraps, as in
+Word; ODT export of unpainted text; a clipped scan picture is treated as
+unclipped; opened PNG/JPG files and "Edit text in picture" for any picture in a
+DOCX (same engine: OCR the picture, then these boxes). The row is `docs/109`
+HF-418.
+
 ## 20a. The host's OCR, wired (io, viewer, AI sessions, MCP)
 
 §20.6 left every surface on the no-model path. Branch `lane/pdf-ocr-wiring` wired the

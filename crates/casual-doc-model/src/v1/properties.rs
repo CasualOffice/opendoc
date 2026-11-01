@@ -1995,6 +1995,14 @@ pub struct RunProperties {
     /// from `hidden` (`w:vanish`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spec_vanish: Option<bool>,
+    /// The glyphs are laid out but painted with no fill
+    /// (`w14:textFill/w14:noFill`, Word 2010): the text is there to select,
+    /// search, read aloud and edit, and the page shows what is under it.
+    /// Distinct from `hidden` (`w:vanish`), which takes the text out of the
+    /// layout. An image-text line box over a scan carries it until the line
+    /// is edited (`docs/182` §20b), so the scan's own pixels show through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_text_fill: Option<bool>,
     /// Run border (`w:bdr`), a single border edge.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub border: Option<BorderEdge>,

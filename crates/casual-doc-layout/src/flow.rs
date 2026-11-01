@@ -7581,7 +7581,7 @@ fn styled_owned_run(
             effective.character_spacing_twips.map_or(Twip::ZERO, Twip),
             ctx.text_scale,
         ),
-        color: run_color(effective.color, ctx.palette),
+        color: text_color(&effective, ctx.palette),
         decoration: run_decoration(&effective, ctx.palette),
         highlight: effective.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&effective.shading, ctx.palette),
@@ -7623,7 +7623,7 @@ fn build_styled_run<'a>(
             properties.character_spacing_twips.map_or(Twip::ZERO, Twip),
             ctx.text_scale,
         ),
-        color: run_color(properties.color, ctx.palette),
+        color: text_color(properties, ctx.palette),
         decoration: run_decoration(properties, ctx.palette),
         highlight: properties.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&properties.shading, ctx.palette),
@@ -7701,7 +7701,7 @@ fn symbol_glyph_run(symbol: &Symbol, ctx: &mut FlowCtx) -> StyledRun<'static> {
             effective.character_spacing_twips.map_or(Twip::ZERO, Twip),
             ctx.text_scale,
         ),
-        color: run_color(effective.color, ctx.palette),
+        color: text_color(&effective, ctx.palette),
         decoration: run_decoration(&effective, ctx.palette),
         highlight: effective.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&effective.shading, ctx.palette),
@@ -7923,7 +7923,7 @@ fn build_script_run<'a>(
             properties.character_spacing_twips.map_or(Twip::ZERO, Twip),
             ctx.text_scale,
         ),
-        color: run_color(properties.color, ctx.palette),
+        color: text_color(properties, ctx.palette),
         decoration: run_decoration(properties, ctx.palette),
         highlight: properties.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&properties.shading, ctx.palette),
@@ -7947,7 +7947,7 @@ fn push_small_caps_runs<'a>(
         properties.character_spacing_twips.map_or(Twip::ZERO, Twip),
         ctx.text_scale,
     );
-    let color = run_color(properties.color, ctx.palette);
+    let color = text_color(properties, ctx.palette);
     let decoration = run_decoration(properties, ctx.palette);
     let highlight = properties.highlight.and_then(highlight_rgba);
     let shading = shading_rgba(&properties.shading, ctx.palette);
@@ -8046,6 +8046,18 @@ fn run_decoration(properties: &RunProperties, palette: Option<&ResolvedPalette>)
             .filter(|mark| *mark != EmphasisMark::None),
         border: resolve_edge(&[properties.border.as_ref()], palette),
     }
+}
+
+/// The fill a run's glyphs are painted with: [`run_color`], transparent when
+/// the run says its text has no fill (`w14:textFill/w14:noFill`). The run is
+/// still shaped, measured, hit-tested and selectable; only its ink is absent,
+/// so what is under it shows (`docs/182` §20b). O(1).
+pub(crate) fn text_color(properties: &RunProperties, palette: Option<&ResolvedPalette>) -> [u8; 4] {
+    let mut color = run_color(properties.color, palette);
+    if properties.no_text_fill == Some(true) {
+        color[3] = 0;
+    }
+    color
 }
 
 /// Resolves a run's `w:color` to opaque RGBA: an explicit `w:color@val` sRGB is
@@ -11129,6 +11141,50 @@ mod tests {
             ),
             [0, 0, 0, 255]
         );
+    }
+
+    /// `w14:textFill/w14:noFill` (`docs/182` §20b): the run is shaped and
+    /// placed (it has glyphs, so it is selectable and the caret walks it) but
+    /// painted with no ink, on every styled-run path: plain, per-script and
+    /// small caps.
+    #[test]
+    fn unpainted_text_is_shaped_but_transparent_on_every_run_path() {
+        let unpainted = |extra: RunProperties| RunProperties {
+            no_text_fill: Some(true),
+            color: Some(Color::Rgb(RgbColor { r: 200, g: 0, b: 0 })),
+            ..extra
+        };
+        for (text, properties) in [
+            ("plain line", unpainted(RunProperties::default())),
+            (
+                "Small Caps",
+                unpainted(RunProperties {
+                    small_caps: Some(true),
+                    ..RunProperties::default()
+                }),
+            ),
+            (
+                "A中B",
+                unpainted(RunProperties {
+                    font_hint: Some(casual_doc_model::v1::RunFontHint::EastAsia),
+                    ..RunProperties::default()
+                }),
+            ),
+        ] {
+            let runs = styled_runs_for(text, properties);
+            assert!(!runs.is_empty(), "{text}: the text is laid out");
+            for run in &runs {
+                assert_eq!(run.color[3], 0, "{text}: painted with no ink");
+            }
+        }
+        let painted = styled_runs_for(
+            "visible",
+            RunProperties {
+                no_text_fill: Some(false),
+                ..RunProperties::default()
+            },
+        );
+        assert_eq!(painted[0].color[3], 255, "an explicit fill-on paints");
     }
 
     #[test]

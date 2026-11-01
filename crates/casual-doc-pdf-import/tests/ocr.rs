@@ -29,6 +29,10 @@ use casual_doc_pdf_import::{
     ImportJob, OcrOptions, PageClass, PdfImport, PdfImportError, PdfReadLimits, Progress,
     import_pdf, import_pdf_with_ocr,
 };
+// Own line: what becomes of text read from pictures (`docs/182` §20b).
+use casual_doc_pdf_import::{ReflowOptions, ScanText};
+// Own line: the image-text groups' members.
+use casual_doc_model::v1::{GroupChild, WordprocessingGroup};
 
 // ---------------------------------------------------------------- fixtures
 
@@ -1370,13 +1374,13 @@ fn a_model_directory_builds_the_providers_and_the_import_records_their_identity(
 
 // ------------------------------------------------------- flowing document
 
-/// The flowing document of a recognised scan is its text: the scan (a
-/// picture the size of each page, under the recognised lines) is neither an
-/// inline picture pushing the text, a background behind text that no longer
-/// lines up with it, nor a letterhead repeated in the header. The exact
-/// layout keeps the scan.
+/// With the opt-in `ScanText::Reflow`, the flowing document of a recognised
+/// scan is its text: the scan (a picture the size of each page, under the
+/// recognised lines) is neither an inline picture pushing the text, a
+/// background behind text that no longer lines up with it, nor a letterhead
+/// repeated in the header. The exact layout keeps the scan.
 #[test]
-fn a_recognised_scan_reflows_as_its_text_and_leaves_the_scan_to_the_exact_layout() {
+fn with_the_reflow_opt_in_a_recognised_scan_reflows_as_its_text() {
     let scripted: Arc<dyn OcrProvider> = Arc::new(Scripted::new(vec![
         ("Recognised", [72.0, 100.0, 160.0, 113.0], 0.99),
         ("words", [72.0, 120.0, 120.0, 133.0], 0.99),
@@ -1388,7 +1392,11 @@ fn a_recognised_scan_reflows_as_its_text_and_leaves_the_scan_to_the_exact_layout
         2,
         "the exact layout keeps both scans"
     );
-    let flowing = imported.reflow().expect("reflows");
+    let flowing = imported
+        .reflow_with(ReflowOptions {
+            scan_text: ScanText::Reflow,
+        })
+        .expect("reflows");
     flowing.document.validate().expect("valid");
     let mut text = String::new();
     let mut graphics = 0;
@@ -1444,7 +1452,11 @@ fn a_skewed_scans_lines_reflow_as_level_text_not_rotated_text() {
     let scripted: Arc<dyn OcrProvider> = Arc::new(scripted);
     let imported =
         import_pdf_with_ocr(blank_scan(1, ""), PdfReadLimits::default(), with(scripted)).unwrap();
-    let flowing = imported.reflow().expect("reflows");
+    let flowing = imported
+        .reflow_with(ReflowOptions {
+            scan_text: ScanText::Reflow,
+        })
+        .expect("reflows");
     flowing.document.validate().expect("valid");
     assert!(
         !flowing.report.has(report::TEXT_ROTATED),
@@ -1470,4 +1482,248 @@ fn a_skewed_scans_lines_reflow_as_level_text_not_rotated_text() {
         })
         .collect();
     assert_eq!(paragraphs.len(), 1, "{paragraphs:?}");
+}
+
+// ------------------------------------------------ image-text line boxes
+
+/// Every image-text group in the body (a group holding a picture and text
+/// boxes), with the paragraph that carries it.
+fn image_text_groups(
+    document: &Document,
+) -> Vec<(&casual_doc_model::v1::Paragraph, &WordprocessingGroup)> {
+    let mut out = Vec::new();
+    for block in document.body() {
+        let BlockNode::Paragraph(p) = block else {
+            continue;
+        };
+        for inline in &p.inlines {
+            if let InlineNode::Group(group) = inline
+                && group
+                    .children
+                    .iter()
+                    .any(|c| matches!(c, GroupChild::Picture(_)))
+                && group
+                    .children
+                    .iter()
+                    .any(|c| matches!(c, GroupChild::TextBox(_)))
+            {
+                out.push((p, group.as_ref()));
+            }
+        }
+    }
+    out
+}
+
+/// A line box's text, and whether every run of it is laid out unpainted.
+fn box_text(child: &GroupChild) -> Option<(String, bool, Option<i32>, i64, i64)> {
+    let GroupChild::TextBox(text_box) = child else {
+        return None;
+    };
+    let mut text = String::new();
+    let mut unpainted = true;
+    for block in &text_box.blocks {
+        let BlockNode::Paragraph(p) = block else {
+            continue;
+        };
+        for inline in &p.inlines {
+            if let InlineNode::Run(r) = inline {
+                text.push_str(&r.text);
+                unpainted &= r.properties.no_text_fill == Some(true);
+            }
+        }
+    }
+    Some((
+        text,
+        unpainted,
+        text_box.rotation,
+        text_box.offset.x_emu,
+        text_box.offset.y_emu,
+    ))
+}
+
+/// The owner's decision (2026-11-01, `docs/182` §20b): a recognised scan
+/// opens as its picture on a page of its own, with an editable line box over
+/// each line OCR read, its text laid out but not painted so the page shows
+/// the scan's own pixels. No recognised text runs in the flow, and nothing
+/// of the scans is taken for a letterhead.
+#[test]
+fn a_recognised_scan_opens_as_its_picture_with_an_unpainted_line_box_over_each_line() {
+    let scripted: Arc<dyn OcrProvider> = Arc::new(Scripted::new(vec![
+        ("Recognised", [72.0, 100.0, 160.0, 113.0], 0.99),
+        ("words", [72.0, 120.0, 120.0, 133.0], 0.99),
+    ]));
+    let imported =
+        import_pdf_with_ocr(blank_scan(2, ""), PdfReadLimits::default(), with(scripted)).unwrap();
+    let flowing = imported.flowing().expect("reflows");
+    flowing.document.validate().expect("valid");
+    let groups = image_text_groups(&flowing.document);
+    assert_eq!(
+        groups.len(),
+        2,
+        "one picture with its line boxes per scanned page"
+    );
+    for (n, (paragraph, group)) in groups.iter().enumerate() {
+        let boxes: Vec<_> = group.children.iter().filter_map(box_text).collect();
+        let texts: Vec<&str> = boxes.iter().map(|b| b.0.as_str()).collect();
+        assert_eq!(texts, ["Recognised", "words"], "page {n}");
+        assert!(boxes.iter().all(|b| b.1), "every line box is unpainted");
+        // Each box sits on its line's ink, padded a little.
+        let (x, y) = (boxes[0].3 as f64 / 12_700.0, boxes[0].4 as f64 / 12_700.0);
+        assert!(
+            (x - 72.0).abs() < 3.0 && (y - 100.0).abs() < 4.0,
+            "box at ({x}, {y})"
+        );
+        // The picture is first: the boxes paint over it.
+        assert!(matches!(group.children[0], GroupChild::Picture(_)));
+        let anchor = group.anchor.as_ref().expect("anchored");
+        assert!(!anchor.behind_doc, "the boxes are clickable");
+        assert_eq!(
+            paragraph.properties.page_break_before == Some(true),
+            n > 0,
+            "each scan starts its own page"
+        );
+    }
+    // The recognised text is in the boxes, not the flow.
+    for block in flowing.document.body() {
+        if let BlockNode::Paragraph(p) = block {
+            assert!(
+                !p.inlines.iter().any(|i| matches!(i, InlineNode::Run(_))),
+                "a recognised line ran in the flow"
+            );
+        }
+    }
+    assert!(
+        flowing.document.definitions().headers.is_empty(),
+        "no letterhead"
+    );
+    let found = flowing
+        .report
+        .findings
+        .iter()
+        .find(|f| f.feature == report::IMAGE_TEXT_BOXES)
+        .expect("reported");
+    assert_eq!(found.occurrences, 4);
+    assert!(!flowing.report.has(report::SCAN_REPLACED_BY_TEXT));
+}
+
+/// A scan fed off square: each line box is turned by its line's angle, so it
+/// lies on the ink the edit will erase.
+#[test]
+fn a_skewed_scans_line_boxes_are_turned_by_the_lines_angle() {
+    let mut scripted = Scripted::new(vec![(
+        "Skewed line of text",
+        [72.0, 100.0, 300.0, 113.0],
+        0.99,
+    )]);
+    scripted.turn = Some(2.0);
+    let scripted: Arc<dyn OcrProvider> = Arc::new(scripted);
+    let imported =
+        import_pdf_with_ocr(blank_scan(1, ""), PdfReadLimits::default(), with(scripted)).unwrap();
+    let flowing = imported.flowing().expect("reflows");
+    let groups = image_text_groups(&flowing.document);
+    let boxes: Vec<_> = groups[0].1.children.iter().filter_map(box_text).collect();
+    let degrees = f64::from(boxes[0].2.expect("turned")) / 60_000.0;
+    assert!((degrees - 2.0).abs() < 0.05, "turned {degrees}");
+    // The box turns about its centre, which is the line's: (186, 106.5).
+    let GroupChild::TextBox(b) = groups[0]
+        .1
+        .children
+        .iter()
+        .find(|c| matches!(c, GroupChild::TextBox(_)))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let cx = (b.offset.x_emu as f64 + b.extent.width_emu as f64 / 2.0) / 12_700.0;
+    let cy = (b.offset.y_emu as f64 + b.extent.height_emu as f64 / 2.0) / 12_700.0;
+    assert!(
+        (cx - 186.0).abs() < 4.0 && (cy - 106.5).abs() < 3.0,
+        "centre ({cx}, {cy})"
+    );
+}
+
+/// A running head printed on every scanned page is in the picture: it stays
+/// a line box over it, never header text drawn over the scan's own.
+#[test]
+fn a_running_head_in_a_scan_stays_in_its_line_box_not_the_header() {
+    let scripted: Arc<dyn OcrProvider> = Arc::new(Scripted::new(vec![
+        ("Running head", [72.0, 20.0, 180.0, 32.0], 0.99),
+        ("Body text", [72.0, 300.0, 160.0, 313.0], 0.99),
+    ]));
+    let imported =
+        import_pdf_with_ocr(blank_scan(3, ""), PdfReadLimits::default(), with(scripted)).unwrap();
+    let flowing = imported.flowing().expect("reflows");
+    assert!(
+        flowing.document.definitions().headers.is_empty(),
+        "the head is not a header"
+    );
+    for (_, group) in image_text_groups(&flowing.document) {
+        let texts: Vec<String> = group
+            .children
+            .iter()
+            .filter_map(box_text)
+            .map(|b| b.0)
+            .collect();
+        assert!(texts.iter().any(|t| t == "Running head"), "{texts:?}");
+    }
+}
+
+/// A text PDF with a picture of text in it: its native text reflows as
+/// before, and the picture keeps the lines OCR read from it as line boxes.
+#[test]
+fn a_picture_of_text_in_a_text_pdf_keeps_its_lines_as_boxes_over_it() {
+    // The picture fills (72, 192)-(372, 392) in page points (top-left
+    // origin); native text sits above it.
+    let (w, h) = (300u32, 200u32);
+    let grey = vec![255u8; (w * h) as usize];
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(6));
+    encoder.write_all(&grey).unwrap();
+    let packed = encoder.finish().unwrap();
+    let objects = vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [4 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+            .to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im0 5 0 R >> /Font << /F1 3 0 R >> >> /Contents 6 0 R >>".to_vec(),
+        stream(
+            &format!("/Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode"),
+            &packed,
+        ),
+        stream(
+            "",
+            b"BT /F1 12 Tf 72 720 Td (Native text above the picture.) Tj ET\nq 300 0 0 200 72 400 cm /Im0 Do Q",
+        ),
+    ];
+    let pdf = write_pdf(&objects);
+    let mut scripted = Scripted::new(vec![(
+        "Inside the picture",
+        [90.0, 250.0, 240.0, 263.0],
+        0.99,
+    )]);
+    scripted.region = Some(((72.0, 192.0), 1.5));
+    let scripted: Arc<dyn OcrProvider> = Arc::new(scripted);
+    let imported = import_pdf_with_ocr(pdf, PdfReadLimits::default(), with(scripted)).unwrap();
+    let flowing = imported.flowing().expect("reflows");
+    flowing.document.validate().expect("valid");
+    let mut flow_text = String::new();
+    for block in flowing.document.body() {
+        if let BlockNode::Paragraph(p) = block {
+            for inline in &p.inlines {
+                if let InlineNode::Run(r) = inline {
+                    flow_text.push_str(&r.text);
+                }
+            }
+        }
+    }
+    assert!(flow_text.contains("Native text above"), "{flow_text}");
+    assert!(
+        !flow_text.contains("Inside"),
+        "the picture's text ran in the flow"
+    );
+    let groups = image_text_groups(&flowing.document);
+    assert_eq!(groups.len(), 1);
+    let boxes: Vec<_> = groups[0].1.children.iter().filter_map(box_text).collect();
+    assert_eq!(boxes.len(), 1);
+    assert_eq!(boxes[0].0, "Inside the picture");
+    assert!(boxes[0].1);
 }
