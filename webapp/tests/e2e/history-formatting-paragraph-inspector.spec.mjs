@@ -96,7 +96,7 @@ test("paragraph properties use a rounded live inspector with per-action undo", a
   await expect(liveParagraphSections.locator('button:has-text("Apply")')).toHaveCount(0);
   await expect(panel.getByRole("button", { name: "Apply", exact: true })).toHaveCount(0);
   await expect(panel.locator('button:has-text("Reset")')).toHaveCount(0);
-  await expect(panel).toHaveCSS("border-radius", "10px");
+  await expect(panel).toHaveCSS("border-radius", "8px");
 
   const left = page.locator("#indentLeft");
   const original = await left.inputValue();
