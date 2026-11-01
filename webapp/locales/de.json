@@ -2652,6 +2652,7 @@
   "findings.feature.pdfPageBreaks": "Aus Seitenenden abgeleitete Seitenumbrüche",
   "findings.feature.pdfFloats": "Bilder und Zeichnungen neben oder hinter ihrem Text verankert",
   "findings.feature.pdfScanReplaced": "Gescannte Seiten als ihr erkannter Text dargestellt (der Scan bleibt im exakten Layout)",
+  "findings.feature.pdfWatermark": "Wasserzeichen erkannt und als Wasserzeichen des Dokuments festgelegt",
   "findings.feature.pdfDecorations": "Als Formen gezeichnete Unterstreichungen, Hervorhebungen, Schattierungen und Rahmen wieder dem Text zugeordnet",
   "findings.feature.pdfVectorsPlaced": "Zeichnungen als Formen platziert",
   "pdfImport.title": "{name} wird geöffnet",

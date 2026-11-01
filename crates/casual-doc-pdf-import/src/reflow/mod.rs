@@ -35,6 +35,7 @@ pub mod order;
 pub mod record;
 pub mod tables;
 pub mod text;
+pub mod watermark;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1384,6 +1385,8 @@ pub(crate) struct Flow {
     /// Per page, its size in points (a landscape page in a portrait
     /// document starts a section of its own).
     pub page_sizes: Vec<(f64, f64)>,
+    /// The document's watermark (`watermark`).
+    pub watermark: Option<watermark::Found>,
 }
 
 /// The font key of a character, through the families the fixed build chose.
@@ -1753,6 +1756,10 @@ pub fn build(
 ) -> Result<Reflowed, PdfImportError> {
     let mut findings = Findings::default();
     let mut work = ReflowWork::default();
+    // The watermark leaves the pages first: its stamps are no text and its
+    // picture no background.
+    let (state, found) = watermark::extract(state, &mut findings);
+    let state: &PdfSourceState = &state;
     let key = key_of(state);
     let (furniture_blocks, mut furniture) = furniture(state, &mut findings, &mut work.furniture);
 
@@ -2565,6 +2572,7 @@ pub fn build(
         (72.0, 72.0, flow.page_size.0 - 72.0, flow.page_size.1 - 72.0)
     };
     flow.furniture = furniture;
+    flow.watermark = found;
     emit::emit(
         state,
         resources,

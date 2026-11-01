@@ -1250,3 +1250,167 @@ fn a_first_line_indent_with_full_lines_is_not_right_aligned() {
         assert_eq!(indent.start_twips, None, "{indent:?}");
     }
 }
+
+/// `text` turned 45 degrees (rising left to right), `size` pt, in grey
+/// `gray` (0 black, 1 white), its baseline centred on (306, 396).
+fn stamp(text_: &str, size: f64, gray: f64) -> String {
+    // Courier advances 0.6 em; start so the baseline's middle is centred.
+    let half = 0.6 * size * text_.len() as f64 / 2.0;
+    let (c, s) = (
+        std::f64::consts::FRAC_1_SQRT_2,
+        std::f64::consts::FRAC_1_SQRT_2,
+    );
+    let (x, y) = (306.0 - half * c, 396.0 - half * s);
+    format!(
+        "q {gray} g BT /F1 {size} Tf {c:.5} {s:.5} {:.5} {c:.5} {x:.2} {y:.2} Tm ({}) Tj ET Q\n",
+        -s,
+        synth::literal(text_)
+    )
+}
+
+/// `pages` pages of prose under `mark` (drawn first, as Word's header
+/// watermark is), with a heading on each so headings are a level.
+fn stamped_pdf(pages: usize, mark: &str) -> Vec<u8> {
+    let prose = full("prose");
+    let lines: Vec<&str> = std::iter::repeat_n(prose.as_str(), 12).collect();
+    let all: Vec<Page> = (0..pages)
+        .map(|p| {
+            Page::new(format!(
+                "{mark}{}{}",
+                line_at(
+                    "F2",
+                    16.0,
+                    72.0,
+                    700.0 - 30.0 * p as f64,
+                    ["Opening", "Middle", "Closing", "Annex"][p % 4]
+                ),
+                text("F1", 11.0, 72.0, 580.0, 14.0, &lines)
+            ))
+        })
+        .collect();
+    synth::document(&all, COURIER, "")
+}
+
+fn section_watermark(document: &Document) -> Option<&casual_doc_model::v1::Watermark> {
+    document
+        .definitions()
+        .sections
+        .iter()
+        .find_map(|s| s.watermark.as_ref())
+}
+
+fn finding(reflowed: &Reflowed, outcome: crate::PdfModelOutcome) -> u32 {
+    reflowed
+        .report
+        .findings
+        .iter()
+        .filter(|e| e.feature == crate::report::WATERMARK_INFERRED && e.outcome == outcome)
+        .map(|e| e.occurrences)
+        .sum()
+}
+
+#[test]
+fn a_diagonal_stamp_on_every_page_is_the_sections_watermark() {
+    let reflowed = reflow_of(stamped_pdf(3, &stamp("DRAFT", 96.0, 0.75)));
+    let document = &reflowed.document;
+    let mark = section_watermark(document).expect("a watermark");
+    let casual_doc_model::v1::WatermarkContent::Text(text) = &mark.content else {
+        panic!("{mark:?}");
+    };
+    assert_eq!(text.text, "DRAFT");
+    assert_eq!(text.size_half_points, Some(192));
+    assert_eq!(mark.layout, casual_doc_model::v1::WatermarkLayout::Diagonal);
+    // Every section carries it, and no page's body holds the stamp.
+    assert!(
+        document
+            .definitions()
+            .sections
+            .iter()
+            .all(|s| s.watermark.is_some())
+    );
+    assert!(
+        paragraphs(document)
+            .iter()
+            .all(|p| !para_text(p).contains("DRAFT")),
+        "{:?}",
+        paragraphs(document)
+            .iter()
+            .map(|p| para_text(p))
+            .collect::<Vec<_>>()
+    );
+    // The chapters are still the first heading level.
+    let chapter = paragraphs(document)
+        .into_iter()
+        .find(|p| para_text(p).starts_with("Opening"))
+        .expect("the chapter");
+    assert_eq!(style_name(document, chapter).as_deref(), Some("heading 1"));
+    assert_eq!(finding(&reflowed, crate::PdfModelOutcome::Mapped), 3);
+}
+
+#[test]
+fn a_lone_light_diagonal_stamp_is_a_watermark_and_a_dark_one_stays_text() {
+    let reflowed = reflow_of(stamped_pdf(1, &stamp("CONFIDENTIAL", 60.0, 0.8)));
+    assert!(section_watermark(&reflowed.document).is_some());
+    // Dark: the reader is unsure; the words stay, and it says so.
+    let reflowed = reflow_of(stamped_pdf(1, &stamp("CONFIDENTIAL", 60.0, 0.0)));
+    assert!(section_watermark(&reflowed.document).is_none());
+    assert!(
+        paragraphs(&reflowed.document)
+            .iter()
+            .any(|p| para_text(p).contains("CONFIDENTIAL"))
+    );
+    assert_eq!(finding(&reflowed, crate::PdfModelOutcome::Degraded), 1);
+}
+
+#[test]
+fn a_faint_centred_picture_on_every_page_is_a_picture_watermark() {
+    let mut pdf = synth::Pdf::default();
+    let image = pdf.stream(
+        "/Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceGray /BitsPerComponent 8",
+        &[60u8; 16],
+    );
+    let prose = full("prose");
+    let lines: Vec<&str> = std::iter::repeat_n(prose.as_str(), 12).collect();
+    let page = |faint: bool| {
+        Page::new(format!(
+            "q {} 200 0 0 200 206 296 cm /Im1 Do Q\n{}",
+            if faint { "/Faint gs" } else { "" },
+            text("F1", 11.0, 72.0, 660.0, 14.0, &lines)
+        ))
+    };
+    let resources =
+        format!("{COURIER} /XObject << /Im1 {image} 0 R >> /ExtGState << /Faint << /ca 0.25 >> >>");
+    let faint = synth::document_in(&mut pdf, &[page(true), page(true)], &resources, "", |_| {
+        String::new()
+    });
+    let reflowed = reflow_of(faint);
+    let mark = section_watermark(&reflowed.document).expect("a watermark");
+    assert!(
+        matches!(
+            mark.content,
+            casual_doc_model::v1::WatermarkContent::Picture(p) if p.washout
+        ),
+        "{mark:?}"
+    );
+    assert_eq!(
+        graphics(&reflowed.document),
+        0,
+        "the picture is not also placed"
+    );
+    // The same picture drawn opaque is a picture in the text, no watermark.
+    let mut pdf = synth::Pdf::default();
+    let image = pdf.stream(
+        "/Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceGray /BitsPerComponent 8",
+        &[60u8; 16],
+    );
+    let resources =
+        format!("{COURIER} /XObject << /Im1 {image} 0 R >> /ExtGState << /Faint << /ca 0.25 >> >>");
+    let opaque = synth::document_in(
+        &mut pdf,
+        &[page(false), page(false)],
+        &resources,
+        "",
+        |_| String::new(),
+    );
+    assert!(section_watermark(&reflow_of(opaque).document).is_none());
+}

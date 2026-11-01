@@ -1963,3 +1963,40 @@ next line → `spacing_is_measured_against_the_line_boxes_and_snapped` (heading 
 twips for 120); the snapping disabled → the same test (151% for 150%); the continuation
 leaving alignment alone → `a_first_line_indent_with_full_lines_is_not_right_aligned`
 (`End`).
+
+**Watermarks** (`reflow/watermark.rs`). Before this, a diagonal "CONFIDENTIAL" was a
+Heading 1 on every page of the watermarked truth (pushing the real headings to level 2) and
+its rotated extent set the right margin to zero. Now:
+
+- `record` keeps every glyph run that may be a stamp out of the text blocks
+  (`record::Stamp`: turned 20 to 70 degrees off level at 14 pt or more, or light or
+  translucent, luminance 160 of 255 or alpha 70% or less, at 24 pt or more). Per page, the
+  pieces of one stamp (a producer that writes each letter as its own run) join on angle,
+  size and fill, ordered along their baseline.
+- A stamp is the watermark when the same text, angle and size sits in the same place
+  (centres within 3% of the page) on at least two pages and half of them; on one page only,
+  when it is diagonal, light, 36 pt or more and centred within 15% of the page's middle.
+  A large centred stamp that fails the rest stays text, reported `watermark_inferred`
+  degraded (the reader is unsure).
+- A picture drawn at most 60% opaque (`ImageEvidence::opacity`, now read from the
+  transparency groups around it), covering 5% of its page with its smaller side 15% of the
+  page's, centred, in the same place on two pages and half of them (or alone on a one-page
+  document), is a picture watermark, washed out. A UI mockup's faint shadow tiles are
+  neither large nor centred, and none of the owner's thirteen files gained a watermark.
+- The section's `Watermark` (one per document, the stamp on the most pages, on every
+  section as Word's dialog writes it): the text, its face, its exact size to the half
+  point, its colour, diagonal or horizontal, semitransparent when it was drawn translucent.
+  DOCX export writes it as Word's own header shape. Everything not taken goes back where it
+  was; a document with no stamp borrows its state unchanged.
+
+Guards, each driven red: no stamp candidates → `a_diagonal_stamp_on_every_page_is_the_
+sections_watermark`; the lone-stamp test without lightness →
+`a_lone_light_diagonal_stamp_is_a_watermark_and_a_dark_one_stays_text` (the dark stamp
+became a watermark); faintness not required → `a_faint_centred_picture_on_every_page_is_a_
+picture_watermark` (the opaque picture became one).
+
+Measured, the watermarked truth before → after: watermark 0.000 → 1.000, paragraphs
+0.696 → 1.000, headings 0.500 → 1.000, layout 0.938 → 1.000, spacing 0.719 → 0.861;
+`page` 0.820 → 0.569, because its short pages now set the bottom margin from the lowest
+body text (the stamp had reached lower): the margin inference for pages that end early is
+a separate, open defect.

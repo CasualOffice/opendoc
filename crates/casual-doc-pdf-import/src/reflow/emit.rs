@@ -7,6 +7,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+// Own line: the section watermark.
+use casual_doc_model::v1::{Watermark, WatermarkContent, WatermarkLayout, WatermarkPicture};
+
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Bookmark, BookmarkEnd,
     BookmarkId, BookmarkStart, Color, Comment, CommentId, CommentRangeEnd, CommentRangeStart,
@@ -1340,6 +1343,9 @@ pub(crate) fn emit(
     work: &mut ReflowWork,
     namespace: u64,
 ) -> Result<Reflowed, PdfImportError> {
+    // The watermark (`watermark`), stamped on every section as Word's
+    // dialog does.
+    let found = flow.watermark.clone();
     let mut items: Vec<Item> = Vec::new();
     let mut joins = 0;
     let mut dehyphenated = 0;
@@ -2324,6 +2330,23 @@ pub(crate) fn emit(
                 ..Comment::default()
             },
         );
+    }
+
+    let mark = match found {
+        Some(super::watermark::Found::Text(mark)) => Some(mark),
+        Some(super::watermark::Found::Picture(image)) => Some(Watermark {
+            content: WatermarkContent::Picture(WatermarkPicture {
+                media: emitter.media(&image)?,
+                scale_percent: None,
+                washout: true,
+            }),
+            layout: WatermarkLayout::Horizontal,
+            semi_transparent: false,
+        }),
+        None => None,
+    };
+    for section in &mut sections {
+        section.watermark.clone_from(&mark);
     }
 
     // Definitions.
