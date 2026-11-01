@@ -98,6 +98,7 @@ Glyphs
 HMAC
 HTML
 HTTP
+HTTPS
 HarfBuzz
 Helvetica
 HiDPI

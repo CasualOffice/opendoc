@@ -397,7 +397,7 @@ impl WasmDocument {
     }
 
     /// `aiPreview` for an ADD-IN (`docs/183` §17): the same compile, authored
-    /// "<add-in name> (add-in)" rather than "Casual AI", so a reviewer can tell
+    /// `"<add-in name> (add-in)"` rather than "Casual AI", so a reviewer can tell
     /// LanguageTool's suggestion from the assistant's. The editor passes the name
     /// from the add-in's manifest; the engine adds the suffix itself, so no add-in
     /// can sign its changes as a person. An empty name is "Casual AI".
