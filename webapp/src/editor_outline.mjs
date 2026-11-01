@@ -84,6 +84,11 @@ export function createOutline(ed) {
       const width = v.clientWidth;
       if (width === lastViewportWidth) return;
       lastViewportWidth = width;
+      // Only while a side panel squeezes the page: a window that is simply
+      // narrower than the page keeps the page's left edge in view, scrolled
+      // from the start (responsive-shell.spec), as it always did.
+      const panelOpen = !!document.querySelector(".workarea > .side-panel:not([hidden])");
+      if (!panelOpen) return;
       const overflow = v.scrollWidth - width;
       v.scrollLeft = overflow > 0 ? Math.round(overflow / 2) : 0;
     }).observe(ed.viewportEl);

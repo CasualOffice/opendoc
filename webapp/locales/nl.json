@@ -3645,5 +3645,6 @@
   "plugins.assistant.workingLocal": "Wachten op het lokale model… Op een computer zonder grafische kaart kan dit een paar minuten duren.",
   "plugins.assistant.unparsableFormat": "Het model antwoordde niet in de gevraagde gestructureerde vorm, dus er is niets gewijzigd. Probeer het opnieuw; een groter model doet dit betrouwbaarder.",
   "plugins.assistant.skipped": "Gelaten zoals ze waren: tabellen en inhoudsopgaven in de selectie ({count}).",
-  "plugins.assistant.truncatedLocal": "Slechts een deel van het document is gelezen: een lokaal model kan naar verwachting zo’n {tokens} tokens bevatten, dus het antwoord kan missen wat elders staat."
+  "plugins.assistant.truncatedLocal": "Slechts een deel van het document is gelezen: een lokaal model kan naar verwachting zo’n {tokens} tokens bevatten, dus het antwoord kan missen wat elders staat.",
+  "panelHome.casualAi": "Casual AI"
 }

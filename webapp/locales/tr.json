@@ -3645,5 +3645,6 @@
   "plugins.assistant.workingLocal": "Yerel model bekleniyor… Ekran kartı olmayan bir bilgisayarda bu birkaç dakika sürebilir.",
   "plugins.assistant.unparsableFormat": "Model istenen yapılandırılmış biçimde yanıt vermedi, bu yüzden hiçbir şey değiştirilmedi. Yeniden deneyin; daha büyük bir model bunu daha güvenilir yapar.",
   "plugins.assistant.skipped": "Olduğu gibi bırakıldı: seçimdeki tablolar ve içindekiler tabloları ({count}).",
-  "plugins.assistant.truncatedLocal": "Belgenin yalnızca bir kısmı okundu: yerel bir modelin yaklaşık {tokens} belirteç alabildiği varsayılır, bu yüzden yanıt başka yerdekileri kaçırabilir."
+  "plugins.assistant.truncatedLocal": "Belgenin yalnızca bir kısmı okundu: yerel bir modelin yaklaşık {tokens} belirteç alabildiği varsayılır, bu yüzden yanıt başka yerdekileri kaçırabilir.",
+  "panelHome.casualAi": "Casual AI"
 }

@@ -793,6 +793,8 @@ test("with autosave off BOTH entry points are still there, and both say why", as
   // leave a control that EXPLAINS ITSELF, never one that silently vanishes or
   // silently does nothing (SKILL §10).
   await runFilePageCommand(page, "view.settings");
+  // Settings shows one topic per page (approved design D3, docs/184).
+  await page.locator('#settingsPanel [data-settings-tab="saving"]').click();
   await page.locator("#autosaveToggle").uncheck();
   await page.keyboard.press("Escape");
 

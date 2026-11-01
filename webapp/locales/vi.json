@@ -3634,5 +3634,6 @@
   "plugins.assistant.workingLocal": "Đang chờ mô hình cục bộ… Trên máy tính không có card đồ họa, việc này có thể mất vài phút.",
   "plugins.assistant.unparsableFormat": "Mô hình không trả lời theo dạng có cấu trúc được yêu cầu nên không có gì thay đổi. Hãy thử lại; mô hình lớn hơn làm việc này đáng tin cậy hơn.",
   "plugins.assistant.skipped": "Giữ nguyên: bảng và mục lục trong vùng chọn ({count}).",
-  "plugins.assistant.truncatedLocal": "Chỉ một phần tài liệu được đọc: mô hình cục bộ được giả định chứa khoảng {tokens} token, nên câu trả lời có thể bỏ sót phần ở chỗ khác."
+  "plugins.assistant.truncatedLocal": "Chỉ một phần tài liệu được đọc: mô hình cục bộ được giả định chứa khoảng {tokens} token, nên câu trả lời có thể bỏ sót phần ở chỗ khác.",
+  "panelHome.casualAi": "Casual AI"
 }

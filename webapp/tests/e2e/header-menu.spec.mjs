@@ -207,7 +207,9 @@ test("document dialogs share the standard type and sizing system", async ({
       fontFamily: getComputedStyle(document.body).fontFamily,
     };
   });
-  expect(propertiesMetrics.width).toBeCloseTo(640, 0);
+  // L (45rem): Document properties lays its fields out in columns, which
+  // stack past a laptop's fold at M (dialog-fit.spec).
+  expect(propertiesMetrics.width).toBeCloseTo(720, 0);
   expect(propertiesMetrics.radius).toBe(12);
   // 13, not 16, since the dialog-weight pass: the owner's report was that the
   // dialogs look "too heavy", and a 16px/650 title competing with the document
@@ -216,10 +218,13 @@ test("document dialogs share the standard type and sizing system", async ({
   // is UNIFORMITY — that every dialog uses the one scale — and that still holds;
   // the constant simply outgrew its old value and is re-measured here rather
   // than the rule being weakened.
-  expect(propertiesMetrics.titleSize).toBe(13);
-  expect(propertiesMetrics.closeSize).toBe(30);
+  // UI v2 (approved design D1, docs/184): 15px titles and ONE control height,
+  // 2.25rem, shared by fields, buttons and the close button. Still asserts the
+  // same thing: every dialog uses the one scale.
+  expect(propertiesMetrics.titleSize).toBe(15);
+  expect(propertiesMetrics.closeSize).toBe(36);
   expect(propertiesMetrics.fieldHeight).toBe(36);
-  expect(propertiesMetrics.actionHeight).toBe(34);
+  expect(propertiesMetrics.actionHeight).toBe(36);
   expect(propertiesMetrics.fontFamily).toContain("Inter");
   await page.locator("#propertiesClose").click();
 
@@ -244,11 +249,10 @@ test("document dialogs share the standard type and sizing system", async ({
   const { width, ...shared } = pageSetupMetrics;
   expect(shared).toEqual({
     radius: 12,
-    titleSize: 13, // see the note on the properties card above
-
-    closeSize: 30,
+    titleSize: 15, // see the note on the properties card above
+    closeSize: 36,
     fieldHeight: 36,
-    actionHeight: 34,
+    actionHeight: 36,
   });
   expect(width).toBeGreaterThan(360);
   expect(width, "a content-sized card must not reach the old wide constant")

@@ -1,6 +1,9 @@
 import { test, expect, gotoEditor, clickIntoFirstPage, setReviewMode, MOD } from './fixtures.mjs';
 async function panel(page) {
   await page.locator('#paraOptsBtn').click();
+  // Direction, list and style management sit under "More options" (approved
+  // design P1, docs/184): open it, as a reader would.
+  await page.locator('#paragraphPropertiesPanel .property-more').evaluate((details) => { details.open = true; });
   await expect(page.locator('#paragraphPropertiesPanel')).toBeVisible();
 }
 test('paragraph direction, pagination and outline persist through closing, clear and undo', async ({page}) => {

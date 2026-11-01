@@ -421,6 +421,10 @@
   --dialog-width-s: 25rem;
   --dialog-width-m: 35rem;
   --dialog-width-l: 45rem;
+  /* The one reference card read whole (Keyboard shortcuts: four columns of
+     keys); it had this width before v2, and at L its list ran 230px past a
+     1280x720 laptop. Not a rung for forms. */
+  --dialog-width-xl: 60rem;
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
@@ -2066,6 +2070,10 @@ body.modal-open {
 
 .dialog-card-wide {
   width: min(var(--dialog-width-l), 100%);
+}
+
+.dialog-card-reference {
+  width: min(var(--dialog-width-xl), 100%);
 }
 
 /* Two of the compact cards are smaller than the 380px constant and one is
@@ -14633,7 +14641,9 @@ body.phone-mode .plugin-panel { height: 55vh; }
    (Outline, Pages, Compare), 16rem. Right = context (Properties, Versions,
    AI, add-ins, Symbol), 20rem. The page re-centres in what is left and scrolls
    sideways rather than being covered. */
-body:not(.phone-mode) .workarea > .side-panel {
+/* The AI/add-in panel is left out: it already docked this way, and its own
+   rules let it run past the status bar to the window's bottom (ai-panel.spec). */
+body:not(.phone-mode) .workarea > .side-panel:not(.plugin-panel) {
   margin: 0;
   border: 0;
   border-radius: 0;
@@ -14647,20 +14657,16 @@ body:not(.phone-mode) .workarea > .side-panel:where(#outlinePanel, #pagesPanel, 
   max-width: 16rem;
   border-inline-end: 1px solid var(--line);
 }
-body:not(.phone-mode) .workarea > .side-panel:not(:where(#outlinePanel, #pagesPanel, #comparePanel)) {
+body:not(.phone-mode) .workarea > .side-panel:not(.plugin-panel, :where(#outlinePanel, #pagesPanel, #comparePanel)) {
   flex: 0 0 20rem;
   width: 20rem;
   max-width: 20rem;
   border-inline-start: 1px solid var(--line);
 }
-body:not(.phone-mode) .workarea > .side-panel.plugin-panel {
-  flex: 0 0 var(--plugin-panel-w, 25rem);
-  width: var(--plugin-panel-w, 25rem);
-  max-width: none;
-}
 .workarea > .side-panel .panel-head {
   min-block-size: 3.5rem;
-  padding: 0 var(--space-3) 0 var(--space-5);
+  /* The head's inset is the body's (--pnl-pad-x): one shell, one inset
+     (panel-alignment.spec). */
   border-block-end: 1px solid var(--line);
 }
 .workarea > .side-panel :is(.panel-title, .panel-head h2, .properties-panel-heading h2) {
@@ -14834,3 +14840,19 @@ body:not(.phone-mode) .workarea > .side-panel.plugin-panel {
 @media (max-width: 30rem) {
   #tableBordersDialog .table-borders-layout { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* A hidden ribbon group takes no room: `.rgroup`'s display:flex otherwise
+   beats the [hidden] attribute (the Casual AI group shows only with a provider). */
+.rgroup[hidden] { display: none; }
+
+/* Fit a 1280x720 laptop (dialog-fit.spec): the card may use the window less
+   1rem a side, and the two reference dialogs whose content sits in columns
+   (Document properties, Keyboard shortcuts) keep the ~60rem width they had,
+   since at the 45rem L width their columns stacked past the fold. */
+.dialog-overlay .dialog-card { max-height: calc(100dvh - 2rem); }
+
+/* Settings borrowed into the File page (file_pane.mjs adds .panel-in-page):
+   the pane is the scroller there, so the dialog's own nav/pages scrolling and
+   overscroll containment step aside (file-page-scroll.spec). */
+#settingsPanel.panel-in-page .settings-body { overflow: visible; min-block-size: 0; }
+#settingsPanel.panel-in-page :is(.settings-pages, .settings-nav) { overflow: visible; overscroll-behavior: auto; }

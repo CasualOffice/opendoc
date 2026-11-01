@@ -70,7 +70,7 @@ test("history labels and mixed run formatting reflect engine state", async ({
   expect(consoleErrors).toEqual([]);
 });
 
-test("paragraph properties use a rounded live inspector with per-action undo", async ({
+test("paragraph properties use a docked live inspector with per-action undo", async ({
   page,
   consoleErrors,
 }) => {
@@ -96,7 +96,8 @@ test("paragraph properties use a rounded live inspector with per-action undo", a
   await expect(liveParagraphSections.locator('button:has-text("Apply")')).toHaveCount(0);
   await expect(panel.getByRole("button", { name: "Apply", exact: true })).toHaveCount(0);
   await expect(panel.locator('button:has-text("Reset")')).toHaveCount(0);
-  await expect(panel).toHaveCSS("border-radius", "8px");
+  // Docked flush to the window edge (approved design P1, docs/184).
+  await expect(panel).toHaveCSS("border-radius", "0px");
 
   const left = page.locator("#indentLeft");
   const original = await left.inputValue();

@@ -3634,5 +3634,6 @@
   "plugins.assistant.workingLocal": "ローカルモデルを待っています… グラフィックカードのないコンピューターでは数分かかることがあります。",
   "plugins.assistant.unparsableFormat": "モデルが求められた構造化形式で回答しなかったため、何も変更されませんでした。もう一度お試しください。より大きなモデルの方が確実です。",
   "plugins.assistant.skipped": "そのままにしました: 選択範囲内の表と目次 ({count})。",
-  "plugins.assistant.truncatedLocal": "文書の一部だけを読み込みました。ローカルモデルが扱えるのは約 {tokens} トークンと想定されるため、他の箇所の内容を見落とす可能性があります。"
+  "plugins.assistant.truncatedLocal": "文書の一部だけを読み込みました。ローカルモデルが扱えるのは約 {tokens} トークンと想定されるため、他の箇所の内容を見落とす可能性があります。",
+  "panelHome.casualAi": "Casual AI"
 }

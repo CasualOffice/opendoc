@@ -3656,5 +3656,6 @@
   "plugins.assistant.workingLocal": "Aguardando o modelo local… Em um computador sem placa de vídeo, isso pode levar alguns minutos.",
   "plugins.assistant.unparsableFormat": "O modelo não respondeu no formato estruturado pedido, então nada foi alterado. Tente de novo; um modelo maior faz isso com mais confiabilidade.",
   "plugins.assistant.skipped": "Mantidos como estavam: tabelas e sumários na seleção ({count}).",
-  "plugins.assistant.truncatedLocal": "Só parte do documento foi lida: supõe-se que um modelo local comporte cerca de {tokens} tokens, então a resposta pode deixar passar o que está em outro lugar."
+  "plugins.assistant.truncatedLocal": "Só parte do documento foi lida: supõe-se que um modelo local comporte cerca de {tokens} tokens, então a resposta pode deixar passar o que está em outro lugar.",
+  "panelHome.casualAi": "Casual AI"
 }

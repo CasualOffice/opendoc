@@ -3667,5 +3667,6 @@
   "plugins.assistant.workingLocal": "Oczekiwanie na model lokalny… Na komputerze bez karty graficznej może to potrwać kilka minut.",
   "plugins.assistant.unparsableFormat": "Model nie odpowiedział w wymaganej formie strukturalnej, więc nic nie zmieniono. Spróbuj ponownie; większy model robi to pewniej.",
   "plugins.assistant.skipped": "Pozostawione bez zmian: tabele i spisy treści w zaznaczeniu ({count}).",
-  "plugins.assistant.truncatedLocal": "Przeczytano tylko część dokumentu: przyjmuje się, że model lokalny mieści około {tokens} tokenów, więc odpowiedź może pominąć to, co jest gdzie indziej."
+  "plugins.assistant.truncatedLocal": "Przeczytano tylko część dokumentu: przyjmuje się, że model lokalny mieści około {tokens} tokenów, więc odpowiedź może pominąć to, co jest gdzie indziej.",
+  "panelHome.casualAi": "Casual AI"
 }

@@ -129,11 +129,12 @@ test("table properties commit live, undo per interaction, and restore focus", as
       shadow: style.boxShadow,
     };
   });
-  // 8px since design system v2 (`docs/63` §7, UX-052): side panels take the
-  // card radius `--r-md`, not the old 10px popover radius.
-  expect(surface.radius).toBe("8px");
-  expect(surface.borders).toEqual(["1px", "1px", "1px", "1px"]);
-  expect(surface.shadow).not.toBe("none");
+  // Docked, not a floating card (approved design P1, docs/184, 2026-11-02;
+  // Google Docs' side panels): no radius, no shadow, and one hairline on the
+  // side that faces the page — the left edge of a right-hand panel.
+  expect(surface.radius).toBe("0px");
+  expect(surface.borders).toEqual(["0px", "0px", "0px", "1px"]);
+  expect(surface.shadow).toBe("none");
   const original = await tablePropertyValues(page);
 
   await page.locator('#tableAlign button[data-talign="center"]').click();

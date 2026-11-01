@@ -8,9 +8,10 @@
 // roster (`modal-roster.mjs`, which `dialog-contract.spec.mjs` proves complete
 // against `editor.html`) and asserts the anatomy as a browser lays it out:
 //
-//   * at 1280x720 the card is 400, 560 or 720px wide (S/M/L) and nothing else;
+//   * at 1280x720 the card is 400, 560 or 720px wide (S/M/L), or 960px for the one
+//     reference card (Keyboard shortcuts), and nothing else;
 //     at 390x844 it is a full-width bottom sheet;
-//   * the title is 20px (1.25rem);
+//   * the title is 15px (--fs-lg; owner, 2026-11-02: 20px was too large);
 //   * the footer is painted inside the card and inside the window — pinned,
 //     not scrolled away;
 //   * no button label wraps, and nothing scrolls sideways;
@@ -24,7 +25,7 @@ import { DIALOGS } from "./modal-roster.mjs";
 
 const LAPTOP = { width: 1280, height: 720 };
 const PHONE = { width: 390, height: 844 };
-const RUNGS = [400, 560, 720];
+const RUNGS = [400, 560, 720, 960];
 
 /** Everything the anatomy promises, measured in the page. */
 async function measure(page, id) {
@@ -81,7 +82,7 @@ async function measure(page, id) {
 }
 
 function assertAnatomy(m, id, where) {
-  expect(m.titleSize, `#${id} (${where}) title must be 20px`).toBe(20);
+  expect(m.titleSize, `#${id} (${where}) title must be 15px`).toBe(15);
   expect(m.wrapped, `#${id} (${where}) wraps a button label`).toEqual([]);
   expect(m.overflow, `#${id} (${where}) scrolls sideways`).toEqual([]);
   if (m.foot) {

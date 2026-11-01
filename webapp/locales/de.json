@@ -3645,5 +3645,6 @@
   "plugins.assistant.workingLocal": "Warten auf das lokale Modell … Auf einem Computer ohne Grafikkarte kann das einige Minuten dauern.",
   "plugins.assistant.unparsableFormat": "Das Modell hat nicht in der verlangten strukturierten Form geantwortet, daher wurde nichts geändert. Versuchen Sie es erneut; ein größeres Modell kann das zuverlässiger.",
   "plugins.assistant.skipped": "Unverändert gelassen: Tabellen und Inhaltsverzeichnisse in der Auswahl ({count}).",
-  "plugins.assistant.truncatedLocal": "Nur ein Teil des Dokuments wurde gelesen: Ein lokales Modell fasst vermutlich etwa {tokens} Tokens, die Antwort kann also anderes übersehen."
+  "plugins.assistant.truncatedLocal": "Nur ein Teil des Dokuments wurde gelesen: Ein lokales Modell fasst vermutlich etwa {tokens} Tokens, die Antwort kann also anderes übersehen.",
+  "panelHome.casualAi": "Casual AI"
 }

@@ -234,7 +234,7 @@ function cardClasses() {
 }
 
 const WIDTH_PROPS = /^(?:width|max-width|min-width|inline-size|max-inline-size|min-inline-size)$/;
-const RUNG = /^(?:min\(var\(--dialog-width-[sml]\), 100%\)|100%|none|auto|0)$/;
+const RUNG = /^(?:min\(var\(--dialog-width-(?:[sml]|xl)\), 100%\)|100%|none|auto|0)$/;
 
 /** Offending width declarations on a dialog card in `source`. */
 function cardWidthOffenders(source, classes) {
@@ -255,7 +255,9 @@ function cardWidthOffenders(source, classes) {
 test("a dialog card is one of three widths, chosen by class", () => {
   const classes = cardClasses();
   assert.ok(classes.size > 30, `expected the dialog cards' classes, found ${classes.size}`);
-  const stated = { s: "25rem", m: "35rem", l: "45rem" };
+  // S/M/L for every form; XL only for the one reference card read whole
+  // (Keyboard shortcuts), which had that width before v2 (docs/184 D1).
+  const stated = { s: "25rem", m: "35rem", l: "45rem", xl: "60rem" };
   for (const [rung, value] of Object.entries(stated)) {
     assert.match(css, new RegExp(`--dialog-width-${rung}:\\s*${value};`));
   }

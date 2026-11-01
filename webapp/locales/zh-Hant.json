@@ -3634,5 +3634,6 @@
   "plugins.assistant.workingLocal": "正在等待本機模型… 在沒有顯示卡的電腦上可能需要幾分鐘。",
   "plugins.assistant.unparsableFormat": "模型沒有依要求的結構化格式回答，因此未作任何變更。請再試一次；較大的模型做得更可靠。",
   "plugins.assistant.skipped": "保持原樣：所選內容中的表格和目錄（{count}）。",
-  "plugins.assistant.truncatedLocal": "只讀取了文件的一部分：本機模型預計約能容納 {tokens} 個詞元，因此回答可能遺漏其他位置的內容。"
+  "plugins.assistant.truncatedLocal": "只讀取了文件的一部分：本機模型預計約能容納 {tokens} 個詞元，因此回答可能遺漏其他位置的內容。",
+  "panelHome.casualAi": "Casual AI"
 }

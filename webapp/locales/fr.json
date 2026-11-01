@@ -3656,5 +3656,6 @@
   "plugins.assistant.workingLocal": "En attente du modèle local… Sur un ordinateur sans carte graphique, cela peut prendre quelques minutes.",
   "plugins.assistant.unparsableFormat": "Le modèle n’a pas répondu sous la forme structurée demandée : rien n’a été modifié. Réessayez ; un modèle plus grand y parvient plus sûrement.",
   "plugins.assistant.skipped": "Laissés tels quels : tableaux et tables des matières de la sélection ({count}).",
-  "plugins.assistant.truncatedLocal": "Seule une partie du document a été lue : un modèle local est supposé contenir environ {tokens} jetons, la réponse peut donc manquer ce qui se trouve ailleurs."
+  "plugins.assistant.truncatedLocal": "Seule une partie du document a été lue : un modèle local est supposé contenir environ {tokens} jetons, la réponse peut donc manquer ce qui se trouve ailleurs.",
+  "panelHome.casualAi": "Casual AI"
 }

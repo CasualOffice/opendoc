@@ -38,8 +38,11 @@ Chrome lengths are rem on the fluid 16px root (`docs/63` §7.1).
 
 **D1 — Dialog anatomy, for every `.dialog-overlay`/`.dialog-card`.** Widths only S 25rem /
 M 35rem / L 45rem, chosen by class (`.dialog-card-compact`, `.dialog-card`,
-`.dialog-card-wide`). Max-height `calc(100dvh - 4rem)`; only the body scrolls and the footer
-is pinned. Radius 0.75rem. Header padding 1.5rem 1.5rem 0.5rem, title 1.25rem/600, an optional
+`.dialog-card-wide`), plus one exception: Keyboard shortcuts, a reference card read whole,
+keeps the 60rem width it had (`.dialog-card-reference`), since at L its four columns stacked
+230px past a 1280×720 laptop. Max-height `calc(100dvh - 2rem)`; only the body scrolls and the
+footer is pinned. Radius 0.75rem. Header padding 1.5rem 1.5rem 0.5rem, title 0.9375rem/600
+(owner, 2026-11-02: the first 1.25rem title was too large), an optional
 one-line description at 0.8125rem. Body padding 0.75rem 1.5rem 1.5rem; 1.5rem between groups,
 0.75rem within a group, 0.375rem from label to field; labels above fields. One control height,
 2.25rem (`--h-input`), for inputs, selects, buttons and segmented controls, 2.75rem on a coarse

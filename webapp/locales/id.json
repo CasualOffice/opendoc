@@ -3634,5 +3634,6 @@
   "plugins.assistant.workingLocal": "Menunggu model lokal… Di komputer tanpa kartu grafis, ini bisa memakan beberapa menit.",
   "plugins.assistant.unparsableFormat": "Model tidak menjawab dalam bentuk terstruktur yang diminta, jadi tidak ada yang diubah. Coba lagi; model yang lebih besar lebih andal untuk ini.",
   "plugins.assistant.skipped": "Dibiarkan apa adanya: tabel dan daftar isi dalam pilihan ({count}).",
-  "plugins.assistant.truncatedLocal": "Hanya sebagian dokumen yang dibaca: model lokal diperkirakan memuat sekitar {tokens} token, jadi jawabannya bisa melewatkan bagian lain."
+  "plugins.assistant.truncatedLocal": "Hanya sebagian dokumen yang dibaca: model lokal diperkirakan memuat sekitar {tokens} token, jadi jawabannya bisa melewatkan bagian lain.",
+  "panelHome.casualAi": "Casual AI"
 }
