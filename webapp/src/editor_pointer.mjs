@@ -254,7 +254,7 @@ export function createPointer(ed) {
       ed.commitCrop();
       return;
     }
-    ed.focusEditorSurface();
+    focusAfterTap(event);
     hideLinkChip();
     pointerHover.clear();
     ed.pointerGesture = null;
@@ -690,6 +690,36 @@ export function createPointer(ed) {
     const page = pageFromEvent(e);
     if (page) onPointerDown(page, e);
   });
+  /** Focuses the editor's text input, which on a phone raises the keyboard.
+   *  A mouse or pen press focuses at once, as before. A finger focuses only
+   *  when the touch turns out to be a TAP: lifted within 10px of where it
+   *  landed and within 600ms. A touch that becomes a scroll is cancelled by
+   *  the browser (pointercancel) or moves further, and the keyboard stays down
+   *  — owner report 2026-11-02, iPhone: "as soon as I click anywhere, even to
+   *  slide, it opens the keyboard". Docs and Word on phones behave this way.
+   *  pointerup is a user activation, so iOS still raises the keyboard. O(1). */
+  function focusAfterTap(event) {
+    if (event.pointerType !== "touch") {
+      ed.focusEditorSurface();
+      return;
+    }
+    const x0 = event.clientX;
+    const y0 = event.clientY;
+    const t0 = performance.now();
+    const finish = (tapped) => (e) => {
+      window.removeEventListener("pointerup", onUp, true);
+      window.removeEventListener("pointercancel", onCancel, true);
+      if (!tapped || e.pointerId !== event.pointerId) return;
+      if (Math.hypot(e.clientX - x0, e.clientY - y0) <= 10 && performance.now() - t0 <= 600) {
+        ed.focusEditorSurface();
+      }
+    };
+    const onUp = finish(true);
+    const onCancel = finish(false);
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", onCancel, true);
+  }
+
   installViewportFocusGuard({ viewport: ed.viewportEl, pages: ed.pagesEl, lastSheet: () => ed.pages[ed.pages.length - 1]?.wrap, focus: ed.focusEditorSurface, caretToEnd: (extend) => ed.doc && ed.navToPosition(ed.doc.lastPosition(), extend) });
   // Focus is the moment the load-time insertion point stops being implicit: the
   // surface can now receive typing (`#pages` is tabindex="0"), so the blinking

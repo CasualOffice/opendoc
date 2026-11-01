@@ -144,7 +144,9 @@ export function testRequest(model) {
 }
 
 /**
- * Wires the dialog (markup in `editor.html`, `#aiProviderDialog`). Returns `open`.
+ * Wires the provider form, which is a page of Settings (`#settingsAiSection` in
+ * `editor.html`; owner, 2026-11-02: never a dialog over a dialog). Returns `open`,
+ * which refreshes the form.
  *
  * @param {object} deps
  * @param {(el: Element, options: object) => object} deps.registerModal
@@ -159,8 +161,7 @@ export function testRequest(model) {
  */
 export function createAiSettingsDialog({ registerModal, fallbackFocus, t, providers, byokAllowed, onChange = () => {}, editAccess = () => null, onEditAs = () => {} }) {
   const $ = (id) => document.getElementById(id);
-  const dialog = $("aiProviderDialog");
-  if (!dialog) return { open() {} };
+  if (!$("aiProviderForm")) return { open() {} };
   const preset = $("aiProviderPreset");
   const url = $("aiProviderUrl");
   const model = $("aiProviderModel");
@@ -211,14 +212,14 @@ export function createAiSettingsDialog({ registerModal, fallbackFocus, t, provid
     editAsNote.textContent = capped ? t("aiProvider.editAs.capped", { reason: t(access.direct.reason ?? "ai.access.reason.viewer") }) : t("aiProvider.editAs.note");
   }
 
-  const controller = registerModal(dialog, {
-    initialFocus: () => (byokAllowed ? preset : $("aiProviderClose")),
-    fallbackFocus,
-    onClose: () => {
+  // No modal of its own any more: Save ends any connection test still in
+  // flight, which is what closing the old dialog did.
+  const controller = {
+    close() {
       testing?.abort();
       testing = null;
     },
-  });
+  };
 
   function draft() {
     const typedKey = key.value.trim();
@@ -348,9 +349,11 @@ export function createAiSettingsDialog({ registerModal, fallbackFocus, t, provid
   });
 
   return {
+    /** Fills the provider form, which now lives inside Settings as its own
+     *  section (owner, 2026-11-02: never a dialog over a dialog). The caller
+     *  shows Settings and brings the section into view. */
     open() {
       fill();
-      controller.open();
     },
   };
 }

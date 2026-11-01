@@ -248,6 +248,14 @@ export function registerModal(element, options = {}) {
     entry.backdropArmed = false;
     if (armed && event.target === element) entry.controller.close("backdrop");
   });
+  // Every dialog's ✕ closes it, through the same path as Escape. Dialogs used
+  // to wire their own ✕, and one that forgot (AI provider) shipped a dead close
+  // button. close() is idempotent, so a dialog's own handler running first is
+  // harmless.
+  element.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest(".dialog-close") : null;
+    if (button && element.contains(button) && !button.disabled) entry.controller.close("button");
+  });
 
   const controller = {
     get isOpen() {

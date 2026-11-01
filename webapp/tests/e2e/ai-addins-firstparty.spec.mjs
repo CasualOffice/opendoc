@@ -14,6 +14,8 @@ const TYPO = "Zorbly";
 
 async function openManager(page) {
   await page.locator("#settingsBtn").click();
+  // Manage add-ins sits on Settings' "AI and add-ins" page (approved design D3).
+  await page.locator('#settingsPanel [data-settings-tab="ai"]').click();
   await page.locator("#settingsAddinsBtn").click();
   await expect(page.locator("#pluginsDialog")).toBeVisible();
 }

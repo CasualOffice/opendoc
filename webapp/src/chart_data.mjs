@@ -472,7 +472,7 @@ export function createChartDataDialog(io) {
     el.setAttribute("aria-labelledby", "chartDataTitle");
     el.setAttribute("aria-describedby", "chartDataDescription");
     const card = document.createElement("section");
-    card.className = "dialog-card chart-data-card";
+    card.className = "dialog-card dialog-card-wide chart-data-card";
     const head = document.createElement("header");
     head.className = "dialog-head";
     const heading = document.createElement("div");

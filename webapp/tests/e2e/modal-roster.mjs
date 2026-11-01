@@ -893,20 +893,6 @@ export const MODALS = [
     },
   },
   {
-    id: "aiProviderDialog",
-    name: "AI provider",
-    // Bring your own key (`docs/183` §3.9). Settings ▸ AI provider is its one
-    // home: the owner's rule is that with no provider configured nothing about AI
-    // appears anywhere else. Opened over Settings, so Escape returns to its row.
-    opener: "#aiProviderSettingsBtn",
-    focus: "#aiProviderPreset",
-    async open(page) {
-      await gotoEditor(page);
-      await page.locator("#settingsBtn").click();
-      await page.locator("#aiProviderSettingsBtn").click();
-    },
-  },
-  {
     id: "pluginsDialog",
     name: "Manage add-ins",
     // `docs/183` §6.5. Review ▸ Proofing ▸ Add-ins ▸ Manage add-ins… is the ribbon
