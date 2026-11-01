@@ -1916,3 +1916,50 @@ committed `nist-ir8105.pdf`).
    check marks (now Noto Sans Symbols 2, subset); `ToUnicode` named a CJK ideograph after
    the radical sharing its glyph; and an Indic syllable several glyphs draw could not be
    named by glyph id (now an `/ActualText` span, which `casual-doc-pdf-read` honours).
+
+### 18.12 Watermarks, table alignment, spacing and sizes (2026-11-01)
+
+The owner (2026-11-01): the reader does not handle watermarks, table alignment, spacing
+or sizes. Measured first, with the existing scorer extended rather than a new tool.
+
+**The instrument, extended** (`tools/opendoc-reflow-score`):
+
+- Five families on top of §18.10/§18.11: `spacing` (line pitch within 3% and the space
+  below within 1.5 pt, the strict form of `layout`), `indents` (start and first-line
+  indents within 2 pt, outside lists and centred text), `sizes` (the exact half point on
+  the matched paragraphs, and each picture's extent within 1%), `table_layout` (each
+  column's share of its table's width within 2 pt, and each cell's alignment) and
+  `watermark` (the section's watermark text and angle).
+- `synth <dir>` writes three synthetic ground truths from constants (`synth.rs`): a
+  three-page document under Word's own Design ▸ Watermark shape, a ruled and a borderless
+  table of figures (left labels, right-aligned amounts, a centred status, a centred header
+  row, unequal columns), and mixed spacing (10.5 pt body at 1.5 lines with a first-line
+  indent and 6 pt after, 9.5 pt block quotes indented both sides, exact 14 pt notes,
+  16 and 13 pt headings, a picture of a fixed size).
+- `corpus` records, with no ground truth: the share of the model's characters whose size
+  the PDF also uses (`size_agreement`), the most common (before, after, pitch) of the
+  plain body paragraphs and their number (`spacing_modal`, `spacing_distinct`), the same
+  for start indents, table cells and the aligned ones, watermarks and rotated runs.
+- `runs <pdf> [page]` prints the reader's glyph runs, pictures (with their opacity, now
+  read: `ImageEvidence::opacity`) and paths.
+
+**Spacing.** Two defects, both at the root:
+
+| Family | What a person saw | Root cause | Fix |
+| --- | --- | --- | --- |
+| First-line indents read as right alignment | A paragraph whose indented first line ran to the column's right came out right-aligned with no indent (every body paragraph of the mixed-spacing truth) | The first line alone was a segment; the right-alignment test (every line indented and ending at the column's right) passed on it, and the lines that carried the paragraph on were joined without looking again | A continuation sets the paragraph's body indent (`rest_x0`) and, when its lines start at the column, clears end and centre alignment; end alignment needs every line to stand in from the column |
+| The space after a heading | 6 pt after a 16 pt heading over a 1.5-line paragraph came out 2.6 pt | The space was the baseline distance less the next paragraph's whole line, which is right only between paragraphs set alike | `emit::line_boxes`: the inverse of the layout's line box (an `auto` multiple puts its extra leading half above and half below), `a`'s descent and half its extra plus `b`'s ascent and half its extra |
+| Values no author set | 5.96 and 6.04 pt; 149% and 151%; indents of 35.7 and 36.2 pt | Raw measurements | Spaces snap to a dialog value within 0.75 pt (0, 2, 3, 4, 5, 6, 8, 9, 10, 12, 14, 15, 16, 18, 20, 24, 36), else the half point; multiples to 100/108/115/120/125/150/175/200/300% within 3 points, else the whole percent; indents to a quarter inch within a point, else the half point |
+
+Sizes needed no change: the reader takes a run's size from its text matrix (hayro
+normalises every outline to 1000 units an em) and rounds it to the half point, and the
+`sizes` family is 1.000 on all four truths before and after. On the owner's files, every
+size the model uses is one the PDF uses except one run (a 1 pt run on one file), and the
+characters the model holds fewer of are text repeated on every page (a running header kept
+once) and a chart's labels.
+
+Guards (`reflow/tests_layout.rs`), each driven red: `line_boxes` replaced by the whole
+next line → `spacing_is_measured_against_the_line_boxes_and_snapped` (heading after 80
+twips for 120); the snapping disabled → the same test (151% for 150%); the continuation
+leaving alignment alone → `a_first_line_indent_with_full_lines_is_not_right_aligned`
+(`End`).

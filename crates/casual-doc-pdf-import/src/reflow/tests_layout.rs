@@ -1169,3 +1169,84 @@ fn a_caption_beside_a_chart_is_not_one_of_its_labels() {
         assert_eq!(super::caption_text(text), caption, "{text}");
     }
 }
+
+/// One line at `size` at (`x`, `y`) (PDF space, y up).
+fn line_at(font: &str, size: f64, x: f64, y: f64, line: &str) -> String {
+    text(font, size, x, y, 0.0, &[line])
+}
+
+/// A 16 pt Courier Bold heading, then paragraphs of 11 pt Courier set at
+/// one and a half lines (19.1 pt, 151% of single) with 6 pt between them,
+/// each opening with a 6-character first-line indent; every line, the
+/// indented first included, runs to the column's right edge. The PDF's
+/// positions carry the rounding a real producer's do: the gaps are 5.8 to
+/// 6.2 pt. Two headings, so the heading is a level.
+fn spacing_pdf() -> Vec<u8> {
+    let pitch = 19.1;
+    let mut content = String::new();
+    let mut y = 720.0;
+    let gaps = [5.8, 6.2, 6.3];
+    for section in 0..2 {
+        content.push_str(&line_at("F2", 16.0, 72.0, y, &format!("Heading {section}")));
+        // 6 pt after the heading: its descent, then the body line's ascent
+        // and half its extra leading (`emit::line_boxes`).
+        y -= 6.0 + 16.0 * 0.21 + 11.0 * (1.15 - 0.21 + (1.725 - 1.15) / 2.0);
+        for (k, gap) in gaps.iter().enumerate() {
+            let seed = ["alpha", "beta", "gamma"][k];
+            content.push_str(&line_at("F1", 11.0, 72.0 + 39.6, y, &full(seed)[..54]));
+            y -= pitch;
+            content.push_str(&line_at("F1", 11.0, 72.0, y, &full(seed)));
+            y -= pitch;
+            content.push_str(&line_at("F1", 11.0, 72.0, y, &full(seed)));
+            y -= pitch + gap;
+        }
+        y -= 24.0;
+    }
+    synth::document(&[Page::new(content)], COURIER, "")
+}
+
+#[test]
+fn spacing_is_measured_against_the_line_boxes_and_snapped() {
+    let reflowed = reflow_of(spacing_pdf());
+    let document = &reflowed.document;
+    let normal = normal_spacing(document);
+    // 150% (measured 151%), and exactly 6 pt after from gaps of 5.8, 6.2
+    // and 6.3 (a median of 6.2).
+    assert_eq!(normal.line_percent, Some(150), "{normal:?}");
+    assert_eq!(normal.after_twips, Some(120), "{normal:?}");
+    // The heading's space after is the 6 pt the PDF left, not what is left
+    // after the next line's whole box (3.9 pt).
+    let heading = paragraphs(document)
+        .into_iter()
+        .find(|p| para_text(p).starts_with("Heading 0"))
+        .expect("the heading");
+    let style = heading
+        .properties
+        .style_ref
+        .and_then(|id| document.definitions().styles.get(&id))
+        .expect("a heading style");
+    let after = style
+        .paragraph
+        .as_ref()
+        .and_then(|p| p.spacing)
+        .and_then(|s| s.after_twips)
+        .expect("space after the heading");
+    assert_eq!(after, 120, "{style:?}");
+}
+
+#[test]
+fn a_first_line_indent_with_full_lines_is_not_right_aligned() {
+    let reflowed = reflow_of(spacing_pdf());
+    let body: Vec<&Paragraph> = paragraphs(&reflowed.document)
+        .into_iter()
+        .filter(|p| para_text(p).contains("alpha"))
+        .collect();
+    assert_eq!(body.len(), 2, "one per section");
+    for p in body {
+        assert_eq!(p.properties.alignment, None, "{:?}", p.properties);
+        let indent = p.properties.indentation.as_ref().expect("an indent");
+        // 6 Courier characters at 11 pt, 39.6 pt, to the half point.
+        assert_eq!(indent.first_line_twips, Some(790), "{indent:?}");
+        assert_eq!(indent.start_twips, None, "{indent:?}");
+    }
+}
