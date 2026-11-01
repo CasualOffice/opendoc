@@ -3143,95 +3143,106 @@ body.phone-mode .autocorrect-body {
 }
 
 /* ---- Page setup dialog ----------------------------------------------------- */
-.page-setup-dialog {
-  /* Driven by what it holds, not by the "wide" constant. With the preview
-     sized to its thumbnail and the spinners sized to five characters, the
-     content no longer fills 760px, and a dialog that stays wide after its
-     contents shrink is exactly the "bigger but not more useful" complaint.
-     The ch ceiling keeps a long margin label from stretching it back out. */
-  /* This declaration DOES NOT PARSE and never has — see `.field-dialog`, which
-     explains why, and `dialog_density.test.mjs`, which ratchets it. Left as
-     written rather than corrected in passing: `fit-content` on its own would size
-     this card to its content, and what this dialog needs is the opposite — a
-     stated width wide enough to hold two columns of groups. The declaration below
-     is the one that applies. */
-  /* A STATED width. MEASURED, on a 1280x720 laptop: the body held 602px of
-     content in a 560px box, so 42px of this dialog — the bottom of the Columns
-     group — was already below the fold before this round added anything, and
-     `dialog-fit.spec.mjs` did not cover it. Two more groups (a Gutter field, which
-     `auto-fit` absorbs into the existing Margins rows for free, and Vertical
-     alignment, which does not) would have made that 108px. The fix is two balanced
-     columns of groups, which needs a width the single tall stack did not.
-
-     756px AND NOT WIDER, and the ceiling is not arbitrary: `--dialog-width-wide` is
-     760px, the widest constant in this file's dialog scale, and
-     `header-menu.spec.mjs` asserts this card stays under it. A first attempt at
-     this layout used 900px, which made Page setup wider than any token in the
-     design system — that is a change to the scale, and it belongs to the owner
-     rather than to a section-properties round. It reddened `header-menu` (received
-     900, expected < 760), and that is why the two declarations below exist.
-
-     What 756px costs, and how it is paid — every figure measured, not estimated:
-     at 756 the two columns are 265px each, and `.dialog-field-grid`'s shared track
-     floor is 144px at this viewport, so each column held ONE field and the five
-     margin fields stacked into 701px of content in a 560px box — WORSE than the 602
-     it started at. So the preview column gives back 32px it was not using, and the
-     field floor is lowered FOR THIS DIALOG ONLY to 7.75rem, which puts two fields
-     back in a column. Result: 485px of content in 485px of box, card 596px tall.
-     Page setup is in `dialog-fit`'s roster now, so neither the overflow nor the
-     width can come back unnoticed. */
-    /* The stated ceiling, from the scale rather than from a `ch` count that
-     happened to land near it: `--dialog-width-wide` IS the 760px this comment
-     already names, and `header-menu.spec.mjs` asserts this card stays under it.
-     It does not bind (the width above caps at 756), so nothing renders
-     differently — but the token is now read where the prose already relied on
-     it, which is the point of a scale (HF-265 D8). */
+/* ONE column (UX-053, docs/184 D2, approved by the owner 2026-11-01). It was 32
+   controls in four columns at 756x720 with an Apply button per property. Now:
+   Apply to; Orientation; Paper size and Page colour in a row; Width and Height
+   in a row; margin preset chips over one row of four fields; the rest behind
+   Advanced. */
+.page-setup-fields {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--dlg-gap);
 }
 
-/* `min(fit-content, 100%)` IS NOT VALID CSS, and it is written on five cards in
- * this file — every one that was meant to be sized by its contents. `min()`
- * takes <length-percentage> terms and `fit-content` is a sizing KEYWORD, so the
- * whole declaration is dropped at parse time: `CSS.supports("width",
- * "min(fit-content, 100%)")` is `false` in Chromium, and the computed width of
- * every one of those cards was still `.dialog-card`'s own `min(640px, 100%)`.
- *
- * So what they actually had was the 640px constant clamped by their
- * `max-inline-size` ch ceiling — a constant, which is the very thing they were
- * written to stop being. Insert field measured 426px, which is exactly its
- * 52ch ceiling and not the 357px its rows add up to.
- *
- * `fit-content` on its own is the correct spelling and needs no clamp: it is
- * defined as `min(max-content, max(min-content, stretch))`, so it already
- * cannot exceed the space available to it. `dialog_density.test.mjs` requires
- * the keyword form on the cards it names and ratchets the broken one, because
- * the broken spelling is the obvious way to write this and reads as correct.
- *
- * Insert field is a six-row picker whose widest row measures 313px; at the
- * inherited constant, 69px of the card and 69px of every row were empty. */
-.field-dialog {
+.page-setup-fields > .dialog-group + .dialog-group {
+  margin-top: 0;
 }
 
-.page-setup-body {
+/* Two fields side by side, each half the body. */
+.page-setup-row {
   display: grid;
-  /* The preview column was a hard 250px and stretched to the full row height —
-     587px of box around a 150x212 sheet, about a fifth of the whole dialog.
-     It is now sized by the thumbnail and pinned to the top, as Word's is.
-     Narrowed again from `clamp(120px, 13vw, 160px)`: the sheet inside it is
-     `min(150px, 100%)` and a laptop resolved that clamp to its 160px cap, so 32px
-     of the column was empty. Those 32px are what let the field grid below keep two
-     fields per column inside a card that stays under the 760px wide constant — see
-     `.page-setup-dialog`. */
-  grid-template-columns: clamp(6.875rem, 10vw, 8rem) minmax(0, 1fr);
-  gap: clamp(1rem, 2vw, 1.75rem);
-  align-items: start;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--dlg-gap-in);
 }
 
-/* No frame. The preview was a 190x288 filled, outlined, 22px-padded card around
-   a 150x212 picture of a sheet — a box drawn round a box drawn round a box, and
-   the single biggest rectangle left in any of these dialogs. Word's page-setup
-   preview is the sheet alone on the dialog's own surface, and the sheet already
-   carries a border and a shadow that say "this is paper". Dropping the frame
-   also gives the field column back ~50px, which is where the dialog was short. */
+/* Top / Bottom / Left / Right on one line, as Google Docs lays them out. */
+.page-margin-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--dlg-gap-in);
+}
+
+.page-setup-fields .dialog-select,
+.page-setup-fields .number-control {
+  inline-size: 100%;
+}
+
+.page-setup-fields .number-control {
+  grid-template-columns: minmax(0, 1fr) 2rem;
+}
+
+.page-colour-pick {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.page-colour-pick input[type="color"] {
+  inline-size: var(--h-input);
+  block-size: var(--h-input);
+  flex: 0 0 auto;
+  padding: 0.125rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+
+/* Margin presets as chips, a radio group (`page_setup.mjs`). */
+.margin-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.margin-chip {
+  min-height: var(--h-input);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+
+.margin-chip:hover {
+  background: var(--hover);
+}
+
+.margin-chip[aria-checked="true"] {
+  border-color: var(--accent);
+  background: var(--selected);
+  color: var(--selected-ink);
+  font-weight: var(--fw-medium);
+}
+
+.page-setup-advanced > summary {
+  display: flex;
+  min-height: var(--h-input);
+  align-items: center;
+  color: var(--accent-text);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+
+.page-setup-advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dlg-gap-in);
+  padding-top: var(--dlg-gap-in);
+}
+
 .page-preview {
   display: flex;
   align-self: start;
@@ -3302,59 +3313,6 @@ body.phone-mode .autocorrect-body {
   color: var(--muted);
   font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
-}
-
-/* Balance independent groups across three columns on a laptop. With the
-   presets and document controls, two columns held 712px of content in a 560px
-   body at 1280x720. Three columns fit the same controls in 530px without
-   reducing their font or touch size. Keep each group whole and preserve DOM
-   tab order; the narrow-screen rule below returns to one column. */
-.page-setup-fields {
-  min-width: 0;
-  columns: 3;
-  column-gap: clamp(1rem, 2vw, 1.25rem);
-}
-
-/* Text labels carry orientation without the decorative icons in these narrow
-   tracks. Action labels may wrap; their buttons grow with the text. */
-.page-setup-fields .orientation-segmented {
-  height: auto;
-}
-.page-setup-fields .orientation-segmented.segmented button {
-  height: auto;
-  min-height: var(--h-tool);
-  padding-inline: 0.375rem;
-  white-space: nowrap;
-}
-.page-setup-fields .orientation-segmented .ms {
-  display: none;
-}
-.page-setup-fields .chip-btn {
-  height: auto;
-  min-height: var(--h-dense);
-  white-space: normal;
-}
-
-/* The rhythm is a bottom margin rather than the flex `gap` this was, because a
-   gap does not exist between multi-column boxes. `.dialog-group` zeroes its own
-   margin, so this is scoped to the children of this one container. */
-.page-setup-fields > .dialog-group {
-  margin-bottom: 1.25rem;
-  break-inside: avoid;
-}
-
-/* A LOWER track floor than the shared one, for this dialog only.
-   `.dialog-field-grid`'s floor is `clamp(7rem, 20vw, 9rem)`, and `20vw` is the
-   VIEWPORT's width, not the column's — so on any laptop it resolves to the 9rem
-   cap, 144px. That floor was written for fields laid out across the full width of a
-   dialog body. Here they sit inside a 265px multi-column column, where 144px means
-   exactly one field per row and five margin fields stacking into a 701px body.
-   7.75rem (124px) fits two, which is what the Top/Bottom and Left/Right pairs are
-   supposed to be — `.dialog-field-grid`'s own comment refuses stacking them, and at
-   this column width this is the only way to honour that. Scoped, because the shared
-   floor is right everywhere else it applies. */
-.page-setup-fields .dialog-field-grid {
-  grid-template-columns: repeat(auto-fit, minmax(clamp(7rem, 20vw, 7.75rem), max-content));
 }
 
 /* ---- Caption and Cross-reference (`109` OO-005) ---------------------------- */
@@ -11355,32 +11313,6 @@ body:not(.doc-loaded) .drop-title {
     grid-column: auto;
   }
 
-  .page-setup-body {
-    grid-template-columns: 1fr;
-    gap: 1.125rem;
-  }
-
-  .page-preview {
-    min-height: 10rem;
-    padding: 1rem;
-  }
-
-  .page-preview-sheet {
-    width: 4.75rem;
-  }
-
-  .page-preview-sheet[data-orientation="landscape"] {
-    width: 8.125rem;
-  }
-
-  /* One column on a phone keeps each group wide enough for its controls. */
-  .page-setup-fields {
-    columns: 1;
-  }
-
-  .page-setup-fields > .dialog-group {
-    margin-bottom: 1.125rem;
-  }
 }
 
 /* =========================================================================

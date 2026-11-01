@@ -24,6 +24,7 @@ test('page presets, unequal columns, mirror and color remain undoable through pa
   await runPaletteCommand(page, 'layout.pageSetup', 'page setup');
   await page.locator('#pagePaperPreset').selectOption('legal');
   await page.locator('#pageMarginsPreset').selectOption('narrow');
+  await page.locator(".page-setup-advanced summary").click(); // docs/184 D2: gutter, alignment, mirror and columns are under Advanced
   await page.locator('#pageColumnCount').selectOption('2');
   await page.locator('#pageColumnEqual').uncheck();
   await page.locator('#pageColumnWidth0').fill('2');
@@ -34,9 +35,12 @@ test('page presets, unequal columns, mirror and color remain undoable through pa
   await expect(page.locator('#pageColumnEqual')).not.toBeChecked();
   await expect(page.locator('#pageColumnWidth0')).toHaveValue('2');
   await expect(page.locator('#pageColumnWidth1')).toHaveValue('5');
-  await page.locator('#pageMirrorMargins').check(); await page.locator('#pageMirrorApply').click();
-  await page.locator('#pageBackgroundColor').fill('#123456'); await page.locator('#pageBackgroundApply').click();
-  await page.locator('#pageSetupClose').click();
+  // One Apply for the document settings too (docs/184 D2): the per-property
+  // "Apply ... to document" buttons are gone.
+  await page.locator('#pageMirrorMargins').check();
+  await page.locator('#pagePageColour').selectOption('custom');
+  await page.locator('#pageBackgroundColor').fill('#123456');
+  await page.locator('#pageSetupApply').click();
   await runPaletteCommand(page, 'layout.pageSetup', 'page setup');
   await expect(page.locator('#pageMirrorMargins')).toBeChecked();
   await expect(page.locator('#pageBackgroundColor')).toHaveValue('#123456');

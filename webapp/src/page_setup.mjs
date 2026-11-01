@@ -90,22 +90,39 @@ export function createPageSetup(io) {
   const previewMargins = el("pagePreviewMargins");
   const previewLabel = el("pagePreviewLabel");
   const sectionSelect = el("pageSetupSection");
+  /** The "Apply to" value meaning every section. */
+  const WHOLE_DOCUMENT = "__whole__";
   const columnCount = el("pageColumnCount");
   const columnGap = el("pageColumnGap");
   const columnSeparator = el("pageColumnSeparator");
 
   const columnEditor = createColumnEditor({ el, measure: io.measure, count: columnCount, gap: columnGap, separator: columnSeparator, contentWidth: () => fieldTwips(widthInput) - fieldTwips(marginLeft) - fieldTwips(marginRight) - fieldTwips(marginGutter) });
 
-  for (const [id, change] of [
-    ['pageMirrorApply', doc => doc.setMirroredMargins(el('pageMirrorMargins').checked)],
-    ['pageBackgroundApply', doc => doc.setPageColor(el('pageBackgroundColor').value)],
-    ['pageBackgroundClear', doc => doc.setPageColor('')],
-  ]) el(id).addEventListener('click', async () => { const doc = io.getDoc(); if (doc) { await io.runEdit(() => change(doc), { gate: true }); reflectDocumentSettings(); } });
+  /** Page colour: Automatic, a short palette, or Custom (the colour input).
+   *  A select, as Word's Page Color gallery and Google Docs' page colour are a
+   *  pick from a list first; the input is the "More colours" step. */
+  const pageColourSelect = el("pagePageColour");
+  const pageColourInput = el("pageBackgroundColor");
+  const pageColour = {
+    value: () =>
+      pageColourSelect.value === "custom" ? pageColourInput.value.toLowerCase() : pageColourSelect.value,
+    paint(hex) {
+      const value = (hex || "").toLowerCase();
+      const known = [...pageColourSelect.options].some((option) => option.value === value);
+      pageColourSelect.value = known ? value : "custom";
+      pageColourInput.value = value || "#ffffff";
+      pageColourInput.hidden = pageColourSelect.value !== "custom";
+    },
+  };
+  pageColourSelect.addEventListener("change", () => {
+    pageColourInput.hidden = pageColourSelect.value !== "custom";
+  });
+
   function reflectDocumentSettings() {
     const doc = io.getDoc();
     if (!doc) return;
     el('pageMirrorMargins').checked = doc.mirroredMargins();
-    el('pageBackgroundColor').value = doc.pageColor() || '#ffffff';
+    pageColour.paint(doc.pageColor() || '');
   }
 
   // ---- Line numbers --------------------------------------------------------
@@ -313,6 +330,30 @@ export function createPageSetup(io) {
    *  and the Section dropdown's change handler come through here; they were two
    *  copies of the same fourteen lines, which is how the column fields came to
    *  be repainted in one and not the other. */
+  // Margin presets as chips (docs/184 D2: Normal / Narrow / Moderate / Wide /
+  // Custom, Google Docs' and Word's gallery as one row). The chips drive the
+  // existing preset select, which stays the one place the preset logic lives.
+  const marginPresetSelect = el("pageMarginsPreset");
+  const marginChips = el("pageMarginChips");
+  let marginGroup = null;
+  function reflectMarginChips() {
+    marginGroup?.reflect(marginPresetSelect.value);
+  }
+  if (marginChips) {
+    marginGroup = bindRadioGroup(marginChips, {
+      attr: "data-margin-preset",
+      onSelect: (value) => {
+        marginPresetSelect.value = value;
+        marginPresetSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        reflectMarginChips();
+      },
+    });
+    marginPresetSelect.addEventListener("change", reflectMarginChips);
+    for (const input of [marginTop, marginBottom, marginLeft, marginRight]) {
+      input.addEventListener("input", () => queueMicrotask(reflectMarginChips));
+    }
+  }
+
   const presets = mountPagePresets({ el, measure: io.measure, orientation: () => orientationGroup.value(), updatePreview });
 
   function paintSection(section) {
@@ -337,6 +378,7 @@ export function createPageSetup(io) {
       orientation ?? (pageSize.widthTwips > pageSize.heightTwips ? "landscape" : "portrait");
     orientationGroup.reflect(active);
     presets.reflect();
+    reflectMarginChips();
     updatePreview();
   }
 
@@ -347,13 +389,19 @@ export function createPageSetup(io) {
     if (!list) return false;
     applyUnits();
     sectionSelect.replaceChildren();
+    const whole = document.createElement("option");
+    whole.value = WHOLE_DOCUMENT;
+    whole.textContent = t("pageSetup.wholeDocument");
+    sectionSelect.appendChild(whole);
     for (const [index, section] of list.sections.entries()) {
       const option = document.createElement("option");
       option.value = section.section;
       option.textContent = t("pageSetup.sectionNumber", { number: index + 1 });
       sectionSelect.appendChild(option);
     }
-    sectionSelect.value = list.current;
+    // Whole document by default, as in Google Docs; a multi-section document
+    // opens on the caret's section, as Word's "This section" does.
+    sectionSelect.value = list.sections.length > 1 ? list.current : WHOLE_DOCUMENT;
     paintSection(
       list.sections.find((section) => section.section === list.current) ?? list.sections[0],
     );
@@ -378,6 +426,8 @@ export function createPageSetup(io) {
     // field labelled `cm` holding inches is the one state this must never show.
     if (show) reflectUnits();
     focusIntent = show ? (INTENTS.get(intent) ?? null) : null;
+    // Layout ▸ Columns lands inside the Advanced disclosure (docs/184 D2).
+    if (show && intent === "columns") pageSetupMenu.querySelector(".page-setup-advanced")?.setAttribute("open", "");
     pageSetupBtn.setAttribute("aria-expanded", String(show));
     if (show) modal.open();
     else modal.close();
@@ -385,7 +435,8 @@ export function createPageSetup(io) {
 
   sectionSelect.addEventListener("change", () => {
     const list = sections();
-    const picked = list?.sections?.find((section) => section.section === sectionSelect.value);
+    const id = sectionSelect.value === WHOLE_DOCUMENT ? list?.current : sectionSelect.value;
+    const picked = list?.sections?.find((section) => section.section === id);
     if (picked) paintSection(picked);
   });
 
@@ -498,50 +549,71 @@ export function createPageSetup(io) {
     const fresh = sections()?.sections?.find((section) => section.section === current.section);
     if (!fresh) return; // the section went away under us; say nothing, change nothing
 
+    // "Apply to" (docs/184 D2): the section the dialog was painted from, or
+    // every section — Google Docs' "Apply to: Whole document". The controls
+    // are compared against the PAINTED section, so "did the reader change
+    // anything" has one answer; what changed is then written to each target
+    // over that target's own band distances, columns and numbering.
+    const everySection = sectionSelect.value === WHOLE_DOCUMENT;
+    const targets = everySection ? sections()?.sections ?? [fresh] : [fresh];
     const columns = columnsPayload(fresh);
+    const columnsMoved = columns !== fresh.columns;
     if (geometryMoved(fresh, columns)) {
-      const payload = {
-        section: fresh.section,
-        pageSize: { widthTwips: fieldTwips(widthInput), heightTwips: fieldTwips(heightInput) },
-        pageMargins: {
-          // The spread still matters: it carries the two BAND distances this dialog
-          // does not show (`headerTwips`/`footerTwips`, which Header and footer
-          // settings owns), so opening Page setup and changing a margin cannot
-          // silently move a header.
-          ...fresh.pageMargins,
-          topTwips: fieldTwips(marginTop),
-          bottomTwips: fieldTwips(marginBottom),
-          startTwips: fieldTwips(marginLeft),
-          endTwips: fieldTwips(marginRight),
-          gutterTwips: fieldTwips(marginGutter),
-        },
-        columns,
-        orientation: orientationGroup.value() ?? "portrait",
-      };
-      await io.runEdit(() => doc.setPageSetup(JSON.stringify(payload)), { gate: true });
+      for (const target of targets) {
+        const payload = {
+          section: target.section,
+          pageSize: { widthTwips: fieldTwips(widthInput), heightTwips: fieldTwips(heightInput) },
+          pageMargins: {
+            // The spread carries the two BAND distances this dialog does not
+            // show (`headerTwips`/`footerTwips`, Header and footer settings owns
+            // them), so changing a margin cannot silently move a header.
+            ...target.pageMargins,
+            topTwips: fieldTwips(marginTop),
+            bottomTwips: fieldTwips(marginBottom),
+            startTwips: fieldTwips(marginLeft),
+            endTwips: fieldTwips(marginRight),
+            gutterTwips: fieldTwips(marginGutter),
+          },
+          columns: columnsMoved || target === fresh ? columns : target.columns,
+          orientation: orientationGroup.value() ?? "portrait",
+        };
+        await io.runEdit(() => doc.setPageSetup(JSON.stringify(payload)), { gate: true });
+      }
     }
-    // Vertical alignment is a second engine call, and it only happens when the
-    // control actually changed: `setSectionLayout` writes the page numbering too,
-    // so an unconditional call would make every Page setup Apply a page-numbering
-    // write as well — and a value read at dialog-open time could by then be stale.
-    // Read fresh, compare, and write only the difference.
+    // Vertical alignment is a second engine call, made only where it differs:
+    // `setSectionLayout` writes the page numbering too, so an unconditional
+    // call would make every Apply a page-numbering write as well.
     const wanted = verticalAlignment.value === "top" ? null : verticalAlignment.value;
-    const layout = layoutOf(fresh.section);
-    if (layout && (layout.verticalAlignment ?? null) !== wanted) {
-      await io.runEdit(
-        () =>
-          doc.setSectionLayout(
-            JSON.stringify({
-              section: fresh.section,
-              verticalAlignment: wanted,
-              // Carried through untouched. This dialog does not show page
-              // numbering, so Apply must not invent values for it.
-              pageNumberFormat: layout.pageNumberFormat ?? null,
-              pageNumberStart: layout.pageNumberStart ?? null,
-            }),
-          ),
-        { gate: true },
-      );
+    const paintedLayout = layoutOf(fresh.section);
+    if (paintedLayout && (paintedLayout.verticalAlignment ?? null) !== wanted) {
+      for (const target of targets) {
+        const layout = layoutOf(target.section);
+        if (!layout || (layout.verticalAlignment ?? null) === wanted) continue;
+        await io.runEdit(
+          () =>
+            doc.setSectionLayout(
+              JSON.stringify({
+                section: target.section,
+                verticalAlignment: wanted,
+                // Carried through untouched: this dialog does not show numbering.
+                pageNumberFormat: layout.pageNumberFormat ?? null,
+                pageNumberStart: layout.pageNumberStart ?? null,
+              }),
+            ),
+          { gate: true },
+        );
+      }
+    }
+    // Mirror margins and the page colour are DOCUMENT settings; they used to
+    // carry their own "Apply ... to document" buttons inside the form. Folded
+    // into the one Apply, written only when they changed.
+    const mirror = el("pageMirrorMargins").checked;
+    if (mirror !== doc.mirroredMargins()) {
+      await io.runEdit(() => doc.setMirroredMargins(mirror), { gate: true });
+    }
+    const colour = pageColour.value();
+    if (colour !== (doc.pageColor() || "")) {
+      await io.runEdit(() => doc.setPageColor(colour), { gate: true });
     }
     toggle(false);
   });

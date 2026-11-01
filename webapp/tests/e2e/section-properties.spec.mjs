@@ -220,6 +220,7 @@ test("vertical alignment moves a short page's content down, and undo brings it b
   expect(top.count, "the typed word is on the page").toBeGreaterThan(0);
 
   await openPageSetup(page);
+  await page.locator(".page-setup-advanced summary").click(); // docs/184 D2: gutter, alignment, mirror and columns are under Advanced
   await expect(page.locator("#pageVerticalAlignment")).toHaveValue("top");
   await page.locator("#pageVerticalAlignment").selectOption("bottom");
   await page.locator("#pageSetupApply").click();
@@ -261,6 +262,7 @@ test("changing only the vertical alignment costs ONE undo, so the next one reach
   expect(typed.count, "the typed word is on the page").toBeGreaterThan(0);
 
   await openPageSetup(page);
+  await page.locator(".page-setup-advanced summary").click(); // docs/184 D2: gutter, alignment, mirror and columns are under Advanced
   await expect(page.locator("#pageVerticalAlignment")).toHaveValue("top");
   await page.locator("#pageVerticalAlignment").selectOption("bottom");
   // Nothing else is touched, which is the whole point: the geometry half of this
@@ -357,6 +359,7 @@ test("the gutter moves the text column in from the binding edge", async ({
   expect(before.minX, "the word has a leading edge to move").not.toBeNull();
 
   await openPageSetup(page);
+  await page.locator(".page-setup-advanced summary").click(); // docs/184 D2: gutter, alignment, mirror and columns are under Advanced
   await expect(page.locator("#pageMarginGutter")).toHaveValue("0");
   await page.locator("#pageMarginGutter").fill("1");
   await page.locator("#pageSetupApply").click();
@@ -432,6 +435,7 @@ test("every property this round shipped is reachable from at least two surfaces"
     await page.locator('[data-tab="layout"]').click();
     await page.locator(button).click();
     await expect(page.locator("#pageSetupMenu")).toBeVisible();
+    await page.locator(".page-setup-advanced summary").click(); // docs/184 D2: gutter, alignment, mirror and columns are under Advanced
     await expect(page.locator("#pageMarginGutter")).toBeVisible();
     await expect(page.locator("#pageVerticalAlignment")).toBeVisible();
     await page.locator("#pageSetupCancel").click();

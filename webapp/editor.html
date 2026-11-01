@@ -1838,109 +1838,97 @@
           <div class="dialog-heading">
                         <div>
               <h2 data-i18n="pageSetupMenu.pageSetup" id="pageSetupTitle">Page setup</h2>
-              <p data-i18n="pageSetupMenu.sizeOrientationMarginsCurrent" id="pageSetupDescription">Size, orientation, and margins for the current section.</p>
+              <p data-i18n="pageSetup.description" id="pageSetupDescription">Orientation, paper and margins.</p>
             </div>
           </div>
           <button data-i18n-title="pageSetupMenu.close.title" data-i18n-label="pageSetupMenu.closePageSetup.label" id="pageSetupClose" type="button" class="dialog-close" title="Close" aria-label="Close page setup">
             <span class="ms" aria-hidden="true">close</span>
           </button>
         </header>
+        <!-- Page setup, rebuilt (docs/184 D2, approved by the owner 2026-11-01;
+             Google Docs' Page setup with Word's and ONLYOFFICE's scope). ONE
+             column, in the order a person decides: where it applies, which way
+             up, what paper, what margins; the rarely used rest behind
+             Advanced. One Apply for everything, including the two document
+             settings (mirror margins, page colour) that used to carry their
+             own "Apply ... to document" buttons inside the form. -->
         <div class="dialog-body page-setup-body">
-          <div class="page-preview" aria-hidden="true">
+          <div class="page-preview" aria-hidden="true" hidden>
             <div id="pagePreviewSheet" class="page-preview-sheet" data-orientation="portrait">
               <div id="pagePreviewMargins" class="page-preview-margins">
                 <span></span><span></span><span></span><span></span>
               </div>
             </div>
-            <span data-i18n="pageSetupMenu.8271169" id="pagePreviewLabel" class="page-preview-label">8.27 × 11.69 in</span>
+            <span id="pagePreviewLabel" class="page-preview-label"></span>
           </div>
           <div class="page-setup-fields">
-            <fieldset class="dialog-group">
-              <legend data-i18n="pageSetupMenu.apply">Apply to</legend>
-              <label data-i18n="pageSetupMenu.section" class="dialog-field">Section<select id="pageSetupSection" class="dialog-select"></select></label>
-            </fieldset>
+            <label class="dialog-field"><span data-i18n="pageSetupMenu.apply">Apply to</span><select id="pageSetupSection" class="dialog-select"></select></label>
             <fieldset class="dialog-group">
               <legend data-i18n="pageSetupMenu.orientation">Orientation</legend>
               <div data-i18n-label="pageSetupMenu.orientation.label" class="segmented orientation-segmented" id="pageOrientationSeg" role="radiogroup" aria-label="Orientation">
-                <button type="button" data-orientation="portrait"><span class="ms" aria-hidden="true">stay_current_portrait</span>Portrait</button>
-                <button type="button" data-orientation="landscape"><span class="ms" aria-hidden="true">stay_current_landscape</span>Landscape</button>
+                <button type="button" data-orientation="portrait"><span class="ms" aria-hidden="true">stay_current_portrait</span><span data-i18n="pageSetup.portrait">Portrait</span></button>
+                <button type="button" data-orientation="landscape"><span class="ms" aria-hidden="true">stay_current_landscape</span><span data-i18n="pageSetup.landscape">Landscape</span></button>
               </div>
             </fieldset>
-            <fieldset class="dialog-group">
-              <legend data-i18n="pageSetupMenu.pageSize">Page size</legend>
-              <label class="dialog-field"><span data-i18n="pagePresets.paper">Paper size preset</span><select id="pagePaperPreset" class="dialog-select"><option value="custom" data-i18n="pagePresets.custom">Custom</option><option value="letter" data-i18n="pagePresets.letter">Letter</option><option value="legal" data-i18n="pagePresets.legal">Legal</option><option value="a4">A4</option><option value="a5">A5</option></select></label>
-              <div class="dialog-field-grid">
-                <label data-i18n="pageSetupMenu.width" class="dialog-field">Width<span class="number-control"><input id="pageWidth" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-                <label data-i18n="pageSetupMenu.height" class="dialog-field">Height<span class="number-control"><input id="pageHeight" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-              </div>
-            </fieldset>
+            <div class="page-setup-row">
+              <label class="dialog-field"><span data-i18n="pageSetup.paperSize">Paper size</span><select id="pagePaperPreset" class="dialog-select"><option value="custom" data-i18n="pagePresets.custom">Custom</option><option value="letter" data-i18n="pagePresets.letter">Letter</option><option value="legal" data-i18n="pagePresets.legal">Legal</option><option value="a4">A4</option><option value="a5">A5</option></select></label>
+              <label class="dialog-field"><span data-i18n="pageExtras.color">Page color</span><span class="page-colour-pick"><select id="pagePageColour" class="dialog-select">
+                <option value="" data-i18n="pageColour.automatic">Automatic</option>
+                <option value="#ffffff" data-i18n="pageColour.white">White</option>
+                <option value="#f3f3f3" data-i18n="pageColour.grey">Light grey</option>
+                <option value="#fff8e1" data-i18n="pageColour.cream">Cream</option>
+                <option value="#e8f0fe" data-i18n="pageColour.blue">Light blue</option>
+                <option value="#e6f4ea" data-i18n="pageColour.green">Light green</option>
+                <option value="custom" data-i18n="pagePresets.custom">Custom</option>
+              </select><input id="pageBackgroundColor" type="color" value="#ffffff" data-i18n-label="pageColour.customLabel" aria-label="Custom page color" hidden /></span></label>
+            </div>
+            <div id="pageCustomSize" class="page-setup-row">
+              <label data-i18n="pageSetupMenu.width" class="dialog-field">Width<span class="number-control"><input id="pageWidth" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+              <label data-i18n="pageSetupMenu.height" class="dialog-field">Height<span class="number-control"><input id="pageHeight" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+            </div>
             <fieldset class="dialog-group">
               <legend data-i18n="pageSetupMenu.margins">Margins</legend>
-              <label class="dialog-check"><input id="pageMirrorMargins" type="checkbox" /><span data-i18n="pageExtras.mirror">Mirror margins on facing pages</span></label><button id="pageMirrorApply" type="button" class="chip-btn" data-i18n="pageExtras.applyMirror">Apply mirrored margins to document</button>
-              <label class="dialog-field"><span data-i18n="pagePresets.margins">Margin preset</span><select id="pageMarginsPreset" class="dialog-select"><option value="custom" data-i18n="pagePresets.custom">Custom</option><option value="normal" data-i18n="pagePresets.normal">Normal</option><option value="narrow" data-i18n="pagePresets.narrow">Narrow</option><option value="moderate" data-i18n="pagePresets.moderate">Moderate</option><option value="wide" data-i18n="pagePresets.wide">Wide</option></select></label>
-              <div class="dialog-field-grid">
+              <span class="page-margins-preset" hidden><select id="pageMarginsPreset" class="dialog-select"><option value="custom" data-i18n="pagePresets.custom">Custom</option><option value="normal" data-i18n="pagePresets.normal">Normal</option><option value="narrow" data-i18n="pagePresets.narrow">Narrow</option><option value="moderate" data-i18n="pagePresets.moderate">Moderate</option><option value="wide" data-i18n="pagePresets.wide">Wide</option></select></span>
+              <div id="pageMarginChips" class="margin-chips" role="radiogroup" data-i18n-label="pagePresets.margins" aria-label="Margin preset">
+                <button type="button" class="margin-chip" data-margin-preset="normal" data-i18n="pagePresets.normal">Normal</button>
+                <button type="button" class="margin-chip" data-margin-preset="narrow" data-i18n="pagePresets.narrow">Narrow</button>
+                <button type="button" class="margin-chip" data-margin-preset="moderate" data-i18n="pagePresets.moderate">Moderate</button>
+                <button type="button" class="margin-chip" data-margin-preset="wide" data-i18n="pagePresets.wide">Wide</button>
+                <button type="button" class="margin-chip" data-margin-preset="custom" data-i18n="pagePresets.custom">Custom</button>
+              </div>
+              <div class="page-margin-row">
                 <label data-i18n="pageSetupMenu.top" class="dialog-field">Top<span class="number-control"><input id="pageMarginTop" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
                 <label data-i18n="pageSetupMenu.bottom" class="dialog-field">Bottom<span class="number-control"><input id="pageMarginBottom" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
                 <label data-i18n="pageSetupMenu.left" class="dialog-field">Left<span class="number-control"><input id="pageMarginLeft" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
                 <label data-i18n="pageSetupMenu.right" class="dialog-field">Right<span class="number-control"><input id="pageMarginRight" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-                <!-- Gutter: the binding margin added on the inner edge, which the
-                     engine has added to `margin_start` since P1F-36
-                     (`casual-doc-layout/src/document_layout.rs`) with no way to
-                     ask for one. It belongs beside the four margins, which is
-                     where ONLYOFFICE keeps it too
-                     (`apps/documenteditor/main/app/view/PageMarginsDialog.js:89`,
-                     in their Margins dialog).
-
-                     It gets its OWN label, which is a deliberate departure from
-                     them: their spinner has none, sitting under a bold header
-                     reading "Gutter position" that actually belongs to the combo
-                     beside it — they even define the string `textGutter`
-                     (`PageMarginsDialog.js:428`) and never reference it.
-
-                     Word's "Gutter position" (top vs left) is NOT offered: it is
-                     `w:settings/w:gutterAtTop`, which this engine does not model,
-                     and `document_layout.rs` records that landing it is a
-                     multi-crate change that must arrive as one unit. An offered
-                     control that silently did nothing is the thing docs/63
-                     forbids. -->
-                <label data-i18n="pageSetupMenu.gutter" class="dialog-field">Gutter<span class="number-control"><input id="pageMarginGutter" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
               </div>
             </fieldset>
-            <!-- Word's Page Setup ▸ Layout ▸ Vertical alignment. WORD is the model
-                 here and not ONLYOFFICE, because ONLYOFFICE does not have this
-                 feature at all — not merely no dialog: their `SectPr` constructor
-                 (`sdkjs/word/Editor/sections/sect-pr.js:58-88`) has no VAlign
-                 field, and their binary section-property enum
-                 (`sdkjs/word/Editor/Serialize2.js:391-406`) has no slot for it, so
-                 `w:vAlign` cannot survive a round-trip through their editor.
-
-                 The engine has aligned pages since `apply_page_vertical_alignment`
-                 (`casual-doc-layout/src/document_layout.rs:1206`), and it takes the
-                 property seriously enough that incremental repagination refuses to
-                 reuse a page while it is set — which is the note the dialog carries
-                 below, because a user choosing this on a long document should know
-                 it costs a full repagination per edit. -->
-            <fieldset class="dialog-group">
-              <legend data-i18n="pageSetupMenu.layout">Layout</legend>
-              <label class="dialog-field"><span data-i18n="pageExtras.color">Page color</span><input id="pageBackgroundColor" type="color" value="#ffffff" /></label><button id="pageBackgroundApply" type="button" class="chip-btn" data-i18n="pageExtras.applyColor">Apply page color to document</button><button id="pageBackgroundClear" type="button" class="chip-btn" data-i18n="pageExtras.clearColor">Automatic page color</button>
-              <div class="dialog-field-grid">
-                <label data-i18n="pageSetupMenu.verticalAlignment" class="dialog-field">Vertical alignment<select id="pageVerticalAlignment" class="dialog-select">
+            <details class="page-setup-advanced">
+              <summary data-i18n="pageSetup.advanced">Advanced</summary>
+              <div class="page-setup-advanced-body">
+                <!-- Gutter: the binding margin on the inner edge (P1F-36). Word's
+                     "Gutter position" is not offered: `w:gutterAtTop` is not
+                     modelled, and a control that silently did nothing is what
+                     docs/63 forbids. -->
+                <div class="page-setup-row">
+                  <label data-i18n="pageSetupMenu.gutter" class="dialog-field">Gutter<span class="number-control"><input id="pageMarginGutter" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+                  <label data-i18n="pageSetupMenu.verticalAlignment" class="dialog-field">Vertical alignment<select id="pageVerticalAlignment" class="dialog-select">
                   <option data-i18n="pageSetupMenu.vAlignTop" value="top">Top</option>
                   <option data-i18n="pageSetupMenu.vAlignCenter" value="center">Center</option>
                   <option data-i18n="pageSetupMenu.vAlignBoth" value="both">Justified</option>
                   <option data-i18n="pageSetupMenu.vAlignBottom" value="bottom">Bottom</option>
                 </select></label>
-              </div>
-            </fieldset>
-            <fieldset class="dialog-group">
-              <legend data-i18n="pageSetupMenu.columns">Columns</legend>
-              <div class="dialog-field-grid">
-                <label data-i18n="pageSetupMenu.number" class="dialog-field">Number<select id="pageColumnCount" class="dialog-select">
+                </div>
+                <label class="dialog-check"><input id="pageMirrorMargins" type="checkbox" /><span data-i18n="pageExtras.mirror">Mirror margins on facing pages</span></label>
+                <fieldset class="dialog-group">
+                  <legend data-i18n="pageSetupMenu.columns">Columns</legend>
+                  <div class="page-setup-row">
+                    <label data-i18n="pageSetupMenu.number" class="dialog-field">Number<select id="pageColumnCount" class="dialog-select">
                   <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
                 </select></label>
-                <label data-i18n="pageSetupMenu.spacing" class="dialog-field">Spacing<span class="number-control"><input id="pageColumnGap" type="number" data-measure-min-twip="0" data-measure-max-twip="7200" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-              </div>
-              <label class="dialog-check"><input id="pageColumnSeparator" type="checkbox" /> Line between columns</label>
+                    <label data-i18n="pageSetupMenu.spacing" class="dialog-field">Spacing<span class="number-control"><input id="pageColumnGap" type="number" data-measure-min-twip="0" data-measure-max-twip="7200" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+                  </div>
+                  <label class="dialog-check"><input id="pageColumnSeparator" type="checkbox" /> Line between columns</label>
 <label class="dialog-check"><input id="pageColumnEqual" type="checkbox" checked /><span data-i18n="pageColumns.equal">Equal column widths</span></label>
 <label class="dialog-field"><span data-i18n="pageColumns.width0">Column 1 width</span><span class="number-control"><input id="pageColumnWidth0" type="number" data-measure-min-twip="1" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
 <label class="dialog-field"><span data-i18n="pageColumns.space0">Space after column 1</span><span class="number-control"><input id="pageColumnSpace0" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
@@ -1950,12 +1938,12 @@
 <label class="dialog-field"><span data-i18n="pageColumns.space2">Space after column 3</span><span class="number-control"><input id="pageColumnSpace2" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
 <label class="dialog-field"><span data-i18n="pageColumns.width3">Column 4 width</span><span class="number-control"><input id="pageColumnWidth3" type="number" data-measure-min-twip="1" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
 <label class="dialog-field"><span data-i18n="pageColumns.space3">Space after column 4</span><span class="number-control"><input id="pageColumnSpace3" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-
-            </fieldset>
+                </fieldset>
+              </div>
+            </details>
           </div>
         </div>
         <footer class="dialog-foot">
-          <span data-i18n="pageSetupMenu.appliesSectionCanBe" class="dialog-note">Applies to this section and can be undone.</span>
           <div class="dialog-actions">
             <button data-i18n="pageSetupMenu.cancel" type="button" id="pageSetupCancel" class="dialog-button">Cancel</button>
             <button data-i18n="pageSetupMenu.apply2" type="button" id="pageSetupApply" class="dialog-button dialog-button-primary">Apply</button>
