@@ -2000,3 +2000,33 @@ Measured, the watermarked truth before → after: watermark 0.000 → 1.000, par
 `page` 0.820 → 0.569, because its short pages now set the bottom margin from the lowest
 body text (the stamp had reached lower): the margin inference for pages that end early is
 a separate, open defect.
+
+**Table alignment** (`reflow/tables.rs`):
+
+| Family | What a person saw | Root cause | Fix |
+| --- | --- | --- | --- |
+| The paragraph under a borderless table vanished into it | On the numeric truth every body row of the borderless table became one cell spanning all five columns, and the three lines under it were inside the last row (`text` 0.708) | Set at the table's own pitch, the paragraph's lines joined a column's block, so that column's extent spanned the table | `whitespace_candidates` peels each member's leading and trailing lines that align with nothing and reach across another column (`Candidate::strays`); they leave the table as text and do not count against its confidence |
+| Alignment lost | Right-aligned amounts reflowed left-aligned; only centring was read, cell by cell | No column-level reading | `align_cells`: the edge most of a column's body cells share (the first row does not vote with three rows or more) is its alignment, a tie being start; a borderless cell off it inside the column is centred (a header over figures); a ruled cell is read against its own box first; a column of one-width text ("OK") is centred when it stands in the middle of its fill's box, or of the room from its header's start to the next column |
+| Column edges drifted | A right-aligned column began at its widest amount and ended at the next column's start, so its numbers ended there | Columns were the clustered text extents' starts | `align_grid`: a start column starts at its shared left edge, an end column ends `pad` past its shared right edge, a centred one (or a centred header) fixes its free edge symmetrically, a free edge is the gutter's middle; the table keeps its right end. Tagged tables are read the same way |
+
+Guard: `a_borderless_table_of_figures_keeps_its_alignment_grid_and_the_text_under_it`,
+driven red three ways: strays never peeled (the table came out four columns wide), the
+cells' alignment ignored at emission (`None` for `End`), the grid not recomputed (the
+amounts' column ended at 318 pt for 303.6).
+
+Measured: numeric truth `text` 0.708 → 1.000, `paragraphs` 0.833 → 1.000, `tables`
+0.793 → 1.000, `table_layout` 0.457 → 0.750 (cells aligned 29 → 70 of 70; column shares
+5 of 10 unchanged); `sample.docx` `table_layout` 0.485 → 0.535 (cells aligned 173 → 227
+of 285, column shares 8 → 6 of 22).
+
+**The owner's thirteen PDFs** (local only; aggregates), before → after this section: body
+paragraphs 1,230 → 1,223, tables 84 → 85; distinct (before, after, pitch) triples of the
+plain body paragraphs summed over the files 216 → 202, distinct start indents 170 → 160,
+mean modal share of spacing 0.694 → 0.709 and of indents 0.743 → 0.747; watermarks found
+0 → 0 (none of them has one; no false positive on faint shadow tiles); every size the
+model uses is one the PDF uses on every file but one (one 1 pt run), before and after.
+
+**Still open:** column widths on `sample.docx`'s borderless tables (6 of 22 column shares
+within 2 pt), decimal alignment (the layout has no decimal tab; aligned decimals with equal
+places read as end), a heading's own line spacing, bottom margins on pages that end early,
+and lines under a table split into one paragraph each.

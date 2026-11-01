@@ -1414,3 +1414,111 @@ fn a_faint_centred_picture_on_every_page_is_a_picture_watermark() {
     );
     assert!(section_watermark(&reflow_of(opaque).document).is_none());
 }
+
+/// Where text of `n` Courier characters at 11 pt starts to sit `align`ed
+/// at `at` (its left, middle or right).
+fn courier_x(text_: &str, align: char, at: f64) -> f64 {
+    let width = 6.6 * text_.len() as f64;
+    match align {
+        'r' => at - width,
+        'c' => at - width / 2.0,
+        _ => at,
+    }
+}
+
+/// A borderless table of figures at the body's own pitch (14 pt): labels
+/// left at 77.4, amounts right-aligned at 303.6 and 397.2, a status centred
+/// on 438.9, codes left at 480.6, a header row centred over its columns;
+/// then the paragraph under it, set at the same pitch, full width.
+fn figures_pdf() -> Vec<u8> {
+    let header = [
+        ("Account", 144.0),
+        ("Budget", 262.8),
+        ("Actual", 356.4),
+        ("Status", 438.9),
+        ("Code", 500.0),
+    ];
+    let rows = [
+        ["Salaries", "1,250,000.00", "1,198,442.50", "Under", "A-101"],
+        ["Travel", "84,500.00", "91,207.25", "Over", "A-205"],
+        ["Equipment", "310,000.00", "7,880.00", "Under", "B-310"],
+        ["Training", "45,000.00", "44,999.99", "Met", "B-412"],
+    ];
+    let places = [
+        ('l', 77.4),
+        ('r', 303.6),
+        ('r', 397.2),
+        ('c', 438.9),
+        ('l', 480.6),
+    ];
+    let mut content = String::new();
+    let mut y = 700.0;
+    content.push_str(&line_at("F1", 11.0, 72.0, y, &full("before")));
+    y -= 20.0;
+    for (label, middle) in header {
+        content.push_str(&line_at(
+            "F2",
+            11.0,
+            courier_x(label, 'c', middle),
+            y,
+            label,
+        ));
+    }
+    for row in rows {
+        y -= 14.0;
+        for (cell, (align, at)) in row.iter().zip(places) {
+            content.push_str(&line_at("F1", 11.0, courier_x(cell, align, at), y, cell));
+        }
+    }
+    for seed in ["after", "still", "ends."] {
+        y -= 14.0;
+        content.push_str(&line_at("F1", 11.0, 72.0, y, &full(seed)));
+    }
+    synth::document(&[Page::new(content)], COURIER, "")
+}
+
+fn cell_align(cell: &casual_doc_model::v1::TableCell) -> Option<Alignment> {
+    cell.blocks.iter().find_map(|b| match b {
+        BlockNode::Paragraph(p) => Some(p.properties.alignment),
+        _ => None,
+    })?
+}
+
+#[test]
+fn a_borderless_table_of_figures_keeps_its_alignment_grid_and_the_text_under_it() {
+    let reflowed = reflow_of(figures_pdf());
+    let document = &reflowed.document;
+    let table = document
+        .body()
+        .iter()
+        .find_map(|b| match b {
+            BlockNode::Table(t) => Some(t),
+            _ => None,
+        })
+        .expect("a table");
+    assert_eq!(table.rows.len(), 5, "a header and four rows");
+    assert!(table.rows.iter().all(|r| r.cells.len() == 5), "{table:?}");
+    // The paragraph under it, set at the table's pitch, is text again:
+    // none of its lines is in a cell.
+    let body: Vec<String> = paragraphs(document).iter().map(|p| para_text(p)).collect();
+    for seed in ["after", "still", "ends."] {
+        assert!(body.iter().any(|t| t.contains(seed)), "{seed}: {body:?}");
+    }
+    // Labels start, amounts end, the status and the header are centred.
+    let row = &table.rows[1].cells;
+    assert_eq!(cell_align(&row[0]), None);
+    assert_eq!(cell_align(&row[1]), Some(Alignment::End));
+    assert_eq!(cell_align(&row[2]), Some(Alignment::End));
+    assert_eq!(cell_align(&row[3]), Some(Alignment::Center));
+    assert_eq!(cell_align(&row[4]), None);
+    for cell in &table.rows[0].cells[1..4] {
+        assert_eq!(cell_align(cell), Some(Alignment::Center), "{cell:?}");
+    }
+    // The amounts' column ends where they do: the grid from the labels'
+    // left edge (77.4) to the first amounts' right (303.6).
+    let width = |k: usize| f64::from(table.grid[k].width_twips.unwrap_or(0)) / 20.0;
+    let end = 77.4 + width(0) + width(1);
+    assert!((end - 303.6).abs() <= 1.0, "{end}");
+    let end = end + width(2);
+    assert!((end - 397.2).abs() <= 1.0, "{end}");
+}

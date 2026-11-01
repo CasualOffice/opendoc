@@ -904,10 +904,13 @@ impl Emitter<'_> {
                             numbers.map(|(p, t, _)| (p, t, varying.as_slice())),
                         )?;
                         let mut properties = cell_paragraph();
-                        if centred_in(chunk, cell.x0, cell.x1) {
-                            let mut centred = (*properties).clone();
-                            centred.alignment = Some(Alignment::Center);
-                            properties = centred.into();
+                        let align = cell.align.or_else(|| {
+                            centred_in(chunk, cell.x0, cell.x1).then_some(Alignment::Center)
+                        });
+                        if let Some(align @ (Alignment::Center | Alignment::End)) = align {
+                            let mut aligned = (*properties).clone();
+                            aligned.alignment = Some(align);
+                            properties = aligned.into();
                         }
                         blocks.push(BlockNode::Paragraph(Paragraph {
                             id,

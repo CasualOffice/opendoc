@@ -494,7 +494,7 @@ fn tagged_table(cells: Vec<Element>) -> Element {
     if widths.is_empty() {
         widths.push((x1 - x0).max(12.0));
     }
-    let table = ITable {
+    let mut table = ITable {
         rows: rows
             .into_iter()
             .map(|(_, cells)| {
@@ -523,6 +523,9 @@ fn tagged_table(cells: Vec<Element>) -> Element {
         bounds: (x0, y0, x1, y1),
         ..ITable::default()
     };
+    // Its cells' alignment and the grid from it, as for a borderless table.
+    let aligned = tables::align_cells(&mut table, &[]);
+    tables::align_grid(&mut table, &aligned);
     Element {
         page,
         rect: Rect { x0, y0, x1, y1 },
@@ -1954,6 +1957,28 @@ pub fn build(
                 continue;
             }
             if candidate.confidence >= tables::TABLE_CONFIDENCE && candidate.rows >= 3 {
+                // Lines that are no row of it go back as text of their own.
+                for (e, out) in &candidate.strays {
+                    let mut kept = Vec::new();
+                    let mut lead = Vec::new();
+                    let mut trail = Vec::new();
+                    for (l, line) in std::mem::take(&mut lines_only[*e]).into_iter().enumerate() {
+                        if !out.contains(&l) {
+                            kept.push(line);
+                        } else if kept.is_empty() {
+                            lead.push(line);
+                        } else {
+                            trail.push(line);
+                        }
+                    }
+                    lines_only[*e] = kept;
+                    for piece in [lead, trail] {
+                        if !piece.is_empty() {
+                            texts.push((Vec::new(), texts[*e].1, texts[*e].2));
+                            lines_only.push(piece);
+                        }
+                    }
+                }
                 let columns: Vec<(Vec<ILine>, (f64, f64))> = candidate
                     .elements
                     .iter()
@@ -1987,6 +2012,11 @@ pub fn build(
         for table in page_tables.iter_mut().filter(|t| !t.ruled) {
             tables::fit_to_fills(table, &page.fills, &mut work.tables);
             tables::shade(table, &page.fills, &mut work.tables);
+        }
+        // Each cell's alignment, and a borderless table's grid from it.
+        for table in &mut page_tables {
+            let columns = tables::align_cells(table, &page.fills);
+            tables::align_grid(table, &columns);
         }
         // Underlines, strikethroughs, highlights, paragraph shading and
         // borders the PDF drew as paths go back on the text.
