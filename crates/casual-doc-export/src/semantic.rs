@@ -10117,6 +10117,27 @@ fn write_run_property_children(
         }
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
+    // `w14:textFill/w14:noFill`: laid-out text painted with no fill (an
+    // image-text line box over a scan, `docs/182` §20b). After the `w:` base
+    // properties, before `w:rPrChange`, where Word writes it; declared
+    // ignorable so a pre-2010 reader keeps the text and drops only the fill.
+    if properties.no_text_fill == Some(true) {
+        let mut el = start("w14:textFill");
+        el.push_attribute((
+            "xmlns:w14",
+            "http://schemas.microsoft.com/office/word/2010/wordml",
+        ));
+        el.push_attribute((
+            "xmlns:mc",
+            "http://schemas.openxmlformats.org/markup-compatibility/2006",
+        ));
+        el.push_attribute(("mc:Ignorable", "w14"));
+        w.write_event(Event::Start(el)).map_err(pkg)?;
+        w.write_event(Event::Empty(start("w14:noFill")))
+            .map_err(pkg)?;
+        w.write_event(Event::End(BytesEnd::new("w14:textFill")))
+            .map_err(pkg)?;
+    }
     // `w:rPrChange` is the last child of `w:rPr` (CT_RPr places it after every
     // property element); its `w:rPr` is the prior snapshot (CT_RPrOriginal — no
     // nested change). An all-default prior still emits a bare `<w:rPr/>` so the

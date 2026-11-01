@@ -434,6 +434,12 @@ export function createContextMenu(ed) {
     }
     // A content control under the caret: Word's right-click Properties and
     // Remove Content Control, and the chooser (`content_controls.mjs`).
+    // A line of text in a picture (a scan's line box, `docs/182` §20b): how
+    // the original text is taken away under it, and Restore original.
+    const pictureText = ed.imageText.atCaret();
+    if (pictureText) {
+      annotate.push(...ed.imageText.commands(pictureText).map((command) => ({ ...command, group: "annotate" })));
+    }
     const control = ed.contentControls.atCaret();
     if (control) {
       annotate.push(

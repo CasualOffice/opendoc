@@ -874,6 +874,17 @@ export const EN_STRINGS = Object.freeze({
   "findings.feature.pdfFloats": "Pictures and drawings floated beside or behind their text",
   "findings.feature.pdfScanReplaced": "Scanned pages shown as their recognised text (the scan stays in the exact layout)",
   "findings.feature.pdfWatermark": "Watermarks recognised and set as the document's watermark",
+  // Editing the text in a picture (`image_text_edit.mjs`, `docs/182` §20b).
+  "findings.feature.pdfImageTextBoxes": "Lines read from scanned pages and pictures, editable over the original pixels",
+  "imageText.fill.command": "Erase text under edits: fill",
+  "imageText.blur.command": "Erase text under edits: blur",
+  "imageText.pixelate.command": "Erase text under edits: pixelate",
+  "imageText.restore.command": "Restore original text in picture",
+  "imageText.reason.noBox": "Place the cursor in a line of text in a scanned page or picture",
+  "imageText.reason.notEdited": "This line has not been edited",
+  "imageText.refused.notImageText": "This text is not over a picture",
+  "imageText.refused.pictureUnreadable": "The picture under this line cannot be read",
+  "imageText.refused.unknownMode": "Unknown way to erase the text",
   "findings.feature.pdfDecorations": "Underlines, highlights, shading and borders drawn as shapes put back on their text",
   "findings.feature.pdfVectorsPlaced": "Drawings placed as shapes",
   // A PDF opened as a flowing document, and the characters the reader made

@@ -121,6 +121,7 @@ pub const FEATURES: &[&str] = &[
     HYPERLINK_INFERRED,
     IMAGE_CLIP_IGNORED,
     IMAGE_REENCODED,
+    IMAGE_TEXT_BOXES,
     IMAGE_UNDECODABLE,
     INVISIBLE_TEXT,
     JUSTIFICATION_INFERRED,
@@ -280,6 +281,13 @@ pub const LINK_UNRESOLVED: &str = "pdf.import.link_unresolved";
 /// Reflow: a bullet or enumerator with a hanging indent became a numbered
 /// or bulleted list item.
 pub const LIST_INFERRED: &str = "pdf.import.list_inferred";
+/// Reflow: lines OCR read from a picture (a scanned page, or a picture of
+/// text in a text PDF) are editable line boxes over that picture, their text
+/// laid out but not painted, so the page shows the picture's own pixels; a
+/// line's ink is erased only when that line is edited (`docs/182` §20b).
+/// Counted in lines. The recogniser's text is unchecked until a line is
+/// edited, which is why it is reported.
+pub const IMAGE_TEXT_BOXES: &str = "pdf.import.image_text_boxes";
 /// Reflow: a scanned page whose text the recogniser read is that text in
 /// the flowing document; the scan behind it, whose words sit at their old
 /// places under lines that now run differently, is kept by the exact layout
