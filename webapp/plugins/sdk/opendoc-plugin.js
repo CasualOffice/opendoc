@@ -1,0 +1,169 @@
+// SPDX-License-Identifier: Apache-2.0
+// The OpenDoc plugin client (`docs/183` §5): a classic script a plugin's page
+// includes to talk to the editor. Copy it next to your plugin — a plugin's CSP
+// lets it load scripts from its own origin only.
+//
+//   <script src="opendoc-plugin.js"></script>
+//   <script>
+//     OpenDocPlugin.connect().then(async (editor) => {
+//       const info = await editor.initialize();
+//       editor.on("contribution/invoked", async ({ command }) => {
+//         const selection = await editor.selection();
+//         await editor.tools.call("propose_edits", { base_revision: 0, edits: [ ... ] });
+//       });
+//     });
+//   </script>
+//
+// JSON-RPC 2.0 over the one MessagePort the editor hands the frame at its first
+// load. Every method resolves with the result or rejects with an Error whose
+// `code` is the editor's refusal code (`permission-denied`, `rate-limited`, …).
+(function () {
+  "use strict";
+  var connecting = null;
+
+  function connect() {
+    if (connecting) return connecting;
+    connecting = new Promise(function (resolve) {
+      function onMessage(event) {
+        var data = event.data;
+        if (!data || data.opendocPlugin !== 1 || data.type !== "connect" || !event.ports || !event.ports[0]) return;
+        window.removeEventListener("message", onMessage);
+        resolve(client(event.ports[0]));
+      }
+      window.addEventListener("message", onMessage);
+    });
+    return connecting;
+  }
+
+  function client(port) {
+    var next = 1;
+    var waiting = new Map();
+    var listeners = new Map();
+    port.onmessage = function (event) {
+      var message = event.data;
+      if (!message || message.jsonrpc !== "2.0") return;
+      if (message.id !== undefined && message.id !== null && waiting.has(message.id)) {
+        var waiter = waiting.get(message.id);
+        waiting.delete(message.id);
+        if (message.error) {
+          var error = new Error(message.error.message);
+          error.code = (message.error.data && message.error.data.code) || "error";
+          error.data = message.error.data || {};
+          waiter.reject(error);
+        } else {
+          waiter.resolve(message.result);
+        }
+        return;
+      }
+      if (message.method) {
+        var set = listeners.get(message.method);
+        if (set) set.forEach(function (fn) { try { fn(message.params || {}); } catch (err) { console.error(err); } });
+      }
+    };
+    function request(method, params) {
+      var id = next++;
+      return new Promise(function (resolve, reject) {
+        waiting.set(id, { resolve: resolve, reject: reject });
+        port.postMessage({ jsonrpc: "2.0", id: id, method: method, params: params || {} });
+      });
+    }
+    function on(method, fn) {
+      if (!listeners.has(method)) listeners.set(method, new Set());
+      listeners.get(method).add(fn);
+      return function () { listeners.get(method).delete(fn); };
+    }
+    /** Puts the editor's tokens on `:root` and its theme, language and direction
+     *  on `<html>`, so `plugin.css` draws with the product's own values. */
+    function applyTheme(info) {
+      var rootEl = document.documentElement;
+      var tokens = (info && info.tokens) || {};
+      Object.keys(tokens).forEach(function (name) {
+        if (/^--[a-z0-9-]+$/.test(name)) rootEl.style.setProperty(name, String(tokens[name]));
+      });
+      if (info && info.theme) {
+        rootEl.dataset.theme = info.theme;
+        rootEl.style.colorScheme = info.theme === "dark" ? "dark" : "light";
+      }
+      if (info && info.locale) rootEl.lang = info.locale;
+      if (info && info.direction) rootEl.dir = info.direction;
+      rootEl.dataset.ready = "1";
+    }
+    on("theme/changed", applyTheme);
+    return {
+      request: request,
+      on: on,
+      applyTheme: applyTheme,
+      initialize: function () {
+        return request("initialize").then(function (info) {
+          applyTheme(info);
+          return info;
+        });
+      },
+      /** Paragraph `node` scrolled to and selected in the editor (a citation). */
+      reveal: function (node) { return request("ui/reveal", { node: node }); },
+      /** First-party plugins: strings from the editor's catalogue. */
+      strings: function (keys) { return request("ui/strings", { keys: keys }).then(function (r) { return r.strings; }); },
+      selection: function () { return request("selection/get"); },
+      tools: {
+        list: function () { return request("tools/list").then(function (r) { return r.tools; }); },
+        call: function (name, args) { return request("tools/call", { name: name, arguments: args || {} }); },
+      },
+      commands: {
+        list: function () { return request("commands/list").then(function (r) { return r.commands; }); },
+        run: function (id) { return request("commands/run", { id: id }); },
+      },
+      ai: {
+        // `request` is an OpenAI Chat Completions body. With `stream: true`,
+        // `options.onChunk` receives each chat.completion.chunk.
+        complete: function (body, options) {
+          var id = next;
+          var off = null;
+          if (body && body.stream && options && options.onChunk) {
+            off = on("ai/chunk", function (params) { if (params.requestId === id) options.onChunk(params.chunk); });
+          }
+          if (options && options.signal) {
+            options.signal.addEventListener("abort", function () { request("ai/cancel", { requestId: id }).catch(function () {}); }, { once: true });
+          }
+          return request("ai/complete", { request: body }).finally(function () { if (off) off(); });
+        },
+      },
+      // Writing issues drawn in the text by the editor (`docs/183` §19). The
+      // editor sends the paragraphs that changed; answer each with its matches
+      // ({start, end, category, message, replacements, rule}, UTF-16 offsets into
+      // the text you were sent). The editor verifies them, draws them and applies
+      // a replacement only when the person clicks it in the editor's own card.
+      proofing: {
+        onCheck: function (fn) { return on("proofing/check", function (params) { fn(params.paragraphs || []); }); },
+        report: function (results, summary) { return request("proofing/report", { results: results, summary: summary || "" }); },
+      },
+      ui: {
+        notify: function (message, kind) { return request("ui/notify", { message: message, kind: kind || "info" }); },
+        panel: function (open) { return request("ui/panel", { open: open !== false }); },
+        /** First-party add-ins only: plain text to the clipboard. */
+        copy: function (text) { return request("ui/copy", { text: String(text || "") }).then(function (r) { return r.copied === true; }); },
+      },
+      // Live co-editing (`docs/183` §23), for the product's own assistant only:
+      // the editor writes the text at a visible pointer, batched, as one undo
+      // step, within the effective access `access()` reports. Every other add-in
+      // is refused and proposes with `tools.call("propose_edits", …)`.
+      edit: {
+        access: function () { return request("edit/access"); },
+        begin: function (spec, kind) { return request("edit/begin", { spec: spec, kind: kind || "text" }); },
+        write: function (turn, text, cell) { return request("edit/write", cell ? { turn: turn, text: text, cell: cell } : { turn: turn, text: text }); },
+        replace: function (turn, spec) { return request("edit/replace", { turn: turn, spec: spec }); },
+        comment: function (turn, spec) { return request("edit/comment", { turn: turn, spec: spec }); },
+        remove: function (turn, spec) { return request("edit/remove", { turn: turn, spec: spec }); },
+        end: function (turn) { return request("edit/end", { turn: turn }); },
+        stop: function (turn) { return request("edit/stop", { turn: turn }); },
+        abort: function (turn, code) { return request("edit/abort", { turn: turn, code: code }); },
+        decide: function (turn, accept) { return request("edit/decide", { turn: turn, accept: accept === true }); },
+      },
+      storage: {
+        get: function () { return request("storage/get").then(function (r) { return r.value; }); },
+        set: function (value) { return request("storage/set", { value: value }); },
+      },
+    };
+  }
+
+  window.OpenDocPlugin = { connect: connect };
+})();

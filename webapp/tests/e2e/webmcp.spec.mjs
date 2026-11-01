@@ -13,7 +13,9 @@ import { test, expect, gotoEditor, waitForFramedEditor } from "./fixtures.mjs";
 
 test.describe.configure({ timeout: 120_000 });
 
-const READS = ["get_outline", "read_blocks", "search", "list_comments", "list_tracked_changes"];
+// `read_table` joined the read tools with "Describe this table" (`docs/183` §23.4): it is a READ,
+// so the readonly mount below must get it with the read hints and nothing that writes.
+const READS = ["get_outline", "read_blocks", "search", "list_comments", "list_tracked_changes", "read_table"];
 const MARKER = " (agent)";
 
 function installFakeModelContext() {

@@ -1,0 +1,13 @@
+{
+  "manifestVersion": 1,
+  "id": "org.casualoffice.readability",
+  "name": "Readability",
+  "version": "2.0.0",
+  "description": "Long sentences, passive voice and filler words highlighted in the text, with a reading-ease score. Runs on this device; nothing is sent anywhere.",
+  "publisher": "Casual Office",
+  "entry": "index.html",
+  "permissions": ["read", "comment"],
+  "contributes": {
+    "proofing": {}
+  }
+}

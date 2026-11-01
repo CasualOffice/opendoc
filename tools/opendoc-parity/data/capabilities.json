@@ -4689,9 +4689,7 @@
       "area": "shell",
       "title": "Third-party plugins",
       "ours": {
-        "absent": [
-          "tools.plugins"
-        ]
+        "family": "plugin."
       },
       "theirs": {
         "absent": {
@@ -4699,7 +4697,7 @@
         }
       },
       "rank": 4,
-      "note": "Neither product offers plugins in its document editor as read. docs/149 grades editorConfig.plugins on the host side and says why a plugin API waits for the command surface to stabilise."
+      "note": "Ours: sandboxed iframe plugins over the same tools MCP and WebMCP use (docs/183, ADR-077): a manifest with six permissions, a grant prompt, Review > Add-ins and Manage add-ins, a side panel, palette and context-menu rows, and a host catalogue (?plugins=). Every edit a plugin proposes waits in the private preview. Theirs is not reachable in the document editor as read."
     },
     {
       "id": "shell.print",

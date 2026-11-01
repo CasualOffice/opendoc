@@ -9300,9 +9300,18 @@ impl BodyParser<'_> {
         self.mark_rpr_depth = 0;
         // A paragraph-mark `w:rPr` (even present-but-empty) is preserved as the
         // paragraph's `mark_run`; `Some` records the mark's own formatting.
+        // EXCEPT a mark rPr that holds nothing but the mark's own `w:ins`/`w:del`: that
+        // `w:rPr` exists only to carry the revision (OOXML has nowhere else for it), so it is
+        // not formatting, and reading it as an empty `mark_run` left one behind once the
+        // revision was decided — a rejected suggested paragraph deletion came back with a
+        // mark formatting it never had (`docs/183` §24, the text_to_table round trip).
         if std::mem::take(&mut self.mark_rpr_seen) {
-            self.paragraph_properties.mark_run =
-                Some(Box::new(std::mem::take(&mut self.mark_run_properties)));
+            let only_the_revision = self.paragraph_properties.mark_revision.is_some()
+                && self.mark_run_properties == RunProperties::default();
+            let properties = std::mem::take(&mut self.mark_run_properties);
+            if !only_the_revision {
+                self.paragraph_properties.mark_run = Some(Box::new(properties));
+            }
         }
         if self.edge_scope == EdgeScope::ParagraphBorders {
             self.edge_scope = EdgeScope::None;

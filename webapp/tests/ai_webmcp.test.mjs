@@ -24,7 +24,7 @@ const VOCABULARY = Object.freeze({
   schema: JSON.parse(readFileSync(new URL("../generated/edit-schema.json", import.meta.url), "utf8")),
   commands: JSON.parse(readFileSync(new URL("../generated/commands.json", import.meta.url), "utf8")),
 });
-const READS = ["get_outline", "read_blocks", "search", "list_comments", "list_tracked_changes"];
+const READS = ["get_outline", "read_blocks", "search", "list_comments", "list_tracked_changes", "read_table"];
 
 const grantOf = (role, direct = false) => aiAccessFor(resolveCapabilities({ mode: role, framed: true }), { direct });
 const names = (grant) => toolsFor(grant, VOCABULARY).map((tool) => tool.name);
@@ -193,7 +193,7 @@ test("unmount unregisters every tool, and a failed registration takes the half l
   const context = fakeModelContext();
   const webmcp = mount(fakeAssistant("edit"), context);
   await webmcp.sync();
-  assert.equal(context.tools.size, 7);
+  assert.equal(context.tools.size, 8);
   webmcp.dispose();
   assert.equal(context.tools.size, 0);
   assert.equal(webmcp.status().state, "unregistered");

@@ -1,0 +1,80 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Casual AI</title>
+<link rel="stylesheet" href="../sdk/plugin.css">
+<link rel="stylesheet" href="assistant.css">
+</head>
+<body>
+<!-- Casual AI's panel (`docs/183` §13, §21). The editor draws the one header
+     line around this frame (title, ⋯, Close); this page is the conversation and
+     ONE composer. Every word below is set from the editor's catalogue once the
+     plugin connects (`ui/strings`), so nothing is shown in a language the
+     reader did not choose; the page stays hidden until then. -->
+<main class="ca">
+  <div id="log" class="ca-log" role="log" aria-live="polite" tabindex="0">
+    <!-- The empty state: what it can do, as four suggestions. Gone once the
+         conversation starts. -->
+    <div id="empty" class="ca-empty">
+      <p id="emptyText" class="ca-empty-text"></p>
+      <div id="chips" class="ca-chips" role="group">
+        <button type="button" class="btn ca-chip" data-chip="summary"><span class="ms" aria-hidden="true">summarize</span><span></span></button>
+        <button type="button" class="btn ca-chip" data-chip="keyPoints"><span class="ms" aria-hidden="true">format_list_bulleted</span><span></span></button>
+        <button type="button" class="btn ca-chip" data-chip="draft"><span class="ms" aria-hidden="true">edit_note</span><span></span></button>
+        <button type="button" class="btn ca-chip" data-chip="review"><span class="ms" aria-hidden="true">rate_review</span><span></span></button>
+        <button type="button" class="btn ca-chip" data-chip="table"><span class="ms" aria-hidden="true">table</span><span></span></button>
+      </div>
+      <!-- Shown once on this device, until the first message: where text goes.
+           Afterwards it lives in the panel's ⋯ menu. -->
+      <p id="firstRun" class="note ca-first-run" hidden></p>
+    </div>
+  </div>
+  <span id="working" class="sr-only" role="status"></span>
+  <div id="translateRow" class="ca-row" hidden>
+    <label for="translateTo" id="translateLabel" class="note"></label>
+    <select id="translateTo" class="field"></select>
+    <button id="translateGo" type="button" class="btn btn-primary"></button>
+  </div>
+  <!-- ONE composer. A group, not a <form>: the sandbox grants no
+       `allow-forms`, so a form could never submit; Enter and Send are handled in
+       script. -->
+  <div id="composer" class="ca-composer" role="group">
+    <div class="ca-context">
+      <!-- What the AI may do here (`docs/183` §23.3): Editing, Suggesting,
+           Commenting or Read-only, with who decided in the tooltip. A status,
+           not a control. -->
+      <span id="accessBadge" class="ca-badge" role="status" hidden><span class="ms" aria-hidden="true">rate_review</span><span id="accessBadgeText"></span></span>
+      <span id="attached" class="ca-attached" hidden>
+        <span class="ms" aria-hidden="true">format_quote</span>
+        <span id="attachedText" class="ca-attached-text"></span>
+        <button id="detach" type="button" class="ca-attached-x"><span class="ms" aria-hidden="true">close</span></button>
+      </span>
+      <button id="turnIntoTable" type="button" class="ca-attached ca-offer" hidden><span class="ms" aria-hidden="true">table</span><span id="turnIntoTableText" class="ca-attached-text"></span></button>
+      <button id="describeTableChip" type="button" class="ca-attached ca-offer" hidden><span class="ms" aria-hidden="true">table_view</span><span id="describeTableText" class="ca-attached-text"></span></button>
+      <span id="tableMode" class="ca-attached" hidden>
+        <span class="ms" aria-hidden="true">table</span>
+        <span id="tableModeText" class="ca-attached-text"></span>
+        <button id="tableCancel" type="button" class="ca-attached-x"><span class="ms" aria-hidden="true">close</span></button>
+      </span>
+      <span id="draftMode" class="ca-attached" hidden>
+        <span class="ms" aria-hidden="true">edit_note</span>
+        <span id="draftModeText" class="ca-attached-text"></span>
+        <button id="draftCancel" type="button" class="ca-attached-x"><span class="ms" aria-hidden="true">close</span></button>
+      </span>
+    </div>
+    <div class="ca-input">
+      <label for="prompt" id="promptLabel" class="sr-only"></label>
+      <textarea id="prompt" class="ca-prompt" rows="1"></textarea>
+      <button id="send" type="button" class="btn btn-primary ca-send"><span class="ms" aria-hidden="true">arrow_upward</span><span id="sendLabel" class="sr-only"></span></button>
+      <button id="stop" type="button" class="btn ca-send" hidden><span class="ms" aria-hidden="true">stop</span><span id="stopLabel" class="sr-only"></span></button>
+    </div>
+  </div>
+  <p id="caveat" class="note ca-caveat"></p>
+</main>
+<script src="../sdk/opendoc-plugin.js"></script>
+<script src="assistant_core.js"></script>
+<script src="assistant.js"></script>
+</body>
+</html>

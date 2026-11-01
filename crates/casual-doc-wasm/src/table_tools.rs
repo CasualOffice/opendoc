@@ -194,6 +194,34 @@ impl WasmDocument {
             .map_err(to_js)
     }
 
+    /// [`convertTextToTable`](Self::convert_text_to_table) in Suggesting mode
+    /// (`docs/183` §24): the table is a tracked insertion before the paragraphs,
+    /// which stay struck through until a reviewer decides, so Reject restores
+    /// them exactly. `author` and `date` as for the other `suggest*` calls. One
+    /// undoable step.
+    ///
+    /// # Errors
+    /// As `convertTextToTable`, and paragraphs that already carry tracked
+    /// changes or hold objects other than text and tabs.
+    #[wasm_bindgen(js_name = suggestTextToTable)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn suggest_text_to_table(
+        &mut self,
+        from: &str,
+        to: &str,
+        separator: &str,
+        character: &str,
+        columns: u32,
+        autofit: &str,
+        author: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        self.suggest_text_to_table_inner(
+            from, to, separator, character, columns, autofit, author, date,
+        )
+        .map_err(to_js)
+    }
+
     /// Converts the table holding `node` to text (Table ▸ Convert to Text):
     /// `separator` and `character` as above, `nested` converting nested tables
     /// too. One undoable step.
@@ -311,8 +339,8 @@ impl WasmDocument {
         self.apply_action_as(ops, HistoryKind::TableFormatting)
     }
 
-    /// See [`WasmDocument::convert_text_to_table`].
-    pub(crate) fn convert_text_to_table_inner(
+    /// The untracked conversion of `from..=to`, with the source paragraphs' ids.
+    fn text_to_table_edit(
         &mut self,
         from: &str,
         to: &str,
@@ -320,7 +348,7 @@ impl WasmDocument {
         character: &str,
         columns: u32,
         autofit: &str,
-    ) -> Result<EditResult, String> {
+    ) -> Result<(casual_doc_command::table::TableEdit, Vec<NodeId>), String> {
         let separator = Separator::parse(separator, character)?;
         let (container, index, paragraphs) = self.paragraph_run(from, to)?;
         let first = paragraphs.first().map(|p| p.id).ok_or("no paragraphs")?;
@@ -335,8 +363,54 @@ impl WasmDocument {
         let edit = table_tools::text_to_table(container, index, &refs, options, &mut || {
             ids.next_id().ok()
         })?;
+        Ok((edit, paragraphs.iter().map(|p| p.id).collect()))
+    }
+
+    /// See [`WasmDocument::convert_text_to_table`].
+    pub(crate) fn convert_text_to_table_inner(
+        &mut self,
+        from: &str,
+        to: &str,
+        separator: &str,
+        character: &str,
+        columns: u32,
+        autofit: &str,
+    ) -> Result<EditResult, String> {
+        let (edit, sources) =
+            self.text_to_table_edit(from, to, separator, character, columns, autofit)?;
+        let first = sources.first().copied().ok_or("no paragraphs")?;
         let caret = Pos::new(edit.caret.unwrap_or(first), 0);
         self.apply_action_caret_as(edit.operations, caret, HistoryKind::TableStructure)
+    }
+
+    /// See [`WasmDocument::suggest_text_to_table`].
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn suggest_text_to_table_inner(
+        &mut self,
+        from: &str,
+        to: &str,
+        separator: &str,
+        character: &str,
+        columns: u32,
+        autofit: &str,
+        author: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, String> {
+        let (edit, sources) =
+            self.text_to_table_edit(from, to, separator, character, columns, autofit)?;
+        let author = self.resolve_author(author);
+        let lowered = casual_doc_review::table_review::suggest_text_to_table(
+            &self.document,
+            edit.operations,
+            &sources,
+            &mut casual_doc_review::ReviewIds {
+                nodes: &mut self.edit_ids,
+                revisions: &mut self.revision_ids,
+            },
+            author,
+            date,
+        )?;
+        self.commit_review(lowered)
     }
 
     /// See [`WasmDocument::convert_table_to_text`].
@@ -555,6 +629,103 @@ mod tests {
         d.undo_inner().expect("undo");
         d.undo_inner().expect("undo");
         assert_eq!(body_shape(&d), vec!["p:Title", "p:a,b,c", "p:d,e"]);
+    }
+
+    /// `docs/183` §24: in Suggesting mode the conversion is tracked. Reject all restores the
+    /// paragraphs exactly; Accept all leaves only the table; both survive a DOCX round trip.
+    #[test]
+    fn a_suggested_conversion_is_tracked_and_reject_restores_the_paragraphs() {
+        let original = vec!["p:Title", "p:a,b,c", "p:d,e", "p:End"];
+        let mut d = document(&format!(
+            "{}{}{}{}",
+            p("Title"),
+            p("a,b,c"),
+            p("d,e"),
+            p("End")
+        ));
+        let from = paragraph_reading(&d, "a,b,c");
+        let to = paragraph_reading(&d, "d,e");
+        d.suggest_text_to_table_inner(
+            &from,
+            &to,
+            "comma",
+            "",
+            0,
+            "fixed",
+            Some("Reviewer".to_owned()),
+            Some("2026-11-01T10:00:00Z".to_owned()),
+        )
+        .expect("a tracked conversion");
+        let shape = body_shape(&d);
+        assert_eq!(
+            shape.len(),
+            5,
+            "the table is added, nothing is removed: {shape:?}"
+        );
+        assert_eq!(shape[1], "t:2x3");
+        let listed: serde_json::Value = serde_json::from_str(&d.list_revisions()).expect("json");
+        let kinds: Vec<_> = listed
+            .as_array()
+            .expect("rows")
+            .iter()
+            .map(|row| row["kind"].as_str().unwrap_or_default().to_owned())
+            .collect();
+        assert!(kinds.contains(&"table_insertion".to_owned()), "{kinds:?}");
+        assert!(
+            kinds.iter().any(|k| k == "deletion"),
+            "the sources are struck: {kinds:?}"
+        );
+        let suggested = d.document.clone();
+        let saved = crate::write_document(&d.document, d.resources.as_map()).expect("save");
+
+        d.decide_all_revisions(false).expect("reject all");
+        assert_eq!(
+            body_shape(&d),
+            original,
+            "Reject restores the paragraphs exactly"
+        );
+        assert_eq!(d.list_revisions(), "[]");
+        d.undo_inner().expect("undo the rejection");
+        assert_eq!(d.document, suggested);
+        d.decide_all_revisions(true).expect("accept all");
+        assert_eq!(body_shape(&d), vec!["p:Title", "t:2x3", "p:End"]);
+
+        // Round trip: the tracked conversion is Word's `w:ins`/`w:del` and row marks.
+        for (accept, expected) in [
+            (false, original.clone()),
+            (true, vec!["p:Title", "t:2x3", "p:End"]),
+        ] {
+            let mut reopened = crate::open_document(&saved).expect("reopen");
+            reopened.decide_all_revisions(accept).expect("decide all");
+            assert_eq!(
+                body_shape(&reopened),
+                expected,
+                "after a round trip, accept={accept}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_suggested_conversion_refuses_paragraphs_with_tracked_changes() {
+        let mut d = document(&format!(
+            "{}<w:p><w:ins w:id=\"1\" w:author=\"A\"><w:r><w:t>x,y</w:t></w:r></w:ins></w:p>",
+            p("a,b")
+        ));
+        let from = paragraph_reading(&d, "a,b");
+        let to = paragraph_reading(&d, "x,y");
+        let refusal = d
+            .suggest_text_to_table_inner(
+                &from,
+                &to,
+                "comma",
+                "",
+                0,
+                "fixed",
+                Some("R".to_owned()),
+                None,
+            )
+            .unwrap_err();
+        assert!(refusal.contains("tracked changes"), "{refusal}");
     }
 
     #[test]

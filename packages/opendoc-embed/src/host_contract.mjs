@@ -161,6 +161,11 @@ export const HOST_EVENTS = Object.freeze([
   // it, `reason` the refusal code when an Accept was refused. A host's assistant
   // learns the outcome without polling, across a frame boundary too.
   Object.freeze({ name: "ai-decision", detail: Object.freeze(["previewId", "decision", "revision", "reason"]) }),
+  // The host's model (`docs/183` §3.8), for a host that serves it over `postMessage`
+  // (`?aiProvider=host`). `kind` is `request` (with `request`, an OpenAI Chat
+  // Completions body, and `purpose`) or `cancel` (the person pressed Stop). Answered
+  // with `ai-provider.answer`, correlated by `qid`. Never carries a key.
+  Object.freeze({ name: "ai-provider", detail: Object.freeze(["qid", "kind", "request", "purpose"]) }),
 ]);
 
 /** Event names alone, for validation and for generating a client's surface. */
@@ -200,7 +205,9 @@ export const PROTOCOL = Object.freeze({
   //  `mention` events, correlated by `qid`. One line: `host_parity.rs` reads it as one.
   //  `ai` is the in-page assistant's door (`docs/178` §9, `docs/181` §4.4): one verb whose
   //  `method` is one of `AI_METHODS`, so the assistant's surface grows without new verbs.
-  requests: Object.freeze(["describe", "execute", "query", "ping", "identify", "directory.answer", "mention.answer", "ai"]),
+  //  `ai-provider.answer` is the host's half of the provider channel (`docs/183` §3.8): a
+  //  `chunk`, the `response` or an `error` for an `ai-provider` request, by `qid`.
+  requests: Object.freeze(["describe", "execute", "query", "ping", "identify", "directory.answer", "mention.answer", "ai", "ai-provider.answer"]),
 });
 
 /** What the `ai` verb can be asked, as `session.ai.<method>(...)` in process and
@@ -852,6 +859,12 @@ export const COMMAND_FAMILIES = Object.freeze([
   // `object.selectNext/Previous` are the exceptions and are declared exactly.
   family("table.", "mutate", "table"),
   family("object.", "mutate", "object"),
+  // Plugins (`docs/183` §8): `plugin.manage` (Manage add-ins) and every
+  // `plugin.<pluginId>.<commandId>` a manifest contributes. Requires nothing of the
+  // host's grant because running one only tells the plugin it was chosen; whatever
+  // the plugin then does to the document goes through the private preview or the
+  // host session's own gated `execute`, under the plugin's own grant.
+  family("plugin.", null, "always"),
 ]);
 
 /** Exact ids, as a Set, for O(1) resolution. */

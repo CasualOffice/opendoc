@@ -173,9 +173,10 @@ export function createTableTools(io) {
     return caret ? [caret, ""] : null;
   }
 
-  /** Runs one engine call and says so when it landed. */
-  async function edit(thunk, doneKey) {
-    const landed = await io.runEdit(thunk, { gate: true });
+  /** Runs one engine call and says so when it landed. `tracked`: the call
+   *  records a tracked change itself, so Suggesting mode does not refuse it. */
+  async function edit(thunk, doneKey, { tracked = false } = {}) {
+    const landed = await io.runEdit(thunk, { gate: !tracked });
     if (landed) {
       io.status(t(doneKey));
       io.afterEdit();
@@ -275,9 +276,15 @@ export function createTableTools(io) {
         }
         columnsInput.setCustomValidity("");
         const autofit = radioValue(root, "textToTableAutofit", "fixed");
+        // Suggesting (`docs/183` §24): a tracked conversion, the table inserted
+        // and the paragraphs struck, so Reject puts them back exactly.
+        const suggesting = io.suggesting?.() === true;
         const landed = await edit(
-          () => doc.convertTextToTable(ends[0], ends[1], args.separator, args.character, columns, autofit),
+          () => suggesting
+            ? doc.suggestTextToTable(ends[0], ends[1], args.separator, args.character, columns, autofit, undefined, new Date().toISOString())
+            : doc.convertTextToTable(ends[0], ends[1], args.separator, args.character, columns, autofit),
           DONE_KEYS.textToTable,
+          { tracked: suggesting },
         );
         if (landed) dialogs.textToTable.close();
         return landed;

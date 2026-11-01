@@ -83,7 +83,6 @@ fn needs(edit: &Edit, mode: Mode) -> Profile {
         // Not trackable (the registry says why): only a direct edit, so `edit`.
         Edit::TableInsertRow { .. }
         | Edit::TableDeleteRow { .. }
-        | Edit::InsertTable { .. }
         | Edit::TableInsertColumn { .. }
         | Edit::TableDeleteColumn { .. }
         | Edit::TableMergeCells { .. }
@@ -95,7 +94,6 @@ fn needs(edit: &Edit, mode: Mode) -> Profile {
         | Edit::TableInsertCells { .. }
         | Edit::TableDeleteCells { .. }
         | Edit::TableToText { .. }
-        | Edit::TextToTable { .. }
         | Edit::RemoveTableOfContents { .. }
         | Edit::InsertTableOfFigures { .. }
         | Edit::SetContentsLevel { .. }
@@ -137,7 +135,10 @@ fn needs(edit: &Edit, mode: Mode) -> Profile {
         | Edit::InsertCaption { .. }
         | Edit::UpdateCaptionNumbers { .. }
         | Edit::InsertCrossReference { .. } => Profile::Edit,
-        Edit::InsertText { .. }
+        // Trackable since `docs/183` §23: a tracked table insertion.
+        Edit::InsertTable { .. }
+        | Edit::TextToTable { .. }
+        | Edit::InsertText { .. }
         | Edit::ReplaceText { .. }
         | Edit::DeleteText { .. }
         | Edit::InsertParagraphs { .. }
@@ -1067,6 +1068,8 @@ fn apply_edit(
             rows,
             columns,
         } => {
+            // Trackable since `docs/183` §23: suggested, it is Word's tracked table
+            // (`w:trPr/w:ins` on every row), one card a reviewer accepts or rejects.
             refuse_untracked(kind, mode)?;
             let node = paragraph(&state.document, &after.node)?.id;
             nodes.push(node);
@@ -1080,7 +1083,22 @@ fn apply_edit(
                     ids.next_id().ok()
                 })
                 .map_err(|message| refusal(&message))?;
-            commit(state, edit.operations)?;
+            let ops = match mode {
+                Mode::Suggest => {
+                    lowered(casual_doc_review::table_review::suggest_insert_table(
+                        edit.operations,
+                        edit.caret,
+                        ids!(state),
+                        &[],
+                        false,
+                        author,
+                        date,
+                    ))?
+                    .operations
+                }
+                Mode::Direct => edit.operations,
+            };
+            commit(state, ops)?;
         }
         Edit::TableInsertColumn { table, index } => {
             refuse_untracked(kind, mode)?;
@@ -1362,12 +1380,29 @@ fn apply_edit(
                 &mut || ids.next_id().ok(),
             )
             .map_err(|message| refusal(&message))?;
+            let sources: Vec<NodeId> = paragraphs.iter().map(|paragraph| paragraph.id).collect();
             drop(refs);
-            nodes.extend(edit.operations.iter().filter_map(|op| match op {
+            // Trackable since `docs/183` §24: suggested, the table is a tracked insertion
+            // before the sources, which stay struck, so Reject restores them exactly.
+            let ops = match mode {
+                Mode::Suggest => {
+                    lowered(casual_doc_review::table_review::suggest_text_to_table(
+                        &state.document,
+                        edit.operations,
+                        &sources,
+                        ids!(state),
+                        author,
+                        date,
+                    ))?
+                    .operations
+                }
+                Mode::Direct => edit.operations,
+            };
+            nodes.extend(ops.iter().filter_map(|op| match op {
                 Operation::InsertTable { table, .. } => Some(table.id),
                 _ => None,
             }));
-            commit(state, edit.operations)?;
+            commit(state, ops)?;
         }
         Edit::SetCellText {
             table,

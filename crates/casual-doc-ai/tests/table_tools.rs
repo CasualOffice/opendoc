@@ -279,3 +279,41 @@ fn text_to_table_cuts_a_paragraph_at_its_commas() {
     assert_eq!(table.rows[0].cells.len(), commas + 1);
     assert_eq!(table.grid.len(), commas + 1);
 }
+
+/// `docs/183` §23: `insert_table` is trackable. Suggested, it is Word's tracked table — every
+/// row `w:trPr/w:ins` — listed as ONE review item a reviewer accepts or rejects.
+#[test]
+fn a_suggested_insert_table_is_one_tracked_table() {
+    let mut session = plain();
+    let blocks = read::read_blocks(&session, None, None, Some(50_000), ReadFormat::Json)
+        .expect("the body reads");
+    let first = blocks["blocks"][0]["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    let before = tables(&session).len();
+    let plan: EditPlan = serde_json::from_value(json!({
+        "base_revision": session.revision(),
+        "mode": "suggest",
+        "edits": [{ "op": "insert_table", "after": { "node": first }, "rows": 2, "columns": 3 }],
+    }))
+    .expect("a well-formed plan");
+    plan::apply(&mut session, &plan).expect("suggest mode inserts a tracked table");
+    let all = tables(&session);
+    assert_eq!(all.len(), before + 1);
+    let inserted = all[0];
+    assert!(
+        inserted.rows.iter().all(|row| row
+            .properties
+            .row_revision
+            .as_ref()
+            .is_some_and(|mark| mark.kind == casual_doc_model::v1::MarkRevisionKind::Insertion)),
+        "every row is a tracked insertion"
+    );
+    let items = casual_doc_review::body::build_review_revision_summaries(session.document());
+    let tables: Vec<_> = items
+        .iter()
+        .filter(|item| item.kind == "table_insertion")
+        .collect();
+    assert_eq!(tables.len(), 1, "one card for the table: {items:?}");
+}

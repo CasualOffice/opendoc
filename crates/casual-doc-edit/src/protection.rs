@@ -117,7 +117,8 @@
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    Document, DocumentProtectionEdit, InlineNode, ParagraphProperties, Revision, RevisionKind,
+    BlockNode, Document, DocumentProtectionEdit, InlineNode, MarkRevisionKind, ParagraphProperties,
+    Revision, RevisionKind, Table,
 };
 
 use crate::Operation;
@@ -646,7 +647,15 @@ pub(crate) fn is_tracked_only(document: &Document, op: &Operation) -> bool {
         // anything. The paragraph mark's own revision may not move.
         Operation::SetParagraphProperties { node, properties } => {
             current_properties(document, *node).is_some_and(|current| {
-                properties.mark_revision == current.mark_revision
+                // The mark as it was, or an untracked mark now a tracked DELETION (the
+                // paragraph break a cross-paragraph suggested deletion strikes, `docs/183`
+                // §24): rejecting it restores the break, so the "before" view is the same.
+                (properties.mark_revision == current.mark_revision
+                    || (current.mark_revision.is_none()
+                        && properties
+                            .mark_revision
+                            .as_ref()
+                            .is_some_and(|mark| mark.kind == MarkRevisionKind::Deletion)))
                     && paragraph_before(properties) == paragraph_before(current)
                     // Someone else's pending change keeps its author: a suggester
                     // extends a suggestion, never re-attributes or drops one.
@@ -694,7 +703,145 @@ pub(crate) fn is_tracked_only(document: &Document, op: &Operation) -> bool {
             id,
             instance: Some(_),
         } => !document.definitions().numbering.contains_key(id),
+        // A tracked table insertion (`docs/183` §23): Word's `w:trPr/w:ins` on every row, and
+        // nothing in a cell that is not itself a tracked insertion, so rejecting it removes
+        // exactly what it added.
+        Operation::InsertTable { table, .. } => is_inserted_table(table),
+        // An inserted paragraph whose mark is a tracked insertion and whose text is all
+        // tracked insertion (an assistant's new paragraph after a table), or a tracked table.
+        Operation::InsertBlocks { blocks, .. } => {
+            !blocks.is_empty()
+                && blocks.iter().all(|block| match block {
+                    BlockNode::Paragraph(paragraph) => {
+                        paragraph
+                            .properties
+                            .mark_revision
+                            .as_ref()
+                            .is_some_and(|mark| mark.kind == MarkRevisionKind::Insertion)
+                            && before_projection(&paragraph.inlines).is_empty()
+                    }
+                    BlockNode::Table(table) => is_inserted_table(table),
+                    BlockNode::Sdt(_) | BlockNode::AltChunk(_) => false,
+                })
+        }
+        // A tracked table deletion: every row `w:trPr/w:del`, the cells' text struck but
+        // unchanged.
+        Operation::ReplaceTable { table, replacement } => crate::find_table(document, *table)
+            .is_some_and(|current| is_tracked_table_deletion(current, replacement)),
         other => is_comment_only(document, other),
+    }
+}
+
+/// Whether every row of `table` carries a mark revision of `kind`.
+fn rows_marked(table: &Table, kind: MarkRevisionKind) -> bool {
+    !table.rows.is_empty()
+        && table.rows.iter().all(|row| {
+            row.properties
+                .row_revision
+                .as_ref()
+                .is_some_and(|mark| mark.kind == kind)
+        })
+}
+
+/// A table that is, whole, a tracked insertion: every row marked inserted and every cell's
+/// content tracked insertion (or empty). O(cells).
+fn is_inserted_table(table: &Table) -> bool {
+    fn content_inserted(blocks: &[BlockNode]) -> bool {
+        blocks.iter().all(|block| match block {
+            BlockNode::Paragraph(paragraph) => before_projection(&paragraph.inlines).is_empty(),
+            BlockNode::Table(table) => is_inserted_table(table),
+            BlockNode::Sdt(_) | BlockNode::AltChunk(_) => false,
+        })
+    }
+    rows_marked(table, MarkRevisionKind::Insertion)
+        && table
+            .rows
+            .iter()
+            .all(|row| row.cells.iter().all(|cell| content_inserted(&cell.blocks)))
+}
+
+/// Whether `proposed` is `current` with every row marked deleted and nothing else changed
+/// but review marks: the same rows, cells and paragraphs, each paragraph's original text the
+/// same and every revision it held still held. O(cells).
+fn is_tracked_table_deletion(current: &Table, proposed: &Table) -> bool {
+    if current
+        .rows
+        .iter()
+        .any(|row| row.properties.row_revision.is_some())
+        || !rows_marked(proposed, MarkRevisionKind::Deletion)
+        || current.rows.len() != proposed.rows.len()
+        || current.id != proposed.id
+        || current.grid != proposed.grid
+        || current.properties != proposed.properties
+    {
+        return false;
+    }
+    current.rows.iter().zip(&proposed.rows).all(|(held, next)| {
+        let mut unmarked = next.properties.clone();
+        unmarked.row_revision = None;
+        held.id == next.id
+            && unmarked == held.properties
+            && held.cells.len() == next.cells.len()
+            && held.cells.iter().zip(&next.cells).all(|(a, b)| {
+                a.id == b.id
+                    && a.properties == b.properties
+                    && a.blocks.len() == b.blocks.len()
+                    && a.blocks.iter().zip(&b.blocks).all(|pair| match pair {
+                        (BlockNode::Paragraph(a), BlockNode::Paragraph(b)) => {
+                            let original = before_projection(&a.inlines);
+                            a.id == b.id
+                                && a.properties == b.properties
+                                && rejoin_split_runs(before_projection(&b.inlines), &original)
+                                    == original
+                                && revision_ids(&a.inlines)
+                                    .into_iter()
+                                    .all(|id| revision_ids(&b.inlines).contains(&id))
+                        }
+                        (a, b) => a == b,
+                    })
+            })
+    })
+}
+
+/// A whole-table review decision: `DeleteTable` rejecting a tracked insertion or accepting a
+/// tracked deletion, or `ReplaceTable` clearing every row mark while each cell paragraph is
+/// only accepted or only rejected. O(cells).
+fn is_table_decision(document: &Document, op: &Operation) -> bool {
+    match op {
+        Operation::DeleteTable { table } => crate::find_table(document, *table).is_some_and(|t| {
+            rows_marked(t, MarkRevisionKind::Insertion)
+                || rows_marked(t, MarkRevisionKind::Deletion)
+        }),
+        Operation::ReplaceTable { table, replacement } => crate::find_table(document, *table)
+            .is_some_and(|current| {
+                (rows_marked(current, MarkRevisionKind::Insertion)
+                    || rows_marked(current, MarkRevisionKind::Deletion))
+                    && current.rows.len() == replacement.rows.len()
+                    && replacement
+                        .rows
+                        .iter()
+                        .all(|row| row.properties.row_revision.is_none())
+                    && current.rows.iter().zip(&replacement.rows).all(|(a, b)| {
+                        a.cells.len() == b.cells.len()
+                            && a.cells.iter().zip(&b.cells).all(|(a, b)| {
+                                a.blocks.len() == b.blocks.len()
+                                    && a.blocks.iter().zip(&b.blocks).all(|pair| match pair {
+                                        (BlockNode::Paragraph(a), BlockNode::Paragraph(b)) => {
+                                            let held = revision_ids(&a.inlines);
+                                            revision_ids(&b.inlines)
+                                                .iter()
+                                                .all(|id| held.contains(id))
+                                                && (after_projection(&a.inlines)
+                                                    == after_projection(&b.inlines)
+                                                    || before_projection(&a.inlines)
+                                                        == before_projection(&b.inlines))
+                                        }
+                                        (a, b) => a == b,
+                                    })
+                            })
+                    })
+            }),
+        _ => false,
     }
 }
 
@@ -852,7 +999,7 @@ fn after_projection(inlines: &[InlineNode]) -> Vec<InlineNode> {
 /// for the same reason: it reuses projections rather than walking the document.
 pub(crate) fn is_review_only(document: &Document, op: &Operation) -> bool {
     let Operation::UpdateReviewState { paragraphs, .. } = op else {
-        return false;
+        return is_table_decision(document, op);
     };
     let mut resolved_any = false;
     for state in paragraphs {
