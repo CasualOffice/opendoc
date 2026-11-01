@@ -3623,5 +3623,16 @@
   "settingsNav.general": "Umum",
   "settingsNav.proofing": "Pemeriksaan",
   "settingsNav.saving": "Penyimpanan",
-  "propertyPanel.moreOptions": "Opsi lainnya"
+  "propertyPanel.moreOptions": "Opsi lainnya",
+  "ai.turn.empty": "Casual AI tidak mengembalikan apa pun; teks Anda tidak berubah.",
+  "ai.violation.empty": "tidak mengembalikan apa pun, jadi teks Anda tidak berubah.",
+  "ai.violation.incomplete": "jawabannya terpotong sebelum selesai.",
+  "plugins.assistant.live.empty": "AI tidak mengembalikan apa pun; teks Anda tidak berubah.",
+  "plugins.assistant.violation.stale": "teks berubah sebelum Casual AI mencapainya.",
+  "plugins.assistant.violation.empty": "tidak mengembalikan apa pun, jadi teks Anda tidak berubah.",
+  "plugins.assistant.violation.incomplete": "jawabannya terpotong sebelum selesai.",
+  "plugins.assistant.workingLocal": "Menunggu model lokal… Di komputer tanpa kartu grafis, ini bisa memakan beberapa menit.",
+  "plugins.assistant.unparsableFormat": "Model tidak menjawab dalam bentuk terstruktur yang diminta, jadi tidak ada yang diubah. Coba lagi; model yang lebih besar lebih andal untuk ini.",
+  "plugins.assistant.skipped": "Dibiarkan apa adanya: tabel dan daftar isi dalam pilihan ({count}).",
+  "plugins.assistant.truncatedLocal": "Hanya sebagian dokumen yang dibaca: model lokal diperkirakan memuat sekitar {tokens} token, jadi jawabannya bisa melewatkan bagian lain."
 }

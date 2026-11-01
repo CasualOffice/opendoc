@@ -66,7 +66,79 @@ def module_files(root: Path) -> list[str]:
     return found
 
 
-def stamp_page(html: str, build: str, modules: list[str]) -> str:
+# A static import or re-export at the start of a statement: `import x from "./a.mjs"`,
+# `import { a,\n b } from "./a.mjs"`, `export { a } from "./a.mjs"`, `import "./a.mjs"`.
+# Anchored at a line start so comments and strings that merely mention an import do not
+# count, and it never matches `import(` — a dynamic import is fetched on demand, by
+# design, and preloading it would defeat that.
+STATIC_IMPORT = re.compile(
+    r"^[ \t]*(?:import|export)\b(?:[^;\"'`(]*?\bfrom)?\s*([\"'])(\.{1,2}/[^\"']+)\1",
+    re.M,
+)
+
+
+def static_graph(root: Path, entries: list[str]) -> list[str]:
+    """Every module statically reachable from `entries`, site-relative, in discovery order.
+
+    O(modules + imports); reads each module once."""
+    seen: list[str] = []
+    queue = list(entries)
+    while queue:
+        rel = queue.pop(0)
+        if rel in seen:
+            continue
+        path = root / rel
+        if not path.is_file():
+            continue
+        seen.append(rel)
+        for match in STATIC_IMPORT.finditer(path.read_text(encoding="utf-8")):
+            target = (path.parent / match.group(2).split("?", 1)[0]).resolve()
+            try:
+                queue.append(str(target.relative_to(root.resolve())).replace("\\", "/"))
+            except ValueError:
+                continue  # outside the site: not ours to preload
+    return seen
+
+
+def module_preloads(html: str, build: str, root: Path | None) -> str:
+    """3. One flat `modulepreload` for every module the page's scripts import statically.
+
+    Without it the browser discovers the graph a level at a time: it must fetch and
+    parse `main.js` before it learns of the ~110 modules main.js imports, fetch those
+    before it learns of theirs, and so on — five sequential round trips over ~310
+    modules before the editor's script can run. Measured on the deployed editor
+    (wasm blocked, so the module graph alone), DOMContentLoaded fell from a median
+    of ~9.6 s to ~6.0 s with the flat list (docs/109 HF-421). The hrefs are the
+    versioned URLs the import map resolves to, so each preload is the very response
+    the import then uses."""
+    html = re.sub(r'\s*<link rel="modulepreload" data-stamp [^>]*>', "", html)
+    if root is None:
+        return html
+    entries = re.findall(r'<script type="module" src="\./((?:src|pkg)/[^"?#]+)', html)
+    if not entries:
+        return html
+    already = set(re.findall(r'<link rel="modulepreload" href="\./([^"?#]+)', html))
+    graph = [m for m in static_graph(root, entries) if m not in already and m not in entries]
+    if not graph:
+        return html
+    block = "".join(
+        f'\n    <link rel="modulepreload" data-stamp href="./{m}?v={build}" />' for m in graph
+    )
+    # After the page's own preloads (main.js, the glue, the wasm), so the entry
+    # module and the multi-megabyte engine are requested first; otherwise right
+    # after the import map, which must precede every module fetch.
+    head_end = html.find("</head>")
+    own = [
+        m
+        for m in re.finditer(r'<link rel="(?:module)?preload"(?! data-stamp)[^>]*>', html)
+        if head_end < 0 or m.start() < head_end
+    ]
+    anchor = own[-1] if own else re.search(r'<script type="importmap" data-stamp>.*?</script>', html, flags=re.S)
+    at = anchor.end() if anchor else html.index("<head>") + len("<head>")
+    return html[:at] + block + html[at:]
+
+
+def stamp_page(html: str, build: str, modules: list[str], root: Path | None = None) -> str:
     # 1. Direct references. Only local ./src/ and ./pkg/ assets: an absolute or
     #    third-party URL is not ours to version.
     def versioned(match: re.Match[str]) -> str:
@@ -107,7 +179,7 @@ def stamp_page(html: str, build: str, modules: list[str]) -> str:
             + "</script>"
         )
         html = html.replace("<head>", "<head>" + block, 1)
-    return html
+    return module_preloads(html, build, root)
 
 
 def stamp_stylesheet(css: str, build: str) -> str:
@@ -145,7 +217,7 @@ def main() -> None:
     if not pages:
         raise SystemExit(f"stamp-assets: no pages in {root}")
     for page in pages:
-        page.write_text(stamp_page(page.read_text(encoding="utf-8"), build, modules), encoding="utf-8")
+        page.write_text(stamp_page(page.read_text(encoding="utf-8"), build, modules, root), encoding="utf-8")
     stylesheets = sorted((root / "src").glob("*.css"))
     for sheet in stylesheets:
         sheet.write_text(stamp_stylesheet(sheet.read_text(encoding="utf-8"), build), encoding="utf-8")

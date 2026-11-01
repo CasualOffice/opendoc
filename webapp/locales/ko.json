@@ -3623,5 +3623,16 @@
   "settingsNav.general": "일반",
   "settingsNav.proofing": "언어 교정",
   "settingsNav.saving": "저장",
-  "propertyPanel.moreOptions": "추가 옵션"
+  "propertyPanel.moreOptions": "추가 옵션",
+  "ai.turn.empty": "Casual AI가 아무것도 반환하지 않았습니다. 텍스트는 바뀌지 않았습니다.",
+  "ai.violation.empty": "아무것도 반환하지 않아 텍스트가 바뀌지 않았습니다.",
+  "ai.violation.incomplete": "답변이 끝나기 전에 끊겼습니다.",
+  "plugins.assistant.live.empty": "AI가 아무것도 반환하지 않았습니다. 텍스트는 바뀌지 않았습니다.",
+  "plugins.assistant.violation.stale": "Casual AI가 도달하기 전에 텍스트가 바뀌었습니다.",
+  "plugins.assistant.violation.empty": "아무것도 반환하지 않아 텍스트가 바뀌지 않았습니다.",
+  "plugins.assistant.violation.incomplete": "답변이 끝나기 전에 끊겼습니다.",
+  "plugins.assistant.workingLocal": "로컬 모델을 기다리는 중… 그래픽 카드가 없는 컴퓨터에서는 몇 분 걸릴 수 있습니다.",
+  "plugins.assistant.unparsableFormat": "모델이 요청한 구조화된 형식으로 답하지 않아 아무것도 바뀌지 않았습니다. 다시 시도하세요. 더 큰 모델이 더 안정적으로 해냅니다.",
+  "plugins.assistant.skipped": "그대로 둠: 선택 영역의 표와 목차 ({count}).",
+  "plugins.assistant.truncatedLocal": "문서의 일부만 읽었습니다. 로컬 모델은 약 {tokens} 토큰을 담는 것으로 가정하므로 다른 곳의 내용을 놓칠 수 있습니다."
 }

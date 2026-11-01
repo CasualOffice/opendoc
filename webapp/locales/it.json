@@ -3645,5 +3645,16 @@
   "settingsNav.general": "Generali",
   "settingsNav.proofing": "Strumenti di correzione",
   "settingsNav.saving": "Salvataggio",
-  "propertyPanel.moreOptions": "Altre opzioni"
+  "propertyPanel.moreOptions": "Altre opzioni",
+  "ai.turn.empty": "Casual AI non ha restituito nulla; il tuo testo è invariato.",
+  "ai.violation.empty": "non ha restituito nulla, quindi il tuo testo è invariato.",
+  "ai.violation.incomplete": "la sua risposta si è interrotta prima di finire.",
+  "plugins.assistant.live.empty": "L’IA non ha restituito nulla; il tuo testo è invariato.",
+  "plugins.assistant.violation.stale": "il testo è cambiato prima che Casual AI lo raggiungesse.",
+  "plugins.assistant.violation.empty": "non ha restituito nulla, quindi il tuo testo è invariato.",
+  "plugins.assistant.violation.incomplete": "la sua risposta si è interrotta prima di finire.",
+  "plugins.assistant.workingLocal": "In attesa del modello locale… Su un computer senza scheda grafica può richiedere alcuni minuti.",
+  "plugins.assistant.unparsableFormat": "Il modello non ha risposto nella forma strutturata richiesta, quindi non è stato cambiato nulla. Riprova; un modello più grande lo fa in modo più affidabile.",
+  "plugins.assistant.skipped": "Lasciati com’erano: tabelle e sommari nella selezione ({count}).",
+  "plugins.assistant.truncatedLocal": "È stata letta solo una parte del documento: si presume che un modello locale contenga circa {tokens} token, quindi la risposta può perdere ciò che si trova altrove."
 }

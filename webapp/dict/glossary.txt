@@ -175,6 +175,7 @@ OSS
 OTT
 Offline
 OffscreenCanvas
+Ollama
 OnlyOffice
 OpenAI
 OpenDoc

@@ -23,7 +23,7 @@
 // answer. The record is kept for this page and offered to `onAudit`.
 //
 // Complexity: O(1) per call beyond the adapter's own work.
-import { LIMITS, aiError, checkRequest, createBudget } from "./ai_provider.mjs";
+import { LIMITS, aiError, checkRequest, createBudget, isLocalEndpoint } from "./ai_provider.mjs";
 import { anthropicAdapter, hostAdapter, mcpSamplingAdapter, openAiAdapter } from "./ai_provider_adapters.mjs";
 
 /** The URL parameter a framed editor reads (`hostConfig().aiProvider`). */
@@ -112,9 +112,30 @@ export function createHostProviderChannel({ emit, setTimer: rawSetTimer = setTim
   };
 }
 
+/** The presets that run a model on this computer (`ai_settings.mjs` `local:
+ *  true`; `ai_provider.test.mjs` holds the two lists equal). */
+export const LOCAL_PRESETS = Object.freeze(["ollama", "lmstudio", "vllm"]);
+
+/** Whether a BYOK configuration reaches a model on this computer: a local
+ *  preset, or any loopback URL (a custom preset pointed at `localhost`). Pure. */
+export function isLocalSettings(settings) {
+  return !!settings && (LOCAL_PRESETS.includes(settings.preset) || isLocalEndpoint(settings.baseUrl));
+}
+
+/**
+ * The watchdog's clocks for a configuration: a local model gets
+ * `LIMITS.localFirstByteMs` to its first token, a cloud service
+ * `LIMITS.firstByteMs`. `timers` given by the caller (tests) win. Pure.
+ */
+export function timersForSettings(settings, timers) {
+  if (timers) return timers;
+  return isLocalSettings(settings) ? { firstByteMs: LIMITS.localFirstByteMs, idleMs: LIMITS.idleMs } : { firstByteMs: LIMITS.firstByteMs, idleMs: LIMITS.idleMs };
+}
+
 /** The adapter a BYOK configuration builds, or null. */
-export function adapterForSettings(settings, { fetchImpl, timers } = {}) {
+export function adapterForSettings(settings, { fetchImpl, timers: given } = {}) {
   if (!settings || !settings.baseUrl) return null;
+  const timers = timersForSettings(settings, given);
   if (settings.protocol === "anthropic") {
     return anthropicAdapter({ baseUrl: settings.baseUrl, apiKey: settings.apiKey ?? "", fetchImpl, timers });
   }
@@ -169,6 +190,7 @@ export function createAiProviders({ config = {}, framed = false, settings = () =
       model: String(stored.model ?? ""),
       contextTokens: Number(stored.contextTokens) || LIMITS.defaultContextTokens,
       outputCeiling: Number(stored.outputCeiling) || LIMITS.defaultOutputTokens,
+      local: isLocalSettings(stored),
     };
   }
 
@@ -198,7 +220,7 @@ export function createAiProviders({ config = {}, framed = false, settings = () =
     describe() {
       const now_ = current();
       if (!now_) return Object.freeze({ available: false, kind: null, endpoint: "", reason: this.unavailableReason() });
-      return Object.freeze({ available: true, kind: now_.adapter.kind, endpoint: now_.adapter.endpoint, model: now_.model, reason: null });
+      return Object.freeze({ available: true, kind: now_.adapter.kind, endpoint: now_.adapter.endpoint, model: now_.model, local: now_.local === true, contextTokens: now_.contextTokens, reason: null });
     },
     /** The in-process host provider (`window.opendoc.aiProvider`). */
     get hostProvider() {

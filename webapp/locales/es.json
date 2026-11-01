@@ -3645,5 +3645,16 @@
   "settingsNav.general": "General",
   "settingsNav.proofing": "Revisión",
   "settingsNav.saving": "Guardado",
-  "propertyPanel.moreOptions": "Más opciones"
+  "propertyPanel.moreOptions": "Más opciones",
+  "ai.turn.empty": "Casual AI no devolvió nada; tu texto no ha cambiado.",
+  "ai.violation.empty": "no devolvió nada, así que tu texto no ha cambiado.",
+  "ai.violation.incomplete": "su respuesta se cortó antes de terminar.",
+  "plugins.assistant.live.empty": "La IA no devolvió nada; tu texto no ha cambiado.",
+  "plugins.assistant.violation.stale": "el texto cambió antes de que Casual AI llegara a él.",
+  "plugins.assistant.violation.empty": "no devolvió nada, así que tu texto no ha cambiado.",
+  "plugins.assistant.violation.incomplete": "su respuesta se cortó antes de terminar.",
+  "plugins.assistant.workingLocal": "Esperando al modelo local… En un equipo sin tarjeta gráfica puede tardar unos minutos.",
+  "plugins.assistant.unparsableFormat": "El modelo no respondió con la forma estructurada que se pidió, así que no se cambió nada. Inténtalo de nuevo; un modelo más grande lo hace con más fiabilidad.",
+  "plugins.assistant.skipped": "Se dejaron como estaban: tablas y tablas de contenido de la selección ({count}).",
+  "plugins.assistant.truncatedLocal": "Solo se leyó una parte del documento: se supone que un modelo local admite unos {tokens} tokens, así que la respuesta puede pasar por alto lo que está en otra parte."
 }

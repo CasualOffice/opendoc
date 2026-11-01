@@ -24,6 +24,19 @@
 //   * ONE UNDO STEP per turn: every commit of a turn joins one undo group in the
 //     engine's log (`Coalesce::Join`), even with the person's own commits
 //     interleaved; Accept all / Reject all act on that turn only.
+//   * NOTHING CHANGES UNTIL THERE IS SOMETHING TO WRITE (deferred replacement):
+//     a range the AI is to replace is only MARKED when the turn opens; it is
+//     struck or removed in the same queued step as the first batch that holds a
+//     non-blank character (`applyDeferred`). An answer that is empty or blank, a
+//     first-byte timeout, a dropped connection, a guard violation or a Stop that
+//     comes before that batch therefore leaves the document byte for byte as it
+//     was, and a turn that ends having written nothing is reverted and reported
+//     ("returned nothing; your text is unchanged"), never offered for Accept.
+//     Deferral rather than rollback, because a rollback is a second edit that can
+//     itself fail or race the person's typing; a deletion that never happened
+//     needs no undoing. The deferred range is re-found through the engine-mapped
+//     anchor (ADR-030 I3) and re-checked against its exact text before it is
+//     replaced, so the person may type elsewhere in the paragraph meanwhile.
 //   * SAFETY AS A ROLLBACK, not a preview: the add-in validates each delta
 //     (`assistant_core.js` `createGuard`) and this module enforces its own
 //     ceiling (bytes, characters, the effective mode). A violation stops the
@@ -80,6 +93,9 @@ export function mapPersonSelection(selection, before, after) {
   const focus = point(selection.focus);
   return anchor === selection.anchor && focus === selection.focus ? selection : { ...selection, anchor, focus };
 }
+
+/** Whether `text` holds anything a reader would see. Pure. */
+const visible = (text) => /\S/.test(String(text ?? ""));
 
 /** The editor's ceiling on one batch: a violation code, or null. Pure. */
 export function hostViolation(text, written, { breaks = 0, cell = false } = {}) {
@@ -302,8 +318,8 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
     return next;
   }
 
-  function tell(state, extra = {}) {
-    const current = turn;
+  function tell(state, extra = {}, which = turn) {
+    const current = which;
     if (!current) return;
     try {
       current.notify?.({ turn: current.id, state, mode: current.mode, ...extra });
@@ -325,8 +341,10 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
 
   /** Writes what is buffered NOW as one batch, after every earlier batch. The
    *  text is taken at the call, so a later move (the next table cell) can never
-   *  pull it along to the wrong place. */
-  function flush() {
+   *  pull it along to the wrong place. While a replacement is still deferred, a
+   *  blank batch is held back (at the end, dropped): only a visible character
+   *  may cause the marked range to be replaced. */
+  function flush(final = false) {
     const current = turn;
     if (!current || !current.writing || !current.pending) return queue(async () => {});
     const text = current.pending;
@@ -335,11 +353,16 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
     current.timer = 0;
     return queue(async () => {
       if (turn !== current || !current.writing) return;
+      if (current.deferred && !visible(text)) {
+        if (!final) current.pending = text + current.pending;
+        return;
+      }
       // An IME composition owns the person's own text: wait it out, never cut in.
       while (ed.composingText && turn === current && current.writing) {
         await new Promise((resolve) => view.setTimeout(resolve, FLUSH_MS));
       }
       if (turn !== current || !current.writing) return;
+      if (current.deferred && !(await applyDeferred(current))) return;
       const before = currentAnchor();
       const result = engine(() => ed.doc.aiTurnWrite(current.engineId, text));
       if (!result.ok) {
@@ -347,25 +370,66 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
         return;
       }
       current.batches += 1;
+      if (visible(text)) current.wrote = true;
       await applyAi(result.value, before);
     });
   }
 
-  async function rollback(current, code) {
+  /**
+   * Replaces the range the turn marked, now that there is text to put there.
+   * The range is found again from the engine-mapped anchor (the person may have
+   * typed before it in the same paragraph) and must still hold exactly the text
+   * the model was shown; anything else is `stale` and the turn is rolled back,
+   * which changes nothing here because nothing was written yet. Returns false
+   * when the turn must not write. O(paragraph).
+   */
+  async function applyDeferred(current) {
+    const range = current.deferred;
+    current.deferred = null;
+    const waited = Date.now() - range.since;
+    if (waited < HIGHLIGHT_MS) await new Promise((resolve) => view.setTimeout(resolve, HIGHLIGHT_MS - waited));
+    if (turn !== current || !current.writing) return false;
+    const at = currentAnchor();
+    const start = at && at.node === range.node ? at.offset : range.start;
+    const end = start + (range.end - range.start);
+    if (textAt(range.node, start, end) !== range.exact) {
+      await rollback(current, "stale");
+      return false;
+    }
+    current.highlight = null;
+    const before = currentAnchor();
+    const result = engine(() => ed.doc.aiTurnReplace(current.engineId, range.node, start, end));
+    if (!result.ok) {
+      await rollback(current, "stale");
+      return false;
+    }
+    await applyAi(result.value, before);
+    return turn === current && current.writing;
+  }
+
+  /** Ends the turn as if it never happened: the engine reverts whatever it did
+   *  and drops it from Undo. `empty` (the turn wrote nothing visible) is said as
+   *  "returned nothing; your text is unchanged", any other code as a rollback. */
+  async function rollback(current, code, extra = {}) {
     if (!current || current.decided) return;
     current.pending = "";
+    current.deferred = null;
+    current.highlight = null;
     if (current.timer) view.clearTimeout(current.timer);
     current.timer = 0;
     current.writing = false;
     current.decided = true;
     engine(() => ed.doc.aiTurnEnd(current.engineId));
     const reverted = engine(() => ed.doc.aiTurnRevert(current.engineId, true));
-    if (reverted.ok) await ed.applyEditResult(reverted.value, { keepView: true, keepSelection: true });
+    if (reverted.ok && reverted.value && typeof reverted.value === "object" && "free" in reverted.value) {
+      await ed.applyEditResult(reverted.value, { keepView: true, keepSelection: true });
+    }
     hidePointer();
     reflectBar();
     ed.paintOverlayLayer?.();
-    ed.setStatus(t("ai.turn.rolledBack", { reason: t(`ai.violation.${code}`) }), "error");
-    tell("rolledBack", { code });
+    if (code === "empty") ed.setStatus(t("ai.turn.empty"), "error");
+    else ed.setStatus(t("ai.turn.rolledBack", { reason: t(`ai.violation.${code}`) }), "error");
+    tell("rolledBack", { code, ...extra }, current);
   }
 
   function refusal(code, extra = {}) {
@@ -390,7 +454,7 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
 
     /** The live turn's id and state, or null. */
     current() {
-      return turn ? { turn: turn.id, mode: turn.mode, writing: turn.writing, decided: turn.decided, batches: turn.batches, pending: turn.pending.length, written: turn.written, timer: !!turn.timer } : null;
+      return turn ? { turn: turn.id, mode: turn.mode, writing: turn.writing, decided: turn.decided, batches: turn.batches, pending: turn.pending.length, written: turn.written, timer: !!turn.timer, deferred: !!turn.deferred, wrote: turn.wrote } : null;
     },
 
     /**
@@ -415,7 +479,7 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
       const mode = access.mode === "direct" ? "direct" : "suggest";
       const opened = engine(() => ed.doc.aiTurnBegin(mode, isoNow()));
       if (!opened.ok) return refusal("engine", { detail: opened.error });
-      turn = { id: `ai-turn-${randomUuid()}`, engineId: opened.value, mode, access: access.mode, writing: true, decided: false, stopped: false, pending: "", timer: 0, chain: Promise.resolve(), written: 0, breaks: 0, batches: 0, cells: null, cellBytes: 0, notify, highlight: null };
+      turn = { id: `ai-turn-${randomUuid()}`, engineId: opened.value, mode, access: access.mode, writing: true, decided: false, stopped: false, pending: "", timer: 0, chain: Promise.resolve(), written: 0, breaks: 0, batches: 0, cells: null, cellBytes: 0, notify, highlight: null, deferred: null, wrote: false };
       const current = turn;
       const steps = [];
       const k = spec?.kind;
@@ -429,12 +493,12 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
           engine(() => ed.doc.aiTurnEnd(current.engineId));
           return refusal("stale");
         }
-        // The range it replaces, marked briefly before it changes.
+        // The range it replaces is MARKED now and replaced only when the first
+        // visible text arrives (`applyDeferred`): until then nothing changed.
         current.highlight = { node: spec.node, start, end };
+        current.deferred = { node: String(spec.node), start, end, exact: String(spec.exact ?? ""), since: Date.now() };
         ed.paintOverlayLayer?.();
         steps.push(() => ed.doc.aiTurnSetAnchor(current.engineId, String(spec.node), start));
-        steps.push("wait");
-        steps.push(() => ed.doc.aiTurnReplace(current.engineId, String(spec.node), start, end));
       } else if (k === "remove") {
         steps.push(() => ed.doc.aiTurnDeleteRange(current.engineId, String(spec.anchor.node), Number(spec.anchor.offset) >>> 0, String(spec.focus.node), Number(spec.focus.offset) >>> 0));
       } else if (k === "after") {
@@ -454,12 +518,6 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
       placePointer(true);
       reflectBar();
       for (const step of steps) {
-        if (step === "wait") {
-          await new Promise((resolve) => view.setTimeout(resolve, HIGHLIGHT_MS));
-          current.highlight = null;
-          if (turn !== current || !current.writing) return refusal("stopped");
-          continue;
-        }
         const before = currentAnchor();
         const result = engine(step);
         if (!result.ok) {
@@ -491,17 +549,13 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
         const start = Number(spec?.start) >>> 0;
         const end = Number(spec?.end) >>> 0;
         if (end <= start || textAt(spec.node, start, end) !== String(spec.exact ?? "")) return refusal("stale");
+        // A range marked earlier that never received text is left as it was.
+        current.deferred = null;
         engine(() => ed.doc.aiTurnSetAnchor(current.engineId, String(spec.node), start));
         current.highlight = { node: spec.node, start, end };
+        current.deferred = { node: String(spec.node), start, end, exact: String(spec.exact ?? ""), since: Date.now() };
         placePointer(true);
         ed.paintOverlayLayer?.();
-        await new Promise((resolve) => view.setTimeout(resolve, HIGHLIGHT_MS));
-        current.highlight = null;
-        if (turn !== current || !current.writing) return refusal("stopped");
-        const before = currentAnchor();
-        const result = engine(() => ed.doc.aiTurnReplace(current.engineId, String(spec.node), start, end));
-        if (!result.ok) return refusal("stale", { detail: result.error });
-        await applyAi(result.value, before);
         return Object.freeze({ ok: true });
       });
     },
@@ -543,6 +597,7 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
         placePointer(true);
         const result = engine(() => ed.doc.aiTurnComment(current.engineId, String(spec.node), start, end, text));
         if (!result.ok) return refusal("stale", { detail: result.error });
+        current.wrote = true;
         await applyAi(result.value, null);
         return Object.freeze({ ok: true });
       });
@@ -592,9 +647,17 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
       if (!current || current.id !== id || !current.writing) return refusal("gone");
       if (current.timer) view.clearTimeout(current.timer);
       current.timer = 0;
-      await flush();
+      await flush(true);
       await queue(async () => {});
-      if (turn !== current || current.decided) return refusal("gone");
+      if (turn !== current || current.decided) return refusal(current.decided && !current.wrote ? "empty" : "gone");
+      if (!current.wrote) {
+        // Nothing visible was written: nothing is offered for Accept, and
+        // whatever the turn built around the text (a paragraph, a table) goes.
+        await rollback(current, "empty");
+        return refusal("empty");
+      }
+      current.highlight = null;
+      current.deferred = null;
       current.writing = false;
       const summary = engine(() => JSON.parse(ed.doc.aiTurnEnd(current.engineId)));
       hidePointer();
@@ -609,6 +672,18 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
     stop(id, by = "person") {
       const current = turn;
       if (!current || current.id !== id || !current.writing) return false;
+      if (!current.wrote) {
+        // Stopped before anything visible was written: a marked range was never
+        // touched, so there is nothing to keep. The turn goes, as if never begun.
+        // The revert is queued behind any batch already in flight, so a batch
+        // never lands after it, and a decision waits for it.
+        current.writing = false;
+        current.pending = "";
+        if (current.timer) view.clearTimeout(current.timer);
+        current.timer = 0;
+        void queue(() => rollback(current, "empty", { by }));
+        return true;
+      }
       current.pending = "";
       if (current.timer) view.clearTimeout(current.timer);
       current.timer = 0;
@@ -637,6 +712,8 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
       if (!current || current.id !== id || current.decided) return refusal("gone");
       if (current.writing) coeditor.stop(id, "decision");
       await queue(async () => {});
+      // A turn stopped before it wrote anything was reverted by `stop`.
+      if (current.decided) return refusal("empty");
       const result = engine(() => (accept ? ed.doc.aiTurnAccept(current.engineId) : ed.doc.aiTurnRevert(current.engineId, false)));
       current.decided = true;
       if (result.ok && result.value && typeof result.value === "object" && "free" in result.value) {

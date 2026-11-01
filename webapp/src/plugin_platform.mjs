@@ -43,6 +43,7 @@ import { capabilityLine, loadAiEditSetting, saveAiEditSetting } from "./ai_edit_
 import { addCommandSource, shown } from "./plugin_command_sources.mjs";
 import {
   addInstalled,
+  admitInOrder,
   grantFor,
   loadCatalogues,
   removeInstalled,
@@ -266,6 +267,9 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
     platform.notifyAll("access/changed", now);
   }
   registerAiLive({ editor: coeditor, accessChanged });
+  /** Whether a plugin edits LIVE through the co-editor: the product's own
+   *  AI add-ins only; a third-party add-in proposes through the private preview. */
+  const liveEditor = (record) => record.entry.source === "first-party" && record.entry.when === "ai";
   /** id -> {manifest, entry, running: host|null, enabled} */
   const plugins = new Map();
   let catalogue = { mode: "none", entries: [], allowInstall: false, problems: [] };
@@ -606,7 +610,7 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
         copy: record.entry.source === "first-party" ? (text) => copyText(text) : null,
         // Live co-editing (`docs/183` §23), for the product's own assistant only:
         // a third-party add-in still proposes through the private preview.
-        coedit: record.entry.source === "first-party" && record.entry.when === "ai" ? {
+        coedit: liveEditor(record) ? {
           access: describeAccess,
           begin: (spec, options) => coeditor.begin(spec, options),
           write: (turn, text, options) => coeditor.write(turn, text, options),
@@ -793,11 +797,13 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
 
   // ---- Loading -------------------------------------------------------------
 
-  async function admit(entry) {
+  /** `fetched` is the manifest's download when the caller already started it
+   *  (`admitInOrder`, at load); an install starts its own. */
+  async function admit(entry, fetched = fetchJson(entry.manifestUrl)) {
     let manifest;
     let raw;
     try {
-      raw = await fetchJson(entry.manifestUrl);
+      raw = await fetched;
       const checked = checkManifest(raw, { manifestUrl: entry.manifestUrl, selfOrigin: view.location.origin });
       if (!checked.ok) return { ok: false, reason: checked.reason };
       manifest = checked.manifest;
@@ -852,7 +858,7 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
     }
     view.matchMedia?.("(prefers-color-scheme: dark)").addEventListener?.("change", themeChanged);
     catalogue = await loadCatalogues({ config, baseUrl: view.location.href, fetchJson, view });
-    for (const entry of catalogue.entries) await admit(entry);
+    await admitInOrder(catalogue.entries, fetchJson, admit);
     renderManager();
     reflectChrome();
   }
@@ -1174,7 +1180,13 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
   }, { once: true });
 
   const platform = {
-    plugins: () => [...plugins.values()].map((record) => ({ id: record.manifest.id, enabled: record.enabled, present: present(record), state: record.running?.state ?? "stopped", source: record.entry.source, grant: record.running?.grant() ?? null })),
+    // `grant` is the plugin's PRIVATE-PREVIEW grant (`effectiveGrant`: its
+    // `direct` needs the host's `?ai=direct`). The product's own assistant edits
+    // LIVE instead, under the effective access (`ai_edit_mode.mjs`, ADR-077 as
+    // amended: Direct edits is the person's choice), which `liveEdits` reports,
+    // so the two are never read as one ("direct: false" beside a turn bar that
+    // says "Direct edits", owner 2026-11-01).
+    plugins: () => [...plugins.values()].map((record) => ({ id: record.manifest.id, enabled: record.enabled, present: present(record), state: record.running?.state ?? "stopped", source: record.entry.source, grant: record.running?.grant() ?? null, liveEdits: record.running && liveEditor(record) ? effective().mode : null })),
     openManager,
     refresh,
     actions,

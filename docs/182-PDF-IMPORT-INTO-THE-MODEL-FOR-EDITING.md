@@ -166,6 +166,26 @@ Every PDF page becomes:
 Edits rewrap within the frame. Linking frames so text flows between them (Foxit) is
 **not** in the first release; it is Q4.
 
+**What this costs the editor (`109` HF-420, 2026-11-01).** A fixed-layout PDF is the most
+object-dense document the editor opens: a 32-page file became ~1,400 selectable
+objects (frames, pictures, vector-group shapes). The selection chrome asks for the
+selected object's geometry (`objectRect`, `objectFrame`, `objectHandles`) on every
+keystroke in a frame, and pointer handling asks `objectAt`. Each answer resolved every
+placed object, and resolving one object took three lookups by id (its anchor, its group
+reference, its frame), each a walk of the document: O(objects × document), so typing in
+that file cost ~0.5 s per keystroke in Chromium and the tab stopped responding.
+The fix is **indexing**: `ObjectIndex` (`casual-doc-wasm`) answers all three questions
+from one walk of the document. It is built from the same visitors the single-object
+lookups stop early on (`visit_frames_in_blocks`, `visit_group_refs_in_blocks`,
+`casual_doc_command::objects::visit_anchors_in_blocks`), so the two cannot give different
+answers. `object_index_tests.rs` builds a synthetic fixed-layout PDF at 6 and 12 pages
+and asserts that doubling the objects doubles the work of a selection query (ratio
+2.00). With the per-object lookups put back the ratio is 3.98 and the test fails.
+Still O(document) per keystroke and not addressed here: the
+layout pass itself, because one section per page leaves the incremental resume
+(single trailing section only) with nothing to resume, and the float pass re-flows every
+frame. Natively that is ~28 ms per keystroke on the same file.
+
 ### 4.2 Flowing (the default on open; also "Convert to flowing document")
 
 From the same evidence, kept in the sidecar for the session:

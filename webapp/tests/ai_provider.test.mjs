@@ -26,7 +26,9 @@ import {
   toAnthropicRequest,
   toSamplingParams,
 } from "../src/ai_provider_adapters.mjs";
-import { createAiProviders, createHostProviderChannel } from "../src/ai_provider_channel.mjs";
+import { LOCAL_PRESETS, createAiProviders, createHostProviderChannel, timersForSettings } from "../src/ai_provider_channel.mjs";
+import { AI_PRESETS } from "../src/ai_settings.mjs";
+import { LIMITS } from "../src/ai_provider.mjs";
 
 const schema = (name) => JSON.parse(readFileSync(new URL(`../schemas/${name}.schema.json`, import.meta.url), "utf8"));
 
@@ -65,6 +67,13 @@ const server = createServer((req, res) => {
         return res.end(JSON.stringify({ error: { message: "too long", type: "invalid_request_error", code: "context_length_exceeded" } }));
       }
       if (prompt === "hang") return; // never answers: cancellation and timeouts
+      if (prompt === "think") {
+        // Headers at once, then a long think before the first token: a local
+        // server evaluating a prompt on a CPU.
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.flushHeaders();
+        return setTimeout(() => res.end(`data: ${JSON.stringify({ id: "c1", model: "m", choices: [{ index: 0, delta: { content: "Late" }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`), 150);
+      }
       if (prompt === "drip") {
         // First chunk, then silence: Stop mid-stream must keep the partial text.
         res.writeHead(200, { "content-type": "text/event-stream" });
@@ -248,6 +257,34 @@ test("openai: Stop mid-stream resolves cancelled and keeps the text that had arr
 test("openai: no first byte within the deadline is a timeout, not a hang", async () => {
   const out = await openAiAdapter({ baseUrl: `${base}/v1`, timers: { firstByteMs: 50, idleMs: 50 } }).complete(req("hang"));
   assert.equal(out.error.code, "timeout");
+});
+
+test("openai: headers are not a first byte: a server that thinks after sending them is waited for", async () => {
+  // Idle (60 ms) is shorter than the think (150 ms); first byte (1 s) is longer.
+  // Resetting the clock on headers made this a `timeout` (owner, 2026-11-01).
+  const out = await openAiAdapter({ baseUrl: `${base}/v1`, timers: { firstByteMs: 1000, idleMs: 60 } }).complete(req("think", { stream: true }));
+  assert.equal(out.ok, true, JSON.stringify(out.error ?? {}));
+  assert.equal(out.response.choices[0].message.content, "Late");
+});
+
+test("a model on this computer gets minutes to its first token; a cloud service keeps 30 s", () => {
+  assert.equal(LIMITS.firstByteMs, 30_000);
+  assert.ok(LIMITS.localFirstByteMs >= 180_000);
+  const first = (settings) => timersForSettings(settings).firstByteMs;
+  for (const preset of ["ollama", "lmstudio", "vllm"]) assert.equal(first({ preset, baseUrl: "http://localhost:1/v1" }), LIMITS.localFirstByteMs, preset);
+  assert.equal(first({ preset: "custom", baseUrl: "http://127.0.0.1:8080/v1" }), LIMITS.localFirstByteMs);
+  assert.equal(first({ preset: "custom", baseUrl: "http://[::1]:8080/v1" }), LIMITS.localFirstByteMs);
+  for (const preset of ["openai", "anthropic", "gemini", "mistral", "openrouter", "azure"]) assert.equal(first({ preset, baseUrl: "https://api.example/v1" }), LIMITS.firstByteMs, preset);
+  assert.equal(first({ preset: "custom", baseUrl: "https://llm.example.org/v1" }), LIMITS.firstByteMs);
+  // Every preset the settings mark local is local here too.
+  assert.deepEqual([...LOCAL_PRESETS].sort(), AI_PRESETS.filter((p) => p.local).map((p) => p.id).sort());
+});
+
+test("the provider says whether it is local, so the panel can say it is waiting on it", () => {
+  const providers = createAiProviders({ settings: () => ({ preset: "ollama", protocol: "openai", baseUrl: "http://localhost:11434/v1", model: "llama3.2:3b" }) });
+  assert.equal(providers.describe().local, true);
+  const cloud = createAiProviders({ settings: () => ({ preset: "openai", protocol: "openai", baseUrl: "https://api.openai.com/v1", apiKey: "k" }) });
+  assert.equal(cloud.describe().local, false);
 });
 
 test("openai: an unreachable endpoint is `network` and names CORS", async () => {

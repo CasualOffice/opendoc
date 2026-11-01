@@ -93,6 +93,55 @@ test("the import map covers every module one module imports from another", () =>
   }
 });
 
+test("the editor preloads its whole static module graph flat, so the browser does not discover it a level at a time (HF-421)", () => {
+  // Without the flat list the deployed editor fetched ~310 modules in five
+  // sequential waves (main.js → its imports → theirs …), each a round trip, before
+  // its script could run. This walks the graph independently of the stamper and
+  // asserts the GUARANTEE: every statically reachable module is preloaded at its
+  // versioned URL, and nothing that is only imported on demand is.
+  const { dir, run } = stampedCopy();
+  run(); // idempotent: a second pass must not double the list
+  const html = readFileSync(join(dir, "editor.html"), "utf8");
+  const preloaded = [...html.matchAll(/<link rel="modulepreload"[^>]*href="\.\/([^"?]+)\?v=([^"]+)"/g)];
+  for (const [, , version] of preloaded) assert.equal(version, BUILD);
+  const names = preloaded.map((m) => m[1]);
+  assert.equal(new Set(names).size, names.length, "a module is preloaded twice");
+
+  const entries = [...html.matchAll(/<script type="module" src="\.\/([^"?]+)/g)].map((m) => m[1]);
+  assert.ok(entries.includes("src/main.js"), "editor.html runs main.js as a module");
+  const reachable = new Set();
+  const queue = [...entries];
+  while (queue.length) {
+    const rel = queue.shift();
+    if (reachable.has(rel)) continue;
+    let code;
+    try {
+      code = readFileSync(join(dir, rel), "utf8");
+    } catch {
+      continue;
+    }
+    reachable.add(rel);
+    for (const [, spec] of code.matchAll(/^[ \t]*(?:import|export)\b[^;"'`(]*?(?:\bfrom\s*)?["'](\.{1,2}\/[^"']+)["']/gm)) {
+      const parts = rel.split("/").slice(0, -1);
+      for (const seg of spec.split("?")[0].split("/")) {
+        if (seg === "..") parts.pop();
+        else if (seg !== ".") parts.push(seg);
+      }
+      queue.push(parts.join("/"));
+    }
+  }
+  const missing = [...reachable].filter((m) => !entries.includes(m) && !names.includes(m));
+  assert.deepEqual(missing, [], "statically imported modules the editor does not preload");
+  assert.ok(reachable.size > 100, `the walk found the real graph (${reachable.size} modules)`);
+  // On demand stays on demand: the plugin platform is a dynamic import.
+  assert.ok(!names.includes("src/plugin_platform.mjs"), "a dynamically imported module was preloaded");
+  // The engine is requested before the module list, not queued behind it.
+  const wasmAt = html.indexOf('rel="preload" as="fetch" type="application/wasm"');
+  const listAt = html.indexOf('rel="modulepreload" data-stamp');
+  assert.ok(wasmAt > 0 && listAt > wasmAt, "the wasm preload precedes the module list");
+  assert.ok(html.indexOf('type="importmap"') < listAt, "the import map precedes every module preload");
+});
+
 test("the wasm binary the glue fetches is versioned, and re-stamping is idempotent", () => {
   const { dir, run } = stampedCopy();
   run(); // a second pass must not produce ?v=x?v=x or a second import map

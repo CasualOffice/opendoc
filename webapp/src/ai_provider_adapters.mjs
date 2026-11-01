@@ -171,7 +171,9 @@ async function httpCall({ fetchImpl, url, headers, body, stream, signal, onChunk
     } catch (err) {
       return transportError(dog, err);
     }
-    dog.progress();
+    // Headers are not an answer: a streaming server sends them at once and then
+    // evaluates the prompt, so the first-byte clock runs on to the first record.
+    if (!stream) dog.progress();
     if (!response.ok) return await errorFromHttp(response, bodyToError);
     if (!stream) {
       let json;
