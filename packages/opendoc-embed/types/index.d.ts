@@ -240,6 +240,9 @@ export declare class OpenDocEditorElement extends HTMLElement {
    *  the validated identity in force, or null. Never put in the frame's URL: it
    *  is handed over in a one-shot `identify` message once the frame has loaded. */
   identity: HostIdentity | null;
+  /** The host's model (`docs/183` §3.8): OpenAI Chat Completions JSON in and out. A
+   *  property, because functions cannot be attributes; setting it remounts. */
+  aiProvider: ((request: object, options: { signal: AbortSignal; onChunk: (chunk: object) => void; purpose: string }) => Promise<object>) | null;
   readonly capabilities: readonly Capability[];
   readonly regions: readonly Region[];
   readonly preferences: Readonly<Record<string, unknown>>;
@@ -261,7 +264,7 @@ export declare function defineOpenDocEditor(tag?: string): boolean;
 // while being wrong.
 
 /** Every event a host can hear. */
-export type HostEventName = "ready" | "change" | "selection" | "save" | "export" | "error" | "refusal" | "directory-query" | "mention" | "ai-decision";
+export type HostEventName = "ready" | "change" | "selection" | "save" | "export" | "error" | "refusal" | "directory-query" | "mention" | "ai-decision" | "ai-provider";
 
 /** Everything a refusal can say, as a code to branch on — never the message,
  *  which is localised and belongs to the chrome. */

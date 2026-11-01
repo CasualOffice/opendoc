@@ -10,6 +10,7 @@ APP
 ASCII
 Ada
 Alt
+Anthropic
 App
 Arial
 Aspose
@@ -21,6 +22,7 @@ Autosave
 BMP
 BOM
 BSD
+BYOK
 Backend
 BiDi
 Bidi
@@ -36,10 +38,12 @@ CMaps
 COEP
 COLLAB
 COLR
+CORS
 COV
 CPU
 CRDT
 CRLF
+CSP
 CSS
 Caladea
 Calibri
@@ -62,6 +66,7 @@ DPI
 DPR
 DTD
 Diff
+DocSpace
 DrawingML
 ECMA
 EMF
@@ -77,6 +82,7 @@ FNV
 FORMCHECKBOX
 FORMDROPDOWN
 FORMTEXT
+Figma
 Firefox
 Flate
 Foxit
@@ -92,6 +98,7 @@ Glyphs
 HMAC
 HTML
 HTTP
+HTTPS
 HarfBuzz
 Helvetica
 HiDPI
@@ -114,6 +121,7 @@ JWT
 JavaScript
 KiB
 Knuth
+LCS
 LGPL
 LLM
 LOC
@@ -167,6 +175,7 @@ OTT
 Offline
 OffscreenCanvas
 OnlyOffice
+OpenAI
 OpenDoc
 OpenDocument
 OpenType
@@ -178,6 +187,7 @@ PDFs
 PNG
 PNGs
 POS
+PPTX
 PRD
 PRs
 PTS
@@ -211,11 +221,13 @@ SDK
 SDS
 SDT
 SDTs
+SEP
 SHA
 SIL
 SIMD
 SVG
 SaaS
+Schemas
 ScreenTip
 Sdt
 ShareDB
@@ -233,6 +245,7 @@ TXT
 Tauri
 TeX
 Tesseract
+Tiptap
 TrueType
 Twip
 UAX
@@ -290,6 +303,7 @@ allowlist
 allowlisted
 alt
 altChunk
+api
 app
 args
 arrowing
@@ -339,6 +353,7 @@ checkable
 checkboxes
 checkmark
 checksums
+chunker
 ciphertext
 cjk
 cli
@@ -399,6 +414,7 @@ editability
 editorConfig
 embeddability
 embeddable
+embedders
 embeddings
 enablement
 encodings
@@ -409,6 +425,8 @@ enum
 enums
 escapeHtml
 etc
+eval
+exfiltration
 fallbacks
 façade
 ffData
@@ -458,6 +476,7 @@ iOS
 idempotency
 idempotent
 iframe
+iframes
 img
 impl
 incl
@@ -705,11 +724,13 @@ unrotated
 unrouted
 unsourced
 unstyled
+untrackable
 untracked
 untrusted
 uri
 url
 vAlign
+vLLM
 vMerge
 val
 validator

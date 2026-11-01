@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://casualoffice.github.io/opendoc/schemas/ai-provider-response.schema.json",
+  "title": "OpenDoc AI provider contract v1: response or error",
+  "description": "A Chat Completions response (https://platform.openai.com/docs/api-reference/chat/object), or the OpenAI error object. What a host's aiProvider callback resolves to, and what the ai-provider.answer request carries as `response` or `error`. docs/183 section 3.3.",
+  "oneOf": [{ "$ref": "#/$defs/response" }, { "$ref": "#/$defs/errorEnvelope" }],
+  "$defs": {
+    "response": {
+      "type": "object",
+      "required": ["choices"],
+      "properties": {
+        "id": { "type": "string" },
+        "object": { "const": "chat.completion" },
+        "created": { "type": "integer" },
+        "model": { "type": "string" },
+        "choices": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["message"],
+            "properties": {
+              "index": { "type": "integer" },
+              "message": {
+                "type": "object",
+                "required": ["role"],
+                "properties": {
+                  "role": { "const": "assistant" },
+                  "content": { "type": ["string", "null"] },
+                  "tool_calls": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["id", "function"],
+                      "properties": {
+                        "id": { "type": "string" },
+                        "type": { "const": "function" },
+                        "function": {
+                          "type": "object",
+                          "required": ["name"],
+                          "properties": { "name": { "type": "string" }, "arguments": { "type": "string" } }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "finish_reason": { "enum": ["stop", "length", "content_filter", "tool_calls"] }
+            }
+          }
+        },
+        "usage": {
+          "type": "object",
+          "required": ["prompt_tokens", "completion_tokens"],
+          "properties": {
+            "prompt_tokens": { "type": "integer", "minimum": 0 },
+            "completion_tokens": { "type": "integer", "minimum": 0 },
+            "total_tokens": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "errorEnvelope": {
+      "type": "object",
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "type": "object",
+          "required": ["message"],
+          "properties": {
+            "message": { "type": "string" },
+            "type": { "type": ["string", "null"] },
+            "code": { "type": ["string", "null"] },
+            "param": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "normalisedErrorCode": {
+      "description": "The code the editor normalises every failure to (docs/183 section 3.3).",
+      "enum": [
+        "provider-unconfigured",
+        "provider-disabled",
+        "bad-request",
+        "context-too-long",
+        "over-budget",
+        "auth-failed",
+        "rate-limited",
+        "content-filtered",
+        "server-error",
+        "network",
+        "timeout",
+        "cancelled",
+        "bad-response",
+        "host-refused"
+      ]
+    }
+  }
+}

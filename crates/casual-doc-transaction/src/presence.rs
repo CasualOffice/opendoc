@@ -307,6 +307,14 @@ pub struct Caret {
     pub anchor: CaretEnd,
     /// The moving end — where the participant's caret is drawn.
     pub head: CaretEnd,
+    /// Where this participant's own ASSISTANT is writing, while one of its turns is open
+    /// (`docs/178` §10, `docs/183` §24): every other replica draws a "Casual AI" caret there.
+    /// It rides in the participant's own payload rather than as a participant of its own,
+    /// so it needs no seat, no identity and no protocol change, and it dies with the
+    /// connection like the rest of presence. Absent from the encoding when `None`, so a
+    /// caret without one encodes byte for byte as before and an older reader ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<CaretEnd>,
 }
 
 /// The payload's own tag, so a caret is distinguishable from any other typed payload.
@@ -327,7 +335,25 @@ impl Caret {
         Self {
             anchor: end,
             head: end,
+            agent: None,
         }
+    }
+
+    /// A selection from `anchor` to `head`, with no assistant writing.
+    #[must_use]
+    pub const fn new(anchor: CaretEnd, head: CaretEnd) -> Self {
+        Self {
+            anchor,
+            head,
+            agent: None,
+        }
+    }
+
+    /// This caret with the participant's assistant writing at `agent` (or not, for `None`).
+    #[must_use]
+    pub const fn with_agent(mut self, agent: Option<CaretEnd>) -> Self {
+        self.agent = agent;
+        self
     }
 
     /// The bytes to put in a [`PresenceUpdate`].
@@ -609,7 +635,14 @@ impl Roster {
                             Fate::Withdrawn
                         }
                         settled => {
-                            held.payload = Caret { anchor, head }.encode();
+                            // The assistant's end is carried on its own: a paragraph it was
+                            // writing in being destroyed drops only the AI caret, never the
+                            // person's.
+                            let agent = caret.agent.and_then(|end| {
+                                let (end, fate) = rebase_end(end, map, target);
+                                (fate != Fate::Withdrawn).then_some(end)
+                            });
+                            held.payload = Caret::new(anchor, head).with_agent(agent).encode();
                             settled
                         }
                     }
@@ -773,10 +806,10 @@ mod tests {
         // The payload is a SHAPE, not a protocol change (doc 152 §2b): it goes through the same
         // frame the wire, the relay's ordered entry and the journal use.
         let (_document, nodes) = document(1);
-        let caret = Caret {
-            anchor: CaretEnd::new(Position::new(nodes[0], 2, Affinity::Before), None),
-            head: CaretEnd::new(Position::new(nodes[0], 7, Affinity::After), None),
-        };
+        let caret = Caret::new(
+            CaretEnd::new(Position::new(nodes[0], 2, Affinity::Before), None),
+            CaretEnd::new(Position::new(nodes[0], 7, Affinity::After), None),
+        );
         assert_eq!(
             Caret::decode(&caret.encode()),
             Ok(caret),
@@ -898,6 +931,47 @@ mod tests {
             1,
             "losing a caret is not losing a participant: they are still in the room"
         );
+    }
+
+    #[test]
+    fn the_assistants_caret_rides_in_the_payload_and_is_withdrawn_alone() {
+        // `docs/178` §10: a participant's assistant is drawn from its own payload. With no
+        // assistant the encoding is byte for byte what it was, so nothing else moves.
+        let (mut doc, nodes) = document(3);
+        let person = body_caret(nodes[0], 1);
+        let plain = String::from_utf8_lossy(&person.encode()).into_owned();
+        assert!(!plain.contains("agent"), "no assistant, no field: {plain}");
+        let writing = person.with_agent(Some(CaretEnd::new(
+            Position::new(nodes[1], 0, Affinity::After),
+            None,
+        )));
+        assert_eq!(Caret::decode(&writing.encode()), Ok(writing));
+
+        // The paragraph the assistant writes in is destroyed: its caret goes, the person's
+        // stays.
+        let (mut roster, grace) = roster_holding(writing.encode());
+        let mut log = RevisionLog::default();
+        let commit = log
+            .apply(
+                &mut doc,
+                transaction(
+                    1,
+                    log.head(),
+                    vec![Operation::DeleteBlocks {
+                        container: None,
+                        index: 1,
+                        count: 1,
+                    }],
+                ),
+            )
+            .expect("the middle paragraph is removed");
+        roster.rebase(commit.position_map(), &BlockIndex::of(&doc));
+        let held = Caret::decode(&roster.get(grace).expect("held").payload).expect("a caret");
+        assert_eq!(
+            held.head.position.node, nodes[0],
+            "the person's caret stays"
+        );
+        assert_eq!(held.agent, None, "the assistant's caret is withdrawn alone");
     }
 
     #[test]

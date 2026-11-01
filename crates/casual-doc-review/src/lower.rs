@@ -1326,6 +1326,9 @@ pub fn decide_revision(
     revision: &str,
     accept: bool,
 ) -> Result<Lowered, String> {
+    if let Some(table) = revision.strip_suffix(crate::table_review::TABLE_REVISION_SUFFIX) {
+        return crate::table_review::decide_table_revision(document, table, accept);
+    }
     if let Some((paragraph, part)) = parse_paragraph_revision_id(revision) {
         return decide_paragraph_revision(document, paragraph, part, accept);
     }
@@ -1532,7 +1535,8 @@ pub fn decide_all_revisions(document: &Document, accept: bool) -> Result<Lowered
     let mut format_ids = Vec::new();
     collect_review_format_ids_all(document, &mut format_ids);
     let paragraph_revisions = collect_paragraph_revisions_all(document);
-    if ids.is_empty() && format_ids.is_empty() && paragraph_revisions.is_empty() {
+    let tables = crate::table_review::has_tracked_tables(document);
+    if ids.is_empty() && format_ids.is_empty() && paragraph_revisions.is_empty() && !tables {
         return Err(refused!(
             "review.no-revisions",
             "This document has no tracked changes."
@@ -1589,6 +1593,13 @@ pub fn decide_all_revisions(document: &Document, accept: bool) -> Result<Lowered
         &paragraph_revisions,
         accept,
     ));
+    // Whole-table changes last: a kept table is replaced by its already-decided self, and
+    // a removed one goes after its cells were updated (`table_review`).
+    if tables {
+        ops.extend(crate::table_review::decide_all_tables(
+            document, &surfaces, accept,
+        )?);
+    }
     Ok(Lowered::new(ops, Pos::new(document.id(), 0)))
 }
 

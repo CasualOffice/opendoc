@@ -575,6 +575,12 @@ pub fn collect_review_revisions(
                 }
             }
             BlockNode::Table(table) => {
+                // A whole-table change is ONE card; its cells' text revisions are part of
+                // it, not cards of their own (`table_review`).
+                if let Some(kind) = crate::table_review::tracked_table_kind(table) {
+                    out.push(crate::table_review::table_revision_item(table, kind));
+                    continue;
+                }
                 for row in &table.rows {
                     for cell in &row.cells {
                         collect_review_revisions(notes, &cell.blocks, move_links, out);

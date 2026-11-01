@@ -542,6 +542,72 @@ fn framed_carets_rebase_over_edits_and_departures_remove_them() {
     assert!(receiver.is_empty());
 }
 
+/// `docs/178` §10: the assistant's caret travels in its person's own presence frame, is
+/// rebased with it, and reaches the other replica's geometry as `agent`.
+#[test]
+fn the_assistants_caret_reaches_the_other_replica_and_moves_with_the_text() {
+    use casual_doc_edit::{Operation, Pos};
+    use casual_doc_transaction::codec::{decode_frame, encode_frame};
+    use casual_doc_transaction::protocol::{ClientMessage, ServerMessage};
+    let mut doc = crate::open_document(b"abcdefgh").expect("document");
+    let node = match &doc.document.body()[0] {
+        casual_doc_model::v1::BlockNode::Paragraph(p) => p.id,
+        _ => panic!("paragraph"),
+    };
+    let id = node.to_string();
+    let mut sender = crate::presence::new_roster();
+    sender
+        .caret_frame_inner(&doc, &id, 1, &id, 1)
+        .expect("frame")
+        .expect("the person's caret");
+    // The AI starts writing: the person did not move, and still a frame goes out.
+    let frame = sender
+        .caret_frame_with_agent_inner(&doc, &id, 1, &id, 1, Some((&id, 6)))
+        .expect("frame")
+        .expect("the AI's caret is news");
+    let ClientMessage::Presence(update) = decode_frame(&frame).expect("decode") else {
+        panic!("presence");
+    };
+    let mut receiver = crate::presence::new_roster();
+    receiver.sync(&doc);
+    receiver
+        .receive_frame_inner(&encode_frame(&ServerMessage::Awareness {
+            client: ClientId::new(7),
+            update,
+        }))
+        .expect("receive");
+    doc.apply(Operation::InsertText {
+        at: Pos::new(node, 0),
+        text: "XY".to_owned(),
+    })
+    .expect("edit");
+    let rows: serde_json::Value =
+        serde_json::from_str(&receiver.remote_selections(&doc)).expect("rows");
+    assert!(
+        rows[0]["agent"]["caret"]
+            .as_array()
+            .is_some_and(|r| !r.is_empty()),
+        "the other replica draws the AI's caret: {rows}"
+    );
+    let held = receiver.roster.participants().next().expect("held");
+    let caret = casual_doc_transaction::presence::Caret::decode(&held.payload).expect("typed");
+    assert_eq!(caret.agent.map(|end| end.position.offset), Some(8));
+    // The turn ends: the next frame drops it.
+    let frame = sender
+        .caret_frame_inner(&doc, &id, 1, &id, 1)
+        .expect("frame")
+        .expect("the AI's caret going is news too");
+    let ClientMessage::Presence(update) = decode_frame(&frame).expect("decode") else {
+        panic!("presence");
+    };
+    assert_eq!(
+        casual_doc_transaction::presence::Caret::decode(&update.payload)
+            .expect("typed")
+            .agent,
+        None
+    );
+}
+
 #[test]
 fn snapshot_packages_preserve_resources_for_share_checkpoint_and_recovery_backups() {
     let mut doc = document();
@@ -948,6 +1014,65 @@ fn in_a_room_the_relays_name_is_the_author() {
         .expect("the comment");
     assert_eq!(comment.author.as_deref(), Some("Ada Lovelace"));
     assert_eq!(comment.initials.as_deref(), Some("AdL"));
+}
+
+/// `docs/178` §10's agent principal: in a room, Casual AI's suggestions and comments are
+/// "Casual AI on behalf of <the participant>", which the replica's own conform at commit
+/// keeps (before this, they were restamped to the person and the AI vanished from the room).
+#[test]
+fn in_a_room_casual_ai_writes_as_its_agent_principal() {
+    let mut d = document();
+    d.collab_receive_frame_inner(&encode_frame(&ServerMessage::Welcome {
+        base_revision: None,
+        missed: Vec::new(),
+        protocol: PROTOCOL_VERSION,
+        client: ClientId::new(0),
+        revision: Revision::new(0),
+        capabilities: Capabilities::owner(),
+        participants: Vec::new(),
+        participants_present: Vec::new(),
+        me: Some(Profile::new("u_ada", "Ada Lovelace")),
+    }))
+    .expect("welcomed");
+    let node = first_paragraph(&d);
+    let turn = d
+        .ai_turn_begin_inner("suggest", "2026-11-01T10:00:00Z")
+        .expect("begin");
+    d.ai_turn_set_anchor_inner(turn, &node, 0).expect("anchor");
+    d.ai_turn_write_inner(turn, "AI words ").expect("write");
+    d.ai_turn_comment_inner(turn, &node, 0, 2, "A note.")
+        .expect("comment");
+    let agent = "Casual AI on behalf of Ada Lovelace";
+    let revisions: serde_json::Value = serde_json::from_str(&d.list_revisions()).expect("json");
+    let authors: Vec<_> = revisions
+        .as_array()
+        .expect("rows")
+        .iter()
+        .map(|row| row["author"].clone())
+        .collect();
+    // The comment's range splits the insertion in two; both halves are the agent's.
+    assert!(
+        !authors.is_empty() && authors.iter().all(|author| *author == agent),
+        "every suggestion of the turn is the agent's: {authors:?}"
+    );
+    let comment = d
+        .document
+        .definitions()
+        .comments
+        .iter()
+        .map(|(_, comment)| comment)
+        .next()
+        .expect("the comment");
+    assert_eq!(comment.author.as_deref(), Some(agent));
+    assert_eq!(comment.initials.as_deref(), Some("AI"));
+    // The turn still finds its own revisions under that author.
+    let end = d.ai_turn_end_value(turn).expect("end");
+    assert_eq!(
+        end["revisions"].as_array().map(Vec::len),
+        Some(authors.len())
+    );
+    d.ai_turn_accept_inner(turn).expect("accept all");
+    assert_eq!(d.list_revisions(), "[]");
 }
 
 /// The roster hands the chrome everyone present with what they look like — the input

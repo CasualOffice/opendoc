@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Probe</title>
+<p id="state">waiting</p>
+<p id="invoked">0</p>
+<script src="../../../../plugins/sdk/opendoc-plugin.js"></script>
+<script>
+  // A test plugin. It does nothing on its own: the e2e spec drives `window.probe`
+  // from inside this frame, so every call goes through the real port and the
+  // real permission gate.
+  OpenDocPlugin.connect().then(async (editor) => {
+    window.probe = editor;
+    window.probeInfo = await editor.initialize();
+    document.getElementById("state").textContent = "connected";
+    editor.on("contribution/invoked", () => {
+      const node = document.getElementById("invoked");
+      node.textContent = String(Number(node.textContent) + 1);
+    });
+  });
+</script>

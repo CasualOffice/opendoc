@@ -48,8 +48,10 @@ pub use limits::Limits;
 pub use profile::Profile;
 /// The author every agent suggestion and comment carries unless an operator sets
 /// another: the owner's answer to `docs/178` Q3 (2026-10-29). It is written into
-/// `w:author`, so Word's review pane shows it too.
-pub const AI_AUTHOR: &str = "Casual AI";
+/// `w:author`, so Word's review pane shows it too. In a shared room the editor writes
+/// `casual_doc_edit::authorship::agent_author` of the person instead ("Casual AI on behalf
+/// of Ada Lovelace", `docs/178` §10), the one form every replica's conform keeps.
+pub const AI_AUTHOR: &str = casual_doc_edit::authorship::AGENT_NAME;
 
 /// How a PDF session opens: flowing (the default) or its exact page layout
 /// (`docs/182` §4).

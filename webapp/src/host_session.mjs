@@ -49,6 +49,7 @@ import {
 import { announcementRegion } from "./status_policy.mjs";
 import { hostIdentity } from "./host_identity.mjs";
 import { DIRECTORY_PARAM, createDirectoryChannel } from "./directory.mjs";
+import { createHostProviderChannel } from "./ai_provider_channel.mjs";
 
 /** Whether the frame was opened by a host that serves the directory over
  *  `postMessage` (`?directory=1`, which the element sets when given one). */
@@ -142,6 +143,13 @@ export function createHostSession({
    *  `directory` property below, or over `postMessage` when the frame was
    *  opened with `?directory=1`. Neither: no picker, nothing sent. */
   const directoryChannel = createDirectoryChannel({ emit, remote: directoryRemote });
+
+  /** The host's model (`docs/183` §3.8): in process through the `aiProvider`
+   *  property below, or over `postMessage` as the `ai-provider` event answered by
+   *  `ai-provider.answer`. Which one is USED is `ai_provider_channel.mjs`'s
+   *  resolution; this only carries the two. */
+  const aiProviderChannel = createHostProviderChannel({ emit });
+  let aiProviderFn = null;
 
   /** The registry as a Map, built once per call that needs it. O(registry) —
    *  the same build the command palette already performs on every keystroke
@@ -273,6 +281,27 @@ export function createHostSession({
     "mention.answer"(message) {
       return Object.freeze({ answered: directoryChannel.answerMention(message) });
     },
+
+    /** The in-process host model (`docs/183` §3.8): `window.opendoc.aiProvider =
+     *  async (request, {signal, onChunk, purpose}) => response`, where `request`
+     *  and `response` are OpenAI Chat Completions JSON. A property, as `directory`
+     *  is: functions cannot be attributes. */
+    get aiProvider() {
+      return aiProviderFn;
+    },
+    set aiProvider(value) {
+      aiProviderFn = typeof value === "function" ? value : null;
+    },
+
+    /** `ai-provider.answer`: a `postMessage` host's `{qid, chunk}`, `{qid,
+     *  response}` or `{qid, error}` for an `ai-provider` request. Unknown or
+     *  late `qid`s are ignored. */
+    "ai-provider.answer"(message) {
+      return Object.freeze({ answered: aiProviderChannel.answer(message) });
+    },
+
+    /** The editor's side of the provider channel, for `ai_provider_channel.mjs`. */
+    aiProviderChannel,
 
     /** The chrome's side of the directory: whether to offer a picker at all, who
      *  matches a query, and telling the host who was mentioned. */
