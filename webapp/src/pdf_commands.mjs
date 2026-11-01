@@ -46,6 +46,31 @@ import { fetchOcrManifest, ocrManifestUrl } from "./ocr_models.mjs";
 export const CONVERT_COMMAND = "file.pdf.convertToFlowing";
 export const RECOGNISE_COMMAND = "file.pdf.recogniseText";
 export const KEEP_LAYOUT_COMMAND = "file.pdf.keepExactLayout";
+/** View ▸ Page display ▸ PDF layout, the palette and the status-bar chip
+ *  (`pdf_layout_chip.mjs`): the SWITCH between the two layouts a PDF opens in,
+ *  as a pair of radio rows (owner, 2026-11-01, `docs/109` UX-051). It is
+ *  symmetric by owner decision: either direction reopens the ORIGINAL PDF the
+ *  session kept, so the document stays a PDF session and can be switched back.
+ *  "Convert to flowing document" stays what it was — a new document that keeps
+ *  no PDF — and is a different question ("make this a Word document"). */
+export const LAYOUT_FLOWING_COMMAND = "view.pdfLayout.flowing";
+export const LAYOUT_EXACT_COMMAND = "view.pdfLayout.exact";
+
+/** The layout a document is in, as the switch names it: `"flowing"`,
+ *  `"exact"`, or `""` for a document that did not come from a PDF. Pure, O(1). */
+export function pdfLayoutOf(doc) {
+  if (!doc?.pdfOrigin) return "";
+  return String(doc.pdfLayout ?? "") === "fixed" ? "exact" : "flowing";
+}
+
+/** Why the switch cannot move to `target` (`"flowing"` | `"exact"`) now, as a
+ *  catalogue key, or `""` when it can. Pure. */
+export function layoutSwitchRefusal(doc, target) {
+  const layout = pdfLayoutOf(doc);
+  if (!layout) return "pdfLayout.notPdf";
+  if (layout === target) return target === "exact" ? "pdfFixed.already" : "pdfReflow.alreadyFlowing";
+  return "";
+}
 
 /** The layout the host opens PDFs in (`?pdfLayout=`, matched in any case
  *  like every host option, `capabilities.mjs`'s `hostParams`): `"fixed"`
@@ -204,6 +229,28 @@ export function createPdfCommands(ed, io) {
     });
   }
 
+  /** Reopens the session's PDF FLOWING, as File ▸ Open opens one, keeping the
+   *  original — the switch's way back from the exact layout, so the reader can
+   *  switch again (owner, 2026-11-01). The same import, dialog and Cancel as
+   *  Open; a session whose scans were read is read again. */
+  async function reopenFlowing() {
+    const refusal = layoutSwitchRefusal(ed.doc, "flowing");
+    if (refusal) {
+      ed.setStatus(t(refusal), "error");
+      return;
+    }
+    const original = ed.doc.pdfOriginal();
+    const name = ed.currentName;
+    const read = recognitionIfRead();
+    if (!(await ed.confirmDiscardIfEdited())) return;
+    await io.openBytes(original, name, undefined, undefined, {
+      origin: "pdf",
+      cancelledStatus: t("pdfFixed.cancelled", { name }),
+      failedStatus: (reason) => t("pdfFixed.failed", { name, reason }),
+      prepare: () => io.pdfImport.run(original, name, { layout: "flowing", recognition: read }),
+    });
+  }
+
   /** Builds the flowing document from the session's PDF and opens it as a new
    *  document. */
   async function convertToFlowing() {
@@ -253,6 +300,41 @@ export function createPdfCommands(ed, io) {
     },
     convertToFlowing,
     keepExactLayout,
+    reopenFlowing,
+    /** The layout switch's rows: View ▸ Page display ▸ PDF layout, the palette
+     *  and the status-bar chip. Radio rows, the current layout checked. Both
+     *  are enabled for a PDF session, the checked one included, so a reader
+     *  can land on it and hear that it is checked; running it says "already
+     *  open as …" in the status line. Disabled with the reason for any other
+     *  document (SKILL §10). O(1). */
+    layoutCommands() {
+      const layout = pdfLayoutOf(ed.doc);
+      const reason = t("pdfLayout.notPdf");
+      return [
+        {
+          id: LAYOUT_FLOWING_COMMAND,
+          label: t("pdfLayout.flowingCommand"),
+          group: "View",
+          kw: "pdf layout flowing reflow paragraphs editable switch view",
+          enabled: layout !== "",
+          disabledReason: reason,
+          checked: layout === "flowing",
+          radio: true,
+          run: () => void reopenFlowing(),
+        },
+        {
+          id: LAYOUT_EXACT_COMMAND,
+          label: t("pdfLayout.exactCommand"),
+          group: "View",
+          kw: "pdf layout exact fixed page as drawn original frames switch view",
+          enabled: layout !== "",
+          disabledReason: reason,
+          checked: layout === "exact",
+          radio: true,
+          run: () => void keepExactLayout(),
+        },
+      ];
+    },
     /** The summary dialog's actions: the same two commands, as buttons. */
     summaryActions() {
       return this.commands().map((command) => ({

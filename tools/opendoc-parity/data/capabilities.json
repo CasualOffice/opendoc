@@ -4881,7 +4881,7 @@
         "localeKey": "DE.Views.FileMenuPanels.Settings.txtScreenReader"
       },
       "rank": 2,
-      "note": "Both paint to a canvas and so must project structure separately. Ours mirrors headings, lists, tables and form checkboxes off-screen and is on always; theirs is a setting the user turns on."
+      "note": "Both paint to a canvas and so must project structure separately. Ours mirrors headings, lists, tables (a nested table as a table inside its cell, HF-416) and form checkboxes off-screen and is on always; theirs is a setting the user turns on."
     },
     {
       "id": "shell.select-all",

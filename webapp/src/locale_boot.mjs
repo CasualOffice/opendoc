@@ -11,6 +11,7 @@ import { BRAND_STRINGS } from "./brand.mjs";
 import { applyDocumentLocale, fetchCatalogue, localizeTree } from "./localize.mjs";
 import { LOCALES, bestLocale } from "./locales.mjs";
 import { EN_STRINGS } from "./en_strings.mjs";
+import { menuArrowKeys } from "./menu_keys.mjs";
 
 /** Locales whose FULL catalogue — the keys the markup declares, not just the
  *  script strings compiled in — has been loaded. */
@@ -134,27 +135,6 @@ export function buildLanguageMenu(list, { saved, browser, choose } = {}) {
   );
 }
 
-/** Arrow keys walk a menu; that is what `role="menu"` promises, and with twenty
- *  rows Tab alone is not an answer. Home and End go to the ends, and the ends
- *  wrap, because a list this long is circular to anyone using it in earnest. */
-function menuArrowKeys(list) {
-  list?.addEventListener("keydown", (event) => {
-    const step = { ArrowDown: 1, ArrowUp: -1, Home: 0, End: 0 }[event.key];
-    if (step === undefined) return;
-    const rows = [...list.querySelectorAll(".language-option")];
-    if (rows.length === 0) return;
-    const at = rows.indexOf(document.activeElement);
-    const next =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? rows.length - 1
-          : (at + step + rows.length) % rows.length;
-    event.preventDefault();
-    rows[next]?.focus();
-  });
-}
-
 /**
  * Wires the whole locale lifecycle to a page: register English, pick a locale,
  * fetch and apply it, fill the picker, and keep both in step when the user
@@ -242,7 +222,9 @@ export function startLocalisation({
     languagePopover?.close();
     void choose(value);
   }
-  menuArrowKeys(menuList);
+  // Arrow keys walk the list (`menu_keys.mjs`): with twenty rows Tab alone is
+  // not an answer, and the ends wrap.
+  menuArrowKeys(menuList, ".language-option");
   buildLanguagePicker(select, sources());
   return apply(preferredLocale(sources())).then((tag) => {
     buildLanguagePicker(select, sources());

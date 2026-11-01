@@ -189,7 +189,13 @@ function commandRow(command, { itemClass, formatShortcut, onRun }) {
   const item = document.createElement("button");
   item.type = "button";
   item.className = itemClass;
-  item.setAttribute("role", "menuitem");
+  // A row that carries a state says so to a screen reader: `checked` makes it
+  // a radio or a checkbox item with `aria-checked`, and the hint column shows
+  // the tick a sighted reader needs (View ▸ Page display ▸ PDF layout, UX-051).
+  // Rows without a `checked` field are plain items, as before.
+  const stateful = typeof command.checked === "boolean";
+  item.setAttribute("role", stateful ? (command.radio ? "menuitemradio" : "menuitemcheckbox") : "menuitem");
+  if (stateful) item.setAttribute("aria-checked", String(command.checked));
   item.dataset.command = command.id;
   item.disabled = command.enabled === false;
   // Only when it is actually refused. A reason on an ENABLED row is a lie in the
@@ -204,7 +210,7 @@ function commandRow(command, { itemClass, formatShortcut, onRun }) {
   label.textContent = command.label;
   const hint = document.createElement("span");
   hint.className = `${itemClass}-hint`;
-  hint.textContent = formatShortcut(command.shortcut);
+  hint.textContent = stateful && command.checked && !command.shortcut ? "✓" : formatShortcut(command.shortcut);
   item.append(label, hint);
   item.addEventListener("click", () => {
     if (command.enabled === false) return;

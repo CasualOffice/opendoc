@@ -34,6 +34,12 @@ import {
   test,
 } from "./fixtures.mjs";
 import { GRAMMAR_DOUBLED, makeSpellingDocx, spellingTypoForPage } from "./large-docx.mjs";
+import {
+  ANY_SPELL_MARK,
+  expectMarkAbsent,
+  expectNoMarksWithCheckerStatus,
+  expectNoMarksWithProofingOff,
+} from "./proofing-marks.mjs";
 
 const DOCX_MIME =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -59,6 +65,10 @@ async function openSpellingDocument(page, { pages: pageCount = 6, language = "" 
 
 const marker = (word) => `.overlay .spell-error[data-spell-word="${word}"]`;
 const grammarMark = (rule) => `.overlay .grammar-error[data-grammar-rule="${rule}"]`;
+/** The positive control for an absence (`proofing-marks.mjs`, HF-417): the
+ *  fixture's grammar line is on every page and is marked whatever the
+ *  spelling switch says, so "no spelling mark" is read beside it. */
+const GRAMMAR = grammarMark("doubled-word");
 
 /**
  * Right-clicks a squiggle at its own coordinates.
@@ -128,7 +138,7 @@ test("the scan is windowed: page 5's misspelling is flagged only once it is on s
   // bound from the walk was mutation-tested here and this spec did not notice.
   // The scan's actual EXTENT is only observable from inside, and is guarded in
   // `tests/spell_check.test.mjs` by counting what the engine is asked.
-  await expect(page.locator(marker(far))).toHaveCount(0);
+  await expectMarkAbsent(page, marker(far), marker(spellingTypoForPage(1)));
 
   await pageSheet(page, 5);
   await expect(page.locator(marker(far))).toHaveCount(1, { timeout: 20_000 });
@@ -157,10 +167,16 @@ test("right-click offers suggestions, and picking one is a single undoable edit"
 
   await first.click();
   await expect(menu).toBeHidden();
-  // The replacement went through `replaceRanges`, so the squiggle is gone and
-  // the word is really in the document — asked through Find, which reads the
-  // engine rather than the DOM.
-  await expect(page.locator(marker(typo))).toHaveCount(0, { timeout: 20_000 });
+  // The replacement went through `replaceRanges`, so the word is really in the
+  // document — read from the model-derived mirror, not from the overlay — and
+  // the squiggle is gone. The right-click put the caret IN the word, where the
+  // checker never marks anything, so a bare zero here held even when the
+  // replacement did nothing: the caret leaves first, and the absence is read
+  // beside the grammar line's mark (HF-417).
+  await expect(page.locator("#a11yDocument")).toContainText("Here the word sentence is");
+  await expect(page.locator("#a11yDocument")).not.toContainText(typo);
+  await page.keyboard.press(`${MOD}+Home`);
+  await expectMarkAbsent(page, marker(typo), GRAMMAR);
 
   // ONE undo brings the misspelling back: the same single-action guarantee
   // Replace All has, because it is the same call.
@@ -188,7 +204,12 @@ test("Ignore all clears the word, and Add to dictionary survives a reload", asyn
   await page.keyboard.press(`${MOD}+Home`);
 
   const invented = page.locator(`${marker("Qzxworden")}`);
-  await expect(invented).toHaveCount(0); // it is on the last page, not this one
+  await expectMarkAbsent(
+    page,
+    marker("Qzxworden"),
+    marker(spellingTypoForPage(1)),
+    "it is on the last page, not this one",
+  );
   await pageSheet(page, 6);
   await expect(invented.first()).toBeVisible({ timeout: 20_000 });
   const occurrences = await invented.count();
@@ -197,8 +218,12 @@ test("Ignore all clears the word, and Add to dictionary survives a reload", asyn
   const menu = await rightClickSquiggle(page, invented.first());
   await menu.locator('[data-command-id="spell.addToDictionary"]').click();
 
-  await expect(page.locator(marker("Qzxworden"))).toHaveCount(0, { timeout: 20_000 });
   await expect(page.locator("#status")).toContainText("Added", { timeout: 20_000 });
+  // The right-click left the caret in the first occurrence, which is never
+  // marked anyway; Ctrl+End parks it after the last word, off both, and page
+  // 6's own typo is the control the absence is read beside.
+  await page.keyboard.press(`${MOD}+End`);
+  await expectMarkAbsent(page, marker("Qzxworden"), marker(spellingTypoForPage(6)));
 
   // The whole point of the personal dictionary: it is still there next time.
   await openSpellingDocument(page);
@@ -210,8 +235,10 @@ test("Ignore all clears the word, and Add to dictionary survives a reload", asyn
   await expect(page.locator(marker(spellingTypoForPage(6)))).toHaveCount(1, {
     timeout: 20_000,
   });
-  await expect(page.locator(marker("Qzxworden"))).toHaveCount(
-    0,
+  await expectMarkAbsent(
+    page,
+    marker("Qzxworden"),
+    marker(spellingTypoForPage(6)),
     "a word added to the personal dictionary is not flagged after a reload",
   );
   expect(consoleErrors).toEqual([]);
@@ -230,7 +257,10 @@ test("Ignore all silences a word for the session without persisting it", async (
   await page
     .locator('.editor-context-menu [data-command-id="spell.ignoreAll"]')
     .click();
-  await expect(page.locator(marker(typo))).toHaveCount(0, { timeout: 20_000 });
+  // The right-click put the caret in the word, which is never marked: move it
+  // off, or this held whether or not Ignore all did anything (HF-417).
+  await page.keyboard.press(`${MOD}+Home`);
+  await expectMarkAbsent(page, marker(typo), GRAMMAR);
 
   // Word does not persist Ignore All, and neither do we: a new document brings
   // the word back. (Add to dictionary is the one that persists.)
@@ -250,12 +280,15 @@ test("the off switch is reachable from two surfaces and is remembered", async ({
   // Surface 1 — the Tools menu. `menu_taxonomy.test.mjs` holds the menu and the
   // command registry to agreement; this proves the row actually works.
   await runAppMenuCommand(page, "review", "tools.spellCheck");
-  await expect(page.locator(".overlay .spell-error")).toHaveCount(0);
   await expect(page.locator("#status")).toHaveText("Spell check off");
+  // Grammar is still on, so its mark proves the overlay was painted.
+  await expectMarkAbsent(page, ANY_SPELL_MARK, GRAMMAR);
 
-  // Remembered across a reload — a preference that resets is not one.
+  // Remembered across a reload — a preference that resets is not one. A fresh
+  // open has painted nothing yet, so a bare zero here held before the checker
+  // had run at all (HF-417).
   await openSpellingDocument(page);
-  await expect(page.locator(".overlay .spell-error")).toHaveCount(0);
+  await expectMarkAbsent(page, ANY_SPELL_MARK, GRAMMAR);
 
   // Surface 2 — the command palette. The command must still be ENABLED while
   // off, or there is no way back (SKILL.md §10, never a dead control).
@@ -281,10 +314,9 @@ test("a language with no dictionary is NAMED, not silently shown as clean", asyn
   // The words are still English misspellings; what changed is the declared
   // language. Nothing may be flagged — and the user has to be told why, or a
   // document nobody is checking is indistinguishable from a correct one.
-  await expect(page.locator("#status")).toHaveText("No spelling dictionary for fr-FR", {
-    timeout: 20_000,
-  });
-  await expect(page.locator(".overlay .spell-error")).toHaveCount(0);
+  // Grammar is English-only, so nothing CAN be painted here and there is no
+  // positive control: the checker's own status is the proof it ran.
+  await expectNoMarksWithCheckerStatus(page, "No spelling dictionary for fr-FR");
   expect(consoleErrors).toEqual([]);
 });
 
@@ -358,6 +390,12 @@ test("right-clicking a grammar mark explains the rule, fixes it, and can silence
 
   await menu.locator('[data-command-id="grammar.suggestion.0"]').click();
   await expect(menu).toBeHidden();
+  // The fix is in the MODEL (the mirror reads it), and one mark fewer is
+  // painted. The caret sat in the mark it was opened on, and a mark is never
+  // painted under the caret, so "one fewer" held even when the fix did nothing:
+  // the caret leaves first (HF-417).
+  await expect(page.locator("#a11yDocument")).toContainText("This line has a doubled word.");
+  await page.keyboard.press(`${MOD}+Home`);
   await expect(page.locator(grammarMark("doubled-word"))).toHaveCount(before - 1, {
     timeout: 20_000,
   });
@@ -371,9 +409,12 @@ test("right-clicking a grammar mark explains the rule, fixes it, and can silence
 
   const again = await rightClickSquiggle(page, page.locator(grammarMark("doubled-word")).first());
   await again.locator('[data-command-id="grammar.ignoreRule"]').click();
-  await expect(page.locator(grammarMark("doubled-word"))).toHaveCount(0, { timeout: 20_000 });
-  // ...and only that rule: the spelling mark beside it is untouched.
-  await expect(page.locator(marker(spellingTypoForPage(1)))).toHaveCount(1);
+  // The right-click left the caret in the mark it opened on, which is never
+  // painted while the caret is in it; move off before reading the absence
+  // (HF-417). ...and only that rule: the spelling mark beside it is untouched,
+  // and it is the control the absence is read beside.
+  await page.keyboard.press(`${MOD}+Home`);
+  await expectMarkAbsent(page, grammarMark("doubled-word"), marker(spellingTypoForPage(1)));
   expect(consoleErrors).toEqual([]);
 });
 
@@ -389,25 +430,21 @@ test("grammar and spelling are independent switches, both remembered", async ({
   // Spelling off, grammar still on — the owner rated grammar the more
   // important of the two, so it must not be reachable only via spelling.
   await runAppMenuCommand(page, "review", "tools.spellCheck");
-  await expect(page.locator(".overlay .spell-error")).toHaveCount(0);
-  await expect(page.locator(grammarMark("doubled-word")).first()).toBeVisible();
+  await expectMarkAbsent(page, ANY_SPELL_MARK, GRAMMAR);
 
   await runAppMenuCommand(page, "review", "tools.grammarCheck");
-  await expect(page.locator(".overlay .grammar-error")).toHaveCount(0);
   await expect(page.locator("#status")).toHaveText("Grammar check off");
+  await expectNoMarksWithProofingOff(page);
 
   // Both remembered across a reload, independently.
   await openSpellingDocument(page);
-  await expect(page.locator(".overlay .spell-error")).toHaveCount(0);
-  await expect(page.locator(".overlay .grammar-error")).toHaveCount(0);
+  await expectNoMarksWithProofingOff(page);
 
   await runAppMenuCommand(page, "review", "tools.grammarCheck");
   await expect(page.locator(grammarMark("doubled-word")).first()).toBeVisible({
     timeout: 20_000,
   });
-  await expect(page.locator(".overlay .spell-error")).toHaveCount(0, {
-    timeout: 5_000,
-  });
+  await expectMarkAbsent(page, ANY_SPELL_MARK, GRAMMAR);
   // Put spelling back so the stored preference does not leak into other specs.
   await runAppMenuCommand(page, "review", "tools.spellCheck");
   expect(consoleErrors).toEqual([]);
@@ -432,7 +469,7 @@ test("our own product names are never flagged, and are not the user's words", as
     timeout: 20_000,
   });
   for (const name of ["opendoc", "opencalc", "CasualOffice", "OOXML"]) {
-    await expect(page.locator(marker(name))).toHaveCount(0, `${name} must not be flagged`);
+    await expectMarkAbsent(page, marker(name), marker(spellingTypoForPage(6)), `${name} must not be flagged`);
   }
   expect(consoleErrors).toEqual([]);
 });
@@ -477,7 +514,7 @@ test("with spelling off, grammar still marks and NOTHING is fetched for spelling
   // Off, and remembered — so the next load starts with spelling already off,
   // which is the state `docs/146` §2 is about.
   await runAppMenuCommand(page, "review", "tools.spellCheck");
-  await expect(page.locator(".overlay .spell-error")).toHaveCount(0);
+  await expectMarkAbsent(page, ANY_SPELL_MARK, GRAMMAR);
 
   dictionaryRequests.length = 0;
   await openSpellingDocument(page);
@@ -485,7 +522,7 @@ test("with spelling off, grammar still marks and NOTHING is fetched for spelling
   await expect(page.locator(grammarMark("doubled-word")).first()).toBeVisible({
     timeout: 20_000,
   });
-  await expect(page.locator(".overlay .spell-error")).toHaveCount(0);
+  await expectMarkAbsent(page, ANY_SPELL_MARK, GRAMMAR);
   // ...and asked the network for neither the word list nor the glossary. The
   // glossary was the one actually being requested; `docs/146` §2 named only the
   // dictionary.
@@ -533,10 +570,12 @@ test("a word list that cannot be fetched marks nothing, says so, and leaves gram
   await expect(page.locator("#status")).toContainText("could not be loaded", {
     timeout: 20_000,
   });
-  await expect(
-    page.locator(".overlay .spell-error"),
+  await expectMarkAbsent(
+    page,
+    ANY_SPELL_MARK,
+    GRAMMAR,
     "a failed word list must flag NOTHING — it used to flag every word in the document",
-  ).toHaveCount(0);
+  );
   // The aborted request is this test's own doing and the browser reports it;
   // everything ELSE must still be clean, which is the assertion that matters.
   expect(

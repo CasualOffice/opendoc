@@ -2602,6 +2602,15 @@
       <button type="button" class="menu-item zoom-fit" data-zoom-mode="fit-page" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span><span data-i18n="zoomMenu.fitPage" class="menu-item-label">Fit page</span></button>
     </div>
 
+    <!-- The PDF layout chip's menu (UX-051): the zoom menu's shape. Each row
+         runs the registry row of the same id (`pdf_commands.mjs`
+         `layoutCommands`), so it is View ▸ Page display ▸ PDF layout by
+         another door. -->
+    <div data-i18n-label="pdfLayoutMenu.label" id="pdfLayoutMenu" class="context-menu zoom-menu" hidden role="menu" aria-label="PDF layout">
+      <button type="button" class="menu-item" data-command="view.pdfLayout.flowing" role="menuitemradio" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="pdfLayoutMenu.flowing" class="menu-item-label">Flowing</span></button>
+      <button type="button" class="menu-item" data-command="view.pdfLayout.exact" role="menuitemradio" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="pdfLayoutMenu.exact" class="menu-item-label">Exact layout</span></button>
+    </div>
+
     <!-- The footer language picker. Its ROWS are built by `locale_boot.mjs`,
          because the endonyms are a data table (`locales.mjs`) and not markup:
          "Deutsch" is a proper noun in its own language and is never translated,
@@ -4709,6 +4718,12 @@
              INTERFACE. Shown once a document is open; `language_selection.mjs`
              writes its name and its tooltip. -->
         <button data-i18n-title="textLanguageStatus.title" data-i18n-label="textLanguageStatus.label" id="textLanguageStatus" type="button" class="text-language-status" data-status-priority="3" title="Text language — click to change" aria-label="Text language — click to change" aria-haspopup="dialog" hidden><span class="ms" aria-hidden="true">translate</span><span id="textLanguageStatusLabel" class="text-language-status-label"></span></button>
+        <!-- The PDF layout chip (UX-051): shown only while the open document is
+             a PDF session, it names the layout in force (Flowing / Exact layout)
+             and opens a two-row menu that switches it. The text-language chip's
+             shape and class; `pdf_layout_chip.mjs` writes its label, icon and
+             name when it shows it. -->
+        <button data-i18n-title="pdfLayoutStatus.title" data-i18n-label="pdfLayoutStatus.label" id="pdfLayoutStatus" type="button" class="text-language-status pdf-layout-status" data-status-priority="3" title="PDF layout" aria-label="PDF layout" aria-haspopup="menu" aria-controls="pdfLayoutMenu" aria-expanded="false" hidden><span id="pdfLayoutStatusIcon" class="ms" aria-hidden="true">wrap_text</span><span id="pdfLayoutStatusLabel" class="text-language-status-label"></span><span class="ms" aria-hidden="true">arrow_drop_down</span></button>
         <!-- Language, in the status bar. Word and Google Docs both put the
              document's language here, at the bottom right, because it is
              status rather than a command — and a person who cannot read the

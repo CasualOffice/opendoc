@@ -174,10 +174,10 @@ Noto Serif
   webapp/assets/fonts/script/OFL-1.1-NotoSerif.txt
 
 Noto Sans script families -- Arabic, Devanagari, Bengali, Gurmukhi, Gujarati,
-Oriya, Tamil, Telugu, Kannada, Malayalam, Sinhala, Hebrew, Thai, Symbols 2
+Oriya, Tamil, Telugu, Kannada, Malayalam, Sinhala, Hebrew, Thai
   webapp/assets/fonts/script/NotoSans{Arabic,Devanagari,Bengali,Gurmukhi,
-  Gujarati,Oriya,Tamil,Telugu,Kannada,Malayalam,Sinhala,Hebrew,Thai,
-  Symbols2}-Regular.ttf
+  Gujarati,Oriya,Tamil,Telugu,Kannada,Malayalam,Sinhala,Hebrew,
+  Thai}-Regular.ttf
   Copyright 2022 The Noto Project Authors (https://github.com/notofonts/)
   SIL Open Font License, Version 1.1
   webapp/assets/fonts/script/OFL-1.1-Noto.txt

@@ -412,31 +412,13 @@ export const SCRIPT_FALLBACK_FONTS = Object.freeze({
     ),
     scripts: Object.freeze(["Thai"]),
   }),
-  // Bucket for the Geometric Shapes / Miscellaneous Symbols / Dingbats
-  // blocks. These scalars have the Unicode Common script (`Zyyy`), but Parley
-  // resolves Common characters beside Latin text into a Latin shaping run.
-  // Register both keys so standalone symbols and symbols embedded in labels
-  // can select the covering face. Noto Sans, the network-fetched face this
-  // table registers for Latin COVERAGE (it is not a metric substitute for
-  // anything — Calibri's metric partner is the bundled Carlito, chosen in
-  // `font_substitution.rs`; calling it "the Calibri substitute" here cost one
-  // investigation an afternoon), doesn't cover these at all, so plain content
-  // like a "☐"/"□" checklist placeholder
-  // (as in the sample fixture's acceptance-checklist and Result-column
-  // cells) tofu'd. Noto Sans Symbols 2 is the intended monochrome fallback
-  // for exactly this range (full pictographic/color emoji are a separate,
-  // much larger gap — see fontKeyForCodePoint's emoji comment).
-  //
-  // Committed, because the demo fixture's own checklist needs it: before this,
-  // the editor's first screen asked a third party for its checkbox glyphs.
-  symbols: Object.freeze({
-    ...local(
-      "NotoSansSymbols2-Regular.ttf",
-      671_568,
-      "c4a0a80f0041ce4be81e2478faad22776d23edb98ae3f0d19bd37044820ecf9d",
-    ),
-    scripts: Object.freeze(["Zyyy", "Latn"]),
-  }),
+  // There is deliberately NO `symbols` bucket. Geometric Shapes (U+25A0–25FF),
+  // Miscellaneous Symbols (U+2600–26FF) and Dingbats (U+2700–27BF) — the
+  // checklist's ☐/☒, □, ✓ — are drawn by the Noto Sans Symbols 2 subset the
+  // engine bundles (`casual-doc-layout/fonts/NotoSansSymbols2-Subset.ttf`, which
+  // covers every scalar of those blocks the full face did), offline and before
+  // any fetch. The 671 KB full face this table used to serve for them was
+  // removed by owner decision (2026-11-01, `docs/109` HF-415).
 
   // --- Colour emoji -------------------------------------------------------
   // Pictographic emoji, IN COLOUR. The engine bundles the monochrome Noto
@@ -455,9 +437,9 @@ export const SCRIPT_FALLBACK_FONTS = Object.freeze({
   //
   // Registered through the same host seam as every other bucket. The engine
   // puts a face carrying colour glyphs at the FRONT of the fallback chain, so
-  // this outranks both the bundled monochrome base and the monochrome symbols
-  // face — which is what stops an emoji-presentation heart painting as a
-  // dingbat because the symbols bucket happened to be fetched first.
+  // this outranks both the bundled monochrome Noto Emoji base and the bundled
+  // monochrome Noto Sans Symbols 2 subset — which is what stops an
+  // emoji-presentation heart painting as a dingbat.
   //
   // Like every bucket here it is coverage-driven: `missingCoverage()` only asks
   // for it when the open document actually contains these scalars (including
@@ -584,22 +566,14 @@ export function fontKeyForCodePoint(cp) {
   // of the cluster they sit in, so seeing either means the document holds an
   // emoji-presentation sequence or a ZWJ sequence and wants the colour face.
   //
-  // Without this the emoji-presentation heart (U+2764 U+FE0F) fell to the
-  // `symbols` bucket below on its base scalar alone — Noto Sans Symbols 2
-  // covers U+2764 as a monochrome dingbat, so a heart painted grey, the colour
-  // face was never asked for, and nothing said why. U+2764 on its OWN is a
-  // dingbat by Unicode default and still belongs to `symbols`; it is the
-  // selector that changes the answer.
+  // Without this the emoji-presentation heart (U+2764 U+FE0F) was decided on
+  // its base scalar alone — a monochrome dingbat — so a heart painted grey, the
+  // colour face was never asked for, and nothing said why. U+2764 on its OWN is
+  // a dingbat by Unicode default and needs no fetch: the engine's bundled
+  // Noto Sans Symbols 2 subset draws it, with the rest of Geometric Shapes,
+  // Miscellaneous Symbols and Dingbats (U+25A0–27BF), so those blocks map to
+  // no bucket at all (HF-415). It is the selector that changes the answer.
   if (cp === 0xfe0f || cp === 0x200d) return "emoji";
-  // Geometric Shapes / Miscellaneous Symbols / Dingbats. Noto Sans Symbols 2
-  // covers these monochrome shapes, and they are what a checklist's ☐/☒ markers
-  // and similar plain content use.
-  if (
-    (cp >= 0x25a0 && cp <= 0x25ff) ||
-    (cp >= 0x2600 && cp <= 0x26ff) ||
-    (cp >= 0x2700 && cp <= 0x27bf)
-  )
-    return "symbols";
   // Pictographic emoji, in the astral plane, plus the two BMP blocks that only
   // carry emoji in practice. Every block here is covered by the colour face
   // registered above; before the bucket existed these all resolved to no font

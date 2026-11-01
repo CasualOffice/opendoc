@@ -895,6 +895,14 @@ export const EN_STRINGS = Object.freeze({
   "pdfFixed.notPdf": "Only a document opened from a PDF can be reopened with its exact page layout.",
   "pdfFixed.already": "This PDF is already open with its exact page layout.",
   "pdfReflow.alreadyFlowing": "This PDF is already open as a flowing document.",
+  // The PDF layout switch (`pdf_commands.mjs` `layoutCommands`, the status-bar
+  // chip `pdf_layout_chip.mjs`, View ▸ Page display), UX-051.
+  "pdfLayout.flowing": "Flowing",
+  "pdfLayout.exact": "Exact layout",
+  "pdfLayout.flowingCommand": "PDF layout: Flowing",
+  "pdfLayout.exactCommand": "PDF layout: Exact layout",
+  "pdfLayout.status": "PDF layout: {layout}. Choose a layout",
+  "pdfLayout.notPdf": "Only a document opened from a PDF has a PDF layout to switch.",
   "findings.pdfFlowing.keepLayout": "To see each page exactly as the PDF draws it, choose Keep exact page layout.",
   "findings.pdfFlowing.save": "It saves as a Word document. Saved as PDF it is a new file; the original PDF is unchanged.",
   // Opening a PDF (`pdf_import.mjs`): the progress dialog over the staged import.

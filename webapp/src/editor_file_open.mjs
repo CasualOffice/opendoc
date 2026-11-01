@@ -13,6 +13,8 @@ import { t } from "./i18n.mjs";
 import { createPdfImport } from "./pdf_import.mjs";
 import { isPdfBytes } from "./pdf_import_scheduler.mjs";
 import { createPdfCommands, ocrSummaryOf } from "./pdf_commands.mjs";
+import { createPdfLayoutChip } from "./pdf_layout_chip.mjs";
+import { registerPopover } from "./popover_manager.mjs";
 import { hostParams } from "./capabilities.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
@@ -36,6 +38,10 @@ export function createFileOpen(ed) {
   // result through `openBytes` below. Installed on `ed` for the palette.
   const pdfCommands = createPdfCommands(ed, { pdfImport, ocrService, openBytes: (...args) => openBytes(...args) });
   ed.pdfCommands = pdfCommands;
+  // The status-bar PDF layout chip (UX-051), on the same rows as View ▸ Page
+  // display ▸ PDF layout; reflected on every open below.
+  // Held on the PDF commands it drives, so the editor context carries no new name.
+  pdfCommands.chip = createPdfLayoutChip(ed, { registerPopover });
 
   async function boot() {
     // Armed before the engine loads, because the hole it closes is open from the
@@ -381,6 +387,7 @@ export function createFileOpen(ed) {
       if (origin === "pdf") queueMicrotask(() => pdfCommands.autoRecognise());
       ed.railOutline.disabled = ed.railPages.disabled = false;
       ed.reflowView.setEnabled();
+      pdfCommands.chip.reflect();
       // The reader's formatting-mark preference, replayed onto the new handle: the
       // PREFERENCE is the person's and outlives the document, while the STATE lives on
       // the document because that is where the renderer reads it. Idempotent and O(1)

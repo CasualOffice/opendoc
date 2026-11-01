@@ -832,13 +832,22 @@ export function createSpellChecker(io) {
   function paint() {
     const doc = io.getDoc?.();
     if (!doc) return;
+    // The caret NOW, not the caret the last scan saw (HF-417). A scan records
+    // where the caret was, but moving the caret is not an edit and schedules no
+    // scan, so reading the recorded offset kept a word unmarked after the caret
+    // had left it: a word a right-click or a click had put the caret in stayed
+    // unmarked after the caret moved away, until the next keystroke or scroll.
+    // The overlay repaints on every caret move, so this follows the caret.
+    // O(1) per paragraph.
+    const caret = io.caret?.() ?? null;
     const marks = [];
     for (const paragraph of scanned) {
+      const caretOffset = caret?.node === paragraph.node ? caret.offset : undefined;
       for (const entry of paragraph.misspellings) {
         if (
-          paragraph.caretOffset !== undefined &&
-          paragraph.caretOffset >= entry.byteStart &&
-          paragraph.caretOffset <= entry.byteEnd
+          caretOffset !== undefined &&
+          caretOffset >= entry.byteStart &&
+          caretOffset <= entry.byteEnd
         )
           continue;
         if (dismissed(entry, paragraph)) continue;

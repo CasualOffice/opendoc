@@ -138,6 +138,14 @@ host's `?pdfLayout=fixed`, the `file.pdf.keepExactLayout` command (File ▸ PDF,
 and the summary's actions), `PdfLayout::Fixed` on the adapter, viewer and session, and MCP
 `open_document`'s `layout: "fixed"`. §18.9 is what was built.
 
+The editor also SHOWS which of the two a PDF session is in and switches between them
+(UX-051, owner 2026-11-01): a status-bar chip, present only for a PDF session, reads
+"Flowing" or "Exact layout" and opens a two-row menu, and View ▸ Page display carries the
+same two radio rows (`view.pdfLayout.flowing`, `view.pdfLayout.exact`). The switch is
+symmetric: Exact runs `file.pdf.keepExactLayout`, and Flowing reopens the kept original as
+File ▸ Open does, so the session stays a PDF session and can be switched back. "Convert to
+flowing document" (§20) is unchanged: it still builds a new document that keeps no PDF.
+
 ### 4.1 Fixed layout ("Keep exact page layout")
 
 Every PDF page becomes:

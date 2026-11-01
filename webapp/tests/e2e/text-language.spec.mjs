@@ -8,6 +8,7 @@
 // of an English paragraph, so the paragraph MIXES languages — the case the
 // checker used to send wholesale to the default list.
 import {
+  MOD,
   clickIntoFirstPage,
   documentPageCount,
   expect,
@@ -17,6 +18,7 @@ import {
   test,
 } from "./fixtures.mjs";
 import { makeSpellingDocx, spellingTypoForPage } from "./large-docx.mjs";
+import { expectMarkAbsent, grammarMarkFor, spellMark } from "./proofing-marks.mjs";
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
@@ -26,7 +28,7 @@ test("Set Language marks one word French: the status bar says so and spell check
   await page.setInputFiles("#file", { name: "spelling.docx", mimeType: DOCX_MIME, buffer: Buffer.from(makeSpellingDocx(2)) });
   await expect.poll(() => documentPageCount(page), { timeout: 45_000 }).toBe(2);
   const typo = spellingTypoForPage(1);
-  const squiggle = page.locator(`.overlay .spell-error[data-spell-word="${typo}"]`);
+  const squiggle = page.locator(spellMark(typo));
   // The positive case first: the English typo is flagged.
   await expect(squiggle).toHaveCount(1, { timeout: 20_000 });
 
@@ -63,15 +65,21 @@ test("Set Language marks one word French: the status bar says so and spell check
   // of 0 is also what the overlay shows for a moment while it repaints, so the
   // POSITIVE half comes first: the checker itself says it met French text it
   // has no list for, which it says only once it has split the paragraph by
-  // language (`languageParts`).
+  // language (`languageParts`). The absence itself is read beside the English
+  // grammar line's mark in the same overlay snapshot, so a repaint gap cannot
+  // pass it either (`proofing-marks.mjs`, HF-417); Ctrl+Home puts the caret at
+  // the start of the document, which is not inside the word wherever the click
+  // happened to land.
   await expect(page.locator("#status")).toHaveText("No spelling dictionary for fr-FR", { timeout: 20_000 });
   await clickIntoFirstPage(page);
-  await expect(squiggle).toHaveCount(0, { timeout: 20_000 });
+  await page.keyboard.press(`${MOD}+Home`);
+  await expectMarkAbsent(page, spellMark(typo), grammarMarkFor("doubled-word"));
 
   // One Undo puts the English back, and with it the squiggle. (The button, not
   // the chord: focus went back to the status-bar item that opened the dialog.)
   await page.locator("#undoBtn").click();
   await clickIntoFirstPage(page);
+  await page.keyboard.press(`${MOD}+Home`);
   await expect(squiggle).toHaveCount(1, { timeout: 20_000 });
   expect(consoleErrors).toEqual([]);
 });

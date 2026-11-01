@@ -105,7 +105,6 @@ export const FALLBACK_SCRIPT_LABELS = Object.freeze({
   sinhala: "Sinhala",
   hebrew: "Hebrew",
   thai: "Thai",
-  symbols: "symbols",
   emoji: "emoji",
 });
 
