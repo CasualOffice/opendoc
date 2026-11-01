@@ -141,7 +141,7 @@ jobs:
 
       - name: Install wasm-pack
         if: inputs.package == 'viewer' || inputs.package == 'both'
-        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177
+        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32
         with:
           tool: wasm-pack@0.15.0
           fallback: none
@@ -250,7 +250,7 @@ jobs:
 
       - name: Install wasm-pack for the SDK
         if: inputs.package == 'sdk'
-        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177
+        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32
         with:
           tool: wasm-pack@0.15.0
           fallback: none
