@@ -204,6 +204,28 @@ pub struct ImageEvidence {
     pub clip: Option<Bounds>,
     /// The unclipped, unrotated bounds.
     pub bounds: Bounds,
+    /// Where a page-sized picture's ink bands end: measured only for a
+    /// picture drawn at least [`INK_MEASURED_AREA`] square points (a page's
+    /// background, a letterhead), else `None`.
+    pub ink: Option<InkBands>,
+}
+
+/// The smallest displayed area, in square points, whose ink bands are
+/// measured: 40% of a Letter page.
+pub const INK_MEASURED_AREA: f64 = 0.4 * 612.0 * 792.0;
+
+/// The content of a page-sized picture at its top and bottom edges, as
+/// shares of its height from its top: a letterhead's logo band ends at
+/// `top`, its footer band starts at `bottom`. A share is 0 (top) or 1
+/// (bottom) when the edge has no band of its own: no ink in the outer
+/// quarter, or ink that runs on into the middle with no blank gap. Ink is a
+/// pixel darker than a faint watermark (luminance under 180).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct InkBands {
+    /// Where the top band of ink ends.
+    pub top: f32,
+    /// Where the bottom band of ink starts.
+    pub bottom: f32,
 }
 
 /// One painted object, in paint order.
@@ -332,4 +354,35 @@ pub struct ActiveContent {
     pub tagged: bool,
     /// Whether the document carries optional content (layers).
     pub optional_content: bool,
+}
+
+/// Gives the glyphs of every `/ActualText` span the span's text: its first
+/// glyph reads as the whole text and the rest as nothing, so a cluster
+/// several glyphs draw (an Indic syllable whose vowel sign is drawn first)
+/// reads as the characters typed, in their order, rather than as each
+/// glyph's `ToUnicode` reading. `actual` is [`crate::content::actual_texts`]'
+/// `show -> (span, text)`. O(glyphs).
+pub(crate) fn read_actual_text(
+    items: &mut [PaintEvidence],
+    actual: &std::collections::BTreeMap<u32, (u32, String)>,
+) {
+    if actual.is_empty() {
+        return;
+    }
+    let mut spoken: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+    for item in items {
+        let PaintEvidence::Glyphs(run) = item else {
+            continue;
+        };
+        let Some((span, text)) = run.show.and_then(|show| actual.get(&show)) else {
+            continue;
+        };
+        for glyph in &mut run.glyphs {
+            glyph.text = Some(if spoken.insert(*span) {
+                text.clone()
+            } else {
+                String::new()
+            });
+        }
+    }
 }

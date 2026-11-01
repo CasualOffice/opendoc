@@ -2628,6 +2628,7 @@
   "findings.feature.pdfJustification": "Căn đều được suy ra từ độ rộng dòng",
   "findings.feature.pdfPageBreaks": "Ngắt trang được suy ra từ nơi trang kết thúc",
   "findings.feature.pdfFloats": "Hình ảnh và bản vẽ đặt nổi bên cạnh hoặc phía sau văn bản",
+  "findings.feature.pdfScanReplaced": "Trang quét được hiển thị dưới dạng văn bản đã nhận dạng (bản quét vẫn ở bố cục chính xác)",
   "findings.feature.pdfDecorations": "Gạch chân, tô sáng, tô nền và viền được vẽ dưới dạng hình được trả về cho văn bản",
   "findings.feature.pdfVectorsPlaced": "Bản vẽ được đặt dưới dạng hình",
   "pdfImport.title": "Đang mở {name}",

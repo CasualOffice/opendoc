@@ -28,6 +28,8 @@ use casual_doc_model::v1::Shading;
 use casual_doc_model::v1::{
     GroupChild, GroupTextBox, PointEmu, ShapeGeometry, TextBoxBodyProperties, TextBoxInsets,
 };
+// Own line: a figure's pictures in its group.
+use casual_doc_model::v1::GroupPicture;
 // Own line: paragraph borders from the PDF's rules.
 use casual_doc_model::v1::ParagraphBorders;
 // Own line: ruled rows keep the PDF's height.
@@ -64,18 +66,29 @@ const FLOAT_SIDE_GAP: f64 = 9.0;
 /// top. `None` is vector art on its own line (`wp:wrapTopAndBottom`). O(1).
 fn float_anchor(dx: f64, dy: f64, wrap: Option<FloatWrap>) -> DrawingAnchor {
     let emu = crate::fixed::emu;
+    // A background is placed on the page itself (`dx`, `dy` from its
+    // corner), whatever paragraph carries it.
+    let page = wrap == Some(FloatWrap::Background);
     DrawingAnchor {
         horizontal: AnchorHorizontal {
-            relative_from: HorizontalAnchor::Column,
+            relative_from: if page {
+                HorizontalAnchor::Page
+            } else {
+                HorizontalAnchor::Column
+            },
             position: HorizontalPosition::Offset(emu(dx)),
         },
         vertical: AnchorVertical {
-            relative_from: VerticalAnchor::Paragraph,
+            relative_from: if page {
+                VerticalAnchor::Page
+            } else {
+                VerticalAnchor::Paragraph
+            },
             position: VerticalPosition::Offset(emu(dy)),
         },
         wrap: match wrap {
             Some(FloatWrap::Beside) => WrapMode::Square,
-            Some(FloatWrap::Behind) => WrapMode::None,
+            Some(FloatWrap::Behind | FloatWrap::Background) => WrapMode::None,
             None => WrapMode::TopAndBottom,
         },
         wrap_text: None,
@@ -90,7 +103,7 @@ fn float_anchor(dx: f64, dy: f64, wrap: Option<FloatWrap>) -> DrawingAnchor {
             WrapDistances::default()
         },
         wrap_polygon: None,
-        behind_doc: wrap == Some(FloatWrap::Behind),
+        behind_doc: matches!(wrap, Some(FloatWrap::Behind | FloatWrap::Background)),
         allow_overlap: true,
     }
 }
@@ -154,8 +167,9 @@ enum Item {
     Para(IPara),
     Table(ITable, Option<usize>),
     Image(SourceImage, Option<usize>),
-    /// Vector art on its own line, with the text drawn inside it.
-    Vector(SourceVector, Option<usize>, Vec<ILine>),
+    /// Vector art on its own line, with the text drawn inside it and the
+    /// pictures that are its pieces.
+    Vector(SourceVector, Option<usize>, Vec<ILine>, Vec<SourceImage>),
     /// Floats whose text produced no paragraph of its own (a tagged table's
     /// cells): carried by an empty paragraph.
     Floats(Vec<Float>, Option<usize>),
@@ -181,7 +195,7 @@ impl Item {
     fn region(&self) -> Option<usize> {
         match self {
             Self::Para(p) => p.region,
-            Self::Table(_, r) | Self::Image(_, r) | Self::Vector(_, r, _) | Self::Floats(_, r) => {
+            Self::Table(_, r) | Self::Image(_, r) | Self::Vector(_, r, ..) | Self::Floats(_, r) => {
                 *r
             }
         }
@@ -241,12 +255,46 @@ impl Emitter<'_> {
         vector: &SourceVector,
         anchor: DrawingAnchor,
         labels: &[ILine],
+        pictures: &[SourceImage],
     ) -> Result<Option<InlineNode>, PdfImportError> {
         let paths: Vec<&casual_doc_pdf_read::PathEvidence> = vector.paths.iter().collect();
         let mut built = crate::fixed::vector_children(&paths, &mut || self.id())?;
         self.vector_clipped += built.clipped;
         self.vector_split += built.split;
-        let Some(mut bounds) = built.bounds else {
+        // The figure's pictures, over its shapes (a screenshot over the card
+        // it sits on) and under its labels, where the PDF drew them.
+        let mut children = Vec::with_capacity(pictures.len() + built.children.len());
+        let mut extent: Option<(f64, f64, f64, f64)> = built.bounds;
+        for picture in pictures {
+            let b = picture.bounds;
+            let media = self.media(picture)?;
+            children.push(GroupChild::Picture(GroupPicture {
+                id: self.id()?,
+                media,
+                offset: PointEmu {
+                    x_emu: crate::fixed::emu(b.x0),
+                    y_emu: crate::fixed::emu(b.y0),
+                },
+                extent: Extent {
+                    width_emu: crate::fixed::emu(b.width()).max(1),
+                    height_emu: crate::fixed::emu(b.height()).max(1),
+                },
+                descr: None,
+                crop: None,
+                opacity: None,
+                hyperlink: None,
+                border: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            }));
+            extent = Some(match extent {
+                Some(e) => (e.0.min(b.x0), e.1.min(b.y0), e.2.max(b.x1), e.3.max(b.y1)),
+                None => (b.x0, b.y0, b.x1, b.y1),
+            });
+        }
+        built.children.append(&mut children);
+        let Some(mut bounds) = extent else {
             return Ok(None);
         };
         // The text drawn inside it, each line a text box where the PDF set
@@ -330,7 +378,9 @@ impl Emitter<'_> {
         let mut out = Vec::with_capacity(floats.len());
         for float in floats {
             let b = float.graphic.bounds();
-            let (dx, dy) = if float.page == page {
+            let (dx, dy) = if float.wrap == FloatWrap::Background {
+                (b.x0, b.y0)
+            } else if float.page == page {
                 (b.x0 - left, b.y0 - top)
             } else {
                 (0.0, 0.0)
@@ -360,7 +410,7 @@ impl Emitter<'_> {
                     })));
                 }
                 Graphic::Vector(vector) => {
-                    if let Some(group) = self.group(vector, anchor, &[])? {
+                    if let Some(group) = self.group(vector, anchor, &[], &[])? {
                         out.push(group);
                     }
                 }
@@ -465,6 +515,9 @@ impl Emitter<'_> {
         }
         if let Some([r, g, b]) = c.shade {
             p.shading.fill = Some(RgbColor { r, g, b });
+        }
+        if c.tracking.abs() >= 0.1 {
+            p.character_spacing_twips = Some(twips(c.tracking));
         }
         p
     }
@@ -847,9 +900,15 @@ impl Emitter<'_> {
                             body.as_ref(),
                             numbers.map(|(p, t, _)| (p, t, varying.as_slice())),
                         )?;
+                        let mut properties = cell_paragraph();
+                        if centred_in(chunk, cell.x0, cell.x1) {
+                            let mut centred = (*properties).clone();
+                            centred.alignment = Some(Alignment::Center);
+                            properties = centred.into();
+                        }
                         blocks.push(BlockNode::Paragraph(Paragraph {
                             id,
-                            properties: cell_paragraph(),
+                            properties,
                             inlines,
                         }));
                     }
@@ -880,6 +939,7 @@ impl Emitter<'_> {
                             fill: cell.shading.map(|[r, g, b]| RgbColor { r, g, b }),
                             ..Shading::default()
                         },
+                        vertical_alignment: cell.valign,
                         ..TableCellProperties::default()
                     },
                     blocks,
@@ -985,16 +1045,29 @@ fn pitch_height(rows: &[Vec<super::tables::ICell>], r: usize) -> RowHeight {
     let height = step(r, r + 1).or_else(|| r.checked_sub(1).and_then(|p| step(p, r)));
     // A step of more than three of its lines (each 1.5 of its ems) is a
     // gap the table does not own.
-    let lines = rows[r]
-        .iter()
-        .map(|c| c.lines.len().max(1))
-        .max()
-        .unwrap_or(1);
     let em = rows[r]
         .iter()
         .flat_map(|c| c.lines.iter())
         .map(|l| l.size)
         .fold(1.0, f64::max);
+    // A tall row (cells at its top and bottom) is as many lines as its
+    // text spans, not as its cells hold.
+    let spanned = {
+        let all = rows[r].iter().flat_map(|c| c.lines.iter());
+        let top = all.clone().map(|l| l.top).fold(f64::INFINITY, f64::min);
+        let bottom = all.map(|l| l.bottom).fold(f64::NEG_INFINITY, f64::max);
+        if bottom > top {
+            ((bottom - top) / (1.2 * em)).ceil() as usize
+        } else {
+            1
+        }
+    };
+    let lines = rows[r]
+        .iter()
+        .map(|c| c.lines.len().max(1))
+        .max()
+        .unwrap_or(1)
+        .max(spanned);
     match height {
         Some(h) if h <= 3.0 * 1.5 * em * lines as f64 => RowHeight {
             value_twips: Some(u32::try_from(twips(h).clamp(0, 31_680)).unwrap_or(0)),
@@ -1007,6 +1080,23 @@ fn pitch_height(rows: &[Vec<super::tables::ICell>], r: usize) -> RowHeight {
 /// A cell paragraph's properties: no space after it (the row's height, or
 /// the cell's padding, is the space; Normal's measured space between body
 /// paragraphs inside every cell made each row a line taller). O(1).
+/// Whether every line of a cell paragraph is centred between the cell's
+/// edges `x0`..`x1` and stands clear of both by at least an em: a merged
+/// header centred across the columns it spans, a status centred in its
+/// column. Text flush with an edge is left (or end) aligned, whatever its
+/// centre. O(lines).
+pub(super) fn centred_in(lines: &[&ILine], x0: f64, x1: f64) -> bool {
+    let middle = (x0 + x1) / 2.0;
+    let tolerance = ((x1 - x0) * 0.04).max(2.0);
+    !lines.is_empty()
+        && lines.iter().all(|line| {
+            let em = line.size.max(1.0);
+            ((line.x0 + line.x1) / 2.0 - middle).abs() <= tolerance
+                && line.x0 - x0 >= em
+                && x1 - line.x1 >= em
+        })
+}
+
 fn cell_paragraph() -> casual_doc_model::v1::SharedParagraphProperties {
     ParagraphProperties {
         spacing: Some(Spacing {
@@ -1201,6 +1291,24 @@ pub const PAGE_BREAK_FILL: f64 = 0.75;
 /// Justified: at least three lines, every line but the last ending at the
 /// same right edge (within a point) at the column's right, and the last line
 /// shorter. Ragged-right text does not end every line within a point. O(lines).
+/// Where `line` had to stop: the left edge of a graphic floated beside the
+/// text (`FloatWrap::Beside`) that shares its band and stands to its right,
+/// else the column's right edge. Text wrapped around a picture runs to the
+/// picture, not the column, so the paragraph it began goes on below the
+/// picture instead of ending at its edge. O(floats).
+fn wrap_right(line: &ILine, column_right: f64, floats: &[Float]) -> f64 {
+    floats
+        .iter()
+        .filter(|f| f.page == line.page && matches!(f.wrap, FloatWrap::Beside))
+        .map(|f| f.graphic.bounds())
+        .filter(|b| {
+            let shared = line.bottom.min(b.y1) - line.top.max(b.y0);
+            shared > 0.5 * (line.bottom - line.top) && b.x0 >= line.x1 - 1.0 && b.x0 < column_right
+        })
+        .map(|b| b.x0)
+        .fold(column_right, f64::min)
+}
+
 pub(super) fn justified(lines: &[&ILine], column_left: f64, column_right: f64) -> bool {
     if lines.len() < 3 {
         return false;
@@ -1279,7 +1387,8 @@ pub(crate) fn emit(
                         let continued = same_struct
                             || same_line
                             || prev.last_line.as_ref().is_some_and(|last| {
-                                text::continues(last, prev.column_right, refs[0], left, key)
+                                let right = wrap_right(last, prev.column_right, &prev.floats);
+                                text::continues(last, right, refs[0], left, key)
                             });
                         if continued {
                             let (more, removed) = text::join(&refs);
@@ -1412,6 +1521,7 @@ pub(crate) fn emit(
                     vector.clone(),
                     element.region,
                     element.labels.clone(),
+                    element.pictures.clone(),
                 ));
             }
         }
@@ -1745,7 +1855,12 @@ pub(crate) fn emit(
         .get(&(false, Variant::Default))
         .and_then(|part| {
             let row = part.rows.first().and_then(|row| row.first()).map(|l| l.top);
-            let object = part.objects.iter().map(|o| o.0).reduce(f64::min);
+            let object = part
+                .objects
+                .iter()
+                .filter(|o| !matches!(o.1, super::PartObject::Background(_)))
+                .map(|o| o.0)
+                .reduce(f64::min);
             match (row, object) {
                 (Some(a), Some(b)) => Some(a.min(b)),
                 (a, b) => a.or(b),
@@ -1758,6 +1873,49 @@ pub(crate) fn emit(
         .and_then(|part| part.rows.last())
         .and_then(|row| row.last())
         .map(|l| l.bottom);
+    // A header's or footer's pictures and tables are page-anchored or sit
+    // in the part; the body clears them (the body of a page with a logo in
+    // the header had started under the logo).
+    let object_edge = |footer: bool| -> Option<f64> {
+        let part = flow.furniture.parts.get(&(footer, Variant::Default))?;
+        let edges = part.objects.iter().map(|(_, o)| match o {
+            super::PartObject::Image(image) => {
+                if footer {
+                    image.bounds.y0
+                } else {
+                    image.bounds.y1
+                }
+            }
+            // Behind the text: the body runs over it, but not over its
+            // logo band (a letterhead's logo at the top, its address band at
+            // the bottom, measured from its ink).
+            super::PartObject::Background(image) => {
+                let b = image.bounds;
+                match image.ink {
+                    Some(ink) if footer && ink.bottom < 1.0 => {
+                        b.y0 + f64::from(ink.bottom) * b.height()
+                    }
+                    Some(ink) if !footer && ink.top > 0.0 => b.y0 + f64::from(ink.top) * b.height(),
+                    _ if footer => f64::INFINITY,
+                    _ => f64::NEG_INFINITY,
+                }
+            }
+            super::PartObject::Table(t, ..) => {
+                if footer {
+                    t.bounds.1
+                } else {
+                    t.bounds.3
+                }
+            }
+        });
+        if footer {
+            edges.reduce(f64::min)
+        } else {
+            edges.reduce(f64::max)
+        }
+    };
+    let by0 = object_edge(false).map_or(by0, |bottom| by0.max(bottom + 4.0));
+    let by1 = object_edge(true).map_or(by1, |top| by1.min(top - 4.0));
     let margins = PageMargins {
         top_twips: twips(by0.max(0.0)),
         bottom_twips: twips((page_h - by1).max(0.0)),
@@ -1922,11 +2080,14 @@ pub(crate) fn emit(
                 let table = emitter.table(t)?;
                 body.push(BlockNode::Table(Box::new(table)));
             }
-            Item::Vector(vector, region, labels) => {
+            Item::Vector(vector, region, labels, pictures) => {
                 let x0 = labels.iter().map(|l| l.x0).fold(vector.bounds.x0, f64::min);
                 let (left, _) = column(&flow, *region, None, x0, page_w);
                 let anchor = float_anchor(x0 - left, 0.0, None);
-                let inlines = emitter.group(vector, anchor, labels)?.into_iter().collect();
+                let inlines = emitter
+                    .group(vector, anchor, labels, pictures)?
+                    .into_iter()
+                    .collect();
                 body.push(BlockNode::Paragraph(Paragraph {
                     id: emitter.id()?,
                     properties: ParagraphProperties::default().into(),
@@ -2742,7 +2903,8 @@ fn furniture_part(
                     emitter.numbered_table(table, Some((page + 1, total_pages, varying)))?;
                 placed.push((*top, BlockNode::Table(Box::new(built))));
             }
-            super::PartObject::Image(image) => {
+            super::PartObject::Image(image) | super::PartObject::Background(image) => {
+                let behind = matches!(object, super::PartObject::Background(_));
                 let media = emitter.media(image)?;
                 let b = image.bounds;
                 emitter.z += 1;
@@ -2768,7 +2930,7 @@ fn furniture_part(
                             wrap_text: None,
                             wrap_distances: WrapDistances::default(),
                             wrap_polygon: None,
-                            behind_doc: false,
+                            behind_doc: behind,
                             allow_overlap: true,
                         },
                         descr: None,

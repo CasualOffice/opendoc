@@ -122,6 +122,7 @@ impl FontTable {
             let units_per_em = face
                 .units_per_em()
                 .map_err(|error| FontError::Malformed(font.0, error))?;
+            embeddable(&face, bytes.len()).map_err(|error| FontError::Malformed(font.0, error))?;
             self.next += 1;
             self.planned.insert(
                 font.0,
@@ -225,6 +226,32 @@ pub struct EmbeddedFace {
     /// subsetter also keeps the components a composite glyph references, and no
     /// content stream ever emits those, so there is nothing to copy.
     pub unmapped_glyphs: usize,
+}
+
+/// Whether `face` can be written into a PDF, checked before any page names
+/// it (a face found unusable while writing would leave pages naming a font
+/// the file lacks): a program copied whole fits [`MAX_FONT_BYTES`], and a
+/// TrueType face has the `glyf` and `loca` tables a subset is built from.
+/// O(tables).
+fn embeddable(face: &Face<'_>, bytes: usize) -> Result<(), SfntError> {
+    let no_subsetting = face
+        .embedding_permissions()
+        .is_some_and(|flags| flags & FSTYPE_NO_SUBSETTING != 0);
+    if (face.is_cff() || no_subsetting) && bytes > crate::subset::MAX_FONT_BYTES {
+        return Err(SfntError::TooLarge(bytes));
+    }
+    if !face.is_cff() {
+        for tag in [b"glyf", b"loca"] {
+            if face.table(tag).is_none() {
+                return Err(SfntError::MissingTable(if tag == b"glyf" {
+                    "glyf"
+                } else {
+                    "loca"
+                }));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn write_face(
@@ -511,6 +538,25 @@ fn postscript_name(face: &Face<'_>) -> String {
 /// stream ever emits cannot be copied out at all, so counting it described a
 /// defect that was not there. `.notdef` is never copied either, so it is not
 /// counted.
+/// Whether `code` is a compatibility or radical form a face shares a glyph
+/// with its ordinary character: Kangxi and CJK radicals, CJK compatibility
+/// ideographs, and the halfwidth and fullwidth forms. O(1).
+fn compatibility_form(code: u32) -> bool {
+    matches!(code, 0x2E80..=0x2FDF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF | 0x2F800..=0x2FA1F)
+}
+
+/// The character a glyph is named after among the `codes` a face maps to
+/// it: the lowest that is not a compatibility or radical form, else the
+/// lowest. O(codes).
+fn name_of(codes: &[u32]) -> Option<u32> {
+    codes
+        .iter()
+        .copied()
+        .filter(|&c| !compatibility_form(c))
+        .min()
+        .or_else(|| codes.iter().copied().min())
+}
+
 fn to_unicode_cmap(
     source: &[u8],
     index: u32,
@@ -519,19 +565,23 @@ fn to_unicode_cmap(
     clusters: Option<&BTreeMap<u16, String>>,
 ) -> (String, usize) {
     let mut mapping: BTreeMap<u16, String> = BTreeMap::new();
+    // Every character the face's map sends to each kept glyph: a CJK face
+    // sends a radical (U+2F47 KANGXI RADICAL SUN) and its ideograph (U+65E5)
+    // to one glyph, and naming the glyph after the lowest code made every
+    // such ideograph copy as its radical.
+    let mut candidates: BTreeMap<u16, Vec<u32>> = BTreeMap::new();
     if let Ok(font) = FontRef::from_index(source, index) {
-        let mut lowest: BTreeMap<u16, u32> = BTreeMap::new();
         for (code, glyph) in font.charmap().mappings() {
             if let Ok(id) = u16::try_from(glyph.to_u32())
                 && id != 0
                 && kept.contains(&id)
             {
-                lowest.entry(id).or_insert(code);
+                candidates.entry(id).or_default().push(code);
             }
         }
-        for (glyph, code) in lowest {
-            if let Some(ch) = char::from_u32(code) {
-                mapping.insert(glyph, ch.to_string());
+        for (glyph, codes) in &candidates {
+            if let Some(ch) = name_of(codes).and_then(char::from_u32) {
+                mapping.insert(*glyph, ch.to_string());
             }
         }
     }
@@ -544,7 +594,15 @@ fn to_unicode_cmap(
         if *glyph == 0 || !kept.contains(glyph) || text.is_empty() {
             continue;
         }
-        if text.chars().count() > 1 || !mapping.contains_key(glyph) {
+        // The document's own character wins among the ones the face maps to
+        // this glyph: it is what the reader typed.
+        let typed = text.chars().count() == 1
+            && text.chars().next().is_some_and(|c| {
+                candidates
+                    .get(glyph)
+                    .is_some_and(|codes| codes.contains(&u32::from(c)))
+            });
+        if text.chars().count() > 1 || !mapping.contains_key(glyph) || typed {
             mapping.insert(*glyph, text.clone());
         }
     }
@@ -595,6 +653,29 @@ fn to_unicode_cmap(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_glyph_shared_by_a_radical_and_its_ideograph_is_named_after_the_ideograph() {
+        // A CJK face maps U+2F47 KANGXI RADICAL SUN and U+65E5 (sun) to one
+        // glyph; the lowest code is the radical, and naming the glyph after
+        // it made every such ideograph copy as its radical.
+        assert_eq!(super::name_of(&[0x2F47, 0x65E5]), Some(0x65E5));
+        assert_eq!(
+            super::name_of(&[0xFF21, 0x41]),
+            Some(0x41),
+            "fullwidth A is not A's name"
+        );
+        assert_eq!(
+            super::name_of(&[0x2F47]),
+            Some(0x2F47),
+            "a lone radical is still named"
+        );
+        assert_eq!(
+            super::name_of(&[0x41, 0x391]),
+            Some(0x41),
+            "otherwise the lowest"
+        );
+    }
+
     use super::*;
     use casual_doc_layout::fonts;
 

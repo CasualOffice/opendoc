@@ -29,6 +29,10 @@
 //! - `FontId(24)..=27` — **Noto Emoji** (SIL OFL-1.1), the monochrome emoji base.
 //!   One face serves all four slots (emoji have no bold or italic), so the
 //!   shaper registers its bytes once.
+//! - `FontId(28)..=31` — **Noto Sans Symbols 2** (SIL OFL-1.1), a subset
+//!   covering arrows, technical symbols, geometric shapes, miscellaneous
+//!   symbols and dingbats: the ballot boxes and check marks of forms (☐ ☒ ✓ ✕)
+//!   that no other bundled face draws. One face serves all four slots.
 //!
 //! The Viewer SDK's `viewer-core-fonts` build (`wasm32` only, `docs/176` §10)
 //! embeds Liberation Sans alone. Every other family keeps its `FontId` block
@@ -242,6 +246,21 @@ pub const NOTO_EMOJI_REGULAR: &[u8] = include_bytes!("../fonts/NotoEmoji-Variabl
 #[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
 pub const NOTO_EMOJI_REGULAR: &[u8] = &[];
 
+/// Noto Sans Symbols 2 (SIL OFL-1.1), subset to the symbol blocks a document
+/// uses as text: arrows (U+2190–21FF), miscellaneous technical (U+2300–23FF),
+/// geometric shapes (U+25A0–25FF), miscellaneous symbols (U+2600–26FF),
+/// dingbats (U+2700–27BF) and miscellaneous symbols and arrows (U+2B00–2BFF).
+///
+/// Forms are full of ballot boxes and check marks (☐ ☒ ✓ ✕), and before this
+/// face no bundled face drew them: they painted as `.notdef` on screen, and an
+/// exported PDF carried boxes that copied as nothing. 151 KB (82 KB brotli)
+/// against 1.2 MB for the whole face.
+#[cfg(not(all(feature = "viewer-core-fonts", target_arch = "wasm32")))]
+pub const NOTO_SYMBOLS_REGULAR: &[u8] = include_bytes!("../fonts/NotoSansSymbols2-Subset.ttf");
+/// Empty viewer placeholder: the host supplies the symbol face (`docs/176` §10, Q2).
+#[cfg(all(feature = "viewer-core-fonts", target_arch = "wasm32"))]
+pub const NOTO_SYMBOLS_REGULAR: &[u8] = &[];
+
 /// A bundled fallback family: four faces (regular, bold, italic, bold-italic)
 /// addressed by a contiguous [`FontId`] block starting at `base`. The face for a
 /// bold/italic combination is `base + (bold | italic << 1)`.
@@ -377,6 +396,21 @@ pub const NOTO_EMOJI: BundledFamily = BundledFamily {
     ],
 };
 
+/// Noto Sans Symbols 2 — the symbol base, after Noto Emoji in the fallback
+/// chain so it only draws what neither a text face nor the emoji base covers
+/// (the emoji base keeps the code points it already drew, such as ☑ and ✔).
+/// Symbols carry no bold or italic: all four slots address the same bytes.
+pub const NOTO_SYMBOLS: BundledFamily = BundledFamily {
+    name: "Noto Sans Symbols 2",
+    base: 28,
+    faces: [
+        NOTO_SYMBOLS_REGULAR,
+        NOTO_SYMBOLS_REGULAR,
+        NOTO_SYMBOLS_REGULAR,
+        NOTO_SYMBOLS_REGULAR,
+    ],
+};
+
 /// The target's deterministic default family. Browser builds use Liberation
 /// Sans until the host-provided Roboto family is registered; native/headless
 /// builds retain Roboto.
@@ -395,7 +429,7 @@ pub const DEFAULT_FAMILY: &BundledFamily = &LIBERATION_SANS;
 /// Every family the resolver can name, in `base`-id order, whether or not this
 /// build embeds its faces. Under the Viewer SDK's core set most of them are
 /// placeholders the host fills by registering the face under the family's name.
-pub const RESOLVER_FAMILIES: [&BundledFamily; 7] = [
+pub const RESOLVER_FAMILIES: [&BundledFamily; 8] = [
     &ROBOTO,
     &CALADEA,
     &CARLITO,
@@ -403,6 +437,7 @@ pub const RESOLVER_FAMILIES: [&BundledFamily; 7] = [
     &LIBERATION_SERIF,
     &LIBERATION_MONO,
     &NOTO_EMOJI,
+    &NOTO_SYMBOLS,
 ];
 
 /// Every bundled family, in `base`-id order — the resolver's fallback chain and
@@ -411,7 +446,7 @@ pub const RESOLVER_FAMILIES: [&BundledFamily; 7] = [
     all(feature = "external-web-fonts", target_arch = "wasm32"),
     all(feature = "viewer-core-fonts", target_arch = "wasm32")
 )))]
-pub const FAMILIES: [&BundledFamily; 7] = [
+pub const FAMILIES: [&BundledFamily; 8] = [
     &ROBOTO,
     &CALADEA,
     &CARLITO,
@@ -420,6 +455,8 @@ pub const FAMILIES: [&BundledFamily; 7] = [
     &LIBERATION_MONO,
     // Last: a pictographic face must never win a code point a text face covers.
     &NOTO_EMOJI,
+    // After the emoji base: it fills only what nothing else draws.
+    &NOTO_SYMBOLS,
 ];
 
 /// The web bundle excludes Roboto's four blobs; the family remains a semantic
@@ -429,7 +466,7 @@ pub const FAMILIES: [&BundledFamily; 7] = [
     not(feature = "viewer-core-fonts"),
     target_arch = "wasm32"
 ))]
-pub const FAMILIES: [&BundledFamily; 6] = [
+pub const FAMILIES: [&BundledFamily; 7] = [
     &CALADEA,
     &CARLITO,
     &LIBERATION_SANS,
@@ -437,6 +474,8 @@ pub const FAMILIES: [&BundledFamily; 6] = [
     &LIBERATION_MONO,
     // Last: a pictographic face must never win a code point a text face covers.
     &NOTO_EMOJI,
+    // After the emoji base: it fills only what nothing else draws.
+    &NOTO_SYMBOLS,
 ];
 
 /// Every bundled face, `(FontId, bytes)`, in id order — the shaper registration
@@ -445,7 +484,7 @@ pub const FAMILIES: [&BundledFamily; 6] = [
     all(feature = "external-web-fonts", target_arch = "wasm32"),
     all(feature = "viewer-core-fonts", target_arch = "wasm32")
 )))]
-pub const BUNDLED_FACES: [(FontId, &[u8]); 28] = [
+pub const BUNDLED_FACES: [(FontId, &[u8]); 32] = [
     (FontId(0), ROBOTO_REGULAR),
     (FontId(1), ROBOTO_BOLD),
     (FontId(2), ROBOTO_ITALIC),
@@ -474,6 +513,10 @@ pub const BUNDLED_FACES: [(FontId, &[u8]); 28] = [
     (FontId(25), NOTO_EMOJI_REGULAR),
     (FontId(26), NOTO_EMOJI_REGULAR),
     (FontId(27), NOTO_EMOJI_REGULAR),
+    (FontId(28), NOTO_SYMBOLS_REGULAR),
+    (FontId(29), NOTO_SYMBOLS_REGULAR),
+    (FontId(30), NOTO_SYMBOLS_REGULAR),
+    (FontId(31), NOTO_SYMBOLS_REGULAR),
 ];
 
 /// Every face retained in the web bundle.
@@ -482,7 +525,7 @@ pub const BUNDLED_FACES: [(FontId, &[u8]); 28] = [
     not(feature = "viewer-core-fonts"),
     target_arch = "wasm32"
 ))]
-pub const BUNDLED_FACES: [(FontId, &[u8]); 24] = [
+pub const BUNDLED_FACES: [(FontId, &[u8]); 28] = [
     (FontId(4), CALADEA_REGULAR),
     (FontId(5), CALADEA_BOLD),
     (FontId(6), CALADEA_ITALIC),
@@ -507,6 +550,10 @@ pub const BUNDLED_FACES: [(FontId, &[u8]); 24] = [
     (FontId(25), NOTO_EMOJI_REGULAR),
     (FontId(26), NOTO_EMOJI_REGULAR),
     (FontId(27), NOTO_EMOJI_REGULAR),
+    (FontId(28), NOTO_SYMBOLS_REGULAR),
+    (FontId(29), NOTO_SYMBOLS_REGULAR),
+    (FontId(30), NOTO_SYMBOLS_REGULAR),
+    (FontId(31), NOTO_SYMBOLS_REGULAR),
 ];
 
 /// The Viewer SDK's core set (`docs/176` §10, Q2): Liberation Sans alone, the
@@ -600,10 +647,12 @@ mod tests {
             seen.push(bytes.as_ptr());
             total += bytes.len();
         }
-        // Raised from 10 MB with the Noto Emoji base (this commit). The native
-        // bundle is 10.88 MB; the 11.5 MB cap is deliberate headroom of about
-        // half a face, not room for another family.
-        const CAP_BYTES: usize = 11_534_336;
+        // Raised from 10 MB with the Noto Emoji base. The native bundle is
+        // 10.88 MB; the 11.5 MB cap is deliberate headroom of about half a
+        // face, not room for another family. Raised by the 151 KB symbol
+        // subset (ballot boxes and check marks, which nothing else drew) to
+        // 11.65 MB, keeping the same headroom.
+        const CAP_BYTES: usize = 11_685_000;
         assert!(
             total <= CAP_BYTES,
             "bundled faces are {:.2} MB, over the {:.0} MB cap — adding a family \

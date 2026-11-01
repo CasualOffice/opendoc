@@ -120,14 +120,64 @@ fn page_anchor(x: f64, y: f64) -> DrawingAnchor {
 /// The family an embedded program registers under and its runs name: the
 /// descriptor's family, else the base name before any style suffix.
 fn embedded_family(font: &FontEvidence) -> String {
-    font.family
+    let base = font
+        .family
         .clone()
         .filter(|f| !f.is_empty())
         .unwrap_or_else(|| {
             let name = font.name.as_str();
             let cut = name.find(['-', ',']).unwrap_or(name.len());
             name[..cut].to_owned()
-        })
+        });
+    with_weight(base, &font.name)
+}
+
+/// The light weight a font's name says (`HelveticaNeue-Light`,
+/// `Roboto-ThinItalic`, `SegoeUI,Light`), as the word Word puts in a
+/// family's name for it: the model has bold and not a weight, so Word and
+/// macOS name a light face as a family of its own ("Helvetica Neue
+/// Light", "Segoe UI Light"). O(name).
+fn light_weight(name: &str) -> Option<&'static str> {
+    let style = name.rsplit_once(['-', ',']).map_or("", |(_, s)| s);
+    let lower = style.to_ascii_lowercase();
+    if lower.contains("bold") || lower.contains("black") || lower.contains("heavy") {
+        return None;
+    }
+    [
+        ("ultralight", "UltraLight"),
+        ("extralight", "ExtraLight"),
+        ("hairline", "Thin"),
+        ("thin", "Thin"),
+        ("light", "Light"),
+    ]
+    .into_iter()
+    .find(|(spelling, _)| lower.starts_with(spelling))
+    .map(|(_, word)| word)
+}
+
+/// `family` named for the light weight `name` says, if any: its words
+/// spaced ("HelveticaNeue" is "Helvetica Neue") and the weight appended,
+/// unless the family already carries it. O(name).
+fn with_weight(family: String, name: &str) -> String {
+    let Some(word) = light_weight(name) else {
+        return family;
+    };
+    if family
+        .to_ascii_lowercase()
+        .ends_with(&word.to_ascii_lowercase())
+    {
+        return family;
+    }
+    let mut spaced = String::with_capacity(family.len() + word.len() + 2);
+    let mut previous: Option<char> = None;
+    for c in family.chars() {
+        if c.is_ascii_uppercase() && previous.is_some_and(|p| p.is_ascii_lowercase()) {
+            spaced.push(' ');
+        }
+        spaced.push(c);
+        previous = Some(c);
+    }
+    format!("{spaced} {word}")
 }
 
 /// Whether the sfnt `bytes` maps every character in `chars` through a cmap.
@@ -160,6 +210,13 @@ fn substitute_family(font: &FontEvidence) -> String {
     // a text face (and the shaper's fallback) does.
     if casual_doc_pdf_read::unicode::FontCodes::of(&font.name).symbolic() {
         return "Arial".to_owned();
+    }
+    // A light weight keeps its own family name ("Helvetica Neue Light"):
+    // mapped to Arial it drew as the regular weight, and a machine that has
+    // the light face could not use it. The layout substitutes a missing one
+    // by its class, as for any other family.
+    if light_weight(&font.name).is_some() {
+        return with_weight(base, &font.name);
     }
     if lower.starts_with("helvetica") || lower == "arialmt" {
         "Arial".to_owned()
@@ -202,6 +259,15 @@ pub(crate) fn run_font(
     )
 }
 
+/// A picture the build placed: its page, where, its part, and its ink bands
+/// (for the reflow's letterhead margins).
+pub(crate) type PlacedImage = (
+    usize,
+    Bounds,
+    MediaReference,
+    Option<casual_doc_pdf_read::InkBands>,
+);
+
 /// A finished build: the document, its media and the report.
 pub(crate) type Built = (Document, BTreeMap<String, Vec<u8>>, crate::PdfImportReport);
 
@@ -226,7 +292,7 @@ pub(crate) struct Builder {
     pub(crate) programs: Vec<EmbeddedFontProgram>,
     /// Every picture placed: page, bounds after the clip, its media
     /// reference (the reflow sidecar references these, never copies them).
-    pub(crate) placed_images: Vec<(usize, Bounds, MediaReference)>,
+    pub(crate) placed_images: Vec<PlacedImage>,
     /// The previous page's anchor paragraph, waiting for the next page so it
     /// can carry the section break that ends its page.
     pending: Option<(Paragraph, SectionId)>,
@@ -1318,6 +1384,7 @@ impl Builder {
                 media_type: media_type.to_owned(),
                 part_name,
             },
+            image.ink,
         ));
         let z = self.next_z();
         let rotation = (!upright).then(|| (image.rotation_degrees * 60_000.0).round() as i32);
@@ -1736,6 +1803,47 @@ fn push_run(inlines: &mut Vec<InlineNode>, run: InlineNode) {
 #[cfg(test)]
 mod push_run_tests {
     use super::*;
+
+    fn font(name: &str, family: Option<&str>) -> FontEvidence {
+        FontEvidence {
+            name: name.to_owned(),
+            family: family.map(str::to_owned),
+            bold: false,
+            italic: false,
+            serif: false,
+            monospace: false,
+            subtype: "Type1".to_owned(),
+            program: None,
+        }
+    }
+
+    /// A light weight keeps its own family name, the way Word and macOS
+    /// name one ("Helvetica Neue Light"); it had been mapped to Arial and
+    /// drawn regular. Mutations, each driven red: `light_weight` answering
+    /// `None`; the camel-case spacing dropped; the substitute ignoring it.
+    #[test]
+    fn a_light_weight_keeps_its_own_family_name() {
+        assert_eq!(
+            substitute_family(&font("HelveticaNeue-Light", None)),
+            "Helvetica Neue Light"
+        );
+        assert_eq!(
+            substitute_family(&font("HelveticaNeue-UltraLight", None)),
+            "Helvetica Neue UltraLight"
+        );
+        assert_eq!(
+            embedded_family(&font("Roboto-LightItalic", Some("Roboto"))),
+            "Roboto Light"
+        );
+        assert_eq!(
+            embedded_family(&font("SegoeUI-Light", Some("Segoe UI Light"))),
+            "Segoe UI Light",
+            "a family that already says it"
+        );
+        assert_eq!(substitute_family(&font("Helvetica-Bold", None)), "Arial");
+        assert_eq!(substitute_family(&font("Helvetica", None)), "Arial");
+        assert_eq!(embedded_family(&font("Lato-Regular", None)), "Lato");
+    }
 
     fn run(id: u128, text: &str, bold: bool) -> InlineNode {
         InlineNode::Run(Run {

@@ -231,7 +231,14 @@ export function createPdfCommands(ed, io) {
      *  served; a no-op otherwise. Once OCR has run, the summary names its
      *  provider and the refusal is "done", so this cannot loop. */
     autoRecognise() {
-      if (recogniseRefusal(state()) === "") void recogniseText({ auto: true });
+      if (this.willAutoRecognise()) void recogniseText({ auto: true });
+    },
+    /** Whether `autoRecognise` will recognise the open document: a PDF with
+     *  scanned pages, not yet recognised, with models served. The open that
+     *  starts it holds its summary back for the recognised document's, so
+     *  the summary appears once. Pure over the session's state. */
+    willAutoRecognise() {
+      return recogniseRefusal(state()) === "";
     },
     /** The PDF import read its first scanned page: start the models loading
      *  in the worker now, in parallel with the rest of the import, so the

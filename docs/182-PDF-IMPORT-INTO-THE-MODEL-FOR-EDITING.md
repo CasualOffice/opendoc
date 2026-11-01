@@ -1825,6 +1825,13 @@ scans; kept on the owner's machine, nothing of them committed):
 | Family | What a person saw | Root cause | Fix |
 | --- | --- | --- | --- |
 | Repeated tables and pictures | A form's title block (a ruled table with "Page 2 of 6") and its logo were body content on every page, the table's first row split off as header text | Furniture was text only, and it took the band's text out of the table before the table was built | `reflow::repeated_objects`: a table or picture in the top or bottom 30% of a page, in the same place (2 pt) with the same grid shape (a table) or type (a picture), on at least two pages and half of them, is the header's or the footer's; the band-text pass leaves text inside a ruled grid to its table. The digit runs that change from instance to instance are the page number (`PAGE`), and a run after one equal to the page count is `NUMPAGES`; a constant number (a form or revision number) stays text. Pictures are page-anchored in the part where the PDF drew them |
+| Page backgrounds | A letterhead printed as one picture the size of the page (logo and watermark) was an inline picture a page tall that pushed the text after it; per page, the copies then landed on arbitrary pages of the flowing document | Pictures were inline or floated beside text; nothing was a background | A picture covering 40% of its page with text over it is a background: behind the text, anchored to the page where the PDF drew it. One that repeats on at least two pages and half of them (any copy covering 85% of its page is one class, a few points off or not) is the header's, behind the text of every page. The layout no longer reserves header room for a behind-text picture that reaches past the middle of the page (Word runs the body over it; reserving it pushed the body off every page and pagination never ended) |
+| Letterhead overlap | The body ran over a letterhead's logo: the top margin was where the highest text on any page started | The margin knew nothing of the background picture | `casual-doc-pdf-read` measures a page-sized picture's ink bands (`ImageEvidence::ink`: where a dark band at its top ends and one at its bottom starts, each followed by a blank gap of 2% of the height, ink darker than a faint watermark); when the header's background has a top band, the body's top margin clears it, and its footer band likewise. Measured only on pictures drawn at 40% of a Letter page or more |
+| UI mockups | A guide of app screenshots (11 pages) reflowed to 39: each screenshot was eleven drawings (shadow tiles, the screenshot, its card), each on its own line, and a panel the PDF clipped at the page edge was a black block beside the page | Pictures never joined a figure; a white page painted in the same run as the card made the run page-sized, so nothing on the page clustered; paths beyond the page were kept | Pictures that touch each other, or overlap a figure, are its pieces, drawn in its group over its shapes (`cluster_pictures`); page-sized fills (half the page or more) leave their run, and a white one, like any all-white unstroked art, is not placed (`split_page_fill`, `invisible`); paths lying mostly off the page are left out (`on_page`). The guide now reflows to 13 pages, each screenshot whole; LibreOffice's white knock-out around a wrapped picture no longer makes that picture a figure |
+| Recognised scans | With OCR text, each scanned page would have become a background behind text that no longer lines up with it, or a letterhead | A scan is a page-sized picture with text over it | A page-sized picture whose text over it is all the recogniser's is left to the exact layout; the flowing document is the text, reported `pdf.import.scan_replaced_by_text` |
+| Skewed scans with OCR | On the owner's eight-page scan, recognised in the live editor: 34 pages, and the summary reported "Rotated text, shown upright" 404 times on an upright scan | A scan fed a degree or two off square: the recogniser reports each line turned by that much, and every run turned past half a degree was rotated text of its own, never grouped into paragraphs | A run turned at most 5 degrees (`record::SKEW_DEGREES`) is a skewed line: laid level along its own baseline and grouped with the lines around it, not reported rotated. Beyond 5 degrees it is rotated text, as before |
+| The summary shown twice | The import summary opened at the first open and again when recognition reopened the document | The first open showed it unconditionally | `pdfCommands.willAutoRecognise()`: when recognition will reopen the document (unread scans, models served), the first open holds its summary back; the recognised open shows the final one. If recognition is cancelled the summary stays behind its chip |
+| Scans without OCR | Each scanned page reflowed shifted right and past the page edge (the owner's report; measured live: a full 8.5 x 11 in picture at the 1 in margins, clipped right and bottom, then a blank page) | The picture kept the page's size in a column with margins | Fixed by `emit::fit` (above), in main since #920 (`143548cc`): headless on that commit the owner's 8-page scan reflows to 8 pages, each an inline picture 468 x 605.6 pt at the left margin inside the column and the body. The live measurement matches the code before the fit; not re-checked in the editor here (no browser runs on this lane) |
 
 **`sample.docx` through our writer, before and after** (the scorer fix applied to both):
 
@@ -1871,16 +1878,33 @@ committed `nist-ir8105.pdf`).
 
 **Still weak on these files**, in the order they hurt:
 
-1. A table whose cells are aligned differently in one tall row (top, centre, bottom: the
-   source's "merged cells and vertical alignment" table) reads as a staircase of rows, since
-   its cells share no baseline.
-2. Text wrapped around a picture: the lines beside it start a new paragraph at the picture's
-   edge.
-3. A chart's labels are text boxes inside its group: right where they were, but a label that
-   was a figure's caption ("Figure 1", short) sitting within two ems of it joins it too.
-4. Light weights (Helvetica Neue Light and UltraLight) map to the regular face: the model has
-   bold and not a weight. Letter spacing (a subtitle's expanded tracking) is not read.
+1. Fixed: a table whose cells are aligned differently in one tall row (top, centre, bottom)
+   read as a staircase of paragraphs, since its cells share no baseline. Under an aligned
+   row, single-line elements standing side by side in its columns at staggered baselines are
+   one tall row (`whitespace_candidates`, `Candidate::tall_rows`), linked to the aligned row
+   under it; each cell keeps its `w:vAlign` (`cell_valign`), and the row is as tall as its
+   text spans. (The staircase `sample.docx`
+   showed was a different cause, now fixed: its "merged cells" table is two rows under a
+   shaded header band, and two aligned rows were below the three a borderless table needs.
+   `tables::shaded_header` counts the band as the merged header row, spanning the columns,
+   centred; `tables` 0.792 to 0.810.)
+2. Fixed: text wrapped around a picture on its right no longer ends its paragraph at the
+   picture's edge; a line beside a floated picture is measured against the picture
+   (`emit::wrap_right`), so the sentence carries on below it. A picture on the text's left
+   needed nothing: the lines beside it still reach the column's edge.
+3. Fixed: a caption beside a chart ("Figure 1. ...", "Table IV", "Source: ...") within two
+   ems of it stays the figure's paragraph instead of joining its labels (`caption_text`); a
+   chart's own labels are still text boxes inside its group.
+4. Fixed: a light weight (`HelveticaNeue-Light`, `-UltraLight`, `-Thin`) keeps its own family
+   name, the way Word and macOS name one ("Helvetica Neue Light"), where it had been mapped to
+   Arial and drawn regular; a machine with the face uses it, and the layout substitutes a
+   missing one by class. Letter spacing is read: a run whose letters stand evenly apart
+   beyond their widths (`Tc`) carries it as character spacing, and the grouping no longer
+   reads each tracked letter as a word ("E X P A N D E D"). Kerning, uneven, is not tracking.
 5. A scanned PDF has no text without an OCR provider; the headless tools have none.
-6. Glyphs the writer's bundled faces lack (checkboxes, Indic, CJK) are missing from our own
-   PDF of `sample.docx`, so its reflow cannot have them (`special` 0.371): the writer's font
-   fallback, not the reflow.
+6. Fixed: glyphs missing from our own PDF of `sample.docx` (`special` 0.371 to 1.000). Four
+   causes, all in the writer or the reader, none in the reflow: a system face over 64 MiB
+   (the macOS emoji face) failed the whole export; no bundled face drew ballot boxes and
+   check marks (now Noto Sans Symbols 2, subset); `ToUnicode` named a CJK ideograph after
+   the radical sharing its glyph; and an Indic syllable several glyphs draw could not be
+   named by glyph id (now an `/ActualText` span, which `casual-doc-pdf-read` honours).

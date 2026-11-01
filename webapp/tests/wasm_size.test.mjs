@@ -140,7 +140,12 @@ const WASM = fileURLToPath(new URL("../pkg/casual_doc_wasm_bg.wasm", import.meta
 // pulldown-cmark, content controls and forms, table layout and borders, shape
 // effects, picture insert, find/view extras). MEASURED by CI at 27,978,452 B;
 // the ceiling is that plus ~128 KiB.
-const MAX_TOTAL_BYTES = 28_110_000;
+// 28,110,000 -> 28,265,000 for the bundled symbol face (#922: Noto Sans Symbols 2
+// subset to the symbol blocks, so form ballot boxes and check marks stop drawing
+// as `.notdef`): a 151,048 B data segment, no code. AN ESTIMATE (measured face
+// bytes added to the ceiling); CI's measurement replaces it. MEASURED by CI
+// (the diagnostic line below) at 28,137,305 B; the ceiling is that plus ~128 KiB.
+const MAX_TOTAL_BYTES = 28_270_000;
 /** What the browser then compiles. Measured: 10,594,266 B (#805); 11,585,101 B
  *  after §19; 12,349,976 B with HF-360, whose opt-level-3 build is 14,144,617 B,
  *  so a dropped `z` still lands far outside this. */
@@ -182,9 +187,13 @@ function sections(bytes) {
   return sizes;
 }
 
-test("the editor's engine download stays inside its budget", () => {
+// Each size test reports what it measured (`t.diagnostic`, a `#` line in the
+// CI log) on a pass too, so a ceiling is re-measured from CI's own build
+// rather than estimated by a lane that cannot run build.sh.
+test("the editor's engine download stays inside its budget", (t) => {
   assert.ok(existsSync(WASM), `${WASM} is missing. ${STALE}`);
   const total = statSync(WASM).size;
+  t.diagnostic(`engine module measured ${total.toLocaleString("en-US")} B`);
   assert.ok(
     total <= MAX_TOTAL_BYTES,
     `the engine module is ${total.toLocaleString("en-US")} B, over the ` +
@@ -196,9 +205,10 @@ test("the editor's engine download stays inside its budget", () => {
   );
 });
 
-test("the code the browser must compile stays inside its budget", () => {
+test("the code the browser must compile stays inside its budget", (t) => {
   assert.ok(existsSync(WASM), `${WASM} is missing. ${STALE}`);
   const code = sections(readFileSync(WASM))[10] ?? 0;
+  t.diagnostic(`code section measured ${code.toLocaleString("en-US")} B`);
   assert.ok(
     code >= MIN_CODE_BYTES,
     `the code section is only ${code.toLocaleString("en-US")} B — that is not this ` +
@@ -233,7 +243,11 @@ const MAIN_GLUE = fileURLToPath(new URL("../pkg/casual_doc_wasm.js", import.meta
 // reflow-quality work of `docs/182` §18.11 (+175 KB: the measured rhythm, the
 // decorations pass, borderless-table fitting, figures with their labels and
 // repeated header objects). The ceiling is that plus ~160 KiB.
-const MAX_PDF_TOTAL_BYTES = 9_700_000;
+// 9,700,000 -> 8,935,000: MEASURED by CI at 8,767,533 B on #922 (its reflow
+// work, the tall-row and header-band tables, tracking and the /ActualText
+// reader, all in this module), so the ceiling had drifted 930 KB above the
+// module and stopped guarding it. Ceiling: that plus ~160 KiB.
+const MAX_PDF_TOTAL_BYTES = 8_935_000;
 const MIN_PDF_TOTAL_BYTES = 1_000_000;
 
 /** Every name a wasm-bindgen glue file exports. */
@@ -256,9 +270,10 @@ function holds(bytes, needle) {
   return Buffer.from(bytes).includes(Buffer.from(needle, "latin1"));
 }
 
-test("the PDF module stays inside its own budget", () => {
+test("the PDF module stays inside its own budget", (t) => {
   assert.ok(existsSync(PDF_WASM), `${PDF_WASM} is missing. ${STALE}`);
   const total = statSync(PDF_WASM).size;
+  t.diagnostic(`PDF module measured ${total.toLocaleString("en-US")} B`);
   assert.ok(total >= MIN_PDF_TOTAL_BYTES, `the PDF module is only ${total} B — not this module. ${STALE}`);
   assert.ok(
     total <= MAX_PDF_TOTAL_BYTES,

@@ -69,6 +69,12 @@ Noto Emoji
   SIL Open Font License, Version 1.1
   crates/casual-doc-layout/fonts/LICENSES/OFL-1.1-NotoEmoji.txt
 
+Noto Sans Symbols 2 (subset)
+  crates/casual-doc-layout/fonts/NotoSansSymbols2-Subset.ttf
+  Copyright 2022 The Noto Project Authors (https://github.com/notofonts/symbols)
+  SIL Open Font License, Version 1.1
+  crates/casual-doc-layout/fonts/LICENSES/OFL-1.1-NotoSansSymbols2.txt
+
 --------------------------------------------------------------------------------
 2. Interface fonts served with the web application
 --------------------------------------------------------------------------------

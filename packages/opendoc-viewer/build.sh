@@ -50,7 +50,7 @@ for face in \
   Carlito-Regular Carlito-Bold Carlito-Italic Carlito-BoldItalic \
   Caladea-Regular Caladea-Bold Caladea-Italic Caladea-BoldItalic \
   Roboto-Regular Roboto-Bold Roboto-Italic Roboto-BoldItalic \
-  NotoEmoji-Variable; do
+  NotoEmoji-Variable NotoSansSymbols2-Subset; do
   cp "$fonts/$face.ttf" "$out/"
 done
 for face in \

@@ -32,6 +32,7 @@ discovery — so layout metrics are reproducible on every host; see
 | `liberation/LiberationMono-Italic.ttf` | Liberation Mono Italic | SIL OFL-1.1 | same |
 | `liberation/LiberationMono-BoldItalic.ttf` | Liberation Mono Bold Italic | SIL OFL-1.1 | same |
 | `NotoEmoji-Variable.ttf` | Noto Emoji | SIL OFL-1.1 | [github.com/google/fonts](https://github.com/google/fonts) (`ofl/notoemoji/NotoEmoji[wght].ttf`) |
+| `NotoSansSymbols2-Subset.ttf` | Noto Sans Symbols 2 (subset) | SIL OFL-1.1 | [github.com/google/fonts](https://github.com/google/fonts) (`ofl/notosanssymbols2/NotoSansSymbols2-Regular.ttf`, version 2.008) |
 
 Roboto and Caladea are licensed under the Apache License 2.0 — the same license
 as this repository. Each carries the Apache-2.0 license string in its `name`
@@ -78,6 +79,19 @@ valid TrueType (sfnt version `0x00010000`) before committing.
   line-breaking divergence. The mapping table lives in
   `src/font_substitution.rs`; every non-exact substitution is reported, never
   silently swapped.
+- **Noto Sans Symbols 2** (`FontId(28)..=31`) is the **symbol base**: a subset
+  of the upstream face to arrows (U+2190–21FF), miscellaneous technical
+  (U+2300–23FF), geometric shapes (U+25A0–25FF), miscellaneous symbols
+  (U+2600–26FF), dingbats (U+2700–27BF) and miscellaneous symbols and arrows
+  (U+2B00–2BFF): 631 code points, 151 KB (82 KB brotli) against 1.2 MB whole.
+  It is after Noto Emoji in the chain, so it only draws what nothing else does —
+  the ballot boxes and check marks of forms (☐ ☒ ✓ ✕) above all. Made with
+  `python3 -m fontTools.subset NotoSansSymbols2-Regular.ttf
+  --unicodes="U+2190-21FF,U+2300-23FF,U+25A0-25FF,U+2600-26FF,U+2700-27BF,U+2B00-2BFF"
+  --layout-features='*' --name-IDs='*' --name-legacy --name-languages='*'
+  --notdef-outline`. The OFL permits a modified version; the upstream licence
+  declares no Reserved Font Name, so the family name is kept, and the licence
+  text ships unmodified as `LICENSES/OFL-1.1-NotoSansSymbols2.txt`.
 - **Noto Emoji** (`FontId(24)..=27`) is the **monochrome emoji base**, last in
   the fallback chain so a pictographic face can never win a code point a text
   face covers. Emoji carry no bold or italic, so all four ids address the same

@@ -89,6 +89,10 @@ pub struct PChar {
     pub strike: bool,
     /// Shaded (a fill tight behind its run: a highlight).
     pub shade: Option<[u8; 3]>,
+    /// The letter spacing of its run, in points: the even space the PDF
+    /// put between its glyphs beyond their widths (`Tc`, a subtitle's
+    /// expanded tracking). Zero when the run is set solid.
+    pub tracking: f64,
 }
 
 /// One line.
@@ -120,6 +124,47 @@ pub struct ILine {
     pub shade: Option<[u8; 3]>,
 }
 
+/// Even space between letters wider than tracking noise, in ems: below it
+/// a run is set solid (kerning and rounding leave a few hundredths).
+const TRACKING_EMS: f64 = 0.04;
+
+/// Sets each run's letter spacing ([`PChar::tracking`]): over a run of one
+/// style, the gaps between adjacent single-character, non-space glyphs
+/// (the PDF's position less the glyph's width) when there are at least
+/// three and they agree (each within a third of their median) on a
+/// median of [`TRACKING_EMS`] to half an em. Kerning is uneven and a word
+/// space is wider, so neither reads as tracking. O(characters).
+fn track(chars: &mut [PChar]) {
+    let mut start = 0;
+    while start < chars.len() {
+        let mut end = start + 1;
+        while end < chars.len() && chars[end].style == chars[start].style {
+            end += 1;
+        }
+        let run = &chars[start..end];
+        let letter = |c: &PChar| c.text.chars().count() == 1 && !c.text.trim().is_empty();
+        let mut gaps: Vec<f64> = run
+            .windows(2)
+            .filter(|w| letter(&w[0]) && letter(&w[1]))
+            .map(|w| w[1].x0 - w[0].x1)
+            .collect();
+        let size = run.iter().map(|c| c.size).fold(0.0, f64::max).max(1.0);
+        if gaps.len() >= 3 {
+            gaps.sort_by(f64::total_cmp);
+            let median = gaps[gaps.len() / 2];
+            let agree = gaps
+                .iter()
+                .all(|g| (g - median).abs() <= median.abs() / 3.0);
+            if agree && (TRACKING_EMS * size..=0.5 * size).contains(&median) {
+                for c in &mut chars[start..end] {
+                    c.tracking = median;
+                }
+            }
+        }
+        start = end;
+    }
+}
+
 impl ILine {
     fn new(line: &Line, page: usize, mcid: Option<i32>) -> Self {
         let size = line.size;
@@ -131,7 +176,7 @@ impl ILine {
             .next()
             .unwrap_or(line.baseline);
         // A glyph with no Unicode (empty text) has no character to edit.
-        let chars = line
+        let mut chars: Vec<PChar> = line
             .chars
             .iter()
             .filter(|c| !c.text.is_empty())
@@ -151,8 +196,11 @@ impl ILine {
                 underline: false,
                 strike: false,
                 shade: None,
+                tracking: 0.0,
             })
             .collect();
+
+        track(&mut chars);
         Self {
             page,
             chars,
@@ -243,7 +291,15 @@ pub enum FloatWrap {
     Beside,
     /// It paints behind the text (`wp:wrapNone behindDoc`): art under text.
     Behind,
+    /// The page's background: a picture covering much of the page with text
+    /// over it, behind the text and anchored to the page where the PDF drew
+    /// it (`wp:wrapNone behindDoc`, page-relative), so it pushes nothing.
+    Background,
 }
+
+/// The share of a page's area a picture with text over it must cover to be
+/// the page's background rather than a picture in the text.
+pub const BACKGROUND_SHARE: f64 = 0.4;
 
 /// A graphic floated on the text element it belongs with.
 #[derive(Clone, Debug)]
@@ -361,6 +417,10 @@ pub struct Element {
     /// Vector art only: the text drawn inside it (a chart's axis labels and
     /// legend, a diagram's captions), drawn with it (`labels`).
     pub labels: Vec<ILine>,
+    /// Vector art only: the pictures that are pieces of the same figure (a
+    /// screenshot with its frame and shadow tiles), drawn with it, under
+    /// its shapes (`cluster_pictures`).
+    pub pictures: Vec<SourceImage>,
 }
 
 /// The ordinal of the nearest `role` element on a lineage.
@@ -473,7 +533,81 @@ fn tagged_table(cells: Vec<Element>) -> Element {
         lineage: Vec::new(),
         floats,
         labels: Vec::new(),
+        pictures: Vec::new(),
     }
+}
+
+/// The share of a page a background covers to be the whole page's.
+pub const FULL_PAGE: f64 = 0.85;
+
+/// Takes out of the elements' floats every page background that repeats in
+/// the same place and size (2 pt; any that covers 85% of its page is one
+/// class) on at least two pages and half of them, and returns one of each,
+/// the second page's: a letterhead printed as a picture the size of the
+/// page. Each page's copy, floated on whichever paragraph the reflow put
+/// first on that page of the PDF, landed on arbitrary pages of the flowing
+/// document (twice on some, never on others). O(floats log floats).
+fn repeated_backgrounds(
+    elements: &mut [Element],
+    sizes: &[(f64, f64)],
+    work: &mut u64,
+) -> Vec<SourceImage> {
+    let pages = sizes.len();
+    let bucket = |v: f64| (v / 2.0).round() as i64;
+    // A background covering nearly the whole page is the page's, wherever a
+    // scanner or a producer put it a few points off: those are one class.
+    let key = |b: &Bounds, page: usize| {
+        let full = sizes
+            .get(page)
+            .is_some_and(|&(w, h)| b.width() * b.height() >= FULL_PAGE * w * h);
+        if full {
+            (i64::MIN, 0, 0, 0)
+        } else {
+            (
+                bucket(b.x0),
+                bucket(b.y0),
+                bucket(b.width()),
+                bucket(b.height()),
+            )
+        }
+    };
+    let mut seen: BTreeMap<(i64, i64, i64, i64), BTreeSet<usize>> = BTreeMap::new();
+    for e in elements.iter() {
+        for f in &e.floats {
+            *work += 1;
+            if f.wrap == FloatWrap::Background {
+                seen.entry(key(&f.graphic.bounds(), f.page))
+                    .or_default()
+                    .insert(f.page);
+            }
+        }
+    }
+    let repeated: BTreeSet<(i64, i64, i64, i64)> = seen
+        .into_iter()
+        .filter(|(_, on)| on.len() >= 2 && on.len() * 2 >= pages)
+        .map(|(k, _)| k)
+        .collect();
+    if repeated.is_empty() {
+        return Vec::new();
+    }
+    let mut out: BTreeMap<(i64, i64, i64, i64), SourceImage> = BTreeMap::new();
+    for e in elements.iter_mut() {
+        e.floats.retain(|f| {
+            let k = key(&f.graphic.bounds(), f.page);
+            if f.wrap != FloatWrap::Background || !repeated.contains(&k) {
+                return true;
+            }
+            if let Graphic::Image(image) = &f.graphic {
+                // The second page's copy: a first page is the likeliest to
+                // differ.
+                if f.page > 0 || !out.contains_key(&k) {
+                    out.entry(k).or_insert_with(|| image.clone());
+                }
+            }
+            false
+        });
+    }
+    out.into_values().collect()
 }
 
 /// The digit runs of a cell's text, in order. O(characters).
@@ -733,6 +867,87 @@ fn merge_figures(
     out
 }
 
+/// Whether vector art draws nothing on a white page: every path a white
+/// fill with no stroke (LibreOffice paints the white knock-out around a
+/// picture text wraps about as four white rectangles; Qt paints its page
+/// white). Such art is not placed, and it is no figure for a picture to
+/// join: the knock-out had made a wrapped picture an own-line figure. O(paths).
+fn invisible(vector: &SourceVector) -> bool {
+    vector
+        .paths
+        .iter()
+        .all(|p| p.stroke.is_none() && matches!(p.fill, Some(Some([255, 255, 255, _]))))
+}
+
+/// `vector` without the paths that lie mostly off the page (a clip in the
+/// PDF hid them: a mockup's panel drawn past the page edge and cut there),
+/// its bounds recomputed; `None` when nothing is left. Drawn, such a path
+/// was a black block beside the page in a group as wide as two pages.
+/// O(paths).
+fn on_page(vector: &SourceVector, width: f64, height: f64) -> Option<SourceVector> {
+    let inside = |b: &Bounds| {
+        let w = (b.x1.min(width) - b.x0.max(0.0)).max(0.0);
+        let h = (b.y1.min(height) - b.y0.max(0.0)).max(0.0);
+        let area = b.width().max(0.01) * b.height().max(0.01);
+        // A rule (no area) counts by its length on the page.
+        if b.width() < 0.5 || b.height() < 0.5 {
+            return w.max(h) >= 0.5 * b.width().max(b.height());
+        }
+        w * h >= 0.5 * area
+    };
+    let paths: Vec<casual_doc_pdf_read::PathEvidence> = vector
+        .paths
+        .iter()
+        .filter(|p| inside(&p.bounds))
+        .cloned()
+        .collect();
+    if paths.len() == vector.paths.len() {
+        return Some(vector.clone());
+    }
+    let first = paths.first()?.bounds;
+    let bounds = paths.iter().fold(first, |b, p| Bounds {
+        x0: b.x0.min(p.bounds.x0),
+        y0: b.y0.min(p.bounds.y0),
+        x1: b.x1.max(p.bounds.x1),
+        y1: b.y1.max(p.bounds.y1),
+    });
+    Some(SourceVector { bounds, paths })
+}
+
+/// `vector` with its page-sized fills (half the page or more) taken out: a
+/// white page, or a white body box (LibreOffice), painted in the same run as
+/// the shapes on it (Qt, Skia) made the whole run as large as the page, so
+/// nothing on the page could be told apart from it. A white one draws
+/// nothing on a white page and is dropped; any other is a run of its own.
+/// O(paths).
+fn split_page_fill(vector: SourceVector, width: f64, height: f64) -> Vec<SourceVector> {
+    let page_sized = |p: &casual_doc_pdf_read::PathEvidence| {
+        p.bounds.width() * p.bounds.height() >= FIGURE_AREA * width * height
+    };
+    if !vector.paths.iter().any(page_sized) {
+        return vec![vector];
+    }
+    let (fills, rest): (Vec<_>, Vec<_>) = vector.paths.into_iter().partition(page_sized);
+    let mut out = Vec::new();
+    let coloured: Vec<_> = fills
+        .into_iter()
+        .filter(|p| p.stroke.is_some() || !matches!(p.fill, Some(Some([255, 255, 255, _]))))
+        .collect();
+    for paths in [coloured, rest] {
+        let Some(first) = paths.first().map(|p| p.bounds) else {
+            continue;
+        };
+        let bounds = paths.iter().fold(first, |b, p| Bounds {
+            x0: b.x0.min(p.bounds.x0),
+            y0: b.y0.min(p.bounds.y0),
+            x1: b.x1.max(p.bounds.x1),
+            y1: b.y1.max(p.bounds.y1),
+        });
+        out.push(SourceVector { bounds, paths });
+    }
+    out
+}
+
 /// The shortest rule kept on its own, as a share of the page's width: a
 /// separator line across the text. Shorter lone rules are a form's fields
 /// or a footnote separator, and stay out.
@@ -798,6 +1013,137 @@ fn free_rules(
         .collect()
 }
 
+/// A figure, whether it is only rules, and the pictures that are its pieces.
+type PicturedFigure = (SourceVector, bool, Vec<SourceImage>);
+
+/// Pictures that overlap a figure join it, and pictures within
+/// `FIGURE_GAP` of each other are one; pictures that touch each other with no
+/// figure make one of their own (paths empty). A screenshot drawn as nine
+/// tiles of shadow around its content and a frame of rules was eleven
+/// drawings, each placed on its own line; it is one figure. A picture
+/// covering half the page or more (a background) joins nothing. Returns the
+/// figures with their pictures, and the pictures left alone.
+/// O((figures + pictures)^2) on a page, which holds few.
+fn cluster_pictures(
+    figures: Vec<(SourceVector, bool)>,
+    images: &[SourceImage],
+    area: f64,
+    work: &mut u64,
+) -> (Vec<PicturedFigure>, Vec<SourceImage>) {
+    let near = |a: &Bounds, b: &Bounds| {
+        a.x0 <= b.x1 + FIGURE_GAP
+            && b.x0 <= a.x1 + FIGURE_GAP
+            && a.y0 <= b.y1 + FIGURE_GAP
+            && b.y0 <= a.y1 + FIGURE_GAP
+    };
+    // Only a page's own background is no figure's piece: a mockup's card
+    // with its screenshot can cover most of a page.
+    let big = |b: &Bounds| b.width() * b.height() >= FULL_PAGE * area;
+    // Union-find over figures (0..f) and pictures (f..f+p).
+    let f = figures.len();
+    let total = f + images.len();
+    let mut parent: Vec<usize> = (0..total).collect();
+    fn root(parent: &mut [usize], mut i: usize) -> usize {
+        while parent[i] != i {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        i
+    }
+    let bounds = |i: usize| -> Bounds {
+        if i < f {
+            figures[i].0.bounds
+        } else {
+            images[i - f].bounds
+        }
+    };
+    for i in f..total {
+        if big(&bounds(i)) {
+            continue;
+        }
+        #[allow(clippy::needless_range_loop)] // `j` spans figures and pictures.
+        for j in 0..total {
+            *work += 1;
+            // A page-sized figure (a page's background) or picture is no
+            // figure's piece, and a lone rule is not a frame.
+            if j == i || big(&bounds(j)) || figures.get(j).is_some_and(|fig| fig.1) {
+                continue;
+            }
+            // Picture to picture: touching (a screenshot's shadow tiles).
+            // Picture to figure: overlapping it (a screenshot inside its
+            // frame); a picture merely beside a drawing floats on its own.
+            let (bi, bj) = (bounds(i), bounds(j));
+            let linked = if j >= f {
+                near(&bi, &bj)
+            } else {
+                bi.x0 < bj.x1 && bj.x0 < bi.x1 && bi.y0 < bj.y1 && bj.y0 < bi.y1
+            };
+            if linked {
+                let (a, b) = (root(&mut parent, i), root(&mut parent, j));
+                if a != b {
+                    parent[a.max(b)] = a.min(b);
+                }
+            }
+        }
+    }
+    // Each root's members.
+    let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for i in 0..total {
+        let r = root(&mut parent, i);
+        groups.entry(r).or_default().push(i);
+    }
+    let mut figures: Vec<Option<(SourceVector, bool)>> = figures.into_iter().map(Some).collect();
+    let mut out = Vec::new();
+    let mut loose = Vec::new();
+    for members in groups.into_values() {
+        let pics: Vec<SourceImage> = members
+            .iter()
+            .filter(|&&i| i >= f)
+            .map(|&i| images[i - f].clone())
+            .collect();
+        let vecs: Vec<usize> = members.iter().copied().filter(|&i| i < f).collect();
+        if vecs.is_empty() && pics.len() < 2 {
+            loose.extend(pics);
+            continue;
+        }
+        // One figure from its vector runs (paths in paint order) and its
+        // pictures' extent.
+        let mut paths = Vec::new();
+        let mut only_rules = !vecs.is_empty();
+        let mut b: Option<Bounds> = None;
+        let grow = |b: &mut Option<Bounds>, c: Bounds| {
+            *b = Some(match *b {
+                Some(o) => Bounds {
+                    x0: o.x0.min(c.x0),
+                    y0: o.y0.min(c.y0),
+                    x1: o.x1.max(c.x1),
+                    y1: o.y1.max(c.y1),
+                },
+                None => c,
+            });
+        };
+        for i in vecs {
+            if let Some((v, rules)) = figures[i].take() {
+                only_rules &= rules;
+                grow(&mut b, v.bounds);
+                paths.extend(v.paths);
+            }
+        }
+        for p in &pics {
+            grow(&mut b, p.bounds);
+        }
+        let Some(bounds) = b else {
+            continue;
+        };
+        out.push((
+            SourceVector { bounds, paths },
+            only_rules && pics.is_empty(),
+            pics,
+        ));
+    }
+    (out, loose)
+}
+
 /// The text drawn inside `figure`, when it is a figure: every text element
 /// inside its bounds (two of the text's ems of slack), not yet taken, whose lines are all
 /// labels; they are marked taken. A chart's axis values and legend,
@@ -844,8 +1190,14 @@ fn labels(
         let within_y = r.y0 >= b.y0 - slack && r.y1 <= b.y1 + slack;
         let near_x = r.x1 >= b.x0 - slack && r.x0 <= b.x1 + slack;
         let near_y = r.y1 >= b.y0 - slack && r.y0 <= b.y1 + slack;
+        // A caption beside the drawing ("Figure 1. ...", "Source: ...")
+        // is the figure's paragraph, not one of its labels: short and set
+        // small, it sits within two ems as an axis title does.
+        let inside = r.x0 >= b.x0 && r.x1 <= b.x1 && r.y0 >= b.y0 && r.y1 <= b.y1;
+        let captioned = !inside && lines.first().is_some_and(|line| caption_text(&line.text()));
         if ((within_x && near_y) || (within_y && near_x))
             && em <= body_size + 0.5
+            && !captioned
             && lines.iter().all(label_line)
         {
             taken[i] = true;
@@ -853,6 +1205,33 @@ fn labels(
         }
     }
     out
+}
+
+/// Whether `text` opens as a caption does: "Figure 1", "Fig. 2a",
+/// "Table IV", "Chart 3", "Exhibit 2" (the word, then a number or a roman
+/// numeral), or a "Source:" or "Note:" line. O(text).
+fn caption_text(text: &str) -> bool {
+    let lower = text.trim_start().to_lowercase();
+    if ["source:", "note:", "notes:"]
+        .iter()
+        .any(|p| lower.starts_with(p))
+    {
+        return true;
+    }
+    let numbered = |rest: &str| {
+        let number = rest.trim_start_matches([' ', '\u{a0}']);
+        let spaced = number.len() < rest.len();
+        let roman = number
+            .split(|c: char| !c.is_ascii_alphabetic())
+            .next()
+            .is_some_and(|w| !w.is_empty() && w.chars().all(|c| "ivxlc".contains(c)));
+        (spaced || rest.is_empty()) && (number.starts_with(|c: char| c.is_ascii_digit()) || roman)
+    };
+    [
+        "figure", "fig.", "fig", "table", "chart", "graph", "exhibit", "diagram", "plate",
+    ]
+    .iter()
+    .any(|word| lower.strip_prefix(word).is_some_and(numbered))
 }
 
 /// A column region and the page it is on.
@@ -896,6 +1275,9 @@ pub enum PartObject {
     Table(ITable, usize, BTreeSet<(usize, usize, usize)>),
     /// A picture, drawn where the PDF placed it.
     Image(SourceImage),
+    /// A page background repeated on the pages (a letterhead printed as one
+    /// picture the size of the page), behind the text on every page.
+    Background(SourceImage),
 }
 
 /// The header and footer parts, keyed by (is footer, variant).
@@ -1430,6 +1812,7 @@ pub fn build(
             .map_or((612.0, 792.0), |((w, h), _)| (w as f64, h as f64))
     };
     let mut masks = 0;
+    let mut scans_replaced = 0;
     let mut vectors_placed = 0;
     let mut floats = 0;
     let mut rotated = 0;
@@ -1525,12 +1908,32 @@ pub fn build(
                 lines.iter().map(|l| l.x1).fold(f64::NEG_INFINITY, f64::max),
             )
         };
+        // A header band's cell spans the columns under it, not its words.
+        let mut spans_over: BTreeMap<usize, (f64, f64)> = BTreeMap::new();
         let candidates = {
             let views: Vec<(&[ILine], (f64, f64))> = lines_only
                 .iter()
                 .map(|l| (l.as_slice(), bounds_of(l)))
                 .collect();
-            tables::whitespace_candidates(&views, &mut work.tables)
+            let mut found = tables::whitespace_candidates(&views, &mut work.tables);
+            // A two-row candidate under a shaded header band spanning its
+            // columns is a table: the band is its merged header row.
+            for candidate in &mut found {
+                if candidate.rows == 2
+                    && let Some((header, extent)) = tables::shaded_header(
+                        &candidate.elements,
+                        &views,
+                        &page.fills,
+                        &mut work.tables,
+                    )
+                {
+                    candidate.elements.insert(0, header);
+                    spans_over.insert(header, extent);
+                    candidate.rows = 3;
+                    candidate.confidence *= 1.5;
+                }
+            }
+            found
         };
         for candidate in candidates {
             // Cells a tagged `Table` owns are its; the tree decides them.
@@ -1549,11 +1952,14 @@ pub fn build(
                     .iter()
                     .map(|&e| {
                         let lines = std::mem::take(&mut lines_only[e]);
-                        let b = bounds_of(&lines);
+                        let b = spans_over
+                            .get(&e)
+                            .copied()
+                            .unwrap_or_else(|| bounds_of(&lines));
                         (lines, b)
                     })
                     .collect();
-                page_tables.push(tables::whitespace_table(&columns));
+                page_tables.push(tables::whitespace_table(&columns, &candidate.tall_rows));
             } else if candidate.confidence >= tables::TABLE_CANDIDATE {
                 findings.record(
                     report::TABLE_TOPOLOGY_DEGRADED,
@@ -1723,6 +2129,7 @@ pub fn build(
                 lineage: node.map(|n| n.lineage.clone()).unwrap_or_default(),
                 floats: Vec::new(),
                 labels: Vec::new(),
+                pictures: Vec::new(),
             });
         }
         for table in page_tables {
@@ -1745,6 +2152,7 @@ pub fn build(
                 lineage: Vec::new(),
                 floats: Vec::new(),
                 labels: Vec::new(),
+                pictures: Vec::new(),
             });
         }
         // Pictures and vector art: floated on the text they sit beside or
@@ -1757,7 +2165,10 @@ pub fn build(
             .iter()
             .enumerate()
             .filter(|(i, _)| !shading_art.contains(i) && !decoration_art.contains(i))
-            .map(|(_, v)| (v.clone(), false))
+            .filter(|(_, v)| !invisible(v))
+            .filter_map(|(_, v)| on_page(v, page.width, page.height))
+            .flat_map(|v| split_page_fill(v, page.width, page.height))
+            .map(|v| (v, false))
             .collect();
         pieces.extend(
             free_rules(page, &taken_rules, &decorated.rules, &table_bounds)
@@ -1765,10 +2176,17 @@ pub fn build(
                 .map(|v| (v, true)),
         );
         let figures = merge_figures(pieces, page.width * page.height, &mut work.graphics);
-        let mut labelled: Vec<(SourceVector, Vec<ILine>)> = Vec::new();
+        // Pictures that touch a figure or each other are its pieces.
+        let (figures, loose) = cluster_pictures(
+            figures,
+            &page.images,
+            page.width * page.height,
+            &mut work.graphics,
+        );
+        let mut labelled: Vec<(SourceVector, Vec<ILine>, Vec<SourceImage>)> = Vec::new();
         let mut taken = vec![false; elements.len()];
         let mut unlabelled: Vec<SourceVector> = Vec::new();
-        for (figure, only_rules) in figures {
+        for (figure, only_rules, pictures) in figures {
             // Rules on their own: a long one is a separator line in the
             // text (kept as a drawing); short ones (a form's fields, a
             // footnote's separator) are left out, as before.
@@ -1787,10 +2205,11 @@ pub fn build(
                 &mut taken,
                 &mut work.graphics,
             );
-            if lines.is_empty() {
+            // A figure with pictures in it is drawn whole on its own line.
+            if lines.is_empty() && pictures.is_empty() {
                 unlabelled.push(figure);
             } else {
-                labelled.push((figure, lines));
+                labelled.push((figure, lines, pictures));
             }
         }
         let text_rects: Vec<(usize, Rect)> = elements
@@ -1799,7 +2218,7 @@ pub fn build(
             .filter(|(i, e)| matches!(e.kind, EKind::Text(_)) && !taken[*i])
             .map(|(i, e)| (i, e.rect))
             .collect();
-        for (figure, lines) in labelled {
+        for (figure, lines, pictures) in labelled {
             let b = figure.bounds;
             vectors_placed += 1;
             elements.push(Element {
@@ -1818,12 +2237,12 @@ pub fn build(
                 lineage: Vec::new(),
                 floats: Vec::new(),
                 labels: lines,
+                pictures,
             });
         }
-        let graphics = page
-            .images
-            .iter()
-            .map(|image| Graphic::Image(image.clone()))
+        let graphics = loose
+            .into_iter()
+            .map(Graphic::Image)
             .chain(unlabelled.into_iter().map(Graphic::Vector));
         for graphic in graphics {
             let b = graphic.bounds();
@@ -1836,6 +2255,46 @@ pub fn build(
             let vector = matches!(graphic, Graphic::Vector(_));
             vectors_placed += u32::from(vector);
             work.graphics += text_rects.len() as u64;
+            // A picture covering much of the page with text over it is the
+            // page's background: before this it was an inline picture a page
+            // tall, and the text it was behind came after it.
+            if !vector && b.width() * b.height() >= BACKGROUND_SHARE * page.width * page.height {
+                let over = text_rects
+                    .iter()
+                    .find(|(_, t)| {
+                        t.x0 < rect.x1 && t.x1 > rect.x0 && t.y0 < rect.y1 && t.y1 > rect.y0
+                    })
+                    .map(|(i, _)| *i);
+                // A scan whose text is the recogniser's: the flowing document
+                // is that text, and the scan behind it (its words at their
+                // old places, now under different lines) is left to the exact
+                // layout.
+                let optical = text_rects
+                    .iter()
+                    .filter(|(_, t)| {
+                        t.x0 < rect.x1 && t.x1 > rect.x0 && t.y0 < rect.y1 && t.y1 > rect.y0
+                    })
+                    .all(|(i, _)| match &elements[*i].kind {
+                        EKind::Text(lines) => lines
+                            .iter()
+                            .flat_map(|l| l.chars.iter())
+                            .all(|c| c.style.font == crate::ocr::OCR_FONT),
+                        _ => false,
+                    });
+                if over.is_some() && optical {
+                    scans_replaced += 1;
+                    continue;
+                }
+                if let Some(anchor) = over {
+                    floats += 1;
+                    elements[anchor].floats.push(Float {
+                        page: page.index,
+                        graphic,
+                        wrap: FloatWrap::Background,
+                    });
+                    continue;
+                }
+            }
             if let Some((anchor, wrap)) = placement(&rect, vector, &text_rects) {
                 floats += 1;
                 elements[anchor].floats.push(Float {
@@ -1859,6 +2318,7 @@ pub fn build(
                 lineage: Vec::new(),
                 floats: Vec::new(),
                 labels: Vec::new(),
+                pictures: Vec::new(),
             });
         }
         // The labels left their text elements for their drawings.
@@ -1978,8 +2438,23 @@ pub fn build(
     let continued = tables::continue_across_pages(&mut flow.elements, &mut work.tables);
     findings.record(report::TABLE_CONTINUED, Outcome::Mapped, continued, None);
     // Tables and pictures repeated at the top or bottom of the pages are
-    // the header's and the footer's, not body content on every page.
-    let objects = repeated_objects(&mut flow.elements, &state.pages, &mut work.furniture);
+    // the header's and the footer's, not body content on every page; a
+    // background repeated on the pages is the header's too, behind the text
+    // of every page.
+    let mut objects = repeated_objects(&mut flow.elements, &state.pages, &mut work.furniture);
+    objects.extend(
+        repeated_backgrounds(
+            &mut flow.elements,
+            &state
+                .pages
+                .iter()
+                .map(|p| (p.width, p.height))
+                .collect::<Vec<_>>(),
+            &mut work.furniture,
+        )
+        .into_iter()
+        .map(|image| (false, false, image.bounds.y0, PartObject::Background(image))),
+    );
     if !objects.is_empty() {
         findings.record(
             report::HEADER_FOOTER_INFERRED,
@@ -1992,6 +2467,15 @@ pub fn build(
             if first {
                 first_variant.push((footer, top, object));
                 continue;
+            }
+            // A background is on every page: in the first-page and even-page
+            // header parts too, when the text made them.
+            if matches!(object, PartObject::Background(_)) {
+                for variant in [Variant::First, Variant::Even] {
+                    if let Some(part) = furniture.parts.get_mut(&(false, variant)) {
+                        part.objects.push((top, object.clone()));
+                    }
+                }
             }
             furniture
                 .parts
@@ -2062,6 +2546,12 @@ pub fn build(
         findings.record(report::TAG_STRUCTURE_IGNORED, Outcome::Degraded, 1, None);
     }
     findings.record(report::VECTOR_OMITTED, Outcome::Omitted, masks, None);
+    findings.record(
+        report::SCAN_REPLACED_BY_TEXT,
+        Outcome::Degraded,
+        scans_replaced,
+        None,
+    );
     findings.record(report::VECTOR_PLACED, Outcome::Mapped, vectors_placed, None);
     findings.record(report::FLOAT_INFERRED, Outcome::Mapped, floats, None);
     findings.record(report::TEXT_ROTATED, Outcome::Degraded, rotated, None);

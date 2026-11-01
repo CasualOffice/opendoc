@@ -140,7 +140,7 @@ await writeFile("invoice.pdf", t.toPdf());
   work there.
 - There is no SVG page output.
 - HTML and Markdown cannot be opened.
-- The module embeds every bundled face (Liberation, Carlito, Caladea, Roboto, Noto Emoji),
+- The module embeds every bundled face (Liberation, Carlito, Caladea, Roboto, Noto Emoji, Noto Sans Symbols 2),
   so pixels do not depend on the machine. That makes the download large: `npm pack` prints
   its size.
 
