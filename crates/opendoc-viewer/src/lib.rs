@@ -732,11 +732,6 @@ fn all_paragraph_texts(document: &Document) -> HashMap<NodeId, String> {
     fn add(blocks: &[BlockNode], out: &mut HashMap<NodeId, String>) {
         casual_doc_model::v1::visit_paragraphs(blocks, &mut |paragraph| {
             out.insert(paragraph.id, node_plain_text(&paragraph.inlines));
-            for inline in &paragraph.inlines {
-                if let casual_doc_model::v1::InlineNode::TextBox(text_box) = inline {
-                    add(&text_box.blocks, out);
-                }
-            }
         });
     }
     let mut out = HashMap::new();
@@ -755,20 +750,18 @@ fn all_paragraph_texts(document: &Document) -> HashMap<NodeId, String> {
     out
 }
 
-/// Appends each paragraph's text and a newline, descending into tables and
-/// block content controls. **O(blocks)**.
+/// Appends each paragraph's text and a newline, descending into tables, block
+/// content controls, and text boxes in groups (including scanned-page OCR
+/// lines). **O(blocks and inlines)**.
 fn append_blocks(blocks: &[BlockNode], out: &mut String) {
     visit_body_paragraphs(blocks, &mut |paragraph| {
         out.push_str(&node_plain_text(&paragraph.inlines));
         out.push('\n');
-        // A text box's content is the paragraph's, read after it: a floating
-        // frame (a PDF-origin page is nothing else, `docs/182`) or an inline
-        // one. Without this a fixed-layout document read as empty.
-        for inline in &paragraph.inlines {
-            if let casual_doc_model::v1::InlineNode::TextBox(text_box) = inline {
-                append_blocks(&text_box.blocks, out);
-            }
-        }
+        // A fixed-layout page and a scanned page can be nothing but a group
+        // with text-box stories. Read those after their owning paragraph.
+        casual_doc_model::v1::inline_block_stories(&paragraph.inlines, &mut |story| {
+            append_blocks(story, out);
+        });
     });
 }
 
@@ -799,6 +792,9 @@ fn visit_body_paragraphs<'a>(
 struct TextIndex {
     /// Paragraph id → its text, in the byte space line ranges index.
     texts: HashMap<NodeId, String>,
+    /// Text-box stories owned by this paragraph, in group order. These do
+    /// not become top-level page fragments when the group is placed.
+    nested_text: HashMap<NodeId, String>,
     /// Paragraph id → the start offset of each of its laid-out lines, in
     /// layout order across every page. A page whose share of a paragraph ends
     /// mid-paragraph reads up to the next line's start, so the characters no
@@ -810,10 +806,17 @@ impl TextIndex {
     /// **O(document + layout)**.
     fn build(document: &Document, layout: &PaginatedLayout) -> Self {
         let mut index = Self::default();
-        visit_body_paragraphs(document.body(), &mut |paragraph| {
+        casual_doc_model::v1::visit_paragraphs(document.body(), &mut |paragraph| {
             index
                 .texts
                 .insert(paragraph.id, node_plain_text(&paragraph.inlines));
+            let mut nested = String::new();
+            casual_doc_model::v1::inline_block_stories(&paragraph.inlines, &mut |story| {
+                append_blocks(story, &mut nested);
+            });
+            if !nested.is_empty() {
+                index.nested_text.insert(paragraph.id, nested);
+            }
         });
         for page in &layout.pages {
             for placed in &page.placed {
@@ -889,6 +892,9 @@ fn append_fragment_text(fragment: &BlockFragment, index: &TextIndex, out: &mut S
                     out.push_str(rest);
                 }
                 out.push('\n');
+                if let Some(nested) = index.nested_text.get(id) {
+                    out.push_str(nested);
+                }
             } else if let Some(at) = cursor
                 && let Some(gap) = index
                     .next_line_start(*id, at)

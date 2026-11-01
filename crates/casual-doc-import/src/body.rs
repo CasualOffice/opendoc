@@ -1140,6 +1140,9 @@ struct BodyParser<'a> {
     run_open: bool,
     run_properties: RunProperties,
     rpr_depth: u32,
+    /// Inside a run's `w14:textFill` (its children say what the glyph fill
+    /// is). Never open across a text-box frame: `w:rPr` holds no drawing.
+    text_fill_open: bool,
     in_text: bool,
     text_buffer: String,
     drawing_depth: u32,
@@ -1555,6 +1558,7 @@ impl<'a> BodyParser<'a> {
             run_open: false,
             run_properties: RunProperties::default(),
             rpr_depth: 0,
+            text_fill_open: false,
             in_text: false,
             text_buffer: String::new(),
             drawing_depth: 0,
@@ -2830,6 +2834,14 @@ impl BodyParser<'_> {
                 self.mark_rpr_seen = true;
             }
             b"rPr" if self.run_open => self.rpr_depth += 1,
+            // `w14:textFill` (Word 2010): only its `w14:noFill` is modelled
+            // (`no_text_fill`, the transparent text of an image-text line box,
+            // `docs/182` §20b); a solid or gradient glyph fill inside it falls
+            // through to the run-property arm and is reported.
+            b"textFill" if self.rpr_depth > 0 => self.text_fill_open = !self_closing,
+            b"noFill" if self.text_fill_open && self.rpr_depth > 0 => {
+                self.run_properties.no_text_fill = Some(true);
+            }
             b"rStyle" if self.rpr_depth > 0 => {
                 match self.resolve_style(element, StyleKind::Character) {
                     Some(style) => self.run_properties.style_ref = Some(style),
@@ -5464,7 +5476,9 @@ impl BodyParser<'_> {
             b"r" => {
                 self.run_open = false;
                 self.rpr_depth = 0;
+                self.text_fill_open = false;
             }
+            b"textFill" => self.text_fill_open = false,
             // The control's own `w:sdtPr/w:rPr` closes: it is the open control's.
             b"rPr" if self.sdt_rpr_depth > 0 => {
                 self.sdt_rpr_depth -= 1;
