@@ -14574,6 +14574,7 @@ body.phone-mode .plugin-panel { height: 55vh; }
   padding-block-end: 0;
 }
 #settingsPanel .settings-nav {
+  overscroll-behavior: contain;
   display: grid;
   align-content: start;
   gap: 0.125rem;
@@ -14582,6 +14583,7 @@ body.phone-mode .plugin-panel { height: 55vh; }
   overflow-y: auto;
 }
 #settingsPanel .settings-pages {
+  overscroll-behavior: contain;
   display: grid;
   align-content: start;
   gap: var(--dlg-gap);
@@ -14604,7 +14606,7 @@ body.phone-mode .plugin-panel { height: 55vh; }
   text-align: start;
   cursor: pointer;
 }
-#settingsPanel .settings-nav button:hover { background: var(--hover, var(--surface-2)); color: var(--ink); }
+#settingsPanel .settings-nav button:hover { background: var(--hover); color: var(--ink); }
 #settingsPanel .settings-nav button[aria-selected="true"] {
   background: var(--accent-soft);
   color: var(--accent-text);
@@ -14685,7 +14687,7 @@ body:not(.phone-mode) .workarea > .side-panel.plugin-panel {
 .properties-panel-body > .property-clear { justify-self: start; margin-top: var(--space-2); }
 /* Panel sections are flat (no box inside the panel): a section title, then
    its fields, pairs side by side; sections separated by a hairline. */
-.workarea > .side-panel .properties-panel-body .property-section {
+.workarea > .side-panel :is(.properties-panel-grid, .property-more) > .property-section {
   border: 0;
   border-radius: 0;
   padding: 0;
@@ -14695,7 +14697,7 @@ body:not(.phone-mode) .workarea > .side-panel.plugin-panel {
   display: grid;
   gap: var(--space-3);
 }
-.workarea > .side-panel .properties-panel-body .property-section > legend {
+.workarea > .side-panel :is(.properties-panel-grid, .property-more) > .property-section > legend {
   padding: 0;
   margin-block-end: var(--space-3);
   font-size: var(--fs-md);

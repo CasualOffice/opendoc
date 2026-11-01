@@ -223,7 +223,6 @@ export function createSettings(ed) {
     });
   }
   showSettingsPage("general");
-  ed.showSettingsPage = showSettingsPage;
   applySettings();
   // After `applySettings`, so the picker is built against the settings that were
   // actually loaded, and awaited nowhere: the editor draws in English and the

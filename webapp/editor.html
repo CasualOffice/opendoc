@@ -289,7 +289,7 @@
           <!-- Ask Casual AI, always reachable without a selection (owner, 2026-11-02;
                Gemini's "Ask Gemini" sits here in Google Docs). Hidden until an AI
                provider is set up and the assistant runs (plugin_platform reflectChrome). -->
-          <button id="aiHeaderBtn" type="button" class="ai-header-btn" title="Ask Casual AI" hidden><span class="ms" aria-hidden="true">auto_awesome</span><span class="ai-header-text">Ask Casual AI</span></button>
+          <button id="aiHeaderBtn" type="button" class="ai-header-btn" hidden><span class="ms" aria-hidden="true">auto_awesome</span><span class="ai-header-text"></span></button>
           <!-- The editing mode, at the top right: where all three references put
                it — ONLYOFFICE at the right of the tab row, Google Docs at the
                right of the toolbar ("Editing ▾"), Word at the right of the ribbon
@@ -427,7 +427,7 @@
           </button>
         </header>
         <div class="dialog-body settings-body">
-        <nav class="settings-nav" role="tablist" aria-label="Settings" aria-orientation="vertical">
+        <nav class="settings-nav" role="tablist" data-i18n-label="ui.settings.label" aria-label="Settings" aria-orientation="vertical">
           <button type="button" role="tab" data-settings-tab="general" data-i18n="settingsNav.general">General</button>
           <button type="button" role="tab" data-settings-tab="proofing" data-i18n="settingsNav.proofing">Proofing</button>
           <button type="button" role="tab" data-settings-tab="saving" data-i18n="settingsNav.saving">Saving</button>
@@ -816,7 +816,7 @@
                the assistant runs; opens its panel with nothing selected. -->
           <div class="rgroup" data-group="ai" id="homeAiGroup" hidden>
             <div class="rgroup-ctl">
-              <button id="homeAiBtn" type="button" class="fmt fmt-big" title="Ask Casual AI" aria-label="Ask Casual AI"><span class="ms" aria-hidden="true">auto_awesome</span><span class="fmt-big-label">Casual AI</span></button>
+              <button id="homeAiBtn" type="button" class="fmt fmt-big"><span class="ms" aria-hidden="true">auto_awesome</span><span class="fmt-big-label"></span></button>
             </div>
           </div>
         </div>

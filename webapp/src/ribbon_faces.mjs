@@ -142,6 +142,9 @@ export const HOME_FACES = Object.freeze([
   // id, and a second chord on `edit.find` could never say "and land on Replace".
   face("#findBtn", "edit.find"),
   face("#replaceBtn", "edit.replace"),
+  // Casual AI's own command (plugins are \`plugin.<id>.<command>\`); the button
+  // only shows while the assistant runs, so the command exists whenever it does.
+  face("#homeAiBtn", "plugin.org.casualoffice.assistant.ask"),
 ]);
 
 /** The View band. `#reviewBtn` is `review.toggle`'s second ribbon face — the
