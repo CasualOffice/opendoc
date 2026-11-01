@@ -3,6 +3,7 @@
 // (docs/177); it reaches the rest of the editor only through the context `ed`.
 import { closeAllPopovers, onButton } from "./popover_manager.mjs";
 import { inchesToTwips, twipsToInchText } from "./units.mjs";
+import { startPropertiesTabs } from "./properties_tabs.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -142,6 +143,9 @@ export function createParagraphInspector(ed) {
       ed.paraOptsBtn.focus({ preventScroll: true });
     }
   }
+
+  // The three properties panels share one tab strip (approved design D5).
+  queueMicrotask(() => startPropertiesTabs(ed));
 
   ed.paraOptsBtn.addEventListener("click", (event) => {
     event.stopPropagation();

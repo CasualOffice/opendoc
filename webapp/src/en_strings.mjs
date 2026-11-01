@@ -2842,4 +2842,7 @@ export const EN_STRINGS = Object.freeze({
   "plugins.assistant.describeTable": "Describe this table",
   "plugins.assistant.command.table": "Turn into table",
   "plugins.assistant.command.describeTable": "Describe this table",
+  "propertiesTabs.paragraph": "Paragraph",
+  "propertiesTabs.picture": "Picture",
+  "propertiesTabs.table": "Table",
 });
