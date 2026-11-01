@@ -65,6 +65,7 @@ DOTX
 DPI
 DPR
 DTD
+Dialogs
 Diff
 DocSpace
 DrawingML
@@ -609,6 +610,7 @@ reflows
 relativeFrom
 relayout
 rels
+rem
 renderable
 renderer
 renderers

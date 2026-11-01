@@ -396,11 +396,8 @@ export function createReviewMargin(ed) {
     // under the pointer, which is the worst possible moment for the page to jump.
     const show = ed.reviewSidebarPreference ?? (items.length > 0 || ed.reviewMode === "suggesting");
     ed.reviewSidebar.hidden = !show;
-    // Mutually exclusive with the outline panel (see toggleOutline): whenever the
-    // review sidebar is shown the outline closes, so the canvas is only ever
-    // inset from one side at a time.
-    if (show) ed.closeFlankingPanel(ed.outlinePanel, ed.railOutline);
-    if (show) ed.closeFlankingPanel(ed.pagesPanel, ed.railPages);
+    // One panel per side (approved design P1): the review sidebar is on the
+    // right, so a left-hand Outline or Pages stays open beside it.
     // Reserve the comment column's width in the page stack only while the column
     // is shown, so pages stay centered-ish and the single `.viewport` scrollbar
     // sits past the comments (never between the canvas and the comments).

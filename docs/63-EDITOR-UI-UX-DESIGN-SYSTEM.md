@@ -29,19 +29,16 @@ Borrowed from the reference, adapted to the CasualOffice brand:
   native system stack as fallback. Chrome text is 13px; headings and titles are
   slightly heavier. Tabular numerals remain in use for measures (ruler, zoom,
   counts).
-- **Icons** — self-hosted Material Symbols Outlined at a 16/18/20px compact,
-  control, and rail grid. Bold/italic/underline/strike remain literal typographic
+- **Icons** — self-hosted Material Symbols Outlined at the v2 16/20/24px grid
+  (§7). Bold/italic/underline/strike remain literal typographic
   glyphs, matching the reference. Font and license files are checked in; editor
   chrome does not depend on a runtime font request.
 - **Neutrals** — near-white surfaces on a light-grey canvas; hairline dividers
   (`--line`); soft, low-contrast shadows for lifted surfaces (menus, panels).
-- **Shape & space** — a 4/8/12/16/20/24px spacing grid, 30px toolbar controls,
-  34px actions, and 36px form fields. **Radii were flattened after this doc was
-  written** (corrected 2026-09-15, `105` UX-024 context): the shipped tokens are
-  `--radius`/`--radius-sm`/`--radius-md` **3px** — near-square, deliberately — while
-  floating surfaces keep their own larger radius so a popover still detaches from the
-  flat chrome. `style.css` is the source of truth for token *values*; this document
-  owns their *roles*. Change them in the same PR or this drift recurs.
+- **Shape & space** — superseded by the v2 scale in §7 (2026-11-01): a 4px
+  spacing grid, 24/28/32/44px control heights and 4/6/8/12/pill radii.
+  `style.css` is the source of truth for token *values*; this document owns their
+  *roles*. Change them in the same PR or this drift recurs.
 - **Light & dark** — both first-class (`:root[data-theme]` + `prefers-color-scheme`).
 - **Motion** — quick (120ms) fades/slides for popovers and panels; nothing bouncy.
 
@@ -160,3 +157,95 @@ Where things live, so we stay consistent as we add features:
 8. **Comments** (needs a comments model — gated on that phase).
 
 Each phase is a PR; the shell in §2 does not change, only fills in.
+
+## 7. Design system v2 (2026-11-01, `109` UX-052..UX-055)
+
+The 2026-11-01 audit measured the chrome against Google Docs, Word for the web,
+opencalc and the ProseMirror docs editor: 30 font sizes and 9 weights in the
+stylesheet, 8 control heights in the visible Home chrome, 31 radii, 42 shadows,
+two primary colours (graphite Apply buttons beside accent toggles), a disabled
+Share button in the header's hero slot, and editing mode and chrome mode each
+offered in two places. The tokens existed; nothing made a rule use them. v2 is
+one scale per property and a guard that refuses anything else.
+
+**The owner's decisions (2026-11-01):** one primary colour, the accent; Share is
+hidden when the host has not configured sharing; editing mode lives only in the
+header chip and Compact/Ribbon in one place; contextual ribbon tabs appear only
+when relevant; the status bar keeps word count, page, zoom and contextual chips;
+every dialog fits 1280×720 and 390×844 with a scrolling body and a pinned footer;
+one docked side-panel pattern; dark elevation by lighter surfaces and a hairline,
+not shadows.
+
+### 7.1 Tokens
+
+All chrome lengths are rem on the fluid root (`chrome_units.test.mjs`), so the
+px figures below are at the 16px root that holds from 1280 to 1440px.
+
+| Family | Tokens | Values | Roles |
+| --- | --- | --- | --- |
+| Type size | `--fs-xs` `--fs-sm` `--fs-md` `--fs-lg` `--fs-xl` | 11 / 12 / 13 / 15 / 20 | chips, shortcut hints, big-button labels · status, meta, field labels · body, menus, tabs · dialog and panel titles · File page heading |
+| Weight | `--fw-regular` `--fw-medium` `--fw-semibold` | 400 / 500 / 600 | body · controls, tabs, labels · titles and headings |
+| Icon | `--icon-sm` `--icon-md` `--icon-lg` | 16 / 20 / 24 | status bar, chips, menu trailing · toolbar, menus, panel actions · big ribbon buttons, mobile |
+| Radius | `--r-xs` `--r-sm` `--r-md` `--r-lg` `--r-pill` | 4 / 6 / 8 / 12 / pill | checkbox, chip, swatch · buttons, inputs, tool buttons · menus, popovers, cards, panels, toolbar card · dialogs, sheets · avatars, mode chip |
+| Height | `--h-dense` `--h-tool` `--h-ctl` `--h-touch` | 24 / 28 / 32 / 44 | status items, chips · toolbar and ribbon buttons · dialog buttons, inputs, selects · coarse pointer |
+| Space | `--space-1`..`--space-6` | 4 / 8 / 12 / 16 / 20 / 24 | the 4px grid; a 2px half-step inside dense controls; never an odd pixel (1px is a hairline, not spacing) |
+| Elevation | `--e1` `--e2` `--e3` | card · menu/popover · dialog | light: hairline plus soft shadow; dark: `none` / hairline ring only |
+| State | `--hover` `--press` `--selected` `--selected-ink` | ink 6% / 10% · accent 12% | washes every control shares |
+| Roles | `--surface-raised` `--icon` `--line-control` `--ink-disabled` `--scrim` | | dialogs over panels · toolbar glyphs · input boundary (3:1, WCAG 1.4.11) · disabled text · modal backdrop |
+
+**Primary.** `--primary-bg` is `var(--accent)` in both themes, `--primary-ink`
+is `var(--accent-ink)` and hover is `--accent-hover` (the accent darkened toward
+black, because white text sits on it in both themes). There is no graphite
+primary any more. The palette names a host may override (`brand_contract.mjs`
+`OVERRIDABLE`) are unchanged: the v2 roles are derived from them where they can
+be, so a white-label re-skins v2 without new keys.
+
+**Palette.** Light: desk and chrome `#f3f4f6`, surface `#ffffff`, sunken
+`#f6f7f9`, ink `#1b1e24`, secondary `#555c68`, tertiary `#656b76`, lines
+`#e6e8ec`/`#d5d9e0`. Dark: desk `#111317`, chrome `#16181d`, surface `#1d2026`,
+raised `#252930`, ink `#e7e9ec`, secondary `#a6acb5`, tertiary `#9aa0a9`, lines
+`#2c3037`/`#3a3f48`, scrim 60%. Every role clears its floor in all three palettes
+(`style_tokens.test.mjs`, `theme-contrast.spec.mjs`).
+
+### 7.2 The guard
+
+`webapp/tests/design_scale.test.mjs` fails the build when a chrome rule writes a
+font size, weight, radius or blurred shadow outside the scale. The document region
+(the sheet, overlay, rulers; `tests/css_regions.mjs`, shared with
+`chrome_units.test.mjs`) is out of scope, and so are named content previews (the
+drop-cap sample, the Styles gallery, the symbol grid, the font list), each listed
+with its reason. The old token names (`--fs-body`, `--radius-popover`,
+`--shadow-dialog`, `--icon-control`, ...) were swept off every editor rule.
+Eight survive as aliases of their v2 rung, and only because the plugin platform
+publishes them: `PLUGIN_TOKENS` (`plugin_platform.mjs`, `docs/183`) hands
+`--radius`, `--radius-sm`, `--radius-md`, `--radius-popover`, `--fs-body`,
+`--fs-small`, `--fs-caption` and `--shadow-popover` to every plugin page, and a
+third-party plugin may already read them. `PLUGIN_TOKENS` now publishes the v2
+names too, and the bundled plugin SDK stylesheet (`plugins/sdk/`) reads only
+those. The guard refuses an editor rule that reads an alias, and a second test
+refuses a published token the stylesheet does not declare (the plugin platform
+and v2 landed in parallel, and the merge silently handed plugins seven empty
+values). Drop the aliases when the plugin API takes a version that removes them.
+
+The same test holds spacing and heights: a padding, margin or gap length in a
+chrome rule is on the grid above (no odd pixel; 100 declarations were snapped to
+the nearest 4px rung, each move 1px), and a height that equals a rung (24, 28,
+32, 44) is written as its token, not as a literal.
+
+**Left for the next phases, on purpose.** Three pre-v2 height tokens are still
+off the scale: `--h-control` (30px: ribbon and toolbar `.fmt` buttons, `.btn`,
+panel and dialog close buttons), `--h-search` (34px: the search trigger, dialog
+buttons) and `--h-field` (36px: dialog inputs and selects). Moving them to
+`--h-tool`/`--h-ctl` resizes every dialog and the whole ribbon, which is the
+dialog pass (UX-053) and the shell pass (UX-054), and each needs its own
+screenshots and ribbon-budget measurement. Until then they are the only
+off-scale lengths the guard does not refuse.
+
+### 7.3 What v2 deliberately keeps
+
+- The accent `#3355c4` and the settable-accent presets.
+- Inter and Material Symbols, self-hosted (`chrome_fonts.test.mjs`).
+- Ribbon group captions: the owner rejected the caption-less band once already
+  (see the `.rgroup-label` comment in `style.css`), so the audit's "captions off"
+  is not taken.
+- The paper layer (`--paper-*`): the document is white in both themes.

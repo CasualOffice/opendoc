@@ -286,6 +286,10 @@
         </div>
         <!-- Row 2, with the tab strip: how the APPLICATION is presented. -->
         <div class="controls-app">
+          <!-- Ask Casual AI, always reachable without a selection (owner, 2026-11-02;
+               Gemini's "Ask Gemini" sits here in Google Docs). Hidden until an AI
+               provider is set up and the assistant runs (plugin_platform reflectChrome). -->
+          <button id="aiHeaderBtn" type="button" class="ai-header-btn" hidden><span class="ms" aria-hidden="true">auto_awesome</span><span class="ai-header-text"></span></button>
           <!-- The editing mode, at the top right: where all three references put
                it — ONLYOFFICE at the right of the tab row, Google Docs at the
                right of the toolbar ("Editing ▾"), Word at the right of the ribbon
@@ -328,7 +332,7 @@
     <div data-i18n-label="ui.applicationMenu.label" id="appMenuPopover" class="app-menu-popover" role="menu" aria-label="Application menu" hidden></div>
 
     <div id="propertiesPanel" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="propertiesTitle" aria-describedby="propertiesDescription">
-      <section class="dialog-card properties-dialog">
+      <section class="dialog-card dialog-card-wide properties-dialog">
         <header class="dialog-head">
           <div class="dialog-heading">
                         <div>
@@ -410,7 +414,7 @@
          other dialog here uses — which is also the shell the File page already
          knows how to borrow. -->
     <div id="settingsPanel" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="settingsTitle" aria-describedby="settingsDescription">
-      <section class="dialog-card settings-dialog">
+      <section class="dialog-card dialog-card-wide settings-dialog">
         <header class="dialog-head">
           <div class="dialog-heading">
                         <div>
@@ -423,7 +427,14 @@
           </button>
         </header>
         <div class="dialog-body settings-body">
-      <div class="settings-section">
+        <nav class="settings-nav" role="tablist" data-i18n-label="ui.settings.label" aria-label="Settings" aria-orientation="vertical">
+          <button type="button" role="tab" data-settings-tab="general" data-i18n="settingsNav.general">General</button>
+          <button type="button" role="tab" data-settings-tab="proofing" data-i18n="settingsNav.proofing">Proofing</button>
+          <button type="button" role="tab" data-settings-tab="saving" data-i18n="settingsNav.saving">Saving</button>
+          <button type="button" role="tab" data-settings-tab="ai" data-i18n="settingsNav.ai">AI and add-ins</button>
+        </nav>
+        <div class="settings-pages">
+      <div class="settings-section" data-settings-page="general">
         <div data-i18n="settingsPanel.theme" class="settings-label">Theme</div>
         <div data-i18n-label="settingsPanel.theme.label" class="segmented" id="themeSeg" role="radiogroup" aria-label="Theme">
           <button data-i18n="themeSeg.system" type="button" data-theme="system">System</button>
@@ -436,7 +447,7 @@
            cannot read the dialog needs to reach this control without reading
            the dialog, so it is at the top and its options name themselves
            (docs/124 §5). -->
-      <div class="settings-section">
+      <div class="settings-section" data-settings-page="general">
         <div class="settings-label" data-i18n="settings.language.label">Language</div>
         <select id="languageSelect" class="dialog-select" data-i18n-label="settings.language.label" aria-label="Language"></select>
         <p class="settings-note" id="languageNote" data-i18n="settings.language.note">Translations other than English are machine-produced and have not been reviewed by a native speaker.</p>
@@ -460,12 +471,12 @@
            discover it — `docs/99` §9.6: understating is as false as overstating,
            and a preference that silently governs some surfaces and not others is
            worse than one that says which. -->
-      <div class="settings-section">
+      <div class="settings-section" data-settings-page="general">
         <div class="settings-label" data-i18n="settings.units.label" id="measurementUnitLabel">Measurement units</div>
         <select id="measurementUnitSelect" class="dialog-select" aria-labelledby="measurementUnitLabel"></select>
         <p class="settings-note" data-i18n="settings.units.note">Used by Page setup. The ruler still draws inch ticks whatever is chosen here.</p>
       </div>
-      <div class="settings-section">
+      <div class="settings-section" data-settings-page="general">
         <div data-i18n="settingsPanel.accent" class="settings-label">Accent</div>
         <div class="swatches" id="accentSwatches">
           <button data-i18n-title="accentSwatches.orange.title" data-i18n-label="accentSwatches.orange.label" type="button" class="acc" data-accent="#e2622a" style="--c:#e2622a" title="Orange" aria-label="Orange"></button>
@@ -479,7 +490,7 @@
           </label>
         </div>
       </div>
-      <div class="settings-section">
+      <div class="settings-section" data-settings-page="general">
         <div data-i18n="settingsPanel.reviewerIdentity" class="settings-label">Reviewer identity</div>
         <div class="dialog-field-grid">
           <label data-i18n="settingsPanel.name" class="dialog-field">Name<input data-i18n-placeholder="settingsPanel.you.placeholder" id="authorName" type="text" maxlength="255" placeholder="You" autocomplete="off" /></label>
@@ -494,7 +505,7 @@
       <!-- Autosave. The retention posture D-1 required be written down before
            any document bytes were kept on-device is stated HERE, next to the
            control that turns it off, rather than only in docs/112. -->
-      <div class="settings-section">
+      <div class="settings-section" data-settings-page="saving">
         <div data-i18n="settingsPanel.autosave" class="settings-label">Autosave</div>
         <label class="dialog-check">
           <input id="autosaveToggle" type="checkbox" checked />
@@ -508,7 +519,7 @@
            because "spell check" is a phrase people reasonably assume means a
            server. It also says where a word added to the dictionary goes,
            since there is no surface yet that can take one back out. -->
-      <div class="settings-section">
+      <div class="settings-section" data-settings-page="proofing">
         <div data-i18n="settingsPanel.spelling" class="settings-label">Spelling</div>
         <label class="dialog-check">
           <input id="spellCheckToggle" type="checkbox" checked />
@@ -526,7 +537,7 @@
       <!-- AutoCorrect (docs/174 TA-05, TA-06): Word's "AutoFormat As You Type"
            switches. Each is also a command-palette switch; `autocorrect.mjs`
            owns all three. -->
-      <div class="settings-section">
+      <div class="settings-section" data-settings-page="proofing">
         <div data-i18n="settingsPanel.autoCorrect" class="settings-label">AutoCorrect</div>
         <label class="dialog-check">
           <input id="smartQuotesToggle" type="checkbox" checked />
@@ -544,16 +555,54 @@
              editable lists live in the AutoCorrect options dialog. -->
         <button data-i18n="settingsPanel.autoCorrectOptions" type="button" id="settingsAutoCorrectOptions" class="dialog-button" aria-haspopup="dialog">AutoCorrect options…</button>
       </div>
+          <section id="settingsAiSection" class="settings-section settings-ai" data-settings-page="ai" aria-labelledby="settingsAiLabel">
+            <div id="settingsAiLabel" class="settings-label" data-i18n="aiProviderDialog.title">AI provider</div>
+            <p id="aiProviderManaged" class="dialog-field-note" hidden></p>
+          <div id="aiProviderForm">
+            <label data-i18n="aiProviderDialog.service" class="dialog-field field-wide">Service<select id="aiProviderPreset" class="dialog-select">
+              <option data-i18n="aiProviderDialog.preset.openai" value="openai">OpenAI</option>
+              <option data-i18n="aiProviderDialog.preset.azure" value="azure">Azure OpenAI</option>
+              <option data-i18n="aiProviderDialog.preset.anthropic" value="anthropic">Anthropic</option>
+              <option data-i18n="aiProviderDialog.preset.gemini" value="gemini">Google Gemini</option>
+              <option data-i18n="aiProviderDialog.preset.mistral" value="mistral">Mistral</option>
+              <option data-i18n="aiProviderDialog.preset.openrouter" value="openrouter">OpenRouter</option>
+              <option data-i18n="aiProviderDialog.preset.ollama" value="ollama">Ollama (this computer)</option>
+              <option data-i18n="aiProviderDialog.preset.lmstudio" value="lmstudio">LM Studio (this computer)</option>
+              <option data-i18n="aiProviderDialog.preset.vllm" value="vllm">vLLM (this computer)</option>
+              <option data-i18n="aiProviderDialog.preset.custom" value="custom">Other OpenAI-compatible service</option>
+            </select></label>
+            <label data-i18n="aiProviderDialog.endpoint" class="dialog-field field-wide">Endpoint URL<input id="aiProviderUrl" type="url" maxlength="2048" autocomplete="off" spellcheck="false" /></label>
+            <label data-i18n="aiProviderDialog.model" class="dialog-field field-wide">Model<input data-i18n-placeholder="aiProviderDialog.model.placeholder" id="aiProviderModel" type="text" maxlength="256" autocomplete="off" spellcheck="false" placeholder="The model name your service uses" /></label>
+            <label data-i18n="aiProviderDialog.key" class="dialog-field field-wide">API key<input id="aiProviderKey" type="password" maxlength="4096" autocomplete="off" spellcheck="false" aria-describedby="aiProviderKeyNote" /></label>
+            <p id="aiProviderKeyNote" class="dialog-field-note"></p>
+            <label class="dialog-check">
+              <input id="aiProviderLegacy" type="checkbox" />
+              <span><strong data-i18n="aiProviderDialog.legacy">Send max_tokens instead of max_completion_tokens</strong><small data-i18n="aiProviderDialog.legacyNote">Only for an older or local server that refuses the newer field name.</small></span>
+            </label>
+          </div>
+          <p id="aiProviderDisclosure" class="dialog-field-note"></p>
+          <!-- "AI edits as" (`docs/183` §23.3): the person's choice, kept on this
+               device and capped by the document and their role. Outside the form,
+               so it is offered when a host manages the provider too. -->
+          <div class="settings-section ai-edit-as">
+            <div data-i18n="aiProviderDialog.editAs" class="settings-label" id="aiEditAsLabel">AI edits as</div>
+            <div class="segmented" id="aiEditAs" role="radiogroup" aria-labelledby="aiEditAsLabel" aria-describedby="aiEditAsNote">
+              <button data-i18n="aiProviderDialog.editAs.suggest" type="button" data-ai-edit-as="suggest" role="radio" aria-checked="true" tabindex="0">Suggestions</button>
+              <button data-i18n="aiProviderDialog.editAs.direct" type="button" data-ai-edit-as="direct" role="radio" aria-checked="false" tabindex="-1">Direct edits</button>
+            </div>
+            <p id="aiEditAsNote" class="dialog-field-note"></p>
+          </div>
+          <p id="aiProviderStatus" class="dialog-field-note" role="status" aria-live="polite"></p>
+            <div class="settings-ai-actions"><button data-i18n="settingsPanel.addinsManage" type="button" id="settingsAddinsBtn" class="dialog-button dialog-button-utility">Manage add-ins…</button><button data-i18n="aiProviderDialog.forget" id="aiProviderForget" type="button" class="dialog-button dialog-button-utility">Forget</button><button data-i18n="aiProviderDialog.test" id="aiProviderTest" type="button" class="dialog-button dialog-button-utility">Test connection</button><button data-i18n="aiProviderDialog.save" id="aiProviderSave" type="button" class="dialog-button dialog-button-primary">Save</button></div>
+          </section>
+        </div>
         </div>
         <footer class="dialog-foot">
-          <!-- AI provider and Add-ins (docs/183 §6.5): in the action row, not a body
-               group, so Settings still fits a 1280x720 laptop (dialog-fit). The
-               note says before anything is sent where text would go. -->
-          <span data-i18n="settingsPanel.aiProviderNote" id="aiProviderSummary" class="dialog-note">No AI provider is set up, so no text is sent anywhere.</span>
+          <span data-i18n="settingsPanel.aiProviderNote" id="aiProviderSummary" class="dialog-note" hidden>No AI provider is set up, so no text is sent anywhere.</span>
+          <button data-i18n="settingsPanel.aiProviderSetUp" type="button" id="aiProviderSettingsBtn" class="dialog-button" hidden>AI provider settings…</button>
+          <button data-i18n="settingsPanel.resetDefaults" type="button" id="settingsReset" class="dialog-button dialog-button-utility">Reset to defaults</button>
           <div class="dialog-actions">
-            <button data-i18n="settingsPanel.aiProviderSetUp" type="button" id="aiProviderSettingsBtn" class="dialog-button">AI provider settings…</button>
-            <button data-i18n="settingsPanel.addinsManage" type="button" id="settingsAddinsBtn" class="dialog-button">Manage add-ins…</button>
-            <button data-i18n="settingsPanel.resetDefaults" type="button" id="settingsReset" class="dialog-button">Reset to defaults</button>
+            <button data-i18n="bookmarkDialog.done" type="button" id="settingsDone" class="dialog-button dialog-button-primary">Done</button>
           </div>
         </footer>
       </section>
@@ -762,6 +811,14 @@
               </div>
             </div>
             <span data-i18n="panelHome.editing" class="rgroup-label">Editing</span>
+          </div>
+          <!-- Casual AI at the end of Home, where Word puts Copilot. Hidden until
+               the assistant runs; opens its panel with nothing selected. -->
+          <div class="rgroup" data-group="ai" id="homeAiGroup" hidden>
+            <div class="rgroup-ctl">
+              <button id="homeAiBtn" type="button" class="fmt fmt-big"><span class="ms" aria-hidden="true">auto_awesome</span><span class="fmt-big-label"></span></button>
+            </div>
+            <span data-i18n="panelHome.casualAi" class="rgroup-label">Casual AI</span>
           </div>
         </div>
 
@@ -1461,7 +1518,7 @@
          registry and from `NAVIGATION_SHORTCUTS`, so a shortcut cannot be listed
          here without existing, or exist without being listed. -->
     <div id="shortcutsDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="shortcutsTitle" aria-describedby="shortcutsDescription">
-      <section class="dialog-card shortcuts-dialog">
+      <section class="dialog-card dialog-card-reference shortcuts-dialog">
         <header class="dialog-head">
           <div class="dialog-heading">
                         <div>
@@ -1579,7 +1636,7 @@
          (`content_controls.mjs`). A dialog rather than Word's in-place list, so it is
          keyboard- and screen-reader-operable on every surface, a phone included. -->
     <div id="controlFillDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="controlFillTitle">
-      <section class="dialog-card control-fill-dialog">
+      <section class="dialog-card dialog-card-compact control-fill-dialog">
         <header class="dialog-head">
           <div class="dialog-heading">
             <div>
@@ -1631,7 +1688,7 @@
     </div>
 
     <div id="wordCountDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="wordCountTitle" aria-describedby="wordCountScope">
-      <section class="dialog-card word-count-dialog">
+      <section class="dialog-card dialog-card-compact word-count-dialog">
         <header class="dialog-head">
           <h2 data-i18n="wordCountDialog.title" id="wordCountTitle">Word count</h2>
           <button data-word-count-dismiss data-i18n-title="wordCountDialog.close.title" data-i18n-label="wordCountDialog.close.label" id="wordCountClose" type="button" class="dialog-close" title="Close" aria-label="Close word count">
@@ -1689,7 +1746,7 @@
         </div>
         <footer class="dialog-foot">
           <div class="dialog-actions">
-            <button data-i18n="dictionaryDialog.clear" id="dictionaryClear" type="button" class="dialog-button">Delete all</button>
+            <button data-i18n="dictionaryDialog.clear" id="dictionaryClear" type="button" class="dialog-button dialog-button-utility">Delete all</button>
             <button data-dictionary-dismiss data-i18n="dictionaryDialog.done" id="dictionaryDone" type="button" class="dialog-button dialog-button-primary">Close</button>
           </div>
         </footer>
@@ -1703,7 +1760,7 @@
          first-letter exceptions, both lists per language. Changes apply at once,
          as ONLYOFFICE's do, so the dialog has Close and not OK/Cancel. -->
     <div id="autoCorrectDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="autoCorrectTitle" aria-describedby="autoCorrectDescription">
-      <section class="dialog-card autocorrect-dialog">
+      <section class="dialog-card dialog-card-wide autocorrect-dialog">
         <header class="dialog-head">
           <div class="dialog-heading">
             <div>
@@ -1793,7 +1850,7 @@
       </section>
     </div>
     <div id="aboutDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="aboutTitle" aria-describedby="aboutDescription">
-      <section class="dialog-card about-dialog">
+      <section class="dialog-card dialog-card-compact about-dialog">
         <header class="dialog-head">
           <div class="dialog-heading">
             <img class="about-mark" src="./opendoc-mark.svg" alt="" width="36" height="36" />
@@ -1846,7 +1903,7 @@
           </button>
         </header>
         <div class="dialog-body page-setup-body">
-          <div class="page-preview" aria-hidden="true">
+          <div class="page-preview" hidden aria-hidden="true">
             <div id="pagePreviewSheet" class="page-preview-sheet" data-orientation="portrait">
               <div id="pagePreviewMargins" class="page-preview-margins">
                 <span></span><span></span><span></span><span></span>
@@ -1854,76 +1911,37 @@
             </div>
             <span data-i18n="pageSetupMenu.8271169" id="pagePreviewLabel" class="page-preview-label">8.27 × 11.69 in</span>
           </div>
-          <div class="page-setup-fields">
-            <fieldset class="dialog-group">
-              <legend data-i18n="pageSetupMenu.apply">Apply to</legend>
-              <label data-i18n="pageSetupMenu.section" class="dialog-field">Section<select id="pageSetupSection" class="dialog-select"></select></label>
-            </fieldset>
-            <fieldset class="dialog-group">
-              <legend data-i18n="pageSetupMenu.orientation">Orientation</legend>
-              <div data-i18n-label="pageSetupMenu.orientation.label" class="segmented orientation-segmented" id="pageOrientationSeg" role="radiogroup" aria-label="Orientation">
+          
+          <div class="dialog-field-grid ps-cols-2 ps-top">
+            <label data-i18n="pageSetupMenu.section" class="dialog-field">Section<select id="pageSetupSection" class="dialog-select"></select></label>
+            <div class="dialog-field ps-orientation"><span data-i18n="pageSetupMenu.orientation">Orientation</span><div data-i18n-label="pageSetupMenu.orientation.label" class="segmented orientation-segmented" id="pageOrientationSeg" role="radiogroup" aria-label="Orientation">
                 <button type="button" data-orientation="portrait"><span class="ms" aria-hidden="true">stay_current_portrait</span>Portrait</button>
                 <button type="button" data-orientation="landscape"><span class="ms" aria-hidden="true">stay_current_landscape</span>Landscape</button>
-              </div>
-            </fieldset>
-            <fieldset class="dialog-group">
-              <legend data-i18n="pageSetupMenu.pageSize">Page size</legend>
+              </div></div>
+          </div>
+          <div class="dialog-field-grid ps-cols-2">
               <label class="dialog-field"><span data-i18n="pagePresets.paper">Paper size preset</span><select id="pagePaperPreset" class="dialog-select"><option value="custom" data-i18n="pagePresets.custom">Custom</option><option value="letter" data-i18n="pagePresets.letter">Letter</option><option value="legal" data-i18n="pagePresets.legal">Legal</option><option value="a4">A4</option><option value="a5">A5</option></select></label>
-              <div class="dialog-field-grid">
-                <label data-i18n="pageSetupMenu.width" class="dialog-field">Width<span class="number-control"><input id="pageWidth" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-                <label data-i18n="pageSetupMenu.height" class="dialog-field">Height<span class="number-control"><input id="pageHeight" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-              </div>
-            </fieldset>
-            <fieldset class="dialog-group">
-              <legend data-i18n="pageSetupMenu.margins">Margins</legend>
-              <label class="dialog-check"><input id="pageMirrorMargins" type="checkbox" /><span data-i18n="pageExtras.mirror">Mirror margins on facing pages</span></label><button id="pageMirrorApply" type="button" class="chip-btn" data-i18n="pageExtras.applyMirror">Apply mirrored margins to document</button>
-              <label class="dialog-field"><span data-i18n="pagePresets.margins">Margin preset</span><select id="pageMarginsPreset" class="dialog-select"><option value="custom" data-i18n="pagePresets.custom">Custom</option><option value="normal" data-i18n="pagePresets.normal">Normal</option><option value="narrow" data-i18n="pagePresets.narrow">Narrow</option><option value="moderate" data-i18n="pagePresets.moderate">Moderate</option><option value="wide" data-i18n="pagePresets.wide">Wide</option></select></label>
-              <div class="dialog-field-grid">
-                <label data-i18n="pageSetupMenu.top" class="dialog-field">Top<span class="number-control"><input id="pageMarginTop" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-                <label data-i18n="pageSetupMenu.bottom" class="dialog-field">Bottom<span class="number-control"><input id="pageMarginBottom" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-                <label data-i18n="pageSetupMenu.left" class="dialog-field">Left<span class="number-control"><input id="pageMarginLeft" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-                <label data-i18n="pageSetupMenu.right" class="dialog-field">Right<span class="number-control"><input id="pageMarginRight" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-                <!-- Gutter: the binding margin added on the inner edge, which the
-                     engine has added to `margin_start` since P1F-36
-                     (`casual-doc-layout/src/document_layout.rs`) with no way to
-                     ask for one. It belongs beside the four margins, which is
-                     where ONLYOFFICE keeps it too
-                     (`apps/documenteditor/main/app/view/PageMarginsDialog.js:89`,
-                     in their Margins dialog).
-
-                     It gets its OWN label, which is a deliberate departure from
-                     them: their spinner has none, sitting under a bold header
-                     reading "Gutter position" that actually belongs to the combo
-                     beside it — they even define the string `textGutter`
-                     (`PageMarginsDialog.js:428`) and never reference it.
-
-                     Word's "Gutter position" (top vs left) is NOT offered: it is
-                     `w:settings/w:gutterAtTop`, which this engine does not model,
-                     and `document_layout.rs` records that landing it is a
-                     multi-crate change that must arrive as one unit. An offered
-                     control that silently did nothing is the thing docs/63
-                     forbids. -->
+              <label class="dialog-field"><span data-i18n="pageExtras.color">Page color</span><input id="pageBackgroundColor" type="color" value="#ffffff" /></label>
+            </div>
+            <div class="dialog-field-grid ps-cols-2">
+              <label data-i18n="pageSetupMenu.width" class="dialog-field">Width<span class="number-control"><input id="pageWidth" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+              <label data-i18n="pageSetupMenu.height" class="dialog-field">Height<span class="number-control"><input id="pageHeight" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+            </div>
+          <fieldset class="dialog-group">
+            <legend data-i18n="pageSetupMenu.margins">Margins</legend>
+            <label class="dialog-field"><span data-i18n="pagePresets.margins">Margin preset</span><select id="pageMarginsPreset" class="dialog-select"><option value="custom" data-i18n="pagePresets.custom">Custom</option><option value="normal" data-i18n="pagePresets.normal">Normal</option><option value="narrow" data-i18n="pagePresets.narrow">Narrow</option><option value="moderate" data-i18n="pagePresets.moderate">Moderate</option><option value="wide" data-i18n="pagePresets.wide">Wide</option></select></label>
+            <div class="dialog-field-grid ps-cols-4">
+              <label data-i18n="pageSetupMenu.top" class="dialog-field">Top<span class="number-control"><input id="pageMarginTop" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+              <label data-i18n="pageSetupMenu.bottom" class="dialog-field">Bottom<span class="number-control"><input id="pageMarginBottom" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+              <label data-i18n="pageSetupMenu.left" class="dialog-field">Left<span class="number-control"><input id="pageMarginLeft" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+              <label data-i18n="pageSetupMenu.right" class="dialog-field">Right<span class="number-control"><input id="pageMarginRight" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+            </div>
+          </fieldset>
+          <details class="dialog-advanced">
+            <summary data-i18n="pageSetupMenu.advanced">Advanced</summary>
+            <div class="dialog-advanced-body">
+              <div class="dialog-field-grid ps-cols-2">
                 <label data-i18n="pageSetupMenu.gutter" class="dialog-field">Gutter<span class="number-control"><input id="pageMarginGutter" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-              </div>
-            </fieldset>
-            <!-- Word's Page Setup ▸ Layout ▸ Vertical alignment. WORD is the model
-                 here and not ONLYOFFICE, because ONLYOFFICE does not have this
-                 feature at all — not merely no dialog: their `SectPr` constructor
-                 (`sdkjs/word/Editor/sections/sect-pr.js:58-88`) has no VAlign
-                 field, and their binary section-property enum
-                 (`sdkjs/word/Editor/Serialize2.js:391-406`) has no slot for it, so
-                 `w:vAlign` cannot survive a round-trip through their editor.
-
-                 The engine has aligned pages since `apply_page_vertical_alignment`
-                 (`casual-doc-layout/src/document_layout.rs:1206`), and it takes the
-                 property seriously enough that incremental repagination refuses to
-                 reuse a page while it is set — which is the note the dialog carries
-                 below, because a user choosing this on a long document should know
-                 it costs a full repagination per edit. -->
-            <fieldset class="dialog-group">
-              <legend data-i18n="pageSetupMenu.layout">Layout</legend>
-              <label class="dialog-field"><span data-i18n="pageExtras.color">Page color</span><input id="pageBackgroundColor" type="color" value="#ffffff" /></label><button id="pageBackgroundApply" type="button" class="chip-btn" data-i18n="pageExtras.applyColor">Apply page color to document</button><button id="pageBackgroundClear" type="button" class="chip-btn" data-i18n="pageExtras.clearColor">Automatic page color</button>
-              <div class="dialog-field-grid">
                 <label data-i18n="pageSetupMenu.verticalAlignment" class="dialog-field">Vertical alignment<select id="pageVerticalAlignment" class="dialog-select">
                   <option data-i18n="pageSetupMenu.vAlignTop" value="top">Top</option>
                   <option data-i18n="pageSetupMenu.vAlignCenter" value="center">Center</option>
@@ -1931,8 +1949,8 @@
                   <option data-i18n="pageSetupMenu.vAlignBottom" value="bottom">Bottom</option>
                 </select></label>
               </div>
-            </fieldset>
-            <fieldset class="dialog-group">
+              <label class="dialog-check"><input id="pageMirrorMargins" type="checkbox" /><span data-i18n="pageExtras.mirror">Mirror margins on facing pages</span></label>
+              <fieldset class="dialog-group">
               <legend data-i18n="pageSetupMenu.columns">Columns</legend>
               <div class="dialog-field-grid">
                 <label data-i18n="pageSetupMenu.number" class="dialog-field">Number<select id="pageColumnCount" class="dialog-select">
@@ -1952,7 +1970,8 @@
 <label class="dialog-field"><span data-i18n="pageColumns.space3">Space after column 4</span><span class="number-control"><input id="pageColumnSpace3" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
 
             </fieldset>
-          </div>
+            </div>
+          </details>
         </div>
         <footer class="dialog-foot">
           <span data-i18n="pageSetupMenu.appliesSectionCanBe" class="dialog-note">Applies to this section and can be undone.</span>
@@ -3193,7 +3212,7 @@
          from a manifest URL is offered only standalone or where the host allows
          it. Code belongs to the installation, never to a document. -->
     <div id="pluginsDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="pluginsTitle" aria-describedby="pluginsDescription">
-      <section class="dialog-card">
+      <section class="dialog-card dialog-card-reference">
         <header class="dialog-head">
           <div class="dialog-heading">
             <div>
@@ -3237,58 +3256,7 @@
         <footer class="dialog-foot"><span></span><div class="dialog-actions"><button data-i18n="pluginGrantDialog.deny" id="pluginGrantDeny" type="button" class="dialog-button">Don’t allow</button><button data-i18n="pluginGrantDialog.allow" id="pluginGrantAllow" type="button" class="dialog-button dialog-button-primary">Allow</button></div></footer>
       </section>
     </div>
-    <div id="aiProviderDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="aiProviderTitle" aria-describedby="aiProviderDescription">
-      <section class="dialog-card">
-        <header class="dialog-head">
-          <div class="dialog-heading">
-            <div>
-              <h2 data-i18n="aiProviderDialog.title" id="aiProviderTitle">AI provider</h2>
-              <p data-i18n="aiProviderDialog.description" id="aiProviderDescription">AI features send text only to the service you choose here, and only when you ask them to. Your key stays on this device.</p>
-            </div>
-          </div>
-          <button data-i18n-title="aiProviderDialog.close.title" data-i18n-label="aiProviderDialog.closeAiProviderDialog.label" id="aiProviderClose" type="button" class="dialog-close" title="Close" aria-label="Close AI provider dialog"><span class="ms" aria-hidden="true">close</span></button>
-        </header>
-        <div class="dialog-body">
-          <p id="aiProviderManaged" class="dialog-field-note" hidden></p>
-          <div id="aiProviderForm">
-            <label data-i18n="aiProviderDialog.service" class="dialog-field field-wide">Service<select id="aiProviderPreset" class="dialog-select">
-              <option data-i18n="aiProviderDialog.preset.openai" value="openai">OpenAI</option>
-              <option data-i18n="aiProviderDialog.preset.azure" value="azure">Azure OpenAI</option>
-              <option data-i18n="aiProviderDialog.preset.anthropic" value="anthropic">Anthropic</option>
-              <option data-i18n="aiProviderDialog.preset.gemini" value="gemini">Google Gemini</option>
-              <option data-i18n="aiProviderDialog.preset.mistral" value="mistral">Mistral</option>
-              <option data-i18n="aiProviderDialog.preset.openrouter" value="openrouter">OpenRouter</option>
-              <option data-i18n="aiProviderDialog.preset.ollama" value="ollama">Ollama (this computer)</option>
-              <option data-i18n="aiProviderDialog.preset.lmstudio" value="lmstudio">LM Studio (this computer)</option>
-              <option data-i18n="aiProviderDialog.preset.vllm" value="vllm">vLLM (this computer)</option>
-              <option data-i18n="aiProviderDialog.preset.custom" value="custom">Other OpenAI-compatible service</option>
-            </select></label>
-            <label data-i18n="aiProviderDialog.endpoint" class="dialog-field field-wide">Endpoint URL<input id="aiProviderUrl" type="url" maxlength="2048" autocomplete="off" spellcheck="false" /></label>
-            <label data-i18n="aiProviderDialog.model" class="dialog-field field-wide">Model<input data-i18n-placeholder="aiProviderDialog.model.placeholder" id="aiProviderModel" type="text" maxlength="256" autocomplete="off" spellcheck="false" placeholder="The model name your service uses" /></label>
-            <label data-i18n="aiProviderDialog.key" class="dialog-field field-wide">API key<input id="aiProviderKey" type="password" maxlength="4096" autocomplete="off" spellcheck="false" aria-describedby="aiProviderKeyNote" /></label>
-            <p id="aiProviderKeyNote" class="dialog-field-note"></p>
-            <label class="dialog-check">
-              <input id="aiProviderLegacy" type="checkbox" />
-              <span><strong data-i18n="aiProviderDialog.legacy">Send max_tokens instead of max_completion_tokens</strong><small data-i18n="aiProviderDialog.legacyNote">Only for an older or local server that refuses the newer field name.</small></span>
-            </label>
-          </div>
-          <p id="aiProviderDisclosure" class="dialog-field-note"></p>
-          <!-- "AI edits as" (`docs/183` §23.3): the person's choice, kept on this
-               device and capped by the document and their role. Outside the form,
-               so it is offered when a host manages the provider too. -->
-          <div class="settings-section ai-edit-as">
-            <div data-i18n="aiProviderDialog.editAs" class="settings-label" id="aiEditAsLabel">AI edits as</div>
-            <div class="segmented" id="aiEditAs" role="radiogroup" aria-labelledby="aiEditAsLabel" aria-describedby="aiEditAsNote">
-              <button data-i18n="aiProviderDialog.editAs.suggest" type="button" data-ai-edit-as="suggest" role="radio" aria-checked="true" tabindex="0">Suggestions</button>
-              <button data-i18n="aiProviderDialog.editAs.direct" type="button" data-ai-edit-as="direct" role="radio" aria-checked="false" tabindex="-1">Direct edits</button>
-            </div>
-            <p id="aiEditAsNote" class="dialog-field-note"></p>
-          </div>
-          <p id="aiProviderStatus" class="dialog-field-note" role="status" aria-live="polite"></p>
-        </div>
-        <footer class="dialog-foot"><button data-i18n="aiProviderDialog.forget" id="aiProviderForget" type="button" class="dialog-button">Forget</button><div class="dialog-actions"><button data-i18n="aiProviderDialog.test" id="aiProviderTest" type="button" class="dialog-button">Test connection</button><button data-i18n="aiProviderDialog.save" id="aiProviderSave" type="button" class="dialog-button dialog-button-primary">Save</button></div></footer>
-      </section>
-    </div>
+    
 
     <div id="styleNameDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="styleNameTitle" aria-describedby="styleNameDescription">
       <section class="dialog-card dialog-card-compact">
@@ -3442,7 +3410,7 @@
         <footer class="dialog-foot">
           <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
-            <button data-i18n="noteSettings.convert" id="noteSettingsConvert" type="button" class="dialog-button">Convert…</button>
+            <button data-i18n="noteSettings.convert" id="noteSettingsConvert" type="button" class="dialog-button dialog-button-utility">Convert…</button>
             <button data-i18n="watermarkDialog.cancel" id="noteSettingsCancel" type="button" class="dialog-button">Cancel</button>
             <button data-i18n="watermarkDialog.apply" id="noteSettingsApply" type="button" class="dialog-button dialog-button-primary">Apply</button>
           </div>
@@ -3552,7 +3520,7 @@
           <div class="dialog-actions">
             <!-- Word's Stop Protection, as its own button while a restriction is
                  in force; the "No restriction" row above reaches the same state. -->
-            <button data-i18n="protect.stop" id="restrictEditingStop" type="button" class="dialog-button" hidden>Stop protection</button>
+            <button data-i18n="protect.stop" id="restrictEditingStop" type="button" class="dialog-button dialog-button-utility" hidden>Stop protection</button>
             <button data-i18n="watermarkDialog.cancel" id="restrictEditingCancel" type="button" class="dialog-button">Cancel</button>
             <button data-i18n="watermarkDialog.apply" id="restrictEditingApply" type="button" class="dialog-button dialog-button-primary">Apply</button>
           </div>
@@ -4539,9 +4507,96 @@
           </button>
         </header>
         <div class="panel-body properties-panel-body">
-          <button id="paraClearAll" type="button" class="chip-btn" data-i18n="paragraphAdvanced.clear">Clear all paragraph formatting</button>
-          <p data-i18n="paragraphPropertiesPanel.adjustAllSelectedParagraphs" id="paragraphPropertiesDescription" class="properties-panel-intro">Adjust all selected paragraphs. Changes apply automatically and Undo restores the previous value.</p>
+          <p data-i18n="paragraphPropertiesPanel.adjustAllSelectedParagraphs" id="paragraphPropertiesDescription" class="properties-panel-intro sr-only">Adjust all selected paragraphs. Changes apply automatically and Undo restores the previous value.</p>
           <div class="properties-panel-grid">
+<fieldset class="dialog-group property-section">
+              <legend data-i18n="paragraphPropertiesPanel.styleAmpAlignment">Style &amp; alignment</legend>
+              <label data-i18n="paragraphPropertiesPanel.style" class="dialog-field">Style<select id="paraPanelStyle" class="dialog-select"><option data-i18n="paraPanelStyle.style" value="">Style</option></select></label>
+              <div class="dialog-field">
+                <span data-i18n="paragraphPropertiesPanel.alignment">Alignment</span>
+                <!-- `role="group"`, NOT `radiogroup` (109 UX-021): over a
+                     multi-paragraph selection this control is tri-state and
+                     publishes `aria-pressed="mixed"`, and `aria-checked="mixed"`
+                     is not legal on a radio. Word, Google Docs and ONLYOFFICE all
+                     use toggle buttons for exactly this control for the same
+                     reason (ONLYOFFICE: Toolbar.js:559-607 `toggleGroup:
+                     'alignGroup'`, with no radiogroup wrapper). The groups that
+                     ARE always exactly-one-of go through `radio_group.mjs`. -->
+                <span data-i18n-label="paragraphPropertiesPanel.paragraphAlignment.label" class="segmented paragraph-align" id="paraPanelAlign" role="group" aria-label="Paragraph alignment">
+                  <button data-i18n-label="paraPanelAlign.alignLeft.label" type="button" data-palign="start" aria-pressed="false" aria-label="Align left"><span class="ms" aria-hidden="true">format_align_left</span></button>
+                  <button data-i18n-label="paraPanelAlign.center.label" type="button" data-palign="center" aria-pressed="false" aria-label="Center"><span class="ms" aria-hidden="true">format_align_center</span></button>
+                  <button data-i18n-label="paraPanelAlign.alignRight.label" type="button" data-palign="end" aria-pressed="false" aria-label="Align right"><span class="ms" aria-hidden="true">format_align_right</span></button>
+                  <button data-i18n-label="paraPanelAlign.justify.label" type="button" data-palign="justify" aria-pressed="false" aria-label="Justify"><span class="ms" aria-hidden="true">format_align_justify</span></button>
+                </span>
+              </div>
+            </fieldset>
+<fieldset class="dialog-group property-section">
+              <legend data-i18n="paragraphPropertiesPanel.indentation">Indentation</legend>
+              <div class="dialog-field-grid">
+                <label data-i18n="paragraphPropertiesPanel.left" class="dialog-field">Left<span class="number-control"><input id="indentLeft" type="number" min="0" max="12" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+                <label data-i18n="paragraphPropertiesPanel.right" class="dialog-field">Right<span class="number-control"><input id="indentRight" type="number" min="0" max="12" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+              </div>
+              <div class="dialog-field-grid">
+                <label data-i18n="paragraphPropertiesPanel.special" class="dialog-field">Special<select id="indentSpecial" class="dialog-select">
+                  <option data-i18n="indentSpecial.mixed" value="">Mixed</option>
+                  <option value="none">None</option>
+                  <option data-i18n="indentSpecial.firstLine" value="first">First line</option>
+                  <option data-i18n="indentSpecial.hanging" value="hanging">Hanging</option>
+                </select></label>
+                <label data-i18n="paragraphPropertiesPanel.by" class="dialog-field">By<span class="number-control"><input id="indentSpecialBy" type="number" min="0" max="12" step="0.01" inputmode="decimal" value="0.5" /><span>in</span></span></label>
+              </div>
+            </fieldset>
+<fieldset class="dialog-group property-section">
+              <legend data-i18n="paragraphPropertiesPanel.spacing">Spacing</legend>
+              <label data-i18n="paragraphPropertiesPanel.lineSpacing" class="dialog-field">Line spacing<select id="paraLineSpacing" class="dialog-select">
+                <option data-i18n="paraLineSpacing.mixedInherited" value="">Mixed or inherited</option>
+                <option data-i18n="paraLineSpacing.single" value="100">Single</option>
+                <option value="115">1.15</option>
+                <option value="150">1.5</option>
+                <option data-i18n="paraLineSpacing.double" value="200">Double</option>
+              </select></label>
+              <div class="dialog-field-grid">
+                <label data-i18n="paragraphPropertiesPanel.before" class="dialog-field">Before<span class="number-control"><input id="paraSpaceBefore" type="number" min="0" max="720" step="1" inputmode="numeric" /><span>pt</span></span></label>
+                <label data-i18n="paragraphPropertiesPanel.after" class="dialog-field">After<span class="number-control"><input id="paraSpaceAfter" type="number" min="0" max="720" step="1" inputmode="numeric" /><span>pt</span></span></label>
+              </div>
+            </fieldset>
+<fieldset class="dialog-group property-section">
+              <legend data-i18n="paragraphPropertiesPanel.shadingAmpBorders">Shading &amp; borders</legend>
+              <div class="property-color-row">
+                <label class="shade-pick"><input id="paraShade" type="color" value="#ffe08a" /><span data-i18n="paragraphPropertiesPanel.fill">Fill</span></label>
+                <button data-i18n="paragraphPropertiesPanel.noFill" type="button" id="paraShadeNone" class="chip-btn">No fill</button>
+                <span data-i18n="paragraphPropertiesPanel.mixed" id="paraShadeMixed" class="mixed-note" hidden>Mixed</span>
+              </div>
+              <div class="property-border-row">
+                <div data-i18n-label="paragraphPropertiesPanel.paragraphBorders.label" class="border-presets" role="group" aria-label="Paragraph borders">
+                  <button data-i18n-title="paragraphPropertiesPanel.noBorder.title" data-i18n-label="paragraphPropertiesPanel.noBorder.label" type="button" class="border-btn" data-border="none" title="No border" aria-label="No border" aria-pressed="false"><span class="bx"></span></button>
+                  <button data-i18n-title="paragraphPropertiesPanel.allBorders.title" data-i18n-label="paragraphPropertiesPanel.allBorders.label" type="button" class="border-btn" data-border="box" title="All borders" aria-label="All borders" aria-pressed="false"><span class="bx"></span></button>
+                  <button data-i18n-title="paragraphPropertiesPanel.topBorder.title" data-i18n-label="paragraphPropertiesPanel.topBorder.label" type="button" class="border-btn" data-border="top" title="Top border" aria-label="Top border" aria-pressed="false"><span class="bx"></span></button>
+                  <button data-i18n-title="paragraphPropertiesPanel.bottomBorder.title" data-i18n-label="paragraphPropertiesPanel.bottomBorder.label" type="button" class="border-btn" data-border="bottom" title="Bottom border" aria-label="Bottom border" aria-pressed="false"><span class="bx"></span></button>
+                  <button data-i18n-title="paragraphPropertiesPanel.leftBorder.title" data-i18n-label="paragraphPropertiesPanel.leftBorder.label" type="button" class="border-btn" data-border="left" title="Left border" aria-label="Left border" aria-pressed="false"><span class="bx"></span></button>
+                  <button data-i18n-title="paragraphPropertiesPanel.rightBorder.title" data-i18n-label="paragraphPropertiesPanel.rightBorder.label" type="button" class="border-btn" data-border="right" title="Right border" aria-label="Right border" aria-pressed="false"><span class="bx"></span></button>
+                </div>
+                <label data-i18n-title="paragraphPropertiesPanel.borderColor.title" class="border-color" title="Border color"><input data-i18n-label="paragraphPropertiesPanel.borderColor.label" id="borderColor" type="color" value="#000000" aria-label="Border color" /></label>
+                <label class="dialog-field"><span data-i18n="paragraphAdvanced.borderStyle">Border line style</span><select id="paraBorderStyle" class="dialog-select"><option value="single" data-i18n="paragraphAdvanced.bordersingle">Single</option>
+                  <option value="double" data-i18n="paragraphAdvanced.borderdouble">Double</option>
+                  <option value="dotted" data-i18n="paragraphAdvanced.borderdotted">Dotted</option>
+                  <option value="dashed" data-i18n="paragraphAdvanced.borderdashed">Dashed</option>
+                  <option value="dotDash" data-i18n="paragraphAdvanced.borderdotDash">Dot dash</option>
+                  <option value="dotDotDash" data-i18n="paragraphAdvanced.borderdotDotDash">Dot dot dash</option><option value="imported" disabled data-i18n="paragraphAdvanced.importedStyle">Imported style</option></select></label>
+              <p id="paraBorderImportedNote" hidden class="dialog-note" data-i18n="paragraphAdvanced.importedNote">This imported border style is preserved and shown as a single line. Choose a supported style to author a border.</p>
+
+              <label class="dialog-field"><span data-i18n="paragraphAdvanced.borderWidth">Border width (pt)</span><input id="paraBorderWidth" type="number" min="0.25" max="12" step="0.125" value="1" /></label>
+              <label class="dialog-field"><span data-i18n="paragraphAdvanced.borderPadding">Border distance from text (pt)</span><input id="paraBorderPadding" type="number" min="0" max="31" step="1" value="0" /></label><button type="button" class="chip-btn" aria-pressed="false" id="paraBorderBetween" data-i18n="paragraphAdvanced.between">Border between paragraphs</button><p class="dialog-note" data-i18n="paragraphAdvanced.betweenNotice">Between-paragraph borders are saved for Word but are not shown on this page yet.</p><span data-i18n="paragraphPropertiesPanel.mixed2" id="paraBordersMixed" class="mixed-note" hidden>Mixed</span>
+              </div>
+            </fieldset>
+<fieldset class="dialog-group property-section">
+              <legend data-i18n="paragraphPropertiesPanel.pagination">Pagination</legend>
+              <label class="dialog-check"><input id="pgKeepNext" type="checkbox" /><span><strong data-i18n="paragraphPropertiesPanel.keepNext">Keep with next</strong><small data-i18n="paragraphPropertiesPanel.keepParagraphFollowingParagraph">Keep this paragraph with the following paragraph.</small></span></label>
+              <label class="dialog-check"><input id="pgKeepLines" type="checkbox" /><span><strong data-i18n="paragraphPropertiesPanel.keepLinesTogether">Keep lines together</strong><small data-i18n="paragraphPropertiesPanel.avoidSplittingParagraphAcross">Avoid splitting the paragraph across pages.</small></span></label>
+              <label class="dialog-check"><input id="pgBreakBefore" type="checkbox" /><span><strong data-i18n="paragraphPropertiesPanel.pageBreakBefore">Page break before</strong><small data-i18n="paragraphPropertiesPanel.startEachSelectedParagraph">Start each selected paragraph on a new page.</small></span></label>
+            </fieldset>
+          </div>
+          <details class="property-more"><summary data-i18n="propertyPanel.moreOptions">More options</summary>
 <fieldset class="dialog-group property-section"><legend data-i18n="styleAdvanced.title">Manage paragraph styles</legend>
 <label class="dialog-field"><span data-i18n="styleAdvanced.target">Style</span><select id="styleAdvancedTarget" class="dialog-select"></select></label>
 <label class="dialog-field"><span data-i18n="styleAdvanced.next">Style for following paragraph</span><select id="styleAdvancedNext" class="dialog-select"></select></label><button id="styleAdvancedNextApply" type="button" class="chip-btn" data-i18n="styleAdvanced.applyNext">Apply following style</button>
@@ -4584,97 +4639,8 @@
                   <option value="9" data-i18n="paragraphAdvanced.outline9">Body text</option></select></label>
 
             </fieldset>
-            <fieldset class="dialog-group property-section">
-              <legend data-i18n="paragraphPropertiesPanel.styleAmpAlignment">Style &amp; alignment</legend>
-              <label data-i18n="paragraphPropertiesPanel.style" class="dialog-field">Style<select id="paraPanelStyle" class="dialog-select"><option data-i18n="paraPanelStyle.style" value="">Style</option></select></label>
-              <div class="dialog-field">
-                <span data-i18n="paragraphPropertiesPanel.alignment">Alignment</span>
-                <!-- `role="group"`, NOT `radiogroup` (109 UX-021): over a
-                     multi-paragraph selection this control is tri-state and
-                     publishes `aria-pressed="mixed"`, and `aria-checked="mixed"`
-                     is not legal on a radio. Word, Google Docs and ONLYOFFICE all
-                     use toggle buttons for exactly this control for the same
-                     reason (ONLYOFFICE: Toolbar.js:559-607 `toggleGroup:
-                     'alignGroup'`, with no radiogroup wrapper). The groups that
-                     ARE always exactly-one-of go through `radio_group.mjs`. -->
-                <span data-i18n-label="paragraphPropertiesPanel.paragraphAlignment.label" class="segmented paragraph-align" id="paraPanelAlign" role="group" aria-label="Paragraph alignment">
-                  <button data-i18n-label="paraPanelAlign.alignLeft.label" type="button" data-palign="start" aria-pressed="false" aria-label="Align left"><span class="ms" aria-hidden="true">format_align_left</span></button>
-                  <button data-i18n-label="paraPanelAlign.center.label" type="button" data-palign="center" aria-pressed="false" aria-label="Center"><span class="ms" aria-hidden="true">format_align_center</span></button>
-                  <button data-i18n-label="paraPanelAlign.alignRight.label" type="button" data-palign="end" aria-pressed="false" aria-label="Align right"><span class="ms" aria-hidden="true">format_align_right</span></button>
-                  <button data-i18n-label="paraPanelAlign.justify.label" type="button" data-palign="justify" aria-pressed="false" aria-label="Justify"><span class="ms" aria-hidden="true">format_align_justify</span></button>
-                </span>
-              </div>
-            </fieldset>
-
-            <fieldset class="dialog-group property-section">
-              <legend data-i18n="paragraphPropertiesPanel.indentation">Indentation</legend>
-              <div class="dialog-field-grid">
-                <label data-i18n="paragraphPropertiesPanel.left" class="dialog-field">Left<span class="number-control"><input id="indentLeft" type="number" min="0" max="12" step="0.01" inputmode="decimal" /><span>in</span></span></label>
-                <label data-i18n="paragraphPropertiesPanel.right" class="dialog-field">Right<span class="number-control"><input id="indentRight" type="number" min="0" max="12" step="0.01" inputmode="decimal" /><span>in</span></span></label>
-              </div>
-              <div class="dialog-field-grid">
-                <label data-i18n="paragraphPropertiesPanel.special" class="dialog-field">Special<select id="indentSpecial" class="dialog-select">
-                  <option data-i18n="indentSpecial.mixed" value="">Mixed</option>
-                  <option value="none">None</option>
-                  <option data-i18n="indentSpecial.firstLine" value="first">First line</option>
-                  <option data-i18n="indentSpecial.hanging" value="hanging">Hanging</option>
-                </select></label>
-                <label data-i18n="paragraphPropertiesPanel.by" class="dialog-field">By<span class="number-control"><input id="indentSpecialBy" type="number" min="0" max="12" step="0.01" inputmode="decimal" value="0.5" /><span>in</span></span></label>
-              </div>
-            </fieldset>
-
-            <fieldset class="dialog-group property-section">
-              <legend data-i18n="paragraphPropertiesPanel.spacing">Spacing</legend>
-              <label data-i18n="paragraphPropertiesPanel.lineSpacing" class="dialog-field">Line spacing<select id="paraLineSpacing" class="dialog-select">
-                <option data-i18n="paraLineSpacing.mixedInherited" value="">Mixed or inherited</option>
-                <option data-i18n="paraLineSpacing.single" value="100">Single</option>
-                <option value="115">1.15</option>
-                <option value="150">1.5</option>
-                <option data-i18n="paraLineSpacing.double" value="200">Double</option>
-              </select></label>
-              <div class="dialog-field-grid">
-                <label data-i18n="paragraphPropertiesPanel.before" class="dialog-field">Before<span class="number-control"><input id="paraSpaceBefore" type="number" min="0" max="720" step="1" inputmode="numeric" /><span>pt</span></span></label>
-                <label data-i18n="paragraphPropertiesPanel.after" class="dialog-field">After<span class="number-control"><input id="paraSpaceAfter" type="number" min="0" max="720" step="1" inputmode="numeric" /><span>pt</span></span></label>
-              </div>
-            </fieldset>
-
-            <fieldset class="dialog-group property-section">
-              <legend data-i18n="paragraphPropertiesPanel.shadingAmpBorders">Shading &amp; borders</legend>
-              <div class="property-color-row">
-                <label class="shade-pick"><input id="paraShade" type="color" value="#ffe08a" /><span data-i18n="paragraphPropertiesPanel.fill">Fill</span></label>
-                <button data-i18n="paragraphPropertiesPanel.noFill" type="button" id="paraShadeNone" class="chip-btn">No fill</button>
-                <span data-i18n="paragraphPropertiesPanel.mixed" id="paraShadeMixed" class="mixed-note" hidden>Mixed</span>
-              </div>
-              <div class="property-border-row">
-                <div data-i18n-label="paragraphPropertiesPanel.paragraphBorders.label" class="border-presets" role="group" aria-label="Paragraph borders">
-                  <button data-i18n-title="paragraphPropertiesPanel.noBorder.title" data-i18n-label="paragraphPropertiesPanel.noBorder.label" type="button" class="border-btn" data-border="none" title="No border" aria-label="No border" aria-pressed="false"><span class="bx"></span></button>
-                  <button data-i18n-title="paragraphPropertiesPanel.allBorders.title" data-i18n-label="paragraphPropertiesPanel.allBorders.label" type="button" class="border-btn" data-border="box" title="All borders" aria-label="All borders" aria-pressed="false"><span class="bx"></span></button>
-                  <button data-i18n-title="paragraphPropertiesPanel.topBorder.title" data-i18n-label="paragraphPropertiesPanel.topBorder.label" type="button" class="border-btn" data-border="top" title="Top border" aria-label="Top border" aria-pressed="false"><span class="bx"></span></button>
-                  <button data-i18n-title="paragraphPropertiesPanel.bottomBorder.title" data-i18n-label="paragraphPropertiesPanel.bottomBorder.label" type="button" class="border-btn" data-border="bottom" title="Bottom border" aria-label="Bottom border" aria-pressed="false"><span class="bx"></span></button>
-                  <button data-i18n-title="paragraphPropertiesPanel.leftBorder.title" data-i18n-label="paragraphPropertiesPanel.leftBorder.label" type="button" class="border-btn" data-border="left" title="Left border" aria-label="Left border" aria-pressed="false"><span class="bx"></span></button>
-                  <button data-i18n-title="paragraphPropertiesPanel.rightBorder.title" data-i18n-label="paragraphPropertiesPanel.rightBorder.label" type="button" class="border-btn" data-border="right" title="Right border" aria-label="Right border" aria-pressed="false"><span class="bx"></span></button>
-                </div>
-                <label data-i18n-title="paragraphPropertiesPanel.borderColor.title" class="border-color" title="Border color"><input data-i18n-label="paragraphPropertiesPanel.borderColor.label" id="borderColor" type="color" value="#000000" aria-label="Border color" /></label>
-                <label class="dialog-field"><span data-i18n="paragraphAdvanced.borderStyle">Border line style</span><select id="paraBorderStyle" class="dialog-select"><option value="single" data-i18n="paragraphAdvanced.bordersingle">Single</option>
-                  <option value="double" data-i18n="paragraphAdvanced.borderdouble">Double</option>
-                  <option value="dotted" data-i18n="paragraphAdvanced.borderdotted">Dotted</option>
-                  <option value="dashed" data-i18n="paragraphAdvanced.borderdashed">Dashed</option>
-                  <option value="dotDash" data-i18n="paragraphAdvanced.borderdotDash">Dot dash</option>
-                  <option value="dotDotDash" data-i18n="paragraphAdvanced.borderdotDotDash">Dot dot dash</option><option value="imported" disabled data-i18n="paragraphAdvanced.importedStyle">Imported style</option></select></label>
-              <p id="paraBorderImportedNote" hidden class="dialog-note" data-i18n="paragraphAdvanced.importedNote">This imported border style is preserved and shown as a single line. Choose a supported style to author a border.</p>
-
-              <label class="dialog-field"><span data-i18n="paragraphAdvanced.borderWidth">Border width (pt)</span><input id="paraBorderWidth" type="number" min="0.25" max="12" step="0.125" value="1" /></label>
-              <label class="dialog-field"><span data-i18n="paragraphAdvanced.borderPadding">Border distance from text (pt)</span><input id="paraBorderPadding" type="number" min="0" max="31" step="1" value="0" /></label><button type="button" class="chip-btn" aria-pressed="false" id="paraBorderBetween" data-i18n="paragraphAdvanced.between">Border between paragraphs</button><p class="dialog-note" data-i18n="paragraphAdvanced.betweenNotice">Between-paragraph borders are saved for Word but are not shown on this page yet.</p><span data-i18n="paragraphPropertiesPanel.mixed2" id="paraBordersMixed" class="mixed-note" hidden>Mixed</span>
-              </div>
-            </fieldset>
-
-            <fieldset class="dialog-group property-section">
-              <legend data-i18n="paragraphPropertiesPanel.pagination">Pagination</legend>
-              <label class="dialog-check"><input id="pgKeepNext" type="checkbox" /><span><strong data-i18n="paragraphPropertiesPanel.keepNext">Keep with next</strong><small data-i18n="paragraphPropertiesPanel.keepParagraphFollowingParagraph">Keep this paragraph with the following paragraph.</small></span></label>
-              <label class="dialog-check"><input id="pgKeepLines" type="checkbox" /><span><strong data-i18n="paragraphPropertiesPanel.keepLinesTogether">Keep lines together</strong><small data-i18n="paragraphPropertiesPanel.avoidSplittingParagraphAcross">Avoid splitting the paragraph across pages.</small></span></label>
-              <label class="dialog-check"><input id="pgBreakBefore" type="checkbox" /><span><strong data-i18n="paragraphPropertiesPanel.pageBreakBefore">Page break before</strong><small data-i18n="paragraphPropertiesPanel.startEachSelectedParagraph">Start each selected paragraph on a new page.</small></span></label>
-            </fieldset>
-          </div>
+          </details>
+          <button id="paraClearAll" type="button" class="dialog-button dialog-button-utility property-clear" data-i18n="paragraphAdvanced.clear">Clear all paragraph formatting</button>
         </div>
       </aside>
 
@@ -4691,7 +4657,7 @@
           </button>
         </header>
         <div class="panel-body table-properties-body">
-          <p data-i18n="tablePropertiesPanel.adjustCurrentTableRow" id="tablePropertiesDescription" class="table-properties-intro">Adjust the current table, row, column, and default cell spacing. Changes apply automatically.</p>
+          <p data-i18n="tablePropertiesPanel.adjustCurrentTableRow" id="tablePropertiesDescription" class="table-properties-intro sr-only">Adjust the current table, row, column, and default cell spacing. Changes apply automatically.</p>
           <div class="table-properties-grid">
             <fieldset class="dialog-group table-property-section">
               <legend data-i18n="tablePropertiesPanel.table">Table</legend>

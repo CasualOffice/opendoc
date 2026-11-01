@@ -81,7 +81,12 @@ test("the touch-target floor the module publishes is the one the phone rung appl
     assert.ok(at >= 0, `${selector} is styled at the phone rung`);
     // The chrome is in rem (HF-413), so the floor is read at the default 16px
     // root, which is the root a coarse pointer never goes below.
-    const declared = rung.slice(at, at + 220).match(/min-(?:height|width): ([\d.]+)(px|rem)/);
+    // A height token (`var(--h-input)`, UX-053) is read through its fine-pointer
+    // declaration, the smaller of its two values.
+    const raw = rung.slice(at, at + 220).match(/min-(?:height|width): (var\(--h-[\w-]+\)|[\d.]+(?:px|rem))/);
+    const token = raw?.[1].match(/^var\((--h-[\w-]+)\)$/)?.[1];
+    const literal = token ? css.match(new RegExp(`\\n\\s*${token}:\\s*([\\d.]+(?:px|rem));`))?.[1] : raw?.[1];
+    const declared = literal ? [raw[0], ...literal.match(/([\d.]+)(px|rem)/).slice(1)] : null;
     const px = declared ? Number(declared[1]) * (declared[2] === "rem" ? 16 : 1) : 0;
     assert.ok(
       declared && px >= MIN_TOUCH_TARGET_PX,

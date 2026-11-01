@@ -2815,6 +2815,7 @@ export const EN_STRINGS = Object.freeze({
   "ai.access.badge.readonly": "Read-only",
   "ai.editAs.nowSuggest": "Casual AI now edits as suggestions.",
   "ai.editAs.nowDirect": "Casual AI now makes direct edits.",
+  "aiHelpWrite.label": "Help me write",
   "aiProvider.editAs.note": "Suggestions are tracked changes you accept or reject. Direct edits change the text; one Undo takes back each answer.",
   "aiProvider.editAs.capped": "Direct edits are not available here. {reason}",
   "plugins.panel.editAs": "Direct edits by Casual AI",
@@ -2852,4 +2853,7 @@ export const EN_STRINGS = Object.freeze({
   "plugins.assistant.describeTable": "Describe this table",
   "plugins.assistant.command.table": "Turn into table",
   "plugins.assistant.command.describeTable": "Describe this table",
+  "propertiesTabs.paragraph": "Paragraph",
+  "propertiesTabs.picture": "Picture",
+  "propertiesTabs.table": "Table",
 });

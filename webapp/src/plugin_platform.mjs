@@ -136,6 +136,28 @@ export const PLUGIN_TOKENS = Object.freeze([
   "--shadow-sm",
   "--shadow-popover",
   "--brand-font",
+  // Design system v2 (`docs/63` §7, `109` UX-052). The pre-v2 names above stay
+  // published as aliases of these, so a plugin written against either reads the
+  // same values; new plugin CSS uses these.
+  "--fs-xs",
+  "--fs-sm",
+  "--fs-md",
+  "--fs-lg",
+  "--fw-regular",
+  "--fw-medium",
+  "--fw-semibold",
+  "--r-xs",
+  "--r-sm",
+  "--r-md",
+  "--r-lg",
+  "--r-pill",
+  "--h-dense",
+  "--h-tool",
+  "--h-ctl",
+  "--h-input",
+  "--e1",
+  "--e2",
+  "--e3",
 ]);
 
 /** A short, stable, opaque key for a string (FNV-1a, 32-bit, hex). Pure. */
@@ -390,11 +412,10 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
     panelClose.setAttribute("aria-label", t("plugins.panel.close", { name: nameOf(record.manifest) }));
     panelClose.title = panelClose.getAttribute("aria-label");
     if (panelMore) panelMore.hidden = panelMenuRows(record).length === 0;
-    // One side panel at a time, as the outline and the review sidebar already
-    // agree between themselves (`editor_outline.mjs`).
+    // One panel per side (approved design P1, 2026-11-02): this panel is on
+    // the right, so it replaces the other right-hand one (the review sidebar)
+    // and leaves a left-hand Outline or Pages open.
     if (ed.reviewSidebar && !ed.reviewSidebar.hidden) ed.toggleReview?.(false);
-    ed.closeFlankingPanel?.(ed.outlinePanel, ed.railOutline);
-    ed.closeFlankingPanel?.(ed.pagesPanel, ed.railPages);
     panel.hidden = false;
     doc.body.classList.add("plugin-panel-open");
     sizer?.reclamp();
@@ -951,7 +972,13 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
     renderManager();
   }
   doc.getElementById("pluginsClose")?.addEventListener("click", () => managerController?.close());
-  doc.getElementById("settingsAddinsBtn")?.addEventListener("click", openManager);
+  doc.getElementById("settingsAddinsBtn")?.addEventListener("click", () => {
+    // Replaces Settings instead of stacking a second dialog over it (owner,
+    // 2026-11-02). Closed through its ✕, the same path as Escape.
+    const settings = doc.getElementById("settingsPanel");
+    if (settings && !settings.hidden) settings.querySelector(".dialog-close")?.click();
+    openManager();
+  });
   doc.getElementById("pluginsDone")?.addEventListener("click", () => managerController?.close());
 
   // ---- Menus: Add-ins (ribbon) and ✦ (selection toolbar) --------------------
@@ -1032,6 +1059,68 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
     }
   }
 
+  /** Opens the first AI plugin's panel, whatever is selected (owner,
+   *  2026-11-02: Casual AI must be reachable without a selection, the way
+   *  Copilot and Gemini are). */
+  function openAiPanel() {
+    const first = contributed("selection")[0]?.[0] ?? null;
+    if (!first?.manifest.contributes.panel) return;
+    showPanel(first, true);
+    first.running.invoke("panel", { hasRange: !!ed.hasRange?.() });
+  }
+  const aiHeaderBtn = doc.getElementById("aiHeaderBtn");
+  const homeAiBtn = doc.getElementById("homeAiBtn");
+  const homeAiGroup = doc.getElementById("homeAiGroup");
+  aiHeaderBtn?.addEventListener("click", openAiPanel);
+  homeAiBtn?.addEventListener("click", openAiPanel);
+
+  // "Help me write" beside the caret on an empty line (Word's "Draft with
+  // Copilot", Docs' "Help me write"). Opens the assistant in Draft mode, which
+  // writes at the caret. Shown only while an AI plugin runs and the caret sits
+  // collapsed in an empty paragraph; O(1) per check (paragraphLength reads one
+  // paragraph).
+  const helpWrite = doc.createElement("button");
+  helpWrite.type = "button";
+  helpWrite.id = "aiHelpWriteBtn";
+  helpWrite.className = "ai-help-write";
+  helpWrite.hidden = true;
+  helpWrite.innerHTML = '<span class="ms" aria-hidden="true">edit_note</span><span class="ai-help-write-text"></span>';
+  const helpWriteText = () => (has("aiHelpWrite.label") ? t("aiHelpWrite.label") : "Help me write");
+  helpWrite.addEventListener("mousedown", (e) => e.preventDefault());
+  helpWrite.addEventListener("click", () => {
+    helpWrite.hidden = true;
+    const first = contributed("selection")[0]?.[0] ?? null;
+    if (!first?.manifest.contributes.panel) return;
+    showPanel(first, true);
+    first.running.invoke("draft", { hasRange: false });
+  });
+  doc.body.append(helpWrite);
+  function placeHelpWrite() {
+    const running = contributed("selection").length > 0;
+    const sel = ed.selection;
+    const collapsed = sel && !ed.hasRange?.();
+    let empty = false;
+    if (running && collapsed && ed.doc?.paragraphLength) {
+      try { empty = ed.doc.paragraphLength(sel.anchor.node) === 0; } catch { empty = false; }
+    }
+    const caret = empty ? ed.pagesEl?.querySelector(".overlay .caret") : null;
+    const r = caret?.getBoundingClientRect();
+    if (!r || !r.height || doc.body.classList.contains("modal-open")) { helpWrite.hidden = true; return; }
+    helpWrite.querySelector(".ai-help-write-text").textContent = helpWriteText();
+    helpWrite.setAttribute("aria-label", helpWriteText());
+    helpWrite.hidden = false;
+    helpWrite.style.top = `${Math.round(r.top + r.height / 2 - helpWrite.offsetHeight / 2)}px`;
+    helpWrite.style.left = `${Math.round(r.left + 8)}px`;
+  }
+  let helpWriteQueued = false;
+  const queueHelpWrite = () => {
+    if (helpWriteQueued) return;
+    helpWriteQueued = true;
+    requestAnimationFrame(() => { helpWriteQueued = false; placeHelpWrite(); });
+  };
+  for (const type of ["keyup", "pointerup", "focusin"]) doc.addEventListener(type, queueHelpWrite, true);
+  ed.viewportEl?.addEventListener("scroll", queueHelpWrite, { passive: true });
+
   /** Shows only what running plugins contribute (owner rule 1). O(plugins). */
   function reflectChrome() {
     const ribbonRows = contributed("ribbon").length > 0;
@@ -1039,6 +1128,21 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
     const selectionRows = contributed("selection").length > 0;
     if (selButton) selButton.hidden = !selectionRows;
     if (selDivider) selDivider.hidden = !selectionRows;
+    // The always-there entry points follow the same rule: shown only while an
+    // AI plugin runs (no provider, no AI chrome — owner rule, 2026-10-31).
+    if (aiHeaderBtn) aiHeaderBtn.hidden = !selectionRows;
+    if (homeAiGroup) homeAiGroup.hidden = !selectionRows;
+    // Labelled here rather than in markup: the keys are declared in
+    // en_strings.mjs, and t() is safe because the buttons only show now.
+    if (selectionRows) {
+      const ask = has("plugins.assistant.command.ask") ? t("plugins.assistant.command.ask") : "Ask Casual AI";
+      const name = has("plugins.assistant.name") ? t("plugins.assistant.name") : "Casual AI";
+      aiHeaderBtn?.querySelector(".ai-header-text")?.replaceChildren(ask);
+      aiHeaderBtn?.setAttribute("title", ask);
+      homeAiBtn?.querySelector(".fmt-big-label")?.replaceChildren(name);
+      homeAiBtn?.setAttribute("title", ask);
+      homeAiBtn?.setAttribute("aria-label", ask);
+    }
   }
 
   // ---- The registry --------------------------------------------------------

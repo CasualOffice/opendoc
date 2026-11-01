@@ -1181,9 +1181,12 @@ export function parseOriginAllowlist(raw, selfOrigin) {
 brand.json was refused:
   - light: --muted (#9aa0a6) on --surface (#ffffff) measures 2.64:1 and must clear 4.5:1. You set --muted: #72777b there would pass, on the same hue.
   - light: --accent-ink (#ffffff) on --accent (#f5a524) measures 2.04:1 and must clear 4.5:1. You set --accent-ink: #484848 there would pass, on the same hue.
+  - light: --primary-ink (var(--accent-ink)) on --primary-bg (var(--accent)) measures 2.04:1 and must clear 4.5:1. You set --accent-ink: #484848 there would pass, on the same hue.
   - light: --accent-text (var(--accent)) on --surface (#ffffff) measures 2.04:1 and must clear 4.5:1. You set --accent: #a06c17 there would pass, on the same hue.
   - system dark: --accent-ink (#ffffff) on --accent (#f5a524) measures 2.04:1 and must clear 4.5:1. You set --accent-ink: #484848 there would pass, on the same hue.
-  - explicit dark: --accent-ink (#ffffff) on --accent (#f5a524) measures 2.04:1 and must clear 4.5:1. You set --accent-ink: #484848 there would pass, on the same hue.</code></pre>
+  - system dark: --primary-ink (var(--accent-ink)) on --primary-bg (var(--accent)) measures 2.04:1 and must clear 4.5:1. You set --accent-ink: #484848 there would pass, on the same hue.
+  - explicit dark: --accent-ink (#ffffff) on --accent (#f5a524) measures 2.04:1 and must clear 4.5:1. You set --accent-ink: #484848 there would pass, on the same hue.
+  - explicit dark: --primary-ink (var(--accent-ink)) on --primary-bg (var(--accent)) measures 2.04:1 and must clear 4.5:1. You set --accent-ink: #484848 there would pass, on the same hue.</code></pre>
         </div>
         <!-- @end brand-refusal -->
         <p class="doc-body" data-i18n="site.embedding.refusedRatherThanCorrected">
@@ -1557,7 +1560,7 @@ brand.json was refused:
             selectable and every one of the
             <span data-claim="region-count">25</span> chrome regions can be
             withheld, but the groups <em>inside</em> a band are not addressable:
-            <span data-claim="unnamed-group-count">60</span> of them carry no
+            <span data-claim="unnamed-group-count">61</span> of them carry no
             <code>data-group</code> attribute at all, so a per-group roster would
             be half expressible. The honest grain for a host is the band.
           </li>

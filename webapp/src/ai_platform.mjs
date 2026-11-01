@@ -120,9 +120,38 @@ export function startAiPlatform(ed, { assistant = null, view = globalThis } = {}
       onEditAs: () => void platformPromise?.then((platform) => platform.accessChanged()),
     });
     dialog.open();
+    // The provider form is a section of Settings, not a dialog of its own:
+    // open Settings if it is not already showing, then bring the section into
+    // view and put the caret on its first control.
+    const doc = view.document;
+    const settings = doc?.getElementById("settingsPanel");
+    if (settings?.hidden) doc.getElementById("settingsBtn")?.click();
+    doc?.querySelector('#settingsPanel [data-settings-tab="ai"]')?.click();
+    const first = doc?.getElementById("aiProviderPreset");
+    if (first && !first.disabled) first.focus({ preventScroll: true });
   }
   const settingsRow = view.document?.getElementById("aiProviderSettingsBtn");
   settingsRow?.addEventListener("click", openSettings);
+  // Fill the form whenever Settings opens, so the section is never stale.
+  view.document?.getElementById("settingsBtn")?.addEventListener("click", () => {
+    queueMicrotask(() => { if (!view.document.getElementById("settingsPanel")?.hidden) openSettingsQuietly(); });
+  });
+  function openSettingsQuietly() {
+    dialog ??= createAiSettingsDialog({
+      registerModal,
+      fallbackFocus: () => shown(view.document.getElementById("aiProviderSettingsBtn")) ?? ed.pagesEl,
+      t,
+      providers,
+      byokAllowed,
+      onChange: () => {
+        refreshSummary();
+        void platformPromise?.then((platform) => platform.refresh());
+      },
+      editAccess: aiAccess,
+      onEditAs: () => void platformPromise?.then((platform) => platform.accessChanged()),
+    });
+    dialog.open();
+  }
   // The Settings row's sentence follows the provider, computed when Settings is
   // opened — never at boot, when the catalogue may not have landed yet.
   view.document?.getElementById("settingsBtn")?.addEventListener("click", refreshSummary);

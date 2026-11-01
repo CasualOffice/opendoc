@@ -2823,9 +2823,9 @@ const pagesPanelView = createPagesPanel({
   getBandModel: () => pageBandModel,
   pageInView,
   bandTop: () => bandTopInScroller,
+  // Left panel: replaces the Outline only (one panel per side, design P1).
   onExclusive: () => {
     closeFlankingPanel(outlinePanel, railOutline);
-    if (!reviewSidebar.hidden) toggleReview(false);
     reanchorPageOverlays();
   },
   onJumped: () => {
