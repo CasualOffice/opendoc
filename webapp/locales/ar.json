@@ -2696,6 +2696,7 @@
   "findings.feature.pdfPageBreaks": "فواصل صفحات مستنتجة من نهايات الصفحات",
   "findings.feature.pdfFloats": "صور ورسومات عائمة بجانب نصها أو خلفه",
   "findings.feature.pdfScanReplaced": "صفحات ممسوحة معروضة كنصها المتعرَّف عليه (يبقى المسح في التخطيط الدقيق)",
+  "findings.feature.pdfWatermark": "تم التعرف على العلامات المائية وتعيينها كعلامة مائية للمستند",
   "findings.feature.pdfDecorations": "أُعيد التسطير والتمييز والتظليل والحدود المرسومة كأشكال إلى نصها",
   "findings.feature.pdfVectorsPlaced": "رسومات موضوعة كأشكال",
   "pdfImport.title": "جارٍ فتح {name}",

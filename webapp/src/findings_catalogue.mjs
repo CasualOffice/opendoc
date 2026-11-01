@@ -288,6 +288,7 @@ export const FEATURE_CATALOGUE = Object.freeze({
   "pdf.import.float_inferred": entry("findings.feature.pdfFloats", CONTENT),
   "pdf.import.scan_replaced_by_text": entry("findings.feature.pdfScanReplaced", CONTENT),
   "pdf.import.vector_placed": entry("findings.feature.pdfVectorsPlaced", CONTENT),
+  "pdf.import.watermark_inferred": entry("findings.feature.pdfWatermark", CONTENT),
   // The default open, a flowing document (`docs/182` §4), and the characters
   // made fit for editing (§18.8).
   "pdf.import.layout_inferred": entry("findings.feature.pdfLayoutInferred", CONTENT),

@@ -2077,7 +2077,9 @@ dependencies = [
  "casual-doc-io",
  "casual-doc-model",
  "casual-doc-pdf-import",
+ "casual-doc-pdf-read",
  "serde_json",
+ "zip",
 ]
 
 [[package]]
