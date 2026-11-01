@@ -233,6 +233,7 @@ export function registerModal(element, options = {}) {
     options,
     returnFocus: null,
     closing: false,
+    suspended: false,
     controller: null,
     backdropArmed: false,
   };
@@ -249,6 +250,19 @@ export function registerModal(element, options = {}) {
     if (armed && event.target === element) entry.controller.close("backdrop");
   });
 
+  // Every ✕ in the card closes it (docs/184 D1). The AI provider dialog shipped
+  // a `.dialog-close` that nothing listened to, so its ✕ was dead while Esc and
+  // the backdrop worked; a dialog's module wiring its own ✕ is a rule somebody
+  // has to remember, and this makes it impossible to forget. Bubble phase and
+  // `defaultPrevented`: a module that must veto a close (an unsaved form)
+  // handles the click first and calls `preventDefault()`. Closing twice is a
+  // no-op, so a module that also closes on the same click is unaffected.
+  element.addEventListener("click", (event) => {
+    const close = event.target instanceof Element ? event.target.closest(".dialog-close") : null;
+    if (!close || !element.contains(close) || event.defaultPrevented) return;
+    entry.controller.close("close");
+  });
+
   const controller = {
     get isOpen() {
       return stack.includes(entry);
@@ -261,6 +275,19 @@ export function registerModal(element, options = {}) {
       entry.returnFocus =
         document.activeElement instanceof HTMLElement ? document.activeElement : null;
       entry.closing = false;
+      // NEVER A MODAL OVER A MODAL (docs/184 D1a; the owner, 2026-11-01:
+      // "popup over a popup — who designed it"). A dialog opened from inside
+      // another one — Settings ▸ AI provider, Add-ins ▸ Allow, a confirmation
+      // from a form — takes the first one's place: the first is put away, not
+      // closed (no onClose runs, its fields keep what was typed), and comes
+      // back exactly as it was when the second closes. Only one overlay is
+      // ever painted. `e2e/dialog-stacking.spec.mjs` asserts it.
+      for (const below of stack) {
+        if (!below.element.hidden) {
+          below.suspended = true;
+          below.element.hidden = true;
+        }
+      }
       element.hidden = false;
       stack.push(entry);
       document.body.classList.add("modal-open");
@@ -283,6 +310,13 @@ export function registerModal(element, options = {}) {
       entry.closing = true;
       stack.splice(index, 1);
       element.hidden = true;
+      // The dialog this one replaced comes back (the Back half of D1a), before
+      // focus returns to the opener that lives inside it.
+      const top = stack[stack.length - 1];
+      if (top?.suspended) {
+        top.suspended = false;
+        top.element.hidden = false;
+      }
       if (stack.length === 0) document.body.classList.remove("modal-open");
       options.onClose?.(reason);
       const opener = entry.returnFocus;
