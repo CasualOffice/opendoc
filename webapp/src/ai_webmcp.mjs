@@ -67,6 +67,7 @@ export const WEBMCP_TOOLS = Object.freeze([
   "search",
   "list_comments",
   "list_tracked_changes",
+  "read_table",
   "add_comment",
   "propose_edits",
   "review_tracked_changes",
@@ -92,6 +93,8 @@ const MODEL_TEXT = Object.freeze({
   search: "Find text in the document; each hit carries the paragraph id and context.",
   list_comments: "Comment threads with anchors, authors and state.",
   list_tracked_changes: "Tracked changes with kind, author, date and anchor.",
+  read_table: "One table's cells as rows of text, with each cell's paragraph id and merges.",
+  table: "A table id from get_outline or read_blocks.",
   add_comment:
     "Propose a comment on quoted text. The person sees it privately in the editor and decides; nothing is added until they accept.",
   propose_edits:
@@ -113,7 +116,7 @@ const baseRevision = field("integer", "baseRevision", { minimum: 0 });
  *  is data and never instruction (`docs/178` §5.8). */
 const READ = Object.freeze({ readOnlyHint: true, untrustedContentHint: true });
 
-/** The five read tools: `[name, the `ai.read` tool, properties, required]`. */
+/** The six read tools: `[name, the `ai.read` tool, properties, required]`. */
 const READS = Object.freeze([
   ["get_outline", "outline", { depth: field("integer", "depth", { minimum: 1, maximum: 9 }), cursor, limit }],
   [
@@ -139,7 +142,12 @@ const READS = Object.freeze([
   ],
   ["list_comments", "comments", { cursor, limit }],
   ["list_tracked_changes", "trackedChanges", { cursor, limit }],
+  ["read_table", "table", { table: field("string", "table"), cursor, limit }, ["table"]],
 ]);
+
+/** Each read tool's `ai.read` tool, for another transport over the same table
+ *  (the plugin port, `plugin_host.mjs`, `docs/183` §5). */
+export const READ_TOOL_OF = Object.freeze(Object.fromEntries(READS.map(([name, read]) => [name, read])));
 
 /** The edit types an access level may put in a plan. Pure; O(vocabulary).
  *
@@ -247,7 +255,7 @@ function toolRefusal(code, message) {
 
 /** What a proposal hands back to the agent: the preview, and that the person
  *  decides. Never an Accept. */
-function proposal(answer) {
+export function proposal(answer) {
   if (!answer?.ok) return answer;
   return Object.freeze({
     ok: true,
@@ -393,7 +401,7 @@ export function createWebMcp({ assistant, modelContext, loadVocabulary }) {
 /** The two generated files, fetched only when a host opted in: ~210 KB nobody
  *  else downloads. Relative to the editor page, which is where `generated/` is
  *  served from (the Pages artifact is the whole `webapp/`). */
-async function fetchVocabulary() {
+export async function fetchVocabulary() {
   const get = async (path) => {
     const response = await fetch(new URL(path, document.baseURI));
     if (!response.ok) throw new Error(`${path}: ${response.status}`);

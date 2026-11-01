@@ -250,6 +250,9 @@ pub struct SourcePage {
     pub masks: u32,
     /// Rotated glyph runs (reflowed upright, reported).
     pub rotated_runs: u32,
+    /// Runs that may be a watermark's text, out of `blocks` until the
+    /// watermark pass decides (`watermark`).
+    pub stamps: Vec<Stamp>,
     /// Where each skewed run was laid level, and the angle it had: what an
     /// image-text line box needs to sit over its ink again (`docs/182`
     /// §20b). In paint order.

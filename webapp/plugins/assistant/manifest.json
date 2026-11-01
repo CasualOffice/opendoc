@@ -1,0 +1,135 @@
+{
+  "manifestVersion": 1,
+  "id": "org.casualoffice.assistant",
+  "name": "Casual AI",
+  "version": "1.0.0",
+  "description": "Ask about the document, rewrite and translate a selection, draft, summarise, review and make tables. Casual AI writes in the document at its own pointer, as suggestions unless you choose direct edits, and one Undo takes back each answer.",
+  "publisher": "Casual Office",
+  "entry": "index.html",
+  "permissions": [
+    "read",
+    "comment",
+    "suggest",
+    "ai"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "ask",
+        "title": "Ask Casual AI"
+      },
+      {
+        "id": "rewrite",
+        "title": "Rewrite"
+      },
+      {
+        "id": "shorten",
+        "title": "Shorten"
+      },
+      {
+        "id": "expand",
+        "title": "Expand"
+      },
+      {
+        "id": "grammar",
+        "title": "Fix grammar"
+      },
+      {
+        "id": "formal",
+        "title": "Make more formal"
+      },
+      {
+        "id": "friendly",
+        "title": "Make friendlier"
+      },
+      {
+        "id": "confident",
+        "title": "Make more confident"
+      },
+      {
+        "id": "translate",
+        "title": "Translate"
+      },
+      {
+        "id": "summarise",
+        "title": "Summarise the document"
+      },
+      {
+        "id": "review",
+        "title": "Review the document"
+      },
+      {
+        "id": "draft",
+        "title": "Draft at the cursor"
+      },
+      {
+        "id": "table",
+        "title": "Turn into table"
+      },
+      {
+        "id": "describeTable",
+        "title": "Describe this table"
+      },
+      {
+        "id": "replies",
+        "title": "Reply to comments"
+      },
+      {
+        "id": "clear",
+        "title": "Clear history"
+      }
+    ],
+    "selection": [
+      {
+        "command": "rewrite",
+        "icon": "edit_note"
+      },
+      {
+        "command": "shorten",
+        "icon": "short_text"
+      },
+      {
+        "command": "expand",
+        "icon": "notes"
+      },
+      {
+        "command": "grammar",
+        "icon": "spellcheck"
+      },
+      {
+        "command": "formal",
+        "icon": "work"
+      },
+      {
+        "command": "friendly",
+        "icon": "sentiment_satisfied"
+      },
+      {
+        "command": "confident",
+        "icon": "campaign"
+      },
+      {
+        "command": "translate",
+        "icon": "translate"
+      },
+      {
+        "command": "table",
+        "icon": "table"
+      },
+      {
+        "command": "ask",
+        "icon": "forum"
+      }
+    ],
+    "panel": {
+      "title": "Casual AI",
+      "width": 400,
+      "menu": [
+        {
+          "command": "clear",
+          "icon": "delete_sweep"
+        }
+      ]
+    }
+  }
+}

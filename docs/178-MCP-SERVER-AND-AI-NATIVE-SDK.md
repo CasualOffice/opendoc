@@ -611,6 +611,12 @@ the person's own edits from the assistant's. The exact label format is Q3.
 
 ## 10. Live co-editing with an agent (later: M5)
 
+**Built for the in-page assistant, 2026-11-01 (`docs/183` §24.1):** the identity half, derived
+rather than granted. In a room the editor's own Casual AI writes as "Casual AI on behalf of
+<the attested name>", which every replica's conform keeps for that sender only, and its caret
+rides in the person's presence payload. A separate agent participant with its own grant, below,
+remains the M5 design for a headless agent.
+
 An agent can join a shared room as a **participant**, with no new mutation path:
 
 - **Identity.** The host mints a grant (JWT, `175` §12 Q6) whose subject is an agent

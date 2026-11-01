@@ -8,5 +8,6 @@
 
 pub mod body;
 pub mod lower;
+pub mod table_review;
 
 pub use lower::{InsertStyle, Lowered, ReviewIds};

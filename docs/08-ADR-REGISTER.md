@@ -4728,3 +4728,63 @@ device API and JBIG2/JPEG 2000 decoders.
   LayoutReader weights) and any cloud conversion.
 
 **Open.** `docs/182` §13 Q1–Q8.
+
+## ADR-077 — AI reaches a model only over open wire formats the person or host configured, and plugins are sandboxed iframes over the same registry agents use
+
+**Status:** Proposed 2026-10-30 from the owner's final decisions of that day; P1 and P2 built
+on `program/ai-plugins`; P3+ waits on the owner's review of `docs/183` §11–§13.
+**Supersedes:** ADR-009's web half (in-process trusted plugins). ADR-009 still describes native
+Rust embedders, who link the engine. **Amends:** `docs/178` §4.4 ("OpenDoc does not call a
+model") and §6.4. **Rows:** `docs/109` RM-50 to RM-54. **Design:** `docs/183`.
+
+**Context.** `editor.ai` (`docs/181` §4.4) lets a host's own assistant propose edits privately,
+and MCP and WebMCP let external agents in, but the editor itself could not call a model, and
+`docs/149` left `editorConfig.plugins` as "Gap — work named" until the command surface
+stabilised, which the capability registry (ADR-075) has now done. ONLYOFFICE's plugins run as
+iframes with an `asc_*` API of their own; ours must not become a second addressing scheme.
+
+**Decision.**
+
+1. **The provider contract is OpenAI Chat Completions** (request, response, chunk, error),
+   with an Anthropic Messages adapter, a host callback whose request and response are that
+   same JSON (in process or over `postMessage` as the `ai-provider` event and the
+   `ai-provider.answer` request), and an MCP sampling adapter. Our additions (`purpose`, the
+   abort signal) travel beside the body, never inside it.
+2. **No provider, no AI and no network call.** BYOK is standalone only and stored on the
+   device; a framed editor uses the host's channel or nothing; `?aiProvider=off` withdraws AI.
+   Every surface names the endpoint that will receive the text before it is sent.
+3. **Budgets are part of the contract:** an estimated input ceiling, an always-set output
+   ceiling, and per-page request and token budgets.
+4. **A plugin is a sandboxed iframe** (`sandbox="allow-scripts"`, opaque origin, a CSP the
+   plugin cannot loosen) talking JSON-RPC over a `MessagePort`. It reaches the document only
+   through the tools `ai_webmcp.toolsFor` builds for MCP/WebMCP, the private preview, and the
+   host session's gated `execute`. It never runs code in the editor's origin.
+5. **The effective grant is an intersection** of the manifest's declared permissions (`read`,
+   `comment`, `suggest`, `edit`, `network`, `ai`), the host's or the person's grant, and the
+   mount's `editor.ai` access; the engine still decides at the choke point.
+6. **UI contributions are bounded:** one Add-ins menu button, one side panel at a time,
+   context-menu and palette rows, all under the `plugin.` command family.
+7. **First-party AI features ship as plugins on this API**, so the API is proven complete by
+   its first user. Macros stay declined.
+
+**Rejected.**
+
+- A home-grown model protocol, or a vendor SDK in the bundle.
+- In-page plugin code, even "trusted" (ADR-009's v1): one bad plugin owns the session.
+- `allow-same-origin` sandboxes, or plugins on our origin (they could read the BYOK key).
+- A ribbon button per plugin (ribbon overflow), or a plugin API with its own verbs beside the
+  registry (`docs/181` §1's VS Code counter-example).
+- BYOK inside a framed editor (a key stored on an origin the host does not control).
+
+**Amended 2026-10-31 (owner, `docs/183` §23).** For the product's OWN assistant, decision 4's
+"the private preview" is replaced by live co-editing: its edits stream into the document at a
+visible "Casual AI" pointer through first-party-only `edit/*` methods, as one undo step per turn
+(the engine's `Coalesce::Join`), as suggestions unless the person chose Direct edits, capped by
+the most restrictive of that setting, the editor's mode, the document's protection and the
+person's role (the AI never exceeds the human), and rolled back on a validation failure. A
+third-party add-in keeps the private preview, and so does a reply on a comment thread. Direct
+edits are now the person's choice rather than only the host's `?ai=direct`; `?ai=suggest` is a
+host ceiling.
+
+**Open.** `docs/183` §13 (the feature list and UI), and whether MCP sampling should ship given
+its deprecation in MCP 2026-07-28 (§3.7).

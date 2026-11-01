@@ -401,8 +401,16 @@ pub const COMMANDS: &[Command] = &[
         id: "insert_table",
         family: Family::Tables,
         summary: "Insert an empty table (rows x columns, with a thin grid) after an anchor's top-level block.",
-        emits: &["InsertTable"],
-        trackable: Trackable::No(TABLE_NOT_TRACKABLE),
+        emits: &[
+            "InsertTable",
+            "UpdateReviewState",
+            "SplitParagraph",
+            "JoinParagraphs",
+            "SetParagraphProperties",
+        ],
+        // Suggested, the table is Word's tracked insertion: `w:trPr/w:ins` on every row,
+        // one review card (`casual_doc_review::table_review`, `docs/183` §23).
+        trackable: Trackable::Yes,
         example: r#"{"op":"insert_table","after":{"node":"1:2"},"rows":2,"columns":3}"#,
         // `insert.drawTable` is Draw Table's pencil: its outline inserts a table,
         // which is this command; an agent splits cells with the row and column
@@ -523,8 +531,19 @@ pub const COMMANDS: &[Command] = &[
         id: "text_to_table",
         family: Family::Tables,
         summary: "Convert consecutive paragraphs into a table, cutting each paragraph into cells at a separator (tab, comma, semicolon, a character) or one cell per paragraph.",
-        emits: &["DeleteBlocks", "InsertTable"],
-        trackable: Trackable::No(TABLE_NOT_TRACKABLE),
+        emits: &[
+            "DeleteBlocks",
+            "InsertTable",
+            "UpdateReviewState",
+            "SplitParagraph",
+            "JoinParagraphs",
+            "SetParagraphProperties",
+        ],
+        // Suggested (`docs/183` §24), the table is Word's tracked insertion placed before the
+        // source paragraphs, which stay struck through until a reviewer decides: Reject puts
+        // them back exactly. Sources that already carry tracked changes, or hold objects other
+        // than text and tabs, are refused in suggest mode.
+        trackable: Trackable::Yes,
         example: r#"{"op":"text_to_table","from":{"node":"1:2"},"separator":"comma"}"#,
         ui_commands: &["insert.textToTable"],
     },
@@ -1008,11 +1027,15 @@ pub const COMMANDS: &[Command] = &[
         id: "review",
         family: Family::Review,
         summary: "Accept or reject named tracked changes, or all of them.",
+        // A whole-table change is decided as the table: kept (`ReplaceTable` with the row
+        // marks cleared) or removed (`DeleteTable`).
         emits: &[
             "UpdateReviewState",
             "SplitParagraph",
             "JoinParagraphs",
             "SetParagraphProperties",
+            "ReplaceTable",
+            "DeleteTable",
         ],
         trackable: Trackable::NotApplicable,
         example: r#"{"op":"review","decision":"accept","revisions":["1:41"]}"#,

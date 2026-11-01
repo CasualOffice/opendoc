@@ -1,0 +1,14 @@
+{
+  "manifestVersion": 1,
+  "id": "org.casualoffice.languagetool",
+  "name": "LanguageTool",
+  "version": "2.0.0",
+  "description": "Grammar, style and spelling issues underlined in the text as you type, from a LanguageTool server. Click an underline to fix it. The public server is used unless your administrator set your own.",
+  "publisher": "Casual Office",
+  "entry": "index.html",
+  "permissions": ["read", "suggest", "network"],
+  "network": ["https://api.languagetool.org"],
+  "contributes": {
+    "proofing": {}
+  }
+}

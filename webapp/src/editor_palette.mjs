@@ -22,6 +22,7 @@ import { tableTools } from "./table_tools.mjs";
 import { tableDrawMode } from "./table_draw_mode.mjs";
 import { revealOnSettings } from "./surface_reveal.mjs";
 import { quickStyleCommands } from "./quick_styles.mjs";
+import { contributedCommands } from "./plugin_command_sources.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -723,7 +724,7 @@ export function createPalette(ed) {
     // the compact bar's tooltip and the shortcut reference all read
     // `command.shortcut`, and the only thing that can set it is the table the
     // dispatcher matches against.
-    cmds.push(...ed.compatFindings.commands(), ...(ed.pdfCommands?.commands() ?? []), ...(ed.pdfCommands?.layoutCommands() ?? []), ...ed.regionCycle.commands());
+    cmds.push(...ed.compatFindings.commands(), ...(ed.pdfCommands?.commands() ?? []), ...(ed.pdfCommands?.layoutCommands() ?? []), ...ed.regionCycle.commands(), ...contributedCommands(context));
     // Picture text (`docs/182` §20b): on the palette only, where the list is
     // built when it opens; its state is the caret's box, kept per revision.
     if (context.surface === "palette") cmds.push(...ed.imageText.commands());

@@ -145,11 +145,16 @@ impl RevisionLog {
         let Some(&first) = indices.first() else {
             return Err(SelectiveUndoError::Unknown);
         };
+        // Somebody else's edit after the step — or, for an AI turn (`Coalesce::Join`),
+        // ANY commit after its first that is not the turn's own: the person typing while the
+        // assistant wrote. Its plain inverse would then be written against a state that no
+        // longer exists, exactly as with a collaborator's edit.
+        let turn = self.is_turn_group(group);
         let foreign_after = self
             .commits
             .iter()
             .skip(first)
-            .any(|commit| commit.origin == Origin::Remote);
+            .any(|commit| commit.origin == Origin::Remote || (turn && commit.group != group));
         if !foreign_after {
             return Ok(self.inverse_of(group));
         }

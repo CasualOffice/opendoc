@@ -55,6 +55,12 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         if Path(self.translate_path(self.path)).suffix == ".wasm":
             self.send_header("Vary", "Accept-Encoding")
+        # The editor's self-hosted fonts are fetched in CORS mode by a plugin's
+        # sandboxed frame (an opaque origin, `docs/183` §7). GitHub Pages answers
+        # every file with `Access-Control-Allow-Origin: *`; this mirrors it for
+        # the fonts, so a plugin draws in Inter and Material Symbols here too.
+        if self.path.split("?", 1)[0].startswith("/assets/fonts/"):
+            self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")

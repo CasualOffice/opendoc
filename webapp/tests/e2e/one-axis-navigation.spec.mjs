@@ -327,6 +327,11 @@ const PALETTE_ONLY = new Map([
   // carries the sentence saying which fact applies. If a session band is ever
   // minted for presence or a participant list, this row belongs in it.
   ["collab.reconnect", "no Review band fits a session action; the status line carries the state"],
+  // Manage add-ins' durable surface is Settings ▸ Add-ins (not one this guard
+  // scans) and, once an add-in contributes a row, Review ▸ Add-ins. Not a menu
+  // row: with no add-in the owner's rule (2026-10-31) is that the chrome is
+  // exactly as it was (`docs/183` §8).
+  ["plugin.manage", "Settings ▸ Add-ins, and Review ▸ Add-ins once an add-in contributes a row"],
   ["object.selectNext", "by design: the Tab key IS the affordance"],
   ["object.selectPrevious", "by design: Shift+Tab IS the affordance"],
   // By design. The ten rungs of the fold-level picker (`show every level`, then

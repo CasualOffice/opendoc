@@ -373,3 +373,67 @@ fn initials_come_from_the_first_two_words() {
     assert_eq!(derive_initials("Ada"), "A");
     assert_eq!(derive_initials(""), "");
 }
+
+/// The agent principal (`docs/178` §10): a suggestion and a comment the sender's own assistant
+/// made keep "Casual AI on behalf of <the sender>", derived from the stamp, on every replica.
+#[test]
+fn the_senders_own_assistant_keeps_its_agent_principal() {
+    let document = document();
+    let agent = agent_author("Bob Stone");
+    assert_eq!(agent, "Casual AI on behalf of Bob Stone");
+    let mut inlines = held_inlines();
+    inlines.insert(
+        2,
+        insertion(id(SENDER, 50), &agent, vec![run(id(SENDER, 51), "x")]),
+    );
+    let made = CommentId::new(id(SENDER, 40));
+    let mut comments = document.definitions().comments.clone();
+    comments.insert(made, comment(&agent, "AI"));
+    let mut operation = review(inlines, Some(comments));
+    let conformed = conform(&document, &mut operation, &bob());
+    let marks = marks_of(&operation);
+    assert!(
+        marks.contains(&(id(SENDER, 50), Some(agent.clone()))),
+        "the assistant's suggestion keeps its principal: {marks:?}"
+    );
+    let kept = comments_of(&operation).get(&made).expect("the comment");
+    assert_eq!(kept.author.as_deref(), Some(agent.as_str()));
+    assert_eq!(kept.initials.as_deref(), Some(AGENT_INITIALS));
+    assert_eq!(
+        conformed,
+        Conformed::default(),
+        "an honest arrival is a no-op"
+    );
+    assert_eq!(agent_principal(&agent), Some("Bob Stone"));
+    assert_eq!(agent_principal("Casual AI"), None);
+}
+
+/// The principal is derived from the stamp, so nobody can attribute work to somebody else's
+/// assistant, nor dress a person up as an agent label.
+#[test]
+fn an_agent_principal_for_somebody_else_takes_the_senders_name() {
+    let document = document();
+    for forged in [
+        agent_author("Ada Lovelace"),
+        "Ada Lovelace on behalf of Bob Stone".to_owned(),
+        "Casual AI".to_owned(),
+    ] {
+        let mut inlines = held_inlines();
+        inlines.insert(
+            2,
+            insertion(id(SENDER, 50), &forged, vec![run(id(SENDER, 51), "x")]),
+        );
+        let made = CommentId::new(id(SENDER, 40));
+        let mut comments = document.definitions().comments.clone();
+        comments.insert(made, comment(&forged, "AI"));
+        let mut operation = review(inlines, Some(comments));
+        conform(&document, &mut operation, &bob());
+        assert!(
+            marks_of(&operation).contains(&(id(SENDER, 50), Some("Bob Stone".to_owned()))),
+            "{forged:?} is restamped"
+        );
+        let stamped = comments_of(&operation).get(&made).expect("the comment");
+        assert_eq!(stamped.author.as_deref(), Some("Bob Stone"), "{forged:?}");
+        assert_eq!(stamped.initials.as_deref(), Some("BS"), "{forged:?}");
+    }
+}

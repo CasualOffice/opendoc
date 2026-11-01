@@ -275,6 +275,12 @@ export function createSpellChecker(io) {
    *  was wanted anyway. */
   let outstanding = 0;
   let outstandingAt = 0;
+  /** An add-in proofing layer (`addin_proofing.mjs`, `docs/183` §19), or null.
+   *  It is handed the window this scan already read, paints its own marks from
+   *  the same overlay repaint, and claims the spans its marks cover so the
+   *  built-in squiggle is not drawn twice under them. Null unless an add-in
+   *  that proofreads is running, so with none the checker is exactly as before. */
+  let external = null;
   let rescanPending = false;
   const now = () => (io.now ? io.now() : Date.now());
 
@@ -596,6 +602,19 @@ export function createSpellChecker(io) {
     const doc = io.getDoc?.();
     const spelling = io.enabled?.() ?? false;
     const grammar = io.grammarEnabled?.() ?? false;
+    // The add-in layer reads the same window rows, once, before the built-in
+    // passes decide whether they have anything to do: an add-in that proofreads
+    // works with the built-in spelling switched off.
+    if (doc && external?.active()) {
+      const pagesNow = io.windowPages?.() ?? [];
+      if (pagesNow.length) {
+        try {
+          external.window(windowRows(doc, pagesNow), pagesNow, io.caret?.() ?? null);
+        } catch (error) {
+          console.warn("add-in proofing", error?.message ?? error);
+        }
+      }
+    }
     if (!doc || (!spelling && !grammar)) {
       scanned = [];
       return;
@@ -851,11 +870,15 @@ export function createSpellChecker(io) {
         )
           continue;
         if (dismissed(entry, paragraph)) continue;
+        // An add-in's mark on the same span replaces the built-in one: one
+        // underline per word, never two (`docs/183` §19).
+        if (external?.covers(paragraph.node, entry.byteStart, entry.byteEnd)) continue;
         marks.push({ paragraph, entry });
       }
     }
-    if (!marks.length) return;
     const pages = io.windowPages?.() ?? [];
+    if (external?.active() && pages.length) external.paint(doc, pages);
+    if (!marks.length) return;
     if (!pages.length) return;
     // `decorationRectsOnPages`, NOT `selectionRects`, and ONE call for every
     // mark on screen (`docs/architecture/180` E2, HF-411). A selection rect is the LINE BOX
@@ -922,6 +945,7 @@ export function createSpellChecker(io) {
       for (const entry of paragraph.misspellings) {
         if (offset < entry.byteStart || offset > entry.byteEnd) continue;
         if (dismissed(entry, paragraph)) continue;
+        if (external?.covers(paragraph.node, entry.byteStart, entry.byteEnd)) continue;
         return {
           kind: entry.kind,
           ruleId: entry.ruleId,
@@ -976,6 +1000,16 @@ export function createSpellChecker(io) {
     paint,
     misspellingAt,
     suggestions,
+
+    /** Installs (or, with null, removes) the add-in proofing layer. Its contract
+     *  is four functions: `active()`, `window(rows, pages, caret)` — the rows this
+     *  scan read, O(window) — `paint(doc, pages)` from the overlay repaint, and
+     *  `covers(node, byteStart, byteEnd)`, O(marks in that paragraph). */
+    setExternal(layer) {
+      external = layer && typeof layer.window === "function" ? layer : null;
+      scheduler.flush();
+      io.repaint?.();
+    },
 
     /**
      * A language pack became active: its words are now a fourth tier for that
@@ -1163,6 +1197,7 @@ export function createSpellChecker(io) {
       reportedUnsupported = new Set();
       unsupportedTag = "";
       scheduler.cancel();
+      external?.reset?.();
     },
 
     /** Turned off: every marker goes and the scan stops. The COMMAND stays

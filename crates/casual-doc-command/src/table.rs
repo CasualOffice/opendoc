@@ -507,6 +507,19 @@ pub fn insert_table_in(
     })
 }
 
+/// Makes the first row of every table an `InsertTable` lowering in `operations` inserts a
+/// repeating header row (`w:tblHeader`), as a table built from data with a header gets.
+/// O(operations).
+pub fn mark_header_row(operations: &mut [Operation]) {
+    for operation in operations {
+        if let Operation::InsertTable { table, .. } = operation
+            && let Some(row) = table.rows.first_mut()
+        {
+            row.properties.header = true;
+        }
+    }
+}
+
 /// The body index right after the top-level block holding paragraph `node`
 /// (at any depth), else the end of the body: where a new table goes. O(body).
 #[must_use]
