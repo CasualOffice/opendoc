@@ -2652,6 +2652,7 @@
   "findings.feature.pdfPageBreaks": "Sayfa sonlarından çıkarılan sayfa sonları",
   "findings.feature.pdfFloats": "Resimler ve çizimler metnin yanına veya arkasına yerleştirildi",
   "findings.feature.pdfScanReplaced": "Taranan sayfalar tanınan metin olarak gösterildi (tarama tam düzende kalır)",
+  "findings.feature.pdfWatermark": "Filigranlar tanındı ve belgenin filigranı olarak ayarlandı",
   "findings.feature.pdfDecorations": "Şekil olarak çizilen alt çizgiler, vurgular, gölgelendirme ve kenarlıklar metne geri verildi",
   "findings.feature.pdfVectorsPlaced": "Çizimler şekil olarak yerleştirildi",
   "pdfImport.title": "{name} açılıyor",

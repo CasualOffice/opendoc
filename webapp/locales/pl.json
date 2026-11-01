@@ -2674,6 +2674,7 @@
   "findings.feature.pdfPageBreaks": "Podziały stron wywnioskowane z końców stron",
   "findings.feature.pdfFloats": "Obrazy i rysunki umieszczone obok tekstu lub za nim",
   "findings.feature.pdfScanReplaced": "Zeskanowane strony pokazane jako rozpoznany tekst (skan pozostaje w dokładnym układzie)",
+  "findings.feature.pdfWatermark": "Rozpoznano znaki wodne i ustawiono je jako znak wodny dokumentu",
   "findings.feature.pdfDecorations": "Podkreślenia, wyróżnienia, cieniowanie i obramowania narysowane jako kształty przywrócone do tekstu",
   "findings.feature.pdfVectorsPlaced": "Rysunki umieszczone jako kształty",
   "pdfImport.title": "Otwieranie {name}",

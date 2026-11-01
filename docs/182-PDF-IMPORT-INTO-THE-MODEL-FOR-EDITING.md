@@ -1936,3 +1936,117 @@ committed `nist-ir8105.pdf`).
    check marks (now Noto Sans Symbols 2, subset); `ToUnicode` named a CJK ideograph after
    the radical sharing its glyph; and an Indic syllable several glyphs draw could not be
    named by glyph id (now an `/ActualText` span, which `casual-doc-pdf-read` honours).
+
+### 18.12 Watermarks, table alignment, spacing and sizes (2026-11-01)
+
+The owner (2026-11-01): the reader does not handle watermarks, table alignment, spacing
+or sizes. Measured first, with the existing scorer extended rather than a new tool.
+
+**The instrument, extended** (`tools/opendoc-reflow-score`):
+
+- Five families on top of §18.10/§18.11: `spacing` (line pitch within 3% and the space
+  below within 1.5 pt, the strict form of `layout`), `indents` (start and first-line
+  indents within 2 pt, outside lists and centred text), `sizes` (the exact half point on
+  the matched paragraphs, and each picture's extent within 1%), `table_layout` (each
+  column's share of its table's width within 2 pt, and each cell's alignment) and
+  `watermark` (the section's watermark text and angle).
+- `synth <dir>` writes three synthetic ground truths from constants (`synth.rs`): a
+  three-page document under Word's own Design ▸ Watermark shape, a ruled and a borderless
+  table of figures (left labels, right-aligned amounts, a centred status, a centred header
+  row, unequal columns), and mixed spacing (10.5 pt body at 1.5 lines with a first-line
+  indent and 6 pt after, 9.5 pt block quotes indented both sides, exact 14 pt notes,
+  16 and 13 pt headings, a picture of a fixed size).
+- `corpus` records, with no ground truth: the share of the model's characters whose size
+  the PDF also uses (`size_agreement`), the most common (before, after, pitch) of the
+  plain body paragraphs and their number (`spacing_modal`, `spacing_distinct`), the same
+  for start indents, table cells and the aligned ones, watermarks and rotated runs.
+- `runs <pdf> [page]` prints the reader's glyph runs, pictures (with their opacity, now
+  read: `ImageEvidence::opacity`) and paths.
+
+**Spacing.** Two defects, both at the root:
+
+| Family | What a person saw | Root cause | Fix |
+| --- | --- | --- | --- |
+| First-line indents read as right alignment | A paragraph whose indented first line ran to the column's right came out right-aligned with no indent (every body paragraph of the mixed-spacing truth) | The first line alone was a segment; the right-alignment test (every line indented and ending at the column's right) passed on it, and the lines that carried the paragraph on were joined without looking again | A continuation sets the paragraph's body indent (`rest_x0`) and, when its lines start at the column, clears end and centre alignment; end alignment needs every line to stand in from the column |
+| The space after a heading | 6 pt after a 16 pt heading over a 1.5-line paragraph came out 2.6 pt | The space was the baseline distance less the next paragraph's whole line, which is right only between paragraphs set alike | `emit::line_boxes`: the inverse of the layout's line box (an `auto` multiple puts its extra leading half above and half below), `a`'s descent and half its extra plus `b`'s ascent and half its extra |
+| Values no author set | 5.96 and 6.04 pt; 149% and 151%; indents of 35.7 and 36.2 pt | Raw measurements | Spaces snap to a dialog value within 0.75 pt (0, 2, 3, 4, 5, 6, 8, 9, 10, 12, 14, 15, 16, 18, 20, 24, 36), else the half point; multiples to 100/108/115/120/125/150/175/200/300% within 3 points, else the whole percent; indents to a quarter inch within a point, else the half point |
+
+Sizes needed no change: the reader takes a run's size from its text matrix (hayro
+normalises every outline to 1000 units an em) and rounds it to the half point, and the
+`sizes` family is 1.000 on all four truths before and after. On the owner's files, every
+size the model uses is one the PDF uses except one run (a 1 pt run on one file), and the
+characters the model holds fewer of are text repeated on every page (a running header kept
+once) and a chart's labels.
+
+Guards (`reflow/tests_layout.rs`), each driven red: `line_boxes` replaced by the whole
+next line → `spacing_is_measured_against_the_line_boxes_and_snapped` (heading after 80
+twips for 120); the snapping disabled → the same test (151% for 150%); the continuation
+leaving alignment alone → `a_first_line_indent_with_full_lines_is_not_right_aligned`
+(`End`).
+
+**Watermarks** (`reflow/watermark.rs`). Before this, a diagonal "CONFIDENTIAL" was a
+Heading 1 on every page of the watermarked truth (pushing the real headings to level 2) and
+its rotated extent set the right margin to zero. Now:
+
+- `record` keeps every glyph run that may be a stamp out of the text blocks
+  (`record::Stamp`: turned 20 to 70 degrees off level at 14 pt or more, or light or
+  translucent, luminance 160 of 255 or alpha 70% or less, at 24 pt or more). Per page, the
+  pieces of one stamp (a producer that writes each letter as its own run) join on angle,
+  size and fill, ordered along their baseline.
+- A stamp is the watermark when the same text, angle and size sits in the same place
+  (centres within 3% of the page) on at least two pages and half of them; on one page only,
+  when it is diagonal, light, 36 pt or more and centred within 15% of the page's middle.
+  A large centred stamp that fails the rest stays text, reported `watermark_inferred`
+  degraded (the reader is unsure).
+- A picture drawn at most 60% opaque (`ImageEvidence::opacity`, now read from the
+  transparency groups around it), covering 5% of its page with its smaller side 15% of the
+  page's, centred, in the same place on two pages and half of them (or alone on a one-page
+  document), is a picture watermark, washed out. A UI mockup's faint shadow tiles are
+  neither large nor centred, and none of the owner's thirteen files gained a watermark.
+- The section's `Watermark` (one per document, the stamp on the most pages, on every
+  section as Word's dialog writes it): the text, its face, its exact size to the half
+  point, its colour, diagonal or horizontal, semitransparent when it was drawn translucent.
+  DOCX export writes it as Word's own header shape. Everything not taken goes back where it
+  was; a document with no stamp borrows its state unchanged.
+
+Guards, each driven red: no stamp candidates → `a_diagonal_stamp_on_every_page_is_the_
+sections_watermark`; the lone-stamp test without lightness →
+`a_lone_light_diagonal_stamp_is_a_watermark_and_a_dark_one_stays_text` (the dark stamp
+became a watermark); faintness not required → `a_faint_centred_picture_on_every_page_is_a_
+picture_watermark` (the opaque picture became one).
+
+Measured, the watermarked truth before → after: watermark 0.000 → 1.000, paragraphs
+0.696 → 1.000, headings 0.500 → 1.000, layout 0.938 → 1.000, spacing 0.719 → 0.861;
+`page` 0.820 → 0.569, because its short pages now set the bottom margin from the lowest
+body text (the stamp had reached lower): the margin inference for pages that end early is
+a separate, open defect.
+
+**Table alignment** (`reflow/tables.rs`):
+
+| Family | What a person saw | Root cause | Fix |
+| --- | --- | --- | --- |
+| The paragraph under a borderless table vanished into it | On the numeric truth every body row of the borderless table became one cell spanning all five columns, and the three lines under it were inside the last row (`text` 0.708) | Set at the table's own pitch, the paragraph's lines joined a column's block, so that column's extent spanned the table | `whitespace_candidates` peels each member's leading and trailing lines that align with nothing and reach across another column (`Candidate::strays`); they leave the table as text and do not count against its confidence |
+| Alignment lost | Right-aligned amounts reflowed left-aligned; only centring was read, cell by cell | No column-level reading | `align_cells`: the edge most of a column's body cells share (the first row does not vote with three rows or more) is its alignment, a tie being start; a borderless cell off it inside the column is centred (a header over figures); a ruled cell is read against its own box first; a column of one-width text ("OK") is centred when it stands in the middle of its fill's box, or of the room from its header's start to the next column |
+| Column edges drifted | A right-aligned column began at its widest amount and ended at the next column's start, so its numbers ended there | Columns were the clustered text extents' starts | `align_grid`: a start column starts at its shared left edge, an end column ends `pad` past its shared right edge, a centred one (or a centred header) fixes its free edge symmetrically, a free edge is the gutter's middle; the table keeps its right end. Tagged tables are read the same way |
+
+Guard: `a_borderless_table_of_figures_keeps_its_alignment_grid_and_the_text_under_it`,
+driven red three ways: strays never peeled (the table came out four columns wide), the
+cells' alignment ignored at emission (`None` for `End`), the grid not recomputed (the
+amounts' column ended at 318 pt for 303.6).
+
+Measured: numeric truth `text` 0.708 → 1.000, `paragraphs` 0.833 → 1.000, `tables`
+0.793 → 1.000, `table_layout` 0.457 → 0.750 (cells aligned 29 → 70 of 70; column shares
+5 of 10 unchanged); `sample.docx` `table_layout` 0.485 → 0.535 (cells aligned 173 → 227
+of 285, column shares 8 → 6 of 22).
+
+**The owner's thirteen PDFs** (local only; aggregates), before → after this section: body
+paragraphs 1,230 → 1,223, tables 84 → 85; distinct (before, after, pitch) triples of the
+plain body paragraphs summed over the files 216 → 202, distinct start indents 170 → 160,
+mean modal share of spacing 0.694 → 0.709 and of indents 0.743 → 0.747; watermarks found
+0 → 0 (none of them has one; no false positive on faint shadow tiles); every size the
+model uses is one the PDF uses on every file but one (one 1 pt run), before and after.
+
+**Still open:** column widths on `sample.docx`'s borderless tables (6 of 22 column shares
+within 2 pt), decimal alignment (the layout has no decimal tab; aligned decimals with equal
+places read as end), a heading's own line spacing, bottom margins on pages that end early,
+and lines under a table split into one paragraph each.
