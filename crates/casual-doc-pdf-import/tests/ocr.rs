@@ -1367,3 +1367,107 @@ fn a_model_directory_builds_the_providers_and_the_import_records_their_identity(
     assert!(manifest.models.iter().all(|(_, sha)| sha.len() == 64));
     assert_eq!(imported.ocr.layout.is_some(), models.has_layout());
 }
+
+// ------------------------------------------------------- flowing document
+
+/// The flowing document of a recognised scan is its text: the scan (a
+/// picture the size of each page, under the recognised lines) is neither an
+/// inline picture pushing the text, a background behind text that no longer
+/// lines up with it, nor a letterhead repeated in the header. The exact
+/// layout keeps the scan.
+#[test]
+fn a_recognised_scan_reflows_as_its_text_and_leaves_the_scan_to_the_exact_layout() {
+    let scripted: Arc<dyn OcrProvider> = Arc::new(Scripted::new(vec![
+        ("Recognised", [72.0, 100.0, 160.0, 113.0], 0.99),
+        ("words", [72.0, 120.0, 120.0, 133.0], 0.99),
+    ]));
+    let imported =
+        import_pdf_with_ocr(blank_scan(2, ""), PdfReadLimits::default(), with(scripted)).unwrap();
+    assert_eq!(
+        pictures(&imported.document),
+        2,
+        "the exact layout keeps both scans"
+    );
+    let flowing = imported.reflow().expect("reflows");
+    flowing.document.validate().expect("valid");
+    let mut text = String::new();
+    let mut graphics = 0;
+    let parts = flowing
+        .document
+        .definitions()
+        .headers
+        .iter()
+        .flat_map(|(_, h)| h.blocks.iter());
+    for block in flowing.document.body().iter().chain(parts) {
+        if let BlockNode::Paragraph(p) = block {
+            for inline in &p.inlines {
+                match inline {
+                    InlineNode::Run(r) => text.push_str(&r.text),
+                    InlineNode::Drawing(_)
+                    | InlineNode::AnchoredDrawing(_)
+                    | InlineNode::Group(_) => {
+                        graphics += 1;
+                    }
+                    _ => {}
+                }
+            }
+            text.push('\n');
+        }
+    }
+    assert!(text.contains("Recognised"), "{text}");
+    assert_eq!(
+        graphics, 0,
+        "no scan, background or cover in the flowing document"
+    );
+    assert!(flowing.report.has(report::SCAN_REPLACED_BY_TEXT));
+}
+
+/// A scan fed a degree and a half off square: the recogniser reads every
+/// line turned by that much. The flowing document lays the lines level and
+/// groups them as text, instead of reporting each as rotated text of its own
+/// (404 lines on the owner's eight-page scan, which reflowed to 34 pages).
+#[test]
+fn a_skewed_scans_lines_reflow_as_level_text_not_rotated_text() {
+    let mut scripted = Scripted::new(vec![
+        (
+            "The first line of a paragraph",
+            [72.0, 100.0, 300.0, 113.0],
+            0.99,
+        ),
+        (
+            "runs on into the second line.",
+            [72.0, 115.0, 296.0, 128.0],
+            0.99,
+        ),
+    ]);
+    scripted.turn = Some(1.5);
+    let scripted: Arc<dyn OcrProvider> = Arc::new(scripted);
+    let imported =
+        import_pdf_with_ocr(blank_scan(1, ""), PdfReadLimits::default(), with(scripted)).unwrap();
+    let flowing = imported.reflow().expect("reflows");
+    flowing.document.validate().expect("valid");
+    assert!(
+        !flowing.report.has(report::TEXT_ROTATED),
+        "a skewed line is not rotated text"
+    );
+    let paragraphs: Vec<String> = flowing
+        .document
+        .body()
+        .iter()
+        .filter_map(|b| match b {
+            BlockNode::Paragraph(p) => {
+                let text: String = p
+                    .inlines
+                    .iter()
+                    .filter_map(|i| match i {
+                        InlineNode::Run(r) => Some(r.text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                (!text.trim().is_empty()).then_some(text)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(paragraphs.len(), 1, "{paragraphs:?}");
+}

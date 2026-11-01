@@ -316,13 +316,16 @@ jobs:
   # under worker contention on a clean tree — `context-menu`,
   # `header-footer-editing`, `object-command-reach`, `table-editing-ux`. Packing
   # more workers onto one runner would buy wall-clock by making those flakier,
-  # which trades a slow honest gate for a fast unreliable one. Four shards each
-  # keep the same per-runner concurrency and simply run a quarter of the tests.
+  # which trades a slow honest gate for a fast unreliable one. Six shards each
+  # keep the same per-runner concurrency and simply run a sixth of the tests.
+  # Four was the count until 2026-10-31, when #917-#919's specs pushed two
+  # shards past the 45-minute job limit (one finished its last test and was
+  # still cancelled); more shards, not a longer limit, keeps each one honest.
   #
   # `fail-fast: false` so one shard's failure still lets the others report; a
   # partial picture is exactly how a second, unrelated failure gets missed.
   browser-smoke:
-    name: browser-smoke (${{ matrix.shard }}/4)
+    name: browser-smoke (${{ matrix.shard }}/6)
     runs-on: ubuntu-24.04
     # Shard 1 reached test 377/387 before the old 30-minute cap cancelled it.
     # Keep enough headroom for runner variance without masking test failures.
@@ -330,7 +333,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -359,7 +362,7 @@ jobs:
       - name: Install Playwright Chromium
         run: npx --prefix webapp playwright install --with-deps chromium
       # Only the first shard runs the unit suite: it is the same suite on every
-      # shard and takes the same time, so running it four times buys nothing.
+      # shard and takes the same time, so running it six times buys nothing.
       - name: Run webapp unit tests
         if: matrix.shard == 1
         shell: bash
@@ -374,7 +377,7 @@ jobs:
       - name: Build optional Share host relay
         run: cargo build -p opendoc-relay --locked
       - name: Run browser smoke suite
-        run: npx playwright test --shard=${{ matrix.shard }}/4
+        run: npx playwright test --shard=${{ matrix.shard }}/6
         working-directory: webapp
       - name: Upload Playwright report
         if: failure()

@@ -52,6 +52,8 @@ pub use evidence::{
     GlyphRunEvidence, ImageEvidence, ImageFormat, PageEvidence, PageNotes, PaintEvidence,
     PathCommand, PathEvidence, Point, RenderMode, Rgba8, StrokeEvidence,
 };
+// Own line: a page-sized picture's ink bands.
+pub use evidence::{INK_MEASURED_AREA, InkBands};
 pub use limits::PdfReadLimits;
 pub use structure::{StructLeaf, StructNode, StructureTree};
 
@@ -309,9 +311,16 @@ impl PdfSource {
         // page is not preservable (`shows: None`). Annotations are not page
         // content here, so `interpret` is exactly `interpret_page`'s first half.
         let stream = page.page_stream().unwrap_or(&[]);
-        let instrumented = content::tokenize(stream)
-            .filter(|ops| content::agrees_with_hayro(stream, ops))
-            .and_then(|ops| content::instrument(stream, &ops));
+        let ops = content::tokenize(stream).filter(|ops| content::agrees_with_hayro(stream, ops));
+        let instrumented = ops
+            .as_ref()
+            .and_then(|ops| content::instrument(stream, ops));
+        // What the producer said a span of glyphs reads as (`/ActualText`),
+        // by show: only knowable where the shows are numbered.
+        let actual = match (&ops, &instrumented) {
+            (Some(ops), Some(_)) => content::actual_texts(stream, ops),
+            _ => std::collections::BTreeMap::new(),
+        };
         let shows = instrumented.as_ref().map(|(_, shows)| *shows);
         let ops_source: &[u8] = instrumented.as_ref().map_or(stream, |(bytes, _)| bytes);
         hayro_interpret::interpret(
@@ -320,7 +329,8 @@ impl PdfSource {
             &mut context,
             &mut collector,
         );
-        let (items, notes) = collector.finish()?;
+        let (mut items, notes) = collector.finish()?;
+        evidence::read_actual_text(&mut items, &actual);
         let missing: Vec<String> = misses
             .lock()
             .map(|names| names.iter().cloned().collect())

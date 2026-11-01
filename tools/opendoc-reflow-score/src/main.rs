@@ -4,6 +4,8 @@
 //! ```text
 //! opendoc-reflow-score loop <source.docx> <out-dir> [label=file.pdf ...] [--soffice]
 //! opendoc-reflow-score corpus <pdf-dir> <results.json>
+//! opendoc-reflow-score dump <file.pdf>
+//! opendoc-reflow-score docx <file.pdf> <out.docx>
 //! ```
 //!
 //! **loop**: the ground truth. The DOCX is imported (its own model is the
@@ -65,7 +67,7 @@ fn print_pdf(source: &ImportArtifact) -> Result<Vec<u8>, String> {
         .map_err(|e| e.to_string())
 }
 
-const FAMILIES: [&str; 14] = [
+const FAMILIES: [&str; 15] = [
     "text",
     "paragraphs",
     "headings",
@@ -80,6 +82,7 @@ const FAMILIES: [&str; 14] = [
     "formatting",
     "special",
     "frames",
+    "layout",
 ];
 
 fn run_loop(args: &[String]) -> Result<(), String> {
@@ -340,11 +343,38 @@ fn run_dump(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// `docx <file.pdf> <out.docx>`: the flowing document saved as DOCX, so a
+/// page renderer (`opendoc-render`) can draw what a person sees next to the
+/// original page.
+fn run_docx(args: &[String]) -> Result<(), String> {
+    let [path, target, ..] = args else {
+        return Err("docx <file.pdf> <out.docx>".to_owned());
+    };
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let imported = import(&bytes, path)?;
+    let docx =
+        casual_doc_io::FormatId::new(casual_doc_io::formats::DOCX).map_err(|e| e.to_string())?;
+    let out = casual_doc_io::builtin_registry()
+        .export(
+            &docx,
+            ExportRequest {
+                document: &imported.document,
+                resources: &imported.resources,
+                source: None,
+                source_unchanged: false,
+                mode: ExportMode::Semantic,
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    std::fs::write(target, out.bytes).map_err(|e| e.to_string())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("loop") => run_loop(&args[1..]),
         Some("dump") => run_dump(&args[1..]),
+        Some("docx") => run_docx(&args[1..]),
         Some("corpus") => run_corpus(&args[1..]),
         _ => Err("usage: opendoc-reflow-score loop <source.docx> <out-dir> [label=file.pdf ...] [--soffice] | corpus <pdf-dir> <results.json>".to_owned()),
     };

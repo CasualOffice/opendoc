@@ -81,7 +81,9 @@ pub fn write_incremental_update(
 ) -> Result<IncrementalExport, PdfError> {
     let mut writer = Writer::append_to(original, base.size);
     let resources = writer.reserve();
-    let mut transcriber = Transcriber::new(fonts, media);
+    let overlays: Vec<PdfPage<'_>> = pages.iter().map(|page| page.overlay).collect();
+    let clusters = crate::cluster::ClusterText::build(&overlays, text);
+    let mut transcriber = Transcriber::with_clusters(fonts, media, &clusters);
     for page in pages {
         let overlay = transcriber.page(&mut writer, page.overlay)?;
         let width = num(points(page.overlay.width));
@@ -128,9 +130,7 @@ pub fn write_incremental_update(
         );
         writer.replace_object(page.object.0, page.object.1, &body);
     }
-    let overlays: Vec<PdfPage<'_>> = pages.iter().map(|page| page.overlay).collect();
-    let (findings, faces) =
-        write_resources(&mut writer, transcriber, &overlays, fonts, text, resources)?;
+    let (findings, faces) = write_resources(&mut writer, transcriber, fonts, &clusters, resources)?;
     Ok(IncrementalExport {
         bytes: writer.finish_incremental(base),
         original_len: original.len(),

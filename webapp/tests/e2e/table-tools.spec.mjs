@@ -45,19 +45,36 @@ async function modelCells(page, mark = MARK) {
   }, mark);
 }
 
-// Mutation: make `insert_table_inner` ignore `table_insertion_point`'s cell and
-// insert into the body; the nested table is gone from the outer table and this
-// goes red.
+// Read two ways, neither of which is the nested `<table>` the first version of
+// this test looked for: the accessibility projection (`accessibility_tree`) has
+// never nested a table — a cell is its plain text, so the `rich` fixture's own
+// nested table reads "Outer Nested A Nested B" — and that test could not pass.
+//   * the PAINT: the new table's active cell lies inside the outer cell's
+//     column and is narrower than it (two columns share that cell's width),
+//     where a body-level 2 x 2 table's cell is as wide as the outer one;
+//   * the MODEL, through the mirror: one table holds the mark, and its first
+//     cell holds both marks as separate blocks (the nested table's cell text),
+//     not one run typed twice into one paragraph.
+// Mutation: make `table_insertion_point` return the body branch for a caret in
+// a cell; the new table lands after the outer one, full width, and this goes red.
 test("Insert table from inside a cell nests the new table in that cell", async ({ page }) => {
   await insertTable(page, 2, 2);
+  const outerCell = await stableBox(page.locator(".cell-outline"));
   await insertTable(page, 2, 2, { open: false });
-  const nested = await page.evaluate((needle) => {
-    const outer = [...document.querySelectorAll("#a11yDocument table")].find(
-      (table) => table.textContent.includes(needle) && table.querySelector("table"),
+  const innerCell = await stableBox(page.locator(".cell-outline"));
+  expect(innerCell.x, "the new table starts inside the outer cell").toBeGreaterThanOrEqual(outerCell.x - 1);
+  expect(innerCell.x + innerCell.width, "and ends inside it").toBeLessThanOrEqual(outerCell.x + outerCell.width + 1);
+  expect(innerCell.width, "and its cell shares the outer cell's width").toBeLessThan(outerCell.width * 0.75);
+  const reading = await page.evaluate((needle) => {
+    const tables = [...document.querySelectorAll("#a11yDocument table")].filter((table) =>
+      table.textContent.includes(needle),
     );
-    return Boolean(outer);
+    return { tables: tables.length, firstCell: tables[0]?.querySelector("td")?.textContent ?? "" };
   }, MARK);
-  expect(nested, "the second table sits inside the first table's cell").toBe(true);
+  expect(reading, "the second table sits inside the first table's cell").toEqual({
+    tables: 1,
+    firstCell: `${MARK} ${MARK}`,
+  });
 });
 
 // Mutation: drop the `insert.tableDialog` row from INSERT_SURFACE; the ribbon

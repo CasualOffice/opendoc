@@ -572,14 +572,20 @@ test("how much English the reference pages put on the site, measured and publish
   // 2686 -> 2685 with PDF import (#899, `docs/182`): `docs/98`'s import non-goal now
   // points at `docs/182`, one fewer text node on `reference/pdf-export-and-print.html`.
   // MEASURED from this assertion's failure output in CI.
+  //
+  // 2685 -> 2698 with the PDF export rows of #922 (`docs/98`: a face over the
+  // copy limit, an unwritable face, colour glyphs, and the `/ActualText` row for
+  // multi-glyph clusters): their code spans and bold runs are text nodes on
+  // `reference/pdf-export-and-print.html`. MEASURED from this assertion's failure
+  // output in CI.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2685,
-    `the thirteen reference pages carry ${total} unrouted English strings (was 2685). That ` +
+    2698,
+    `the thirteen reference pages carry ${total} unrouted English strings (was 2698). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose, or a page was published. Regenerate the pages, then MEASURE and record ` +
       `the new figure here — do not calculate it. Per page: ` +

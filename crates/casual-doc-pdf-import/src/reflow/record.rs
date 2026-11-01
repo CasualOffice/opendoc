@@ -32,6 +32,24 @@ pub const RULE_THICKNESS: f64 = 2.5;
 pub const RULE_MIN_LENGTH: f64 = 4.0;
 /// Rotation (degrees) below which text counts as upright.
 const UPRIGHT_DEGREES: f64 = 0.5;
+/// A run turned at most this far is a skewed line (a scan fed a degree or
+/// two off square, read by OCR), not rotated text: it is laid level along
+/// its own baseline and grouped with the lines around it.
+pub const SKEW_DEGREES: f64 = 5.0;
+
+/// `run` laid level: its glyphs placed along a horizontal baseline from its
+/// first glyph, at their advances. O(glyphs).
+fn level(run: &GlyphRunEvidence) -> GlyphRunEvidence {
+    let mut flat = run.clone();
+    let origin = flat.glyphs.first().map(|g| g.origin).unwrap_or_default();
+    let mut x = origin.x;
+    for glyph in &mut flat.glyphs {
+        glyph.origin = casual_doc_pdf_read::Point { x, y: origin.y };
+        x += glyph.advance;
+    }
+    flat.rotation_degrees = 0.0;
+    flat
+}
 
 /// A block of text and the marked-content sequence it sits in.
 #[derive(Clone, Debug)]
@@ -86,6 +104,9 @@ pub struct SourceImage {
     pub bounds: Bounds,
     /// The media reference (part name and type) of its bytes.
     pub media: MediaReference,
+    /// A page-sized picture's ink bands (`casual_doc_pdf_read::InkBands`):
+    /// where a letterhead's logo band ends and its footer band starts.
+    pub ink: Option<casual_doc_pdf_read::InkBands>,
 }
 
 /// Vector art: a maximal run of consecutive paths that are not rules, in
@@ -185,7 +206,8 @@ pub struct PdfSourceState {
 
 /// The axis-aligned rectangles a path is made of, one per subpath, when it
 /// is nothing else: each subpath a move and at most four straight lines
-/// (closed or not) along the axes. `x y w h re` is one such subpath; a
+/// (closed or not) along the axes, or a thin bar of more corners
+/// (`thin_polygon`). `x y w h re` is one such subpath; a
 /// producer that paints a table's borders as one path of many `re`
 /// (LibreOffice, Excel, report writers) gives one per border. O(path).
 #[must_use]
@@ -196,7 +218,17 @@ pub fn rectangles(path: &PathEvidence) -> Option<Vec<Bounds>> {
         if points.is_empty() {
             return true;
         }
-        if points.len() > 5 {
+        // Repeated points (a closing point equal to the start, a zero-length
+        // segment) add no corner.
+        points.dedup_by(|b, a| (a.x - b.x).abs() < 0.01 && (a.y - b.y).abs() < 0.01);
+        if points.len() > 1
+            && let (Some(first), Some(last)) = (points.first().copied(), points.last().copied())
+            && (first.x - last.x).abs() < 0.01
+            && (first.y - last.y).abs() < 0.01
+        {
+            points.pop();
+        }
+        if points.len() > 5 && !thin_polygon(points) {
             return false;
         }
         // Every segment along an axis, the closing one included.
@@ -241,6 +273,20 @@ pub fn rectangles(path: &PathEvidence) -> Option<Vec<Bounds>> {
         return None;
     }
     Some(out)
+}
+
+/// Whether a polygon of more than four corners is a bar: every point within
+/// a rule's thickness of one axis-aligned line. LibreOffice paints each table
+/// border as a filled six-cornered bar with bevelled ends (`m`, five `l`,
+/// `h`, `f*`), so its tables had no rules and reflowed as loose lines with
+/// stray strokes through them. Any polygon that thin is a bar whatever its
+/// corners, and its bounds are the rule. O(points).
+fn thin_polygon(points: &[casual_doc_pdf_read::Point]) -> bool {
+    let x0 = points.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let x1 = points.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    let y0 = points.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+    let y1 = points.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+    (x1 - x0).min(y1 - y0) <= RULE_THICKNESS
 }
 
 /// Whether a rectangle is thin enough, and long enough, to be a rule.
@@ -358,6 +404,23 @@ impl PdfSourceState {
             annotations,
             ..SourcePage::default()
         };
+        // Skewed runs laid level first, so they group as the upright ones do
+        // (every line of a scan fed off square had been text of its own,
+        // reported rotated: 404 lines on one owner scan, and a page count
+        // four times the PDF's).
+        let levelled: Vec<Option<GlyphRunEvidence>> = page
+            .items
+            .iter()
+            .map(|item| match item {
+                PaintEvidence::Glyphs(run)
+                    if run.rotation_degrees.abs() > UPRIGHT_DEGREES
+                        && run.rotation_degrees.abs() <= SKEW_DEGREES =>
+                {
+                    Some(level(run))
+                }
+                _ => None,
+            })
+            .collect();
         // Upright runs, segmented by marked-content sequence.
         let mut rotated: Vec<SourceBlock> = Vec::new();
         let mut segment: Vec<&GlyphRunEvidence> = Vec::new();
@@ -396,7 +459,7 @@ impl PdfSourceState {
             segment.clear();
             n
         };
-        for item in &page.items {
+        for (at, item) in page.items.iter().enumerate() {
             // Glyphs or a picture end the run; only the item directly before
             // a run can be the picture it masks.
             match item {
@@ -412,18 +475,12 @@ impl PdfSourceState {
             }
             match item {
                 PaintEvidence::Glyphs(run) => {
+                    let run = levelled[at].as_ref().unwrap_or(run);
                     if run.rotation_degrees.abs() > UPRIGHT_DEGREES {
                         // Reflowed upright where it starts, as fixed layout
                         // frames it (`docs/182` G-3), and reported.
                         out.rotated_runs += 1;
-                        let mut flat = run.clone();
-                        let origin = flat.glyphs.first().map(|g| g.origin).unwrap_or_default();
-                        let mut x = origin.x;
-                        for glyph in &mut flat.glyphs {
-                            glyph.origin = casual_doc_pdf_read::Point { x, y: origin.y };
-                            x += glyph.advance;
-                        }
-                        flat.rotation_degrees = 0.0;
+                        let flat = level(run);
                         let (blocks, n) = group::blocks_counted(&[&flat], params);
                         comparisons += n;
                         rotated.extend(blocks.into_iter().map(|block| SourceBlock {

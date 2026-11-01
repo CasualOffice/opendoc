@@ -1,4 +1,5 @@
 ABI
+ACL
 ADR
 ADRs
 AES
@@ -98,6 +99,7 @@ HMAC
 HTML
 HTTP
 HarfBuzz
+Helvetica
 HiDPI
 Hocuspocus
 Hotfix
@@ -220,6 +222,7 @@ SDTs
 SEP
 SHA
 SIL
+SIMD
 SVG
 SaaS
 Schemas
@@ -479,6 +482,7 @@ includepicture
 injective
 inlined
 inlines
+inlining
 inspectable
 intra
 invariants

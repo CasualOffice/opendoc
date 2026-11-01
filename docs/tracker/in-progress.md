@@ -12,7 +12,7 @@ currently assigned. Rows stay in their queue order.
 | 3 | HF-081 | P1 | 1,319 user-facing strings are still English literals in the source — the SEAM and the pipeline now exist, the strings have not moved yet | Open (partly delivered) |
 | 4 | HF-109 | P1 | The packaged iframe custom element exists, but the editor still lacks an in-process `mountEditor(root, options)` and unmount lifecycle | Partly fixed; package and custom element shipped, in-process mount open |
 | 5 | HF-114 | P1 | Share and join work through an optional host; production host integration and invitation access settings remain | Partly fixed; Share, presence and recovery implemented (`docs/169`) |
-| 6 | HF-414 | P1 | Text recognition froze the tab: the OCR engine load and every scanned page ran on the main thread | In progress — fix on `fix/ocr-off-main-thread` |
+| 6 | HF-414 | P1 | Text recognition froze the tab: the OCR engine load and every scanned page ran on the main thread | In progress — worker merged (#919); the follow-up below (SIMD PDF module, plain-HTTP crypto) is on `main`, and the row closes once the live site is re-verified |
 | 7 | HF-362 | P2 | Verify the merged shared, host-authored version history and close its acceptance row (`docs/174` RC-09) | Open — implementation merged in #890; acceptance and queue closure pending |
 | 10 | HF-066 | P2 | Pasted hyperlinks are stored with no scheme filter and re-exported | Partly fixed |
 | 19 | HF-160 | P2 | No `.rtf` support — RTF is in neither the import nor the export registry, so an RTF file cannot be opened at all | Partly fixed (#553) |

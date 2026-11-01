@@ -35,6 +35,7 @@ import { createProofLanguages } from "./proof_languages.mjs";
 import { createSpellChecker } from "./spell_check.mjs";
 import { SPELL_LANGUAGES } from "./spelling.mjs";
 import { t } from "./i18n.mjs";
+import { sha256Hex as digestHex } from "./web_crypto.mjs";
 
 /** Bytes → lower-case SHA-256 hex.
  *
@@ -45,8 +46,8 @@ import { t } from "./i18n.mjs";
  *  checksum MISMATCH without corrupting a real file unless it can substitute this.
  */
 async function sha256Hex(bytes) {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  // Web Crypto, or the JavaScript digest on a plain-HTTP page (HF-414).
+  return digestHex(bytes);
 }
 
 /**

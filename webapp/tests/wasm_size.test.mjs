@@ -140,7 +140,12 @@ const WASM = fileURLToPath(new URL("../pkg/casual_doc_wasm_bg.wasm", import.meta
 // pulldown-cmark, content controls and forms, table layout and borders, shape
 // effects, picture insert, find/view extras). MEASURED by CI at 27,978,452 B;
 // the ceiling is that plus ~128 KiB.
-const MAX_TOTAL_BYTES = 28_110_000;
+// 28,110,000 -> 28,265,000 for the bundled symbol face (#922: Noto Sans Symbols 2
+// subset to the symbol blocks, so form ballot boxes and check marks stop drawing
+// as `.notdef`): a 151,048 B data segment, no code. AN ESTIMATE (measured face
+// bytes added to the ceiling); CI's measurement replaces it. MEASURED by CI
+// (the diagnostic line below) at 28,137,305 B; the ceiling is that plus ~128 KiB.
+const MAX_TOTAL_BYTES = 28_270_000;
 /** What the browser then compiles. Measured: 10,594,266 B (#805); 11,585,101 B
  *  after §19; 12,349,976 B with HF-360, whose opt-level-3 build is 14,144,617 B,
  *  so a dropped `z` still lands far outside this. */
@@ -182,9 +187,13 @@ function sections(bytes) {
   return sizes;
 }
 
-test("the editor's engine download stays inside its budget", () => {
+// Each size test reports what it measured (`t.diagnostic`, a `#` line in the
+// CI log) on a pass too, so a ceiling is re-measured from CI's own build
+// rather than estimated by a lane that cannot run build.sh.
+test("the editor's engine download stays inside its budget", (t) => {
   assert.ok(existsSync(WASM), `${WASM} is missing. ${STALE}`);
   const total = statSync(WASM).size;
+  t.diagnostic(`engine module measured ${total.toLocaleString("en-US")} B`);
   assert.ok(
     total <= MAX_TOTAL_BYTES,
     `the engine module is ${total.toLocaleString("en-US")} B, over the ` +
@@ -196,9 +205,10 @@ test("the editor's engine download stays inside its budget", () => {
   );
 });
 
-test("the code the browser must compile stays inside its budget", () => {
+test("the code the browser must compile stays inside its budget", (t) => {
   assert.ok(existsSync(WASM), `${WASM} is missing. ${STALE}`);
   const code = sections(readFileSync(WASM))[10] ?? 0;
+  t.diagnostic(`code section measured ${code.toLocaleString("en-US")} B`);
   assert.ok(
     code >= MIN_CODE_BYTES,
     `the code section is only ${code.toLocaleString("en-US")} B — that is not this ` +
@@ -229,8 +239,15 @@ const PDF_WASM = fileURLToPath(new URL("../pkg-pdf/casual_doc_wasm_pdf_bg.wasm",
 const PDF_GLUE = fileURLToPath(new URL("../pkg-pdf/casual_doc_wasm_pdf.js", import.meta.url));
 const MAIN_GLUE = fileURLToPath(new URL("../pkg/casual_doc_wasm.js", import.meta.url));
 // MEASURED by CI at 9,359,261 B (the 8,500,000 estimate predated reflow, the P3
-// fonts and the save planner in this module); the ceiling is that plus ~128 KiB.
-const MAX_PDF_TOTAL_BYTES = 9_490_000;
+// fonts and the save planner in this module), then at 9,534,441 B after the
+// reflow-quality work of `docs/182` §18.11 (+175 KB: the measured rhythm, the
+// decorations pass, borderless-table fitting, figures with their labels and
+// repeated header objects). The ceiling is that plus ~160 KiB.
+// 9,700,000 -> 8,935,000: MEASURED by CI at 8,767,533 B on #922 (its reflow
+// work, the tall-row and header-band tables, tracking and the /ActualText
+// reader, all in this module), so the ceiling had drifted 930 KB above the
+// module and stopped guarding it. Ceiling: that plus ~160 KiB.
+const MAX_PDF_TOTAL_BYTES = 8_935_000;
 const MIN_PDF_TOTAL_BYTES = 1_000_000;
 
 /** Every name a wasm-bindgen glue file exports. */
@@ -253,9 +270,10 @@ function holds(bytes, needle) {
   return Buffer.from(bytes).includes(Buffer.from(needle, "latin1"));
 }
 
-test("the PDF module stays inside its own budget", () => {
+test("the PDF module stays inside its own budget", (t) => {
   assert.ok(existsSync(PDF_WASM), `${PDF_WASM} is missing. ${STALE}`);
   const total = statSync(PDF_WASM).size;
+  t.diagnostic(`PDF module measured ${total.toLocaleString("en-US")} B`);
   assert.ok(total >= MIN_PDF_TOTAL_BYTES, `the PDF module is only ${total} B — not this module. ${STALE}`);
   assert.ok(
     total <= MAX_PDF_TOTAL_BYTES,
@@ -285,4 +303,69 @@ test("the main module exports no PDF import entry point, and links no PDF reader
   assert.ok(holds(readFileSync(PDF_WASM), "hayro"), "the PDF module should link hayro");
   assert.ok(!holds(readFileSync(WASM), "hayro"), "the main module links hayro again");
   assert.ok(!holds(readFileSync(WASM), "casual-doc-pdf-save"), "the main module links the save planner");
+});
+
+// ---- Text recognition's kernels are vectorised (HF-414) ---------------------
+//
+// rten selects its WebAssembly SIMD kernels at compile time, so a PDF module
+// built without `-C target-feature=+simd128` still works, only many times
+// slower: on the live site (2026-10-31) a scanned page had not finished after
+// ten minutes, and the owner reported that OCR "is still not there".
+// `build.sh` builds this module with `simd128` and the main module without it.
+//
+// The check reads the artifact, not the build script: a function that keeps a
+// value in a `v128` local declares it in its body's local declarations (value
+// type 0x7b), which a scalar build never does. O(code section), decoding only
+// each body's local declarations, never its instructions.
+
+/** How many function bodies in `bytes` (a wasm module) declare a `v128` local. */
+function v128Functions(bytes) {
+  let p = 8;
+  const leb = () => {
+    let value = 0;
+    let shift = 0;
+    let byte;
+    do {
+      byte = bytes[p++];
+      value += (byte & 0x7f) * 2 ** shift;
+      shift += 7;
+    } while (byte & 0x80);
+    return value;
+  };
+  let count = 0;
+  while (p < bytes.length) {
+    const id = bytes[p++];
+    const size = leb();
+    const end = p + size;
+    if (id === 10) {
+      const bodies = leb();
+      for (let i = 0; i < bodies; i += 1) {
+        const bodyEnd = leb() + p;
+        const groups = leb();
+        let vector = false;
+        for (let g = 0; g < groups; g += 1) {
+          leb();
+          if (bytes[p++] === 0x7b) vector = true;
+        }
+        if (vector) count += 1;
+        p = bodyEnd;
+      }
+    }
+    p = end;
+  }
+  return count;
+}
+
+test("the PDF module is built with WebAssembly SIMD, and the main module is not", () => {
+  assert.ok(existsSync(PDF_WASM) && existsSync(WASM), STALE);
+  const pdf = v128Functions(readFileSync(PDF_WASM));
+  // Measured 563 with simd128, 0 in the scalar module the site served before.
+  assert.ok(
+    pdf >= 100,
+    `only ${pdf} functions in the PDF module use v128: it was built without simd128 ` +
+      "(webapp/build.sh's RUSTFLAGS for casual-doc-wasm-pdf), so OCR's kernels run scalar",
+  );
+  // The main module's build is a separate decision (RM-14); this keeps the flag
+  // from leaking into it unnoticed.
+  assert.equal(v128Functions(readFileSync(WASM)), 0, "the main module now uses SIMD: RM-14 decides that, not this flag");
 });

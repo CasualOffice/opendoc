@@ -1645,6 +1645,8 @@ fn line_ending_at(x1: f64, top: f64) -> super::ILine {
         baseline: top + 8.0,
         size: 10.0,
         mcid: None,
+        border_below: None,
+        shade: None,
     }
 }
 
@@ -2573,5 +2575,234 @@ fn a_table_with_an_overhanging_column_still_validates() {
     assert_eq!(
         super::emit::cell_width(table.rows[0][0].x1 - table.rows[0][0].x0),
         0
+    );
+}
+
+/// A two-row borderless table under a shaded header band that spans its
+/// columns, the way Word and LibreOffice print a merged header row
+/// (`sample.docx` OD-TBL-002): one table of three rows, the header one cell
+/// spanning every column, centred, and the rows' cells side by side, not
+/// a staircase of indented paragraphs. Mutations, each driven red: no
+/// header band found (`shaded_header` answering `None`: two rows are no
+/// table); the header keeping its words' extent (it lands in one column of
+/// the first row); a spanning single-line cell getting no row of its own in
+/// `whitespace_table`; `centred_in` answering `false`.
+#[test]
+fn a_shaded_header_band_makes_two_aligned_rows_a_table() {
+    let mut content = text("F2", 11.0, 72.0, 720.0, 14.0, &["Merged cells."]);
+    content.push_str("0.91 0.93 0.96 rg\n");
+    content.push_str(&rect(72.0, 672.0, 420.0, 20.0));
+    content.push_str("0 g\n");
+    content.push_str(&text(
+        "F2",
+        9.0,
+        // Centred on the band: 132 pt of words around x = 282.
+        216.0,
+        678.0,
+        11.0,
+        &["Merged header across three columns"],
+    ));
+    let rows = [["A1", "B1", "C1"], ["Merged pair", "", "Standalone"]];
+    for (r, row) in rows.iter().enumerate() {
+        let y = 678.0 - 24.0 * (r + 1) as f64;
+        for (c, cell) in row.iter().enumerate() {
+            if !cell.is_empty() {
+                content.push_str(&text("F2", 9.0, [84.0, 230.0, 380.0][c], y, 11.0, &[cell]));
+            }
+        }
+    }
+    // The next paragraph one row pitch below the last row: the row's own
+    // height already holds that space.
+    content.push_str(&text(
+        "F2",
+        9.0,
+        72.0,
+        678.0 - 24.0 * 3.0,
+        11.0,
+        &["After the table."],
+    ));
+    let (_, reflowed) = reflow_of(synth::document(&[Page::new(content)], "", ""));
+    let document = &reflowed.document;
+    let tables = tables_in(document);
+    assert_eq!(tables.len(), 1, "{:?}", texts(document));
+    let rows = cell_texts(document, 0);
+    assert_eq!(rows.len(), 3, "{rows:?}");
+    let after = paragraphs(document)
+        .into_iter()
+        .find(|p| para_text(p).starts_with("After"))
+        .expect("the paragraph after the table");
+    let before = after
+        .properties
+        .spacing
+        .as_ref()
+        .and_then(|s| s.before_twips)
+        .unwrap_or(0);
+    assert!(
+        before < 100,
+        "the last row's slack is not counted again above the next paragraph: {before} twips"
+    );
+    assert_eq!(
+        rows[0],
+        vec!["Merged header across three columns"],
+        "{rows:?}"
+    );
+    assert_eq!(rows[1], vec!["A1", "B1", "C1"], "{rows:?}");
+    let header = &tables[0].rows[0].cells[0];
+    assert_eq!(header.properties.grid_span, Some(3));
+    let BlockNode::Paragraph(paragraph) = &header.blocks[0] else {
+        panic!("a paragraph");
+    };
+    assert_eq!(
+        paragraph.properties.alignment,
+        Some(casual_doc_model::v1::Alignment::Center),
+        "the header is centred across the columns it spans"
+    );
+}
+
+/// A line set with letter spacing (`2 Tc`: a subtitle's expanded tracking)
+/// reflows with that spacing on its runs, and a line set solid with none.
+/// Mutations, each driven red: `track` never setting a run's tracking; the
+/// run properties ignoring it; the agreement test dropped (a solid line's
+/// kerning noise reads as tracking, here forced by a kerned TJ).
+#[test]
+fn letter_spacing_reflows_as_character_spacing() {
+    let mut content = text(
+        "F2",
+        10.0,
+        72.0,
+        720.0,
+        14.0,
+        &["An ordinary paragraph set solid, with nothing between its letters."],
+    );
+    content.push_str("BT /F2 14 Tf 2 Tc 72 680 Td (EXPANDED SUBTITLE) Tj 0 Tc ET\n");
+    // Kerned, not tracked: uneven adjustments between a few pairs.
+    content.push_str("BT /F2 10 Tf 72 650 Td [(A) -20 (V) -90 (A) -40 (T) -80 (W) -50 (a) -25 (y) -70 (s)] TJ ET\n");
+    let (_, reflowed) = reflow_of(synth::document(&[Page::new(content)], "", ""));
+    let spacing_of = |start: &str| -> Vec<Option<i32>> {
+        paragraphs(&reflowed.document)
+            .into_iter()
+            .find(|p| para_text(p).starts_with(start))
+            .unwrap_or_else(|| panic!("{start}: {:?}", texts(&reflowed.document)))
+            .inlines
+            .iter()
+            .filter_map(|i| match i {
+                InlineNode::Run(run) => Some(run.properties.character_spacing_twips),
+                _ => None,
+            })
+            .collect()
+    };
+    let expanded = spacing_of("EXPANDED");
+    assert!(
+        expanded.iter().all(|s| *s == Some(40)),
+        "2 pt of tracking is 40 twips on every run: {expanded:?}"
+    );
+    assert!(spacing_of("An ordinary").iter().all(Option::is_none));
+    assert!(
+        spacing_of("AVA").iter().all(Option::is_none),
+        "kerning is not tracking"
+    );
+}
+
+/// Text wrapped around a picture on its right: the lines beside it stop
+/// short of the column at the picture's edge, and the sentence carries on
+/// below the picture across the column. One paragraph, floated on by the
+/// picture, not a paragraph ending at the picture's edge. Mutation, driven
+/// red: `wrap_right` answering the column's edge.
+#[test]
+fn text_wrapped_around_a_picture_stays_one_paragraph() {
+    let beside = [
+        "Text that wraps around a picture runs to the picture",
+        "and not to the column, so every line beside it stops",
+        "at the same place, a little short of the picture edge",
+        "where the picture begins, and the sentence carries on",
+    ];
+    let below = [
+        "below the picture across the full width of the column where the text now runs",
+        "to the right margin and the paragraph ends here at last.",
+    ];
+    let content = format!(
+        "{}{}{}",
+        picture(312.0, 655.0, 100.0, 65.0),
+        text("F1", 10.0, 72.0, 710.0, 14.0, &beside),
+        text("F1", 10.0, 72.0, 630.0, 14.0, &below),
+    );
+    let (_, reflowed) = reflow_of(with_picture(&[Page::new(content)]));
+    let found = graphics(&reflowed.document);
+    let whole = found
+        .iter()
+        .find(|(text, _, _)| text.starts_with("Text that wraps"))
+        .unwrap_or_else(|| panic!("{found:?}"));
+    assert!(
+        whole.0.ends_with("ends here at last."),
+        "the lines below the picture continue the paragraph: {found:?}"
+    );
+    assert_eq!(whole.1, vec![(WrapMode::Square, false)], "{found:?}");
+}
+
+/// A tall row whose cells are aligned top, centre and bottom (Word's
+/// "vertical alignment" table) shares no baseline: one row of the table,
+/// each cell keeping its alignment, not a staircase of paragraphs.
+/// Mutations, each driven red: no tall row found in
+/// `whitespace_candidates` (its cells stay paragraphs); `whitespace_table`
+/// making no row of it (its cells fall into the row above); `cell_valign`
+/// answering `None`.
+#[test]
+fn a_tall_row_with_cells_at_top_middle_and_bottom_is_one_row() {
+    let mut content = text("F2", 11.0, 72.0, 720.0, 14.0, &["Vertical alignment."]);
+    let columns = [84.0, 220.0, 380.0];
+    for (c, cell) in ["Feature", "Input", "Status"].iter().enumerate() {
+        content.push_str(&text("F3", 9.0, columns[c], 690.0, 11.0, &[cell]));
+    }
+    // The tall row: top, middle and bottom of a band 36 pt deep.
+    for (c, (cell, y)) in [
+        ("Top cell", 668.0),
+        ("Middle cell", 652.0),
+        ("Bottom cell", 636.0),
+    ]
+    .iter()
+    .enumerate()
+    {
+        content.push_str(&text("F2", 9.0, columns[c], *y, 11.0, &[cell]));
+    }
+    for (r, row) in [["Next", "row", "here"], ["Last", "row", "too"]]
+        .iter()
+        .enumerate()
+    {
+        let y = 612.0 - 22.0 * r as f64;
+        for (c, cell) in row.iter().enumerate() {
+            content.push_str(&text("F2", 9.0, columns[c], y, 11.0, &[cell]));
+        }
+    }
+    let (_, reflowed) = reflow_of(synth::document(&[Page::new(content)], "", ""));
+    let document = &reflowed.document;
+    let tables = tables_in(document);
+    assert_eq!(tables.len(), 1, "{:?}", texts(document));
+    let rows = cell_texts(document, 0);
+    assert_eq!(rows.len(), 4, "{rows:?}");
+    assert_eq!(
+        rows[1],
+        vec!["Top cell", "Middle cell", "Bottom cell"],
+        "{rows:?}"
+    );
+    use casual_doc_model::v1::CellVerticalAlignment;
+    let aligned: Vec<Option<CellVerticalAlignment>> = tables[0].rows[1]
+        .cells
+        .iter()
+        .map(|c| c.properties.vertical_alignment)
+        .collect();
+    assert_eq!(
+        aligned,
+        vec![
+            None,
+            Some(CellVerticalAlignment::Center),
+            Some(CellVerticalAlignment::Bottom)
+        ]
+    );
+    assert!(
+        tables[0].rows[2]
+            .cells
+            .iter()
+            .all(|c| c.properties.vertical_alignment.is_none()),
+        "an ordinary row keeps the default"
     );
 }

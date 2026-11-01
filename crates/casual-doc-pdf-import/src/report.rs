@@ -105,6 +105,7 @@ pub const FEATURES: &[&str] = &[
     CLIP_IGNORED,
     COLUMNS_INFERRED,
     COMMENT_INFERRED,
+    DECORATION_INFERRED,
     DEHYPHENATION_INFERRED,
     ENCRYPTED_UNSUPPORTED,
     EXACT_SAVE_FIXED_LAYOUT_ONLY,
@@ -142,6 +143,7 @@ pub const FEATURES: &[&str] = &[
     PATTERN_FLATTENED,
     QUOTE_FROM_GLYPH_NAME,
     READING_ORDER_INFERRED,
+    SCAN_REPLACED_BY_TEXT,
     STYLE_INFERRED,
     SYMBOL_FONT_MAPPED,
     TABLE_CONTINUED,
@@ -252,6 +254,11 @@ pub const COLUMNS_INFERRED: &str = "pdf.import.columns_inferred";
 /// nearest its rectangle (the anchor is inferred; author, date and text are
 /// the annotation's).
 pub const COMMENT_INFERRED: &str = "pdf.import.comment_inferred";
+/// Reflow: a rule or fill the PDF drew beside text became that text's
+/// underline, strikethrough or shading, or its paragraph's shading or bottom
+/// border (`reflow::decorate`). Which path is which decoration is inferred
+/// from where it sits against the glyphs.
+pub const DECORATION_INFERRED: &str = "pdf.import.decoration_inferred";
 /// Reflow: a line-end hyphen between letters was removed when joining the
 /// lines (the next line starts lowercase).
 pub const DEHYPHENATION_INFERRED: &str = "pdf.import.dehyphenation_inferred";
@@ -272,6 +279,11 @@ pub const LINK_UNRESOLVED: &str = "pdf.import.link_unresolved";
 /// Reflow: a bullet or enumerator with a hanging indent became a numbered
 /// or bulleted list item.
 pub const LIST_INFERRED: &str = "pdf.import.list_inferred";
+/// Reflow: a scanned page whose text the recogniser read is that text in
+/// the flowing document; the scan behind it, whose words sit at their old
+/// places under lines that now run differently, is kept by the exact layout
+/// only.
+pub const SCAN_REPLACED_BY_TEXT: &str = "pdf.import.scan_replaced_by_text";
 /// Reflow: font clusters became the style sheet (Normal and Heading n).
 pub const STYLE_INFERRED: &str = "pdf.import.style_inferred";
 /// Reflow: a ruling-line grid, or whitespace-aligned columns above the

@@ -69,6 +69,9 @@ pub struct ICell {
     pub y1: f64,
     /// Background, from a filled rectangle under the cell.
     pub shading: Option<[u8; 3]>,
+    /// Where its text sits in a row taller than it (`w:vAlign`): read from
+    /// a tall row whose cells stand at its top, middle and bottom.
+    pub valign: Option<casual_doc_model::v1::CellVerticalAlignment>,
 }
 
 /// One table.
@@ -86,6 +89,11 @@ pub struct ITable {
     pub border_color: Option<[u8; 3]>,
     /// The thickness of its rules, in points (the most common one).
     pub border_width: f64,
+    /// A borderless table's cell padding before its text, in points: the
+    /// distance from the fill behind its rows to its first column's text
+    /// (zero without one). Its cells' margins are this on the start side and
+    /// nothing on the end, so each column's text starts where the PDF's did.
+    pub pad: f64,
     /// Leading rows that repeat as a header on every page the table spans
     /// (`w:tblHeader`): the row a table continued across a page repeated.
     pub header_rows: usize,
@@ -417,6 +425,7 @@ fn build(
         border_color,
         border_width,
         header_rows: 0,
+        pad: 0.0,
     };
     let mut owner: Vec<Vec<usize>> = vec![vec![usize::MAX; cols]; rows];
     for r in 0..rows {
@@ -437,6 +446,7 @@ fn build(
                 y0: ys[r],
                 y1: ys[r + 1],
                 shading: None,
+                valign: None,
             };
             for k in start..=c {
                 cell.lines.append(&mut contents[r][k]);
@@ -504,22 +514,105 @@ pub fn shade(table: &mut ITable, fills: &[Fill], work: &mut u64) {
     if meeting.is_empty() {
         return;
     }
+    let ruled = table.ruled;
     for cell in table.rows.iter_mut().flatten() {
-        let area = (cell.x1 - cell.x0) * (cell.y1 - cell.y0);
+        // A ruled cell is its rules' box; a borderless cell's box is its
+        // text (its band runs to the middle of the gap to the next row,
+        // which a row's fill does not reach).
+        let (x0, y0, x1, y1) = if ruled || cell.lines.is_empty() {
+            (cell.x0, cell.y0, cell.x1, cell.y1)
+        } else {
+            (
+                cell.lines
+                    .iter()
+                    .map(|l| l.x0)
+                    .fold(f64::INFINITY, f64::min),
+                cell.lines
+                    .iter()
+                    .map(|l| l.top)
+                    .fold(f64::INFINITY, f64::min),
+                cell.lines
+                    .iter()
+                    .map(|l| l.x1)
+                    .fold(f64::NEG_INFINITY, f64::max),
+                cell.lines
+                    .iter()
+                    .map(|l| l.bottom)
+                    .fold(f64::NEG_INFINITY, f64::max),
+            )
+        };
+        let area = (x1 - x0) * (y1 - y0);
         if area <= 0.0 {
             continue;
         }
         for fill in &meeting {
             *work += 1;
             let b = fill.bounds;
-            let w = (b.x1.min(cell.x1) - b.x0.max(cell.x0)).max(0.0);
-            let h = (b.y1.min(cell.y1) - b.y0.max(cell.y0)).max(0.0);
+            let w = (b.x1.min(x1) - b.x0.max(x0)).max(0.0);
+            let h = (b.y1.min(y1) - b.y0.max(y0)).max(0.0);
             if w * h >= SHADING_COVER * area {
                 let [r, g, bl, _] = fill.color;
                 cell.shading = ([r, g, bl] != [255, 255, 255]).then_some([r, g, bl]);
             }
         }
     }
+}
+
+/// Slack after a borderless table's last column's text, in points, for a
+/// substitute face that sets it wider.
+pub const CELL_MARGINS: f64 = 12.0;
+
+/// Widens a whitespace table to the fills painted behind its rows: a
+/// borderless table's shaded header row or banded rows run from the table's
+/// left to its right, while its bounds were only its text's, so the table
+/// reflowed as narrow as its text and the fills, wider than it, were placed
+/// as drawings beside it. A fill counts when it lies within the table's
+/// rows (half a row of slack) and meets its columns. O(fills).
+pub fn fit_to_fills(table: &mut ITable, fills: &[Fill], work: &mut u64) {
+    if table.ruled || table.rows.is_empty() {
+        return;
+    }
+    let (left, top, right, bottom) = table.bounds;
+    let slack = (bottom - top) / table.rows.len() as f64 / 2.0;
+    let (mut x0, mut x1) = (left, right);
+    for fill in fills {
+        *work += 1;
+        let b = fill.bounds;
+        let [r, g, bl, _] = fill.color;
+        if [r, g, bl] == [255, 255, 255]
+            || b.y0 < top - slack
+            || b.y1 > bottom + slack
+            || b.x1 <= left
+            || b.x0 >= right
+        {
+            continue;
+        }
+        x0 = x0.min(b.x0);
+        x1 = x1.max(b.x1);
+    }
+    if x1 > right {
+        if let Some(w) = table.columns.last_mut() {
+            *w += x1 - right;
+        }
+        for row in &mut table.rows {
+            if let Some(cell) = row.last_mut() {
+                cell.x1 = x1;
+            }
+        }
+    }
+    // Every column starts its padding before its text, so the widths
+    // between column starts are unchanged and the first cell's text keeps
+    // its place.
+    if x0 < left {
+        table.pad = (left - x0).min(12.0);
+        for row in &mut table.rows {
+            if let Some(cell) = row.first_mut() {
+                cell.x0 = x0;
+            }
+        }
+    }
+    // The bounds stay the text's: they set the page's body (its margins),
+    // which a fill reaching into the margin must not move.
 }
 
 /// Whether vector art is a table's shading: every path a flat fill of
@@ -532,6 +625,10 @@ pub fn is_shading(vector: &SourceVector, tables: &[ITable]) -> bool {
         // past the text by the cell padding.
         let slack = if t.ruled { 1.0 } else { 12.0 };
         let (left, top, right, bottom) = t.bounds;
+        // Its cells may reach past its text (`fit_to_fills`).
+        let cells = t.rows.iter().flatten();
+        let left = cells.clone().map(|c| c.x0).fold(left, f64::min);
+        let right = cells.map(|c| c.x1).fold(right, f64::max);
         b.x0 >= left - slack
             && b.x1 <= right + slack
             && b.y0 >= top - slack
@@ -722,7 +819,14 @@ pub struct Candidate {
     pub confidence: f64,
     /// Aligned rows.
     pub rows: usize,
+    /// Tall rows whose cells share no baseline (one at the row's top, one
+    /// in its middle, one at its bottom): the baseline of each such row's
+    /// highest line, for [`whitespace_table`] to make a row of.
+    pub tall_rows: Vec<f64>,
 }
+
+/// A tall row reaches at most this many ems below the aligned row above it.
+pub const TALL_ROW_EMS: f64 = 12.0;
 
 /// Scores whitespace-table candidates among text elements (each a list of
 /// lines with its bounds). O(l log l).
@@ -806,6 +910,82 @@ pub fn whitespace_candidates(
             uf.union(upper[0].2, lower[0].2);
         }
     }
+    // A tall row whose cells are aligned top, centre and bottom shares no
+    // baseline, so it links nothing and its cells became a staircase of
+    // paragraphs. Under an aligned row (before the next one, within
+    // TALL_ROW_EMS), the single-line elements standing side by side, a
+    // gutter apart, whose columns agree with the row above are one row.
+    let mut tall: Vec<(usize, f64)> = Vec::new();
+    for (k, (b0, s0, upper)) in aligned_rows.iter().enumerate() {
+        *work += 1;
+        let limit = aligned_rows
+            .get(k + 1)
+            .map_or(b0 + TALL_ROW_EMS * s0.max(1.0), |next| next.0)
+            .min(b0 + TALL_ROW_EMS * s0.max(1.0));
+        let mut pieces: Vec<(f64, f64, usize, f64)> = elements
+            .iter()
+            .enumerate()
+            .filter_map(|(e, (lines, _))| match lines {
+                [line]
+                    if !aligned_lines[e][0]
+                        && line.baseline > b0 + BASELINE_TOLERANCE
+                        && line.baseline < limit - BASELINE_TOLERANCE =>
+                {
+                    Some((line.x0, line.x1, e, line.baseline))
+                }
+                _ => None,
+            })
+            .collect();
+        if pieces.len() < 2 {
+            continue;
+        }
+        pieces.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let gutter = CELL_GUTTER_EMS * s0.max(1.0);
+        let disjoint = pieces.windows(2).all(|w| w[1].0 - w[0].1 >= gutter);
+        let cells: Vec<(f64, f64, usize)> = pieces.iter().map(|p| (p.0, p.1, p.2)).collect();
+        // Every piece in its own column of the row above.
+        let columned = cells.iter().all(|c| {
+            upper
+                .iter()
+                .filter(|u| c.0 <= u.1 + COLUMN_SLACK && c.1 >= u.0 - COLUMN_SLACK)
+                .count()
+                == 1
+        }) && {
+            let mut used: Vec<usize> = cells
+                .iter()
+                .filter_map(|c| {
+                    upper
+                        .iter()
+                        .position(|u| c.0 <= u.1 + COLUMN_SLACK && c.1 >= u.0 - COLUMN_SLACK)
+                })
+                .collect();
+            used.dedup();
+            used.len() == cells.len()
+        };
+        // Not one line: the pieces' baselines differ (else they are an
+        // aligned row already).
+        let staggered = pieces
+            .iter()
+            .any(|p| (p.3 - pieces[0].3).abs() > BASELINE_TOLERANCE);
+        if disjoint && columned && staggered {
+            for p in &pieces {
+                uf.union(upper[0].2, p.2);
+                aligned_lines[p.2][0] = true;
+            }
+            let top = pieces.iter().map(|p| p.3).fold(f64::INFINITY, f64::min);
+            let lowest = pieces.iter().map(|p| p.3).fold(f64::NEG_INFINITY, f64::max);
+            // The row under it, a row's reach below its lowest line and in
+            // the same columns, is the same table.
+            if let Some((b1, _, lower)) = aligned_rows.get(k + 1)
+                && b1 - lowest <= ROW_REACH * s0.max(1.0)
+                && columns_agree(upper, lower)
+            {
+                uf.union(upper[0].2, lower[0].2);
+            }
+            *rows_of.entry(pieces[0].2).or_default() += 1;
+            tall.push((pieces[0].2, top));
+        }
+    }
     let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for e in 0..elements.len() {
         groups.entry(uf.find(e)).or_default().push(e);
@@ -839,13 +1019,109 @@ pub fn whitespace_candidates(
         let confidence = share * (1.0 - prose_share) * (rows as f64 / 3.0).min(1.0);
         let mut elements_sorted = members.clone();
         elements_sorted.sort_by(|&a, &b| elements[a].1.0.total_cmp(&elements[b].1.0));
+        let tall_rows = tall
+            .iter()
+            .filter(|(e, _)| members.contains(e))
+            .map(|(_, b)| *b)
+            .collect();
         out.push(Candidate {
             elements: elements_sorted,
             confidence,
             rows,
+            tall_rows,
         });
     }
     out
+}
+
+/// Where a cell's `lines` sit in a tall row of `cells`: at its top (the
+/// default, `None`), its bottom or its middle, against the band from the
+/// row's highest line top to its lowest line bottom, within a third of a
+/// line. O(lines in the row).
+fn cell_valign(
+    lines: &[ILine],
+    cells: &[Vec<ILine>],
+) -> Option<casual_doc_model::v1::CellVerticalAlignment> {
+    use casual_doc_model::v1::CellVerticalAlignment;
+    let all = cells.iter().flatten();
+    let top = all.clone().map(|l| l.top).fold(f64::INFINITY, f64::min);
+    let bottom = all.map(|l| l.bottom).fold(f64::NEG_INFINITY, f64::max);
+    let own_top = lines.iter().map(|l| l.top).fold(f64::INFINITY, f64::min);
+    let own_bottom = lines
+        .iter()
+        .map(|l| l.bottom)
+        .fold(f64::NEG_INFINITY, f64::max);
+    if !own_top.is_finite() {
+        return None;
+    }
+    let slack = lines.iter().map(|l| l.bottom - l.top).fold(1.0, f64::max) / 3.0;
+    if own_top - top <= slack {
+        None
+    } else if bottom - own_bottom <= slack {
+        Some(CellVerticalAlignment::Bottom)
+    } else if (((own_top + own_bottom) - (top + bottom)) / 2.0).abs() <= slack * 1.5 {
+        Some(CellVerticalAlignment::Center)
+    } else {
+        None
+    }
+}
+
+/// The shaded header band over a whitespace candidate, if there is one: one
+/// single-line element (`elements[e]`, not among `members`) on a filled,
+/// non-white rectangle that spans the candidate's columns, directly above
+/// its first row (within [`ROW_REACH`] ems). Word and LibreOffice draw a
+/// borderless table's merged header ("Merged header across three columns")
+/// exactly so: a shaded row, one cell spanning every column, no rules. It is
+/// the row that tells a two-row borderless table from two lines that happen
+/// to share columns. Returns the element and the extent its cell spans (the
+/// band across the candidate's columns: its text alone is only as wide as
+/// the words, centred over one column). O(elements × fills).
+#[must_use]
+pub fn shaded_header(
+    members: &[usize],
+    elements: &[(&[ILine], (f64, f64))],
+    fills: &[Fill],
+    work: &mut u64,
+) -> Option<(usize, (f64, f64))> {
+    let lines = || members.iter().flat_map(|&e| elements[e].0.iter());
+    let x0 = members
+        .iter()
+        .map(|&e| elements[e].1.0)
+        .fold(f64::INFINITY, f64::min);
+    let x1 = members
+        .iter()
+        .map(|&e| elements[e].1.1)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let first = lines().min_by(|a, b| a.baseline.total_cmp(&b.baseline))?;
+    let (top, baseline, size) = (
+        lines().map(|l| l.top).fold(f64::INFINITY, f64::min),
+        first.baseline,
+        first.size.max(1.0),
+    );
+    (0..elements.len())
+        .filter(|e| !members.contains(e))
+        .find(|&e| {
+            *work += fills.len() as u64;
+            let [line] = elements[e].0 else {
+                return false;
+            };
+            line.bottom <= top + BASELINE_TOLERANCE
+                && baseline - line.baseline <= ROW_REACH * size
+                && fills.iter().any(|fill| {
+                    let b = fill.bounds;
+                    let [r, g, bl, a] = fill.color;
+                    let white = r >= 250 && g >= 250 && bl >= 250;
+                    !white
+                        && a > 0
+                        && b.x0 <= line.x0
+                        && b.x1 >= line.x1
+                        && b.y0 <= line.top + BASELINE_TOLERANCE
+                        && b.y1 >= line.bottom - BASELINE_TOLERANCE
+                        && b.x0 <= x0 + COLUMN_SLACK * 4.0
+                        && b.x1 >= x1 - COLUMN_SLACK
+                })
+        })
+        .map(|e| (e, (x0, x1)))
 }
 
 /// Gap (points) under which two cells' horizontal extents are one column:
@@ -864,7 +1140,7 @@ pub const COLUMN_SLACK: f64 = 6.0;
 /// it in its column, so no text is dropped. O(e² + l log l) for `e` elements,
 /// a table's cells.
 #[must_use]
-pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))]) -> ITable {
+pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))], tall_rows: &[f64]) -> ITable {
     // Columns: (left, right), and per element (column, span).
     let mut order: Vec<usize> = (0..columns.len()).collect();
     order.sort_by(|&a, &b| {
@@ -914,7 +1190,9 @@ pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))]) -> ITable {
         .flat_map(|(lines, _)| lines.iter().map(|l| l.baseline))
         .collect();
     all.sort_by(f64::total_cmp);
-    // A row is a baseline at least two cells share.
+    // A row is a baseline at least two cells share, or the line of a
+    // single-line cell spanning several columns (a merged header row, the
+    // only cell on its baseline).
     let mut baselines: Vec<f64> = Vec::new();
     let mut i = 0;
     while i < all.len() {
@@ -927,6 +1205,26 @@ pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))]) -> ITable {
         }
         i = j;
     }
+    for &e in &spanning {
+        if let [line] = columns[e].0.as_slice()
+            && !baselines
+                .iter()
+                .any(|b| (b - line.baseline).abs() <= BASELINE_TOLERANCE)
+        {
+            baselines.push(line.baseline);
+        }
+    }
+    // A tall row is a row from its highest line down: its lower cells'
+    // lines fall to it as the row above them.
+    for &b in tall_rows {
+        if !baselines
+            .iter()
+            .any(|x| (x - b).abs() <= BASELINE_TOLERANCE)
+        {
+            baselines.push(b);
+        }
+    }
+    baselines.sort_by(f64::total_cmp);
     let width = clusters.len().max(1);
     let mut grid: Vec<Vec<Vec<ILine>>> = vec![vec![Vec::new(); width]; baselines.len()];
     let mut spans: BTreeMap<(usize, usize), usize> = BTreeMap::new();
@@ -970,6 +1268,26 @@ pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))]) -> ITable {
             bands[r + 1].0 = middle;
         }
     }
+    // Each tall row's cells: at its top, in its middle or at its bottom.
+    let valigns: Vec<Vec<Option<casual_doc_model::v1::CellVerticalAlignment>>> = grid
+        .iter()
+        .enumerate()
+        .map(|(r, cells)| {
+            let tall = tall_rows
+                .iter()
+                .any(|b| (b - baselines[r]).abs() <= BASELINE_TOLERANCE);
+            cells
+                .iter()
+                .map(|lines| {
+                    if tall {
+                        cell_valign(lines, cells)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .collect();
     let mut rows: Vec<Vec<ICell>> = Vec::with_capacity(grid.len());
     for (r, cells) in grid.into_iter().enumerate() {
         let mut row = Vec::new();
@@ -982,6 +1300,7 @@ pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))]) -> ITable {
                 }
             }
             let last = (c + span - 1).min(width - 1);
+            let valign = valigns[r][c];
             row.push(ICell {
                 lines: rejoin(lines),
                 span: u32::try_from(span).unwrap_or(1),
@@ -990,6 +1309,7 @@ pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))]) -> ITable {
                 x1: clusters.get(last).map_or(0.0, |k| k.1),
                 y0: bands[r].0,
                 y1: bands[r].1,
+                valign,
                 ..ICell::default()
             });
         }
@@ -998,8 +1318,11 @@ pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))]) -> ITable {
     let left = clusters.first().map_or(0.0, |c| c.0);
     let right = clusters.last().map_or(0.0, |c| c.1);
     let mut widths: Vec<f64> = clusters.windows(2).map(|w| w[1].0 - w[0].0).collect();
+    // The last column holds its widest text plus some slack: at exactly its
+    // text's width, the substitute face's slightly wider text wrapped ("12
+    // ms" became "12" over "ms" in a tab-leader list).
     if let Some(last) = clusters.last() {
-        widths.push((last.1 - last.0).max(1.0));
+        widths.push((last.1 - last.0).max(1.0) + CELL_MARGINS);
     }
     let top = columns
         .iter()
@@ -1009,6 +1332,34 @@ pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))]) -> ITable {
         .iter()
         .flat_map(|(l, _)| l.iter().map(|x| x.bottom))
         .fold(f64::NEG_INFINITY, f64::max);
+    // The table reaches as far as its rows will when laid out: each row is
+    // as tall as the step to the next row's baseline, the last as tall as
+    // the step before it (`emit::pitch_height`). Ending it at the last
+    // line's ink counted that row's slack twice below a borderless table,
+    // once in the row and again as space above the next paragraph.
+    let first_baseline = |row: &Vec<ICell>| {
+        row.iter()
+            .filter_map(|c| c.lines.first().map(|l| l.baseline))
+            .reduce(f64::min)
+    };
+    let bottom = match rows.as_slice() {
+        [.., before, last] => match (first_baseline(before), first_baseline(last)) {
+            (Some(a), Some(b)) if b > a => {
+                let last_top = last
+                    .iter()
+                    .flat_map(|c| c.lines.iter().map(|l| l.top))
+                    .fold(f64::INFINITY, f64::min);
+                let laid = last_top + (b - a);
+                if laid.is_finite() && laid > bottom && laid - bottom < b - a {
+                    laid
+                } else {
+                    bottom
+                }
+            }
+            _ => bottom,
+        },
+        _ => bottom,
+    };
     ITable {
         rows,
         columns: widths,

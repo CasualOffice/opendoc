@@ -4,8 +4,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { readFileSync } from "node:fs";
 import {
   convertRefusal,
+  createPdfCommands,
   hostPdfLayout,
   keepLayoutRefusal,
   ocrSummaryOf,
@@ -78,4 +80,22 @@ test("the deployment's own models are the default; the host's option overrides t
   assert.equal(ocrManifestUrl("", noTag), null, "a build that staged no models offers none");
   assert.match(ocrManifestUrl("?pdfOcrModels=https://host.example/m.json", withTag), /^https:\/\/host\.example\/m\.json$/);
   assert.equal(ocrManifestUrl("?pdfocrmodels=none", withTag), null);
+});
+
+test("a scanned PDF that recognition will reopen holds its first summary back, so it shows once", () => {
+  const url = "https://host.example/models.json";
+  const commands = (summary, search = `?pdfOcrModels=${encodeURIComponent(url)}`) =>
+    createPdfCommands(
+      { doc: { pdfOrigin: true, pdfLayout: "flowing", pdfOcrSummaryJson: JSON.stringify(summary) } },
+      { search: () => search, ocrService: null, view: {} },
+    );
+  assert.equal(commands(scan).willAutoRecognise(), true, "unread scans with models: recognition reopens it");
+  assert.equal(commands({ ...scan, provider: "pp-ocrv5" }).willAutoRecognise(), false, "the recognised open is final");
+  assert.equal(commands({ ...scan, rasterPages: 0 }).willAutoRecognise(), false, "no scans, nothing to wait for");
+  assert.equal(commands(scan, "?pdfOcrModels=none").willAutoRecognise(), false, "no models, no reopen");
+  // The open's summary is gated on it (the open that recognition makes
+  // reports the final state).
+  const open = readFileSync(new URL("../src/editor_file_open.mjs", import.meta.url), "utf8");
+  assert.match(open, /const recognising = origin === "pdf" && pdfCommands\.willAutoRecognise\(\);/);
+  assert.match(open, /if \(origin && !ed\.activatingRestore && !recognising\) ed\.compatFindings\.open\(\);/);
 });

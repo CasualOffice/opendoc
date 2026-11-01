@@ -377,7 +377,10 @@ export function createPdfImport(io = {}) {
         },
         onPages: (done, total) => {
           delete parts.bar.dataset.phase;
-          parts.phase.textContent = t("pdfImport.reading");
+          // A scanned page takes seconds in the worker, and the count moves
+          // only when it is finished: name the page being read now, so
+          // "Page 0 of 8" never reads as stuck (HF-414).
+          parts.phase.textContent = done < total ? t("pdfOcr.recognisingPage", { page: n(done + 1), total: n(total) }) : t("pdfImport.reading");
           paintProgress(done, total);
         },
         onRead: () => {

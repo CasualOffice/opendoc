@@ -354,3 +354,52 @@ fn bold_is_read_from_the_names_producers_give_it() {
         assert!(!crate::admit::bold_name(regular), "{regular}");
     }
 }
+
+/// A one-page PDF over `content`, with `/F1` as Helvetica.
+fn page_with(content: &str) -> Vec<u8> {
+    let objects = [
+        "<</Type/Catalog/Pages 2 0 R>>".to_owned(),
+        "<</Type/Pages/Kids[3 0 R]/Count 1>>".to_owned(),
+        "<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Resources<</Font<</F1 5 0 R>>>>/Contents 4 0 R>>"
+            .to_owned(),
+        format!("<</Length {}>>stream\n{content}\nendstream", content.len() + 1),
+        "<</Type/Font/Subtype/Type1/BaseFont/Helvetica/Encoding/WinAnsiEncoding>>".to_owned(),
+    ];
+    let mut out = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (index, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n{body}\nendobj\n", index + 1).as_bytes());
+    }
+    let xref = out.len();
+    out.extend_from_slice(
+        format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+    );
+    for offset in offsets {
+        out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(
+        format!(
+            "trailer\n<</Size {}/Root 1 0 R>>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    out
+}
+
+/// A span's `/ActualText` is what its glyphs read as (ISO 32000-1 §14.9.4):
+/// the first glyph reads as the whole text and the rest as nothing. Our own
+/// writer wraps a cluster several glyphs draw (an Indic syllable whose vowel
+/// sign is drawn first) in one, so the reflow of our own PDFs, and of any
+/// producer's that does the same, reads the syllable as it was typed.
+#[test]
+fn a_spans_actual_text_is_what_its_glyphs_read_as() {
+    let bytes = page_with(
+        "BT /F1 12 Tf 72 700 Td (a) Tj \
+         /Span<</ActualText<FEFF0939093F0902>>>BDC [(XY) 20 (Z)] TJ EMC (b) Tj ET",
+    );
+    let mut source = PdfSource::open(bytes, PdfReadLimits::default()).expect("admit");
+    let page = source.page_evidence(0).expect("page");
+    assert_eq!(text_of(&page), "a\u{0939}\u{093F}\u{0902}b");
+}

@@ -58,6 +58,8 @@
 // failed request and one console error per mirrored face. See
 // `declaredProvisioned`.
 
+import { sha256Hex as digestHex } from "./web_crypto.mjs";
+
 /** Pinned upstream revisions. Used to build `mirror` URLs for the faces that
  *  are not committed, and kept here so the provisioning tool and the manifest
  *  cannot drift apart.
@@ -630,16 +632,11 @@ export function fallbackKeysFor(codePoints) {
   return [...keys];
 }
 
-/** Lowercase hex SHA-256 of `bytes`, or `null` where WebCrypto is unavailable
- *  (a page served over plain HTTP to something other than localhost has no
- *  `crypto.subtle` at all). */
+/** Lowercase hex SHA-256 of `bytes`: WebCrypto, or on a page served over plain
+ *  HTTP (no `crypto.subtle` at all) the same digest in JavaScript, so every
+ *  face is verified on every page (`web_crypto.mjs`, HF-414). */
 async function sha256Hex(bytes) {
-  const subtle = globalThis.crypto?.subtle;
-  if (!subtle) return null;
-  const digest = await subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return digestHex(bytes);
 }
 
 /** Verifies `bytes` against the manifest entry for `url`.
@@ -650,10 +647,8 @@ async function sha256Hex(bytes) {
  *
  * Where the manifest has no entry for the URL (a host passing its own face
  * through this helper) there is nothing to verify against and the bytes pass.
- * Where WebCrypto is missing, a **mirrored** face is refused — those are the
- * bytes a third party supplies, so they are the ones that must be checked —
- * while a face served from our own origin is allowed through, because its
- * integrity already rests on the same origin that served the page.
+ * Without WebCrypto the digest is computed in JavaScript, so a mirrored face is
+ * checked on a plain-HTTP page too, instead of being refused there.
  */
 async function verifyFontBytes(url, bytes) {
   const face = BY_URL.get(url);
@@ -664,12 +659,6 @@ async function verifyFontBytes(url, bytes) {
     );
   }
   const actual = await sha256Hex(bytes);
-  if (actual === null) {
-    if (face.local) return;
-    throw new Error(
-      `${face.file}: cannot verify a mirrored face without WebCrypto`,
-    );
-  }
   if (actual !== face.sha256) {
     throw new Error(
       `${face.file}: SHA-256 mismatch (expected ${face.sha256}, got ${actual})`,

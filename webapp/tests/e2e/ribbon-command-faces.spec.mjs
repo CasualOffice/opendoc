@@ -70,7 +70,15 @@ async function prepare(page, { table = true, range = true } = {}) {
   } else {
     await page.keyboard.type("parity");
   }
-  if (range) for (let i = 0; i < 6; i += 1) await page.keyboard.press("Shift+ArrowLeft");
+  if (range) {
+    for (let i = 0; i < 6; i += 1) await page.keyboard.press("Shift+ArrowLeft");
+    // The status bar's "1 of N words" (`word_count.mjs`, #918) is written 120 ms
+    // AFTER the selection settles. A baseline read inside that window recorded
+    // "N words", and the half whose 400 ms observation window caught the timer
+    // reported a words change the other half did not: a surface "difference"
+    // made of timing alone, red on all three attempts once CI ran fast enough.
+    await expect(page.locator("#statWords")).toContainText(/\d of \d/);
+  }
   // Let the preparation's own announcements finish. The toast is transient, so a
   // baseline taken while one is still up would attribute its disappearance to the
   // activation — and the two halves of a comparison are timed slightly
