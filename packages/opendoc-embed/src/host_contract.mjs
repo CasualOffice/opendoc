@@ -659,6 +659,12 @@ export const COMMAND_CONTRACT = Object.freeze([
   // Walking the anchored objects with Tab changes nothing.
   exact("object.selectNext", null),
   exact("object.selectPrevious", null),
+  // The picture-text rows either replace the patch under an OCR line or
+  // restore its original ink. All four change the document (HF-418).
+  exact("imageText.fill", "mutate"),
+  exact("imageText.blur", "mutate"),
+  exact("imageText.pixelate", "mutate"),
+  exact("imageText.restore", "mutate"),
 
   // ---- tools / view -------------------------------------------------------
   // Proofing and chrome preferences. None of them touches the document, and all

@@ -571,6 +571,7 @@ fn overlay_run(base: &mut RunProperties, over: &RunProperties) {
     set!(rtl);
     set!(snap_to_grid);
     set!(spec_vanish);
+    set!(no_text_fill);
     set!(border);
     if !over.shading.is_empty() {
         base.shading = over.shading;

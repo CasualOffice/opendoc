@@ -328,7 +328,7 @@ export function createKeyboard(ed) {
         if (start.node !== end.node) await ed.suggestAcrossParagraphs(start, end, null);
         return;
       }
-      await ed.runEdit(() => range ? ed.doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset) : ed.doc.deleteBackward(focus.node, focus.offset));
+      await ed.runEdit(() => range ? ed.doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset) : ed.doc.deleteBackward(focus.node, focus.offset), { text: true });
       return;
     }
     if (key === "Delete") {
@@ -352,7 +352,7 @@ export function createKeyboard(ed) {
         if (start.node !== end.node) await ed.suggestAcrossParagraphs(start, end, null);
         return;
       }
-      await ed.runEdit(() => range ? ed.doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset) : ed.doc.deleteForward(focus.node, focus.offset));
+      await ed.runEdit(() => range ? ed.doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset) : ed.doc.deleteForward(focus.node, focus.offset), { text: true });
       return;
     }
     if (key === "Enter") {

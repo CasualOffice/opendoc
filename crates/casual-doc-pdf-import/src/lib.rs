@@ -63,7 +63,7 @@ pub use casual_doc_ocr::{
     RecognitionModel,
 };
 pub use ocr::{OcrOptions, OcrSummary, OcrTextPlacement, PageClass, PageLayout, ScanBehindText};
-pub use reflow::{PdfSourceState, Reflowed};
+pub use reflow::{PdfSourceState, ReflowOptions, Reflowed, ScanText};
 pub use report::{PdfFinding, PdfImportReport, PdfModelOutcome};
 
 /// Mixed into the id namespace of a reflowed document, so its ids are
@@ -193,10 +193,22 @@ impl PdfImport {
     ///
     /// [`PdfImportError::Model`] if the result fails validation (a defect).
     pub fn reflow(&self) -> Result<Reflowed, PdfImportError> {
-        reflow::build(
+        self.reflow_with(ReflowOptions::default())
+    }
+
+    /// [`PdfImport::reflow`] with explicit [`ReflowOptions`] (what becomes
+    /// of text read from pictures: line boxes over them, the default, or
+    /// paragraphs of the flow). O(document log document).
+    ///
+    /// # Errors
+    ///
+    /// As [`PdfImport::reflow`].
+    pub fn reflow_with(&self, options: ReflowOptions) -> Result<Reflowed, PdfImportError> {
+        reflow::build_with(
             &self.source,
             &self.resources,
             self.namespace ^ REFLOW_NAMESPACE,
+            options,
         )
     }
 
@@ -215,7 +227,17 @@ impl PdfImport {
     ///
     /// As [`PdfImport::reflow`].
     pub fn flowing(&self) -> Result<Reflowed, PdfImportError> {
-        let mut reflowed = self.reflow()?;
+        self.flowing_with(ReflowOptions::default())
+    }
+
+    /// [`PdfImport::flowing`] with explicit [`ReflowOptions`].
+    /// O(document log document).
+    ///
+    /// # Errors
+    ///
+    /// As [`PdfImport::reflow`].
+    pub fn flowing_with(&self, options: ReflowOptions) -> Result<Reflowed, PdfImportError> {
+        let mut reflowed = self.reflow_with(options)?;
         reflowed.report = flowing_report(&self.report, &reflowed.report, self.pages);
         Ok(reflowed)
     }
