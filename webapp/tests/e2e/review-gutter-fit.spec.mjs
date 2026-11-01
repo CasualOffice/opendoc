@@ -12,11 +12,11 @@
 //
 // The widths below bracket that band deliberately. 1280 was fine before the fix
 // and must stay fine; 1100 and 980 are inside it.
-import { clickIntoFirstPage, expect, gotoEditor, stableBox, test } from "./fixtures.mjs";
+import { clickIntoFirstPage, expect, gotoEditor, stableBox, test, setReviewMode } from "./fixtures.mjs";
 
 async function enterSuggesting(page) {
   await clickIntoFirstPage(page);
-  await page.locator('#reviewModeControl [data-review-mode="suggesting"]').click();
+  await setReviewMode(page, "suggesting");
   await page.keyboard.type("Inserted suggestion for review. ");
   await expect(page.locator(".review-sidebar")).toBeVisible();
 }

@@ -64,7 +64,7 @@ const CONTENT_PREVIEWS = [
   [/^html$/, "root unit"],
 ];
 
-const TYPE = /^var\(--(?:fs-(?:xs|sm|md|lg|xl)|icon-(?:sm|md|lg))\)$/;
+const TYPE = /^var\(--(?:fs-(?:xs|sm|md|lg|xl|panel)|icon-(?:sm|md|lg))\)$/;
 const RELATIVE = /^(?:inherit|initial|unset|[\d.]+em|[\d.]+%|smaller|larger)$/;
 const WEIGHT = /^(?:400|500|600|normal|inherit|var\(--fw-(?:regular|medium|semibold)\))$/;
 const RADIUS = /^(?:0|50%|inherit|var\(--r-(?:xs|sm|md|lg|pill)\))$/;
@@ -142,6 +142,7 @@ test("the scale tokens are declared once, at the values the design states", () =
     "--fs-md": "0.8125rem",
     "--fs-lg": "0.9375rem",
     "--fs-xl": "1.25rem",
+    "--fs-panel": "1.0625rem",
     "--fw-regular": "400",
     "--fw-medium": "500",
     "--fw-semibold": "600",

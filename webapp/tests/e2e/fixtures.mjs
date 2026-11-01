@@ -291,15 +291,16 @@ export async function moveCaretToDocStart(page) {
   await page.keyboard.press(`${MOD}+Home`);
 }
 
-// The three-state review-mode control (`#reviewModeControl`: Editing /
-// Suggesting / Viewing) lives in the persistent footer. Selects `mode` and
-// confirms its segment became the pressed one.
+// The three-state review mode (Editing / Suggesting / Viewing) is chosen in the
+// header chip, its only visible face (docs/184 D6). `#reviewModeControl`'s
+// segments still hold the state (hidden), so a spec can read the pressed one.
 export async function setReviewMode(page, mode) {
-  const button = page.locator(
-    `#reviewModeControl [data-review-mode="${mode}"]`,
+  await page.locator("#headerModeBtn").click();
+  await page.locator(`#headerModeMenu [data-header-mode="${mode}"]`).click();
+  await expect(page.locator(`#reviewModeControl [data-review-mode="${mode}"]`)).toHaveAttribute(
+    "aria-pressed",
+    "true",
   );
-  await button.click();
-  await expect(button).toHaveAttribute("aria-pressed", "true");
 }
 
 /** Proves nothing entered the undo history — from a surface that survives when

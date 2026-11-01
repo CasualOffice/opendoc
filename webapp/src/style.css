@@ -228,6 +228,8 @@
   --fs-md: 0.8125rem;
   --fs-lg: 0.9375rem;
   --fs-xl: 1.25rem;
+  /* A docked panel's title (docs/184 D4): between a dialog title and body. */
+  --fs-panel: 1.0625rem;
   --fw-regular: 400;
   --fw-medium: 500;
   --fw-semibold: 600;
@@ -387,8 +389,9 @@
      their inset the same way. `dialog_density.test.mjs` fails if a panel goes
      back to hardcoding its chrome padding, and
      `e2e/panel-alignment.spec.mjs` measures the result. */
-  --pnl-pad-x: var(--space-4);
-  --pnl-pad-y: var(--space-2);
+  /* docs/184 D4: a panel body is inset 1rem 1.25rem. */
+  --pnl-pad-x: var(--space-5);
+  --pnl-pad-y: var(--space-4);
   /* The File page's reading measure (HF-265 D4). The pane is 960px wide at
      1280 and 1600px at 1920 — it is a two-column backstage, not a card — and
      the content inside it was capped at a flat 760px while the HEADING over
@@ -1267,6 +1270,10 @@ button.presence-row:hover {
 }
 
 /* ---- Buttons --------------------------------------------------------------- */
+.share-btn[hidden] {
+  display: none;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -6699,21 +6706,62 @@ body.is-format-painting .page-wrap * {
 }
 
 .side-panel {
-  flex: 0 0 15.75rem;
-  width: 15.75rem;
+  /* DOCKED, not floating (UX-055, docs/184 D4; Google Docs). The audit found
+     ten panels in five widths drawn as inset cards with a radius and a shadow.
+     Every panel is now flush with the window edge at the workarea's full
+     height, separated from the page by one hairline, in-flow so the page
+     re-centres in what is left and is never covered. LEFT is navigation
+     (whatever precedes the viewport: Outline, Pages); RIGHT is context and
+     collaboration. One width per side, 20rem by default, resizable 17.5-30rem
+     and remembered (`side_panels.mjs`, which also keeps one panel per side,
+     opens a panel at the top and returns focus on close). */
+  position: relative;
+  flex: 0 0 var(--panel-w-left, 20rem);
+  width: var(--panel-w-left, 20rem);
   min-width: 0;
-  max-width: min(15.75rem, calc(100vw - 3.25rem));
-  /* Inset floating panel: even breathing room on all sides (the rail stays
-     flush under the ribbon; the panels float within the workarea). */
-  margin: 0.5rem;
+  max-width: calc(100vw - 3.25rem);
+  margin: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
   background: var(--surface);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-md);
-  box-shadow: var(--e1);
+  border: none;
+  border-inline-end: 1px solid var(--line);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+#viewport ~ .side-panel {
+  flex-basis: var(--panel-w-right, 20rem);
+  width: var(--panel-w-right, 20rem);
+  border-inline-end: none;
+  border-inline-start: 1px solid var(--line);
+}
+
+/* The resize grip on the panel's inner edge: a 0.5rem hit strip (the hairline
+   is the panel's own border), a focus ring when reached by keyboard. */
+.panel-resizer {
+  position: absolute;
+  inset-block: 0;
+  z-index: 1;
+  width: var(--space-2);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.panel-resizer-left {
+  inset-inline-end: 0;
+}
+
+.panel-resizer-right {
+  inset-inline-start: 0;
+}
+
+.panel-resizer:hover,
+.panel-resizer:focus-visible {
+  background: var(--accent-soft);
+  outline: none;
 }
 
 .side-panel[hidden] {
@@ -6732,9 +6780,6 @@ body.is-format-painting .page-wrap * {
    removes the need to anchor its top to `--chrome-bottom`: the row already
    starts below the chrome, in whichever chrome mode is showing. */
 .object-inspector {
-  flex: 0 0 17.5rem;
-  width: 17.5rem;
-  max-width: min(17.5rem, calc(100vw - 3.25rem));
   z-index: var(--z-inspector);
 }
 
@@ -6750,9 +6795,6 @@ body.is-format-painting .page-wrap * {
   /* Contextual tools belong in the right-hand inspector column, never between
      the navigation rail and the document canvas. */
   order: 3;
-  flex-basis: 22.5rem;
-  width: 22.5rem;
-  max-width: min(22.5rem, calc(100vw - 3.25rem));
 }
 
 /* The legacy left-side review inventory is retained only as compatibility
@@ -7442,14 +7484,15 @@ body.is-format-painting .page-wrap * {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  min-height: var(--h-rail-control);
-  padding: var(--pnl-pad-y) var(--pnl-pad-x);
+  /* 3.5rem, the title 17px/600 (docs/184 D4). */
+  min-height: 3.5rem;
+  padding: 0 var(--pnl-pad-x);
   border-bottom: 1px solid var(--line);
 }
 
 .panel-title {
-  font-weight: 600;
-  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-panel);
 }
 
 .panel-close {
@@ -7493,9 +7536,6 @@ body.is-format-painting .page-wrap * {
 
 .side-panel.table-properties-panel,
 .side-panel.properties-panel {
-  flex-basis: 20rem;
-  width: 20rem;
-  max-width: min(20rem, calc(100vw - 3.25rem));
 }
 
 /* Two lines of heading, no padding of its own: the shell's `min-height` and
@@ -7785,9 +7825,6 @@ body.is-format-painting .page-wrap * {
    lines and its actions are full-width buttons — and that width comes from the
    existing `.side-panel.properties-panel` value rather than a new one. */
 .side-panel.version-panel {
-  flex-basis: 20rem;
-  width: 20rem;
-  max-width: min(20rem, calc(100vw - 3.25rem));
 }
 
 /* A BAND of the panel shell, so it takes the shell's inset like the head and
@@ -8113,9 +8150,6 @@ body.is-format-painting .page-wrap * {
 /* Compare's panel: the same width as the version panel, because it holds a
    list of sentences a reader reads, not a column of icons. */
 .side-panel.compare-panel {
-  flex-basis: 20rem;
-  width: 20rem;
-  max-width: min(20rem, calc(100vw - 3.25rem));
 }
 .compare-heading { margin: 0 0 0.25rem; font-weight: 600; }
 .compare-body .diff-nav { margin: 0.375rem 0; }
@@ -9937,6 +9971,18 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
  * when its object does. */
 .ribbon-tab-contextual {
   margin-left: 0.375rem;
+  /* Styled as contextual (docs/184 D6): the accent ink and an accent rule
+     under it, as Word colours its Table Design and Picture Format tabs. */
+  color: var(--accent-text);
+  box-shadow: inset 0 -2px 0 var(--accent-soft);
+}
+
+/* ...and present ONLY while its object is selected (docs/184 D6, owner
+   2026-11-01). A contextual tab is disabled exactly when its object is not
+   selected, so the disabled state is the absent state: never a greyed
+   placeholder in the strip. */
+.ribbon-tab-contextual:disabled {
+  display: none;
 }
 
 /* The File page COVERS the work area — it is a route, not an overlay.
@@ -10750,6 +10796,10 @@ body:not(.doc-loaded) .drop-title {
 
 .foot-right {
   flex: 0 0 auto;
+}
+
+.footer-mode[hidden] {
+  display: none;
 }
 
 .footer-mode {
@@ -13577,9 +13627,6 @@ body.chrome-no-brand.chrome-no-title.chrome-no-state.chrome-no-menu.chrome-no-ri
  * swatch dots are the one exception, painted the document's own theme colours
  * the engine resolved, because a swatch has to show what the chart will be. */
 .side-panel.chart-panel {
-  flex-basis: 20rem;
-  width: 20rem;
-  max-width: min(20rem, calc(100vw - 3.25rem));
 }
 
 .chart-panel-section select,

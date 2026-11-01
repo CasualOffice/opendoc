@@ -5,7 +5,7 @@
 // chrome let a `commentor` container decide anyway. These read the EFFECT: a
 // suggestion the commentor made is still there after every route that used to
 // reject it, and the controls say why rather than doing nothing.
-import { test, expect, gotoEditor, clickIntoFirstPage, MOD } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, MOD, setReviewMode } from "./fixtures.mjs";
 
 const REFUSAL =
   "Accepting or rejecting a change edits the document, and this editor may only comment here.";
@@ -61,7 +61,7 @@ test("an edit container still decides, so the gate is the grant and not the mode
   consoleErrors,
 }) => {
   await gotoEditor(page, "&mode=edit");
-  await page.locator('#reviewModeControl [data-review-mode="suggesting"]').click();
+  await setReviewMode(page, "suggesting");
   await clickIntoFirstPage(page);
   await page.keyboard.press("End");
   await page.keyboard.type(MARK);

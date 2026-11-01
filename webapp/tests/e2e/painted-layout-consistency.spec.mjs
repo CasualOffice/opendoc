@@ -33,8 +33,7 @@ import {
   moveCaretToDocStart,
   pageSheet,
   stableBox,
-  test,
-} from "./fixtures.mjs";
+  test, setReviewMode } from "./fixtures.mjs";
 
 const mirrorText = (page) =>
   page.locator("#a11yDocument").evaluate((el) => el.textContent.trim());
@@ -305,7 +304,7 @@ test("the table column-resize handles sit on the table that is painted", async (
   // resize chrome is armed again, because `docs/141` D-1 stopped painting a grip
   // that would refuse on release (TBL-35). Asserting the handle's position in
   // Suggesting would now be asserting that a dead control is in the right place.
-  await page.locator('#reviewModeControl [data-review-mode="editing"]').click();
+  await setReviewMode(page, "editing");
   await expect(page.locator("body")).toHaveClass(/showing-changes/);
   await settledBox(page, page.locator(".page-wrap .page").first());
 

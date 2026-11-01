@@ -1,4 +1,4 @@
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, expectNothingToUndo } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, expectNothingToUndo, setReviewMode } from "./fixtures.mjs";
 
 // Dispatches a paste carrying a freshly-encoded PNG image file (a valid image the
 // browser can decode), as the OS clipboard yields for a copied image.
@@ -41,7 +41,7 @@ test("pasting an image inserts a picture as one undoable action", async ({ page,
 
 test("inserting a picture is blocked (read-only) in Viewing mode", async ({ page }) => {
   await gotoEditor(page);
-  await page.locator('#reviewModeControl [data-review-mode="viewing"]').click();
+  await setReviewMode(page, "viewing");
   await clickIntoFirstPage(page);
   await pasteGeneratedImage(page);
   await expect(page.locator("#status")).toContainText("read-only");

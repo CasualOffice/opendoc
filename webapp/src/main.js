@@ -12,6 +12,7 @@
 import { editRefusalMessage, mutationBlockedMessage, readRevision } from "./edit_errors.mjs";
 import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
 import { createPagesPanel } from "./pages_panel.mjs";
+import { installSidePanels } from "./side_panels.mjs";
 import {
   reflectReviewSurface,
 } from "./ribbon_surface.mjs";
@@ -2807,6 +2808,7 @@ function buildAccessibilityTree() {
 const {
   buildOutline, closeFlankingPanel, reanchorPageOverlays, reflectOutlineSelection, toggleOutline,
 } = createOutline(ed);
+installSidePanels(document); // docs/184 D4: dock, one per side, top, focus return, resize
 const pagesPanelView = createPagesPanel({
   panel: pagesPanel,
   body: pagesBody,

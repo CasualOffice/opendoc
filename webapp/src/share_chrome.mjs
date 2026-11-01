@@ -24,8 +24,13 @@ export function createShareChrome({ root, parent, share, available, t }) {
     reflect() {
       text.textContent = t('collab.share');
       button.setAttribute('aria-label', t('collab.share'));
-      button.disabled = !available();
-      button.title = t(button.disabled ? 'collab.shareHostRequired' : 'collab.share');
+      // Hidden, not disabled, when no share host is configured (docs/184 D6,
+      // owner 2026-11-01; Google Docs shows no Share it cannot honour). A
+      // disabled primary button in the header's hero slot promised a feature
+      // the deployment does not have.
+      button.hidden = !available();
+      button.disabled = false;
+      button.title = t('collab.share');
     },
     bind() { button.addEventListener('click', () => share()); },
     showLink(link) {

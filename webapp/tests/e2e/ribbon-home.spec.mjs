@@ -1,4 +1,4 @@
-import { MOD, clickIntoFirstPage, definedParagraphStyles, expect, gotoEditor, reflectedParagraphStyle, stableBox, test } from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, definedParagraphStyles, expect, gotoEditor, reflectedParagraphStyle, stableBox, test, setReviewMode } from "./fixtures.mjs";
 
 // docs/64 — the Home ribbon mirrors template.png: a single no-wrap band of
 // labeled groups. Two hard rules this suite guards:
@@ -85,9 +85,9 @@ test("the Home ribbon never horizontally scrolls; narrow widths collapse groups 
   // The survivor still drives the engine, which is the guarantee the two-control
   // mirror was standing in for: Suggesting mode IS track-changes, so the Review
   // band's toggle is the independent read-back.
-  await page.locator('#reviewModeControl [data-review-mode="suggesting"]').click();
+  await setReviewMode(page, "suggesting");
   await expect(page.locator("#reviewTrackBtn")).toHaveAttribute("aria-pressed", "true");
-  await page.locator('#reviewModeControl [data-review-mode="editing"]').click();
+  await setReviewMode(page, "editing");
   await expect(page.locator("#reviewTrackBtn")).toHaveAttribute("aria-pressed", "false");
 
   // Narrow: groups that don't fit move into the "⋯" menu — still no scrollbar.

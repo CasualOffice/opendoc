@@ -3,7 +3,7 @@
 // SetExtent op on release (one undo step), with a live preview during the drag
 // and fail-closed gating in Suggesting/Viewing mode. Move + wrap are floating-
 // object ops (deferred with anchored-float selection); resize is the inline op.
-import { MOD, expect, gotoEditor, stableBox, test } from "./fixtures.mjs";
+import { MOD, expect, gotoEditor, stableBox, test, setReviewMode } from "./fixtures.mjs";
 
 const IMAGE_POS = { fx: 0.32, fy: 0.1 };
 
@@ -344,7 +344,7 @@ test("object resize is blocked (fail-closed) in Suggesting mode", async ({
 }) => {
   await gotoEditor(page);
   // Enter Suggesting mode, then select the image and try to resize it.
-  await page.locator('#reviewModeControl [data-review-mode="suggesting"]').click();
+  await setReviewMode(page, "suggesting");
   await selectImage(page);
   const before = await outlineSize(page);
   const beforeState = await resizeDiagnostic(page, 4);

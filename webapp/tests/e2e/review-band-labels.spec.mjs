@@ -19,8 +19,7 @@ import {
   clickIntoFirstPage,
   MOD,
   shortcutHint,
-  stableBox,
-} from "./fixtures.mjs";
+  stableBox, setReviewMode } from "./fixtures.mjs";
 
 async function openReview(page) {
   await page.locator("#tabReview").click();
@@ -98,7 +97,7 @@ test("Accept and Reject advertise the chords that run them", async ({ page }) =>
   await openReview(page);
   // Disabled until there is a change to decide, and a disabled control's tooltip
   // is its reason — so make one first.
-  await page.locator('#reviewModeControl [data-review-mode="suggesting"]').click();
+  await setReviewMode(page, "suggesting");
   await clickIntoFirstPage(page);
   await page.keyboard.type("Q");
   await expect(page.locator("#reviewAcceptBtn")).toBeEnabled();

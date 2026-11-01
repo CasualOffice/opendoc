@@ -4345,14 +4345,6 @@
            of what they came for. The file input is the Word route — Review ▸
            Compare picks a document off the disk — and its `accept` list is the
            importers' own, because a comparison has to PARSE the other side. -->
-      <aside data-i18n-label="ui.compareDocuments.label2" id="comparePanel" class="side-panel compare-panel" hidden aria-label="Compare documents">
-        <div class="panel-head">
-          <span data-i18n="comparePanel.compare" class="panel-title">Compare</span>
-          <button data-i18n-title="comparePanel.closeCompare.title" data-i18n-label="comparePanel.closeCompare.label" id="compareClose" type="button" class="panel-close" title="Close compare" aria-label="Close compare"><span class="ms" aria-hidden="true">close</span></button>
-        </div>
-        <div id="compareBody" class="panel-body compare-body"></div>
-        <input id="compareFile" type="file" accept=".docx,.odt,.rtf,.json,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/rtf,text/rtf,application/json,text/plain" hidden />
-      </aside>
       <main id="viewport" class="viewport">
         <div id="drop" class="drop">
           <div class="drop-card">
@@ -4457,6 +4449,14 @@
            deletes, and Shift+F10 opens the same menu the ⋮ does. Nothing is
            hover-only and the ⋮ is a 44px target, because the owner has said
            mobile is supported. -->
+      <aside data-i18n-label="ui.compareDocuments.label2" id="comparePanel" class="side-panel compare-panel" hidden aria-label="Compare documents">
+        <div class="panel-head">
+          <span data-i18n="comparePanel.compare" class="panel-title">Compare</span>
+          <button data-i18n-title="comparePanel.closeCompare.title" data-i18n-label="comparePanel.closeCompare.label" id="compareClose" type="button" class="panel-close" title="Close compare" aria-label="Close compare"><span class="ms" aria-hidden="true">close</span></button>
+        </div>
+        <div id="compareBody" class="panel-body compare-body"></div>
+        <input id="compareFile" type="file" accept=".docx,.odt,.rtf,.json,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/rtf,text/rtf,application/json,text/plain" hidden />
+      </aside>
       <aside id="versionPanel" class="side-panel version-panel" hidden aria-labelledby="versionPanelTitle">
         <div class="panel-head">
           <span data-i18n="versionPanel.versionHistory" id="versionPanelTitle" class="panel-title">Version history</span>
@@ -4845,7 +4845,11 @@
              and a "Mode" caption in front of it that neither reference has and
              that made the run of text longer still. The track is drawn now, so
              the three segments read as one control. -->
-        <span class="footer-mode">
+        <!-- docs/184 D6 (owner, 2026-11-01): the editing mode is chosen ONLY in
+             the header chip (#headerModeBtn), as in Google Docs and Word. These
+             segments stay in the tree, never painted, because they hold the
+             state the chip's rows press and every mode reader observes. -->
+        <span class="footer-mode" hidden>
           <span data-i18n-label="ui.editingMode.label" id="reviewModeControl" class="review-mode-segmented" role="group" aria-label="Editing mode">
             <button data-i18n="reviewModeControl.editing" type="button" class="review-mode-seg" data-review-mode="editing" aria-pressed="true" disabled>Editing</button>
             <button data-i18n="reviewModeControl.suggesting" type="button" class="review-mode-seg" data-review-mode="suggesting" aria-pressed="false" disabled>Suggesting</button>
