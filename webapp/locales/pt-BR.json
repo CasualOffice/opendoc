@@ -2663,6 +2663,7 @@
   "findings.feature.pdfPageBreaks": "Quebras de página deduzidas de onde as páginas terminam",
   "findings.feature.pdfFloats": "Imagens e desenhos flutuantes ao lado ou atrás do texto",
   "findings.feature.pdfScanReplaced": "Páginas digitalizadas mostradas como o texto reconhecido (a digitalização fica no layout exato)",
+  "findings.feature.pdfWatermark": "Marcas d'água reconhecidas e definidas como marca d'água do documento",
   "findings.feature.pdfDecorations": "Sublinhados, realces, sombreamentos e bordas desenhados como formas devolvidos ao texto",
   "findings.feature.pdfVectorsPlaced": "Desenhos posicionados como formas",
   "pdfImport.title": "Abrindo {name}",

@@ -33,6 +33,9 @@ pub struct Para {
     pub before: f64,
     /// Space after, in points, through the style chain.
     pub after: f64,
+    /// Start indent and first-line indent (negative: hanging), in points,
+    /// through the style chain.
+    pub indent: (f64, f64),
 }
 
 /// One table.
@@ -42,6 +45,11 @@ pub struct Tab {
     pub cells: Vec<Vec<String>>,
     /// Cells with a grid span or a vertical merge.
     pub merges: usize,
+    /// The grid's column widths, in points.
+    pub widths: Vec<f64>,
+    /// Each cell's first paragraph's alignment (0 start, 1 centre, 2 end,
+    /// 3 both), through its style chain.
+    pub aligns: Vec<Vec<u8>>,
 }
 
 /// The whole document.
@@ -53,6 +61,11 @@ pub struct Summary {
     pub tables: Vec<Tab>,
     /// Inline and anchored pictures.
     pub pictures: usize,
+    /// Each picture's extent, in points, in document order.
+    pub picture_sizes: Vec<(f64, f64)>,
+    /// The first section's watermark: its text (or `"<picture>"`) and
+    /// whether it is diagonal.
+    pub watermark: Option<(String, bool)>,
     /// Text boxes (frames) in the body: zero in a flowing document.
     pub text_boxes: usize,
     /// Shape groups.
@@ -150,6 +163,41 @@ fn list_of(defs: &Definitions, p: &ParagraphProperties) -> Option<u8> {
     })
 }
 
+/// A paragraph's alignment through its style chain: 0 start, 1 centre,
+/// 2 end, 3 both.
+fn align_of(defs: &Definitions, p: &ParagraphProperties) -> u8 {
+    let align = p.alignment.or_else(|| {
+        chain(defs, own_style(defs, p), |s| {
+            s.paragraph.as_ref().and_then(|pp| pp.alignment)
+        })
+    });
+    match align {
+        Some(Alignment::Center) => 1,
+        Some(Alignment::End) => 2,
+        Some(Alignment::Justify) => 3,
+        _ => 0,
+    }
+}
+
+/// A paragraph's start and first-line indents (negative: hanging), in
+/// points, through its style chain. O(style chain).
+fn indent_of(defs: &Definitions, p: &ParagraphProperties) -> (f64, f64) {
+    let get = |f: &dyn Fn(&casual_doc_model::v1::Indentation) -> Option<i32>| -> Option<i32> {
+        p.indentation.as_ref().and_then(f).or_else(|| {
+            chain(defs, own_style(defs, p), |s| {
+                s.paragraph
+                    .as_ref()
+                    .and_then(|pp| pp.indentation.as_ref())
+                    .and_then(f)
+            })
+        })
+    };
+    let start = f64::from(get(&|i| i.start_twips).unwrap_or(0)) / 20.0;
+    let first = f64::from(get(&|i| i.first_line_twips).unwrap_or(0)) / 20.0
+        - f64::from(get(&|i| i.hanging_twips).unwrap_or(0)) / 20.0;
+    (start, first)
+}
+
 /// The alignment, line pitch, and space before and after of a paragraph of
 /// majority size `size` (half points), through its style chain and the
 /// document defaults. O(style chain).
@@ -174,17 +222,7 @@ fn layout_of(defs: &Definitions, p: &ParagraphProperties, size: u32) -> (u8, f64
                     .and_then(get)
             })
     };
-    let align = p.alignment.or_else(|| {
-        chain(defs, own_style(defs, p), |s| {
-            s.paragraph.as_ref().and_then(|pp| pp.alignment)
-        })
-    });
-    let align = match align {
-        Some(Alignment::Center) => 1,
-        Some(Alignment::End) => 2,
-        Some(Alignment::Justify) => 3,
-        _ => 0,
-    };
+    let align = align_of(defs, p);
     let em = f64::from(size) / 2.0;
     let rule = spacing(&|s| {
         s.line_rule.map(|r| match r {
@@ -241,9 +279,15 @@ struct Walk {
     text: String,
     formats: Vec<(bool, bool, u32, usize)>,
     pictures: usize,
+    picture_sizes: Vec<(f64, f64)>,
     text_boxes: usize,
     groups: usize,
     page_fields: usize,
+}
+
+/// EMU to points.
+fn emu_points(emu: i64) -> f64 {
+    emu as f64 / 12_700.0
 }
 
 fn inlines(defs: &Definitions, para: &ParagraphProperties, list: &[InlineNode], out: &mut Walk) {
@@ -257,7 +301,20 @@ fn inlines(defs: &Definitions, para: &ParagraphProperties, list: &[InlineNode], 
             }
             InlineNode::Tab(_) => out.text.push(' '),
             InlineNode::Break(_) => out.text.push(' '),
-            InlineNode::Drawing(_) | InlineNode::AnchoredDrawing(_) => out.pictures += 1,
+            InlineNode::Drawing(d) => {
+                out.pictures += 1;
+                if let Some(e) = d.extent {
+                    out.picture_sizes
+                        .push((emu_points(e.width_emu), emu_points(e.height_emu)));
+                }
+            }
+            InlineNode::AnchoredDrawing(d) => {
+                out.pictures += 1;
+                out.picture_sizes.push((
+                    emu_points(d.extent.width_emu),
+                    emu_points(d.extent.height_emu),
+                ));
+            }
             InlineNode::TextBox(_) => out.text_boxes += 1,
             InlineNode::Group(_) => out.groups += 1,
             InlineNode::Hyperlink(h) => inlines(defs, para, &h.inlines, out),
@@ -301,6 +358,7 @@ fn blocks(
                 let mut walk = Walk::default();
                 inlines(defs, &p.properties, &p.inlines, &mut walk);
                 sum.pictures += walk.pictures;
+                sum.picture_sizes.extend(walk.picture_sizes);
                 sum.text_boxes += walk.text_boxes;
                 sum.groups += walk.groups;
                 all.push_str(&walk.text);
@@ -320,6 +378,7 @@ fn blocks(
                         pitch,
                         before,
                         after,
+                        indent: indent_of(defs, &p.properties),
                     });
                 }
             }
@@ -330,10 +389,27 @@ fn blocks(
                 blocks(defs, &t.rows[0].cells[0].blocks, false, sum, all);
             }
             BlockNode::Table(t) => {
-                let mut tab = Tab::default();
+                let mut tab = Tab {
+                    widths: t
+                        .grid
+                        .iter()
+                        .map(|g| f64::from(g.width_twips.unwrap_or(0)) / 20.0)
+                        .collect(),
+                    ..Tab::default()
+                };
                 for row in &t.rows {
                     let mut cells = Vec::new();
+                    let mut aligns = Vec::new();
                     for cell in &row.cells {
+                        aligns.push(
+                            cell.blocks
+                                .iter()
+                                .find_map(|b| match b {
+                                    BlockNode::Paragraph(p) => Some(align_of(defs, &p.properties)),
+                                    _ => None,
+                                })
+                                .unwrap_or(0),
+                        );
                         if cell.properties.grid_span.is_some_and(|s| s > 1)
                             || cell.properties.vertical_merge.is_some()
                         {
@@ -343,10 +419,12 @@ fn blocks(
                         let mut text = String::new();
                         blocks(defs, &cell.blocks, true, &mut inner, &mut text);
                         sum.pictures += inner.pictures;
+                        sum.picture_sizes.extend(inner.picture_sizes);
                         all.push_str(&text);
                         cells.push(collapse(&text));
                     }
                     tab.cells.push(cells);
+                    tab.aligns.push(aligns);
                 }
                 if !in_table {
                     sum.tables.push(tab);
@@ -412,6 +490,20 @@ pub fn summarize(document: &Document) -> Summary {
         .map(|s| s.columns.count)
         .max()
         .unwrap_or(1);
+    sum.watermark = defs
+        .sections
+        .iter()
+        .find_map(|s| s.watermark.as_ref())
+        .map(|w| {
+            let text = match &w.content {
+                casual_doc_model::v1::WatermarkContent::Text(t) => t.text.clone(),
+                casual_doc_model::v1::WatermarkContent::Picture(_) => "<picture>".to_owned(),
+            };
+            (
+                text,
+                w.layout == casual_doc_model::v1::WatermarkLayout::Diagonal,
+            )
+        });
     if let Some(first) = defs.sections.first() {
         sum.page = (first.page_size.width_twips, first.page_size.height_twips);
         let m = &first.page_margins;
@@ -429,4 +521,112 @@ pub fn summarize(document: &Document) -> Summary {
         }
     }
     sum
+}
+
+/// Non-whitespace characters per size (half points) over every run of the
+/// document: body, tables, headers, footers and notes. Compared with the
+/// PDF's own glyph sizes (`main.rs` `pdf_sizes`) it says whether the reflow
+/// kept every size exactly, with no ground truth. O(document).
+#[must_use]
+pub fn size_histogram(document: &Document) -> std::collections::BTreeMap<u32, usize> {
+    fn walk_inlines(
+        defs: &Definitions,
+        para: &ParagraphProperties,
+        list: &[InlineNode],
+        out: &mut std::collections::BTreeMap<u32, usize>,
+    ) {
+        for inline in list {
+            match inline {
+                InlineNode::Run(run) => {
+                    let (_, _, size) = run_format(defs, para, &run.properties);
+                    let n = run.text.chars().filter(|c| !c.is_whitespace()).count();
+                    if n > 0 {
+                        *out.entry(size).or_default() += n;
+                    }
+                }
+                InlineNode::Hyperlink(h) => walk_inlines(defs, para, &h.inlines, out),
+                InlineNode::Field(f) => walk_inlines(defs, para, &f.inlines, out),
+                InlineNode::Sdt(s) => walk_inlines(defs, para, &s.inlines, out),
+                _ => {}
+            }
+        }
+    }
+    fn walk(
+        defs: &Definitions,
+        list: &[BlockNode],
+        out: &mut std::collections::BTreeMap<u32, usize>,
+    ) {
+        for block in list {
+            match block {
+                BlockNode::Paragraph(p) => walk_inlines(defs, &p.properties, &p.inlines, out),
+                BlockNode::Table(t) => {
+                    for row in &t.rows {
+                        for cell in &row.cells {
+                            walk(defs, &cell.blocks, out);
+                        }
+                    }
+                }
+                BlockNode::Sdt(s) => walk(defs, &s.blocks, out),
+                _ => {}
+            }
+        }
+    }
+    let defs = document.definitions();
+    let mut out = std::collections::BTreeMap::new();
+    walk(defs, document.body(), &mut out);
+    for part in defs
+        .headers
+        .iter()
+        .chain(defs.footers.iter())
+        .map(|(_, v)| v)
+    {
+        walk(defs, &part.blocks, &mut out);
+    }
+    for note in defs
+        .footnotes
+        .iter()
+        .chain(defs.endnotes.iter())
+        .map(|(_, v)| v)
+    {
+        walk(defs, &note.blocks, &mut out);
+    }
+    out
+}
+
+/// How consistent the body's spacing and indents are: over the plain body
+/// paragraphs (no heading, no list), the share whose (before, after, pitch)
+/// is the most common one, the number of distinct triples, the share whose
+/// start indent is the most common one, and the number of distinct start
+/// indents (each rounded to half a point). A reflow that measures each
+/// paragraph on its own scatters these; the PDF's own style sheet did not.
+#[must_use]
+pub fn consistency(summary: &Summary) -> (f64, usize, f64, usize) {
+    let plain: Vec<&Para> = summary
+        .paras
+        .iter()
+        .filter(|p| p.heading.is_none() && p.list.is_none())
+        .collect();
+    let half = |v: f64| (v * 2.0).round() as i64;
+    let mut triples: std::collections::BTreeMap<(i64, i64, i64), usize> =
+        std::collections::BTreeMap::new();
+    let mut starts: std::collections::BTreeMap<i64, usize> = std::collections::BTreeMap::new();
+    for p in &plain {
+        *triples
+            .entry((half(p.before), half(p.after), half(p.pitch)))
+            .or_default() += 1;
+        *starts.entry(half(p.indent.0)).or_default() += 1;
+    }
+    let modal = |largest: usize| {
+        if plain.is_empty() {
+            1.0
+        } else {
+            largest as f64 / plain.len() as f64
+        }
+    };
+    (
+        modal(triples.values().copied().max().unwrap_or(0)),
+        triples.len(),
+        modal(starts.values().copied().max().unwrap_or(0)),
+        starts.len(),
+    )
 }

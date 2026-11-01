@@ -17,7 +17,11 @@ casual-doc-io = { workspace = true, features = ["pdf-import"] }
 casual-doc-model.workspace = true
 # For the reason a reflow failed, when the corpus sweep meets one.
 casual-doc-pdf-import.workspace = true
+# The reader's evidence, printed by `runs`.
+casual-doc-pdf-read.workspace = true
 serde_json.workspace = true
+# Packages the synthetic ground truths (`synth.rs`) as DOCX.
+zip.workspace = true
 
 [lints]
 workspace = true

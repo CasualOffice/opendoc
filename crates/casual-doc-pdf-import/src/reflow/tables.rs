@@ -29,6 +29,8 @@
 
 use std::collections::BTreeMap;
 
+use casual_doc_model::v1::Alignment;
+
 use super::record::{Fill, Rule, SourceVector};
 use super::{EKind, Element};
 
@@ -72,6 +74,9 @@ pub struct ICell {
     /// Where its text sits in a row taller than it (`w:vAlign`): read from
     /// a tall row whose cells stand at its top, middle and bottom.
     pub valign: Option<casual_doc_model::v1::CellVerticalAlignment>,
+    /// Where its text sits across the cell (`align_cells`): `None` is the
+    /// start.
+    pub align: Option<Alignment>,
 }
 
 /// One table.
@@ -447,6 +452,7 @@ fn build(
                 y1: ys[r + 1],
                 shading: None,
                 valign: None,
+                align: None,
             };
             for k in start..=c {
                 cell.lines.append(&mut contents[r][k]);
@@ -823,6 +829,12 @@ pub struct Candidate {
     /// in its middle, one at its bottom): the baseline of each such row's
     /// highest line, for [`whitespace_table`] to make a row of.
     pub tall_rows: Vec<f64>,
+    /// Per element, the indices of its leading and trailing lines that are
+    /// no row of the table: aligned with nothing and reaching across
+    /// another column (the paragraph under a borderless table, set at the
+    /// table's own pitch, joins its first column's block). They leave the
+    /// table as text.
+    pub strays: Vec<(usize, Vec<usize>)>,
 }
 
 /// A tall row reaches at most this many ems below the aligned row above it.
@@ -995,9 +1007,57 @@ pub fn whitespace_candidates(
         if members.len() < 2 {
             continue;
         }
+        // Each member's aligned extent, then its stray lines: from either
+        // end, unaligned lines that overlap another member's extent.
+        let extent = |e: usize| -> Option<(f64, f64)> {
+            let lines = elements[e].0;
+            let xs: Vec<&ILine> = lines
+                .iter()
+                .enumerate()
+                .filter(|(l, _)| aligned_lines[e][*l])
+                .map(|(_, line)| line)
+                .collect();
+            (!xs.is_empty()).then(|| {
+                (
+                    xs.iter().map(|l| l.x0).fold(f64::INFINITY, f64::min),
+                    xs.iter().map(|l| l.x1).fold(f64::NEG_INFINITY, f64::max),
+                )
+            })
+        };
+        let extents: Vec<(usize, (f64, f64))> = members
+            .iter()
+            .filter_map(|&e| extent(e).map(|x| (e, x)))
+            .collect();
+        let mut strays: Vec<(usize, Vec<usize>)> = Vec::new();
+        for &e in &members {
+            let lines = elements[e].0;
+            let across = |l: usize| {
+                !aligned_lines[e][l]
+                    && extents.iter().any(|&(o, (x0, x1))| {
+                        o != e && lines[l].x0 < x1 - COLUMN_SLACK && lines[l].x1 > x0 + COLUMN_SLACK
+                    })
+            };
+            let mut out: Vec<usize> = (0..lines.len()).take_while(|&l| across(l)).collect();
+            let lead = out.len();
+            out.extend(
+                (lead..lines.len())
+                    .rev()
+                    .take_while(|&l| across(l))
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev(),
+            );
+            if !out.is_empty() && out.len() < lines.len() {
+                strays.push((e, out));
+            }
+        }
+        let stray = |e: usize, l: usize| strays.iter().any(|(se, ls)| *se == e && ls.contains(&l));
         let (mut total, mut aligned, mut prose) = (0usize, 0usize, 0usize);
         for &e in &members {
             for (l, line) in elements[e].0.iter().enumerate() {
+                if stray(e, l) {
+                    continue;
+                }
                 total += 1;
                 aligned += usize::from(aligned_lines[e][l]);
                 let words = line
@@ -1029,6 +1089,7 @@ pub fn whitespace_candidates(
             confidence,
             rows,
             tall_rows,
+            strays,
         });
     }
     out
@@ -1366,5 +1427,328 @@ pub fn whitespace_table(columns: &[(Vec<ILine>, (f64, f64))], tall_rows: &[f64])
         ruled: false,
         bounds: (left, top, right, bottom),
         ..ITable::default()
+    }
+}
+
+/// Cell text edges within this many points share an alignment.
+pub const ALIGN_TOLERANCE: f64 = 1.5;
+
+/// Where a cell's text starts and ends (its lines' ink), and its middle.
+fn ink_extent(cell: &ICell) -> Option<(f64, f64)> {
+    let x0 = cell
+        .lines
+        .iter()
+        .filter_map(|l| {
+            l.chars
+                .iter()
+                .find(|c| !c.text.trim().is_empty())
+                .map(|c| c.x0)
+        })
+        .fold(f64::INFINITY, f64::min);
+    let x1 = cell
+        .lines
+        .iter()
+        .map(|l| l.x1)
+        .fold(f64::NEG_INFINITY, f64::max);
+    (x0.is_finite() && x1 > x0).then_some((x0, x1))
+}
+
+/// The largest number of values within [`ALIGN_TOLERANCE`] of one of them,
+/// and that one. O(n²), a column's cells.
+fn cluster(values: &[f64]) -> (usize, f64) {
+    values
+        .iter()
+        .map(|&v| {
+            (
+                values
+                    .iter()
+                    .filter(|&&w| (w - v).abs() <= ALIGN_TOLERANCE)
+                    .count(),
+                v,
+            )
+        })
+        .max_by(|a, b| a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)))
+        .unwrap_or((0, 0.0))
+}
+
+/// One column's alignment and where its text stands.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ColumnText {
+    align: Option<Alignment>,
+    /// The left edge its start-aligned text shares (or its leftmost).
+    left: f64,
+    /// The right edge its end-aligned text shares (or its rightmost).
+    right: f64,
+    /// The middle its centred text shares.
+    middle: f64,
+    /// The leftmost and rightmost ink of any cell.
+    min_left: f64,
+    max_right: f64,
+    /// Middles of its cells centred against the dominant alignment (a
+    /// header centred over a column of figures).
+    centred: Option<f64>,
+    /// Every cell's text is one width ("OK", a code): its edges cannot say
+    /// start from centre.
+    ambiguous: bool,
+}
+
+/// Each cell's horizontal alignment (`ICell::align`), read per column the
+/// way a reader sees it: the edge most of the column's cells share is the
+/// column's alignment (their left edges: start; their right edges: end;
+/// their middles: centre); a cell off that edge is centred when the table
+/// is borderless and it stands inside the column (a header over figures),
+/// or by its own box in a ruled table (`emit::centred_in`, or flush with
+/// the cell's end). Text that fills its cell is the column's. Before this
+/// only centring was read, cell by cell, so a column of right-aligned
+/// amounts reflowed ragged on the left. O(cells²) per column.
+pub(crate) fn align_cells(table: &mut ITable, fills: &[Fill]) -> Vec<ColumnText> {
+    let width = table.columns.len();
+    let mut out = vec![ColumnText::default(); width];
+    for (c, column) in out.iter_mut().enumerate() {
+        let cells: Vec<(usize, usize, (f64, f64))> = table
+            .rows
+            .iter()
+            .enumerate()
+            .flat_map(|(r, row)| {
+                let mut at = 0;
+                row.iter()
+                    .enumerate()
+                    .filter_map(move |(k, cell)| {
+                        let here = at;
+                        at += cell.span.max(1) as usize;
+                        (here == c && cell.span <= 1 && cell.vmerge != Some(false))
+                            .then_some((r, k))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .filter_map(|(r, k)| ink_extent(&table.rows[r][k]).map(|e| (r, k, e)))
+            .collect();
+        if cells.is_empty() {
+            continue;
+        }
+        // The column's own alignment is its body's: a header row is often
+        // aligned otherwise (centred over figures), so with three rows or
+        // more the first does not vote.
+        let voters: Vec<&(usize, usize, (f64, f64))> = cells
+            .iter()
+            .filter(|c| table.rows.len() < 3 || c.0 > 0)
+            .collect();
+        let voters = if voters.is_empty() {
+            cells.iter().collect()
+        } else {
+            voters
+        };
+        let lefts: Vec<f64> = voters.iter().map(|c| c.2.0).collect();
+        let rights: Vec<f64> = voters.iter().map(|c| c.2.1).collect();
+        let middles: Vec<f64> = voters.iter().map(|c| (c.2.0 + c.2.1) / 2.0).collect();
+        let (nl, l) = cluster(&lefts);
+        let (nr, r) = cluster(&rights);
+        let (nm, m) = cluster(&middles);
+        column.min_left = cells.iter().map(|c| c.2.0).fold(f64::INFINITY, f64::min);
+        column.max_right = cells
+            .iter()
+            .map(|c| c.2.1)
+            .fold(f64::NEG_INFINITY, f64::max);
+        column.left = l;
+        column.right = r;
+        column.middle = m;
+        let enough = |n: usize| n >= 2 && 2 * n >= voters.len();
+        column.ambiguous = nl == voters.len() && nr == voters.len();
+        // The edge most cells share; text of one width (codes, dates)
+        // shares every edge, and a tie is start, the default.
+        column.align = if enough(nl) && nl >= nr && nl >= nm {
+            Some(Alignment::Start)
+        } else if enough(nr) && nr >= nm {
+            Some(Alignment::End)
+        } else if enough(nm) {
+            Some(Alignment::Center)
+        } else {
+            None
+        };
+        let ruled = table.ruled;
+        for (row, k, (x0, x1)) in cells {
+            let cell = &mut table.rows[row][k];
+            let on = match column.align {
+                Some(Alignment::Start) => (x0 - l).abs() <= ALIGN_TOLERANCE,
+                Some(Alignment::End) => (x1 - r).abs() <= ALIGN_TOLERANCE,
+                Some(Alignment::Center) => ((x0 + x1) / 2.0 - m).abs() <= ALIGN_TOLERANCE,
+                _ => false,
+            };
+            let lines: Vec<&ILine> = cell.lines.iter().collect();
+            // A ruled cell's own box says centred whatever the column's
+            // edges agree on: a column of one word ("OK") shares every edge.
+            cell.align = if ruled && super::emit::centred_in(&lines, cell.x0, cell.x1) {
+                Some(Alignment::Center)
+            } else if on {
+                column.align
+            } else if ruled {
+                let lines: Vec<&ILine> = cell.lines.iter().collect();
+                let (lpad, rpad) = (x0 - cell.x0, cell.x1 - x1);
+                if super::emit::centred_in(&lines, cell.x0, cell.x1) {
+                    Some(Alignment::Center)
+                } else if rpad + 3.0 < lpad && rpad <= 9.0 {
+                    Some(Alignment::End)
+                } else {
+                    None
+                }
+            } else if column.align.is_some()
+                && x0 > column.min_left + ALIGN_TOLERANCE
+                && x1 < column.max_right - ALIGN_TOLERANCE
+            {
+                column.centred = Some((x0 + x1) / 2.0);
+                Some(Alignment::Center)
+            } else {
+                None
+            };
+        }
+    }
+    // A column whose text is all one width says nothing by its edges; in a
+    // borderless table it is centred when its text stands in the middle of
+    // the gutter-bounded room its neighbours leave, two ems clear of both
+    // ("OK" under a centred "Status"). O(columns + cells).
+    if !table.ruled {
+        let em = table
+            .rows
+            .iter()
+            .flatten()
+            .flat_map(|cell| cell.lines.iter().map(|l| l.size))
+            .fold(1.0, f64::max);
+        for c in 0..width {
+            let here = out[c];
+            if !here.ambiguous || !here.min_left.is_finite() {
+                continue;
+            }
+            let before = c.checked_sub(1).map(|b| out[b].max_right);
+            let after = out.get(c + 1).map(|a| a.min_left);
+            // The column's own box, when a fill behind its header or rows
+            // spans it and no neighbour's text (a shaded header's cells).
+            let boxed = fills
+                .iter()
+                .map(|f| (f.bounds.x0, f.bounds.x1))
+                .find(|&(x0, x1)| {
+                    x0 <= here.min_left
+                        && x1 >= here.max_right
+                        && before.is_none_or(|b| x0 >= b - 1.0)
+                        && after.is_none_or(|a| x1 <= a + 1.0)
+                });
+            // Else the room from where its header starts (a header set at
+            // the column's start, before the body's text) to where the next
+            // column's text starts.
+            let room = match (boxed, after) {
+                (Some(b), _) => b,
+                (None, Some(a)) if here.left - here.min_left >= em => (here.min_left, a),
+                _ => continue,
+            };
+            let middle = (here.left + here.right) / 2.0;
+            if (middle - (room.0 + room.1) / 2.0).abs() <= (0.05 * (room.1 - room.0)).max(3.0)
+                && here.left - room.0 >= em
+            {
+                out[c].align = Some(Alignment::Center);
+                out[c].middle = middle;
+                for row in &mut table.rows {
+                    let mut at = 0;
+                    for cell in row.iter_mut() {
+                        if at == c
+                            && cell.span <= 1
+                            && cell.align.is_none_or(|a| a == Alignment::Start)
+                            && let Some((x0, x1)) = ink_extent(cell)
+                            && ((x0 + x1) / 2.0 - middle).abs() <= ALIGN_TOLERANCE
+                        {
+                            cell.align = Some(Alignment::Center);
+                        }
+                        at += cell.span.max(1) as usize;
+                    }
+                }
+            }
+        }
+    }
+    // A cell spanning columns (a merged header) is centred by its own box,
+    // read here while the box is still its text's columns.
+    for row in &mut table.rows {
+        for cell in row.iter_mut().filter(|c| c.span > 1 && c.align.is_none()) {
+            let lines: Vec<&ILine> = cell.lines.iter().collect();
+            if super::emit::centred_in(&lines, cell.x0, cell.x1) {
+                cell.align = Some(Alignment::Center);
+            }
+        }
+    }
+    out
+}
+
+/// A borderless table's column grid from its text and the alignments
+/// [`align_cells`] read (`ITable::columns`, every cell's `x0`/`x1`). The
+/// grid is measured where each cell's text starts (`pad` before it,
+/// nothing after, as the cells' margins are emitted): a start-aligned
+/// column starts at its text's shared left edge; an end-aligned one ends
+/// `pad` past its shared right edge; a centred one is as wide either side
+/// of its text's middle (a header centred over figures sets the free edge
+/// of its column the same way); an edge nothing fixes is the middle of the
+/// gutter. The clustered extents set column starts only, so a column of
+/// right-aligned amounts started at its widest amount and ended at the
+/// next column's start, and its numbers, right-aligned, ended there.
+/// O(columns + cells).
+pub(crate) fn align_grid(table: &mut ITable, columns: &[ColumnText]) {
+    let n = table.columns.len();
+    if table.ruled || n == 0 || columns.len() != n {
+        return;
+    }
+    let pad = table.pad;
+    // Where the table ended (the last column's slack, or a fill behind its
+    // rows that reaches further, `fit_to_fills`).
+    let end = table.bounds.0 + table.columns.iter().sum::<f64>();
+    let mut edges: Vec<Option<f64>> = vec![None; n + 1];
+    edges[0] = Some(table.bounds.0);
+    let mut hard: Vec<Vec<f64>> = vec![Vec::new(); n + 1];
+    for (c, col) in columns.iter().enumerate() {
+        match col.align {
+            Some(Alignment::Start) if c > 0 => hard[c].push(col.left),
+            Some(Alignment::End) => hard[c + 1].push(col.right + pad),
+            _ => {}
+        }
+    }
+    for k in 1..=n {
+        if !hard[k].is_empty() {
+            edges[k] = Some(hard[k].iter().sum::<f64>() / hard[k].len() as f64);
+        }
+    }
+    // Centred text fixes one edge from the other: left to right, then
+    // right to left.
+    let middle_of = |col: &ColumnText| match col.align {
+        Some(Alignment::Center) => Some(col.middle),
+        _ => col.centred,
+    };
+    for _ in 0..2 {
+        for c in 0..n {
+            let Some(m) = middle_of(&columns[c]) else {
+                continue;
+            };
+            match (edges[c], edges[c + 1]) {
+                (Some(a), None) => edges[c + 1] = Some(2.0 * m + pad - a),
+                (None, Some(b)) => edges[c] = Some(2.0 * m + pad - b),
+                _ => {}
+            }
+        }
+    }
+    for k in 1..n {
+        if edges[k].is_none() {
+            edges[k] = Some((columns[k - 1].max_right + pad + columns[k].min_left) / 2.0);
+        }
+    }
+    if edges[n].is_none() {
+        edges[n] = Some(end.max(columns[n - 1].max_right + pad));
+    }
+    let mut at: Vec<f64> = edges.into_iter().map(|e| e.unwrap_or(0.0)).collect();
+    for k in 1..=n {
+        at[k] = at[k].max(at[k - 1] + 1.0);
+    }
+    table.columns = at.windows(2).map(|w| w[1] - w[0]).collect();
+    for row in &mut table.rows {
+        let mut c = 0;
+        for cell in row {
+            let span = cell.span.max(1) as usize;
+            cell.x0 = at[c.min(n)];
+            cell.x1 = at[(c + span).min(n)];
+            c += span;
+        }
     }
 }
