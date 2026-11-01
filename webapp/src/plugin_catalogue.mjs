@@ -152,6 +152,31 @@ export async function loadCatalogues({ config, baseUrl, fetchJson, view = global
   return { mode, entries: unique.slice(0, MAX_PLUGINS), allowInstall, problems };
 }
 
+/**
+ * Admits every entry in catalogue order, with every manifest downloading at
+ * once. The manifests are independent, but `await admit(entry)` in a loop
+ * fetched them one after another — a round trip each, so three first-party
+ * add-ins cost four sequential requests before the Add-ins menu filled (2.5 to
+ * 6 s measured on the deployed site; docs/109 HF-421). Admission itself stays in
+ * order, so the menu, the strongest-source-first de-duplication and a plugin's
+ * position never depend on which response lands first.
+ *
+ * @param {ReadonlyArray<{manifestUrl: string}>} entries
+ * @param {(url: string) => Promise<unknown>} fetchJson
+ * @param {(entry: object, fetched: Promise<unknown>) => Promise<unknown>} admit
+ *   takes the entry and its manifest's in-flight download.
+ */
+export async function admitInOrder(entries, fetchJson, admit) {
+  const downloads = entries.map((entry) => {
+    const download = new Promise((resolve) => resolve(fetchJson(entry.manifestUrl)));
+    download.catch(() => {}); // a failure is reported by `admit`, which awaits it
+    return download;
+  });
+  const results = [];
+  for (const [index, entry] of entries.entries()) results.push(await admit(entry, downloads[index]));
+  return results;
+}
+
 /** The installed manifest URLs, on this device. */
 export function installedUrls(view = globalThis) {
   const list = readJson(view, INSTALLED_KEY, []);

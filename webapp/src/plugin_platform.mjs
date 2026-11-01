@@ -43,6 +43,7 @@ import { capabilityLine, loadAiEditSetting, saveAiEditSetting } from "./ai_edit_
 import { addCommandSource, shown } from "./plugin_command_sources.mjs";
 import {
   addInstalled,
+  admitInOrder,
   grantFor,
   loadCatalogues,
   removeInstalled,
@@ -772,11 +773,13 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
 
   // ---- Loading -------------------------------------------------------------
 
-  async function admit(entry) {
+  /** `fetched` is the manifest's download when the caller already started it
+   *  (`admitInOrder`, at load); an install starts its own. */
+  async function admit(entry, fetched = fetchJson(entry.manifestUrl)) {
     let manifest;
     let raw;
     try {
-      raw = await fetchJson(entry.manifestUrl);
+      raw = await fetched;
       const checked = checkManifest(raw, { manifestUrl: entry.manifestUrl, selfOrigin: view.location.origin });
       if (!checked.ok) return { ok: false, reason: checked.reason };
       manifest = checked.manifest;
@@ -831,7 +834,7 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
     }
     view.matchMedia?.("(prefers-color-scheme: dark)").addEventListener?.("change", themeChanged);
     catalogue = await loadCatalogues({ config, baseUrl: view.location.href, fetchJson, view });
-    for (const entry of catalogue.entries) await admit(entry);
+    await admitInOrder(catalogue.entries, fetchJson, admit);
     renderManager();
     reflectChrome();
   }

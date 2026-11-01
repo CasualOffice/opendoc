@@ -19,7 +19,7 @@ import {
 } from "../src/plugin_manifest.mjs";
 import { RPC_ERRORS, servePort } from "../src/plugin_rpc.mjs";
 import { CONNECT_MESSAGE, commandPermission, grantAdmits, startPlugin } from "../src/plugin_host.mjs";
-import { catalogueMode, checkCatalogue, loadCatalogues } from "../src/plugin_catalogue.mjs";
+import { admitInOrder, catalogueMode, checkCatalogue, loadCatalogues } from "../src/plugin_catalogue.mjs";
 import { COMMAND_FAMILIES, commandContract } from "../src/host_contract.mjs";
 
 const where = { manifestUrl: "https://plugins.example/lt/manifest.json", selfOrigin: "https://docs.example" };
@@ -197,6 +197,38 @@ test("?plugins=none fetches nothing at all", async () => {
   const out = await loadCatalogues({ config: { plugins: "none" }, baseUrl: "https://d.example/", fetchJson: async () => (fetched += 1), view: {} });
   assert.equal(out.entries.length, 0);
   assert.equal(fetched, 0);
+});
+
+test("every manifest downloads at once, and admission still follows catalogue order (HF-421)", async () => {
+  // A barrier: no manifest answers until all three have been ASKED for. A loader
+  // that awaits one manifest before requesting the next never gets past the
+  // first, so this fails on the serial loop rather than measuring a time.
+  const entries = ["a", "b", "c"].map((id) => ({ manifestUrl: `https://p.example/${id}/manifest.json`, id }));
+  const asked = [];
+  let release;
+  const everyoneAsked = new Promise((resolve) => (release = resolve));
+  // Answers land in REVERSE order once released, so order-by-arrival would show.
+  const fetchJson = async (url) => {
+    asked.push(url);
+    if (asked.length === entries.length) release();
+    await everyoneAsked;
+    await new Promise((resolve) => setTimeout(resolve, 10 * (entries.length - asked.indexOf(url))));
+    if (url.includes("/b/")) throw new Error("404");
+    return { url };
+  };
+  const admitted = [];
+  const admit = async (entry, fetched) => {
+    try {
+      admitted.push([entry.id, (await fetched).url === entry.manifestUrl]);
+    } catch {
+      admitted.push([entry.id, "unavailable"]);
+    }
+    return entry.id;
+  };
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error(`manifests fetched one at a time: only ${asked.length} of 3 asked for`)), 2000).unref());
+  const out = await Promise.race([admitInOrder(entries, fetchJson, admit), timeout]);
+  assert.deepEqual(out, ["a", "b", "c"]);
+  assert.deepEqual(admitted, [["a", true], ["b", "unavailable"], ["c", true]]);
 });
 
 // ---- The RPC -------------------------------------------------------------------------
