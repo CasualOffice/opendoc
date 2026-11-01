@@ -444,3 +444,60 @@ fn a_protected_document_refuses_the_turn_as_it_refuses_the_person() {
     assert_eq!(texts(&d), ["Alpha"]);
     let _ = Pos::new(d.document.id(), 0);
 }
+
+/// RM-52: two turns started in the SAME second share a `w:date`. The second turn's Accept all
+/// must accept its own suggestion only; the first turn's stays pending. (Matching a turn's
+/// revisions by author and date, as before, accepted both.)
+#[test]
+fn turns_started_in_the_same_second_never_decide_each_others_suggestions() {
+    let mut d = open(&["Alpha", "Beta"]);
+    let p = ids(&d);
+    let first = d.ai_turn_begin_inner("suggest", DATE).expect("begin");
+    d.ai_turn_set_anchor_inner(first, &p[0], 5).expect("anchor");
+    d.ai_turn_write_inner(first, " ONE").expect("write");
+    d.ai_turn_end_value(first).expect("end");
+    // The person leaves the first turn's card undecided and asks again, in the same second.
+    let second = d.ai_turn_begin_inner("suggest", DATE).expect("begin");
+    assert_ne!(first, second);
+    d.ai_turn_set_anchor_inner(second, &p[1], 4)
+        .expect("anchor");
+    d.ai_turn_write_inner(second, " TWO").expect("write");
+    let end = d.ai_turn_end_value(second).expect("end");
+    assert_eq!(
+        end["revisions"].as_array().map(Vec::len),
+        Some(1),
+        "the second turn owns one suggestion, not both: {end}"
+    );
+    d.ai_turn_accept_inner(second).expect("accept all");
+    let left = items(&d);
+    assert_eq!(
+        left.len(),
+        1,
+        "the first turn's suggestion is still pending: {left:?}"
+    );
+    assert_eq!(left[0]["text"], " ONE");
+    assert_eq!(texts(&d), ["Alpha ONE", "Beta TWO"]);
+}
+
+/// RM-52: a turn id is never handed out twice in a document's life, so a card left from a
+/// decided turn cannot name the next one. (Restarting at 1 once the turn was decided did.)
+#[test]
+fn a_decided_turns_id_never_names_a_later_turn() {
+    let mut d = open(&["Alpha"]);
+    let p = ids(&d);
+    let first = d.ai_turn_begin_inner("suggest", DATE).expect("begin");
+    d.ai_turn_set_anchor_inner(first, &p[0], 5).expect("anchor");
+    d.ai_turn_write_inner(first, " one").expect("write");
+    d.ai_turn_end_value(first).expect("end");
+    d.ai_turn_accept_inner(first).expect("accept");
+    let second = d.ai_turn_begin_inner("suggest", DATE).expect("begin");
+    assert_ne!(first, second, "a fresh id");
+    d.ai_turn_set_anchor_inner(second, &p[0], 0)
+        .expect("anchor");
+    d.ai_turn_write_inner(second, "two ").expect("write");
+    assert!(
+        d.ai_turn_accept_inner(first).is_err(),
+        "the earlier turn's handle is gone, not the new turn's"
+    );
+    assert_eq!(items(&d).len(), 1, "the new turn's suggestion is untouched");
+}

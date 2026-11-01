@@ -89,6 +89,25 @@ pub(crate) struct AiTurn {
     open: bool,
     /// The last table the turn inserted.
     table: Option<NodeId>,
+    /// The revision serials (`w:id`) the turn's own commits allocated, as half-open
+    /// ranges, oldest first, adjacent ranges merged. This, not the date, is what makes a
+    /// revision the turn's: `w:date` is second-granular, so two turns started in the
+    /// same second share it, and matching on it let one turn's Accept all accept the
+    /// other's suggestions (RM-52).
+    serials: Vec<(u128, u128)>,
+    /// The allocator's next serial when the turn last committed (or began).
+    serial_mark: u128,
+}
+
+impl AiTurn {
+    /// Whether `serial` was allocated by one of this turn's commits. O(ranges).
+    fn owns_serial(&self, serial: &str) -> bool {
+        serial.parse::<u128>().is_ok_and(|serial| {
+            self.serials
+                .iter()
+                .any(|(start, end)| (*start..*end).contains(&serial))
+        })
+    }
 }
 
 impl WasmDocument {
@@ -132,10 +151,16 @@ impl WasmDocument {
                 ));
             }
         };
-        let id = self
-            .ai_turn
-            .as_ref()
-            .map_or(1, |held| held.id.wrapping_add(1).max(1));
+        // Monotonic for the document's lifetime, NOT derived from the open turn: once a turn
+        // was decided `ai_turn` is empty, and restarting at 1 handed the next turn the id a
+        // card of the earlier one still held.
+        let id = self.ai_turn_serial.checked_add(1).ok_or_else(|| {
+            marked(
+                "ai.turn-ids-exhausted",
+                "Casual AI has used every turn id this document has.",
+            )
+        })?;
+        self.ai_turn_serial = id;
         let group = self.log.open_turn_group();
         self.ai_turn = Some(AiTurn {
             id,
@@ -149,6 +174,8 @@ impl WasmDocument {
             commits: 0,
             open: true,
             table: None,
+            serials: Vec::new(),
+            serial_mark: self.revision_ids.next,
         });
         Ok(id)
     }
@@ -211,9 +238,20 @@ impl WasmDocument {
             .last()
             .map(casual_doc_transaction::Commit::group);
         let head = self.log.head();
+        let next_serial = self.revision_ids.next;
         let held = self.turn_mut(turn)?;
         held.commits += 1;
         held.seen = head;
+        // The serials this commit's lowering allocated. A person's suggestion allocated
+        // between two of the turn's commits falls in the range too, so membership also
+        // requires the AI's author (`turn_revision_items`).
+        if next_serial > held.serial_mark {
+            match held.serials.last_mut() {
+                Some(last) if last.1 == held.serial_mark => last.1 = next_serial,
+                _ => held.serials.push((held.serial_mark, next_serial)),
+            }
+        }
+        held.serial_mark = next_serial;
         if let Some(landed) = landed
             && landed != held.group
         {
@@ -676,14 +714,19 @@ impl WasmDocument {
         Ok(self.turn_result(caret, &lowered.operations))
     }
 
-    /// The review items this turn authored: author "Casual AI" with the turn's date.
-    /// O(document): the revision list.
+    /// The review items this turn authored: the turn's author, its date, and a revision
+    /// serial one of its own commits allocated. O(document): the revision list.
     fn turn_revision_items(&self, held: &AiTurn) -> Vec<(String, Option<String>)> {
+        let author = self.turn_author();
         build_review_revision_summaries(&self.document)
             .into_iter()
             .filter(|item| {
-                item.author.as_deref() == Some(casual_doc_ai::AI_AUTHOR)
+                item.author == author
                     && item.date.as_deref() == Some(held.date.as_str())
+                    && item
+                        .revision_id
+                        .as_deref()
+                        .is_some_and(|serial| held.owns_serial(serial))
             })
             .map(|item| (item.id, item.group_id))
             .collect()

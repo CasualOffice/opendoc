@@ -35,6 +35,7 @@
 import { participantDisplay } from "./presence_strip.mjs";
 import { paintCaretFlag } from "./collab_presence.mjs";
 import { admits } from "./ai_edit_mode.mjs";
+import { randomUuid } from "./web_crypto.mjs";
 
 /** How long deltas are buffered before one batch is written. */
 export const FLUSH_MS = 80;
@@ -189,7 +190,7 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
   function currentAnchor() {
     if (!turn || !ed.doc) return null;
     try {
-      const at = JSON.parse(ed.doc.aiTurnAnchor(turn.id));
+      const at = JSON.parse(ed.doc.aiTurnAnchor(turn.engineId));
       return at && at.node ? at : null;
     } catch {
       return null;
@@ -336,7 +337,7 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
       }
       if (turn !== current || !current.writing) return;
       const before = currentAnchor();
-      const result = engine(() => ed.doc.aiTurnWrite(current.id, text));
+      const result = engine(() => ed.doc.aiTurnWrite(current.engineId, text));
       if (!result.ok) {
         await rollback(current, "engine");
         return;
@@ -353,8 +354,8 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
     current.timer = 0;
     current.writing = false;
     current.decided = true;
-    engine(() => ed.doc.aiTurnEnd(current.id));
-    const reverted = engine(() => ed.doc.aiTurnRevert(current.id, true));
+    engine(() => ed.doc.aiTurnEnd(current.engineId));
+    const reverted = engine(() => ed.doc.aiTurnRevert(current.engineId, true));
     if (reverted.ok) await ed.applyEditResult(reverted.value, { keepView: true, keepSelection: true });
     hidePointer();
     reflectBar();
@@ -404,40 +405,40 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
       const mode = access.mode === "direct" ? "direct" : "suggest";
       const opened = engine(() => ed.doc.aiTurnBegin(mode, isoNow()));
       if (!opened.ok) return refusal("engine", { detail: opened.error });
-      turn = { id: opened.value, mode, access: access.mode, writing: true, decided: false, stopped: false, pending: "", timer: 0, chain: Promise.resolve(), written: 0, breaks: 0, batches: 0, cells: null, cellBytes: 0, notify, highlight: null };
+      turn = { id: `ai-turn-${randomUuid()}`, engineId: opened.value, mode, access: access.mode, writing: true, decided: false, stopped: false, pending: "", timer: 0, chain: Promise.resolve(), written: 0, breaks: 0, batches: 0, cells: null, cellBytes: 0, notify, highlight: null };
       const current = turn;
       const steps = [];
       const k = spec?.kind;
       if (k === "insert" || k === "at") {
-        steps.push(() => ed.doc.aiTurnSetAnchor(current.id, String(spec.at?.node ?? ""), Number(spec.at?.offset) >>> 0));
+        steps.push(() => ed.doc.aiTurnSetAnchor(current.engineId, String(spec.at?.node ?? ""), Number(spec.at?.offset) >>> 0));
       } else if (k === "replace") {
         const start = Number(spec.start) >>> 0;
         const end = Number(spec.end) >>> 0;
         if (end <= start || textAt(spec.node, start, end) !== String(spec.exact ?? "")) {
           turn = null;
-          engine(() => ed.doc.aiTurnEnd(current.id));
+          engine(() => ed.doc.aiTurnEnd(current.engineId));
           return refusal("stale");
         }
         // The range it replaces, marked briefly before it changes.
         current.highlight = { node: spec.node, start, end };
         ed.paintOverlayLayer?.();
-        steps.push(() => ed.doc.aiTurnSetAnchor(current.id, String(spec.node), start));
+        steps.push(() => ed.doc.aiTurnSetAnchor(current.engineId, String(spec.node), start));
         steps.push("wait");
-        steps.push(() => ed.doc.aiTurnReplace(current.id, String(spec.node), start, end));
+        steps.push(() => ed.doc.aiTurnReplace(current.engineId, String(spec.node), start, end));
       } else if (k === "remove") {
-        steps.push(() => ed.doc.aiTurnDeleteRange(current.id, String(spec.anchor.node), Number(spec.anchor.offset) >>> 0, String(spec.focus.node), Number(spec.focus.offset) >>> 0));
+        steps.push(() => ed.doc.aiTurnDeleteRange(current.engineId, String(spec.anchor.node), Number(spec.anchor.offset) >>> 0, String(spec.focus.node), Number(spec.focus.offset) >>> 0));
       } else if (k === "after") {
-        steps.push(() => ed.doc.aiTurnParagraphAfter(current.id, String(spec.block ?? "")));
+        steps.push(() => ed.doc.aiTurnParagraphAfter(current.engineId, String(spec.block ?? "")));
       } else if (k === "table") {
         const rows = Math.min(TURN_LIMITS.rows, Math.max(1, Number(spec.rows) | 0));
         const columns = Math.min(TURN_LIMITS.columns, Math.max(1, Number(spec.columns) | 0));
-        steps.push(() => ed.doc.aiTurnInsertTable(current.id, String(spec.after ?? ""), rows, columns, spec.header !== false));
+        steps.push(() => ed.doc.aiTurnInsertTable(current.engineId, String(spec.after ?? ""), rows, columns, spec.header !== false));
       } else if (k === "replaceTable") {
-        steps.push(() => ed.doc.aiTurnParagraphAfter(current.id, String(spec.table ?? "")));
-        steps.push(() => ed.doc.aiTurnRemoveTable(current.id, String(spec.table ?? "")));
+        steps.push(() => ed.doc.aiTurnParagraphAfter(current.engineId, String(spec.table ?? "")));
+        steps.push(() => ed.doc.aiTurnRemoveTable(current.engineId, String(spec.table ?? "")));
       } else {
         turn = null;
-        engine(() => ed.doc.aiTurnEnd(current.id));
+        engine(() => ed.doc.aiTurnEnd(current.engineId));
         return refusal("plan");
       }
       placePointer(true);
@@ -459,7 +460,7 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
         if (result.value && typeof result.value === "object" && "free" in result.value) await applyAi(result.value, before);
       }
       if (k === "table") {
-        const cells = engine(() => JSON.parse(ed.doc.aiTurnTableCells(current.id)));
+        const cells = engine(() => JSON.parse(ed.doc.aiTurnTableCells(current.engineId)));
         current.cells = cells.ok ? cells.value : null;
       }
       placePointer(true);
@@ -480,7 +481,7 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
         const start = Number(spec?.start) >>> 0;
         const end = Number(spec?.end) >>> 0;
         if (end <= start || textAt(spec.node, start, end) !== String(spec.exact ?? "")) return refusal("stale");
-        engine(() => ed.doc.aiTurnSetAnchor(current.id, String(spec.node), start));
+        engine(() => ed.doc.aiTurnSetAnchor(current.engineId, String(spec.node), start));
         current.highlight = { node: spec.node, start, end };
         placePointer(true);
         ed.paintOverlayLayer?.();
@@ -488,7 +489,7 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
         current.highlight = null;
         if (turn !== current || !current.writing) return refusal("stopped");
         const before = currentAnchor();
-        const result = engine(() => ed.doc.aiTurnReplace(current.id, String(spec.node), start, end));
+        const result = engine(() => ed.doc.aiTurnReplace(current.engineId, String(spec.node), start, end));
         if (!result.ok) return refusal("stale", { detail: result.error });
         await applyAi(result.value, before);
         return Object.freeze({ ok: true });
@@ -507,7 +508,7 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
         const a = spec?.anchor;
         const f = spec?.focus;
         if (!a?.node || !f?.node) return refusal("plan");
-        const result = engine(() => ed.doc.aiTurnDeleteRange(current.id, String(a.node), Number(a.offset) >>> 0, String(f.node), Number(f.offset) >>> 0));
+        const result = engine(() => ed.doc.aiTurnDeleteRange(current.engineId, String(a.node), Number(a.offset) >>> 0, String(f.node), Number(f.offset) >>> 0));
         if (!result.ok) return refusal("stale", { detail: result.error });
         await applyAi(result.value, null);
         return Object.freeze({ ok: true });
@@ -528,9 +529,9 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
         const start = Number(spec?.start) >>> 0;
         const end = Number(spec?.end) >>> 0;
         if (spec.exact !== undefined && textAt(spec.node, start, end) !== String(spec.exact)) return refusal("stale");
-        engine(() => ed.doc.aiTurnSetAnchor(current.id, String(spec.node), end));
+        engine(() => ed.doc.aiTurnSetAnchor(current.engineId, String(spec.node), end));
         placePointer(true);
-        const result = engine(() => ed.doc.aiTurnComment(current.id, String(spec.node), start, end, text));
+        const result = engine(() => ed.doc.aiTurnComment(current.engineId, String(spec.node), start, end, text));
         if (!result.ok) return refusal("stale", { detail: result.error });
         await applyAi(result.value, null);
         return Object.freeze({ ok: true });
@@ -555,7 +556,7 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
         current.cellBytes = 0;
         queue(async () => {
           if (turn !== current || !current.writing) return;
-          engine(() => ed.doc.aiTurnSetAnchor(current.id, target, 0));
+          engine(() => ed.doc.aiTurnSetAnchor(current.engineId, target, 0));
           placePointer(true);
         });
       }
@@ -585,7 +586,7 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
       await queue(async () => {});
       if (turn !== current || current.decided) return refusal("gone");
       current.writing = false;
-      const summary = engine(() => JSON.parse(ed.doc.aiTurnEnd(current.id)));
+      const summary = engine(() => JSON.parse(ed.doc.aiTurnEnd(current.engineId)));
       hidePointer();
       reflectBar();
       ed.paintOverlayLayer?.();
@@ -603,7 +604,7 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
       current.timer = 0;
       current.writing = false;
       current.stopped = true;
-      engine(() => ed.doc.aiTurnEnd(current.id));
+      engine(() => ed.doc.aiTurnEnd(current.engineId));
       hidePointer();
       reflectBar();
       ed.paintOverlayLayer?.();
@@ -626,7 +627,7 @@ export function createCoEditor(ed, { t, effective, view = globalThis }) {
       if (!current || current.id !== id || current.decided) return refusal("gone");
       if (current.writing) coeditor.stop(id, "decision");
       await queue(async () => {});
-      const result = engine(() => (accept ? ed.doc.aiTurnAccept(current.id) : ed.doc.aiTurnRevert(current.id, false)));
+      const result = engine(() => (accept ? ed.doc.aiTurnAccept(current.engineId) : ed.doc.aiTurnRevert(current.engineId, false)));
       current.decided = true;
       if (result.ok && result.value && typeof result.value === "object" && "free" in result.value) {
         await ed.applyEditResult(result.value, { keepView: true, keepSelection: true });

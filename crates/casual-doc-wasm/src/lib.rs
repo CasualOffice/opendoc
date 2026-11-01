@@ -716,6 +716,9 @@ pub struct WasmDocument {
     typing_history: Option<TypingHistory>,
     /// The open Casual AI co-editing turn, if any (`ai_turn.rs`, `docs/183` §23).
     ai_turn: Option<ai_turn::AiTurn>,
+    /// The last Casual AI turn id handed out. Monotonic for the document's lifetime, so a
+    /// stale handle (a card left from an earlier turn) can never name a later turn (RM-52).
+    ai_turn_serial: u32,
     /// Set only while a FORM-AWARE action is running, so it may edit a document
     /// protected with `w:documentProtection w:edit="forms"`.
     ///
@@ -22947,6 +22950,7 @@ fn session_from_import(
         next_transaction: 0,
         typing_history: None,
         ai_turn: None,
+        ai_turn_serial: 0,
         editing_a_form_field: false,
         form_roles: form_roles::FormRoles::default(),
         capabilities: Capabilities::local(),
@@ -31876,6 +31880,7 @@ mod tests {
             next_transaction: 0,
             typing_history: None,
             ai_turn: None,
+            ai_turn_serial: 0,
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
@@ -32334,6 +32339,7 @@ mod tests {
             next_transaction: 0,
             typing_history: None,
             ai_turn: None,
+            ai_turn_serial: 0,
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
@@ -32652,6 +32658,7 @@ mod tests {
             next_transaction: 0,
             typing_history: None,
             ai_turn: None,
+            ai_turn_serial: 0,
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
@@ -36732,6 +36739,7 @@ mod tests {
             next_transaction: 0,
             typing_history: None,
             ai_turn: None,
+            ai_turn_serial: 0,
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
@@ -38119,6 +38127,7 @@ mod tests {
             next_transaction: 0,
             typing_history: None,
             ai_turn: None,
+            ai_turn_serial: 0,
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
@@ -39625,6 +39634,7 @@ mod tests {
             next_transaction: 0,
             typing_history: None,
             ai_turn: None,
+            ai_turn_serial: 0,
             revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
