@@ -4519,9 +4519,96 @@
           </button>
         </header>
         <div class="panel-body properties-panel-body">
-          <button id="paraClearAll" type="button" class="chip-btn" data-i18n="paragraphAdvanced.clear">Clear all paragraph formatting</button>
-          <p data-i18n="paragraphPropertiesPanel.adjustAllSelectedParagraphs" id="paragraphPropertiesDescription" class="properties-panel-intro">Adjust all selected paragraphs. Changes apply automatically and Undo restores the previous value.</p>
+          <p data-i18n="paragraphPropertiesPanel.adjustAllSelectedParagraphs" id="paragraphPropertiesDescription" class="properties-panel-intro sr-only">Adjust all selected paragraphs. Changes apply automatically and Undo restores the previous value.</p>
           <div class="properties-panel-grid">
+<fieldset class="dialog-group property-section">
+              <legend data-i18n="paragraphPropertiesPanel.styleAmpAlignment">Style &amp; alignment</legend>
+              <label data-i18n="paragraphPropertiesPanel.style" class="dialog-field">Style<select id="paraPanelStyle" class="dialog-select"><option data-i18n="paraPanelStyle.style" value="">Style</option></select></label>
+              <div class="dialog-field">
+                <span data-i18n="paragraphPropertiesPanel.alignment">Alignment</span>
+                <!-- `role="group"`, NOT `radiogroup` (109 UX-021): over a
+                     multi-paragraph selection this control is tri-state and
+                     publishes `aria-pressed="mixed"`, and `aria-checked="mixed"`
+                     is not legal on a radio. Word, Google Docs and ONLYOFFICE all
+                     use toggle buttons for exactly this control for the same
+                     reason (ONLYOFFICE: Toolbar.js:559-607 `toggleGroup:
+                     'alignGroup'`, with no radiogroup wrapper). The groups that
+                     ARE always exactly-one-of go through `radio_group.mjs`. -->
+                <span data-i18n-label="paragraphPropertiesPanel.paragraphAlignment.label" class="segmented paragraph-align" id="paraPanelAlign" role="group" aria-label="Paragraph alignment">
+                  <button data-i18n-label="paraPanelAlign.alignLeft.label" type="button" data-palign="start" aria-pressed="false" aria-label="Align left"><span class="ms" aria-hidden="true">format_align_left</span></button>
+                  <button data-i18n-label="paraPanelAlign.center.label" type="button" data-palign="center" aria-pressed="false" aria-label="Center"><span class="ms" aria-hidden="true">format_align_center</span></button>
+                  <button data-i18n-label="paraPanelAlign.alignRight.label" type="button" data-palign="end" aria-pressed="false" aria-label="Align right"><span class="ms" aria-hidden="true">format_align_right</span></button>
+                  <button data-i18n-label="paraPanelAlign.justify.label" type="button" data-palign="justify" aria-pressed="false" aria-label="Justify"><span class="ms" aria-hidden="true">format_align_justify</span></button>
+                </span>
+              </div>
+            </fieldset>
+<fieldset class="dialog-group property-section">
+              <legend data-i18n="paragraphPropertiesPanel.indentation">Indentation</legend>
+              <div class="dialog-field-grid">
+                <label data-i18n="paragraphPropertiesPanel.left" class="dialog-field">Left<span class="number-control"><input id="indentLeft" type="number" min="0" max="12" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+                <label data-i18n="paragraphPropertiesPanel.right" class="dialog-field">Right<span class="number-control"><input id="indentRight" type="number" min="0" max="12" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+              </div>
+              <div class="dialog-field-grid">
+                <label data-i18n="paragraphPropertiesPanel.special" class="dialog-field">Special<select id="indentSpecial" class="dialog-select">
+                  <option data-i18n="indentSpecial.mixed" value="">Mixed</option>
+                  <option value="none">None</option>
+                  <option data-i18n="indentSpecial.firstLine" value="first">First line</option>
+                  <option data-i18n="indentSpecial.hanging" value="hanging">Hanging</option>
+                </select></label>
+                <label data-i18n="paragraphPropertiesPanel.by" class="dialog-field">By<span class="number-control"><input id="indentSpecialBy" type="number" min="0" max="12" step="0.01" inputmode="decimal" value="0.5" /><span>in</span></span></label>
+              </div>
+            </fieldset>
+<fieldset class="dialog-group property-section">
+              <legend data-i18n="paragraphPropertiesPanel.spacing">Spacing</legend>
+              <label data-i18n="paragraphPropertiesPanel.lineSpacing" class="dialog-field">Line spacing<select id="paraLineSpacing" class="dialog-select">
+                <option data-i18n="paraLineSpacing.mixedInherited" value="">Mixed or inherited</option>
+                <option data-i18n="paraLineSpacing.single" value="100">Single</option>
+                <option value="115">1.15</option>
+                <option value="150">1.5</option>
+                <option data-i18n="paraLineSpacing.double" value="200">Double</option>
+              </select></label>
+              <div class="dialog-field-grid">
+                <label data-i18n="paragraphPropertiesPanel.before" class="dialog-field">Before<span class="number-control"><input id="paraSpaceBefore" type="number" min="0" max="720" step="1" inputmode="numeric" /><span>pt</span></span></label>
+                <label data-i18n="paragraphPropertiesPanel.after" class="dialog-field">After<span class="number-control"><input id="paraSpaceAfter" type="number" min="0" max="720" step="1" inputmode="numeric" /><span>pt</span></span></label>
+              </div>
+            </fieldset>
+<fieldset class="dialog-group property-section">
+              <legend data-i18n="paragraphPropertiesPanel.shadingAmpBorders">Shading &amp; borders</legend>
+              <div class="property-color-row">
+                <label class="shade-pick"><input id="paraShade" type="color" value="#ffe08a" /><span data-i18n="paragraphPropertiesPanel.fill">Fill</span></label>
+                <button data-i18n="paragraphPropertiesPanel.noFill" type="button" id="paraShadeNone" class="chip-btn">No fill</button>
+                <span data-i18n="paragraphPropertiesPanel.mixed" id="paraShadeMixed" class="mixed-note" hidden>Mixed</span>
+              </div>
+              <div class="property-border-row">
+                <div data-i18n-label="paragraphPropertiesPanel.paragraphBorders.label" class="border-presets" role="group" aria-label="Paragraph borders">
+                  <button data-i18n-title="paragraphPropertiesPanel.noBorder.title" data-i18n-label="paragraphPropertiesPanel.noBorder.label" type="button" class="border-btn" data-border="none" title="No border" aria-label="No border" aria-pressed="false"><span class="bx"></span></button>
+                  <button data-i18n-title="paragraphPropertiesPanel.allBorders.title" data-i18n-label="paragraphPropertiesPanel.allBorders.label" type="button" class="border-btn" data-border="box" title="All borders" aria-label="All borders" aria-pressed="false"><span class="bx"></span></button>
+                  <button data-i18n-title="paragraphPropertiesPanel.topBorder.title" data-i18n-label="paragraphPropertiesPanel.topBorder.label" type="button" class="border-btn" data-border="top" title="Top border" aria-label="Top border" aria-pressed="false"><span class="bx"></span></button>
+                  <button data-i18n-title="paragraphPropertiesPanel.bottomBorder.title" data-i18n-label="paragraphPropertiesPanel.bottomBorder.label" type="button" class="border-btn" data-border="bottom" title="Bottom border" aria-label="Bottom border" aria-pressed="false"><span class="bx"></span></button>
+                  <button data-i18n-title="paragraphPropertiesPanel.leftBorder.title" data-i18n-label="paragraphPropertiesPanel.leftBorder.label" type="button" class="border-btn" data-border="left" title="Left border" aria-label="Left border" aria-pressed="false"><span class="bx"></span></button>
+                  <button data-i18n-title="paragraphPropertiesPanel.rightBorder.title" data-i18n-label="paragraphPropertiesPanel.rightBorder.label" type="button" class="border-btn" data-border="right" title="Right border" aria-label="Right border" aria-pressed="false"><span class="bx"></span></button>
+                </div>
+                <label data-i18n-title="paragraphPropertiesPanel.borderColor.title" class="border-color" title="Border color"><input data-i18n-label="paragraphPropertiesPanel.borderColor.label" id="borderColor" type="color" value="#000000" aria-label="Border color" /></label>
+                <label class="dialog-field"><span data-i18n="paragraphAdvanced.borderStyle">Border line style</span><select id="paraBorderStyle" class="dialog-select"><option value="single" data-i18n="paragraphAdvanced.bordersingle">Single</option>
+                  <option value="double" data-i18n="paragraphAdvanced.borderdouble">Double</option>
+                  <option value="dotted" data-i18n="paragraphAdvanced.borderdotted">Dotted</option>
+                  <option value="dashed" data-i18n="paragraphAdvanced.borderdashed">Dashed</option>
+                  <option value="dotDash" data-i18n="paragraphAdvanced.borderdotDash">Dot dash</option>
+                  <option value="dotDotDash" data-i18n="paragraphAdvanced.borderdotDotDash">Dot dot dash</option><option value="imported" disabled data-i18n="paragraphAdvanced.importedStyle">Imported style</option></select></label>
+              <p id="paraBorderImportedNote" hidden class="dialog-note" data-i18n="paragraphAdvanced.importedNote">This imported border style is preserved and shown as a single line. Choose a supported style to author a border.</p>
+
+              <label class="dialog-field"><span data-i18n="paragraphAdvanced.borderWidth">Border width (pt)</span><input id="paraBorderWidth" type="number" min="0.25" max="12" step="0.125" value="1" /></label>
+              <label class="dialog-field"><span data-i18n="paragraphAdvanced.borderPadding">Border distance from text (pt)</span><input id="paraBorderPadding" type="number" min="0" max="31" step="1" value="0" /></label><button type="button" class="chip-btn" aria-pressed="false" id="paraBorderBetween" data-i18n="paragraphAdvanced.between">Border between paragraphs</button><p class="dialog-note" data-i18n="paragraphAdvanced.betweenNotice">Between-paragraph borders are saved for Word but are not shown on this page yet.</p><span data-i18n="paragraphPropertiesPanel.mixed2" id="paraBordersMixed" class="mixed-note" hidden>Mixed</span>
+              </div>
+            </fieldset>
+<fieldset class="dialog-group property-section">
+              <legend data-i18n="paragraphPropertiesPanel.pagination">Pagination</legend>
+              <label class="dialog-check"><input id="pgKeepNext" type="checkbox" /><span><strong data-i18n="paragraphPropertiesPanel.keepNext">Keep with next</strong><small data-i18n="paragraphPropertiesPanel.keepParagraphFollowingParagraph">Keep this paragraph with the following paragraph.</small></span></label>
+              <label class="dialog-check"><input id="pgKeepLines" type="checkbox" /><span><strong data-i18n="paragraphPropertiesPanel.keepLinesTogether">Keep lines together</strong><small data-i18n="paragraphPropertiesPanel.avoidSplittingParagraphAcross">Avoid splitting the paragraph across pages.</small></span></label>
+              <label class="dialog-check"><input id="pgBreakBefore" type="checkbox" /><span><strong data-i18n="paragraphPropertiesPanel.pageBreakBefore">Page break before</strong><small data-i18n="paragraphPropertiesPanel.startEachSelectedParagraph">Start each selected paragraph on a new page.</small></span></label>
+            </fieldset>
+          </div>
+          <details class="property-more"><summary data-i18n="propertyPanel.moreOptions">More options</summary>
 <fieldset class="dialog-group property-section"><legend data-i18n="styleAdvanced.title">Manage paragraph styles</legend>
 <label class="dialog-field"><span data-i18n="styleAdvanced.target">Style</span><select id="styleAdvancedTarget" class="dialog-select"></select></label>
 <label class="dialog-field"><span data-i18n="styleAdvanced.next">Style for following paragraph</span><select id="styleAdvancedNext" class="dialog-select"></select></label><button id="styleAdvancedNextApply" type="button" class="chip-btn" data-i18n="styleAdvanced.applyNext">Apply following style</button>
@@ -4564,97 +4651,8 @@
                   <option value="9" data-i18n="paragraphAdvanced.outline9">Body text</option></select></label>
 
             </fieldset>
-            <fieldset class="dialog-group property-section">
-              <legend data-i18n="paragraphPropertiesPanel.styleAmpAlignment">Style &amp; alignment</legend>
-              <label data-i18n="paragraphPropertiesPanel.style" class="dialog-field">Style<select id="paraPanelStyle" class="dialog-select"><option data-i18n="paraPanelStyle.style" value="">Style</option></select></label>
-              <div class="dialog-field">
-                <span data-i18n="paragraphPropertiesPanel.alignment">Alignment</span>
-                <!-- `role="group"`, NOT `radiogroup` (109 UX-021): over a
-                     multi-paragraph selection this control is tri-state and
-                     publishes `aria-pressed="mixed"`, and `aria-checked="mixed"`
-                     is not legal on a radio. Word, Google Docs and ONLYOFFICE all
-                     use toggle buttons for exactly this control for the same
-                     reason (ONLYOFFICE: Toolbar.js:559-607 `toggleGroup:
-                     'alignGroup'`, with no radiogroup wrapper). The groups that
-                     ARE always exactly-one-of go through `radio_group.mjs`. -->
-                <span data-i18n-label="paragraphPropertiesPanel.paragraphAlignment.label" class="segmented paragraph-align" id="paraPanelAlign" role="group" aria-label="Paragraph alignment">
-                  <button data-i18n-label="paraPanelAlign.alignLeft.label" type="button" data-palign="start" aria-pressed="false" aria-label="Align left"><span class="ms" aria-hidden="true">format_align_left</span></button>
-                  <button data-i18n-label="paraPanelAlign.center.label" type="button" data-palign="center" aria-pressed="false" aria-label="Center"><span class="ms" aria-hidden="true">format_align_center</span></button>
-                  <button data-i18n-label="paraPanelAlign.alignRight.label" type="button" data-palign="end" aria-pressed="false" aria-label="Align right"><span class="ms" aria-hidden="true">format_align_right</span></button>
-                  <button data-i18n-label="paraPanelAlign.justify.label" type="button" data-palign="justify" aria-pressed="false" aria-label="Justify"><span class="ms" aria-hidden="true">format_align_justify</span></button>
-                </span>
-              </div>
-            </fieldset>
-
-            <fieldset class="dialog-group property-section">
-              <legend data-i18n="paragraphPropertiesPanel.indentation">Indentation</legend>
-              <div class="dialog-field-grid">
-                <label data-i18n="paragraphPropertiesPanel.left" class="dialog-field">Left<span class="number-control"><input id="indentLeft" type="number" min="0" max="12" step="0.01" inputmode="decimal" /><span>in</span></span></label>
-                <label data-i18n="paragraphPropertiesPanel.right" class="dialog-field">Right<span class="number-control"><input id="indentRight" type="number" min="0" max="12" step="0.01" inputmode="decimal" /><span>in</span></span></label>
-              </div>
-              <div class="dialog-field-grid">
-                <label data-i18n="paragraphPropertiesPanel.special" class="dialog-field">Special<select id="indentSpecial" class="dialog-select">
-                  <option data-i18n="indentSpecial.mixed" value="">Mixed</option>
-                  <option value="none">None</option>
-                  <option data-i18n="indentSpecial.firstLine" value="first">First line</option>
-                  <option data-i18n="indentSpecial.hanging" value="hanging">Hanging</option>
-                </select></label>
-                <label data-i18n="paragraphPropertiesPanel.by" class="dialog-field">By<span class="number-control"><input id="indentSpecialBy" type="number" min="0" max="12" step="0.01" inputmode="decimal" value="0.5" /><span>in</span></span></label>
-              </div>
-            </fieldset>
-
-            <fieldset class="dialog-group property-section">
-              <legend data-i18n="paragraphPropertiesPanel.spacing">Spacing</legend>
-              <label data-i18n="paragraphPropertiesPanel.lineSpacing" class="dialog-field">Line spacing<select id="paraLineSpacing" class="dialog-select">
-                <option data-i18n="paraLineSpacing.mixedInherited" value="">Mixed or inherited</option>
-                <option data-i18n="paraLineSpacing.single" value="100">Single</option>
-                <option value="115">1.15</option>
-                <option value="150">1.5</option>
-                <option data-i18n="paraLineSpacing.double" value="200">Double</option>
-              </select></label>
-              <div class="dialog-field-grid">
-                <label data-i18n="paragraphPropertiesPanel.before" class="dialog-field">Before<span class="number-control"><input id="paraSpaceBefore" type="number" min="0" max="720" step="1" inputmode="numeric" /><span>pt</span></span></label>
-                <label data-i18n="paragraphPropertiesPanel.after" class="dialog-field">After<span class="number-control"><input id="paraSpaceAfter" type="number" min="0" max="720" step="1" inputmode="numeric" /><span>pt</span></span></label>
-              </div>
-            </fieldset>
-
-            <fieldset class="dialog-group property-section">
-              <legend data-i18n="paragraphPropertiesPanel.shadingAmpBorders">Shading &amp; borders</legend>
-              <div class="property-color-row">
-                <label class="shade-pick"><input id="paraShade" type="color" value="#ffe08a" /><span data-i18n="paragraphPropertiesPanel.fill">Fill</span></label>
-                <button data-i18n="paragraphPropertiesPanel.noFill" type="button" id="paraShadeNone" class="chip-btn">No fill</button>
-                <span data-i18n="paragraphPropertiesPanel.mixed" id="paraShadeMixed" class="mixed-note" hidden>Mixed</span>
-              </div>
-              <div class="property-border-row">
-                <div data-i18n-label="paragraphPropertiesPanel.paragraphBorders.label" class="border-presets" role="group" aria-label="Paragraph borders">
-                  <button data-i18n-title="paragraphPropertiesPanel.noBorder.title" data-i18n-label="paragraphPropertiesPanel.noBorder.label" type="button" class="border-btn" data-border="none" title="No border" aria-label="No border" aria-pressed="false"><span class="bx"></span></button>
-                  <button data-i18n-title="paragraphPropertiesPanel.allBorders.title" data-i18n-label="paragraphPropertiesPanel.allBorders.label" type="button" class="border-btn" data-border="box" title="All borders" aria-label="All borders" aria-pressed="false"><span class="bx"></span></button>
-                  <button data-i18n-title="paragraphPropertiesPanel.topBorder.title" data-i18n-label="paragraphPropertiesPanel.topBorder.label" type="button" class="border-btn" data-border="top" title="Top border" aria-label="Top border" aria-pressed="false"><span class="bx"></span></button>
-                  <button data-i18n-title="paragraphPropertiesPanel.bottomBorder.title" data-i18n-label="paragraphPropertiesPanel.bottomBorder.label" type="button" class="border-btn" data-border="bottom" title="Bottom border" aria-label="Bottom border" aria-pressed="false"><span class="bx"></span></button>
-                  <button data-i18n-title="paragraphPropertiesPanel.leftBorder.title" data-i18n-label="paragraphPropertiesPanel.leftBorder.label" type="button" class="border-btn" data-border="left" title="Left border" aria-label="Left border" aria-pressed="false"><span class="bx"></span></button>
-                  <button data-i18n-title="paragraphPropertiesPanel.rightBorder.title" data-i18n-label="paragraphPropertiesPanel.rightBorder.label" type="button" class="border-btn" data-border="right" title="Right border" aria-label="Right border" aria-pressed="false"><span class="bx"></span></button>
-                </div>
-                <label data-i18n-title="paragraphPropertiesPanel.borderColor.title" class="border-color" title="Border color"><input data-i18n-label="paragraphPropertiesPanel.borderColor.label" id="borderColor" type="color" value="#000000" aria-label="Border color" /></label>
-                <label class="dialog-field"><span data-i18n="paragraphAdvanced.borderStyle">Border line style</span><select id="paraBorderStyle" class="dialog-select"><option value="single" data-i18n="paragraphAdvanced.bordersingle">Single</option>
-                  <option value="double" data-i18n="paragraphAdvanced.borderdouble">Double</option>
-                  <option value="dotted" data-i18n="paragraphAdvanced.borderdotted">Dotted</option>
-                  <option value="dashed" data-i18n="paragraphAdvanced.borderdashed">Dashed</option>
-                  <option value="dotDash" data-i18n="paragraphAdvanced.borderdotDash">Dot dash</option>
-                  <option value="dotDotDash" data-i18n="paragraphAdvanced.borderdotDotDash">Dot dot dash</option><option value="imported" disabled data-i18n="paragraphAdvanced.importedStyle">Imported style</option></select></label>
-              <p id="paraBorderImportedNote" hidden class="dialog-note" data-i18n="paragraphAdvanced.importedNote">This imported border style is preserved and shown as a single line. Choose a supported style to author a border.</p>
-
-              <label class="dialog-field"><span data-i18n="paragraphAdvanced.borderWidth">Border width (pt)</span><input id="paraBorderWidth" type="number" min="0.25" max="12" step="0.125" value="1" /></label>
-              <label class="dialog-field"><span data-i18n="paragraphAdvanced.borderPadding">Border distance from text (pt)</span><input id="paraBorderPadding" type="number" min="0" max="31" step="1" value="0" /></label><button type="button" class="chip-btn" aria-pressed="false" id="paraBorderBetween" data-i18n="paragraphAdvanced.between">Border between paragraphs</button><p class="dialog-note" data-i18n="paragraphAdvanced.betweenNotice">Between-paragraph borders are saved for Word but are not shown on this page yet.</p><span data-i18n="paragraphPropertiesPanel.mixed2" id="paraBordersMixed" class="mixed-note" hidden>Mixed</span>
-              </div>
-            </fieldset>
-
-            <fieldset class="dialog-group property-section">
-              <legend data-i18n="paragraphPropertiesPanel.pagination">Pagination</legend>
-              <label class="dialog-check"><input id="pgKeepNext" type="checkbox" /><span><strong data-i18n="paragraphPropertiesPanel.keepNext">Keep with next</strong><small data-i18n="paragraphPropertiesPanel.keepParagraphFollowingParagraph">Keep this paragraph with the following paragraph.</small></span></label>
-              <label class="dialog-check"><input id="pgKeepLines" type="checkbox" /><span><strong data-i18n="paragraphPropertiesPanel.keepLinesTogether">Keep lines together</strong><small data-i18n="paragraphPropertiesPanel.avoidSplittingParagraphAcross">Avoid splitting the paragraph across pages.</small></span></label>
-              <label class="dialog-check"><input id="pgBreakBefore" type="checkbox" /><span><strong data-i18n="paragraphPropertiesPanel.pageBreakBefore">Page break before</strong><small data-i18n="paragraphPropertiesPanel.startEachSelectedParagraph">Start each selected paragraph on a new page.</small></span></label>
-            </fieldset>
-          </div>
+          </details>
+          <button id="paraClearAll" type="button" class="dialog-button dialog-button-utility property-clear" data-i18n="paragraphAdvanced.clear">Clear all paragraph formatting</button>
         </div>
       </aside>
 

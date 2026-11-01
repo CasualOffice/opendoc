@@ -3655,5 +3655,6 @@
   "settingsNav.ai": "ИИ и надстройки",
   "settingsNav.general": "Общие",
   "settingsNav.proofing": "Правописание",
-  "settingsNav.saving": "Сохранение"
+  "settingsNav.saving": "Сохранение",
+  "propertyPanel.moreOptions": "Другие параметры"
 }

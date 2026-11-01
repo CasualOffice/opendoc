@@ -14665,3 +14665,59 @@ body:not(.phone-mode) .workarea > .side-panel.plugin-panel {
   font-size: var(--fs-lg);
   font-weight: var(--fw-semibold);
 }
+
+/* Paragraph properties: the common sections first, the rest behind "More
+   options", the clear action last (approved design P1). */
+.property-more { border-top: 1px solid var(--line); padding-top: var(--space-3); }
+.property-more > summary {
+  display: flex; align-items: center; gap: var(--space-1);
+  min-block-size: var(--h-input); cursor: pointer; list-style: none;
+  font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--ink);
+}
+.property-more > summary::-webkit-details-marker { display: none; }
+.property-more > summary::before {
+  content: "chevron_right"; font-family: "Material Symbols Outlined";
+  font-size: var(--icon-sm); line-height: 1; transition: transform 120ms ease;
+}
+.property-more[open] > summary::before { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .property-more > summary::before { transition: none; } }
+.property-more > .dialog-group { margin-top: var(--space-3); }
+.properties-panel-body > .property-clear { justify-self: start; margin-top: var(--space-2); }
+/* Panel sections are flat (no box inside the panel): a section title, then
+   its fields, pairs side by side; sections separated by a hairline. */
+.workarea > .side-panel .properties-panel-body .property-section {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+  background: none;
+  box-shadow: none;
+  display: grid;
+  gap: var(--space-3);
+}
+.workarea > .side-panel .properties-panel-body .property-section > legend {
+  padding: 0;
+  margin-block-end: var(--space-3);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+.workarea > .side-panel .properties-panel-grid {
+  display: grid;
+  gap: var(--space-5);
+}
+.workarea > .side-panel .properties-panel-grid > .property-section + .property-section {
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-5);
+}
+.workarea > .side-panel .properties-panel-body .dialog-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+.workarea > .side-panel .properties-panel-body .number-control {
+  inline-size: 100%;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-inline-end: var(--space-3);
+}
+.workarea > .side-panel .properties-panel-body .dialog-select { inline-size: 100%; }

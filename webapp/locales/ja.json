@@ -3622,5 +3622,6 @@
   "settingsNav.ai": "AI とアドイン",
   "settingsNav.general": "全般",
   "settingsNav.proofing": "文章校正",
-  "settingsNav.saving": "保存"
+  "settingsNav.saving": "保存",
+  "propertyPanel.moreOptions": "その他のオプション"
 }

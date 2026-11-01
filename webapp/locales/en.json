@@ -2683,6 +2683,7 @@
   "propertiesPanel.title": "Title",
   "propertiesPanel.totalEditingTime": "Total editing time",
   "propertiesPanel.version": "Version",
+  "propertyPanel.moreOptions": "More options",
   "protect.applied": "Editing restricted to: {level}",
   "protect.appliedFormatting": "Formatting is now limited to this document's unlocked styles",
   "protect.appliedWithPassword": "Editing restricted to: {level}, with a password",
