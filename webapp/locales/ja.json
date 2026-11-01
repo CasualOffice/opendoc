@@ -3301,5 +3301,15 @@
   "printSelection.command": "選択範囲を印刷",
   "printSelection.needsRange": "先に印刷するテキストを選択してください",
   "unicodeToggle.command": "文字コードの切り替え",
-  "unicodeToggle.nothing": "挿入位置の前に変換するものがありません"
+  "unicodeToggle.nothing": "挿入位置の前に変換するものがありません",
+  "findings.feature.pdfImageTextBoxes": "スキャンしたページや画像から読み取った行。元のピクセルの上で編集できます",
+  "imageText.fill.command": "編集部分の下の文字を消す: 塗りつぶし",
+  "imageText.blur.command": "編集部分の下の文字を消す: ぼかし",
+  "imageText.pixelate.command": "編集部分の下の文字を消す: モザイク",
+  "imageText.restore.command": "画像内の元の文字を復元",
+  "imageText.reason.noBox": "スキャンしたページや画像の文字の行にカーソルを置いてください",
+  "imageText.reason.notEdited": "この行は編集されていません",
+  "imageText.refused.notImageText": "この文字は画像の上にありません",
+  "imageText.refused.pictureUnreadable": "この行の下の画像を読み取れません",
+  "imageText.refused.unknownMode": "不明な消去方法です"
 }

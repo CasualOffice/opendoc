@@ -3323,5 +3323,15 @@
   "printSelection.command": "Imprimer la sélection",
   "printSelection.needsRange": "Sélectionnez d’abord le texte à imprimer",
   "unicodeToggle.command": "Basculer le code de caractère",
-  "unicodeToggle.nothing": "Rien à convertir avant le point d’insertion"
+  "unicodeToggle.nothing": "Rien à convertir avant le point d’insertion",
+  "findings.feature.pdfImageTextBoxes": "Lignes lues dans les pages numérisées et les images, modifiables au-dessus des pixels d'origine",
+  "imageText.fill.command": "Effacer le texte sous les modifications : remplir",
+  "imageText.blur.command": "Effacer le texte sous les modifications : flouter",
+  "imageText.pixelate.command": "Effacer le texte sous les modifications : pixeliser",
+  "imageText.restore.command": "Restaurer le texte d'origine de l'image",
+  "imageText.reason.noBox": "Placez le curseur dans une ligne de texte d'une page numérisée ou d'une image",
+  "imageText.reason.notEdited": "Cette ligne n'a pas été modifiée",
+  "imageText.refused.notImageText": "Ce texte n'est pas sur une image",
+  "imageText.refused.pictureUnreadable": "L'image sous cette ligne est illisible",
+  "imageText.refused.unknownMode": "Méthode d'effacement inconnue"
 }

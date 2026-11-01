@@ -1265,6 +1265,46 @@ correctness; the two-run equality test is the evidence.
 - **The time budget in the browser** needs the host's `Interrupt` over
   `performance.now()`; `Deadline` is native-only.
 
+## 20b. Amendment (owner, 2026-11-01): text in pictures is edited where it is, not reflowed
+
+**Decision.** Turning a scan into flowing text is no longer the default. A
+recognised scanned page opens as its picture, on a page of its own, with an
+editable line box over each line OCR read; the boxes' text is laid out but not
+painted (`RunProperties::no_text_fill`, `w14:textFill/w14:noFill`), so an
+unedited page shows the scan's own pixels and a misread appears only once that
+line is edited. A text PDF still reflows, but a picture in it that OCR read text
+from keeps that text the same way, as line boxes over the picture. The previous
+behaviour (`pdf.import.scan_replaced_by_text`) is the opt-in
+`ReflowOptions { scan_text: ScanText::Reflow }`; the default reports
+`pdf.import.image_text_boxes` (lines).
+
+**Editing a line** (`casual-doc-wasm` `image_text.rs`, the editor's
+`image_text_edit.mjs`): before the first text edit or format in an unedited box,
+the ink under the box is erased in a **patch picture** placed directly under the
+box (same offset, size and turn), and the text is painted in the ink's measured
+colour, height and weight. The original picture is never changed; the patch's
+alt text keeps the recognised line, which Restore puts back; each step is one
+undo. Saved as DOCX the group is the picture, the patches and the text boxes.
+
+**The erase** (`casual_doc_render::image_text`, inpainting): Otsu's threshold
+per box, the smaller class is ink, dilated 1-2 px; 4-8 px tiles take the mean of
+their paper pixels only (no ink pixel ever enters an average), tiles with none
+borrow from neighbours, pixels interpolate bilinearly between tile centres, and
+the rim is feathered. When paper pixels stray from that model by more than 9
+levels RMS (texture, grain) the paper is kept and only the ink is solved by
+Laplacian relaxation. Blur and Pixelate are the other two modes. O(box pixels).
+No new dependency.
+
+**Skew.** A line read turned (at most 5°, `record::SKEW_DEGREES`) is laid level
+for grouping; its box is turned back by the same angle about the centre of the
+line's ink, so the patch covers the ink it replaces.
+
+**Not built yet:** fitting the edited text to the line's width (a substitute
+face can wrap a line), moving large patches off the main thread, a box spanning
+a selection across two boxes, opened PNG/JPG files and "Edit text in picture"
+for any picture in a DOCX (same engine: OCR the picture, then these boxes). The
+row is `docs/109` HF-415.
+
 ## 20a. The host's OCR, wired (io, viewer, AI sessions, MCP)
 
 §20.6 left every surface on the no-model path. Branch `lane/pdf-ocr-wiring` wired the

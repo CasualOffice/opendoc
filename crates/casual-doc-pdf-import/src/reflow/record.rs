@@ -185,6 +185,35 @@ pub struct SourcePage {
     pub masks: u32,
     /// Rotated glyph runs (reflowed upright, reported).
     pub rotated_runs: u32,
+    /// Where each skewed run was laid level, and the angle it had: what an
+    /// image-text line box needs to sit over its ink again (`docs/182`
+    /// §20b). In paint order.
+    pub skews: Vec<Skew>,
+}
+
+/// A skewed run's start (its first glyph's origin, the pivot it was laid
+/// level about) and its clockwise angle in degrees.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Skew {
+    /// The first glyph's origin, x.
+    pub x: f64,
+    /// The first glyph's origin, y (the levelled baseline).
+    pub baseline: f64,
+    /// Clockwise rotation, degrees.
+    pub degrees: f64,
+}
+
+impl SourcePage {
+    /// The angle of the skewed run that starts at the start of a levelled
+    /// line (`x`, `baseline`), or 0 when none does. O(skews on the page).
+    #[must_use]
+    pub fn skew_at(&self, x: f64, baseline: f64) -> f64 {
+        const NEAR: f64 = 1.5;
+        self.skews
+            .iter()
+            .find(|s| (s.x - x).abs() <= NEAR && (s.baseline - baseline).abs() <= NEAR)
+            .map_or(0.0, |s| s.degrees)
+    }
 }
 
 /// The source state of a whole import.
@@ -421,6 +450,17 @@ impl PdfSourceState {
                 _ => None,
             })
             .collect();
+        for (item, flat) in page.items.iter().zip(&levelled) {
+            if let (PaintEvidence::Glyphs(run), Some(flat)) = (item, flat)
+                && let Some(first) = flat.glyphs.first()
+            {
+                out.skews.push(Skew {
+                    x: first.origin.x,
+                    baseline: first.origin.y,
+                    degrees: run.rotation_degrees,
+                });
+            }
+        }
         // Upright runs, segmented by marked-content sequence.
         let mut rotated: Vec<SourceBlock> = Vec::new();
         let mut segment: Vec<&GlyphRunEvidence> = Vec::new();

@@ -3312,5 +3312,15 @@
   "printSelection.command": "Seçimi yazdır",
   "printSelection.needsRange": "Önce yazdırılacak metni seçin",
   "unicodeToggle.command": "Karakter kodunu değiştir",
-  "unicodeToggle.nothing": "Ekleme noktasından önce dönüştürülecek bir şey yok"
+  "unicodeToggle.nothing": "Ekleme noktasından önce dönüştürülecek bir şey yok",
+  "findings.feature.pdfImageTextBoxes": "Taranan sayfalardan ve resimlerden okunan satırlar, özgün piksellerin üzerinde düzenlenebilir",
+  "imageText.fill.command": "Düzenlemelerin altındaki metni sil: doldur",
+  "imageText.blur.command": "Düzenlemelerin altındaki metni sil: bulanıklaştır",
+  "imageText.pixelate.command": "Düzenlemelerin altındaki metni sil: pikselleştir",
+  "imageText.restore.command": "Resimdeki özgün metni geri yükle",
+  "imageText.reason.noBox": "İmleci taranmış bir sayfa veya resimdeki bir metin satırına yerleştirin",
+  "imageText.reason.notEdited": "Bu satır düzenlenmedi",
+  "imageText.refused.notImageText": "Bu metin bir resmin üzerinde değil",
+  "imageText.refused.pictureUnreadable": "Bu satırın altındaki resim okunamıyor",
+  "imageText.refused.unknownMode": "Metni silmenin bilinmeyen yolu"
 }

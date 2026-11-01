@@ -252,7 +252,7 @@ const ed = {
   get commitComposedText() { return commitComposedText; },
   get commitCrop() { return commitCrop; },
   get compactToolbarUi() { return compactToolbarUi; }, set compactToolbarUi(v) { compactToolbarUi = v; },
-  get comparePanel() { return comparePanel; }, get contentControls() { return contentControls; }, get formRoles() { return formRoles; },
+  get comparePanel() { return comparePanel; }, get contentControls() { return contentControls; }, get formRoles() { return formRoles; }, get imageText() { return imageText; },
   get compatFindings() { return compatFindings; },
   get composingText() { return composingText; }, set composingText(v) { composingText = v; },
   get computeFitZoom() { return computeFitZoom; },
@@ -2329,7 +2329,7 @@ function documentVersion() {
 }
 const {
   applyEditResult, blockUntrackedInSuggesting, breakTypingSession, paintArrival,
-  typingSessionForKey,
+  typingSessionForKey, imageText, prepareImageTextEdit,
 } = createEditPipeline(ed);
 /** True (after showing the read-only status message and returning focus to the
  *  canvas) if Viewing mode should block a document mutation. Viewing is fully
@@ -2356,11 +2356,11 @@ function blockMutationInViewing() {
  *
  *  Returns whether the edit actually landed, so a caller chaining several edits
  *  can stop instead of continuing against a document that never changed. */
-async function runEdit(thunk, { typing = false, gate = false, keepView = false, keepSelection = false } = {}) {
+async function runEdit(thunk, { typing = false, text = false, gate = false, keepView = false, keepSelection = false } = {}) {
   if (blockMutationInViewing()) return false;
   if (!typing) breakTypingSession();
   if (gate && blockUntrackedInSuggesting()) return false;
-  let res;
+  if ((typing || text) && !(await prepareImageTextEdit())) return false; let res; // an unedited picture line first (`docs/182` §20b)
   try {
     res = thunk();
   } catch (err) {
@@ -2397,7 +2397,7 @@ function selEndpoints() {
 async function runToolbarEdit(thunk, { allowInSuggesting = false, paragraphLevel = false } = {}) {
   if (blockMutationInViewing()) return;
   breakTypingSession();
-  if (!allowInSuggesting && blockUntrackedInSuggesting({ paragraphLevel })) return;
+  if (!allowInSuggesting && blockUntrackedInSuggesting({ paragraphLevel })) return; await prepareImageTextEdit();
   const ends = selEndpoints();
   if (!ends) return;
   let res;

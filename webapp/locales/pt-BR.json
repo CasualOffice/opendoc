@@ -3323,5 +3323,15 @@
   "printSelection.command": "Imprimir seleção",
   "printSelection.needsRange": "Selecione primeiro o texto a imprimir",
   "unicodeToggle.command": "Alternar código de caractere",
-  "unicodeToggle.nothing": "Nada antes do ponto de inserção para converter"
+  "unicodeToggle.nothing": "Nada antes do ponto de inserção para converter",
+  "findings.feature.pdfImageTextBoxes": "Linhas lidas de páginas digitalizadas e imagens, editáveis sobre os pixels originais",
+  "imageText.fill.command": "Apagar o texto sob as edições: preencher",
+  "imageText.blur.command": "Apagar o texto sob as edições: desfocar",
+  "imageText.pixelate.command": "Apagar o texto sob as edições: pixelizar",
+  "imageText.restore.command": "Restaurar o texto original da imagem",
+  "imageText.reason.noBox": "Coloque o cursor em uma linha de texto de uma página digitalizada ou imagem",
+  "imageText.reason.notEdited": "Esta linha não foi editada",
+  "imageText.refused.notImageText": "Este texto não está sobre uma imagem",
+  "imageText.refused.pictureUnreadable": "Não é possível ler a imagem sob esta linha",
+  "imageText.refused.unknownMode": "Forma desconhecida de apagar o texto"
 }

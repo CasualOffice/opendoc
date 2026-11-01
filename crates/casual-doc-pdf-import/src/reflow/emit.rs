@@ -58,6 +58,28 @@ fn twips(points: f64) -> i32 {
     (points * 20.0).round() as i32
 }
 
+/// An image-text line box's padding around its line's ink, as a share of
+/// the line's height (`Emitter::image_text`): the rim and the descenders a
+/// recogniser's box leaves out, and no more, so a box does not reach the
+/// line above or below.
+const LINE_BOX_PAD: f64 = 0.12;
+
+/// Marks every run in `inlines` as laid out and not painted
+/// (`RunProperties::no_text_fill`). O(inlines).
+fn unpainted(inlines: &mut [InlineNode]) {
+    for inline in inlines {
+        match inline {
+            InlineNode::Run(run) => {
+                let mut properties = (*run.properties).clone();
+                properties.no_text_fill = Some(true);
+                run.properties = properties.into();
+            }
+            InlineNode::Hyperlink(link) => unpainted(&mut link.inlines),
+            _ => {}
+        }
+    }
+}
+
 /// Word's default distance between a square-wrapped float and the text
 /// beside it (`distL`/`distR`, 0.125 in).
 const FLOAT_SIDE_GAP: f64 = 9.0;
@@ -166,7 +188,9 @@ struct IPara {
 enum Item {
     Para(IPara),
     Table(ITable, Option<usize>),
-    Image(SourceImage, Option<usize>),
+    /// A picture; with lines, the lines OCR read from it, drawn over it as
+    /// line boxes (`ScanText::LineBoxes`).
+    Image(SourceImage, Option<usize>, Vec<ILine>),
     /// Vector art on its own line, with the text drawn inside it and the
     /// pictures that are its pieces.
     Vector(SourceVector, Option<usize>, Vec<ILine>, Vec<SourceImage>),
@@ -188,16 +212,20 @@ impl Item {
                 .flat_map(|c| c.lines.first())
                 .map(|l| l.page)
                 .next(),
-            Self::Image(..) | Self::Vector(..) | Self::Floats(..) => None,
+            // A picture with line boxes is its page's (a scan): it decides
+            // that page's size.
+            Self::Image(_, _, lines) => lines.first().map(|l| l.page),
+            Self::Vector(..) | Self::Floats(..) => None,
         }
     }
 
     fn region(&self) -> Option<usize> {
         match self {
             Self::Para(p) => p.region,
-            Self::Table(_, r) | Self::Image(_, r) | Self::Vector(_, r, ..) | Self::Floats(_, r) => {
-                *r
-            }
+            Self::Table(_, r)
+            | Self::Image(_, r, _)
+            | Self::Vector(_, r, ..)
+            | Self::Floats(_, r) => *r,
         }
     }
 }
@@ -362,6 +390,126 @@ impl Emitter<'_> {
         Ok(Some(InlineNode::Group(Box::new(
             crate::fixed::vector_group(id, built.children, bounds, anchor, self.z),
         ))))
+    }
+
+    /// A picture with the lines OCR read from it (`ScanText::LineBoxes`,
+    /// `docs/182` §20b): one group of the picture and, over it, one text box
+    /// per line where the line's ink is, turned by the line's skew, its text
+    /// laid out but not painted (`no_text_fill`) so the page shows the
+    /// picture. Each box is padded by [`LINE_BOX_PAD`] of its height on every
+    /// side, so the anti-aliased rim and the descenders are inside it: the box
+    /// is the region an edit erases. The group is `size` on the page; its
+    /// child space is the page's points. O(characters of the lines).
+    fn image_text(
+        &mut self,
+        image: &SourceImage,
+        lines: &[ILine],
+        skew: &dyn Fn(&ILine) -> f64,
+        anchor: DrawingAnchor,
+        size: (f64, f64),
+    ) -> Result<InlineNode, PdfImportError> {
+        let emu = crate::fixed::emu;
+        let b = image.bounds;
+        let media = self.media(image)?;
+        let mut children = Vec::with_capacity(lines.len() + 1);
+        children.push(GroupChild::Picture(GroupPicture {
+            id: self.id()?,
+            media,
+            offset: PointEmu {
+                x_emu: emu(b.x0),
+                y_emu: emu(b.y0),
+            },
+            extent: Extent {
+                width_emu: emu(b.width()).max(1),
+                height_emu: emu(b.height()).max(1),
+            },
+            descr: None,
+            crop: None,
+            opacity: None,
+            hyperlink: None,
+            border: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        }));
+        for line in lines {
+            let (chars, _) = text::join(&[line]);
+            let mut inlines = self.inlines(&chars, None)?;
+            unpainted(&mut inlines);
+            let height = (line.bottom - line.top).max(1.0);
+            let pad = (height * LINE_BOX_PAD).max(0.5);
+            let (x0, y0, x1, y1) = (
+                line.x0 - pad,
+                line.top - pad,
+                line.x1 + pad,
+                line.bottom + pad,
+            );
+            let (w, h) = (x1 - x0, y1 - y0);
+            // The line was laid level about its first glyph's origin; its
+            // ink runs from there at its angle. The box turns about its own
+            // centre (`a:xfrm@rot`), so its centre is the turned one.
+            let degrees = skew(line);
+            let (cx, cy) = {
+                let (px, py) = (line.x0, line.baseline);
+                let (dx, dy) = ((x0 + x1) / 2.0 - px, (y0 + y1) / 2.0 - py);
+                let (sin, cos) = degrees.to_radians().sin_cos();
+                (px + dx * cos - dy * sin, py + dx * sin + dy * cos)
+            };
+            children.push(GroupChild::TextBox(GroupTextBox {
+                id: self.id()?,
+                offset: PointEmu {
+                    x_emu: emu(cx - w / 2.0),
+                    y_emu: emu(cy - h / 2.0),
+                },
+                extent: Extent {
+                    width_emu: emu(w).max(1),
+                    height_emu: emu(h).max(1),
+                },
+                geometry: ShapeGeometry::Rectangle,
+                preset: None,
+                adjustments: Vec::new(),
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: self.id()?,
+                    properties: ParagraphProperties {
+                        spacing: Some(Spacing {
+                            before_twips: Some(0),
+                            after_twips: Some(0),
+                            line_percent: Some(100),
+                            ..Spacing::default()
+                        }),
+                        ..ParagraphProperties::default()
+                    }
+                    .into(),
+                    inlines,
+                })],
+                fill: None,
+                border: None,
+                shadow: None,
+                body_properties: TextBoxBodyProperties {
+                    insets: TextBoxInsets {
+                        left_emu: i32::try_from(emu(pad)).unwrap_or(0),
+                        top_emu: 0,
+                        right_emu: 0,
+                        bottom_emu: 0,
+                    },
+                    ..TextBoxBodyProperties::default()
+                },
+                hyperlink: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: (degrees.abs() > 0.0).then(|| (degrees * 60_000.0).round() as i32),
+            }));
+        }
+        self.z += 1;
+        let id = self.id()?;
+        let mut group =
+            crate::fixed::vector_group(id, children, (b.x0, b.y0, b.x1, b.y1), anchor, self.z);
+        group.extent = Extent {
+            width_emu: emu(size.0).max(1),
+            height_emu: emu(size.1).max(1),
+        };
+        group.transform.extent = group.extent;
+        Ok(InlineNode::Group(Box::new(group)))
     }
 
     /// The floats of a paragraph whose first line's top is `top`, in the
@@ -1513,7 +1661,11 @@ pub(crate) fn emit(
             }
             EKind::Image(image) => {
                 object_bottom = Some((element.page, image.bounds.y1));
-                items.push(Item::Image(image.clone(), element.region));
+                items.push(Item::Image(
+                    image.clone(),
+                    element.region,
+                    element.labels.clone(),
+                ));
             }
             EKind::Vector(vector) => {
                 object_bottom = Some((element.page, vector.bounds.y1));
@@ -2025,6 +2177,8 @@ pub(crate) fn emit(
     if current_shape.0 > 1 {
         column_sections += 1;
     }
+    // The last block was a scanned page: what follows starts a new page.
+    let mut after_scan = false;
     for item in &items {
         let shape = shape_of(item.region());
         let size = item.page().map_or(current_size, size_of_page);
@@ -2062,6 +2216,29 @@ pub(crate) fn emit(
             current_size = size;
             if shape.0 > 1 {
                 column_sections += 1;
+            }
+        }
+        if after_scan && !matches!(item, Item::Image(_, _, lines) if !lines.is_empty()) {
+            after_scan = false;
+            if !drop_break && !matches!(item, Item::Para(_)) {
+                body.push(BlockNode::Paragraph(Paragraph {
+                    id: emitter.id()?,
+                    properties: ParagraphProperties {
+                        page_break_before: Some(true),
+                        ..ParagraphProperties::default()
+                    }
+                    .into(),
+                    inlines: Vec::new(),
+                }));
+            }
+            if let Item::Para(p) = item
+                && !drop_break
+            {
+                let mut p = p.clone();
+                p.page_break = true;
+                drop_break = false;
+                body.push(BlockNode::Paragraph(emitter.paragraph(&p)?));
+                continue;
             }
         }
         match item {
@@ -2112,7 +2289,48 @@ pub(crate) fn emit(
                     inlines,
                 }));
             }
-            Item::Image(image, region) => {
+            Item::Image(image, region, lines) if !lines.is_empty() => {
+                let b = image.bounds;
+                let page = lines[0].page;
+                let (pw, ph) = size_of_page(page);
+                let full = b.width() * b.height() >= super::BACKGROUND_SHARE * pw * ph;
+                let skews = state.pages.get(page);
+                let skew = |line: &ILine| skews.map_or(0.0, |p| p.skew_at(line.x0, line.baseline));
+                let (anchor, size) = if full {
+                    // A scanned page: the picture where the PDF drew it on a
+                    // page of its own, in front of nothing (the page has no
+                    // other text), its lines clickable over it.
+                    let mut anchor = float_anchor(b.x0, b.y0, Some(FloatWrap::Background));
+                    anchor.behind_doc = false;
+                    (anchor, (b.width(), b.height()))
+                } else {
+                    // A picture of text in a text PDF: on its own line, as a
+                    // picture is, sized as one.
+                    let (left, right) = column(&flow, *region, None, b.x0, page_w);
+                    let room = (
+                        right - left,
+                        by1 - by0 - emitter.rhythm.body_after.unwrap_or(0.0) - 2.0,
+                    );
+                    (
+                        float_anchor((b.x0 - left).max(0.0), 0.0, None),
+                        fit(b.width(), b.height(), room),
+                    )
+                };
+                let group = emitter.image_text(image, lines, &skew, anchor, size)?;
+                let mut properties = ParagraphProperties::default();
+                if full && !body.is_empty() && !drop_break {
+                    properties.page_break_before = Some(true);
+                }
+                drop_break = false;
+                body.push(BlockNode::Paragraph(Paragraph {
+                    id: emitter.id()?,
+                    properties: properties.into(),
+                    inlines: vec![group],
+                }));
+                after_scan = full;
+                continue;
+            }
+            Item::Image(image, region, _) => {
                 let media = emitter.media(image)?;
                 let b = image.bounds;
                 let (left, right) = column(&flow, *region, None, b.x0, page_w);

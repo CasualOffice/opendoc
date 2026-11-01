@@ -3312,5 +3312,15 @@
   "printSelection.command": "चयन प्रिंट करें",
   "printSelection.needsRange": "पहले प्रिंट करने के लिए टेक्स्ट चुनें",
   "unicodeToggle.command": "वर्ण कोड टॉगल करें",
-  "unicodeToggle.nothing": "इंसर्शन पॉइंट से पहले बदलने को कुछ नहीं है"
+  "unicodeToggle.nothing": "इंसर्शन पॉइंट से पहले बदलने को कुछ नहीं है",
+  "findings.feature.pdfImageTextBoxes": "स्कैन किए गए पृष्ठों और चित्रों से पढ़ी गई पंक्तियाँ, मूल पिक्सेल के ऊपर संपादन योग्य",
+  "imageText.fill.command": "संपादन के नीचे का पाठ मिटाएँ: भरें",
+  "imageText.blur.command": "संपादन के नीचे का पाठ मिटाएँ: धुंधला करें",
+  "imageText.pixelate.command": "संपादन के नीचे का पाठ मिटाएँ: पिक्सेलेट करें",
+  "imageText.restore.command": "चित्र में मूल पाठ पुनर्स्थापित करें",
+  "imageText.reason.noBox": "कर्सर को स्कैन किए गए पृष्ठ या चित्र की किसी पाठ पंक्ति में रखें",
+  "imageText.reason.notEdited": "यह पंक्ति संपादित नहीं हुई है",
+  "imageText.refused.notImageText": "यह पाठ किसी चित्र के ऊपर नहीं है",
+  "imageText.refused.pictureUnreadable": "इस पंक्ति के नीचे का चित्र पढ़ा नहीं जा सकता",
+  "imageText.refused.unknownMode": "पाठ मिटाने का अज्ञात तरीका"
 }

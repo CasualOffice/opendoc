@@ -3301,5 +3301,15 @@
   "printSelection.command": "打印所选内容",
   "printSelection.needsRange": "请先选择要打印的文字",
   "unicodeToggle.command": "切换字符代码",
-  "unicodeToggle.nothing": "插入点前没有可转换的内容"
+  "unicodeToggle.nothing": "插入点前没有可转换的内容",
+  "findings.feature.pdfImageTextBoxes": "从扫描页面和图片中读取的行，可在原始像素上编辑",
+  "imageText.fill.command": "擦除编辑处下方的文字：填充",
+  "imageText.blur.command": "擦除编辑处下方的文字：模糊",
+  "imageText.pixelate.command": "擦除编辑处下方的文字：像素化",
+  "imageText.restore.command": "恢复图片中的原始文字",
+  "imageText.reason.noBox": "请将光标放在扫描页面或图片中的一行文字中",
+  "imageText.reason.notEdited": "此行尚未编辑",
+  "imageText.refused.notImageText": "此文字不在图片上",
+  "imageText.refused.pictureUnreadable": "无法读取此行下方的图片",
+  "imageText.refused.unknownMode": "未知的擦除方式"
 }

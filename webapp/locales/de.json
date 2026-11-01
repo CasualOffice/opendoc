@@ -3312,5 +3312,15 @@
   "printSelection.command": "Auswahl drucken",
   "printSelection.needsRange": "Markieren Sie zuerst den zu druckenden Text",
   "unicodeToggle.command": "Zeichencode umschalten",
-  "unicodeToggle.nothing": "Vor der Einfügemarke gibt es nichts umzuwandeln"
+  "unicodeToggle.nothing": "Vor der Einfügemarke gibt es nichts umzuwandeln",
+  "findings.feature.pdfImageTextBoxes": "Aus gescannten Seiten und Bildern gelesene Zeilen, über den Originalpixeln bearbeitbar",
+  "imageText.fill.command": "Text unter Änderungen entfernen: füllen",
+  "imageText.blur.command": "Text unter Änderungen entfernen: weichzeichnen",
+  "imageText.pixelate.command": "Text unter Änderungen entfernen: verpixeln",
+  "imageText.restore.command": "Originaltext im Bild wiederherstellen",
+  "imageText.reason.noBox": "Setzen Sie den Cursor in eine Textzeile einer gescannten Seite oder eines Bildes",
+  "imageText.reason.notEdited": "Diese Zeile wurde nicht bearbeitet",
+  "imageText.refused.notImageText": "Dieser Text liegt nicht über einem Bild",
+  "imageText.refused.pictureUnreadable": "Das Bild unter dieser Zeile kann nicht gelesen werden",
+  "imageText.refused.unknownMode": "Unbekannte Art, den Text zu entfernen"
 }
