@@ -2651,6 +2651,7 @@
   "findings.feature.pdfPageBreaks": "Pagina-einden afgeleid uit waar pagina's eindigen",
   "findings.feature.pdfFloats": "Afbeeldingen en tekeningen zwevend naast of achter hun tekst",
   "findings.feature.pdfScanReplaced": "Gescande pagina's getoond als hun herkende tekst (de scan blijft in de exacte opmaak)",
+  "findings.feature.pdfWatermark": "Watermerken herkend en ingesteld als watermerk van het document",
   "findings.feature.pdfDecorations": "Als vormen getekende onderstrepingen, markeringen, arceringen en randen teruggezet op hun tekst",
   "findings.feature.pdfVectorsPlaced": "Tekeningen geplaatst als vormen",
   "pdfImport.title": "{name} openen",

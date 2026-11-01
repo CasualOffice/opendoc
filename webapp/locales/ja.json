@@ -2640,6 +2640,7 @@
   "findings.feature.pdfPageBreaks": "ページの終わりから推定した改ページ",
   "findings.feature.pdfFloats": "画像と図形を本文の横または背面に配置",
   "findings.feature.pdfScanReplaced": "スキャンしたページを認識したテキストとして表示（スキャン画像は正確なレイアウトに残ります）",
+  "findings.feature.pdfWatermark": "透かしを認識し、文書の透かしとして設定しました",
   "findings.feature.pdfDecorations": "図形として描かれた下線・蛍光ペン・網かけ・罫線を本文の書式に戻しました",
   "findings.feature.pdfVectorsPlaced": "図形として配置した描画",
   "pdfImport.title": "{name} を開いています",

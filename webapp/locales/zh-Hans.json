@@ -2640,6 +2640,7 @@
   "findings.feature.pdfPageBreaks": "根据页面结尾推断的分页符",
   "findings.feature.pdfFloats": "图片和绘图浮动在文字旁边或后面",
   "findings.feature.pdfScanReplaced": "扫描页面以识别出的文字显示（扫描图像保留在精确版式中）",
+  "findings.feature.pdfWatermark": "已识别水印并设为文档水印",
   "findings.feature.pdfDecorations": "以图形绘制的下划线、突出显示、底纹和边框已还原为文字格式",
   "findings.feature.pdfVectorsPlaced": "绘图已作为形状放置",
   "pdfImport.title": "正在打开 {name}",

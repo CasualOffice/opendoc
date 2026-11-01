@@ -2673,6 +2673,7 @@
   "findings.feature.pdfPageBreaks": "Розриви сторінок визначено за кінцями сторінок",
   "findings.feature.pdfFloats": "Зображення та малюнки розміщено поруч із текстом або за ним",
   "findings.feature.pdfScanReplaced": "Скановані сторінки показано як розпізнаний текст (скан лишається в точній розмітці)",
+  "findings.feature.pdfWatermark": "Водяні знаки розпізнано та встановлено як водяний знак документа",
   "findings.feature.pdfDecorations": "Підкреслення, виділення, заливку та межі, намальовані фігурами, повернуто тексту",
   "findings.feature.pdfVectorsPlaced": "Малюнки розміщено як фігури",
   "pdfImport.title": "Відкриття {name}",

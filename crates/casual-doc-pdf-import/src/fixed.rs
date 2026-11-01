@@ -266,6 +266,7 @@ pub(crate) type PlacedImage = (
     Bounds,
     MediaReference,
     Option<casual_doc_pdf_read::InkBands>,
+    f32,
 );
 
 /// A finished build: the document, its media and the report.
@@ -1385,6 +1386,7 @@ impl Builder {
                 part_name,
             },
             image.ink,
+            image.opacity,
         ));
         let z = self.next_z();
         let rotation = (!upright).then(|| (image.rotation_degrees * 60_000.0).round() as i32);
