@@ -3682,6 +3682,7 @@
   "ai.turn.empty": "لم يُرجع Casual AI شيئًا؛ لم يتغيّر نصك.",
   "ai.violation.empty": "لم يُرجع شيئًا، لذا لم يتغيّر نصك.",
   "ai.violation.incomplete": "انقطعت إجابته قبل أن تكتمل.",
+  "pdfOcr.stop": "إيقاف التعرف على النص",
   "plugins.assistant.live.empty": "لم يُرجع الذكاء الاصطناعي شيئًا؛ لم يتغيّر نصك.",
   "plugins.assistant.violation.stale": "تغيّر النص قبل أن يصل إليه Casual AI.",
   "plugins.assistant.violation.empty": "لم يُرجع شيئًا، لذا لم يتغيّر نصك.",

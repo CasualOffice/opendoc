@@ -3627,6 +3627,7 @@
   "ai.turn.empty": "Casual AI가 아무것도 반환하지 않았습니다. 텍스트는 바뀌지 않았습니다.",
   "ai.violation.empty": "아무것도 반환하지 않아 텍스트가 바뀌지 않았습니다.",
   "ai.violation.incomplete": "답변이 끝나기 전에 끊겼습니다.",
+  "pdfOcr.stop": "텍스트 인식 중지",
   "plugins.assistant.live.empty": "AI가 아무것도 반환하지 않았습니다. 텍스트는 바뀌지 않았습니다.",
   "plugins.assistant.violation.stale": "Casual AI가 도달하기 전에 텍스트가 바뀌었습니다.",
   "plugins.assistant.violation.empty": "아무것도 반환하지 않아 텍스트가 바뀌지 않았습니다.",

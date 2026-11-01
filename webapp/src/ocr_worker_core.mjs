@@ -26,7 +26,11 @@
 //   { type: "stored", id, manifestUrl }      → { type: "stored", id, stored }
 //   { type: "warm", id, manifestUrl }        → { type: "warm", id } | error
 //   { type: "import", id, bytes, manifestUrl, mode, cmapSource }
-//        → { type: "pages", id, done, total }* → { type: "read", id }
+//        → { type: "pages", id, done, total, scanned }* → { type: "read", id }
+//     `manifestUrl: null` is a plain import with no recognition: no models
+//     are loaded, and the pages are read off the main thread all the same
+//     (a scanned page costs ~600 ms to decode, which froze the tab when the
+//     open ran on the main thread; owner report 2026-11-02).
 //   { type: "finish", id, layout }           → { type: "done", id, pkg, ocr, layout } | error
 // and, broadcast while the models load for whichever request needed them:
 //   { type: "models", done, total }, { type: "loading" }
@@ -59,6 +63,19 @@ export function createOcrWorkerCore(io) {
   const finishing = new Map();
 
   const fail = (id, error) => io.post({ type: "error", id, message: String(error?.message ?? error) });
+  /** One turn of the event loop. A MessageChannel, not `setTimeout(0)`, which
+   *  is clamped to 4 ms once nested: 1.6 s over a 400-page file. */
+  const pause =
+    io.pause ??
+    (() =>
+      new Promise((resolve) => {
+        const channel = new MessageChannel();
+        channel.port1.onmessage = () => {
+          channel.port1.close();
+          resolve();
+        };
+        channel.port2.postMessage(0);
+      }));
 
   async function module() {
     if (glue) return glue;
@@ -120,14 +137,18 @@ export function createOcrWorkerCore(io) {
   async function importWith(id, pdf, loaded, bytes, message) {
     let job = null;
     try {
-      job = pdf.beginPdfImportWithOcr(bytes, loaded);
+      job = loaded ? pdf.beginPdfImportWithOcr(bytes, loaded) : pdf.beginPdfImport(bytes);
       await provideCMaps(pdf, job.missingCMaps, message.cmapSource);
       const total = job.pageCount;
-      io.post({ type: "pages", id, done: 0, total });
+      io.post({ type: "pages", id, done: 0, total, scanned: job.scannedPages ?? 0 });
       let status = "pending";
       while (status === "pending") {
         status = job.step(1);
-        io.post({ type: "pages", id, done: job.pagesDone, total });
+        io.post({ type: "pages", id, done: job.pagesDone, total, scanned: job.scannedPages ?? 0 });
+        // Back to the event loop between pages, so a message that arrived
+        // meanwhile runs now: the model preload the first scanned page asks
+        // for must start while the rest are read, not after (docs/182 §17a.5).
+        await pause();
       }
       if (status !== "done") throw new Error(status === "cancelled" ? "the import was cancelled" : "a page could not be read");
       // The layout is the reader's to choose while the pages were read (the
@@ -158,7 +179,7 @@ export function createOcrWorkerCore(io) {
   async function runImport(message) {
     const { id } = message;
     try {
-      const loaded = await ensureEngine(message.manifestUrl);
+      const loaded = message.manifestUrl ? await ensureEngine(message.manifestUrl) : null;
       const pdf = await module();
       const bytes = new Uint8Array(message.bytes);
       let result;

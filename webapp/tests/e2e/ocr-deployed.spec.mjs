@@ -88,10 +88,12 @@ test.describe("scanned-PDF recognition as deployed", () => {
     await page.locator("#file").setInputFiles({ name: "printed-scan.pdf", mimeType: "application/pdf", buffer: pdf });
     await expect.poll(() => page.locator("#docTitle").inputValue(), { timeout: 60_000 }).toBe("printed-scan.pdf");
 
-    // Recognition starts by itself, with the deployment's models.
-    const dialog = page.locator("#pdfImportDialog");
-    await expect(dialog).toHaveAttribute("data-mode", "ocr", { timeout: 60_000 });
-    await expect(dialog).toBeHidden({ timeout: 200_000 });
+    // Recognition starts by itself, with the deployment's models, in the
+    // background: no dialog, progress in the status bar.
+    const running = page.locator("body[data-pdf-recognition=running]");
+    await expect(running).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.locator("#pdfImportDialog")).toBeHidden();
+    await expect(running).toHaveCount(0, { timeout: 200_000 });
     await expect(page.locator("#status")).not.toHaveClass(/error/);
 
     // The words are text now: in the document, and found by Find.

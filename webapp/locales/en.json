@@ -2348,6 +2348,7 @@
   "pdfOcr.noScans": "This PDF has no scanned pages to read.",
   "pdfOcr.notPdf": "Text recognition applies to a document opened from a PDF.",
   "pdfOcr.recognisingPage": "Recognising text on page {page} of {total}…",
+  "pdfOcr.stop": "Stop recognising text",
   "pdfOcr.title": "Recognising text in {name}",
   "pdfReflow.alreadyFlowing": "This PDF is already open as a flowing document.",
   "pdfReflow.cancelLabel": "Cancel converting this PDF",

@@ -3638,6 +3638,7 @@
   "ai.turn.empty": "Casual AI gaf niets terug; je tekst is ongewijzigd.",
   "ai.violation.empty": "het gaf niets terug, dus je tekst is ongewijzigd.",
   "ai.violation.incomplete": "het antwoord werd afgebroken voordat het klaar was.",
+  "pdfOcr.stop": "Tekstherkenning stoppen",
   "plugins.assistant.live.empty": "De AI gaf niets terug; je tekst is ongewijzigd.",
   "plugins.assistant.violation.stale": "de tekst veranderde voordat Casual AI er was.",
   "plugins.assistant.violation.empty": "het gaf niets terug, dus je tekst is ongewijzigd.",

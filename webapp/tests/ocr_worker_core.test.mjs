@@ -12,7 +12,7 @@ const URL_A = "https://host.example/ocr/manifest.json";
 
 function harness({ engineFails = 0 } = {}) {
   const posts = [];
-  const calls = { obtain: 0, load: 0, begin: 0, finish: [] };
+  const calls = { obtain: 0, load: 0, begin: 0, plain: 0, finish: [] };
   let failures = engineFails;
   const glue = {
     setFaceHost(host) {
@@ -34,16 +34,25 @@ function harness({ engineFails = 0 } = {}) {
     beginPdfImportWithOcr(bytes, engine) {
       calls.begin += 1;
       assert.ok(engine.engine);
+      return glue.job();
+    },
+    beginPdfImport() {
+      calls.plain += 1;
+      return glue.job();
+    },
+    job() {
       let done = 0;
+      const pages = glue.pages ?? 3;
       return {
+        scannedPages: 2,
         missingCMaps: [],
-        pageCount: 3,
+        pageCount: pages,
         get pagesDone() {
           return done;
         },
         step() {
           done += 1;
-          return done < 3 ? "pending" : "done";
+          return done < pages ? "pending" : "done";
         },
         finish() {
           calls.finish.push("fixed");
@@ -113,6 +122,22 @@ test("a preload and the run after it load the models once, and the run reports e
   assert.deepEqual(calls.finish, ["fixed", "flowing"], "a conversion finishes flowing without asking");
 });
 
+test("a plain import (no manifest) reads the pages in the worker with no models, and reports the scans it met", async () => {
+  const { core, posts, calls, next } = harness();
+  core.handle({ type: "import", id: 4, manifestUrl: null, mode: "import", bytes: new ArrayBuffer(4) });
+  await next("read", 4);
+  assert.equal(calls.plain, 1, "the plain entry point read it");
+  assert.equal(calls.begin, 0, "not the recognising one");
+  assert.equal(calls.obtain, 0, "no model was downloaded");
+  assert.equal(calls.load, 0, "no engine was loaded");
+  const scanned = posts.filter((p) => p.message.type === "pages" && p.message.id === 4).map((p) => p.message.scanned);
+  assert.ok(scanned.every((n) => n === 2), "each progress message carries the scanned-page count");
+  core.handle({ type: "finish", id: 4, layout: "flowing" });
+  const done = await next("done", 4);
+  assert.deepEqual(calls.finish, ["flowing"]);
+  assert.deepEqual(done.transfer, [done.message.pkg.buffer]);
+});
+
 test("an engine that fails to load is reported and forgotten, so the next request loads again", async () => {
   const { core, calls, next } = harness({ engineFails: 1 });
   core.handle({ type: "warm", id: 1, manifestUrl: URL_A });
@@ -137,4 +162,20 @@ test("whether the models are kept is answered from the worker's store", async ()
   core.handle({ type: "stored", id: 5, manifestUrl: URL_A });
   const answer = await next("stored", 5);
   assert.equal(answer.message.stored, true);
+});
+
+test("a preload asked for while a plain import reads its pages is served before the pages are all read", async () => {
+  // The first scanned page asks for the models (docs/182 §17a.5): the worker
+  // must take that message between pages, or the download waits for the
+  // whole file. Seen red with the pause between pages removed: "warm" came
+  // after "read".
+  const { core, posts, glue, next } = harness();
+  glue.pages = 200;
+  core.handle({ type: "import", id: 7, manifestUrl: null, mode: "import", bytes: new ArrayBuffer(4) });
+  await next("pages", 7);
+  core.handle({ type: "warm", id: 8, manifestUrl: URL_A });
+  await next("read", 7);
+  const order = posts.map((p) => `${p.message.type}:${p.message.id}`);
+  assert.ok(order.includes("warm:8"), `the preload was not served while the pages were read: ${order.slice(-5).join(", ")}`);
+  assert.ok(order.indexOf("warm:8") < order.indexOf("read:7"), "the preload waited for the whole file");
 });

@@ -89,6 +89,7 @@ async function serveFakeModels(page) {
     (url) => url.pathname === "/ocr-test/manifest.json",
     (route) => {
       seen.manifest += 1;
+      seen.manifestAt ??= Date.now();
       return route.fulfill({ contentType: "application/json", body: JSON.stringify(manifest) });
     },
   );
@@ -209,10 +210,11 @@ test.describe("the lazily loaded PDF module", () => {
   });
 
   // The contract since auto-recognition (owner, 2026-10-30): a scanned PDF is
-  // recognised on its own, downloading the models WITHOUT a prompt, behind the
-  // import dialog's progress and Cancel; "Recognise text" asked for by hand
-  // still confirms first, naming the size and the origin, until the models
-  // are kept in this browser.
+  // recognised on its own, downloading the models WITHOUT a prompt, in the
+  // BACKGROUND (owner report 2026-11-02): no dialog, its progress in the status
+  // bar, and the same File-menu command, now "Stop recognising text", cancels
+  // it. "Recognise text" asked for by hand still confirms first, naming the
+  // size and the origin, until the models are kept in this browser.
   test("with a host's models, a scan is recognised on its own without asking; by hand, recognition asks until the models are kept", async ({
     page,
   }) => {
@@ -222,15 +224,18 @@ test.describe("the lazily loaded PDF module", () => {
     seen.hold();
     await openBuffer(page, "scan.pdf", scanPdf());
 
-    // Automatic: no consent prompt, the download shows in the import dialog.
-    await expect(dialog(page)).toHaveAttribute("data-mode", "ocr");
-    await expect(page.locator("#pdfImportDialogPhase")).toHaveText("Downloading recognition models…");
+    // Automatic: no consent prompt and no dialog; the download shows in the
+    // status bar while the scanned pages stay on screen.
+    await expect(page.locator("body[data-pdf-recognition=running]")).toHaveCount(1);
+    await expect(page.locator("#status")).toHaveText("Downloading recognition models…");
+    await expect(dialog(page)).toBeHidden();
     await expect(page.locator("#confirmDialog")).toBeHidden();
     await expect.poll(() => seen.files, { message: "the automatic run downloads without asking" }).toBeGreaterThan(0);
 
-    // Cancel terminates the worker: nothing is kept, the document stays.
-    await page.locator("#pdfImportDialogCancel").click();
-    await expect(dialog(page)).toBeHidden();
+    // Stop terminates the worker: nothing is kept, the document stays.
+    if (await findings(page).isVisible()) await closeFindings(page);
+    await runAppMenuCommand(page, "file", "file.pdf.recogniseText");
+    await expect(page.locator("body[data-pdf-recognition=running]")).toHaveCount(0);
     await expect(page.locator("#status")).toHaveText("Text recognition was cancelled — the document is unchanged");
     await expect(page.locator("#docTitle")).toHaveValue("scan.pdf");
     seen.release();
@@ -273,26 +278,6 @@ test.describe("the lazily loaded PDF module", () => {
   test("a scanned PDF starts loading the models while it is still being read; a DOCX and a text PDF never ask", async ({
     page,
   }) => {
-    // Every idle slice after the first is held once `__holdAfterFirst` is set:
-    // the import stops after its first slice, with pages still to read.
-    await page.addInitScript(() => {
-      const real = window.requestIdleCallback?.bind(window);
-      if (!real) return;
-      const held = [];
-      window.__holdAfterFirst = false;
-      let ran = 0;
-      window.requestIdleCallback = (callback, options) => {
-        if (window.__holdAfterFirst && ran++ >= 1) {
-          held.push([callback, options]);
-          return 0;
-        }
-        return real(callback, options);
-      };
-      window.__releaseHeld = () => {
-        window.__holdAfterFirst = false;
-        for (const [callback, options] of held.splice(0)) real(callback, options);
-      };
-    });
     const seen = await serveFakeModels(page);
     await gotoEditor(page, "&pdfOcrModels=/ocr-test/manifest.json");
     expect(seen.manifest + seen.files, "a DOCX asked for the OCR models").toBe(0);
@@ -302,18 +287,23 @@ test.describe("the lazily loaded PDF module", () => {
     await closeFindings(page);
     expect(seen.manifest + seen.files, "a PDF with no scans asked for the OCR models").toBe(0);
 
-    await page.evaluate(() => {
-      window.__holdAfterFirst = true;
-    });
+    // 400 scanned pages, read in the worker (HF-423). The guarantee: the
+    // models are asked for while the pages are still being read, so the
+    // download overlaps the read, not after it. Stated as an order of events:
+    // the manifest request starts before the import's finish mark (set when
+    // the worker's package arrives). Seen red with the worker's pause between
+    // pages removed: the preload message waited behind the whole read.
+    await page.evaluate(() => performance.clearMarks("opendoc:pdf-import:finish"));
     await page.locator("#file").setInputFiles({ name: "long-scan.pdf", mimeType: "application/pdf", buffer: scanPdf({ pages: 400 }) });
-    await expect(dialog(page)).toHaveAttribute("data-mode", "import");
-    // Still reading the PDF, and the models are already on their way.
-    await expect.poll(() => seen.manifest, { message: "the preload never started" }).toBeGreaterThan(0);
-    await expect.poll(() => seen.files).toBe(3);
-    await expect(dialog(page)).toHaveAttribute("data-mode", "import");
-    await expect(page.locator("#docTitle")).toHaveValue("synthetic-prose.pdf");
+    await expect.poll(() => seen.files, { message: "the preload never fetched the models" }).toBe(3);
+    const finishedAt = () =>
+      page.evaluate(() => {
+        const mark = performance.getEntriesByName("opendoc:pdf-import:finish")[0];
+        return mark ? performance.timeOrigin + mark.startTime : null;
+      });
+    await expect.poll(finishedAt, { timeout: 60_000 }).not.toBeNull();
+    expect(seen.manifestAt, "the models were asked for only after every page was read").toBeLessThan(await finishedAt());
 
-    await page.evaluate(() => window.__releaseHeld());
     // The automatic run that follows uses what the preload kept: no second
     // download (these files are not models, so it ends refused, in words).
     await expect(page.locator("#status")).toContainText("Text recognition failed", { timeout: 60_000 });

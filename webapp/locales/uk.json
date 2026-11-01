@@ -3660,6 +3660,7 @@
   "ai.turn.empty": "Casual AI нічого не повернув; ваш текст не змінено.",
   "ai.violation.empty": "він нічого не повернув, тому ваш текст не змінено.",
   "ai.violation.incomplete": "його відповідь обірвалася, не завершившись.",
+  "pdfOcr.stop": "Зупинити розпізнавання тексту",
   "plugins.assistant.live.empty": "ШІ нічого не повернув; ваш текст не змінено.",
   "plugins.assistant.violation.stale": "текст змінився, перш ніж до нього дійшов Casual AI.",
   "plugins.assistant.violation.empty": "він нічого не повернув, тому ваш текст не змінено.",
