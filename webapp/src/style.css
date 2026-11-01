@@ -14535,3 +14535,25 @@ body.phone-mode .plugin-panel { height: 55vh; }
 .ai-header-btn .ms { font-size: var(--icon-sm); }
 .ai-header-btn:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .ai-header-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* "Help me write" on an empty line, beside the caret (approved design A1). */
+.ai-help-write {
+  position: fixed;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  block-size: var(--h-dense);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink-3, var(--muted));
+  font: inherit;
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+.ai-help-write[hidden] { display: none; }
+.ai-help-write .ms { font-size: var(--icon-sm); color: var(--accent-text); }
+.ai-help-write:hover { background: var(--accent-soft); color: var(--accent-text); }
+.ai-help-write:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

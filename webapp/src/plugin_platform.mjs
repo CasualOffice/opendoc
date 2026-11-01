@@ -1069,6 +1069,53 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
   aiHeaderBtn?.addEventListener("click", openAiPanel);
   homeAiBtn?.addEventListener("click", openAiPanel);
 
+  // "Help me write" beside the caret on an empty line (Word's "Draft with
+  // Copilot", Docs' "Help me write"). Opens the assistant in Draft mode, which
+  // writes at the caret. Shown only while an AI plugin runs and the caret sits
+  // collapsed in an empty paragraph; O(1) per check (paragraphLength reads one
+  // paragraph).
+  const helpWrite = doc.createElement("button");
+  helpWrite.type = "button";
+  helpWrite.id = "aiHelpWriteBtn";
+  helpWrite.className = "ai-help-write";
+  helpWrite.hidden = true;
+  helpWrite.innerHTML = '<span class="ms" aria-hidden="true">edit_note</span><span class="ai-help-write-text"></span>';
+  const helpWriteText = () => (has("aiHelpWrite.label") ? t("aiHelpWrite.label") : "Help me write");
+  helpWrite.addEventListener("mousedown", (e) => e.preventDefault());
+  helpWrite.addEventListener("click", () => {
+    helpWrite.hidden = true;
+    const first = contributed("selection")[0]?.[0] ?? null;
+    if (!first?.manifest.contributes.panel) return;
+    showPanel(first, true);
+    first.running.invoke("draft", { hasRange: false });
+  });
+  doc.body.append(helpWrite);
+  function placeHelpWrite() {
+    const running = contributed("selection").length > 0;
+    const sel = ed.selection;
+    const collapsed = sel && !ed.hasRange?.();
+    let empty = false;
+    if (running && collapsed && ed.doc?.paragraphLength) {
+      try { empty = ed.doc.paragraphLength(sel.anchor.node) === 0; } catch { empty = false; }
+    }
+    const caret = empty ? ed.pagesEl?.querySelector(".overlay .caret") : null;
+    const r = caret?.getBoundingClientRect();
+    if (!r || !r.height || doc.body.classList.contains("modal-open")) { helpWrite.hidden = true; return; }
+    helpWrite.querySelector(".ai-help-write-text").textContent = helpWriteText();
+    helpWrite.setAttribute("aria-label", helpWriteText());
+    helpWrite.hidden = false;
+    helpWrite.style.top = `${Math.round(r.top + r.height / 2 - helpWrite.offsetHeight / 2)}px`;
+    helpWrite.style.left = `${Math.round(r.left + 8)}px`;
+  }
+  let helpWriteQueued = false;
+  const queueHelpWrite = () => {
+    if (helpWriteQueued) return;
+    helpWriteQueued = true;
+    requestAnimationFrame(() => { helpWriteQueued = false; placeHelpWrite(); });
+  };
+  for (const type of ["keyup", "pointerup", "focusin"]) doc.addEventListener(type, queueHelpWrite, true);
+  ed.viewportEl?.addEventListener("scroll", queueHelpWrite, { passive: true });
+
   /** Shows only what running plugins contribute (owner rule 1). O(plugins). */
   function reflectChrome() {
     const ribbonRows = contributed("ribbon").length > 0;
