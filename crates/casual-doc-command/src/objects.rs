@@ -281,69 +281,79 @@ pub fn points_to_emu(points: f64) -> Option<i64> {
 
 /// The anchor of the floating object `object` in `blocks` (paragraphs, table
 /// cells, content controls and text-box bodies, and inline wrappers),
-/// if it is one. O(blocks).
+/// if it is one. O(blocks up to `object`).
+///
+/// It is [`visit_anchors_in_blocks`] stopped at the first floating match, so a
+/// one-walk index built from the visitor answers exactly what this does. Never
+/// call it once per object inside a loop over objects (`SKILL` §8): visit once.
 #[must_use]
 pub fn anchor_in_blocks(blocks: &[BlockNode], object: NodeId) -> Option<DrawingAnchor> {
-    for block in blocks {
-        match block {
-            BlockNode::Paragraph(paragraph) => {
-                if let Some(anchor) = anchor_in_inlines(&paragraph.inlines, object) {
-                    return Some(anchor);
-                }
-            }
-            BlockNode::Table(table) => {
-                for row in &table.rows {
-                    for cell in &row.cells {
-                        if let Some(anchor) = anchor_in_blocks(&cell.blocks, object) {
-                            return Some(anchor);
-                        }
-                    }
-                }
-            }
-            BlockNode::Sdt(sdt) => {
-                if let Some(anchor) = anchor_in_blocks(&sdt.blocks, object) {
-                    return Some(anchor);
-                }
-            }
-            BlockNode::AltChunk(_) => {}
+    let mut found = None;
+    visit_anchors_in_blocks(blocks, &mut |id, anchor| {
+        if id == object
+            && let Some(anchor) = anchor
+        {
+            found = Some(anchor.clone());
+            true
+        } else {
+            false
         }
-    }
-    None
+    });
+    found
 }
 
-fn anchor_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<DrawingAnchor> {
+/// Visits every object carrier the anchor lookup can resolve in `blocks`, with
+/// its anchor (`None` for an in-line one), in the lookup's search order
+/// (pre-order, document order). `visit` returning `true` stops the walk, and
+/// so does this function's `true`. O(nodes in `blocks`).
+pub fn visit_anchors_in_blocks(
+    blocks: &[BlockNode],
+    visit: &mut dyn FnMut(NodeId, Option<&DrawingAnchor>) -> bool,
+) -> bool {
+    for block in blocks {
+        let stop = match block {
+            BlockNode::Paragraph(paragraph) => visit_anchors_in_inlines(&paragraph.inlines, visit),
+            BlockNode::Table(table) => table.rows.iter().any(|row| {
+                row.cells
+                    .iter()
+                    .any(|cell| visit_anchors_in_blocks(&cell.blocks, visit))
+            }),
+            BlockNode::Sdt(sdt) => visit_anchors_in_blocks(&sdt.blocks, visit),
+            BlockNode::AltChunk(_) => false,
+        };
+        if stop {
+            return true;
+        }
+    }
+    false
+}
+
+fn visit_anchors_in_inlines(
+    inlines: &[InlineNode],
+    visit: &mut dyn FnMut(NodeId, Option<&DrawingAnchor>) -> bool,
+) -> bool {
     for inline in inlines {
-        match inline {
-            InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
-                return Some(drawing.anchor.clone());
-            }
+        let stop = match inline {
+            InlineNode::AnchoredDrawing(drawing) => visit(drawing.id, Some(&drawing.anchor)),
             InlineNode::TextBox(text_box) => {
-                if text_box.id == object {
-                    return text_box.anchor.clone();
-                }
-                if let Some(anchor) = anchor_in_blocks(&text_box.blocks, object) {
-                    return Some(anchor);
-                }
+                visit(text_box.id, text_box.anchor.as_ref())
+                    || visit_anchors_in_blocks(&text_box.blocks, visit)
             }
-            InlineNode::Group(group) if group.id == object => return group.anchor.clone(),
+            InlineNode::Group(group) => visit(group.id, group.anchor.as_ref()),
             // A floating chart or diagram (`docs/109` HF-260); an in-line one
             // answers `None`, as an in-line text box does.
-            InlineNode::EmbeddedObject(embedded) if embedded.id == object => {
-                return embedded.anchor.clone();
-            }
+            InlineNode::EmbeddedObject(embedded) => visit(embedded.id, embedded.anchor.as_ref()),
             // Every inline wrapper in the declared container set (`Hyperlink`,
             // `Field`, `Revision`, `Sdt`): a float inside a field result or an
             // inline content control is still a float (`109` HF-166, HF-214).
-            other => {
-                if let Some(nested) = contained_inlines(other)
-                    && let Some(anchor) = anchor_in_inlines(nested, object)
-                {
-                    return Some(anchor);
-                }
-            }
+            other => contained_inlines(other)
+                .is_some_and(|nested| visit_anchors_in_inlines(nested, visit)),
+        };
+        if stop {
+            return true;
         }
     }
-    None
+    false
 }
 
 /// The anchor of the floating object `object` on any surface. O(document).
