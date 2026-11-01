@@ -510,7 +510,7 @@ export interface TableDeleteRowEdit {
 /**
  * Insert an empty table (rows x columns, with a thin grid) after an anchor's top-level block.
  *
- * Family `tables`; trackable: no. Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.
+ * Family `tables`; trackable: yes.
  *
  * @example {"op":"insert_table","after":{"node":"1:2"},"rows":2,"columns":3}
  */
@@ -790,7 +790,7 @@ export interface TableToTextEdit {
 /**
  * Convert consecutive paragraphs into a table, cutting each paragraph into cells at a separator (tab, comma, semicolon, a character) or one cell per paragraph.
  *
- * Family `tables`; trackable: no. Table structure and cell formatting cannot be suggested yet: tracked table structure is not modelled (docs/178 Q11). Use mode `direct` under a profile that grants `edit`.
+ * Family `tables`; trackable: yes.
  *
  * @example {"op":"text_to_table","from":{"node":"1:2"},"separator":"comma"}
  */

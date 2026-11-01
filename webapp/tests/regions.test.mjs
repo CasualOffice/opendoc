@@ -256,6 +256,10 @@ test("the URL is the one configuration channel, read in one place", () => {
     // The host's network policy for Picture from URL, verbatim;
     // `picture_url.mjs` resolves it and fails closed.
     remoteImages: "deny",
+    // The host's AI provider switch and plugin catalogue (`docs/183` §9), absent
+    // from this URL and so `null`.
+    aiProvider: null,
+    plugins: null,
     framed: true,
   });
   // And absent on a page nobody shared: a document opened from a file has no

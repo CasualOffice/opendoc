@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://casualoffice.github.io/opendoc/schemas/plugin-manifest.schema.json",
+  "title": "OpenDoc plugin manifest v1",
+  "description": "What a plugin declares: who it is, where its page is, what it may do, and where it appears. Unknown fields are refused. docs/183 section 4.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["manifestVersion", "id", "name", "version", "entry"],
+  "properties": {
+    "manifestVersion": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9]+(\\.[a-z0-9-]+)+$", "maxLength": 128 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?$" },
+    "description": { "type": "string", "maxLength": 300 },
+    "publisher": { "type": "string", "maxLength": 64 },
+    "entry": { "type": "string", "description": "An HTML page, relative to the manifest or absolute https (http only on this computer)." },
+    "icon": { "type": "string" },
+    "permissions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "enum": ["read", "comment", "suggest", "edit", "network", "ai"] }
+    },
+    "network": {
+      "type": "array",
+      "maxItems": 8,
+      "description": "Origins the plugin may fetch, exactly (no paths, no wildcards). Required with the network permission and refused without it.",
+      "items": { "type": "string", "format": "uri" }
+    },
+    "contributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commands": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "title"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z][a-zA-Z0-9-]{0,47}$" },
+              "title": { "type": "string", "minLength": 1, "maxLength": 64 }
+            }
+          }
+        },
+        "ribbon": {
+          "type": "array",
+          "maxItems": 8,
+          "description": "Rows in the one Add-ins menu, never a ribbon button per plugin.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["command"],
+            "properties": { "command": { "type": "string" }, "icon": { "type": "string", "pattern": "^[a-z0-9_]{1,40}$" } }
+          }
+        },
+        "panel": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["title"],
+          "properties": {
+            "title": { "type": "string", "maxLength": 64 },
+            "width": { "type": "integer", "minimum": 240, "maximum": 480 },
+            "menu": {
+              "type": "array",
+              "maxItems": 6,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["command"],
+                "properties": { "command": { "type": "string" }, "icon": { "type": "string", "pattern": "^[a-z0-9_]{1,40}$" } }
+              }
+            }
+          }
+        },
+        "contextMenu": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["command"],
+            "properties": { "command": { "type": "string" }, "when": { "enum": ["always", "selection", "caret"] } }
+          }
+        },
+        "selection": {
+          "type": "array",
+          "maxItems": 12,
+          "description": "Rows in the one ✦ menu of the selection toolbar: actions on the selected text, shown only while the plugin runs.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["command"],
+            "properties": { "command": { "type": "string" }, "icon": { "type": "string", "pattern": "^[a-z0-9_]{1,40}$" } }
+          }
+        },
+        "palette": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["command"],
+            "properties": { "command": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "locales": {
+      "type": "object",
+      "maxProperties": 32,
+      "additionalProperties": {
+        "type": "object",
+        "description": "name, description, panel.title and commands.<id> in that language.",
+        "additionalProperties": { "type": "string", "maxLength": 300 }
+      }
+    }
+  }
+}

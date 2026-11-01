@@ -145,7 +145,29 @@ impl WasmRoster {
             .map_err(to_js)
     }
 
+    /// `caretFrame` while this participant's assistant is writing at `agent_node` /
+    /// `agent_offset` (`docs/178` §10): every other replica draws a "Casual AI" caret
+    /// there. An empty `agent_node` is no assistant, exactly `caretFrame`.
+    #[wasm_bindgen(js_name = caretFrameWithAgent)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn caret_frame_with_agent(
+        &mut self,
+        document: &crate::WasmDocument,
+        anchor: &str,
+        anchor_offset: u32,
+        head: &str,
+        head_offset: u32,
+        agent_node: &str,
+        agent_offset: u32,
+    ) -> Result<Option<Vec<u8>>, JsValue> {
+        let agent = (!agent_node.is_empty()).then_some((agent_node, agent_offset));
+        self.caret_frame_with_agent_inner(document, anchor, anchor_offset, head, head_offset, agent)
+            .map_err(to_js)
+    }
+
     /// Maps the roster across edits and returns geometry from the document engine.
+    /// A participant whose assistant is writing also carries `agent: {caret}`, the AI
+    /// caret's rectangle (`docs/178` §10).
     #[wasm_bindgen(js_name = remoteSelections)]
     pub fn remote_selections(&mut self, document: &crate::WasmDocument) -> String {
         self.sync(document);
@@ -160,11 +182,19 @@ impl WasmRoster {
                 if rect.is_empty() {
                     return None;
                 }
-                Some(serde_json::json!({
+                let mut row = serde_json::json!({
                     "client": held.client.get(), "caret": rect,
                     "selection": document.selection_rects(&anchor.node.to_string(), anchor.offset,
                         &head.node.to_string(), head.offset)
-                }))
+                });
+                if let Some(agent) = caret.agent {
+                    let at = agent.position;
+                    let rect = document.caret_rect(&at.node.to_string(), at.offset);
+                    if !rect.is_empty() {
+                        row["agent"] = serde_json::json!({ "caret": rect });
+                    }
+                }
+                Some(row)
             })
             .collect();
         serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_owned())

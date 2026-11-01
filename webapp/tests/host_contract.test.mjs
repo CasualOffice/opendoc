@@ -162,6 +162,8 @@ test("every declared event's detail is exactly what the session emits", async ()
   session.noteWrite("export", { format: "pdf", name: "a.pdf", bytes: 34 });
   session.noteError("threw", "why", "edit.undo");
   session.noteAiDecision({ previewId: 3, decision: "accepted", revision: 7, reason: null });
+  // The provider channel's request (`docs/183` §3.8), driven the way the provider service drives it.
+  void session.aiProviderChannel.ask({ messages: [] }, { purpose: "chat" }).catch(() => {});
   await session.execute("nope.nope");
   for (const event of HOST_EVENTS) {
     const detail = seen.get(event.name);

@@ -7,6 +7,7 @@ import { registerModal } from "./modal.mjs";
 import { paintMovePad, paintResizeHandles } from "./object_guides.mjs";
 import { activeLocale, t } from "./i18n.mjs";
 import { openWordStore } from "./drafts.mjs";
+import { paintAiLive } from "./ai_live.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -36,6 +37,7 @@ export function createProofing(ed) {
     reflect: () => ed.updateToolbar(),
     openWords: () => openWordStore({}),
     runEdit: ed.runEdit,
+    reviewMode: () => ed.reviewMode,
     registerModal,
     fallbackFocus: () => ed.pagesEl,
     activeLocale: () => activeLocale(),
@@ -92,6 +94,8 @@ export function createProofing(ed) {
     // over a table is not a reason to require a caret.
     ed.tableGutter.paint(ed.pages);
     ed.remotePresence.paint(ed.place);
+    // Casual AI, a co-editor that is not a room member (`ai_coeditor.mjs`).
+    paintAiLive(ed.place);
   }
 
   function drawSelection() {
