@@ -14623,7 +14623,7 @@ body.phone-mode .plugin-panel { height: 55vh; }
 #settingsPanel .settings-pages > .settings-ai { border-top: 0; padding-top: 0; }
 #settingsPanel .dialog-foot .dialog-button-utility { margin-inline-end: auto; }
 @media (max-width: 40rem) {
-  #settingsPanel .settings-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  #settingsPanel .settings-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); row-gap: var(--space-4); }
   #settingsPanel .settings-nav { grid-auto-flow: column; overflow-x: auto; border: 0; padding: 0; }
 }
 
