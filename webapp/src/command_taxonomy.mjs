@@ -369,7 +369,12 @@ export const APP_MENU_SECTIONS = {
     // How the page itself is shown (`docs/153` shell.multiple-pages-view,
     // shell.dark-document): ONLYOFFICE's View tab keeps both together. A
     // flyout, so the two cost this menu one row.
-    sub("menuGroup.pageDisplay", "view.multiplePages", "view.darkDocument"),
+    // PDF layout joins it (owner, 2026-11-01, UX-051): how the pages are shown
+    // is the question both answer, and the View menu is at its 13-row cap
+    // (`menu-submenus.spec.mjs`), so the switch costs this menu no row. The two
+    // rows are radio items, the current layout checked, disabled with the
+    // reason for a document that is not a PDF. File ▸ PDF keeps its rows.
+    sub("menuGroup.pageDisplay", "view.multiplePages", "view.darkDocument", "view.pdfLayout.flowing", "view.pdfLayout.exact"),
   ],
   // Word's Insert TAB group order, which ONLYOFFICE's Insert tab also follows:
   // Tables | Illustrations | Links | Comments | Header & footer | Text |

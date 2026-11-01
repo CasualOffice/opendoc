@@ -286,6 +286,10 @@ export const COMMAND_CONTRACT = Object.freeze([
   exact("file.pdf.recogniseText", "open"),
   exact("file.pdf.convertToFlowing", "open"),
   exact("file.pdf.keepExactLayout", "open"),
+  // The PDF layout switch (UX-051): each direction reopens the session's PDF,
+  // as Open does, so it needs what Open needs.
+  exact("view.pdfLayout.flowing", "open"),
+  exact("view.pdfLayout.exact", "open"),
   // Recovering a draft requires the capability that WROTE it. A host that
   // withheld `autosave` has no drafts of this visitor's typing, and offering to
   // restore some would be offering work from a session the host refused to keep.
