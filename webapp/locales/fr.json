@@ -3645,6 +3645,7 @@
   "ai.turn.empty": "Casual AI n’a rien renvoyé ; votre texte est inchangé.",
   "ai.violation.empty": "il n’a rien renvoyé, votre texte est donc inchangé.",
   "ai.violation.incomplete": "sa réponse a été coupée avant la fin.",
+  "pdfOcr.stop": "Arrêter la reconnaissance du texte",
   "plugins.assistant.live.empty": "L’IA n’a rien renvoyé ; votre texte est inchangé.",
   "plugins.assistant.violation.stale": "le texte a changé avant que Casual AI ne l’atteigne.",
   "plugins.assistant.violation.empty": "il n’a rien renvoyé, votre texte est donc inchangé.",

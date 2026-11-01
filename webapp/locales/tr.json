@@ -3634,6 +3634,7 @@
   "ai.turn.empty": "Casual AI hiçbir şey döndürmedi; metniniz değişmedi.",
   "ai.violation.empty": "hiçbir şey döndürmedi, bu yüzden metniniz değişmedi.",
   "ai.violation.incomplete": "yanıtı bitmeden kesildi.",
+  "pdfOcr.stop": "Metin tanımayı durdur",
   "plugins.assistant.live.empty": "Yapay zekâ hiçbir şey döndürmedi; metniniz değişmedi.",
   "plugins.assistant.violation.stale": "metin, Casual AI ona ulaşmadan değişti.",
   "plugins.assistant.violation.empty": "hiçbir şey döndürmedi, bu yüzden metniniz değişmedi.",

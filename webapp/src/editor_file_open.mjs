@@ -79,6 +79,9 @@ export function createFileOpen(ed) {
     fallbackFocus: () => ed.pagesEl,
     onScans: () => ed.pdfCommands?.preload(),
     scrollTarget: () => ed.viewportEl,
+    // Every PDF's pages are read in the worker, not only a recognition run's
+    // (a scanned page froze the tab ~600 ms when read here). Created below.
+    worker: () => (typeof Worker === "function" ? ocrService : null),
   });
   // Text recognition, every part of it in a dedicated worker: spawned the
   // first time a scanned page is read or recognition is asked for, never for

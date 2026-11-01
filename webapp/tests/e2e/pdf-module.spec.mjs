@@ -209,10 +209,11 @@ test.describe("the lazily loaded PDF module", () => {
   });
 
   // The contract since auto-recognition (owner, 2026-10-30): a scanned PDF is
-  // recognised on its own, downloading the models WITHOUT a prompt, behind the
-  // import dialog's progress and Cancel; "Recognise text" asked for by hand
-  // still confirms first, naming the size and the origin, until the models
-  // are kept in this browser.
+  // recognised on its own, downloading the models WITHOUT a prompt, in the
+  // BACKGROUND (owner report 2026-11-02): no dialog, its progress in the status
+  // bar, and the same File-menu command, now "Stop recognising text", cancels
+  // it. "Recognise text" asked for by hand still confirms first, naming the
+  // size and the origin, until the models are kept in this browser.
   test("with a host's models, a scan is recognised on its own without asking; by hand, recognition asks until the models are kept", async ({
     page,
   }) => {
@@ -222,15 +223,18 @@ test.describe("the lazily loaded PDF module", () => {
     seen.hold();
     await openBuffer(page, "scan.pdf", scanPdf());
 
-    // Automatic: no consent prompt, the download shows in the import dialog.
-    await expect(dialog(page)).toHaveAttribute("data-mode", "ocr");
-    await expect(page.locator("#pdfImportDialogPhase")).toHaveText("Downloading recognition models…");
+    // Automatic: no consent prompt and no dialog; the download shows in the
+    // status bar while the scanned pages stay on screen.
+    await expect(page.locator("body[data-pdf-recognition=running]")).toHaveCount(1);
+    await expect(page.locator("#status")).toHaveText("Downloading recognition models…");
+    await expect(dialog(page)).toBeHidden();
     await expect(page.locator("#confirmDialog")).toBeHidden();
     await expect.poll(() => seen.files, { message: "the automatic run downloads without asking" }).toBeGreaterThan(0);
 
-    // Cancel terminates the worker: nothing is kept, the document stays.
-    await page.locator("#pdfImportDialogCancel").click();
-    await expect(dialog(page)).toBeHidden();
+    // Stop terminates the worker: nothing is kept, the document stays.
+    if (await findings(page).isVisible()) await closeFindings(page);
+    await runAppMenuCommand(page, "file", "file.pdf.recogniseText");
+    await expect(page.locator("body[data-pdf-recognition=running]")).toHaveCount(0);
     await expect(page.locator("#status")).toHaveText("Text recognition was cancelled — the document is unchanged");
     await expect(page.locator("#docTitle")).toHaveValue("scan.pdf");
     seen.release();

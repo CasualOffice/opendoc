@@ -3656,6 +3656,7 @@
   "ai.turn.empty": "Casual AI nic nie zwróciło; Twój tekst się nie zmienił.",
   "ai.violation.empty": "nic nie zwróciło, więc Twój tekst się nie zmienił.",
   "ai.violation.incomplete": "jego odpowiedź urwała się przed końcem.",
+  "pdfOcr.stop": "Zatrzymaj rozpoznawanie tekstu",
   "plugins.assistant.live.empty": "AI nic nie zwróciło; Twój tekst się nie zmienił.",
   "plugins.assistant.violation.stale": "tekst zmienił się, zanim dotarło do niego Casual AI.",
   "plugins.assistant.violation.empty": "nic nie zwróciło, więc Twój tekst się nie zmienił.",

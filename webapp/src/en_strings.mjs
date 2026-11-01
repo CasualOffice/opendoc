@@ -2817,6 +2817,7 @@ export const EN_STRINGS = Object.freeze({
   "ai.editAs.nowDirect": "Casual AI now makes direct edits.",
   "aiProvider.editAs.note": "Suggestions are tracked changes you accept or reject. Direct edits change the text; one Undo takes back each answer.",
   "aiProvider.editAs.capped": "Direct edits are not available here. {reason}",
+  "pdfOcr.stop": "Stop recognising text",
   "plugins.panel.editAs": "Direct edits by Casual AI",
   "plugins.assistant.prompt.tablePlaceholder": "Describe the table to make at the cursor…",
   "plugins.assistant.chip.table": "Table…",

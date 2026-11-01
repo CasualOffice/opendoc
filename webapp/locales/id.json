@@ -3623,6 +3623,7 @@
   "ai.turn.empty": "Casual AI tidak mengembalikan apa pun; teks Anda tidak berubah.",
   "ai.violation.empty": "tidak mengembalikan apa pun, jadi teks Anda tidak berubah.",
   "ai.violation.incomplete": "jawabannya terpotong sebelum selesai.",
+  "pdfOcr.stop": "Hentikan pengenalan teks",
   "plugins.assistant.live.empty": "AI tidak mengembalikan apa pun; teks Anda tidak berubah.",
   "plugins.assistant.violation.stale": "teks berubah sebelum Casual AI mencapainya.",
   "plugins.assistant.violation.empty": "tidak mengembalikan apa pun, jadi teks Anda tidak berubah.",

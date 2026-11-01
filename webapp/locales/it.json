@@ -3645,6 +3645,7 @@
   "ai.turn.empty": "Casual AI non ha restituito nulla; il tuo testo è invariato.",
   "ai.violation.empty": "non ha restituito nulla, quindi il tuo testo è invariato.",
   "ai.violation.incomplete": "la sua risposta si è interrotta prima di finire.",
+  "pdfOcr.stop": "Interrompi il riconoscimento del testo",
   "plugins.assistant.live.empty": "L’IA non ha restituito nulla; il tuo testo è invariato.",
   "plugins.assistant.violation.stale": "il testo è cambiato prima che Casual AI lo raggiungesse.",
   "plugins.assistant.violation.empty": "non ha restituito nulla, quindi il tuo testo è invariato.",

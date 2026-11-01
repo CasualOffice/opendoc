@@ -107,8 +107,9 @@ async function openScan(page) {
   await gotoEditor(page, "&pdfOcrModels=/ocr-real/manifest.json");
   const pdf = scanPdf({ pages: 1, width: WIDTH, height: HEIGHT, pixels: await printedPage(page, WIDTH, HEIGHT) });
   await page.locator("#file").setInputFiles({ name: "synthetic-scan.pdf", mimeType: "application/pdf", buffer: pdf });
-  await expect(page.locator("#pdfImportDialog")).toHaveAttribute("data-mode", "ocr", { timeout: 60_000 });
-  await expect(page.locator("#pdfImportDialog")).toBeHidden({ timeout: 200_000 });
+  // Recognition runs in the background, with no dialog: wait on its state.
+  await expect(page.locator("body[data-pdf-recognition=running]")).toHaveCount(1, { timeout: 60_000 });
+  await expect(page.locator("body[data-pdf-recognition=running]")).toHaveCount(0, { timeout: 200_000 });
   await expect(page.locator("#a11yDocument")).toContainText(/budget/i, { timeout: 30_000 });
   // The import summary, as after every PDF open.
   await expect(page.locator("#compatibilityFindingsDialog")).toBeVisible();

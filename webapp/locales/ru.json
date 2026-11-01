@@ -3656,6 +3656,7 @@
   "ai.turn.empty": "Casual AI ничего не вернул; ваш текст не изменён.",
   "ai.violation.empty": "он ничего не вернул, поэтому ваш текст не изменён.",
   "ai.violation.incomplete": "его ответ оборвался, не завершившись.",
+  "pdfOcr.stop": "Остановить распознавание текста",
   "plugins.assistant.live.empty": "ИИ ничего не вернул; ваш текст не изменён.",
   "plugins.assistant.violation.stale": "текст изменился до того, как до него дошёл Casual AI.",
   "plugins.assistant.violation.empty": "он ничего не вернул, поэтому ваш текст не изменён.",

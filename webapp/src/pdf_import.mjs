@@ -76,8 +76,9 @@ import { idleSlices, runStagedImport } from "./pdf_import_scheduler.mjs";
 
 const ID = "pdfImportDialog";
 
-/** Marks the end of the sliced phase, for the main-thread guard: tasks before
- *  it are the import's slices, the task after it is the finish and layout. */
+/** Marks the end of the reading phase, for the main-thread guards: tasks
+ *  before it are the import's (slices on this thread, or nothing but progress
+ *  when the worker reads), the task after it is the open and layout. */
 export const FINISH_MARK = "opendoc:pdf-import:finish";
 
 /** Bracket a recognition run, for the OCR main-thread guard
@@ -188,6 +189,9 @@ async function provideCMaps(module, names, source, signal) {
  * @param {() => string|null} [io.cmapSource] the host's CMap base URL, or null.
  * @param {() => "flowing"|"fixed"} [io.layout] the host's default layout
  *   (`hostPdfLayout` of the page's query).
+ * @param {() => object|null} [io.worker] the OCR service (`ocr_service.mjs`),
+ *   whose worker also runs plain imports off this thread; null (or absent)
+ *   keeps the sliced main-thread import, for a host without workers.
  * @param {() => void} [io.onScans] called once per import, the first time a
  *   page it read is a scan: the preload's trigger.
  * @param {() => HTMLElement|null} [io.scrollTarget] what the wheel over the
@@ -218,7 +222,7 @@ export function createPdfImport(io = {}) {
     active.cancelRequested = true;
     active.abort.abort();
     parts.cancel.disabled = true;
-    parts.phase.textContent = t("pdfImport.cancelling");
+    say(t("pdfImport.cancelling"));
   }
 
   function paintProgress(done, total) {
@@ -255,7 +259,7 @@ export function createPdfImport(io = {}) {
     parts.close.title = t("pdfImport.cancel");
     parts.cancel.textContent = t("pdfImport.cancel");
     parts.cancel.disabled = false;
-    parts.phase.textContent = t("pdfImport.reading");
+    say(t("pdfImport.reading"));
     paintProgress(0, 0);
   }
 
@@ -284,7 +288,7 @@ export function createPdfImport(io = {}) {
   /** Loads the PDF module behind the open dialog, the first time only. */
   async function ensureModule() {
     if (pdfModuleLoaded() && !io.loadModule) return loadModule();
-    parts.phase.textContent = t("pdfImport.loadingModule");
+    say(t("pdfImport.loadingModule"));
     paintProgress(0, 0);
     parts.bar.dataset.phase = "module";
     try {
@@ -292,6 +296,13 @@ export function createPdfImport(io = {}) {
     } finally {
       delete parts.bar.dataset.phase;
     }
+  }
+
+  /** Writes the dialog's status line, and hands it to a background run's
+   *  status (the status bar) when the run has no dialog on screen. */
+  function say(text) {
+    parts.phase.textContent = text;
+    active?.onStatus?.(text);
   }
 
   /** One staged import without recognition, sliced on this thread; `null`
@@ -304,7 +315,7 @@ export function createPdfImport(io = {}) {
       await provideCMaps(module, job.missingCMaps, cmapSource(), active.abort.signal);
       if (active.cancelRequested) return null;
       paintProgress(0, job.pageCount);
-      parts.phase.textContent = t("pdfImport.reading");
+      say(t("pdfImport.reading"));
       const clock = scope.performance ?? globalThis.performance;
       const result = await runStagedImport(job, {
         nextSlice: idleSlices(scope),
@@ -325,7 +336,7 @@ export function createPdfImport(io = {}) {
         },
       });
       if (result.status === "cancelled") return null;
-      parts.phase.textContent = t("pdfImport.finishing");
+      say(t("pdfImport.finishing"));
       parts.cancel.disabled = true;
       // The layout is decided now, when the pages are read: the reader may
       // have ticked "Keep exact page layout" while they were.
@@ -351,13 +362,60 @@ export function createPdfImport(io = {}) {
     }
   }
 
+  /** One plain import (no recognition) in the worker: the pages are read off
+   *  this thread, which only paints the progress. A scanned page costs ~600 ms
+   *  to decode and cannot be split into slices, so the sliced import below
+   *  froze the tab once per scanned page (owner report 2026-11-02: an 8-page
+   *  scan blocked the main thread for 4.7 s). `null` when cancelled. */
+  async function workerImport(bytes, mode, service) {
+    let scansNoted = false;
+    say(t("pdfImport.reading"));
+    paintProgress(0, 0);
+    try {
+      const imported = await service.recognise(bytes, {
+        manifestUrl: null,
+        mode,
+        cmapSource: cmapSource(),
+        signal: active.abort.signal,
+        onPages: (done, total, scanned) => {
+          paintProgress(done, total);
+          // The first scan read starts the models loading, in parallel with
+          // the pages still to read (`docs/182` §17a.5), as before.
+          if (!scansNoted && scanned > 0) {
+            scansNoted = true;
+            try {
+              io.onScans?.();
+            } catch {
+              // A preload that cannot start is the recognition run's to report.
+            }
+          }
+        },
+        onRead: () => {
+          say(t("pdfImport.finishing"));
+          parts.cancel.disabled = true;
+        },
+        layout: () => {
+          parts.keep.disabled = true;
+          return layoutOf(mode);
+        },
+      });
+      // The pages were read and finished in the worker: from here, this
+      // thread's work is opening the package (`pdf-import.spec` partitions on it).
+      clock.mark?.(FINISH_MARK);
+      return imported;
+    } catch (error) {
+      if (active.cancelRequested || error?.name === "AbortError") return null;
+      throw error;
+    }
+  }
+
   /** One import WITH recognition, in the OCR worker; `null` when the reader
    *  cancelled. Nothing of it runs on this thread but painting the progress
    *  the worker reports (`ocr_service.mjs`). */
   async function recogniseOnce(bytes, mode, recognition) {
     const clock = scope.performance ?? globalThis.performance;
     parts.bar.dataset.phase = "models";
-    parts.phase.textContent = t("pdfOcr.loading");
+    say(t("pdfOcr.loading"));
     clock.mark?.(OCR_START_MARK);
     try {
       const result = await recognition.service.recognise(bytes, {
@@ -367,12 +425,12 @@ export function createPdfImport(io = {}) {
         signal: active.abort.signal,
         onModels: (done, total) => {
           parts.bar.dataset.phase = "models";
-          parts.phase.textContent = t("pdfOcr.downloading");
+          say(t("pdfOcr.downloading"));
           paintModule(done, total);
         },
         onLoading: () => {
           parts.bar.dataset.phase = "models";
-          parts.phase.textContent = t("pdfOcr.loading");
+          say(t("pdfOcr.loading"));
           paintProgress(0, 0);
         },
         onPages: (done, total) => {
@@ -380,11 +438,11 @@ export function createPdfImport(io = {}) {
           // A scanned page takes seconds in the worker, and the count moves
           // only when it is finished: name the page being read now, so
           // "Page 0 of 8" never reads as stuck (HF-414).
-          parts.phase.textContent = done < total ? t("pdfOcr.recognisingPage", { page: n(done + 1), total: n(total) }) : t("pdfImport.reading");
+          say(done < total ? t("pdfOcr.recognisingPage", { page: n(done + 1), total: n(total) }) : t("pdfImport.reading"));
           paintProgress(done, total);
         },
         onRead: () => {
-          parts.phase.textContent = t("pdfImport.finishing");
+          say(t("pdfImport.finishing"));
         },
         // The layout is decided when the pages are read: the reader may have
         // ticked "Keep exact page layout" while they were.
@@ -416,6 +474,8 @@ export function createPdfImport(io = {}) {
    *   says and how the job finishes: `import` and `ocr` in the layout the
    *   dialog's checkbox ends on, `fixed` in the exact page layout, `reflow`
    *   as a new flowing document that keeps no PDF.
+   * @param {{onStatus: (text: string) => void}} [options.background] run with
+   *   no dialog, reporting progress to `onStatus`; `cancel()` stops it.
    * @param {"flowing"|"fixed"} [options.layout] where the checkbox starts
    *   (default: the host's `?pdfLayout=`, else flowing).
    * @returns {Promise<{doc: object, ocr: object|null, layout: string} | {cancelled: true}>}
@@ -425,11 +485,19 @@ export function createPdfImport(io = {}) {
    */
   async function run(bytes, name, options = {}) {
     if (active) throw new Error(t("pdfImport.busy"));
-    active = { cancelRequested: false, abort: new AbortController() };
+    // `background`: recognition after a scan opened runs with no dialog on
+    // screen, its progress in the status bar, so the scanned pages stay
+    // readable and scrollable for the minutes it takes (owner report
+    // 2026-11-02: a modal over an 8-page OCR run made the editor unusable).
+    const background = options.background ?? null;
+    active = { cancelRequested: false, abort: new AbortController(), onStatus: background?.onStatus ?? null };
     const recognition = options.recognition ?? null;
     const mode = options.mode ?? (recognition ? "ocr" : "import");
     renderOpen(name, mode, options.layout ?? hostLayout());
-    modal.open();
+    if (!background) modal.open();
+    // The run's state where a host, an assistive reader's script or a test
+    // can see it, since no dialog says it: removed when the run ends.
+    else if (view.body) view.body.dataset.pdfRecognition = "running";
     try {
       await painted();
       if (active.cancelRequested) return { cancelled: true };
@@ -444,8 +512,11 @@ export function createPdfImport(io = {}) {
       }
       if (active.cancelRequested) return { cancelled: true };
       let imported;
+      const worker = recognition ? null : io.worker?.();
       if (recognition) {
         imported = await recogniseOnce(bytes, mode, recognition);
+      } else if (worker) {
+        imported = await workerImport(bytes, mode, worker);
       } else {
         try {
           imported = await importOnce(module, bytes, mode);
@@ -468,6 +539,7 @@ export function createPdfImport(io = {}) {
       return { doc, ocr: imported.ocr, layout: imported.layout };
     } finally {
       active = null;
+      if (view.body) delete view.body.dataset.pdfRecognition;
       if (modal.isOpen) modal.close("done");
     }
   }
@@ -500,6 +572,14 @@ export function createPdfImport(io = {}) {
 
   return {
     run,
+    /** Stops the import in flight, a background one included. */
+    cancel: () => {
+      if (active) requestCancel();
+    },
+    /** Whether the import in flight runs with no dialog (background OCR). */
+    get background() {
+      return Boolean(active?.onStatus);
+    },
     /** Whether an import is in flight (a second open waits for it). */
     get running() {
       return active !== null;

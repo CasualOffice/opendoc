@@ -12,7 +12,7 @@ const URL_A = "https://host.example/ocr/manifest.json";
 
 function harness({ engineFails = 0 } = {}) {
   const posts = [];
-  const calls = { obtain: 0, load: 0, begin: 0, finish: [] };
+  const calls = { obtain: 0, load: 0, begin: 0, plain: 0, finish: [] };
   let failures = engineFails;
   const glue = {
     setFaceHost(host) {
@@ -34,8 +34,16 @@ function harness({ engineFails = 0 } = {}) {
     beginPdfImportWithOcr(bytes, engine) {
       calls.begin += 1;
       assert.ok(engine.engine);
+      return glue.job();
+    },
+    beginPdfImport() {
+      calls.plain += 1;
+      return glue.job();
+    },
+    job() {
       let done = 0;
       return {
+        scannedPages: 2,
         missingCMaps: [],
         pageCount: 3,
         get pagesDone() {
@@ -111,6 +119,22 @@ test("a preload and the run after it load the models once, and the run reports e
   assert.equal(calls.obtain, 1);
   assert.equal(calls.load, 1);
   assert.deepEqual(calls.finish, ["fixed", "flowing"], "a conversion finishes flowing without asking");
+});
+
+test("a plain import (no manifest) reads the pages in the worker with no models, and reports the scans it met", async () => {
+  const { core, posts, calls, next } = harness();
+  core.handle({ type: "import", id: 4, manifestUrl: null, mode: "import", bytes: new ArrayBuffer(4) });
+  await next("read", 4);
+  assert.equal(calls.plain, 1, "the plain entry point read it");
+  assert.equal(calls.begin, 0, "not the recognising one");
+  assert.equal(calls.obtain, 0, "no model was downloaded");
+  assert.equal(calls.load, 0, "no engine was loaded");
+  const scanned = posts.filter((p) => p.message.type === "pages" && p.message.id === 4).map((p) => p.message.scanned);
+  assert.ok(scanned.every((n) => n === 2), "each progress message carries the scanned-page count");
+  core.handle({ type: "finish", id: 4, layout: "flowing" });
+  const done = await next("done", 4);
+  assert.deepEqual(calls.finish, ["flowing"]);
+  assert.deepEqual(done.transfer, [done.message.pkg.buffer]);
 });
 
 test("an engine that fails to load is reported and forgotten, so the next request loads again", async () => {

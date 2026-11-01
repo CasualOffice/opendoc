@@ -3634,6 +3634,7 @@
   "ai.turn.empty": "Casual AI hat nichts zurückgegeben; Ihr Text ist unverändert.",
   "ai.violation.empty": "es hat nichts zurückgegeben, Ihr Text ist daher unverändert.",
   "ai.violation.incomplete": "seine Antwort brach ab, bevor sie fertig war.",
+  "pdfOcr.stop": "Texterkennung beenden",
   "plugins.assistant.live.empty": "Die KI hat nichts zurückgegeben; Ihr Text ist unverändert.",
   "plugins.assistant.violation.stale": "der Text hat sich geändert, bevor Casual AI ihn erreichte.",
   "plugins.assistant.violation.empty": "es hat nichts zurückgegeben, Ihr Text ist daher unverändert.",

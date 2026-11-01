@@ -3623,6 +3623,7 @@
   "ai.turn.empty": "Casual AI 没有返回任何内容；你的文本未改变。",
   "ai.violation.empty": "它没有返回任何内容，因此你的文本未改变。",
   "ai.violation.incomplete": "它的回答在完成前被截断。",
+  "pdfOcr.stop": "停止识别文字",
   "plugins.assistant.live.empty": "AI 没有返回任何内容；你的文本未改变。",
   "plugins.assistant.violation.stale": "Casual AI 到达之前文本已更改。",
   "plugins.assistant.violation.empty": "它没有返回任何内容，因此你的文本未改变。",

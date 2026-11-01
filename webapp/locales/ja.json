@@ -3623,6 +3623,7 @@
   "ai.turn.empty": "Casual AI は何も返しませんでした。テキストは変更されていません。",
   "ai.violation.empty": "何も返さなかったため、テキストは変更されていません。",
   "ai.violation.incomplete": "回答が完了する前に途切れました。",
+  "pdfOcr.stop": "文字認識を停止",
   "plugins.assistant.live.empty": "AI は何も返しませんでした。テキストは変更されていません。",
   "plugins.assistant.violation.stale": "Casual AI が到達する前にテキストが変更されました。",
   "plugins.assistant.violation.empty": "何も返さなかったため、テキストは変更されていません。",

@@ -3634,6 +3634,7 @@
   "ai.turn.empty": "Casual AI ने कुछ नहीं लौटाया; आपका पाठ नहीं बदला।",
   "ai.violation.empty": "इसने कुछ नहीं लौटाया, इसलिए आपका पाठ नहीं बदला।",
   "ai.violation.incomplete": "इसका उत्तर पूरा होने से पहले कट गया।",
+  "pdfOcr.stop": "टेक्स्ट पहचानना रोकें",
   "plugins.assistant.live.empty": "AI ने कुछ नहीं लौटाया; आपका पाठ नहीं बदला।",
   "plugins.assistant.violation.stale": "Casual AI के पहुँचने से पहले पाठ बदल गया।",
   "plugins.assistant.violation.empty": "इसने कुछ नहीं लौटाया, इसलिए आपका पाठ नहीं बदला।",
