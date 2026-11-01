@@ -63,6 +63,19 @@ export function createOcrWorkerCore(io) {
   const finishing = new Map();
 
   const fail = (id, error) => io.post({ type: "error", id, message: String(error?.message ?? error) });
+  /** One turn of the event loop. A MessageChannel, not `setTimeout(0)`, which
+   *  is clamped to 4 ms once nested: 1.6 s over a 400-page file. */
+  const pause =
+    io.pause ??
+    (() =>
+      new Promise((resolve) => {
+        const channel = new MessageChannel();
+        channel.port1.onmessage = () => {
+          channel.port1.close();
+          resolve();
+        };
+        channel.port2.postMessage(0);
+      }));
 
   async function module() {
     if (glue) return glue;
@@ -132,6 +145,10 @@ export function createOcrWorkerCore(io) {
       while (status === "pending") {
         status = job.step(1);
         io.post({ type: "pages", id, done: job.pagesDone, total, scanned: job.scannedPages ?? 0 });
+        // Back to the event loop between pages, so a message that arrived
+        // meanwhile runs now: the model preload the first scanned page asks
+        // for must start while the rest are read, not after (docs/182 §17a.5).
+        await pause();
       }
       if (status !== "done") throw new Error(status === "cancelled" ? "the import was cancelled" : "a page could not be read");
       // The layout is the reader's to choose while the pages were read (the

@@ -208,6 +208,8 @@ export function createPdfImport(io = {}) {
   const parts = buildDialog(view);
   /** The import in flight, or null. One at a time: the dialog is modal. */
   let active = null;
+  /** Whether the worker has its PDF module (it has reported a page). */
+  let workerReady = false;
   const modal = registerModal(parts.overlay, {
     initialFocus: () => parts.cancel,
     fallbackFocus: io.fallbackFocus,
@@ -301,8 +303,8 @@ export function createPdfImport(io = {}) {
   /** Writes the dialog's status line, and hands it to a background run's
    *  status (the status bar) when the run has no dialog on screen. */
   function say(text) {
-    parts.phase.textContent = text;
-    active?.onStatus?.(text);
+    if (active?.onStatus) active.onStatus(text);
+    else parts.phase.textContent = text;
   }
 
   /** One staged import without recognition, sliced on this thread; `null`
@@ -369,7 +371,9 @@ export function createPdfImport(io = {}) {
    *  scan blocked the main thread for 4.7 s). `null` when cancelled. */
   async function workerImport(bytes, mode, service) {
     let scansNoted = false;
-    say(t("pdfImport.reading"));
+    // Until the first page is reported the worker is fetching its PDF module
+    // (the first time) or admitting the file.
+    say(t(workerReady ? "pdfImport.reading" : "pdfImport.loadingModule"));
     paintProgress(0, 0);
     try {
       const imported = await service.recognise(bytes, {
@@ -378,6 +382,8 @@ export function createPdfImport(io = {}) {
         cmapSource: cmapSource(),
         signal: active.abort.signal,
         onPages: (done, total, scanned) => {
+          if (!workerReady) say(t("pdfImport.reading"));
+          workerReady = true;
           paintProgress(done, total);
           // The first scan read starts the models loading, in parallel with
           // the pages still to read (`docs/182` §17a.5), as before.
@@ -404,6 +410,8 @@ export function createPdfImport(io = {}) {
       (scope.performance ?? globalThis.performance).mark?.(FINISH_MARK);
       return imported;
     } catch (error) {
+      // Cancel ends the worker, and its module with it.
+      workerReady = false;
       if (active.cancelRequested || error?.name === "AbortError") return null;
       throw error;
     }
@@ -490,10 +498,18 @@ export function createPdfImport(io = {}) {
     // readable and scrollable for the minutes it takes (owner report
     // 2026-11-02: a modal over an 8-page OCR run made the editor unusable).
     const background = options.background ?? null;
-    active = { cancelRequested: false, abort: new AbortController(), onStatus: background?.onStatus ?? null };
+    active = {
+      cancelRequested: false,
+      abort: new AbortController(),
+      onStatus: background?.onStatus ?? null,
+      // A background run has no checkbox to read: its layout is the one asked for.
+      layout: background ? (options.layout ?? hostLayout()) : null,
+    };
     const recognition = options.recognition ?? null;
     const mode = options.mode ?? (recognition ? "ocr" : "import");
-    renderOpen(name, mode, options.layout ?? hostLayout());
+    // A background run leaves the dialog as it is: it is not on screen, and an
+    // import that opens while it runs must find the dialog in its own state.
+    if (!background) renderOpen(name, mode, options.layout ?? hostLayout());
     if (!background) modal.open();
     // The run's state where a host, an assistive reader's script or a test
     // can see it, since no dialog says it: removed when the run ends.
@@ -501,23 +517,23 @@ export function createPdfImport(io = {}) {
     try {
       await painted();
       if (active.cancelRequested) return { cancelled: true };
-      let module;
-      try {
-        // Loaded here even for a run in the worker: a fixed-layout session's
-        // byte-preserving save asks this thread's PDF module for its plan.
-        module = await ensureModule();
-      } catch (error) {
-        if (active.cancelRequested || error?.name === "AbortError") return { cancelled: true };
-        throw new Error(t("pdfImport.moduleFailed", { reason: String(error?.message ?? error) }));
-      }
-      if (active.cancelRequested) return { cancelled: true };
       let imported;
       const worker = recognition ? null : io.worker?.();
       if (recognition) {
         imported = await recogniseOnce(bytes, mode, recognition);
       } else if (worker) {
+        // The worker loads its own PDF module; this thread loads none, so the
+        // module is fetched and held in memory once, not twice.
         imported = await workerImport(bytes, mode, worker);
       } else {
+        let module;
+        try {
+          module = await ensureModule();
+        } catch (error) {
+          if (active.cancelRequested || error?.name === "AbortError") return { cancelled: true };
+          throw new Error(t("pdfImport.moduleFailed", { reason: String(error?.message ?? error) }));
+        }
+        if (active.cancelRequested) return { cancelled: true };
         try {
           imported = await importOnce(module, bytes, mode);
         } catch (error) {
@@ -550,6 +566,7 @@ export function createPdfImport(io = {}) {
   function layoutOf(mode) {
     if (mode === "reflow") return "flowing";
     if (mode === "fixed") return "fixed";
+    if (active?.layout) return active.layout;
     return parts.keep.checked ? "fixed" : "flowing";
   }
 

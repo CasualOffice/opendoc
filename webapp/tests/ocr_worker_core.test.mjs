@@ -42,16 +42,17 @@ function harness({ engineFails = 0 } = {}) {
     },
     job() {
       let done = 0;
+      const pages = glue.pages ?? 3;
       return {
         scannedPages: 2,
         missingCMaps: [],
-        pageCount: 3,
+        pageCount: pages,
         get pagesDone() {
           return done;
         },
         step() {
           done += 1;
-          return done < 3 ? "pending" : "done";
+          return done < pages ? "pending" : "done";
         },
         finish() {
           calls.finish.push("fixed");
@@ -161,4 +162,20 @@ test("whether the models are kept is answered from the worker's store", async ()
   core.handle({ type: "stored", id: 5, manifestUrl: URL_A });
   const answer = await next("stored", 5);
   assert.equal(answer.message.stored, true);
+});
+
+test("a preload asked for while a plain import reads its pages is served before the pages are all read", async () => {
+  // The first scanned page asks for the models (docs/182 §17a.5): the worker
+  // must take that message between pages, or the download waits for the
+  // whole file. Seen red with the pause between pages removed: "warm" came
+  // after "read".
+  const { core, posts, glue, next } = harness();
+  glue.pages = 200;
+  core.handle({ type: "import", id: 7, manifestUrl: null, mode: "import", bytes: new ArrayBuffer(4) });
+  await next("pages", 7);
+  core.handle({ type: "warm", id: 8, manifestUrl: URL_A });
+  await next("read", 7);
+  const order = posts.map((p) => `${p.message.type}:${p.message.id}`);
+  assert.ok(order.includes("warm:8"), `the preload was not served while the pages were read: ${order.slice(-5).join(", ")}`);
+  assert.ok(order.indexOf("warm:8") < order.indexOf("read:7"), "the preload waited for the whole file");
 });
