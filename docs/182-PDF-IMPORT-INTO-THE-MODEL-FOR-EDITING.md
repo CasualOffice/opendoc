@@ -166,7 +166,7 @@ Every PDF page becomes:
 Edits rewrap within the frame. Linking frames so text flows between them (Foxit) is
 **not** in the first release; it is Q4.
 
-**What this costs the editor (`109` HF-416, 2026-11-01).** A fixed-layout PDF is the most
+**What this costs the editor (`109` HF-420, 2026-11-01).** A fixed-layout PDF is the most
 object-dense document the editor opens: a 32-page file became ~1,400 selectable
 objects (frames, pictures, vector-group shapes). The selection chrome asks for the
 selected object's geometry (`objectRect`, `objectFrame`, `objectHandles`) on every
