@@ -60,31 +60,38 @@ export function scanPdf({ pages = 1, width = 8, height = 8, pixels = null } = {}
   return Buffer.concat(parts);
 }
 
-/** Holds every idle callback while `window.__holdIdle` is true; installed
- *  before the editor loads. `window.__releaseIdle()` lets them run. */
-export async function installIdleGate(page) {
-  await page.addInitScript(() => {
-    const real = window.requestIdleCallback?.bind(window);
-    if (!real) return;
-    const held = [];
-    window.__holdIdle = false;
-    window.requestIdleCallback = (callback, options) => {
-      if (!window.__holdIdle) return real(callback, options);
-      held.push([callback, options]);
-      return 0;
-    };
-    window.__releaseIdle = () => {
-      window.__holdIdle = false;
-      for (const [callback, options] of held.splice(0)) real(callback, options);
-    };
+/** Holds the PDF module's download, so an open stays in its dialog. The pages
+ *  are read in the worker (HF-423), and the worker's first job is fetching the
+ *  module: held there, the import is up and cancellable with no page read.
+ *  Installed on the context, so the worker's request is caught too. Cancel
+ *  ends the worker, so the next open fetches (and is held) again.
+ *  `hold()` closes the gate, `release()` opens it. */
+export async function holdPdfModule(page) {
+  let gate = null;
+  let open = null;
+  const held = {
+    hold() {
+      gate ??= new Promise((resolve) => {
+        open = resolve;
+      });
+    },
+    release() {
+      open?.();
+      gate = null;
+    },
+  };
+  await page.context().route(/casual_doc_wasm_pdf_bg\.wasm/, async (route) => {
+    if (gate) await gate;
+    // A cancelled import ended the worker that asked: nothing to answer.
+    await route.continue().catch(() => {});
   });
+  return held;
 }
 
-/** Starts opening `file` with the slices held; returns once the dialog is up. */
-export async function startHeldPdfImport(page, file = PDF_FIXTURE) {
-  await page.evaluate(() => {
-    window.__holdIdle = true;
-  });
+/** Starts opening `file` with the PDF module held; returns once the dialog is
+ *  up. `held` is `holdPdfModule`'s handle. */
+export async function startHeldPdfImport(page, held, file = PDF_FIXTURE) {
+  held.hold();
   await page.locator("#file").setInputFiles(file);
   await expect(page.locator("#pdfImportDialog")).toBeVisible();
 }

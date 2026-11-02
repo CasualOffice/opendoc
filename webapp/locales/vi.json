@@ -3627,6 +3627,7 @@
   "ai.turn.empty": "Casual AI không trả về gì; văn bản của bạn không thay đổi.",
   "ai.violation.empty": "không trả về gì nên văn bản của bạn không thay đổi.",
   "ai.violation.incomplete": "câu trả lời bị cắt trước khi hoàn tất.",
+  "pdfOcr.stop": "Dừng nhận dạng văn bản",
   "plugins.assistant.live.empty": "AI không trả về gì; văn bản của bạn không thay đổi.",
   "plugins.assistant.violation.stale": "văn bản đã thay đổi trước khi Casual AI tới đó.",
   "plugins.assistant.violation.empty": "không trả về gì nên văn bản của bạn không thay đổi.",

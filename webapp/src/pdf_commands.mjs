@@ -196,10 +196,37 @@ export function createPdfCommands(ed, io) {
     }
     // Read again in the layout the session has: a flowing PDF stays flowing.
     const layout = state().pdfLayout === "fixed" ? "fixed" : "flowing";
+    if (!auto) {
+      await io.openBytes(original, name, undefined, undefined, {
+        origin: "pdf",
+        cancelledStatus: t("pdfOcr.cancelled"),
+        prepare: () => io.pdfImport.run(original, name, { recognition: recognition(url), layout }),
+      });
+      return;
+    }
+    // Run on its own after a scan opens: in the BACKGROUND, the scanned pages
+    // on screen and usable while it reads them, its progress in the status bar
+    // (owner report 2026-11-02: an 8-page OCR run held a modal over the editor
+    // for minutes). The result replaces the document only if it is still the
+    // one that was read, and only with the reader's consent if they edited it.
+    const session = ed.doc;
     await io.openBytes(original, name, undefined, undefined, {
       origin: "pdf",
       cancelledStatus: t("pdfOcr.cancelled"),
-      prepare: () => io.pdfImport.run(original, name, { recognition: recognition(url), layout }),
+      prepare: async () => {
+        const made = await io.pdfImport.run(original, name, {
+          recognition: recognition(url),
+          layout,
+          background: { onStatus: (text) => ed.setStatus(text) },
+        });
+        if (made.cancelled) return made;
+        const stillHere = ed.doc === session;
+        if (!stillHere || !(await ed.confirmDiscardIfEdited())) {
+          made.doc?.free?.();
+          return { cancelled: true };
+        }
+        return made;
+      },
     });
   }
 
@@ -361,15 +388,26 @@ export function createPdfCommands(ed, io) {
           disabledReason: t(keepRefusal || "pdfFixed.notPdf"),
           run: () => void keepExactLayout(),
         },
-        {
-          id: RECOGNISE_COMMAND,
-          label: t("pdfOcr.command"),
-          group: "File",
-          kw: "ocr recognise recognize text scan scanned image picture pdf read",
-          enabled: !ocrRefusal,
-          disabledReason: t(ocrRefusal || "pdfOcr.notPdf"),
-          run: () => void recogniseText(),
-        },
+        // While recognition runs in the background the same command stops it:
+        // with no dialog on screen, this (palette, File menu) is its Cancel.
+        io.pdfImport.background
+          ? {
+              id: RECOGNISE_COMMAND,
+              label: t("pdfOcr.stop"),
+              group: "File",
+              kw: "ocr recognise recognize text stop cancel scan pdf",
+              enabled: true,
+              run: () => io.pdfImport.cancel(),
+            }
+          : {
+              id: RECOGNISE_COMMAND,
+              label: t("pdfOcr.command"),
+              group: "File",
+              kw: "ocr recognise recognize text scan scanned image picture pdf read",
+              enabled: !ocrRefusal,
+              disabledReason: t(ocrRefusal || "pdfOcr.notPdf"),
+              run: () => void recogniseText(),
+            },
         {
           id: CONVERT_COMMAND,
           label: t("pdfReflow.command"),

@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { clickIntoFirstPage, expect, gotoEditor, runAppMenuCommand, stableBox, test } from "./fixtures.mjs";
-import { PDF_FIXTURE as FIXTURE, installIdleGate, startHeldPdfImport } from "./pdf-import-helpers.mjs";
+import { PDF_FIXTURE as FIXTURE, holdPdfModule, startHeldPdfImport } from "./pdf-import-helpers.mjs";
 const NAME = "synthetic-prose.pdf";
 const dialog = (page) => page.locator("#pdfImportDialog");
 const findings = (page) => page.locator("#compatibilityFindingsDialog");
@@ -53,14 +53,14 @@ test.describe("PDF import in the editor", () => {
     page,
     consoleErrors,
   }) => {
-    await installIdleGate(page);
+    const held = await holdPdfModule(page);
     await gotoEditor(page);
-    await startHeldPdfImport(page);
+    await startHeldPdfImport(page, held);
     const keep = page.locator("#pdfImportDialogKeepLayout");
     await expect(keep).toBeVisible();
     await expect(keep).not.toBeChecked();
     await expect(page.locator("#pdfImportDialogKeepLayoutLabel")).toHaveText("Keep exact page layout");
-    await page.evaluate(() => window.__releaseIdle());
+    held.release();
     await expect(dialog(page)).toBeHidden({ timeout: 60_000 });
     await expect(page.locator("#docTitle")).toHaveValue(NAME);
     await expect(findings(page)).toBeVisible();
@@ -92,24 +92,23 @@ test.describe("PDF import in the editor", () => {
     page,
     consoleErrors,
   }) => {
-    await installIdleGate(page);
+    const held = await holdPdfModule(page);
     await gotoEditor(page, "&pdfLayout=fixed");
-    await startHeldPdfImport(page);
+    await startHeldPdfImport(page, held);
     await expect(page.locator("#pdfImportDialogKeepLayout")).toBeChecked();
 
-    // The dialog, before any page: titled with the file, Cancel focused, the bar
-    // determinate once admission has counted the pages.
+    // The dialog, before any page: titled with the file, Cancel focused, and
+    // saying what it waits for (the worker's PDF module, held here). The page
+    // count arrives with the first page the worker reads.
     await expect(page.locator("#pdfImportDialogTitle")).toHaveText(`Opening ${NAME}`);
     await expect(page.locator("#pdfImportDialogCancel")).toBeFocused();
     const bar = page.locator("#pdfImportDialogBar");
     await expect(bar).toHaveAttribute("role", "progressbar");
-    await expect(bar).toHaveAttribute("aria-valuemax", "2");
-    await expect(bar).toHaveAttribute("aria-valuenow", "0");
-    await expect(page.locator("#pdfImportDialogCount")).toHaveText("Page 0 of 2");
+    await expect(page.locator("#pdfImportDialogPhase")).toHaveText("Loading the PDF reader…");
     // The previous document is still the document while the import runs.
     await expect(page.locator("#docTitle")).toHaveValue("opendoc-demo.docx");
 
-    await page.evaluate(() => window.__releaseIdle());
+    held.release();
     await expect(dialog(page)).toBeHidden({ timeout: 60_000 });
     await expect(page.locator("#docTitle")).toHaveValue(NAME);
     await expect.poll(() => pageCount(page)).toBe(2);
@@ -163,16 +162,16 @@ test.describe("PDF import in the editor", () => {
   });
 
   test("Cancel mid-import leaves the open document exactly as it was", async ({ page, consoleErrors }) => {
-    await installIdleGate(page);
+    const held = await holdPdfModule(page);
     await gotoEditor(page);
     const before = await page.locator("#a11yDocument").textContent();
     const pagesBefore = await pageCount(page);
 
     // The button.
-    await startHeldPdfImport(page);
+    await startHeldPdfImport(page, held);
     await page.locator("#pdfImportDialogCancel").click();
     await expect(page.locator("#pdfImportDialogPhase")).toHaveText("Cancelling…");
-    await page.evaluate(() => window.__releaseIdle());
+    held.release();
     await expect(dialog(page)).toBeHidden();
     await expect(page.locator("#status")).toHaveText(
       `Opening ${NAME} was cancelled — the document you had open is still here`,
@@ -182,10 +181,10 @@ test.describe("PDF import in the editor", () => {
     expect(await page.locator("#a11yDocument").textContent()).toBe(before);
 
     // Escape is Cancel too, through the one modal contract.
-    await startHeldPdfImport(page);
+    await startHeldPdfImport(page, held);
     await page.keyboard.press("Escape");
     await expect(dialog(page)).toBeHidden();
-    await page.evaluate(() => window.__releaseIdle());
+    held.release();
     await expect(page.locator("#status")).toContainText("was cancelled");
     await expect(page.locator("#docTitle")).toHaveValue("opendoc-demo.docx");
     expect(await page.locator("#a11yDocument").textContent()).toBe(before);

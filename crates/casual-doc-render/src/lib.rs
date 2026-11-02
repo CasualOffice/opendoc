@@ -39,7 +39,7 @@ use casual_doc_layout::display::{
 use casual_doc_layout::display::ShapeTransform;
 use casual_doc_layout::font_registry::{DynFace, FontRegistry};
 use casual_doc_layout::text::{FontId, GlyphRun};
-use casual_doc_layout::units::{Point, Rect};
+use casual_doc_layout::units::{Point, Rect, Twip};
 use casual_doc_model::v1::{CROP_FULL, CropRect, OPACITY_FULL};
 // Kept on a separate `use` line (anti-conflict): the dash/line-end model types the
 // shape paint path consumes.
@@ -525,13 +525,22 @@ fn collect_layer<'a>(items: &mut impl Iterator<Item = &'a PaintItem>) -> Display
     nested
 }
 
-/// Draws `nested` into a transparent page-sized pixmap and composites it back
-/// through `transform`.
+/// Draws `nested` into a transparent pixmap and composites it back through
+/// `transform`.
 ///
 /// The enclosing clip is applied to the COMPOSITE, not inside the sub-surface:
 /// the sub-surface is in the same coordinate space, but its content moves when
 /// the transform is applied, so a clip tested before the move would cut the wrong
 /// pixels.
+///
+/// The pixmap covers the layer's CONTENT ([`layer_bounds`]), not the page. A
+/// page-sized one cost an allocation, a clear and a bilinear composite of every
+/// page pixel per layer, and a recognised scan page opens two layers per OCR
+/// line: ~70 lines took 12.9 s to paint at 192 dpi (HF-423, measured in
+/// Chrome), and the tab froze on every scroll. Sized to its content, a layer
+/// costs O(its own pixels). The content is moved by a whole-pixel number of
+/// twips ([`whole_pixel_twips`]) and drawn back at that offset, so an upright
+/// layer lands on the same pixels as before.
 #[allow(clippy::too_many_arguments)] // one offscreen composite; every input is used
 fn draw_layer(
     nested: &DisplayList,
@@ -543,12 +552,54 @@ fn draw_layer(
     blend: LayerBlend,
     clip_stack: &[Mask],
 ) {
-    let (width, height) = (surface.pixmap.width(), surface.pixmap.height());
-    let Some(pixmap) = Pixmap::new(width, height) else {
+    let (page_w, page_h) = (surface.pixmap.width(), surface.pixmap.height());
+    let Some(bounds) = layer_bounds(nested, dpi) else {
+        // Nothing in the layer paints.
         return;
     };
+    let step = i64::from(whole_pixel_twips(dpi));
+    let origin_twip = |px: f32| -> i32 {
+        let twip = (f64::from(px) * 1440.0 / f64::from(dpi)).floor() as i64;
+        (twip.div_euclid(step) * step).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+    };
+    let (ox, oy) = (origin_twip(bounds.left()), origin_twip(bounds.top()));
+    let (x, y) = (Twip(ox).to_device_px(dpi), Twip(oy).to_device_px(dpi));
+    let (w, h) = (
+        (bounds.right() - x).ceil().max(1.0),
+        (bounds.bottom() - y).ceil().max(1.0),
+    );
+    // No smaller than the page (content far outside it, or a bound gone wide):
+    // the page-sized surface it always used, unmoved.
+    let page_area = f64::from(page_w) * f64::from(page_h);
+    let sized = f64::from(w) * f64::from(h) < page_area;
+    let moved;
+    let (list, x, y, w, h) = if sized {
+        let mut shifted = DisplayList::new();
+        for item in &nested.items {
+            let mut item = item.clone();
+            item.translate(Twip(-ox), Twip(-oy));
+            shifted.push(item);
+        }
+        moved = shifted;
+        (&moved, x, y, w as u32, h as u32)
+    } else {
+        (nested, 0.0, 0.0, page_w, page_h)
+    };
+    let Some(pixmap) = Pixmap::new(w, h) else {
+        return;
+    };
+    LAYER_PIXELS.with(|n| n.set(n.get() + u64::from(w) * u64::from(h)));
     let mut offscreen = Surface { pixmap };
-    render(nested, &mut offscreen, dpi, fonts, media);
+    render(list, &mut offscreen, dpi, fonts, media);
+    // An upright layer at a fractional offset (a dpi with no whole-pixel twip)
+    // goes on the nearest pixel: under 0.1 px off, and as sharp as the
+    // page-sized layer was. A turned one is resampled anyway.
+    let turned = object_transform(transform.as_ref(), dpi);
+    let place = if turned.is_identity() {
+        Transform::from_translate(x.round(), y.round())
+    } else {
+        turned.pre_translate(x, y)
+    };
     surface.pixmap.draw_pixmap(
         0,
         0,
@@ -565,9 +616,164 @@ fn draw_layer(
             },
             ..PixmapPaint::default()
         },
-        object_transform(transform.as_ref(), dpi),
+        place,
         clip_stack.last(),
     );
+}
+
+thread_local! {
+    /// Offscreen pixels allocated for layers on this thread: what the layer
+    /// guard (`layers_cost_their_content_not_the_page`) counts.
+    static LAYER_PIXELS: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+}
+
+/// Offscreen pixels allocated for layers on this thread since it started. For
+/// the layer-cost guard; O(1).
+#[doc(hidden)]
+#[must_use]
+pub fn layer_pixels_allocated() -> u64 {
+    LAYER_PIXELS.with(core::cell::Cell::get)
+}
+
+/// A conservative device-pixel box of everything `nested` paints, in the
+/// layer's own (untransformed) space; `None` when it paints nothing. A nested
+/// layer adds its content's box through its own transform. Clips only shrink
+/// what paints, so they are ignored and the box stays conservative. The
+/// margins are the GPU backend's fallback tile's. O(items).
+fn layer_bounds(nested: &DisplayList, dpi: f32) -> Option<SkRect> {
+    fn union(a: Option<SkRect>, b: Option<SkRect>) -> Option<SkRect> {
+        match (a, b) {
+            (Some(a), Some(b)) => SkRect::from_ltrb(
+                a.left().min(b.left()),
+                a.top().min(b.top()),
+                a.right().max(b.right()),
+                a.bottom().max(b.bottom()),
+            ),
+            (a, None) => a,
+            (None, b) => b,
+        }
+    }
+    let px = |t: Twip| t.to_device_px(dpi);
+    let rect_box = |r: &Rect, pad: f32| {
+        SkRect::from_ltrb(
+            px(r.origin.x) - pad,
+            px(r.origin.y) - pad,
+            px(r.origin.x) + px(r.size.width) + pad,
+            px(r.origin.y) + px(r.size.height) + pad,
+        )
+    };
+    let points_box = |points: &mut dyn Iterator<Item = Point>, pad: f32| {
+        let mut out: Option<SkRect> = None;
+        for p in points {
+            let (x, y) = (px(p.x), px(p.y));
+            out = union(out, SkRect::from_ltrb(x - pad, y - pad, x + pad, y + pad));
+        }
+        out
+    };
+    let geometry_box = |geometry: &ShapeGeometry, pad: f32| match geometry {
+        ShapeGeometry::Rect { rect }
+        | ShapeGeometry::Ellipse { rect }
+        | ShapeGeometry::RoundedRect { rect, .. } => rect_box(rect, pad),
+        ShapeGeometry::Path { commands, .. } => points_box(
+            &mut commands.iter().flat_map(|command| command.points()),
+            pad,
+        ),
+        ShapeGeometry::Line { from, to } => points_box(&mut [*from, *to].into_iter(), pad),
+    };
+    let through = |b: Option<SkRect>, transform: Option<&ShapeTransform>| {
+        b.and_then(|b| b.transform(object_transform(transform, dpi)))
+    };
+
+    let mut out: Option<SkRect> = None;
+    let mut items = nested.items.iter();
+    while let Some(item) = items.next() {
+        let b = match item {
+            PaintItem::PushLayer { transform, .. } => {
+                // Its content, through its transform; the reader moves past it.
+                let mut depth = 1usize;
+                let mut inner = DisplayList::new();
+                for next in items.by_ref() {
+                    match next {
+                        PaintItem::PushLayer { .. } => depth += 1,
+                        PaintItem::PopLayer => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    inner.push(next.clone());
+                }
+                through(layer_bounds(&inner, dpi), transform.as_ref())
+            }
+            PaintItem::Glyphs { run } => {
+                // A size of margin on every side covers a colour glyph's
+                // overhang and the effects.
+                let size = run.size.to_device_px(dpi);
+                let advance: f32 = run.glyphs.iter().map(|g| g.advance.to_device_px(dpi)).sum();
+                let (x, y) = (px(run.origin.x), px(run.origin.y));
+                SkRect::from_ltrb(
+                    x - size - 2.0,
+                    y - 2.0 * size - 2.0,
+                    x + advance + size + 2.0,
+                    y + size + 2.0,
+                )
+            }
+            PaintItem::Shape {
+                geometry,
+                stroke,
+                transform,
+                ..
+            } => {
+                // The longest arrowhead (a diamond) reaches 9 line widths past
+                // its end point.
+                let pad = stroke.as_ref().map_or(1.0, |s| s.width.max(1.0)) * 10.0 + 2.0;
+                through(geometry_box(geometry, pad), transform.as_ref())
+            }
+            PaintItem::Shadow {
+                geometry,
+                stroke_width,
+                offset,
+                blur,
+                transform,
+                ..
+            } => {
+                // Three sigmas of blur (sigma = blurRad / 2) and the outline.
+                let pad = blur.to_device_px(dpi) * 1.5 + stroke_width.unwrap_or(0.0) + 4.0;
+                through(geometry_box(geometry, pad), transform.as_ref()).and_then(|b| {
+                    b.transform(Transform::from_translate(px(offset.x), px(offset.y)))
+                })
+            }
+            PaintItem::Image {
+                rect, transform, ..
+            } => through(rect_box(rect, 2.0), transform.as_ref()),
+            PaintItem::Rect { rect, .. }
+            | PaintItem::Ellipse { rect, .. }
+            | PaintItem::RoundedRect { rect, .. } => rect_box(rect, 4.0),
+            PaintItem::Polygon { points, .. } => points_box(&mut points.iter().copied(), 4.0),
+            PaintItem::Line { from, to, stroke } => {
+                points_box(&mut [*from, *to].into_iter(), stroke.width + 2.0)
+            }
+            PaintItem::PushClip(_) | PaintItem::PopClip | PaintItem::PopLayer => None,
+        };
+        out = union(out, b);
+    }
+    out
+}
+
+/// The smallest whole number of twips that is also a whole number of device
+/// pixels at `dpi`, or 1 when the scale has none (a fractional dpi). The GPU
+/// backend's fallback tile snaps the same way.
+fn whole_pixel_twips(dpi: f32) -> i32 {
+    if dpi.fract() != 0.0 || dpi <= 0.0 {
+        return 1;
+    }
+    let (mut a, mut b) = (1440_i64, dpi as i64);
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    i32::try_from(1440 / a.abs().max(1)).unwrap_or(1)
 }
 
 /// Extracts the visible source sub-rectangle described by an `a:srcRect` crop

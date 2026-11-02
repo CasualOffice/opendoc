@@ -3627,6 +3627,7 @@
   "ai.turn.empty": "Casual AI 沒有傳回任何內容；你的文字未變更。",
   "ai.violation.empty": "它沒有傳回任何內容，因此你的文字未變更。",
   "ai.violation.incomplete": "它的回答在完成前被截斷。",
+  "pdfOcr.stop": "停止辨識文字",
   "plugins.assistant.live.empty": "AI 沒有傳回任何內容；你的文字未變更。",
   "plugins.assistant.violation.stale": "Casual AI 到達之前文字已變更。",
   "plugins.assistant.violation.empty": "它沒有傳回任何內容，因此你的文字未變更。",

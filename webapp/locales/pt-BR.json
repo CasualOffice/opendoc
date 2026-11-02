@@ -3649,6 +3649,7 @@
   "ai.turn.empty": "O Casual AI não retornou nada; seu texto não foi alterado.",
   "ai.violation.empty": "não retornou nada, então seu texto não foi alterado.",
   "ai.violation.incomplete": "a resposta foi interrompida antes de terminar.",
+  "pdfOcr.stop": "Parar o reconhecimento de texto",
   "plugins.assistant.live.empty": "A IA não retornou nada; seu texto não foi alterado.",
   "plugins.assistant.violation.stale": "o texto mudou antes que o Casual AI chegasse até ele.",
   "plugins.assistant.violation.empty": "não retornou nada, então seu texto não foi alterado.",

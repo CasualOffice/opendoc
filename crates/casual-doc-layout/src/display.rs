@@ -587,6 +587,59 @@ pub struct DisplayList {
     pub items: Vec<PaintItem>,
 }
 
+impl PaintItem {
+    /// Moves every coordinate the item carries by `(dx, dy)` twips: origins,
+    /// points, and the centre a transform turns about. Sizes, radii and
+    /// advances are lengths and stay put. How a renderer paints part of a list
+    /// into a surface smaller than the page (the GPU backend's fallback tile,
+    /// the CPU renderer's content-sized layer). O(1), or O(c) in a path's
+    /// commands.
+    pub fn translate(&mut self, dx: Twip, dy: Twip) {
+        let shift = |point: &mut Point| {
+            point.x = Twip(point.x.0.saturating_add(dx.0));
+            point.y = Twip(point.y.0.saturating_add(dy.0));
+        };
+        let shift_centre = |transform: &mut Option<ShapeTransform>| {
+            if let Some(transform) = transform {
+                shift(&mut transform.center);
+            }
+        };
+        match self {
+            Self::Glyphs { run } => shift(&mut run.origin),
+            Self::Rect { rect, .. }
+            | Self::Ellipse { rect, .. }
+            | Self::RoundedRect { rect, .. }
+            | Self::PushClip(rect) => shift(&mut rect.origin),
+            Self::Polygon { points, .. } => points.iter_mut().for_each(shift),
+            Self::Image {
+                rect, transform, ..
+            } => {
+                shift(&mut rect.origin);
+                shift_centre(transform);
+            }
+            Self::Line { from, to, .. } => {
+                shift(from);
+                shift(to);
+            }
+            Self::Shape {
+                geometry,
+                transform,
+                ..
+            }
+            | Self::Shadow {
+                geometry,
+                transform,
+                ..
+            } => {
+                *geometry = geometry.translated(dx, dy);
+                shift_centre(transform);
+            }
+            Self::PushLayer { transform, .. } => shift_centre(transform),
+            Self::PopClip | Self::PopLayer => {}
+        }
+    }
+}
+
 impl DisplayList {
     /// An empty display list.
     #[must_use]

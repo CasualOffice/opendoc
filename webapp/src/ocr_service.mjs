@@ -117,7 +117,7 @@ export function createOcrService(io = {}) {
       pending.delete(message.id);
       request.reject(new Error(message.message));
     } else if (message.type === "pages") {
-      request.on?.pages?.(message.done, message.total);
+      request.on?.pages?.(message.done, message.total, message.scanned ?? 0);
     } else if (message.type === "read") {
       request.on?.read?.(message.id);
     } else {
@@ -151,8 +151,11 @@ export function createOcrService(io = {}) {
   function warm(url) {
     if (warmUrl === url && warming) return warming;
     if (warmUrl !== url) {
-      // A different manifest: a fresh worker, so one engine is ever held.
-      if (worker) reset(new Error("the recognition models changed"));
+      // A different manifest: a fresh worker, so one engine is ever held. Not
+      // when the worker holds no engine yet: it may be reading a plain
+      // import's pages (`pdf_import.mjs`), and the first scan it reads is what
+      // asks for this preload; restarting would kill that import.
+      if (worker && warmUrl !== null) reset(new Error("the recognition models changed"));
       warmUrl = url;
     }
     const promise = request({ type: "warm", manifestUrl: url }).then(() => {
@@ -180,17 +183,18 @@ export function createOcrService(io = {}) {
       return Boolean(answer.stored);
     },
     /**
-     * Imports `bytes` with recognition, in the worker.
+     * Imports `bytes` in the worker: with recognition when `manifestUrl` is
+     * given, a plain import (no models) when it is null.
      *
      * @param {Uint8Array} bytes the PDF; a copy is transferred, `bytes` is kept.
      * @param {object} options
-     * @param {string} options.manifestUrl
+     * @param {string|null} options.manifestUrl
      * @param {"import"|"ocr"|"fixed"|"reflow"} options.mode
      * @param {string|null} [options.cmapSource]
      * @param {() => "flowing"|"fixed"} [options.layout] asked once the pages are read.
      * @param {(done: number, total: number) => void} [options.onModels]
      * @param {() => void} [options.onLoading]
-     * @param {(done: number, total: number) => void} [options.onPages]
+     * @param {(done: number, total: number, scanned: number) => void} [options.onPages]
      * @param {() => void} [options.onRead] the pages are read; the finish runs.
      * @param {AbortSignal} [options.signal] terminates the worker.
      * @returns {Promise<{pkg: Uint8Array, ocr: object|null, layout: string}>}
@@ -198,10 +202,12 @@ export function createOcrService(io = {}) {
      */
     async recognise(bytes, options) {
       if (options.signal?.aborted) throw cancelled();
-      warm(options.manifestUrl).catch(() => {});
+      // No manifest is a plain import off the main thread: no models load.
+      const recognising = Boolean(options.manifestUrl);
+      if (recognising) warm(options.manifestUrl).catch(() => {});
       active = options;
-      if (!warmed && modelState?.phase === "models") options.onModels?.(modelState.done, modelState.total);
-      if (!warmed && modelState?.phase === "loading") options.onLoading?.();
+      if (recognising && !warmed && modelState?.phase === "models") options.onModels?.(modelState.done, modelState.total);
+      if (recognising && !warmed && modelState?.phase === "loading") options.onLoading?.();
       const copy = bytes.slice();
       let abort = null;
       try {
@@ -222,7 +228,7 @@ export function createOcrService(io = {}) {
             {
               transfer: [copy.buffer],
               on: {
-                pages: (done, total) => options.onPages?.(done, total),
+                pages: (done, total, scanned) => options.onPages?.(done, total, scanned),
                 read: (id) => {
                   options.onRead?.();
                   const layout = options.layout?.() ?? "flowing";

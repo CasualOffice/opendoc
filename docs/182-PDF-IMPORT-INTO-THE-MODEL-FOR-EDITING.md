@@ -1035,13 +1035,23 @@ scanned page, desktop Chromium: **one main-thread task of 66,430 ms** (90,505 ms
 - **Cancel terminates the worker.** A page's recognition is one wasm call nothing can
   interrupt from outside; terminating frees the job, the engine and their memory at once.
   The next use spawns a new worker, which loads the models from IndexedDB.
-- **Usable while it runs.** The dialog stays (no new chrome); the wheel over its backdrop
-  scrolls the document behind it, while focus stays in the dialog, so the pages can be
-  read but not edited into a state the finished import would replace.
+- **Usable while it runs (HF-423, 2026-11-02).** The automatic run after a scan opens has
+  no dialog: the scanned pages stay on screen, readable, scrollable and editable, and the
+  progress is the status bar's ("Recognising text on page 3 of 8…"). Owner report: a modal
+  over an 8-page run (~30 s a page) made the editor unusable for minutes. The File-menu and
+  palette command "Recognise text" reads "Stop recognising text" while it runs, and is its
+  Cancel. `body[data-pdf-recognition="running"]` exposes the state. When it finishes, the
+  result replaces the document only if that document is still the one it read, and, if
+  the reader edited it meanwhile, only after the usual discard confirmation; otherwise the
+  result is dropped. "Recognise text" asked for by hand keeps the dialog: the reader asked
+  to wait for it.
 
 **The preload.** `PdfImportJob.scannedPages` (new, O(pages read)) counts the pages read so
-far that need optical recognition. The open's own import, still sliced on the main thread
-and with no recognition, reports the first one through `onScans`, once, and
+far that need optical recognition. The open's own import, with no recognition, runs in
+the same worker (HF-423: a scanned page costs ~600 ms to read, one task no slice can
+split, and an 8-page scan read on the main thread blocked it for 4.7 s; the sliced
+main-thread import stays only for a host with no `Worker`), and reports the first one
+through `onScans`, once, and
 `pdf_commands.mjs`'s `preload` starts the models loading in the worker at that moment, in
 parallel with the rest of the PDF. The automatic run that follows joins the load already
 under way, or finds the engine ready. A later session loads them from IndexedDB, without

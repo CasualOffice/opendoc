@@ -136,3 +136,37 @@ test("a manifest the worker cannot load rejects the run and the next preload tri
   await assert.rejects(service.warm(URL_A), /refused/);
   assert.equal(attempts, 2);
 });
+
+test("a plain import runs in the worker with no models, and the preload its first scan asks for does not restart that worker", async () => {
+  let service;
+  const warmed = [];
+  // Like the worker core, but the first page reports a scan, and the import
+  // starts the preload from there, exactly as `pdf_import.mjs`'s onPages does.
+  const { spawn, spawned } = fakeSpawner((message, reply) => {
+    if (message.type === "warm") warmed.push(message.manifestUrl);
+    if (message.type === "import") {
+      reply({ type: "pages", id: message.id, done: 1, total: 2, scanned: 1 });
+      reply({ type: "pages", id: message.id, done: 2, total: 2, scanned: 1 });
+      reply({ type: "read", id: message.id });
+      return;
+    }
+    workerLike(message, reply);
+  });
+  service = createOcrService({ spawn });
+  const scans = [];
+  const result = await service.recognise(new Uint8Array([1]), {
+    manifestUrl: null,
+    mode: "import",
+    layout: () => "flowing",
+    onPages: (done, total, scanned) => {
+      scans.push(scanned);
+      if (scanned > 0 && scans.length === 1) service.warm(URL_A).catch(() => {});
+    },
+  });
+  assert.deepEqual([...result.pkg], [7, 7], "the import finished: its worker was not restarted under it");
+  assert.equal(spawned.length, 1);
+  assert.equal(spawned[0].terminated, false);
+  assert.equal(spawned[0].posts.find((p) => p.message.type === "import").message.manifestUrl, null);
+  assert.deepEqual(scans, [1, 1], "the scanned-page count reaches the caller");
+  assert.deepEqual(warmed, [URL_A], "the only models asked for are the preload's");
+});
