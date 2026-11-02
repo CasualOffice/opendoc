@@ -24,6 +24,7 @@ import {
   openAppMenu,
   expectNothingToUndo,
   runAppMenuCommand,
+  expectEditorFocused,
 } from "./fixtures.mjs";
 
 // A 1×1 PNG — the smallest thing `createImageBitmap` will decode, so the test
@@ -457,20 +458,18 @@ test("Insert ▸ Drop cap creates, changes, removes, and restores the initial as
   expect(consoleErrors).toEqual([]);
 });
 
-test("the load-time insertion point exists but paints no caret until the editor surface is focused", async ({
+test("the load-time insertion point is focused and painted on open, ready for typing", async ({
   page,
   consoleErrors,
 }) => {
   await gotoEditor(page);
 
-  // The insertion point is live (the Insert tab proves it — see above), but the
-  // caret is not painted: `#pages` does not have focus yet, so the editor would
-  // discard typing, and a blinking cursor there would be a lie.
-  await expect(page.locator(".overlay .caret")).toHaveCount(0);
-
-  // Focusing the surface — by keyboard here, no click — makes it the user's
-  // caret and paints it.
-  await page.locator("#pages").focus();
+  // A caret is painted only while the surface holds focus (a blinking cursor
+  // that discards typing would be a lie). Since `109` UX-060 an unframed,
+  // editable document takes focus on open, as Word and Docs do, so the caret is
+  // there without a click. (`open_focus.mjs` keeps an embedded or otherwise
+  // focused page unfocused; its rules are unit-tested.)
+  await expectEditorFocused(page);
   await expect(page.locator(".overlay .caret")).toHaveCount(1);
 
   // And it is a real caret: typing goes in at the start of the body.

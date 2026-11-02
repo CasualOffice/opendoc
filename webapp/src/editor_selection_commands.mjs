@@ -3,6 +3,26 @@
 // reaches the rest of the editor only through the context `ed`.
 import { selectionMatchesRange } from "./caret_navigation.mjs";
 
+/** The start or end of the story the caret is in — the one rule Ctrl+Home,
+ *  Ctrl+End and Select All share (`docs/109` UX-057, audit CRITIC-01).
+ *
+ *  The document's edges are the BODY's (`firstPosition` / `lastPosition`, which
+ *  the engine answers from the body alone). A header or footer has edges of its
+ *  own only while it is OPEN for editing (`runningOpen`); a note body or a text
+ *  box the caret is already inside has its own edges too, as in Word. Anything
+ *  else — including a caret that has somehow ended up in a header or footer
+ *  outside header/footer mode — goes to the body, so navigation can never be the
+ *  thing that enters a running band. Returns `{node, offset}`. O(document): one
+ *  engine walk. */
+export function storyBoundary(doc, focusNode, { runningOpen = false } = {}, toEnd = false) {
+  const kind = focusNode ? String(doc.storyKind?.(focusNode) ?? "body") : "body";
+  const ownEdges = kind === "header" || kind === "footer" ? runningOpen : kind !== "body" && kind !== "";
+  const caret = ownEdges ? doc.storyEdge(focusNode, toEnd) : toEnd ? doc.lastPosition() : doc.firstPosition();
+  const at = { node: caret.node, offset: caret.offset };
+  caret.free?.();
+  return at;
+}
+
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
 export function createSelectionCommands(ed) {
@@ -79,15 +99,15 @@ export function createSelectionCommands(ed) {
       }
     }
 
-    const a = ed.doc.firstPosition();
-    const b = ed.doc.lastPosition();
+    // The story the caret is in: the body, or the header/footer/note being edited.
+    // It used to run from the body's start to the LAST paragraph of every story, a
+    // footer, so Select All + Delete emptied the headers and footers too (UX-057).
+    const focusNode = ed.selection?.focus?.node ?? null;
+    const scope = { runningOpen: !!ed.runningEditBand };
+    const a = storyBoundary(ed.doc, focusNode, scope, false);
+    const b = storyBoundary(ed.doc, focusNode, scope, true);
     ed.tableRange.clear();
-    ed.selection = {
-      anchor: { node: a.node, offset: a.offset },
-      focus: { node: b.node, offset: b.offset },
-    };
-    a.free();
-    b.free();
+    ed.selection = { anchor: a, focus: b };
     ed.drawSelection();
     ed.focusEditorSurface();
     ed.setStatus("Document selected");

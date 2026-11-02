@@ -13,6 +13,7 @@ import { createTableChrome } from "./table_chrome.mjs";
 import { createTableGutter } from "./table_gutter.mjs";
 import { tableDrawMode } from "./table_draw_mode.mjs";
 import { installViewportFocusGuard } from "./viewport_focus.mjs";
+import { createClickCounter, extendByUnit, unitForClickCount, unitRange } from "./unit_selection.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -216,6 +217,10 @@ export function createPointer(ed) {
   /** Touch selection — the long press, the two handles, the loupe and the caret
    *  drag (`105` UX-018, `148` §9 item 2). Every tunable and the whole gesture
    *  live in the module; this is all the shell owes it. */
+  /** The unit ("word" / "paragraph") the latest press selected, so the `dblclick`
+   *  and triple `click` that follow its release do not select again. */
+  let unitClick = null;
+  const clickCounter = createClickCounter();
   const touchSelection = createTouchSelection({
     view: window,
     surface: ed.pagesEl,
@@ -236,6 +241,8 @@ export function createPointer(ed) {
 
   function onPointerDown(page, event) {
     if (event.button !== 0) return;
+    unitClick = null; // every press decides afresh whether it started a unit selection
+    const clicks = event.detail || clickCounter.press(event.clientX, event.clientY, event.timeStamp);
     // No caret region: a press neither places an insertion point nor starts a
     // drag-selection. Scrolling and zooming are not gestures on the document.
     // This precedes the shape gate deliberately — a container offered no caret is
@@ -444,6 +451,21 @@ export function createPointer(ed) {
       event.shiftKey && ed.selection && !crossedStory
         ? { anchor: ed.selection.anchor, focus: anchor }
         : { anchor, focus: anchor };
+    // A double or triple press selects its word or paragraph NOW, on the press,
+    // and the drag that may follow grows it a whole unit at a time (UX-059,
+    // `unit_selection.mjs`). The post-release `dblclick` / triple `click` then
+    // has nothing left to do for text. A press in a margin band it is not
+    // editing is left to `dblclick`, which enters that header or footer.
+    const unit = event.shiftKey || !pointerDragSelects(event) ? null : unitForClickCount(clicks);
+    const band = unit ? ed.runningBandAt(page, y) : null;
+    const entersBand = !!band && !(band === ed.runningEditBand && page.pageNumber === ed.runningEditPage);
+    unitClick = unit && !entersBand ? unit : null;
+    if (unitClick) {
+      const origin = unitRange(ed.doc, anchor, unitClick);
+      ed.pointerGesture.unit = unitClick;
+      ed.pointerGesture.unitOrigin = origin;
+      ed.selection = { anchor: origin.start, focus: origin.end };
+    }
     // Non-blocking secondary effect (REVIEW-GAP-005): surface the sidebar card
     // for a comment the click landed inside, without altering the caret/range
     // hit-testing just computed above.
@@ -535,7 +557,8 @@ export function createPointer(ed) {
     // turns into a drag it is no longer a confirming click.
     if (ed.tableRange.dragTo(ed.pointerGesture.cellAnchor, focus.node, ed.pointerGesture)) return syncSelectionToCellRange();
     ed.tableRange.clear();
-    ed.selection = { anchor: ed.selection.anchor, focus };
+    const { unit, unitOrigin } = ed.pointerGesture;
+    ed.selection = unit ? extendByUnit(ed.doc, unitOrigin, focus, unit) : { anchor: ed.selection.anchor, focus };
     ed.drawSelection();
   }
 
@@ -898,11 +921,15 @@ export function createPointer(ed) {
       void ed.editRunningContent(bandAtPoint, page);
       return;
     }
+    // The press already selected the word, and a drag may have grown it: selecting
+    // the word under the RELEASE point here is what collapsed a double-click-drag.
+    if (unitClick === "word") return;
     touchSelection.selectWord(page, e); // the SAME routine the long press uses
   });
   // Triple-click selects the paragraph (the click's `detail` is the click count).
   ed.pagesEl.addEventListener("click", (e) => {
     if (e.detail !== 3) return;
+    if (unitClick === "paragraph") return; // the press selected it (UX-059)
     const page = pageFromEvent(e);
     if (!page) return;
     const a = ed.anchorAt(page, e);

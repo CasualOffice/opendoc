@@ -83,12 +83,20 @@ test("the first Tab reaches a skip link that lands in the document", async ({
   consoleErrors,
 }) => {
   await gotoEditor(page);
-  // Tab from a clean focus state, which is what a fresh load gives a keyboard
-  // user. Clicking first would start sequential navigation from the click
-  // target, and every clickable point in the chrome is AFTER the link in DOM
-  // order — so Tab would move past it and the test would be measuring the wrong
-  // journey entirely.
-  await page.evaluate(() => document.activeElement?.blur());
+  // Tab from the TOP of the page. A fresh load now puts focus in the document
+  // itself (`109` UX-060), which already bypasses the chrome; the link is for a
+  // keyboard user who starts from the top — after a reload with focus moved, a
+  // framed editor, or a screen reader's own navigation. Blurring alone is not
+  // that state: Chromium keeps the sequential-navigation starting point at the
+  // element that lost focus. Focusing the root (and dropping its tabindex) is.
+  // Clicking would start navigation from the click target, and every clickable
+  // point in the chrome is AFTER the link in DOM order.
+  await page.evaluate(() => {
+    const root = document.documentElement;
+    root.tabIndex = -1;
+    root.focus();
+    root.removeAttribute("tabindex");
+  });
   await page.keyboard.press("Tab");
 
   const focused = page.locator(":focus");

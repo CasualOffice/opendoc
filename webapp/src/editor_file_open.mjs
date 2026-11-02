@@ -15,7 +15,8 @@ import { isPdfBytes } from "./pdf_import_scheduler.mjs";
 import { createPdfCommands, ocrSummaryOf } from "./pdf_commands.mjs";
 import { createPdfLayoutChip } from "./pdf_layout_chip.mjs";
 import { registerPopover } from "./popover_manager.mjs";
-import { hostParams } from "./capabilities.mjs";
+import { hostConfig, hostParams } from "./capabilities.mjs";
+import { shouldFocusOnOpen } from "./open_focus.mjs";
 
 // Curated `?demo=<kind>` presets for the editor. `?demo=1` — used by the Home
 // hero live embed — is the plain sample with no panel; the named kinds boot the
@@ -484,6 +485,15 @@ export function createFileOpen(ed) {
       ed.tocCommands.fields.refresh();
       ed.buildAccessibilityTree();
       ed.drawSelection();
+      // Open ready to type, as Word and Docs do — unless that would take focus
+      // from someone (`open_focus.mjs`, UX-060).
+      if (ed.doc === next && shouldFocusOnOpen({
+        framed: hostConfig(window).framed,
+        activeElement: document.activeElement,
+        body: document.body,
+        editable: !ed.readOnlyReason && ed.reviewMode !== "viewing" && ed.chromeShows("caret"),
+        coarsePointer: window.matchMedia?.("(pointer: coarse)")?.matches === true,
+      })) ed.focusEditorSurface();
       ed.armBackgroundMeasure();
       if (typeof onRendered === "function") onRendered();
 
