@@ -295,14 +295,13 @@
                right of the toolbar ("Editing ▾"), Word at the right of the ribbon
                (`109` UX-025, docs/123 §4.5). One button naming the mode in force,
                opening a three-row menu, which is Docs' shape.
-               It is the SECOND face of ONE state, not a second state: it holds
-               no mode of its own. `header_mode.mjs` reads the status bar's
-               segmented control (`#reviewModeControl`) and acts by pressing it,
-               so `setReviewMode` stays the only writer and the two surfaces
-               cannot disagree. The rows carry `data-header-mode`, NOT
-               `data-review-mode`: `main.js` collects every `[data-review-mode]`
-               at import and stamps `aria-pressed` on it, which a
-               `menuitemradio` must not carry. -->
+               It is the ONLY mode switch on screen (`docs/184` D6, `109` UX-054):
+               the status bar's duplicate segmented control is gone, as in Docs and
+               Word. Its rows carry `data-review-mode`, so they ARE the published
+               state: `setReviewMode` (the only writer) stamps `aria-checked` on
+               them and `reflectReviewModeAccess` stamps `aria-disabled` and the
+               reason. The palette, Review ▸ Track changes, the menu bar's Mode
+               group and Ctrl+Shift+E are its other surfaces. -->
           <div id="headerModeControl" class="header-mode">
             <span data-i18n="ui.editingMode.label" id="headerModeCaption" class="sr-only">Editing mode</span>
             <button data-i18n-title="headerMode.title" id="headerModeBtn" type="button" class="header-mode-btn" title="Choose whether your edits change the document, become suggestions, or are not allowed" aria-haspopup="menu" aria-controls="headerModeMenu" aria-expanded="false" aria-labelledby="headerModeCaption headerModeText" data-mode="editing">
@@ -2665,27 +2664,27 @@
 
     <!-- The header's editing-mode menu (`#headerModeBtn`). At body level, like
          the language menu, so no ancestor's stacking context can put it under
-         the ribbon. The three names are the status bar's own keys — one
-         vocabulary for one state on two surfaces — and each row's sentence is
+         the ribbon. The three names keep the `reviewModeControl.*` keys the
+         retired status-bar control used, so no locale changes — and each row's sentence is
          its DESCRIPTION, not part of its name: `aria-hidden` on the visible
          copy and `aria-describedby` to it, so a screen reader hears "Suggesting,
          radio menu item, checked" and then the explanation. -->
     <div data-i18n-label="ui.editingMode.label" id="headerModeMenu" class="context-menu header-mode-menu" role="menu" aria-label="Editing mode" hidden>
-      <button type="button" class="menu-item header-mode-item" role="menuitemradio" aria-checked="true" data-header-mode="editing" aria-describedby="headerModeEditingNote">
+      <button type="button" class="menu-item header-mode-item" role="menuitemradio" aria-checked="true" data-review-mode="editing" aria-describedby="headerModeEditingNote">
         <span class="ms" aria-hidden="true">edit</span>
         <span class="header-mode-item-text">
           <span data-i18n="reviewModeControl.editing" class="header-mode-item-label">Editing</span>
           <span data-i18n="headerMode.editing.note" id="headerModeEditingNote" class="header-mode-item-note" aria-hidden="true">Edit the document directly</span>
         </span>
       </button>
-      <button type="button" class="menu-item header-mode-item" role="menuitemradio" aria-checked="false" data-header-mode="suggesting" aria-describedby="headerModeSuggestingNote">
+      <button type="button" class="menu-item header-mode-item" role="menuitemradio" aria-checked="false" data-review-mode="suggesting" aria-describedby="headerModeSuggestingNote">
         <span class="ms" aria-hidden="true">rate_review</span>
         <span class="header-mode-item-text">
           <span data-i18n="reviewModeControl.suggesting" class="header-mode-item-label">Suggesting</span>
           <span data-i18n="headerMode.suggesting.note" id="headerModeSuggestingNote" class="header-mode-item-note" aria-hidden="true">Edits become suggestions others can accept or reject</span>
         </span>
       </button>
-      <button type="button" class="menu-item header-mode-item" role="menuitemradio" aria-checked="false" data-header-mode="viewing" aria-describedby="headerModeViewingNote">
+      <button type="button" class="menu-item header-mode-item" role="menuitemradio" aria-checked="false" data-review-mode="viewing" aria-describedby="headerModeViewingNote">
         <span class="ms" aria-hidden="true">visibility</span>
         <span class="header-mode-item-text">
           <span data-i18n="reviewModeControl.readOnly" class="header-mode-item-label">Read only</span>
@@ -4800,24 +4799,6 @@
              an add-in that proofreads is running; a click goes to the next issue.
              Its words are written by `plugin_platform.mjs` when it is shown. -->
         <button id="addinIssuesStatus" class="compatibility-status addin-issues-status" type="button" hidden></button>
-        <!-- The editing-mode switch. Word puts its view switcher at the right
-             end of the status bar, immediately before zoom, as a GROUP of
-             adjacent toggles with no caption of its own; this is that control,
-             in that place, beside zoom. Google Docs' is one button that always
-             names the current mode — the same guarantee, and the reason the
-             active segment is the one that is filled.
-             It used to read as three loose words: the track was `--bg-2` on a
-             `--bg-2` footer, so there was no container, only the selected pill,
-             and a "Mode" caption in front of it that neither reference has and
-             that made the run of text longer still. The track is drawn now, so
-             the three segments read as one control. -->
-        <span class="footer-mode">
-          <span data-i18n-label="ui.editingMode.label" id="reviewModeControl" class="review-mode-segmented" role="group" aria-label="Editing mode">
-            <button data-i18n="reviewModeControl.editing" type="button" class="review-mode-seg" data-review-mode="editing" aria-pressed="true" disabled>Editing</button>
-            <button data-i18n="reviewModeControl.suggesting" type="button" class="review-mode-seg" data-review-mode="suggesting" aria-pressed="false" disabled>Suggesting</button>
-            <button data-i18n="reviewModeControl.readOnly" type="button" class="review-mode-seg" data-review-mode="viewing" aria-pressed="false" disabled>Read only</button>
-          </span>
-        </span>
         <!-- What THIS reader may do with THIS document, from first paint, in every
              mode including standalone and embedded. `access_badge.mjs` carries
              the argument; the two things to know here are WHERE and WHAT IT IS

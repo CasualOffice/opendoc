@@ -291,15 +291,21 @@ export async function moveCaretToDocStart(page) {
   await page.keyboard.press(`${MOD}+Home`);
 }
 
-// The three-state review-mode control (`#reviewModeControl`: Editing /
-// Suggesting / Viewing) lives in the persistent footer. Selects `mode` and
-// confirms its segment became the pressed one.
+// The three-state review mode (Editing / Suggesting / Viewing) is switched from
+// the header's one mode selector (`docs/184` D6: the status bar's duplicate is
+// gone). Opens its menu, chooses `mode` and confirms its row became the checked
+// one. `modeRow` is the row itself, for asserting the published state
+// (`aria-checked`, `aria-disabled`) without opening the menu.
+export function modeRow(page, mode) {
+  return page.locator(`#headerModeMenu [data-review-mode="${mode}"]`);
+}
+
 export async function setReviewMode(page, mode) {
-  const button = page.locator(
-    `#reviewModeControl [data-review-mode="${mode}"]`,
-  );
-  await button.click();
-  await expect(button).toHaveAttribute("aria-pressed", "true");
+  const row = modeRow(page, mode);
+  await page.locator("#headerModeBtn").click();
+  await expect(row).toBeVisible();
+  await row.click();
+  await expect(row).toHaveAttribute("aria-checked", "true");
 }
 
 /** Proves nothing entered the undo history — from a surface that survives when

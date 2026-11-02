@@ -2,7 +2,7 @@
 // routed to the wrong handler rather than resolved to the wrong position. None
 // corrupts content — the painted range is still the range that gets edited — but
 // each one breaks an ordinary editing action outright.
-import { test, expect, gotoEditor, clickIntoFirstPage, stableBox } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, stableBox, setReviewMode } from "./fixtures.mjs";
 
 const selectedText = (page) =>
   page.evaluate(() => {
@@ -83,7 +83,7 @@ test("the first tracked change does not shift the page sideways", async ({
 }) => {
   await gotoEditor(page);
   await clickIntoFirstPage(page);
-  await page.locator('#reviewModeControl [data-review-mode="suggesting"]').click();
+  await setReviewMode(page, "suggesting");
 
   const pageX = async () => (await stableBox(page.locator(".page-wrap").first())).x;
   const before = await pageX();

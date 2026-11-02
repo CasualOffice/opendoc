@@ -302,13 +302,13 @@ test("the status bar keeps its counts and live controls at 720px", async ({ page
   await expect(page.locator("#statWords")).toBeVisible();
   await expect(page.locator("#statChars")).toBeVisible();
   await expect(page.locator("#statPages")).toBeVisible();
-  await expect(page.locator("#reviewModeControl")).toBeVisible();
   await expect(page.locator(".zoom")).toBeVisible();
 
-  // Every mode segment is fully readable — not squeezed to an ellipsis — and the
-  // zoom control is clickable rather than merely on-screen.
+  // Every footer item is fully readable — not squeezed to an ellipsis — and the
+  // zoom control is clickable rather than merely on-screen. (The mode switch left
+  // the status bar for the header in `docs/184` D6.)
   const clipped = await page.evaluate(() =>
-    [...document.querySelectorAll(".footer .review-mode-seg")].filter((el) => el.scrollWidth > el.clientWidth).length,
+    [...document.querySelectorAll(".footer button:not([hidden])")].filter((el) => el.getClientRects().length > 0 && el.scrollWidth > el.clientWidth + 1).length,
   );
   expect(clipped).toBe(0);
   await page.locator("#zoomIn").click();

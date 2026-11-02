@@ -22,9 +22,10 @@ project's production-grade bar (not an MVP).
 
 Borrowed from the reference, adapted to the CasualOffice brand:
 
-- **Accent** — a single settable accent (Settings ⚙). Brand default is orange
-  (`--accent`, casualoffice.org "Studio"); the reference's blue is one of the
-  presets. Everything tints from `--accent` via `color-mix`.
+- **Accent** — a single settable accent (Settings ⚙). The default is blue,
+  `--accent: #3355c4` (owner decision, 2026-11-03: never orange as the editor's
+  accent); the Settings presets, orange among them, are the reader's choice.
+  Everything tints from `--accent` via `color-mix`.
 - **Type** — self-hosted Inter for deterministic cross-platform chrome, with the
   native system stack as fallback. Chrome text is 13px; headings and titles are
   slightly heavier. Tabular numerals remain in use for measures (ruler, zoom,
@@ -68,7 +69,7 @@ toolbar, context menus, toolbar popovers.
 | 1 | **Top bar + toolbar** | identity + primary actions + formatting | brand; two-row document block with title, honest local `Opened`/`Edited`/`Downloaded` state, and functional File/Edit/View/Insert/Format/Tools/Help menus; Open/Save/Properties/Settings; tabbed formatting ribbon. |
 | 3 | **Left nav rail + panel** | document navigation | **Outline** (heading tree → scroll-to) first; later Pages (thumbnails), Search/Find. The rail only shows an icon once its panel is functional. |
 | 4 | **Right context panel** | inspect/act on the selection | later: Styles (apply), Properties (paragraph/table inspector), Comments (needs a comments model — a later phase). Collapsible; never empty. |
-| 5 | **Status bar** | document state | page X of Y, word/paragraph counts, zoom (−/＋/%), later language, edit mode, view toggles, save/sync state. |
+| 5 | **Status bar** | document state | page X of Y, word/paragraph counts, zoom (−/＋/%), language, view toggles, save/sync state. Never the editing mode (it is the header selector's alone, `docs/184` D6) and never an echo of the toolbar layout or a font download. |
 | 6 | **Command palette (⌘⇧P)** | fast command access | fuzzy search over every action (insert table, apply style, export, …). `⌘K` remains the document-standard Add/Edit Link shortcut. |
 | — | **Floating selection toolbar** | quick format at the selection | mini B/I/U · highlight · color · link · comment above a range; complements our engine-drawn selection. |
 | — | **Rulers** | measure + indent/tabs | horizontal (done: margins, indent markers, tab stops); vertical (top/bottom margins) later. |
@@ -130,8 +131,8 @@ Where things live, so we stay consistent as we add features:
 
 ## 5. Decisions
 
-- Keep the **single settable accent**; brand default orange, reference blue is a
-  preset. Structure/spacing follow the reference; colour does not have to.
+- Keep the **single settable accent**; default blue `#3355c4`, the other
+  presets (orange among them) a reader's choice. Structure/spacing follow the reference; colour does not have to.
 - **Tabbed ribbon**: the working Home/Insert/Table/View/**Review** ribbon is now the
   primary toolbar (five tabs as shipped; this doc and `64` both said four until
   2026-09-15). A **Layout** tab is the next one this rule licenses — the page/section
@@ -183,14 +184,14 @@ px figures below are at the 16px root that holds from 1280 to 1440px.
 
 | Family | Tokens | Values | Roles |
 | --- | --- | --- | --- |
-| Type size | `--fs-xs` `--fs-sm` `--fs-md` `--fs-lg` `--fs-xl` | 11 / 12 / 13 / 15 / 20 | chips, shortcut hints, big-button labels · status, meta, field labels · body, menus, tabs · dialog and panel titles · File page heading |
+| Type size | `--fs-xs` `--fs-sm` `--fs-md` `--fs-lg` `--fs-xl` | 12 / 12 / 13 / 15 / 20 (`--fs-xs` was 11 until the D7 floor raised chrome text to 12; the two names are kept for their roles) | chips, shortcut hints, big-button labels · status, meta, field labels · body, menus, tabs · dialog and panel titles · File page heading |
 | Weight | `--fw-regular` `--fw-medium` `--fw-semibold` | 400 / 500 / 600 | body · controls, tabs, labels · titles and headings |
 | Icon | `--icon-sm` `--icon-md` `--icon-lg` | 16 / 20 / 24 | status bar, chips, menu trailing · toolbar, menus, panel actions · big ribbon buttons, mobile |
 | Radius | `--r-xs` `--r-sm` `--r-md` `--r-lg` `--r-pill` | 4 / 6 / 8 / 12 / pill | checkbox, chip, swatch · buttons, inputs, tool buttons · menus, popovers, cards, panels, toolbar card · dialogs, sheets · avatars, mode chip |
 | Height | `--h-dense` `--h-tool` `--h-ctl` `--h-touch` | 24 / 28 / 32 / 44 | status items, chips · toolbar and ribbon buttons · dialog buttons, inputs, selects · coarse pointer |
 | Space | `--space-1`..`--space-6` | 4 / 8 / 12 / 16 / 20 / 24 | the 4px grid; a 2px half-step inside dense controls; never an odd pixel (1px is a hairline, not spacing) |
 | Elevation | `--e1` `--e2` `--e3` | card · menu/popover · dialog | light: hairline plus soft shadow; dark: `none` / hairline ring only |
-| State | `--hover` `--press` `--selected` `--selected-ink` | ink 6% / 10% · accent 12% | washes every control shares |
+| State | `--hover` `--press` `--selected` `--selected-ink` | ink 6% / 10% · accent 12% | washes every control shares; a ribbon button held under the mouse takes `--press`, one step past hover (`shell-sparse.spec.mjs`) |
 | Roles | `--surface-raised` `--icon` `--line-control` `--ink-disabled` `--scrim` | | dialogs over panels · toolbar glyphs · input boundary (3:1, WCAG 1.4.11) · disabled text · modal backdrop |
 
 **Primary.** `--primary-bg` is `var(--accent)` in both themes, `--primary-ink`

@@ -247,6 +247,10 @@ export function createSettings(ed) {
       ed.reflowView.setEnabled(); // the width button's label is the STEP's, not markup's
       ed.pdfCommands?.chip?.reflect(); // the PDF layout chip names its layout in a sentence
       if (ed.doc) ed.updateStats();
+      // `<title>` carries `data-i18n` for the no-document fallback, so the relabel
+      // just wrote that fallback over the open document's name whenever the
+      // catalogue landed after the open (audit FILE-V-01). Name the document again.
+      if (ed.doc) ed.refreshDocumentTitle();
       // The timeline's rows, day headings and disclosure are all script-built from
       // locale-shaped values, and the View entry's disabled reason is a sentence —
       // so this panel is one of the surfaces a relabel has to reach.

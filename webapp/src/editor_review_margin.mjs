@@ -130,11 +130,12 @@ export function createReviewMargin(ed) {
     // composition is silent (`docs/126`).
     ed.reflectReviewBanners(ed.containerCanEdit ? ed.reviewMode : "", ed.readOnlyReason);
     // The banner's "Switch to editing" offer is `updateReviewControls`'s, below,
-    // so the segments and the banner cannot disagree about whether editing is possible.
+    // so the mode rows and the banner cannot disagree about whether editing is possible.
     ed.reflectChrome(); // every edge — `readOnlyReason`, a preview's two, and the MODE
     aiAccessMayHaveChanged(); // Casual AI's effective access follows the mode (`docs/183` §23.3)
+    // The header menu's rows are `menuitemradio`s: the mode is `aria-checked`.
     for (const button of ed.reviewModeButtons) {
-      button.setAttribute("aria-pressed", String(button.dataset.reviewMode === ed.reviewMode));
+      button.setAttribute("aria-checked", String(button.dataset.reviewMode === ed.reviewMode));
     }
     // Announce a genuine user mode change (not the load-time reset to Editing).
     if (ed.reviewMode !== previous) {

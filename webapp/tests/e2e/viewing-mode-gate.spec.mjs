@@ -45,14 +45,14 @@ test("Viewing mode is read-only: typing, deletion, paste, formatting, and table 
   // The mode is reflected: the Viewing segment is pressed, the other two are
   // not, and the read-only banner is shown.
   await expect(
-    page.locator('#reviewModeControl [data-review-mode="viewing"]'),
-  ).toHaveAttribute("aria-pressed", "true");
+    page.locator('#headerModeMenu [data-review-mode="viewing"]'),
+  ).toHaveAttribute("aria-checked", "true");
   await expect(
-    page.locator('#reviewModeControl [data-review-mode="editing"]'),
-  ).toHaveAttribute("aria-pressed", "false");
+    page.locator('#headerModeMenu [data-review-mode="editing"]'),
+  ).toHaveAttribute("aria-checked", "false");
   await expect(
-    page.locator('#reviewModeControl [data-review-mode="suggesting"]'),
-  ).toHaveAttribute("aria-pressed", "false");
+    page.locator('#headerModeMenu [data-review-mode="suggesting"]'),
+  ).toHaveAttribute("aria-checked", "false");
   await expect(page.locator("#viewingBanner")).toBeVisible();
   await expect(page.locator("#suggestingBanner")).toBeHidden();
 
@@ -155,7 +155,8 @@ test("Viewing mode composes the editing chrome away, and leaving it puts everyth
   // reveals the menu bar, which is where File ▸ Print lives.
   await expect(page.locator("#appMenuBar")).toBeVisible();
   await expect(page.locator(".footer")).toBeVisible();
-  await expect(page.locator("#reviewModeControl")).toBeVisible();
+  // ...and the way back out: the header's mode selector stays (`docs/184` D6).
+  await expect(page.locator("#headerModeBtn")).toBeVisible();
 
   // The floating selection toolbar goes with the ribbon: it offers formatting and
   // nothing else, so a selection in Viewing raises no format bar.

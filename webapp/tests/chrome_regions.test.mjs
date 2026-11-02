@@ -85,13 +85,10 @@ const EXPECTED = Object.freeze({
     'id="versionPreviewBanner"',
   ],
   // The Editing / Suggesting / Read-only switcher (ONLYOFFICE
-  // `customization.review.hideReviewDisplay`). One element: the segmented
-  // control is a `role="group"` holding the three buttons, so removing it
-  // removes all three and cannot leave one behind. Its second face is the
-  // header's mode selector (`109` UX-025) and the menu it opens: withholding
-  // the region has to take all of it, or a host who said `chrome=-review` still
-  // ships a switch at the top right.
-  review: ['id="reviewModeControl"', 'id="headerModeControl"', 'id="headerModeMenu"'],
+  // `customization.review.hideReviewDisplay`): the header's mode selector
+  // (`109` UX-025) and the menu it opens. The status bar's duplicate was removed
+  // (`docs/184` D6, UX-054), so these two are the whole region.
+  review: ['id="headerModeControl"', 'id="headerModeMenu"'],
   status: ['class="footer"', 'id="statusToast"'],
   zoom: ['class="zoom"'],
   find: ['id="findPanel"'],

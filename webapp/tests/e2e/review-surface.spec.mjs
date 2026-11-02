@@ -130,16 +130,15 @@ test("the tracking toggles reflect and drive the engine's own state", async ({
   await clickIntoFirstPage(page);
   await openReviewTab(page);
 
-  // Track changes IS Suggesting mode — the ribbon toggle and the footer's mode
-  // control are two views of one piece of state, not two flags.
+  // Track changes IS Suggesting mode — the ribbon toggle and the header's mode
+  // selector are two views of one piece of state, not two flags.
   await expect(page.locator("#reviewTrackBtn")).toHaveAttribute("aria-pressed", "false");
   await page.locator("#reviewTrackBtn").click();
   await expect(page.locator("#reviewTrackBtn")).toHaveAttribute("aria-pressed", "true");
-  // The footer's mode control is the other view of that same state. (There are
-  // two mode controls in the shell — footer and ribbon — so scope to the footer.)
+  // The header's mode selector is the other view of that same state.
   await expect(
-    page.locator('.footer .review-mode-seg[data-review-mode="suggesting"]'),
-  ).toHaveAttribute("aria-pressed", "true");
+    page.locator('#headerModeMenu [data-review-mode="suggesting"]'),
+  ).toHaveAttribute("aria-checked", "true");
 
   await page.locator("#reviewTrackBtn").click();
   await expect(page.locator("#reviewTrackBtn")).toHaveAttribute("aria-pressed", "false");

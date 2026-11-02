@@ -99,6 +99,12 @@ Contextual tabs (Table, Chart, Header & Footer, Picture…) appear only while th
 selected, styled as contextual, never as greyed placeholders. The status bar is page x of y,
 word count, language and zoom, plus the contextual chips that already exist.
 
+*Status (2026-11-03, `program/ui-redesign` lane L2, `109` UX-054):* built except "Compact/Ribbon
+is one control", which goes with the header restructure (lane L4), and opening a contextual tab
+automatically on insert. Share is hidden without a host that can share; the header selector is the
+only mode switch, at every width including the phone; contextual tabs are hidden until their
+object is selected and drawn in the accent. `e2e/shell-sparse.spec.mjs` exists and holds it.
+
 **D7 — Accessibility floor, enforced by tests.** Every interactive target ≥1.5rem (24px) in
 both dimensions, ≥2.75rem on a coarse pointer; chrome text ≥0.75rem; a 2px accent focus ring
 with an offset; every control has an accessible name; AA contrast in both themes.

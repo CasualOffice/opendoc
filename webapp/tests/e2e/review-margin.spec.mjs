@@ -244,8 +244,8 @@ test("replacement and formatting pairs are one atomic suggestion card", async ({
 
   await page.locator("#suggestingBanner").getByRole("button", { name: "Switch to editing" }).click();
   await expect(
-    page.locator('#reviewModeControl [data-review-mode="editing"]'),
-  ).toHaveAttribute("aria-pressed", "true");
+    page.locator('#headerModeMenu [data-review-mode="editing"]'),
+  ).toHaveAttribute("aria-checked", "true");
   await expect(page.locator("#suggestingBanner")).toBeHidden();
   expect(consoleErrors).toEqual([]);
 });

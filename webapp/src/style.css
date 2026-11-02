@@ -1171,6 +1171,12 @@ button.presence-row:hover {
   font-size: var(--icon-sm);
 }
 
+/* `.btn` sets a display, which would otherwise beat the `hidden` attribute that
+   takes Share away when no host configured sharing (`docs/184` D6). */
+.btn.share-btn[hidden] {
+  display: none;
+}
+
 /* A remote caret the reader just asked to be shown: its label pulses once. */
 .remote-caret.is-located > span {
   animation: presence-located 1.2s ease-out 1;
@@ -5763,6 +5769,11 @@ body.compact-mode {
   font-weight: 600;
   cursor: pointer;
   border-bottom: 2px solid transparent;
+  /* One line, always: "Header & Footer" wrapped at 1024px and "Kopf- und
+     Fußzeile" at 1280px in German, and the second line was cut off by the band
+     (audit MOBILE-17, CRITIC-06). Word keeps tab labels on one line; when the
+     strip runs out of room it scrolls under its fade instead. */
+  white-space: nowrap;
 }
 
 .ribbon-tab:hover:not(:disabled) {
@@ -6060,7 +6071,10 @@ body.compact-mode {
   gap: 0.125rem;
 }
 
-.fmt-big .ms {
+/* Two classes: `.fmt .ms` (below, same specificity as `.fmt-big .ms`) came
+   later and won, so every big button drew the small 20px glyph and the ribbon
+   read flat (audit SYSTEM-06). */
+.fmt.fmt-big .ms {
   font-size: var(--icon-lg);
 }
 
@@ -6564,6 +6578,14 @@ body.compact-mode {
   background: var(--bg-2);
 }
 
+/* Pressed: one step past hover, as Word and ONLYOFFICE darken on mouse-down. It
+   was identical to hover, so a click gave no feedback until the command ran
+   (audit SHELL-11). After the hover rule, which has the same specificity; it
+   outranks the toggled wash. */
+.fmt:active:not(:disabled) {
+  background: var(--press);
+}
+
 .fmt[aria-pressed="true"] {
   background: var(--accent-soft);
   border-color: var(--accent-line);
@@ -6847,13 +6869,6 @@ body.is-format-painting .page-wrap * {
    that are not selected still read as parts of one switch rather than as loose
    words in the status bar. The track was `--bg-2` — the footer's own colour, in
    both themes — which is why only the selected pill was visible. */
-.review-mode-segmented { display: inline-flex; gap: 0; padding: 1px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); }
-.review-mode-seg { display: inline-flex; align-items: center; gap: 0.25rem; border: 1px solid transparent; border-radius: var(--r-pill); padding: 0.25rem 0.5rem; background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-xs); font-weight: 600; cursor: pointer; white-space: nowrap; }
-.review-mode-seg .ms { font-size: var(--fs-lg); }
-.review-mode-seg[aria-pressed="true"] { color: var(--review-insert); border-color: var(--review-insert-line); background: var(--review-insert-soft); }
-.review-mode-seg[data-review-mode="viewing"][aria-pressed="true"] { color: var(--ink); border-color: var(--accent-text); background: var(--accent-soft); }
-.review-mode-seg:disabled { opacity: 0.45; cursor: default; }
-.review-mode-seg:not(:disabled):not([aria-pressed="true"]):hover { background: var(--accent-soft); color: var(--ink); }
 .viewing-banner { border-color: color-mix(in srgb, var(--accent-text) 42%, var(--line)); background: color-mix(in srgb, var(--accent-text) 12%, var(--surface)); }
 .viewing-banner .ms { color: var(--accent-text); }
 .suggesting-banner {
@@ -8270,19 +8285,20 @@ body.is-format-painting .page-wrap * {
   background: var(--bg);
 }
 
-.viewport.dragging::after {
+/* The whole window, because a file is caught anywhere in it (audit FILE-14). */
+body.file-dragging::after {
   content: "Drop to open";
   position: fixed;
-  inset: 116px 16px 16px;
+  inset: 1rem;
   border: 2px dashed var(--accent-text);
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   display: grid;
   place-items: center;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--accent-text);
   background: color-mix(in srgb, var(--accent) 9%, transparent);
   pointer-events: none;
-  z-index: 5;
+  z-index: var(--z-palette);
 }
 
 /* `width: max-content` is what makes the horizontal scroll REACHABLE. A
@@ -8484,7 +8500,14 @@ body.is-format-painting .page-wrap * {
    span between the page margins, hairline ticks, and pentagon indent markers) - */
 .ruler {
   position: sticky;
-  top: 0;
+  /* Flush against the chrome once the document scrolls (audit SHELL-V-01).
+     Sticky offsets are measured from the scroller's CONTENT edge, so `top: 0`
+     parked the ruler 12px (`.viewport`'s top padding) below the ribbon, and the
+     scrolled page painted in that band: content showed above the ruler and
+     `elementFromPoint` there hit the page. Minus the padding, it sticks at the
+     scroller's top edge, so nothing can scroll above it. At rest it is
+     unchanged: the padding still sets it on the desk below the ribbon. */
+  top: -12px;
   z-index: 4;
   height: 24px;
   /* Cancel most of the .pages flex gap (22px) so the ruler hugs the page top. */
@@ -8493,9 +8516,12 @@ body.is-format-painting .page-wrap * {
   border: 1px solid var(--line);
   border-radius: 5px;
   user-select: none;
-  /* The strip itself never intercepts a page click; only the small indent
-     markers below opt back in (pointer-events: auto) so they can be dragged. */
-  pointer-events: none;
+  /* The strip is opaque to the pointer as well as to the eye. It used to let
+     clicks through to the page, which while scrolled is text hidden UNDER the
+     ruler: a press on its margin zone put the caret somewhere the reader could
+     not see. At rest the ruler never overlaps a page (22px gap, -16px margin),
+     so nothing that was clickable is lost. */
+  cursor: default;
 }
 
 .ruler[hidden] {
@@ -9958,6 +9984,36 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
  * when its object does. */
 .ribbon-tab-contextual {
   margin-left: 0.375rem;
+  color: var(--accent-text);
+}
+
+/* Contextual tabs are HIDDEN, not greyed, until their object is selected
+   (`docs/184` D6, audit SHELL-03), as Word shows Table Design or Picture Format
+   only while the table or picture is selected. One rule for all of them: the
+   three modules that own the tabs (`main.js` for Table, `chart_surface.mjs` for
+   Chart, `editor_header_footer.mjs` for Header & Footer) already keep `disabled`
+   true exactly while there is nothing for the tab to act on, so hiding the
+   disabled ones cannot disagree with them. A hidden tab is out of the
+   accessibility tree and the arrow-key roving skips disabled tabs already. */
+.ribbon-tab-contextual:disabled {
+  display: none;
+}
+
+/* The contextual set reads as a group, as in the approved mockup: a hairline
+   before the FIRST contextual tab that is showing. */
+.ribbon-tab-contextual:not(:disabled):not(.ribbon-tab-contextual:not(:disabled) ~ .ribbon-tab-contextual) {
+  position: relative;
+  margin-left: 0.75rem;
+}
+
+.ribbon-tab-contextual:not(:disabled):not(.ribbon-tab-contextual:not(:disabled) ~ .ribbon-tab-contextual)::before {
+  content: "";
+  position: absolute;
+  left: -0.375rem;
+  top: 0.5rem;
+  bottom: 0.5rem;
+  width: 1px;
+  background: var(--line-strong);
 }
 
 /* The File page COVERS the work area — it is a route, not an overlay.
@@ -10544,13 +10600,11 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   cursor: default;
 }
 
-/* Before a document is open the mode means nothing — the status bar that carries
-   the other face is hidden then too — and on a phone the status bar's own
-   segments are the one face: the two-row phone header has no room for a third
-   cluster, and a control repeated in a 390px viewport is the clutter the phone
-   tier exists to remove. */
-body:not(.doc-loaded) .header-mode,
-body.phone-mode .header-mode {
+/* Before a document is open the mode means nothing. On a phone the selector
+   stays: it is the one mode switch at every width (`docs/184` D6; the phone
+   mockup draws "Editing ▾" in the header), and the status bar that used to carry
+   a duplicate is not on a phone's screen at all. */
+body:not(.doc-loaded) .header-mode {
   display: none;
 }
 
@@ -10773,26 +10827,6 @@ body:not(.doc-loaded) .drop-title {
 
 .foot-right {
   flex: 0 0 auto;
-}
-
-.footer-mode {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  white-space: nowrap;
-}
-
-.footer .review-mode-seg {
-  padding: 0.125rem 0.5rem;
-  font-size: var(--fs-xs);
-}
-
-.rgroup-mode .review-mode-seg {
-  padding: 0.25rem;
-}
-
-.rgroup-mode .review-mode-seg .ms {
-  display: none;
 }
 
 /* Inside the left half the transient engine message comes FIRST. It used to be
@@ -11130,11 +11164,6 @@ body:not(.doc-loaded) .drop-title {
   .foot-left,
   .foot-right {
     gap: 0.5rem;
-  }
-
-  .footer .review-mode-seg {
-    padding-inline: 0.25rem;
-    font-size: var(--fs-xs);
   }
 }
 
@@ -13497,10 +13526,8 @@ body.chrome-no-history #versionPreviewBanner,
    A host whose own product decides who is reviewing does not want a switch
    offered; the GRANT still decides what the editor does, so taking the control
    away neither widens nor narrows anything. */
-body.chrome-no-review #reviewModeControl,
-/* …and its second face at the top right, and the menu that face opens. A region
-   that took the status-bar switch away and left the header one on screen would
-   be a host believing they had withheld a surface that is still there. */
+/* The switch is the header's selector and the menu it opens (the status bar's
+   duplicate was removed, `docs/184` D6): withholding the region takes both. */
 body.chrome-no-review #headerModeControl,
 body.chrome-no-review #headerModeMenu,
 body.chrome-no-status .footer,
@@ -14872,3 +14899,19 @@ body:not(.phone-mode) .workarea > .side-panel:not(.plugin-panel, :where(#outline
    overscroll containment step aside (file-page-scroll.spec). */
 #settingsPanel.panel-in-page .settings-body { overflow: visible; min-block-size: 0; }
 #settingsPanel.panel-in-page :is(.settings-pages, .settings-nav) { overflow: visible; overscroll-behavior: auto; }
+
+/* Reduced motion, once, for the whole editor (audit A11Y-20). The scattered
+   per-surface blocks above caught the tabs, the rail, the side panel and the
+   palette, and missed 206 elements, the ribbon buttons among them. Docs and Word
+   drop transitions entirely under this preference. 0.01ms rather than 0 so
+   `transitionend`/`animationend` still fire for code that waits on them. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

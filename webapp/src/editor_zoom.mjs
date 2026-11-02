@@ -100,17 +100,31 @@ export function createZoom(ed) {
     fitResizeRaf = requestAnimationFrame(() => ed.renderAll());
   });
 
-  // Drag-and-drop anywhere over the viewport.
-  for (const type of ["dragover", "drop"]) {
-    ed.viewportEl.addEventListener(type, (e) => e.preventDefault());
-  }
-  ed.viewportEl.addEventListener("dragover", () => ed.viewportEl.classList.add("dragging"));
-  ed.viewportEl.addEventListener("dragleave", () => ed.viewportEl.classList.remove("dragging"));
-  ed.viewportEl.addEventListener("drop", (e) => {
-    ed.viewportEl.classList.remove("dragging");
+  // A FILE dragged anywhere in the window is the editor's (audit FILE-14). The
+  // handlers sat on the viewport only, so a file let go over the header, the
+  // ribbon or the status bar fell through to the browser, which opened it in
+  // place of the editor tab. Google Docs and Word catch it anywhere. On the
+  // document: one overlay over the whole window, one open path. Only drags that
+  // carry files are claimed — text dragged within a field keeps its own default.
+  const carriesFiles = (event) => [...(event.dataTransfer?.types ?? [])].includes("Files");
+  const setDragging = (on) => document.body.classList.toggle("file-dragging", on);
+  document.addEventListener("dragover", (event) => {
+    if (!carriesFiles(event)) return;
+    event.preventDefault();
+    setDragging(true);
+  });
+  // Leaving the WINDOW (no element to go to) ends the hover; moving between
+  // elements inside it fires `dragleave` too, and must not flicker the overlay.
+  document.addEventListener("dragleave", (event) => {
+    if (!event.relatedTarget) setDragging(false);
+  });
+  document.addEventListener("drop", (event) => {
+    if (!carriesFiles(event)) return;
+    event.preventDefault();
+    setDragging(false);
     // `handleFile` reports every failure it can name; this catch is for the ones
     // it cannot, so a dropped file can never fail into silence (docs/104 HF-065).
-    ed.handleFile(e.dataTransfer?.files?.[0]).catch((err) => {
+    ed.handleFile(event.dataTransfer?.files?.[0]).catch((err) => {
       console.error("open failed:", err);
       ed.setStatus("That file could not be opened", "error");
     });

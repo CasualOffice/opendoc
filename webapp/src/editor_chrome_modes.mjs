@@ -61,14 +61,19 @@ export function createChromeModes(ed) {
     if (compact) ed.compactToolbarUi.render();
     else ed.compactToolbarUi.release();
     if (persist) writePref(CHROME_MODE_PREF, chromeMode);
-    if (announce) ed.setStatus(compact ? "Compact toolbar" : "Ribbon toolbar", "", { timeout: 1800 });
+    // Spoken, never painted: the change is visible on its own, and the status
+    // line kept saying "Compact toolbar" beside the word count (audit SHELL-V-02).
+    if (announce) ed.statusChannel.announce(compact ? "Compact toolbar" : "Ribbon toolbar");
   }
 
   const chromeModeGroup = bindRadioGroup(document.querySelector(".chrome-mode"), {
     attr: "data-chrome-mode",
     onSelect: (mode) => setChromeMode(mode),
   });
-  setChromeMode(chromeMode, { persist: false });
+  // Silently at boot: nobody chose a layout, so announcing one leaked "Ribbon
+  // toolbar" into the status line on every load and a "Compact toolbar" toast on
+  // a phone (audit FILE-17, MOBILE-V-02). Only a person's own toggle is spoken.
+  setChromeMode(chromeMode, { persist: false, announce: false });
   // Silently: nobody asked to cross the rung, so a toast on every rotation would
   // be a notification about the window rather than about the document.
   ed.phoneChrome.onPhoneChange(() => setChromeMode(chromeMode, { persist: false, announce: false }));

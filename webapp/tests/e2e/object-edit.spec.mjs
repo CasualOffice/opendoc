@@ -5,7 +5,7 @@
 // Suggesting. The `?fixture=float` document holds one top-level floating image
 // (the shipped sample docs contain none); it is selected exactly as in
 // object-anchor.spec.mjs.
-import { expect, expectNothingToUndo, stableBox, test } from "./fixtures.mjs";
+import { expect, expectNothingToUndo, stableBox, test, setReviewMode } from "./fixtures.mjs";
 
 // The floating image sits near the top-left of page 1 in the float fixture.
 const FLOAT_POS = { fx: 0.14, fy: 0.11 };
@@ -196,7 +196,7 @@ test("alt text, delete, and crop are all blocked (fail-closed) in Viewing mode",
 }) => {
   await gotoFloat(page);
   // Enter Viewing (read-only), then select the image and try each edit.
-  await page.locator('#reviewModeControl [data-review-mode="viewing"]').click();
+  await setReviewMode(page, "viewing");
   await selectFloat(page);
   await expectNothingToUndo(page);
   await selectFloat(page);

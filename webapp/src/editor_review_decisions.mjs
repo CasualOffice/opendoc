@@ -479,8 +479,8 @@ export function createReviewDecisions(ed) {
   ed.reviewRejectAll.addEventListener("click", () => void decideAllReviewChanges(false));
   ed.reviewPrevious.addEventListener("click", () => navigateReview(-1));
   ed.reviewNext.addEventListener("click", () => navigateReview(1));
-  // The visible mode control (`#reviewModeControl`) is a three-button segmented
-  // group; each button carries `data-review-mode` and is wired below.
+  // The mode switch is the header menu's three rows (`header_mode.mjs`); each
+  // carries `data-review-mode` and is wired below.
   ed.suggestingBannerEdit.addEventListener("click", () => ed.setReviewMode("editing"));
   if (ed.viewingBannerEdit) ed.viewingBannerEdit.addEventListener("click", () => ed.setReviewMode("editing"));
   function openReviewComposer(parent = null) {
@@ -532,7 +532,12 @@ export function createReviewDecisions(ed) {
     });
   }
   for (const mode of ed.reviewModeButtons) {
-    mode.addEventListener("click", () => ed.setReviewMode(mode.dataset.reviewMode));
+    mode.addEventListener("click", () => {
+      // A refused mode is `aria-disabled` (still focusable, so its reason can be
+      // heard), which unlike `disabled` does not stop a click.
+      if (mode.disabled || mode.getAttribute("aria-disabled") === "true") return;
+      ed.setReviewMode(mode.dataset.reviewMode);
+    });
   }
 
   return {

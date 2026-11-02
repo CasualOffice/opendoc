@@ -684,7 +684,7 @@ const ed = {
   get selectionAutoScrollFrame() { return selectionAutoScrollFrame; }, set selectionAutoScrollFrame(v) { selectionAutoScrollFrame = v; },
   get selectionContainsClientPoint() { return selectionContainsClientPoint; },
   get selectionModelRect() { return selectionModelRect; },
-  get setDocumentState() { return setDocumentState; },
+  get setDocumentState() { return setDocumentState; }, get refreshDocumentTitle() { return refreshDocumentTitle; },
   get setDraftStatus() { return setDraftStatus; },
   get setGrammarCheckEnabled() { return setGrammarCheckEnabled; },
   get setObjectWrap() { return setObjectWrap; },

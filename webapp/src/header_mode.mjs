@@ -6,34 +6,30 @@
 // All three references put Editing / Suggesting / Viewing in the TOP chrome and
 // none puts it in a status bar: ONLYOFFICE at the right of the tab row, Google
 // Docs at the right of the toolbar ("Editing ▾"), Word at the right of the
-// ribbon. Ours lived only in the status bar (docs/123 §4.5 recorded the gap and
-// left it, because the move touched the compact chrome). The status bar keeps
-// its segmented control as the second surface — Word does put a view switcher
-// there — and this adds the one a person coming from any of the three looks
-// for first.
+// ribbon. It is the ONLY mode switch on screen (`docs/184` D6, `109` UX-054):
+// the status bar's segmented control that used to be a second face of the same
+// state was removed, because a mode shown twice reads as two settings. The
+// other routes to the mode are not faces on screen: the palette's three
+// `review.mode.*` rows, the menu bar's Mode group, Review ▸ Track changes and
+// Ctrl+Shift+E (SKILL §10: every capability on at least two surfaces).
 //
-// ---- ONE STATE, TWO FACES -------------------------------------------------
+// ---- ONE STATE, ONE WRITER -------------------------------------------------
 //
-// The established answer to "two controls for one piece of state" is a single
-// source of truth with views over it, and the cheapest correct version of that
-// here needs no new state at all: the status bar's segments ARE the published
-// state. `setReviewMode` in `main.js` writes `aria-pressed` on every
-// `[data-review-mode]` button and `reflectReviewModeAccess` writes `disabled`
-// and the reason on the same buttons. So this module
+// The menu's rows carry `data-review-mode`, so `main.js` collects them as its
+// `reviewModeButtons` and they ARE the published state: `setReviewMode` (the
+// only writer of the mode) stamps `aria-checked` on them, and
+// `reflectReviewModeAccess` stamps `aria-disabled` with the reason on `title`.
+// A row's click is bound by `editor_review_decisions.mjs` to `setReviewMode`, so
+// choosing a row runs the same read-only refusal, announcement and focus
+// return as the palette. This module only
 //
-//   * READS the mode, the availability and the reason off those attributes
-//     (a `MutationObserver`, not a poll and not a second copy of the rules), and
-//   * WRITES by pressing the segment — `button.click()` — so the change runs
-//     through `setReviewMode` exactly as a click on the status bar does: the
-//     same read-only refusal, the same announcement, the same focus return.
+//   * READS the checked row to name the mode on the button (a
+//     `MutationObserver`, not a poll and not a second copy of the rules), and
+//   * closes the menu, in the CAPTURE phase, before the row's own click moves
+//     focus to the document — and swallows a click on a refused row, so a
+//     refused mode is never asked for.
 //
-// Nothing here decides whether a mode is allowed. A disabled segment is a
-// disabled row with the segment's own reason, and a click on it does nothing,
-// because the segment would do nothing. That is what keeps UX-016's defect —
-// two controls that can disagree — unrepresentable rather than merely avoided.
-//
-// It needs no edit to `main.js` (lane boundary, and `main.js` sits on a line
-// ratchet): it binds to markup and to attributes `main.js` already maintains.
+// Nothing here decides whether a mode is allowed.
 //
 // ---- SHAPE ------------------------------------------------------------------
 //
@@ -47,7 +43,7 @@
 // Complexity: O(1) per mutation and per key — three rows.
 //
 // The popover manager is PASSED IN rather than imported: it installs document
-// listeners when it loads, and this module's rules (`readSegments`,
+// listeners when it loads, and this module's rules (`readModeRows`,
 // `nextRowIndex`) are unit-tested in Node, where there is no document.
 
 /** The glyph each mode is drawn with — Docs' pencil / suggestion / eye. */
@@ -57,21 +53,21 @@ export const MODE_ICONS = Object.freeze({
   viewing: "visibility",
 });
 
-/** What the status bar's segmented control currently says, as plain data.
+/** What the mode rows currently say, as plain data.
  *
- *  `buttons` are the `[data-review-mode]` segments. Pure apart from reading
- *  attributes, so the rule — "the pressed segment is the mode; with none
- *  pressed it is Editing, which is `setReviewMode`'s own fallback" — is
- *  testable without a page. */
-export function readSegments(buttons) {
-  const rows = [...buttons].map((button) => ({
-    mode: button.dataset?.reviewMode ?? button.getAttribute?.("data-review-mode"),
-    pressed: button.getAttribute("aria-pressed") === "true",
-    disabled: !!button.disabled,
-    reason: button.disabled ? button.getAttribute("title") || "" : "",
+ *  `rows` are the `[data-review-mode]` menu items. Pure apart from reading
+ *  attributes, so the rule — "the checked row is the mode; with none checked it
+ *  is Editing, which is `setReviewMode`'s own fallback" — is testable without a
+ *  page. */
+export function readModeRows(rows) {
+  const read = [...rows].map((row) => ({
+    mode: row.dataset?.reviewMode ?? row.getAttribute?.("data-review-mode"),
+    checked: row.getAttribute("aria-checked") === "true",
+    disabled: row.getAttribute("aria-disabled") === "true",
+    reason: row.getAttribute("aria-disabled") === "true" ? row.getAttribute("title") || "" : "",
   }));
-  const current = rows.find((row) => row.pressed)?.mode ?? "editing";
-  return { current, rows };
+  const current = read.find((row) => row.checked)?.mode ?? "editing";
+  return { current, rows: read };
 }
 
 /** Moves focus within the menu's rows: ArrowDown/ArrowUp wrap, Home/End jump.
@@ -93,41 +89,24 @@ export function nextRowIndex(key, at, count) {
 }
 
 /**
- * Binds the header control to the status bar's segments.
+ * Binds the header control to its menu's rows.
  *
  * Inert, returning `null`, when any of the markup is missing — a host shell
- * that composes the header or the status bar away gets nothing rather than a
- * throw (`document_protection.mjs`'s pattern).
+ * that composes the header away gets nothing rather than a throw
+ * (`document_protection.mjs`'s pattern).
  *
  * @param {{button: HTMLElement|null, text: HTMLElement|null, icon: HTMLElement|null,
- *          menu: HTMLElement|null, segments: HTMLElement|null,
- *          registerPopover: Function}} parts — `registerPopover` is
- *          `popover_manager.mjs`'s, so this menu shares the one manager.
+ *          menu: HTMLElement|null, registerPopover: Function}} parts — `registerPopover`
+ *          is `popover_manager.mjs`'s, so this menu shares the one manager.
  * @returns {{sync: () => void, popover: object}|null}
  */
-export function installHeaderModeMenu({ button, text, icon, menu, segments, registerPopover }) {
-  if (!button || !text || !menu || !segments || !registerPopover) return null;
-  const items = [...menu.querySelectorAll("[data-header-mode]")];
-  const segmentFor = (mode) => segments.querySelector(`[data-review-mode="${mode}"]`);
+export function installHeaderModeMenu({ button, text, icon, menu, registerPopover }) {
+  if (!button || !text || !menu || !registerPopover) return null;
+  const items = [...menu.querySelectorAll("[data-review-mode]")];
 
   function sync() {
-    const { current, rows } = readSegments(segments.querySelectorAll("[data-review-mode]"));
-    for (const item of items) {
-      const row = rows.find((r) => r.mode === item.dataset.headerMode);
-      item.setAttribute("aria-checked", String(item.dataset.headerMode === current));
-      // `aria-disabled`, not `disabled`: a disabled button cannot take focus, and
-      // the REASON is on this row's title — a keyboard user has to be able to
-      // land on the row to be told why it is unavailable (SKILL §10).
-      if (row?.disabled) {
-        item.setAttribute("aria-disabled", "true");
-        if (row.reason) item.setAttribute("title", row.reason);
-        else item.removeAttribute("title");
-      } else {
-        item.removeAttribute("aria-disabled");
-        item.removeAttribute("title");
-      }
-    }
-    const checked = items.find((item) => item.dataset.headerMode === current);
+    const { current } = readModeRows(items);
+    const checked = items.find((item) => item.dataset.reviewMode === current);
     const label = checked?.querySelector(".header-mode-item-label")?.textContent?.trim() ?? "";
     if (text.textContent !== label) text.textContent = label;
     if (icon) icon.textContent = MODE_ICONS[current] ?? MODE_ICONS.editing;
@@ -136,24 +115,25 @@ export function installHeaderModeMenu({ button, text, icon, menu, segments, regi
 
   const popover = registerPopover(button, menu, sync, { needsDocument: false });
 
-  function choose(item) {
-    if (item.getAttribute("aria-disabled") === "true") return;
-    const segment = segmentFor(item.dataset.headerMode);
-    // Close first, through the manager, so `aria-expanded` and the keyboard's
-    // place are restored before `setReviewMode` moves focus to the document.
-    popover.close();
-    // The status bar's own button, pressed. `setReviewMode` is the only writer of
-    // the mode, and this is how it is reached without a second path into it.
-    if (segment && !segment.disabled) segment.click();
-  }
-
-  for (const item of items) {
-    item.addEventListener("click", (event) => {
+  // Capture: this runs before the row's own click (`setReviewMode`), so the menu
+  // is closed — `aria-expanded` and the keyboard's place restored — before the
+  // mode change moves focus to the document. A refused row is still FOCUSABLE
+  // (`aria-disabled`, so a keyboard user can land on it and hear the reason), and
+  // its click stops here: nothing asks for a mode that was refused.
+  menu.addEventListener(
+    "click",
+    (event) => {
+      const item = event.target.closest?.("[data-review-mode]");
+      if (!item || !items.includes(item)) return;
       event.preventDefault();
-      choose(item);
-    });
-  }
-
+      if (item.getAttribute("aria-disabled") === "true") {
+        event.stopPropagation();
+        return;
+      }
+      popover.close();
+    },
+    true,
+  );
   menu.addEventListener("keydown", (event) => {
     if (event.key === "Tab") {
       // A menu is not a Tab stop of its own: Tab leaves it, the way it leaves a
@@ -177,16 +157,11 @@ export function installHeaderModeMenu({ button, text, icon, menu, segments, regi
     if (menu.hidden) button.click();
   });
 
-  // The segments are the state; observe exactly the three attributes that carry
-  // it. The menu's own text is observed too, because a locale change rewrites
-  // the row labels in place (`localizeTree`) and the button repeats one of them.
+  // The rows are the state; observe the attribute that carries the mode. The
+  // menu's own text is observed too, because a locale change rewrites the row
+  // labels in place (`localizeTree`) and the button repeats one of them.
   const observer = new MutationObserver(sync);
-  observer.observe(segments, {
-    subtree: true,
-    attributes: true,
-    attributeFilter: ["aria-pressed", "disabled", "title"],
-  });
-  observer.observe(menu, { subtree: true, characterData: true, childList: true });
+  observer.observe(menu, { subtree: true, attributes: true, attributeFilter: ["aria-checked"], characterData: true, childList: true });
   sync();
   return { sync, popover };
 }

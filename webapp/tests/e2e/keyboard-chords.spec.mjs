@@ -148,7 +148,7 @@ test("the review-mode chord cycles all three modes", async ({ page, consoleError
   await clickIntoFirstPage(page);
   const mode = () =>
     page.evaluate(
-      () => document.querySelector('.review-mode-seg[aria-pressed="true"]')?.dataset.reviewMode,
+      () => document.querySelector('#headerModeMenu [aria-checked="true"]')?.dataset.reviewMode,
     );
   // UX-007's example: this chord worked and was advertised nowhere. It is a named
   // command now, so it is both discoverable and still has to actually cycle.

@@ -11,7 +11,7 @@
 // wrapper is SPLIT (dividing the range without touching a character of its
 // content) and a deletion inside one NESTS, exactly as Word's `w:del` inside
 // `w:ins` does.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, setReviewMode } from "./fixtures.mjs";
 
 async function reviewAs(page, author) {
   await page.locator("#settingsBtn").click();
@@ -28,7 +28,7 @@ const documentText = (page) =>
 async function adaSuggests(page) {
   await reviewAs(page, "Ada");
   await clickIntoFirstPage(page);
-  await page.locator('#reviewModeControl [data-review-mode="suggesting"]').click();
+  await setReviewMode(page, "suggesting");
   await moveCaretToDocStart(page);
   await page.keyboard.type("ADAWORD");
   await expect.poll(() => documentText(page)).toContain("ADAWORD");
