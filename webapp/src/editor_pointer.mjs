@@ -13,7 +13,7 @@ import { createTableChrome } from "./table_chrome.mjs";
 import { createTableGutter } from "./table_gutter.mjs";
 import { tableDrawMode } from "./table_draw_mode.mjs";
 import { installViewportFocusGuard } from "./viewport_focus.mjs";
-import { extendByUnit, unitForPress, unitSpan } from "./selection_units.mjs";
+import { createClickCounter, extendByUnit, unitForPress, unitSpan } from "./selection_units.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -25,6 +25,10 @@ export function createPointer(ed) {
   // that follow a unit DRAG not to replace its selection with one word.
   let unitSelection = null;
   let unitDragReleased = false;
+  // The click count of the press being handled. `pointerdown` carries none in
+  // Chrome (`detail` is 0), so it is counted here (`createClickCounter`).
+  const countClicks = createClickCounter();
+  let pressClicks = 1;
   /** Whether `anchor` is still an edge of the unit selection, so Shift+click is
    *  extending THAT selection rather than one made since by the keyboard. */
   const extendsUnitSelection = (anchor) =>
@@ -461,7 +465,7 @@ export function createPointer(ed) {
     // double-click selects its word and the third its paragraph at once, and a
     // drag from there extends by whole units. Shift+click after one extends by
     // the same unit, as long as it still extends that selection.
-    const unit = unitForPress(event);
+    const unit = unitForPress(event, pressClicks);
     if (unit !== "char" && !event.shiftKey && !crossedStory) {
       const origin = unitSpan(ed.doc, unit, anchor);
       unitSelection = { unit, origin };
@@ -720,6 +724,7 @@ export function createPointer(ed) {
 
   ed.pagesEl.addEventListener("pointerdown", (e) => {
     // Only a hit inside a page places the caret: a gap click must not jump into the nearest fragment.
+    pressClicks = countClicks(e); // every press counts, so a double-click is two (UX-060)
     const page = pageFromEvent(e);
     if (page) onPointerDown(page, e);
   });

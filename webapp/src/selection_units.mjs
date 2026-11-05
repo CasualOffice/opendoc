@@ -17,13 +17,39 @@
 // Complexity: O(1) engine calls per pointer move — one `wordAt` or one
 // `paragraphLength`, and at most one `selectionEdge` to order the two ends.
 
-/** The unit a press selects by, from its click count (`event.detail`). A touch
- *  press never selects by unit here: the long press owns that (`touch_selection`). */
-export function unitForPress(event) {
+/** The unit a press selects by, from its click count. A touch press never selects
+ *  by unit here: the long press owns that (`touch_selection`). */
+export function unitForPress(event, clicks) {
   if (event.pointerType === "touch") return "char";
-  if (event.detail >= 3) return "paragraph";
-  if (event.detail === 2) return "word";
+  if (clicks >= 3) return "paragraph";
+  if (clicks === 2) return "word";
   return "char";
+}
+
+/** The platform's double-click interval and slop, as browsers apply them. */
+const MULTI_CLICK_MS = 500;
+const MULTI_CLICK_PX = 4;
+
+/** Counts presses into single, double and triple clicks.
+ *
+ *  A `pointerdown` carries no click count — Chrome reports `detail` 0 on pointer
+ *  events, as the Pointer Events spec says it may; only the `mousedown` that
+ *  follows it has one — so the press that STARTS a word drag would read as a
+ *  single click. A press continues the count when it comes within the
+ *  double-click interval and a few pixels of the previous one; a non-zero
+ *  `detail` is believed where a browser does supply it. O(1). */
+export function createClickCounter() {
+  let last = null;
+  return function count(event) {
+    const near =
+      last &&
+      event.timeStamp - last.time <= MULTI_CLICK_MS &&
+      Math.abs(event.clientX - last.x) <= MULTI_CLICK_PX &&
+      Math.abs(event.clientY - last.y) <= MULTI_CLICK_PX;
+    const clicks = event.detail > 0 ? event.detail : near ? Math.min(last.clicks + 1, 3) : 1;
+    last = { time: event.timeStamp, x: event.clientX, y: event.clientY, clicks };
+    return clicks;
+  };
 }
 
 /** The word or paragraph around `at`, as `{ start, end }`. A position with no word

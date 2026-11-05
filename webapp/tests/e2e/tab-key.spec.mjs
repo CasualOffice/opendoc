@@ -40,16 +40,16 @@ function inlineOrder(paragraph) {
 test("Tab in body text types a tab character, and indents nothing", async ({ page, consoleErrors }) => {
   await gotoEditor(page);
   await freshParagraph(page);
-  await page.keyboard.type("alpha");
+  await page.keyboard.type("Alpha"); // capitalised, so AutoCorrect leaves it alone
   await page.keyboard.press("Tab");
   await page.keyboard.type("beta");
 
   const xml = opcPart(await save(page), "word/document.xml");
-  const paragraph = paragraphHolding(xml, "alphabeta");
+  const paragraph = paragraphHolding(xml, "Alphabeta");
   expect(paragraph, "the typed paragraph was saved").toBeTruthy();
-  // Mutation proof: restoring the always-indent branch saves "alphabeta" with
+  // Mutation proof: restoring the always-indent branch saves "Alphabeta" with
   // no tab and a `<w:ind w:start="360"/>`.
-  expect(inlineOrder(paragraph)).toEqual(["alpha", "<tab>", "beta"]);
+  expect(inlineOrder(paragraph)).toEqual(["Alpha", "<tab>", "beta"]);
   expect(paragraph).not.toMatch(/<w:ind\b/);
   expect(consoleErrors).toEqual([]);
 });
@@ -59,19 +59,19 @@ test("Tab at the start of a list item demotes it to a. ; Tab inside the item typ
   await freshParagraph(page);
   await page.locator("#numberedList").click();
   await expect(page.locator("#numberedList")).toHaveAttribute("aria-pressed", "true");
-  await page.keyboard.type("one");
+  await page.keyboard.type("One");
   await page.keyboard.press("Enter");
   await page.keyboard.press("Tab"); // at the start of the new item: demote
-  await page.keyboard.type("two");
+  await page.keyboard.type("Kiwi");
   await page.keyboard.press("ArrowLeft");
   await page.keyboard.press("Tab"); // mid-item: a tab, the level unchanged
 
   const bytes = await save(page);
   const xml = opcPart(bytes, "word/document.xml");
-  const item = paragraphHolding(xml, "two");
+  const item = paragraphHolding(xml, "Kiwi");
   expect(item, "the demoted item was saved").toBeTruthy();
   expect(item).toMatch(/<w:ilvl w:val="1"\/>/);
-  expect(inlineOrder(item)).toEqual(["tw", "<tab>", "o"]);
+  expect(inlineOrder(item)).toEqual(["Kiw", "<tab>", "i"]);
 
   // The level it demoted to, read through ITS OWN numbering instance — the rich
   // fixture has other lists, and a level of theirs must not stand in for ours.

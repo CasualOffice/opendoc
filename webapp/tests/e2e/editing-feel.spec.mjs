@@ -52,7 +52,8 @@ test.describe("Undo re-selects what it restored (UX-058)", () => {
     await moveCaretToDocStart(page);
     await page.keyboard.press("Enter");
     await page.keyboard.press("ArrowUp");
-    await page.keyboard.type("one two three");
+    // Capitalised, because AutoCorrect capitalises a sentence start anyway.
+    await page.keyboard.type("One two three");
   }
 
   test("after undoing bold, typing replaces the formatted word", async ({ page, consoleErrors }) => {
@@ -62,8 +63,8 @@ test.describe("Undo re-selects what it restored (UX-058)", () => {
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press(`${MOD}+z`);
     await page.keyboard.type("X");
-    // Mutation proof: a collapsed undo caret measured "Xone two three" live.
-    await expect(mirror(page).locator("h1").first()).toHaveText("one two X");
+    // Mutation proof: a collapsed undo caret measured "XOne two three" live.
+    await expect(mirror(page).locator("h1").first()).toHaveText("One two X");
     expect(consoleErrors).toEqual([]);
   });
 
@@ -75,8 +76,8 @@ test.describe("Undo re-selects what it restored (UX-058)", () => {
     await page.keyboard.press("Backspace");
     await page.keyboard.press(`${MOD}+z`);
     await page.keyboard.type("X");
-    // Mutation proof: measured "one two threeX" with a collapsed undo caret.
-    await expect(mirror(page).locator("h1").first()).toHaveText("one X");
+    // Mutation proof: measured "One two threeX" with a collapsed undo caret.
+    await expect(mirror(page).locator("h1").first()).toHaveText("One X");
     expect(consoleErrors).toEqual([]);
   });
 });
@@ -106,7 +107,7 @@ test("select-all and Delete removes a table instead of leaving its empty grid (U
 
 test.describe("selection by unit (UX-060)", () => {
   test("a double-click drag extends by whole words and keeps the first word", async ({ page, consoleErrors }) => {
-    await blankDocumentWithText(page, "quick brown fox jumps");
+    await blankDocumentWithText(page, "Quick brown fox jumps");
     const quick = await charsCentre(page, 0, 5);
     const fox = await charsCentre(page, 13, 1); // the middle of "fox"
     await page.mouse.move(quick.x, quick.y);
@@ -117,14 +118,14 @@ test.describe("selection by unit (UX-060)", () => {
     await page.mouse.up({ clickCount: 2 });
     await page.keyboard.type("Z");
     // Mutation proof: a character drag, replaced on release by the word under
-    // the pointer, leaves "quick brown Z jumps".
+    // the pointer, leaves "Quick brown Z jumps".
     await expect(mirror(page)).toContainText("Z jumps");
-    await expect(mirror(page)).not.toContainText("quick");
+    await expect(mirror(page)).not.toContainText("Quick");
     expect(consoleErrors).toEqual([]);
   });
 
   test("Shift+click after a double-click extends to a word end", async ({ page, consoleErrors }) => {
-    await blankDocumentWithText(page, "quick brown fox jumps");
+    await blankDocumentWithText(page, "Quick brown fox jumps");
     const quick = await charsCentre(page, 0, 5);
     const fox = await charsCentre(page, 13, 1);
     await page.mouse.dblclick(quick.x, quick.y);
@@ -139,9 +140,9 @@ test.describe("selection by unit (UX-060)", () => {
   });
 
   test("a triple-click drag into the next paragraph selects both whole paragraphs", async ({ page, consoleErrors }) => {
-    await blankDocumentWithText(page, "alpha one");
+    await blankDocumentWithText(page, "Alpha one");
     await page.keyboard.press("Enter");
-    await page.locator("#pages").pressSequentially("beta two");
+    await page.locator("#pages").pressSequentially("Beta two");
     const beta = await charsCentre(page, 1, 1);
     await page.keyboard.press("ArrowUp");
     const alpha = await charsCentre(page, 6, 1);
@@ -154,8 +155,8 @@ test.describe("selection by unit (UX-060)", () => {
     await page.mouse.move(beta.x, beta.y, { steps: 8 });
     await page.mouse.up({ clickCount: 3 });
     await page.keyboard.type("Z");
-    // The paragraph under the release point alone would leave "alpha one".
-    await expect(mirror(page)).not.toContainText("alpha");
+    // The paragraph under the release point alone would leave "Alpha one".
+    await expect(mirror(page)).not.toContainText("Alpha");
     await expect(mirror(page)).not.toContainText("two");
     await expect(mirror(page)).toContainText("Z");
     expect(consoleErrors).toEqual([]);
@@ -168,16 +169,16 @@ test("macOS Option+Down moves to the start of the next paragraph (HF-103)", asyn
   await page.addInitScript(() => {
     Object.defineProperty(Navigator.prototype, "platform", { get: () => "MacIntel" });
   });
-  await blankDocumentWithText(page, "first line here");
+  await blankDocumentWithText(page, "First line here");
   await page.keyboard.press("Enter");
-  await page.locator("#pages").pressSequentially("second");
+  await page.locator("#pages").pressSequentially("Second");
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("Home");
   for (let i = 0; i < 3; i += 1) await page.keyboard.press("ArrowRight");
   await page.keyboard.press("Alt+ArrowDown");
   await page.keyboard.type("Y");
-  // Mutation proof: a dead chord types the Y where the caret was, "firYst".
-  await expect(mirror(page)).toContainText("Ysecond");
-  await expect(mirror(page)).toContainText("first line here");
+  // Mutation proof: a dead chord types the Y where the caret was, "FirYst".
+  await expect(mirror(page)).toContainText("YSecond");
+  await expect(mirror(page)).toContainText("First line here");
   expect(consoleErrors).toEqual([]);
 });

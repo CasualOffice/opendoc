@@ -352,8 +352,18 @@ test("arrow-navigating away from a selected table row drops the row paint", asyn
 
 // GREEN today. The reported "highlight painted over everything" does not happen
 // for ordinary text selections: every mutation kind collapses the highlight to
-// exactly one caret, and undo/redo never smears it. Pinned so a fix for A/B
-// cannot silently break what already works.
+// exactly one caret, and undo never smears it — since UX-058 an Undo re-selects
+// exactly the text it restored, as Word and Docs do, so its highlight is the
+// original selection's, no more. Pinned so a fix for A/B cannot silently break
+// what already works.
+/** After an Undo the highlight is the restored selection's (UX-058): the same
+ *  rectangles over the same area as before the edit, and no caret beside it. */
+function expectRestoredSelection(after, before) {
+  expect(after.highlight.rects).toBe(before.highlight.rects);
+  expect(Math.abs(after.highlight.area - before.highlight.area)).toBeLessThanOrEqual(before.highlight.area * 0.02);
+  expect(after.carets).toBe(0);
+}
+
 test("a text-range highlight is fully cleared by type, delete, paste and cut", async ({
   page,
   consoleErrors,
@@ -371,7 +381,7 @@ test("a text-range highlight is fully cleared by type, delete, paste and cut", a
   expect(await paint(page)).toMatchObject({ highlight: { rects: 0, area: 0 }, carets: 1 });
   await page.keyboard.press(`${MOD}+z`);
   await page.waitForTimeout(300);
-  expect(await paint(page)).toMatchObject({ highlight: { rects: 0, area: 0 }, carets: 1 });
+  expectRestoredSelection(await paint(page), all);
 
   // A cross-paragraph, table-spanning range: 3 rects / ~12,470 px² for 47 chars.
   await moveCaretToDocStart(page);
@@ -387,7 +397,7 @@ test("a text-range highlight is fully cleared by type, delete, paste and cut", a
   expect(await paint(page)).toMatchObject({ highlight: { rects: 0, area: 0 }, carets: 1 });
   await page.keyboard.press(`${MOD}+z`);
   await page.waitForTimeout(300);
-  expect(await paint(page)).toMatchObject({ highlight: { rects: 0, area: 0 }, carets: 1 });
+  expectRestoredSelection(await paint(page), span);
 
   // Paste over a range, and cut a range.
   await moveCaretToDocStart(page);

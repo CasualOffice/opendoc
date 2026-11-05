@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { extendByUnit, isBefore, unitForPress, unitSpan } from "../src/selection_units.mjs";
+import { createClickCounter, extendByUnit, isBefore, unitForPress, unitSpan } from "../src/selection_units.mjs";
 
 // Two paragraphs, in this order: p1 "quick brown fox jumps", p2 "lazy dog".
 const TEXT = { p1: "quick brown fox jumps", p2: "lazy dog" };
@@ -38,11 +38,27 @@ const text = ({ anchor, focus }) => {
 };
 
 test("the click count picks the unit, and a touch press never does", () => {
-  assert.equal(unitForPress({ detail: 1, pointerType: "mouse" }), "char");
-  assert.equal(unitForPress({ detail: 2, pointerType: "mouse" }), "word");
-  assert.equal(unitForPress({ detail: 3, pointerType: "mouse" }), "paragraph");
-  assert.equal(unitForPress({ detail: 4, pointerType: "pen" }), "paragraph");
-  assert.equal(unitForPress({ detail: 2, pointerType: "touch" }), "char");
+  assert.equal(unitForPress({ pointerType: "mouse" }, 1), "char");
+  assert.equal(unitForPress({ pointerType: "mouse" }, 2), "word");
+  assert.equal(unitForPress({ pointerType: "mouse" }, 3), "paragraph");
+  assert.equal(unitForPress({ pointerType: "pen" }, 4), "paragraph");
+  assert.equal(unitForPress({ pointerType: "touch" }, 2), "char");
+});
+
+// Chrome's pointerdown reports `detail` 0, so the count is the editor's own. The
+// first e2e draft read `event.detail` and every word drag silently stayed a
+// character drag. Mutation proof: make `count` return `event.detail || 1` and
+// the second and third presses read 1.
+test("presses close in time and space count up to a triple click; a far or late one restarts", () => {
+  const count = createClickCounter();
+  const press = (timeStamp, clientX, clientY = 10) => count({ detail: 0, timeStamp, clientX, clientY });
+  assert.equal(press(0, 10), 1);
+  assert.equal(press(200, 11), 2);
+  assert.equal(press(400, 11), 3);
+  assert.equal(press(600, 11), 3, "a fourth quick press stays a triple");
+  assert.equal(press(2000, 11), 1, "too late");
+  assert.equal(press(2100, 40), 1, "too far");
+  assert.equal(count({ detail: 2, timeStamp: 9000, clientX: 0, clientY: 0 }), 2, "a browser's own count wins");
 });
 
 test("a double-click drag forward extends to the end of the word under the pointer", () => {
