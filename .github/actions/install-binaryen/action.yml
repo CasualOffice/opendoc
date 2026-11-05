@@ -1,0 +1,50 @@
+# Puts binaryen's `wasm-opt` on PATH before any wasm-pack build.
+#
+# wasm-pack uses a `wasm-opt` it finds on PATH and only otherwise downloads
+# binaryen from GitHub releases itself, once per runner, with no retry. When
+# that one download fails, wasm-pack has already written the UNOPTIMISED
+# module: on PR #935 (run 42103563006, browser-smoke 1/6) the engine came out
+# at 30,301,636 B against the 28,405,000 B budget in `tests/wasm_size.test.mjs`
+# because binaryen version_117 could not be fetched.
+#
+# Here the tarball is cached across runs, fetched with retries on a miss,
+# verified against its pinned SHA-256, and `wasm-opt --version` must answer
+# before the step succeeds. `webapp/build.sh` also refuses to finish without
+# a `wasm-opt`, so a missing one fails the build rather than the size test.
+#
+# version_117 is the binaryen wasm-pack 0.15.0 itself pins: the module CI
+# builds is the one it built before this step existed.
+name: Install binaryen (wasm-opt)
+description: Cached, retried, checksum-verified binaryen release with wasm-opt on PATH.
+runs:
+  using: composite
+  steps:
+    - name: Restore binaryen
+      id: cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.binaryen/version_117
+        key: binaryen-version_117-${{ runner.os }}-${{ runner.arch }}
+    - name: Download binaryen
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        version=version_117
+        archive="binaryen-${version}-x86_64-linux.tar.gz"
+        sha256=3dc677006555b355ea2da5e82602065a161d5e83eaefd3f759afa00b96e83212
+        url="https://github.com/WebAssembly/binaryen/releases/download/${version}/${archive}"
+        tmp="$(mktemp -d)"
+        curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+          --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+          --output "$tmp/$archive" "$url"
+        echo "${sha256}  $tmp/$archive" | sha256sum --check --strict
+        mkdir -p ~/.binaryen
+        tar -xzf "$tmp/$archive" -C ~/.binaryen
+        mv ~/.binaryen/"binaryen-${version}" ~/.binaryen/"${version}"
+    - name: Put wasm-opt on PATH
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "$HOME/.binaryen/version_117/bin" >> "$GITHUB_PATH"
+        "$HOME/.binaryen/version_117/bin/wasm-opt" --version

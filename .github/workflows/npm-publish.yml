@@ -146,6 +146,10 @@ jobs:
           tool: wasm-pack@0.15.0
           fallback: none
 
+      - name: Install binaryen
+        if: inputs.package == 'viewer' || inputs.package == 'both'
+        uses: ./.github/actions/install-binaryen
+
       - name: Build the viewer package
         if: inputs.package == 'viewer' || inputs.package == 'both'
         run: ./packages/opendoc-viewer/build.sh
@@ -254,6 +258,10 @@ jobs:
         with:
           tool: wasm-pack@0.15.0
           fallback: none
+
+      - name: Install binaryen for the SDK
+        if: inputs.package == 'sdk'
+        uses: ./.github/actions/install-binaryen
 
       - name: Build and test the SDK package
         if: inputs.package == 'sdk'

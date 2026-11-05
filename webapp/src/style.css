@@ -14904,7 +14904,11 @@ body:not(.phone-mode) .workarea > .side-panel:not(.plugin-panel) {
   background: var(--surface);
   align-self: stretch;
 }
-body:not(.phone-mode) .workarea > .side-panel:where(#outlinePanel, #pagesPanel, #comparePanel) {
+/* `:not(.plugin-panel)` is here for its SPECIFICITY, matching the reset above
+   and the right-hand rule below. Without it this rule weighed (0,3,1) against
+   the reset's (0,4,1), so the reset's `border: 0` took the left panels'
+   hairline away and the outline met the page with no edge at all. */
+body:not(.phone-mode) .workarea > .side-panel:not(.plugin-panel):where(#outlinePanel, #pagesPanel, #comparePanel) {
   flex: 0 0 16rem;
   width: 16rem;
   max-width: 16rem;

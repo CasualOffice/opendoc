@@ -135,11 +135,18 @@ run_wasm_pack() {
   # reader, the importer and OCR are the SECOND module below, fetched the first
   # time a PDF is opened. `tests/wasm_size.test.mjs` holds this one to its
   # pre-PDF ceilings and proves it links no hayro.
+  #
+  # Every step ends in `|| return 1`. This function runs as `if run_wasm_pack`,
+  # and bash switches `set -e` off inside a function called as a condition, so
+  # without it a failed first build was ignored and the function returned the
+  # SECOND build's status. That is how PR #935 shipped an unoptimised engine
+  # (30,301,636 B against the 28,405,000 B budget): wasm-pack wrote the module,
+  # failed to download binaryen for `wasm-opt`, exited 1, and nothing retried.
   wasm-pack build "$repo/crates/casual-doc-wasm" \
     --target web \
     --out-dir "$here/pkg" \
     --out-name casual_doc_wasm \
-    -- --features web-host-fonts
+    -- --features web-host-fonts || return 1
   # The PDF module (`casual-doc-wasm-pdf`): hayro, the reader, the fixed-layout
   # importer and PP-OCRv5 on rten, with no bundled faces, CMaps or models.
   # `src/pdf_module.mjs` imports it on the first PDF open; its own budget is in
@@ -155,7 +162,15 @@ run_wasm_pack() {
   wasm-pack build "$repo/crates/casual-doc-wasm-pdf" \
     --target web \
     --out-dir "$here/pkg-pdf" \
-    --out-name casual_doc_wasm_pdf
+    --out-name casual_doc_wasm_pdf || return 1
+  # Both modules were optimised only if a `wasm-opt` existed to do it: on PATH
+  # (CI installs it, `.github/actions/install-binaryen`) or in wasm-pack's own
+  # cache. Neither means the modules on disk are unoptimised; retry, and in
+  # the end fail here rather than at the size budget or, worse, in a deploy.
+  if ! command -v wasm-opt >/dev/null 2>&1 && ! wasm_opt_cached; then
+    echo "build.sh: no wasm-opt (not on PATH, not in $wasm_pack_cache): the modules are unoptimised" >&2
+    return 1
+  fi
 }
 
 build_with_retry() {

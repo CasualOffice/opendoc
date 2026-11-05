@@ -4,12 +4,28 @@
 import { downloadBytes } from "./save_formats.mjs";
 import { findingTotals } from "./compat_findings.mjs";
 import { downloadNameForFormat } from "./format_io.mjs";
+import { ensurePdfSavePlanner, needsPdfSavePlanner } from "./pdf_module.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
 export function createSave(ed) {
+  /** Exports and downloads the document. Synchronous, except the first PDF
+   *  save of a PDF session, which first loads the PDF module's save planner on
+   *  this thread (`needsPdfSavePlanner`) and returns that promise. */
   function exportDocumentAs(targetFormat, intent = "export") {
-    if (!ed.doc || !targetFormat) return;
+    if (!ed.doc || !targetFormat) return undefined;
+    if (needsPdfSavePlanner(ed.currentSourceFormat, targetFormat)) {
+      const doc = ed.doc;
+      // A document replaced while the module loaded is not the one asked for.
+      return ensurePdfSavePlanner().then(() => {
+        if (ed.doc === doc) writeExport(targetFormat, intent);
+      });
+    }
+    writeExport(targetFormat, intent);
+    return undefined;
+  }
+
+  function writeExport(targetFormat, intent) {
     try {
       let artifact;
       if (targetFormat === ed.currentSourceFormat) {

@@ -162,7 +162,13 @@ test("the selection formatting toolbar follows light and dark panel surfaces", a
   expect(consoleErrors).toEqual([]);
 });
 
-test("the outline inspector uses the shared rounded panel surface", async ({
+// The outline is a DOCKED panel since the approved UI audit (`docs/184` D4,
+// UX-055, Google Docs): docked to the workspace edge at full workspace height,
+// no floating card, no radius, no shadow, one hairline on the side that faces
+// the page, and the page beside it, never under it. Until #928 this test held
+// the opposite design, a rounded floating card with a shadow and a gap below
+// it; D4 retired that card on purpose, so this asserts the docked guarantee.
+test("the outline inspector is docked to the workspace edge, beside the page", async ({
   page,
   consoleErrors,
 }) => {
@@ -176,6 +182,11 @@ test("the outline inspector uses the shared rounded panel surface", async ({
   const style = await panel.evaluate((element) => {
     const computed = getComputedStyle(element);
     const bounds = element.getBoundingClientRect();
+    const work = element.closest(".workarea").getBoundingClientRect();
+    const viewport = document.getElementById("viewport").getBoundingClientRect();
+    // The left edge it docks to is the rail's, the workarea's first column.
+    const rail = element.parentElement.querySelector(":scope > .rail");
+    const edge = rail && rail.offsetParent !== null ? rail.getBoundingClientRect().right : work.left;
     return {
       radius: computed.borderRadius,
       borderTop: computed.borderTopWidth,
@@ -183,21 +194,27 @@ test("the outline inspector uses the shared rounded panel surface", async ({
       borderBottom: computed.borderBottomWidth,
       borderLeft: computed.borderLeftWidth,
       shadow: computed.boxShadow,
-      bottomGap: window.innerHeight - bounds.bottom,
+      topInset: bounds.top - work.top,
+      bottomInset: work.bottom - bounds.bottom,
+      leftInset: bounds.left - edge,
+      overlap: bounds.right - viewport.left,
     };
   });
-  // 8px since design system v2 (`docs/63` §7, UX-052): panels, menus and
-  // popovers share the one card radius, `--r-md`. It was 10px when floating
-  // surfaces carried a fourth radius of their own.
-  expect(style.radius).toBe("8px");
+  expect(style.radius).toBe("0px");
+  expect(style.shadow).toBe("none");
+  // One hairline, on the side that faces the page (the outline docks left).
   expect([
     style.borderTop,
     style.borderRight,
     style.borderBottom,
     style.borderLeft,
-  ]).toEqual(["1px", "1px", "1px", "1px"]);
-  expect(style.shadow).not.toBe("none");
-  expect(style.bottomGap).toBeGreaterThanOrEqual(8);
+  ]).toEqual(["0px", "1px", "0px", "0px"]);
+  // Full workspace height, flush against the rail: no floating inset.
+  expect(Math.abs(style.topInset)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(style.bottomInset)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(style.leftInset)).toBeLessThanOrEqual(0.5);
+  // The page re-centres beside the panel: the viewport starts where it ends.
+  expect(style.overlap).toBeLessThanOrEqual(0.5);
   expect(consoleErrors).toEqual([]);
 });
 
