@@ -4714,9 +4714,14 @@ fn group_picture_mut(children: &mut [GroupChild], object: NodeId) -> Option<&mut
 /// and column breaks travel the same operation, so the same hole would have
 /// swallowed their undo too.
 ///
+/// The typed or pasted **tab** (`InlineNode::Tab`, `docs/109` UX-057) is the
+/// third member, for the same reason: the Tab key and `plain_text_ops` insert
+/// one through this operation, and without it here a typed tab could not be
+/// undone (`undo failed: NodeNotFound`, measured before this line existed).
+///
 /// O(1).
 fn is_removable_inline_node(node: &InlineNode) -> bool {
-    is_object_node(node) || matches!(node, InlineNode::Break(_))
+    is_object_node(node) || matches!(node, InlineNode::Break(_) | InlineNode::Tab(_))
 }
 
 /// Whether `node` is a drawing object: the set object selection offers handles

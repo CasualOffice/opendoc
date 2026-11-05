@@ -13,10 +13,23 @@ import { createTableChrome } from "./table_chrome.mjs";
 import { createTableGutter } from "./table_gutter.mjs";
 import { tableDrawMode } from "./table_draw_mode.mjs";
 import { installViewportFocusGuard } from "./viewport_focus.mjs";
+import { extendByUnit, unitForPress, unitSpan } from "./selection_units.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
 export function createPointer(ed) {
+  // -- Selection by unit (UX-060) -------------------------------------------------
+  // The word or paragraph the last double- or triple-click selected, `{ unit,
+  // origin }`, kept so a drag and a later Shift+click extend by that unit. Cleared
+  // by a plain press. `unitDragReleased` tells the `dblclick` and triple `click`
+  // that follow a unit DRAG not to replace its selection with one word.
+  let unitSelection = null;
+  let unitDragReleased = false;
+  /** Whether `anchor` is still an edge of the unit selection, so Shift+click is
+   *  extending THAT selection rather than one made since by the keyboard. */
+  const extendsUnitSelection = (anchor) =>
+    [unitSelection.origin.start, unitSelection.origin.end].some((edge) => edge.node === anchor.node && edge.offset === anchor.offset);
+
   // -- Contents entries that were never hyperlinked -----------------------------
   // `toc_navigation.mjs` carries the finding, the measured evidence and the rule;
   // the navigator holds the two revision-keyed caches that keep a click O(1).
@@ -444,6 +457,21 @@ export function createPointer(ed) {
       event.shiftKey && ed.selection && !crossedStory
         ? { anchor: ed.selection.anchor, focus: anchor }
         : { anchor, focus: anchor };
+    // Selection BY UNIT (UX-060, `selection_units.mjs`): the second press of a
+    // double-click selects its word and the third its paragraph at once, and a
+    // drag from there extends by whole units. Shift+click after one extends by
+    // the same unit, as long as it still extends that selection.
+    const unit = unitForPress(event);
+    if (unit !== "char" && !event.shiftKey && !crossedStory) {
+      const origin = unitSpan(ed.doc, unit, anchor);
+      unitSelection = { unit, origin };
+      ed.selection = { anchor: origin.start, focus: origin.end };
+    } else if (event.shiftKey && unitSelection && !crossedStory && extendsUnitSelection(ed.selection.anchor)) {
+      ed.selection = extendByUnit(ed.doc, unitSelection.origin, unitSelection.unit, anchor);
+    } else {
+      unitSelection = null;
+    }
+    ed.pointerGesture.unit = unitSelection;
     // Non-blocking secondary effect (REVIEW-GAP-005): surface the sidebar card
     // for a comment the click landed inside, without altering the caret/range
     // hit-testing just computed above.
@@ -535,7 +563,8 @@ export function createPointer(ed) {
     // turns into a drag it is no longer a confirming click.
     if (ed.tableRange.dragTo(ed.pointerGesture.cellAnchor, focus.node, ed.pointerGesture)) return syncSelectionToCellRange();
     ed.tableRange.clear();
-    ed.selection = { anchor: ed.selection.anchor, focus };
+    const unit = ed.pointerGesture.unit;
+    ed.selection = unit ? extendByUnit(ed.doc, unit.origin, unit.unit, focus) : { anchor: ed.selection.anchor, focus };
     ed.drawSelection();
   }
 
@@ -586,6 +615,10 @@ export function createPointer(ed) {
     if (tableChrome.finishDrag(event)) return;
     if (tableGutter.finishDrag(event)) return;
     const gesture = ed.pointerGesture;
+    // A unit drag already holds its final selection; the `dblclick` / triple
+    // `click` that follow this release must not replace it with the one word or
+    // paragraph under the pointer (UX-060).
+    unitDragReleased = !!(gesture?.unit && gesture.moved);
     ed.resetPointerGesture();
     // Format painter: this pointer gesture landed on the document, so consume it as
     // the paint target (a drag's range, or the word under a bare click) instead of
@@ -898,11 +931,12 @@ export function createPointer(ed) {
       void ed.editRunningContent(bandAtPoint, page);
       return;
     }
+    if (unitDragReleased) return; // a double-click-drag already selected by words (UX-060)
     touchSelection.selectWord(page, e); // the SAME routine the long press uses
   });
   // Triple-click selects the paragraph (the click's `detail` is the click count).
   ed.pagesEl.addEventListener("click", (e) => {
-    if (e.detail !== 3) return;
+    if (e.detail !== 3 || unitDragReleased) return;
     const page = pageFromEvent(e);
     if (!page) return;
     const a = ed.anchorAt(page, e);

@@ -29,6 +29,23 @@ export function createEditPipeline(ed) {
     return at;
   }
 
+  /** The selection an edit result hands back: a range when its anchor differs from
+   *  its caret and both ends are placeable (Undo re-selecting what it restored,
+   *  UX-058), otherwise the collapsed caret `adoptEditPosition` resolves. */
+  function adoptEditSelection(anchorNode, anchorOffset, node, offset) {
+    const caret = adoptEditPosition(node, offset);
+    if (anchorNode === node && anchorOffset === offset) return caret;
+    if (caret.focus.node !== node || caret.focus.offset !== offset) return caret; // the caret itself was recovered
+    try {
+      if (ed.doc.caretRect(anchorNode, anchorOffset).length >= 5) {
+        return { anchor: { node: anchorNode, offset: anchorOffset }, focus: caret.focus };
+      }
+    } catch {
+      // an unplaceable anchor: keep the collapsed caret
+    }
+    return caret;
+  }
+
   /** Repaints what a remote arrival changed; the engine applied it, and the shell already
    *  carried `selection` across it synchronously (`collabMapSelection`, `107` P-4). */
   async function paintArrival({ dirty = [], pageCount, viewRevision }) {
@@ -41,6 +58,10 @@ export function createEditPipeline(ed) {
   async function applyEditResult(res, { keepView = false, keepSelection = false } = {}) {
     const node = res.node;
     const offset = res.offset;
+    // Undo and Redo hand back the selection they restored (UX-058); every other
+    // edit's anchor is its caret. Read before `free()`, like every other field.
+    const anchorNode = res.anchorNode ?? node;
+    const anchorOffset = res.anchorOffset ?? offset;
     const dirty = res.dirtyPages;
     const newCount = res.pageCount;
     const revision = readRevision(res);
@@ -53,7 +74,7 @@ export function createEditPipeline(ed) {
     // positions coincide.
     ed.implicitCaretAt = null;
     ed.verticalGoal.clear(); // an edit ends a run of vertical moves (HF-164)
-    if (!keepSelection || !ed.selection) ed.selection = adoptEditPosition(node, offset); // a setting keeps the reader's selection (HF-283)
+    if (!keepSelection || !ed.selection) ed.selection = adoptEditSelection(anchorNode, anchorOffset, node, offset); // a setting keeps the reader's selection (HF-283)
     // A content mutation invalidates a row/column/table selection the same way it
     // invalidates an object selection. Without this the accent fill survives
     // typing, deleting, undo and arrow keys, so the editor claims a whole table is
