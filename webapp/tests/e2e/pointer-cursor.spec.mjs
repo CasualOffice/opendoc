@@ -252,7 +252,22 @@ test.describe("the pointer says what the thing under it will do", () => {
       highlight.x + highlight.width / 2,
       highlight.y + highlight.height / 2,
     );
-    expect(onLink).toMatchObject({ cursor: "pointer", target: "hyperlink" });
+    // In Editing, an external link keeps the I-beam: a plain click places the
+    // caret and shows the link card (docs/184 D-12, audit CANVAS-16)…
+    expect(onLink).toMatchObject({ cursor: "text", target: "hyperlink-text" });
+    // …and the sheet's tooltip names the target and the follow chord.
+    await expect
+      .poll(() => page.evaluate(() => document.querySelector(".page-wrap [title]")?.title ?? ""))
+      .toContain("https://example.com");
+    // The hand appears while the follow chord (Ctrl, or Cmd on a Mac) is held.
+    const linkX = highlight.x + highlight.width / 2;
+    const linkY = highlight.y + highlight.height / 2;
+    await page.keyboard.down(MOD);
+    await page.mouse.move(linkX - 1, linkY);
+    await page.mouse.move(linkX, linkY);
+    await expect.poll(async () => (await read(page, linkX, linkY)).target).toBe("hyperlink");
+    expect((await read(page, linkX, linkY)).cursor).toBe("pointer");
+    await page.keyboard.up(MOD);
 
     // Arming the format painter is a whole-surface mode, and its brush must win
     // over whatever the router would otherwise have written here — including the

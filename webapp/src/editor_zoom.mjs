@@ -5,6 +5,8 @@
 import { closePopover, registerPopover } from "./popover_manager.mjs";
 import { fitPageIndex, fitZoomFactor, parseZoomInput, reflectZoomMenu } from "./view_zoom.mjs";
 import { TWIPS_PER_INCH } from "./units.mjs";
+import { anchorPoint, anchorScrollDelta, captureAnchor } from "./zoom_anchor.mjs";
+import { createPageInView } from "./page_in_view.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -27,8 +29,73 @@ export function createZoom(ed) {
     return clampZoom(factor);
   }
 
+  // ---- Zoom anchoring (audit CANVAS-08, CANVAS-V-02; `zoom_anchor.mjs`) -----
+  // `renderAll` calls `updateZoomDisplay` once the new factor is decided and
+  // BEFORE it lays the band out again, and the relayout after it is synchronous.
+  // So this is the one place that sees every zoom change, whatever asked for it
+  // (the status bar, the View band, the palette, a chord, a fit recompute):
+  // capture the anchor here against the OLD geometry, and restore it in a
+  // microtask, which runs once the relayout has published the new pages.
+  let laidOutAt = null;
+  // The document that layout was for: a zoom that comes with a newly opened
+  // document has no point to keep.
+  let laidOutDoc = null;
+  let wheelPointer = null;
+  let restorePending = false;
+
+  function captureZoomAnchor() {
+    const pages = ed.pages;
+    if (!ed.doc || !pages?.length) return null;
+    const view = ed.viewportEl.getBoundingClientRect();
+    let caret = null;
+    const focus = ed.selection?.focus;
+    if (focus) {
+      const flat = ed.doc.caretRect(focus.node, focus.offset);
+      const page = flat.length >= 5 ? pages[flat[0] - 1] : null;
+      if (page) {
+        const { rect, sx, sy } = ed.scaleOf(page);
+        caret = { x: rect.left + flat[1] * sx, y: rect.top + (flat[2] + flat[4] / 2) * sy, page };
+      }
+    }
+    const at = anchorPoint(wheelPointer, caret, view);
+    wheelPointer = null;
+    const page = at.source === "caret" ? caret.page : ed.pageFromClientPoint(at.x, at.y);
+    if (!page) return null;
+    const { rect, sx, sy } = ed.scaleOf(page);
+    return captureAnchor(pages.indexOf(page), rect, sx, sy, at);
+  }
+
+  function restoreZoomAnchor(anchor) {
+    const page = ed.pages?.[anchor.pageIndex];
+    if (!page) return;
+    const { rect, sx, sy } = ed.scaleOf(page);
+    const { dx, dy } = anchorScrollDelta(anchor, rect, sx, sy);
+    ed.viewportEl.scrollLeft += dx;
+    ed.viewportEl.scrollTop += dy;
+  }
+
+  function noteZoomForAnchor() {
+    const factor = ed.zoomFactor;
+    if (laidOutAt !== null && laidOutDoc === ed.doc && Math.abs(factor - laidOutAt) > 1e-6 && !restorePending) {
+      const anchor = captureZoomAnchor();
+      if (anchor) {
+        restorePending = true;
+        queueMicrotask(() => {
+          restorePending = false;
+          restoreZoomAnchor(anchor);
+        });
+      }
+    }
+    if (ed.pages?.length) {
+      laidOutAt = factor;
+      laidOutDoc = ed.doc;
+    }
+    wheelPointer = null;
+  }
+
   /** Repaints the zoom input (unless the user is mid-edit) and the preset checks. */
   function updateZoomDisplay() {
+    noteZoomForAnchor();
     if (document.activeElement !== ed.zoomEl) {
       ed.zoomEl.value =
         ed.zoomMode === "fit-width" ? "Fit width"
@@ -81,6 +148,9 @@ export function createZoom(ed) {
       if (!(e.ctrlKey || e.metaKey) || !ed.doc) return;
       e.preventDefault();
       const base = ed.zoomMode === "custom" ? ed.zoomFactor : computeFitZoom(ed.zoomMode);
+      // The point under the pointer stays where it is (CANVAS-08): Word's and
+      // ONLYOFFICE's Ctrl+wheel, and a trackpad pinch, which arrives as this.
+      wheelPointer = { x: e.clientX, y: e.clientY };
       ed.setZoom(clampZoom(base * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
     },
     { passive: false },
@@ -129,6 +199,10 @@ export function createZoom(ed) {
       ed.setStatus("That file could not be opened", "error");
     });
   });
+
+  // "Page X of Y" follows the page in view while scrolling (audit CANVAS-09).
+  // Here because this module already owns the viewport's other listeners.
+  createPageInView(ed);
 
   return { clampZoom, computeFitZoom, updateZoomDisplay, zoomMenu };
 }

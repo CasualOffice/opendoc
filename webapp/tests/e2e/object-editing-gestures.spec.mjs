@@ -92,7 +92,8 @@ test.describe("pictures inside containers", () => {
 
     await page.mouse.click(point.x, point.y, { button: "right" });
     const menu = page.locator(".editor-context-menu");
-    await expect(menu.locator('[data-command-id="object.crop"]')).toBeVisible();
+    // The crop family is one Crop ▸ on the right-click menu (docs/184 D-12).
+    await expect(menu.locator('[data-command-id="object.cropMenu"]')).toBeVisible();
     await menu.locator('[data-command-id="object.altText"]').click();
     const input = page.locator("#altTextInput");
     await expect(input).toHaveValue("Partner B");
@@ -216,9 +217,13 @@ test.describe("Word's Picture Format controls", () => {
 
     const menu = page.locator(".editor-context-menu");
     await page.mouse.click(fitted.x + fitted.width / 2, fitted.y + fitted.height / 2, { button: "right" });
-    const resetCrop = menu.locator('[data-command-id="object.resetCrop"]');
+    // The crop family sits under one Crop ▸ (docs/184 D-12); inside a submenu a
+    // refused row stays, greyed with its reason.
+    await menu.locator('[data-command-id="object.cropMenu"]').hover();
+    const cropMenu = page.locator(".editor-submenu");
+    const resetCrop = cropMenu.locator('[data-command-id="object.resetCrop"]');
     await expect(resetCrop, "an uncropped picture has nothing to reset").toBeDisabled();
-    await menu.locator('[data-command-id="object.resetSize"]').click();
+    await cropMenu.locator('[data-command-id="object.resetSize"]').click();
     await expect(page.locator("#status")).toContainText("actual size");
     const actual = await outlineBox(page);
     expect(Math.abs(actual.height * 2 - actual.width), "at its own 2:1 proportions").toBeLessThan(2);
@@ -230,8 +235,9 @@ test.describe("Word's Picture Format controls", () => {
     // Crop to fill and to fit are offered on the same menu, enabled, beside the
     // manual crop (their geometry is `picture_tools.test.mjs`'s).
     await page.mouse.click(fitted.x + fitted.width / 2, fitted.y + fitted.height / 2, { button: "right" });
-    await expect(menu.locator('[data-command-id="object.cropFill"]')).toBeEnabled();
-    await expect(menu.locator('[data-command-id="object.cropFit"]')).toBeEnabled();
+    await menu.locator('[data-command-id="object.cropMenu"]').hover();
+    await expect(cropMenu.locator('[data-command-id="object.cropFill"]')).toBeEnabled();
+    await expect(cropMenu.locator('[data-command-id="object.cropFit"]')).toBeEnabled();
     await page.keyboard.press("Escape");
     expect(consoleErrors).toEqual([]);
   });
@@ -271,7 +277,9 @@ test.describe("rotate and flip (HF-056)", () => {
     // Rotate right from the right-click menu: the properties panel reads 90.
     await page.mouse.click(point.x, point.y);
     await page.mouse.click(point.x, point.y, { button: "right" });
-    await page.locator('.editor-context-menu [data-command-id="object.rotate"]').hover();
+    // Rotate lives under Arrange ▸ on the right-click menu (docs/184 D-12).
+    await page.locator('.editor-context-menu [data-command-id="object.arrange"]').hover();
+    await page.locator('.editor-submenu [data-command-id="object.rotate"]').hover();
     await page.locator('[data-command-id="object.rotate.right90"]').click();
     await page.locator('.object-bar-btn[aria-label="Open object properties"]').click();
     await expect(page.locator(".object-inspector [data-object-prop=rotation]")).toHaveValue("90");

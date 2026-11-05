@@ -115,6 +115,38 @@ from the pointer in JavaScript. `chrome_units.test.mjs` holds the stylesheets;
 `chrome_js_units.test.mjs` refuses a px type or spacing length, or any px literal, written
 from script.
 
+**D12 — The canvas: one floating surface, short menus, zoom keeps its place** (the
+2026-11-03 redesign audit's decision D-12, owner-approved with the v2 mockups; Word's mini
+toolbar, Docs' link card, Word's 14-entry table menu). Of the link card, the object bar, the
+table insert markers, the selection mini-toolbar and the paste chip, at most one shows, in
+that priority, and none covers the selection (`floating_arbiter.mjs`: the owners keep showing
+and placing their own element, and one observer settles after every change, so no path can
+forget to ask). A click on an external link places the caret and shows the card (Ctrl/Cmd+click
+follows it; the pointer is an I-beam until the chord is held, and the sheet's tooltip names the
+target and the chord); an internal link, a contents entry, still jumps on a plain click. The
+mini-toolbar appears only for a pointer-made selection and fades as the pointer leaves it; a
+keyboard selection, Tab into a cell and a link click raise none. Context menus follow the
+approved right-click anatomy (`docs/63` §3) and one policy for every builder: no Undo/Redo,
+no refused top-level row (several rows hidden for one reason leave that reason as a note), at
+most 16 rows and 480px with the trailing groups folding into "More"; a table cell offers
+Insert ▸, Delete ▸, Merge or Unmerge when it applies, Split cell, Select ▸, one Table ▸ and
+Table properties…; a picture one Arrange ▸ and one Crop ▸. The spelling menu leads with at
+most three bold suggestions ranked by a weighted edit distance (doubled letters, swaps,
+keyboard neighbours and vowels cost less) plus a word-frequency term. The paste chip is a
+collapsed icon at the end of the paste, opened by a click or by Ctrl alone, offering Keep
+source formatting, Match destination formatting, Keep text only and Picture. A zoom keeps the
+point the reader is on (the pointer for Ctrl+wheel and pinch, the caret when it is in view,
+else the middle of the view); PageDown steps one screen less a line and keeps the caret's
+place on screen; "Page X of Y" names the page most in view while scrolling, and the caret's
+page while the caret is on screen.
+
+*Status (2026-11-06, `program/ui-redesign` lane L7, `109` UX-070, UX-071, UX-072):* built as
+above. Not built yet, and queued in UX-072: the object bar's five grouped actions and
+16px handle hit areas (CANVAS-15), hover-only table edge strips and an 8px resize zone
+(CANVAS-11), one tint for cell selections (CANVAS-12), the drag ghost and snapped drop
+(CANVAS-14), the CJK fallback and per-run proofing language (CANVAS-17) and the select-line
+margin (CANVAS-18).
+
 ## 4. Guards
 
 | Decision | Guard |
@@ -125,5 +157,6 @@ from script.
 | D6 | `e2e/shell-sparse.spec.mjs` |
 | D7 | `e2e/a11y-floor.spec.mjs`; `theme-contrast.spec.mjs` |
 | D8 | `tests/chrome_units.test.mjs`, `tests/chrome_js_units.test.mjs`, `tests/design_scale.test.mjs` |
+| D12 | `e2e/overlay-arbiter.spec.mjs` (at most one floating surface, none over the selection, in every state; link click; pointer-only mini-toolbar; Tab into a cell; the paste chip); `e2e/context-menu.spec.mjs` (≤16 rows, ≤480px, no Undo/Redo, no disabled top-level row, on text, table and picture); `e2e/zoom-anchor.spec.mjs` (the caret stays in view at 300%; Ctrl+wheel keeps the pointer's point within 4px; PageDown; Page X of Y); `tests/context_menu.test.mjs`, `tests/floating_arbiter.test.mjs`, `tests/zoom_anchor.test.mjs`, `tests/page_in_view.test.mjs`, `tests/spelling.test.mjs` |
 
 Implementation status per decision is kept in the `docs/109` rows, not here.

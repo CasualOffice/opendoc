@@ -13,6 +13,7 @@
 //           keyboard way into a freshly loaded editor.
 //   HF-072  the floating selection toolbar never showed Bold/Italic/Underline state
 import {
+  pointerSelectHighlight,
   test,
   expect,
   gotoEditor,
@@ -231,6 +232,8 @@ test("the floating selection toolbar reflects the selection's format", async ({
   await page.keyboard.press("Enter");
   await page.keyboard.type("SELTOOLBAR");
   for (let i = 0; i < "SELTOOLBAR".length; i++) await page.keyboard.press("Shift+ArrowLeft");
+  // The mini-toolbar is earned by a pointer selection (docs/184 D-12).
+  await pointerSelectHighlight(page);
 
   const selBold = page.locator('#selToolbar [data-fmt="bold"]');
   const selItalic = page.locator('#selToolbar [data-fmt="italic"]');

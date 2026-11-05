@@ -3,6 +3,7 @@
 // Accept-all/Reject-all — plus caret-driven card expansion and card→canvas
 // scroll-to-anchor for both comments and tracked changes.
 import {
+  commentOnSelection,
   test,
   expect,
   gotoEditor,
@@ -25,7 +26,7 @@ async function pastePlainText(page, text) {
 async function addComment(page, target, body) {
   await page.keyboard.type(target);
   for (let i = 0; i < target.length; i++) await page.keyboard.press("Shift+ArrowLeft");
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
   const sidebar = page.locator("#reviewSidebar");
   await sidebar.locator('[data-testid="review-comment-composer"]').fill(body);
   await sidebar.locator('[data-testid="review-comment-submit"]').click();

@@ -16,6 +16,7 @@ import {
   expectNothingToUndo,
   runAppMenuCommand,
   MOD,
+  stableBox,
 } from "./fixtures.mjs";
 
 // The engine word count in the footer is the mutation-independent proof that
@@ -160,8 +161,17 @@ test("Viewing mode composes the editing chrome away, and leaving it puts everyth
 
   // The floating selection toolbar goes with the ribbon: it offers formatting and
   // nothing else, so a selection in Viewing raises no format bar.
+  // With the POINTER, the gesture that earns the bar in Editing (docs/184
+  // D-12), so its absence is Viewing's doing and not the selection's.
   await moveCaretToDocStart(page);
   for (let i = 0; i < 6; i++) await page.keyboard.press("Shift+ArrowRight");
+  const word = await stableBox(page.locator("#pages .overlay .highlight").first());
+  await page.keyboard.press("ArrowLeft");
+  await page.mouse.move(word.x + 1, word.y + word.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(word.x + word.width - 1, word.y + word.height / 2, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.locator("#pages .overlay .highlight").first()).toBeVisible();
   await expect(page.locator("#selToolbar")).toBeHidden();
 
   // Leaving restores EXACTLY what was there, the active band included.

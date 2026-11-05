@@ -1629,12 +1629,9 @@
   "autocorrect.statusOn": "{name} aktif",
   "autocorrect.statusOff": "{name} nonaktif",
   "pasteBtn.paste": "Tempel",
-  "pasteOptions.dismiss.title": "Tutup",
-  "pasteOptions.dismissPasteOptions.label": "Tutup opsi tempel",
   "pasteOptions.keepPastedEmphasisBut.title": "Pertahankan penekanan yang ditempel tetapi gunakan pemformatan dokumen ini",
   "pasteOptions.keepTextOnly": "Pertahankan teks saja",
   "pasteOptions.keepTextOnlyV.title": "Pertahankan teks saja (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "Gabungkan pemformatan",
   "proofDocument.disposed": "Pemeriksaan telah dihentikan untuk dokumen ini.",
   "proofDocument.notAvailable": "Memeriksa seluruh dokumen sekaligus belum tersedia. Pemeriksaan memeriksa halaman yang sedang Anda lihat, jadi gulir dokumen untuk memeriksa semuanya.",
   "proofDocument.notConfigured": "Pemeriksaan belum disiapkan untuk dokumen ini.",
@@ -3636,5 +3633,13 @@
   "plugins.assistant.unparsableFormat": "Model tidak menjawab dalam bentuk terstruktur yang diminta, jadi tidak ada yang diubah. Coba lagi; model yang lebih besar lebih andal untuk ini.",
   "plugins.assistant.skipped": "Dibiarkan apa adanya: tabel dan daftar isi dalam pilihan ({count}).",
   "plugins.assistant.truncatedLocal": "Hanya sebagian dokumen yang dibaca: model lokal diperkirakan memuat sekitar {tokens} token, jadi jawabannya bisa melewatkan bagian lain.",
-  "panelHome.casualAi": "Casual AI"
+  "panelHome.casualAi": "Casual AI",
+  "table.tools.typeSubmenu": "Tabel",
+  "object.cropSubmenu": "Pangkas",
+  "context.more": "Lainnya",
+  "link.followHint": "{key}+Klik untuk membuka tautan",
+  "pasteOptions.toggle.title": "Opsi tempel (Ctrl)",
+  "pasteOptions.keepSource": "Pertahankan format sumber",
+  "pasteOptions.keepSource.title": "Pertahankan format saat teks disalin",
+  "pasteOptions.matchDestination": "Cocokkan format tujuan"
 }

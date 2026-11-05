@@ -444,3 +444,69 @@ export function buildObjectContextCommands(context, io) {
   }
   return commands;
 }
+
+/** The arrangement rows the right-click menu folds under ONE "Arrange ▸". */
+const ARRANGE_FAMILY = Object.freeze(["object.position", "object.align", "object.rotate", "object.layoutOptions"]);
+/** A picture's crop family, folded under ONE "Crop ▸" (audit CANVAS-07: Crop to
+ *  fill, Crop to fit and Reset crop sat at the menu's top level). */
+const CROP_FAMILY = Object.freeze(["object.crop", "object.cropFill", "object.cropFit", "object.resetCrop", "object.resetSize"]);
+
+/**
+ * How the RIGHT-CLICK menu presents `buildObjectContextCommands`' rows: about a
+ * dozen entries, as Word's picture menu (docs/184 D-12, audit CANVAS-07, which
+ * measured 24 rows and 586px for a picture). Position, Align, Rotate and Layout
+ * options join the order-and-group rows under one Arrange ▸, and the crop
+ * variants go under one Crop ▸.
+ *
+ * Presentation only: the palette flattens `buildObjectContextCommands` itself,
+ * so every command keeps its id, its reason and its palette row; and
+ * `tests/object_context_menu.test.mjs` keeps testing the full tree.
+ *
+ * Complexity: O(rows).
+ */
+export function compactObjectMenu(commands, text = (key) => key) {
+  const byId = new Map(commands.map((command) => [command.id, command]));
+  const arrange = byId.get("object.arrange");
+  const arrangeRows = ARRANGE_FAMILY.map((id) => byId.get(id)).filter(Boolean);
+  const cropRows = CROP_FAMILY.map((id) => byId.get(id)).filter(Boolean);
+  const out = [];
+  let arrangePlaced = false;
+  let cropPlaced = false;
+  for (const command of commands) {
+    if (ARRANGE_FAMILY.includes(command.id) || command.id === "object.arrange") {
+      if (arrangePlaced || (!arrange && arrangeRows.length === 0)) continue;
+      arrangePlaced = true;
+      out.push({
+        id: "object.arrange",
+        label: arrange?.label ?? text("object.arrange"),
+        group: "arrange",
+        icon: arrange?.icon ?? "layers",
+        submenu: [
+          ...arrangeRows.map((row) => ({ ...row, group: "arrange-place" })),
+          ...(arrange?.submenu ?? []),
+        ],
+      });
+      continue;
+    }
+    if (CROP_FAMILY.includes(command.id)) {
+      if (cropPlaced) continue;
+      cropPlaced = true;
+      // One crop row is not a family: a picture whose only crop command is
+      // "Crop image" keeps it at the top level.
+      if (cropRows.length === 1) {
+        out.push(cropRows[0]);
+        continue;
+      }
+      out.push({
+        id: "object.cropMenu",
+        label: text("object.cropSubmenu"),
+        group: "arrange",
+        icon: "crop",
+        submenu: cropRows.map((row) => ({ ...row, group: row.id === "object.crop" ? "crop-enter" : "crop-preset" })),
+      });
+      continue;
+    }
+    out.push(command);
+  }
+  return out;
+}

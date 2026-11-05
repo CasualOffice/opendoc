@@ -4178,12 +4178,17 @@
       <button data-i18n-title="selToolbar.aiActions.title" data-i18n-label="selToolbar.aiActions.label" id="selAiBtn" type="button" class="fmt" hidden title="Casual AI actions (⌘/)" aria-label="Casual AI actions" aria-haspopup="menu" aria-controls="selAiMenu" aria-expanded="false"><span class="format-glyph" aria-hidden="true">✦</span></button>
     </div>
 
-    <div data-i18n-label="ui.pasteOptions.label" id="pasteOptions" class="paste-options" role="dialog" aria-label="Paste options" hidden>
-      <span class="ms paste-options-icon" aria-hidden="true">content_paste</span>
-      <button data-i18n-title="pasteOptions.keepPastedEmphasisBut.title" data-i18n="pasteOptions.mergeFormatting" id="pasteOptionsMerge" type="button" class="paste-options-action" title="Keep the pasted emphasis but adopt this document's formatting">Merge formatting</button>
-      <button data-i18n-title="pasteOptions.keepTextOnlyV.title" data-i18n="pasteOptions.keepTextOnly" id="pasteOptionsTextOnly" type="button" class="paste-options-action" title="Keep text only (⌘⇧V)">Keep text only</button>
-      <button data-i18n-title="pasteOptions.picture.title" data-i18n="pasteOptions.picture" id="pasteOptionsPicture" type="button" class="paste-options-action" title="Paste this as a picture of how it looks">Picture</button>
-      <button data-i18n-title="pasteOptions.dismiss.title" data-i18n-label="pasteOptions.dismissPasteOptions.label" id="pasteOptionsClose" type="button" class="paste-options-close" title="Dismiss" aria-label="Dismiss paste options"><span class="ms" aria-hidden="true">close</span></button>
+    <!-- Paste options (docs/184 D-12, audit CRITIC-10): Word's collapsed (Ctrl)
+         chip at the END of the paste, beside the caret, so it never covers the
+         pasted text; a click on it, or Ctrl pressed alone, opens the choices. -->
+    <div data-i18n-label="ui.pasteOptions.label" id="pasteOptions" class="paste-options" role="group" aria-label="Paste options" hidden>
+      <button data-i18n-title="pasteOptions.toggle.title" data-i18n-label="ui.pasteOptions.label" id="pasteOptionsToggle" type="button" class="paste-options-toggle" aria-haspopup="menu" aria-expanded="false" aria-controls="pasteOptionsMenu" title="Paste options (Ctrl)" aria-label="Paste options"><span class="ms" aria-hidden="true">content_paste</span><span class="ms paste-options-caret" aria-hidden="true">arrow_drop_down</span></button>
+      <div data-i18n-label="ui.pasteOptions.label" id="pasteOptionsMenu" class="paste-options-menu" role="menu" aria-label="Paste options" hidden>
+        <button data-i18n-title="pasteOptions.keepSource.title" data-i18n="pasteOptions.keepSource" id="pasteOptionsKeepSource" type="button" role="menuitemradio" aria-checked="true" class="paste-options-action" title="Keep the formatting the text was copied with">Keep source formatting</button>
+        <button data-i18n-title="pasteOptions.keepPastedEmphasisBut.title" data-i18n="pasteOptions.matchDestination" id="pasteOptionsMerge" type="button" role="menuitemradio" aria-checked="false" class="paste-options-action" title="Keep the pasted emphasis but adopt this document's formatting">Match destination formatting</button>
+        <button data-i18n-title="pasteOptions.keepTextOnlyV.title" data-i18n="pasteOptions.keepTextOnly" id="pasteOptionsTextOnly" type="button" role="menuitemradio" aria-checked="false" class="paste-options-action" title="Keep text only (⌘⇧V)">Keep text only</button>
+        <button data-i18n-title="pasteOptions.picture.title" data-i18n="pasteOptions.picture" id="pasteOptionsPicture" type="button" role="menuitemradio" aria-checked="false" class="paste-options-action" title="Paste this as a picture of how it looks">Picture</button>
+      </div>
     </div>
 
     <div data-i18n-label="ui.documentLink.label" id="linkChip" class="link-chip" role="dialog" aria-label="Document link" hidden>

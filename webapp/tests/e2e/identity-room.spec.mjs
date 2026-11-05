@@ -8,7 +8,7 @@
 import { spawn } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test, expect } from './fixtures.mjs';
+import { test, expect, commentOnSelection } from './fixtures.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const TEXT = ['Alpha line for identity tests.', 'Bravo line shared by both people.', 'Charlie line at the end.'].join('\n');
@@ -129,7 +129,7 @@ test.describe('an open room', () => {
       await b.locator('.page-wrap').first().click({ position: { x: 80, y: 100 } });
       await b.keyboard.press('ControlOrMeta+Home');
       for (let i = 0; i < 5; i += 1) await b.keyboard.press('Shift+ArrowRight');
-      await b.locator('#selComment').click();
+      await commentOnSelection(b);
       const composer = b.locator('#reviewSidebar [data-testid="review-comment-composer"]');
       await expect(composer).toBeVisible();
       await composer.fill('From the second Ada');

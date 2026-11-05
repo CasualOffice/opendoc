@@ -1,7 +1,7 @@
 // @mention over the host's directory (`docs/175` §7, `docs/109` HF-361), in the real
 // comment composer. The host is the in-process one (`window.opendoc.directory`), so
 // the spec can see exactly what the editor asked it and when.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD, waitForFramedEditor } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD, waitForFramedEditor, commentOnSelection } from "./fixtures.mjs";
 
 /** Installs a directory that answers from a small list and records every call. */
 async function installDirectory(page, { status = "needs-access" } = {}) {
@@ -30,7 +30,7 @@ async function openComposer(page) {
   await clickIntoFirstPage(page);
   await moveCaretToDocStart(page);
   for (let i = 0; i < 5; i += 1) await page.keyboard.press("Shift+ArrowRight");
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
   const composer = page.locator('#reviewSidebar [data-testid="review-comment-composer"]');
   await expect(composer).toBeVisible();
   await composer.focus();

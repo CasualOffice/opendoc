@@ -1630,12 +1630,9 @@
   "autocorrect.statusOn": "{name} açık",
   "autocorrect.statusOff": "{name} kapalı",
   "pasteBtn.paste": "Yapıştır",
-  "pasteOptions.dismiss.title": "Kapat",
-  "pasteOptions.dismissPasteOptions.label": "Yapıştırma seçeneklerini kapat",
   "pasteOptions.keepPastedEmphasisBut.title": "Yapıştırılan vurguyu koru ama bu belgenin biçimlendirmesini kullan",
   "pasteOptions.keepTextOnly": "Yalnızca metni koru",
   "pasteOptions.keepTextOnlyV.title": "Yalnızca metni koru (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "Biçimlendirmeyi birleştir",
   "proofDocument.disposed": "Bu belge için denetim kapatıldı.",
   "proofDocument.notAvailable": "Belgenin tümünü bir kerede denetlemek henüz kullanılabilir değil. Denetim baktığınız sayfaları kontrol eder; tümünü denetlemek için belgeyi kaydırın.",
   "proofDocument.notConfigured": "Bu belge için denetim ayarlanmamış.",
@@ -3647,5 +3644,13 @@
   "plugins.assistant.unparsableFormat": "Model istenen yapılandırılmış biçimde yanıt vermedi, bu yüzden hiçbir şey değiştirilmedi. Yeniden deneyin; daha büyük bir model bunu daha güvenilir yapar.",
   "plugins.assistant.skipped": "Olduğu gibi bırakıldı: seçimdeki tablolar ve içindekiler tabloları ({count}).",
   "plugins.assistant.truncatedLocal": "Belgenin yalnızca bir kısmı okundu: yerel bir modelin yaklaşık {tokens} belirteç alabildiği varsayılır, bu yüzden yanıt başka yerdekileri kaçırabilir.",
-  "panelHome.casualAi": "Casual AI"
+  "panelHome.casualAi": "Casual AI",
+  "table.tools.typeSubmenu": "Tablo",
+  "object.cropSubmenu": "Kırp",
+  "context.more": "Daha fazla",
+  "link.followHint": "Bağlantıyı izlemek için {key}+Tıklayın",
+  "pasteOptions.toggle.title": "Yapıştırma seçenekleri (Ctrl)",
+  "pasteOptions.keepSource": "Kaynak biçimlendirmesini koru",
+  "pasteOptions.keepSource.title": "Metnin kopyalandığı biçimlendirmeyi koru",
+  "pasteOptions.matchDestination": "Hedef biçimlendirmeyle eşleştir"
 }

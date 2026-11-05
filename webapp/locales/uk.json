@@ -1632,12 +1632,9 @@
   "autocorrect.statusOn": "{name}: увімк.",
   "autocorrect.statusOff": "{name}: вимк.",
   "pasteBtn.paste": "Вставити",
-  "pasteOptions.dismiss.title": "Відхилити",
-  "pasteOptions.dismissPasteOptions.label": "Приховати параметри вставлення",
   "pasteOptions.keepPastedEmphasisBut.title": "Зберегти виділення вставленого тексту, застосувавши форматування цього документа",
   "pasteOptions.keepTextOnly": "Зберегти лише текст",
   "pasteOptions.keepTextOnlyV.title": "Зберегти лише текст (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "Об’єднати форматування",
   "proofDocument.disposed": "Перевірку для цього документа зупинено.",
   "proofDocument.notAvailable": "Перевірка всього документа одразу ще недоступна. Перевіряються сторінки, які ви переглядаєте, тому прокрутіть документ, щоб перевірити його повністю.",
   "proofDocument.notConfigured": "Перевірку для цього документа не налаштовано.",
@@ -3669,5 +3666,13 @@
   "plugins.assistant.unparsableFormat": "Модель не відповіла в запитаній структурованій формі, тому нічого не змінено. Спробуйте ще раз; більша модель робить це надійніше.",
   "plugins.assistant.skipped": "Залишено без змін: таблиці та змісти у виділенні ({count}).",
   "plugins.assistant.truncatedLocal": "Прочитано лише частину документа: локальна модель, імовірно, вміщує близько {tokens} токенів, тому відповідь може пропустити те, що в інших місцях.",
-  "panelHome.casualAi": "Casual AI"
+  "panelHome.casualAi": "Casual AI",
+  "table.tools.typeSubmenu": "Таблиця",
+  "object.cropSubmenu": "Обрізати",
+  "context.more": "Більше",
+  "link.followHint": "{key}+клацання — перейти за посиланням",
+  "pasteOptions.toggle.title": "Параметри вставлення (Ctrl)",
+  "pasteOptions.keepSource": "Зберегти вихідне форматування",
+  "pasteOptions.keepSource.title": "Зберегти форматування, з яким текст скопійовано",
+  "pasteOptions.matchDestination": "Узгодити з форматуванням призначення"
 }

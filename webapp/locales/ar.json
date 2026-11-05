@@ -1634,12 +1634,9 @@
   "autocorrect.statusOn": "تم تفعيل {name}",
   "autocorrect.statusOff": "تم تعطيل {name}",
   "pasteBtn.paste": "لصق",
-  "pasteOptions.dismiss.title": "تجاهل",
-  "pasteOptions.dismissPasteOptions.label": "تجاهل خيارات اللصق",
   "pasteOptions.keepPastedEmphasisBut.title": "الاحتفاظ بالتأكيد المنسوخ مع اعتماد تنسيق هذا المستند",
   "pasteOptions.keepTextOnly": "الاحتفاظ بالنص فقط",
   "pasteOptions.keepTextOnlyV.title": "الاحتفاظ بالنص فقط (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "دمج التنسيق",
   "proofDocument.disposed": "تم إيقاف التدقيق لهذا المستند.",
   "proofDocument.notAvailable": "تدقيق المستند بأكمله مرة واحدة غير متاح بعد. يدقّق البرنامج الصفحات التي تعرضها، لذا مرّر في المستند لتدقيقه بالكامل.",
   "proofDocument.notConfigured": "لم يتم إعداد التدقيق لهذا المستند.",
@@ -3691,5 +3688,13 @@
   "plugins.assistant.unparsableFormat": "لم يُجب النموذج بالشكل المنظَّم المطلوب، لذا لم يتغيّر شيء. حاول مجددًا؛ النماذج الأكبر أكثر موثوقية في ذلك.",
   "plugins.assistant.skipped": "تُركت كما هي: الجداول وجداول المحتويات في التحديد ({count}).",
   "plugins.assistant.truncatedLocal": "قُرئ جزء من المستند فقط: يُفترض أن النموذج المحلي يتّسع لنحو {tokens} رمز، لذا قد تفوت الإجابةَ أجزاءٌ أخرى.",
-  "panelHome.casualAi": "Casual AI"
+  "panelHome.casualAi": "Casual AI",
+  "table.tools.typeSubmenu": "جدول",
+  "object.cropSubmenu": "اقتصاص",
+  "context.more": "المزيد",
+  "link.followHint": "{key}+نقر لفتح الرابط",
+  "pasteOptions.toggle.title": "خيارات اللصق (Ctrl)",
+  "pasteOptions.keepSource": "الاحتفاظ بتنسيق المصدر",
+  "pasteOptions.keepSource.title": "الاحتفاظ بالتنسيق الذي نُسخ به النص",
+  "pasteOptions.matchDestination": "مطابقة تنسيق الوجهة"
 }

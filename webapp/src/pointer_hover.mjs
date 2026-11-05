@@ -70,6 +70,20 @@ export function createPointerHover(host) {
     }
   }
 
+  /** Puts the hovered link's target and its follow chord on the sheet's tooltip,
+   *  or takes it off. */
+  function tipLink(page, probe) {
+    for (const sheet of host.materializedPages()) {
+      if (!sheet.canvas) continue;
+      if (sheet === page && probe) {
+        const follow = probe.linkKind === "internal" ? "" : host.followHint?.() ?? "";
+        sheet.canvas.title = [probe.linkTarget, follow].filter(Boolean).join("\n");
+      } else if (sheet.canvas.title) {
+        sheet.canvas.removeAttribute("title");
+      }
+    }
+  }
+
   /** What is under the pointer, as the plain facts `resolvePointerCursor` reads.
    *
    *  The engine queries are ordered to match what `onPointerDown` actually does
@@ -128,7 +142,18 @@ export function createPointerHover(host) {
       probe.formCheckbox = !!doc.formCheckboxAt(hit.node, hit.offset);
       hit.free?.();
     }
-    if (!probe.formCheckbox) probe.link = !!host.linkAt(page, event);
+    if (!probe.formCheckbox) {
+      const link = host.linkAt(page, event);
+      probe.link = !!link;
+      // Which kind, and whether the follow chord is held: in Editing a click on
+      // an external link places the caret, and only Ctrl/Cmd+click follows it,
+      // so the hand appears only while the chord is down (audit CANVAS-16).
+      if (link) {
+        probe.linkKind = link.kind === "internal" ? "internal" : "external";
+        probe.followModifier = event.modifier === true;
+        probe.linkTarget = link.kind === "internal" ? `#${link.anchor ?? ""}` : link.url ?? "";
+      }
+    }
     // A contents entry with no authored link under it. Asked LAST and only when
     // nothing above claimed the point, and `tocEntryTargetAt` itself returns
     // immediately unless the document holds a TOC field — so the ordinary
@@ -153,7 +178,7 @@ export function createPointerHover(host) {
      *  pointer emits far more moves than the screen has frames and each probe
      *  asks the engine real questions. `page` may be null during a drag. */
     schedule(page, event) {
-      pending = { page, clientX: event.clientX, clientY: event.clientY };
+      pending = { page, clientX: event.clientX, clientY: event.clientY, modifier: !!(event.ctrlKey || event.metaKey) };
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
@@ -175,6 +200,10 @@ export function createPointerHover(host) {
           : probeAt(at.page, at, state);
         const { target, cursor } = resolvePointerCursor(probe);
         apply(drag ? null : at.page, cursor, target);
+        // The hover hint Word gives a link: where it goes, and how to follow it
+        // (audit CANVAS-16). A native tooltip on the sheet, so it costs no node
+        // and a screen reader's hover reading gets it too.
+        tipLink(drag ? null : at.page, probe.link ? probe : null);
       });
     },
   };

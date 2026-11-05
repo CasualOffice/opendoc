@@ -1,4 +1,5 @@
 import {
+  pointerSelectHighlight,
   appMenuButton,
   test,
   expect,
@@ -112,6 +113,8 @@ test("the selection formatting toolbar follows light and dark panel surfaces", a
   await gotoEditor(page);
   await clickIntoFirstPage(page);
   await page.keyboard.press(`${MOD}+a`);
+  // The mini-toolbar is earned by a pointer selection (docs/184 D-12).
+  await pointerSelectHighlight(page);
 
   const toolbar = page.locator("#selToolbar");
   await expect(toolbar).toBeVisible();

@@ -10,6 +10,7 @@
 // paints a highlight, not a caret, so the old `scrollCaretIntoView` never moved
 // an off-screen marker into view at all.
 import {
+  commentOnSelection,
   test,
   expect,
   gotoEditor,
@@ -47,7 +48,7 @@ async function caretToClusterLine(page, linesUp) {
 
 async function commentWholeLine(page, note) {
   await page.keyboard.press("Shift+End");
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
   const composer = page.locator('[data-testid="review-comment-composer"]');
   await expect(composer).toBeVisible();
   await composer.fill(note);

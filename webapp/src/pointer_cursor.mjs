@@ -431,11 +431,14 @@ export const CURSOR_TARGETS = [
   },
   {
     id: "ruler-content",
-    cursor: "copy",
+    cursor: "default",
     owner: "css",
     selector: ".ruler-content",
     gesture: "Adding a tab stop at this position",
-    why: "A click CREATES something, which `copy` signals and `pointer` does not.",
+    why:
+      "Word's ruler shows the plain arrow and a click adds a tab stop; `copy` read " +
+      "as a drag-and-drop copy (audit CANVAS-18). The tab glyph that lands is the " +
+      "affordance, and the tab-type box beside the ruler names what a click adds.",
   },
   {
     id: "page-background",
@@ -563,12 +566,26 @@ export const CURSOR_TARGETS = [
     selector: null,
     gesture: "Following the link",
     why:
-      "DIVERGENCE, and the considered one. Word requires Ctrl+click and keeps the " +
-      "I-beam; ONLYOFFICE copies that exactly, giving `pointer` only while Ctrl is " +
-      "held (`Paragraph.js:12712`), with no plain-click path for a .docx. This " +
-      "editor follows a link on an UNMODIFIED click — pointer-up opens the link " +
-      "chip — so the hand is the truthful shape for this product, and it is what " +
-      "was already shipped here (`.page.link-hover`).",
+      "The hand promises that a click FOLLOWS. That is true for an internal link " +
+      "(a contents entry, a cross-reference), which jumps on a plain click as a " +
+      "reader of a contents list expects, and for any link while Ctrl/Cmd is held, " +
+      "the chord Word and ONLYOFFICE use (`Paragraph.js:12712`). An external link " +
+      "under a plain click places the caret and shows the link card " +
+      "(docs/184 D-12, audit CANVAS-16), so it keeps the I-beam: see " +
+      "`hyperlink-text`.",
+    when: (p) => p.link === true && (p.linkKind !== "external" || p.followModifier === true),
+  },
+  {
+    id: "hyperlink-text",
+    cursor: "text",
+    owner: "router",
+    selector: null,
+    gesture: "Placing the caret in the link text; Ctrl/Cmd+click follows it",
+    why:
+      "Word and Docs keep the I-beam over a link while editing: a click edits " +
+      "the text and shows the link card, it does not navigate away. The " +
+      "hand used to be shown here and the click then selected the link (audit " +
+      "CANVAS-16). The sheet's tooltip names the target and the follow chord.",
     when: (p) => p.link === true,
   },
   {

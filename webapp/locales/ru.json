@@ -1632,12 +1632,9 @@
   "autocorrect.statusOn": "{name}: вкл.",
   "autocorrect.statusOff": "{name}: выкл.",
   "pasteBtn.paste": "Вставить",
-  "pasteOptions.dismiss.title": "Скрыть",
-  "pasteOptions.dismissPasteOptions.label": "Скрыть параметры вставки",
   "pasteOptions.keepPastedEmphasisBut.title": "Сохранить выделение вставленного текста, применив форматирование этого документа",
   "pasteOptions.keepTextOnly": "Сохранить только текст",
   "pasteOptions.keepTextOnlyV.title": "Сохранить только текст (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "Объединить форматирование",
   "proofDocument.disposed": "Проверка для этого документа остановлена.",
   "proofDocument.notAvailable": "Проверка всего документа сразу пока недоступна. Проверяются страницы, которые вы просматриваете, поэтому прокрутите документ, чтобы проверить его полностью.",
   "proofDocument.notConfigured": "Проверка для этого документа не настроена.",
@@ -3669,5 +3666,13 @@
   "plugins.assistant.unparsableFormat": "Модель не ответила в запрошенной структурированной форме, поэтому ничего не изменено. Попробуйте ещё раз; более крупная модель справляется надёжнее.",
   "plugins.assistant.skipped": "Оставлены без изменений: таблицы и оглавления в выделении ({count}).",
   "plugins.assistant.truncatedLocal": "Прочитана только часть документа: локальная модель, вероятно, вмещает около {tokens} токенов, поэтому ответ может упустить то, что находится в других местах.",
-  "panelHome.casualAi": "Casual AI"
+  "panelHome.casualAi": "Casual AI",
+  "table.tools.typeSubmenu": "Таблица",
+  "object.cropSubmenu": "Обрезка",
+  "context.more": "Ещё",
+  "link.followHint": "{key}+щелчок — перейти по ссылке",
+  "pasteOptions.toggle.title": "Параметры вставки (Ctrl)",
+  "pasteOptions.keepSource": "Сохранить исходное форматирование",
+  "pasteOptions.keepSource.title": "Сохранить форматирование, с которым текст был скопирован",
+  "pasteOptions.matchDestination": "Использовать форматирование назначения"
 }

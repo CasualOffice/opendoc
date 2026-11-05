@@ -339,6 +339,33 @@ export async function expectNothingToUndo(page) {
  *  landing on nothing. The palette also passes the chosen row as the anchor for
  *  any popover the command opens, so a picker reached this way is positioned
  *  against the row rather than against a ribbon button that is not on screen. */
+/** Opens the comment composer for the current selection by its chord
+ *  (⌘⌥M, Ctrl+Alt+M elsewhere). Specs used to click the mini-toolbar's Comment
+ *  button after a KEYBOARD selection; the mini-toolbar is earned by a pointer
+ *  selection only (docs/184 D-12, audit CANVAS-06), as Word's is, so a
+ *  keyboard-made selection reaches the command by its keyboard route. */
+export async function commentOnSelection(page) {
+  await page.keyboard.press("ControlOrMeta+Alt+m");
+}
+
+/** Re-makes the current (first-line) selection with the POINTER: a drag across
+ *  the first painted highlight. The mini-toolbar appears only for pointer-made
+ *  selections (docs/184 D-12, audit CANVAS-06), so a spec about the toolbar
+ *  makes its selection the way a reader who sees the toolbar does. Waits for
+ *  the toolbar. */
+export async function pointerSelectHighlight(page) {
+  const box = await stableBox(page.locator("#pages .overlay .highlight").first());
+  // Collapse first: a press INSIDE a selection starts a text drag (a move).
+  await page.keyboard.press("ArrowLeft");
+  const y = box.y + box.height / 2;
+  await page.mouse.move(box.x + 1, y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, y, { steps: 3 });
+  await page.mouse.move(box.x + box.width - 1, y, { steps: 3 });
+  await page.mouse.up();
+  await expect(page.locator("#selToolbar")).toBeVisible();
+}
+
 export async function runPaletteCommand(page, commandId, query) {
   await page.keyboard.press(`${MOD}+Shift+P`);
   await expect(page.locator("#cmdPalette")).toBeVisible();

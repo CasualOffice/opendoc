@@ -1631,12 +1631,9 @@
   "autocorrect.statusOn": "{name} activé",
   "autocorrect.statusOff": "{name} désactivé",
   "pasteBtn.paste": "Coller",
-  "pasteOptions.dismiss.title": "Ignorer",
-  "pasteOptions.dismissPasteOptions.label": "Ignorer les options de collage",
   "pasteOptions.keepPastedEmphasisBut.title": "Conserver la mise en évidence collée mais adopter la mise en forme de ce document",
   "pasteOptions.keepTextOnly": "Conserver le texte seulement",
   "pasteOptions.keepTextOnlyV.title": "Conserver le texte seulement (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "Fusionner la mise en forme",
   "proofDocument.disposed": "La vérification a été arrêtée pour ce document.",
   "proofDocument.notAvailable": "Vérifier tout le document en une fois n'est pas encore possible. La vérification porte sur les pages que vous consultez : faites défiler le document pour tout vérifier.",
   "proofDocument.notConfigured": "La vérification n'est pas configurée pour ce document.",
@@ -3658,5 +3655,13 @@
   "plugins.assistant.unparsableFormat": "Le modèle n’a pas répondu sous la forme structurée demandée : rien n’a été modifié. Réessayez ; un modèle plus grand y parvient plus sûrement.",
   "plugins.assistant.skipped": "Laissés tels quels : tableaux et tables des matières de la sélection ({count}).",
   "plugins.assistant.truncatedLocal": "Seule une partie du document a été lue : un modèle local est supposé contenir environ {tokens} jetons, la réponse peut donc manquer ce qui se trouve ailleurs.",
-  "panelHome.casualAi": "Casual AI"
+  "panelHome.casualAi": "Casual AI",
+  "table.tools.typeSubmenu": "Tableau",
+  "object.cropSubmenu": "Rogner",
+  "context.more": "Plus",
+  "link.followHint": "{key}+clic pour suivre le lien",
+  "pasteOptions.toggle.title": "Options de collage (Ctrl)",
+  "pasteOptions.keepSource": "Conserver la mise en forme source",
+  "pasteOptions.keepSource.title": "Conserver la mise en forme avec laquelle le texte a été copié",
+  "pasteOptions.matchDestination": "Respecter la mise en forme de destination"
 }

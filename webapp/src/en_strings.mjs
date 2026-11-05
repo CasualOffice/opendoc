@@ -1819,6 +1819,13 @@ export const EN_STRINGS = Object.freeze({
   "object.addedToSelection": "Added to the selection",
   // Rotation and flips — Word's Rotate menu, the same four rows.
   "object.rotate": "Rotate",
+  // The right-click menu's one Crop submenu for a picture's crop family (docs/184 D-12).
+  "object.cropSubmenu": "Crop",
+  // Where an over-budget context menu folds its trailing groups (docs/184 D-12).
+  "context.more": "More",
+  // A hovered link's tooltip line under its target (audit CANVAS-16). {key} is
+  // the platform's modifier, Ctrl or ⌘.
+  "link.followHint": "{key}+Click to follow the link",
   "object.rotate.right90": "Rotate right 90°",
   "object.rotate.left90": "Rotate left 90°",
   "object.rotate.flipVertical": "Flip vertical",
@@ -1971,6 +1978,8 @@ export const EN_STRINGS = Object.freeze({
   "table.tools.convertToTextCommand": "Convert to text…",
   "table.tools.lookSubmenu": "Style options",
   "table.tools.directionSubmenu": "Text direction",
+  // The right-click menu's one type submenu for a table's long tail (docs/184 D-12).
+  "table.tools.typeSubmenu": "Table",
   "table.tools.insertDialogCommand": "Insert table by size…",
   "table.tools.textToTableCommand": "Convert text to table…",
   "table.look.headerRow": "Header row",

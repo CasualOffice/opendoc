@@ -4,6 +4,7 @@
 // proves the multi-paragraph selection is commentable, the single-paragraph
 // path still works, and add-comment stays blocked in read-only Viewing mode.
 import {
+  commentOnSelection,
   test,
   expect,
   gotoEditor,
@@ -39,7 +40,7 @@ test("a comment can span two paragraphs and renders one anchored card", async ({
   await page.keyboard.press("Shift+ArrowUp");
   await page.keyboard.press("Shift+Home");
 
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
   await submitComposer(page, "Spans two paragraphs");
 
   // The comment is created (one anchored card) and its highlight resolves —
@@ -60,7 +61,7 @@ test("a single-paragraph comment still works", async ({ page, consoleErrors }) =
   await page.keyboard.type(target);
   for (let i = 0; i < target.length; i++) await page.keyboard.press("Shift+ArrowLeft");
 
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
   await submitComposer(page, "One paragraph only");
 
   await expect(commentCard(page)).toHaveCount(1);

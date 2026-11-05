@@ -4,6 +4,9 @@
 import { OBJECT_LABELS } from "./object_traversal.mjs";
 import { formatShortcut } from "./keyboard.mjs";
 import { clampContextMenuPosition, moveMenuIndex, normalizeMenuEntries } from "./context_menu.mjs";
+// Own line (anti-conflict): the short-menu policy (docs/184 D-12).
+import { CONTEXT_MENU_BUDGET, foldContextMenu, foldsForRowBudget, pruneContextMenu } from "./context_menu.mjs";
+import { t } from "./i18n.mjs";
 import { focusMenuIndex, menuItemAt, renderMenuLevel as renderMenuLevelRows } from "./menu_render.mjs";
 import { createReflowChrome } from "./reflow_chrome.mjs";
 import { createFoldChrome } from "./fold_chrome.mjs";
@@ -130,17 +133,32 @@ export function createMenuRender(ed) {
     hideContextMenu();
     ed.contextMenuReturnFocus =
       document.activeElement instanceof HTMLElement ? document.activeElement : ed.pagesEl;
-    const entries = normalizeMenuEntries(context.commands ?? ed.buildContextCommands(context));
-    if (entries.length === 0) {
+    // The short-menu policy (`context_menu.mjs`, docs/184 D-12): no history rows,
+    // no refused top-level rows (one shared reason becomes a note), and the
+    // row and pixel budget, at this one choke point so no builder can opt out.
+    const commands = pruneContextMenu(context.commands ?? ed.buildContextCommands(context));
+    if (commands.every((command) => command.note)) {
       ed.contextMenuReturnFocus = null;
       if (context.surface === "object") {
         const label = (OBJECT_LABELS[context.kind] ?? "Object").toLowerCase();
-        ed.setStatus(`No editable properties are available for this nested ${label} yet`);
+        ed.setStatus(commands[0]?.label ?? `No editable properties are available for this nested ${label} yet`);
       }
       return false;
     }
+    const moreLabel = t("context.more");
+    let folds = foldsForRowBudget(commands);
+    let entries = normalizeMenuEntries(foldContextMenu(commands, folds, moreLabel));
     ed.editorContextMenu.hidden = false;
     renderMenuLevel(ed.editorContextMenu, entries, 0);
+    // The pixel half of the budget needs the rendered menu: fold one more
+    // trailing group while it is still taller than the ceiling.
+    while (ed.editorContextMenu.offsetHeight > CONTEXT_MENU_BUDGET.heightPx && folds < commands.length) {
+      folds += 1;
+      const next = normalizeMenuEntries(foldContextMenu(commands, folds, moreLabel));
+      if (next.length >= entries.length) break;
+      entries = next;
+      renderMenuLevel(ed.editorContextMenu, entries, 0);
+    }
     const position = clampContextMenuPosition(
       clientX,
       clientY,

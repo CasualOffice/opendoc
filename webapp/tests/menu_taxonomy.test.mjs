@@ -86,6 +86,9 @@ test("the Table menu covers every structural table command", () => {
     // The table tools' two submenus (`table_tools.mjs`).
     "table.look",
     "table.textDirection",
+    // The right-click menu's one "Table ▸" type submenu (docs/184 D-12), a
+    // container for rows the Table menu already offers one by one.
+    "table.more",
   ]);
   const built = new Set(
     [

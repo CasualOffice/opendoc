@@ -1631,12 +1631,9 @@
   "autocorrect.statusOn": "{name}: attivo",
   "autocorrect.statusOff": "{name}: disattivo",
   "pasteBtn.paste": "Incolla",
-  "pasteOptions.dismiss.title": "Ignora",
-  "pasteOptions.dismissPasteOptions.label": "Ignora le opzioni Incolla",
   "pasteOptions.keepPastedEmphasisBut.title": "Mantieni l’enfasi incollata ma adotta la formattazione di questo documento",
   "pasteOptions.keepTextOnly": "Mantieni solo il testo",
   "pasteOptions.keepTextOnlyV.title": "Mantieni solo il testo (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "Unisci formattazione",
   "proofDocument.disposed": "La revisione è stata chiusa per questo documento.",
   "proofDocument.notAvailable": "Controllare tutto il documento in una volta non è ancora possibile. La revisione controlla le pagine che stai guardando: scorri il documento per controllarlo tutto.",
   "proofDocument.notConfigured": "La revisione non è configurata per questo documento.",
@@ -3658,5 +3655,13 @@
   "plugins.assistant.unparsableFormat": "Il modello non ha risposto nella forma strutturata richiesta, quindi non è stato cambiato nulla. Riprova; un modello più grande lo fa in modo più affidabile.",
   "plugins.assistant.skipped": "Lasciati com’erano: tabelle e sommari nella selezione ({count}).",
   "plugins.assistant.truncatedLocal": "È stata letta solo una parte del documento: si presume che un modello locale contenga circa {tokens} token, quindi la risposta può perdere ciò che si trova altrove.",
-  "panelHome.casualAi": "Casual AI"
+  "panelHome.casualAi": "Casual AI",
+  "table.tools.typeSubmenu": "Tabella",
+  "object.cropSubmenu": "Ritaglia",
+  "context.more": "Altro",
+  "link.followHint": "{key}+clic per seguire il collegamento",
+  "pasteOptions.toggle.title": "Opzioni Incolla (Ctrl)",
+  "pasteOptions.keepSource": "Mantieni formattazione originale",
+  "pasteOptions.keepSource.title": "Mantieni la formattazione con cui il testo è stato copiato",
+  "pasteOptions.matchDestination": "Usa formattazione di destinazione"
 }

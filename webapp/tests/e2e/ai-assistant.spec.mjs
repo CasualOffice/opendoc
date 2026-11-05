@@ -7,7 +7,7 @@
 // points (the ✦ item in the selection toolbar, the panel in the side-panel slot,
 // palette rows); every change waits in the preview and lands as a suggestion;
 // streaming happens in the panel; Stop stops.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD, pointerSelectHighlight } from "./fixtures.mjs";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -66,7 +66,8 @@ async function selectWord(page) {
   await page.keyboard.press("Enter");
   await page.keyboard.type(WORD);
   for (let i = 0; i < WORD.length; i += 1) await page.keyboard.press("Shift+ArrowLeft");
-  await expect(page.locator("#selToolbar")).toBeVisible();
+  // The mini-toolbar is earned by a pointer selection (docs/184 D-12).
+  await pointerSelectHighlight(page);
 }
 
 const assistant = (page) => page.frameLocator(ASSISTANT);

@@ -37,14 +37,14 @@ test("every command declared for the context menu is in the context menu", async
     els.map((el) => el.dataset.commandId),
   );
 
+  // The declared set is the approved menu's clipboard block (docs/184 D-12):
+  // Undo/Redo, Select all and Paste as picture keep their toolbar, menu-bar,
+  // palette and chord surfaces and are no longer context commands. Cut and Copy
+  // need a selection, and a right-click with none hides them, so this menu,
+  // opened on a bare caret, is asked for the two that always apply.
   for (const id of [
-    "edit.undo",
-    "edit.redo",
-    "edit.cut",
-    "edit.copy",
     "edit.paste",
     "edit.pasteText",
-    "edit.selectAll",
   ]) {
     expect(
       offered,

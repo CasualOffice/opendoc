@@ -3,6 +3,7 @@
 // that announces review events, keyboard-activatable controls, and focus return
 // on close.
 import {
+  commentOnSelection,
   test,
   expect,
   gotoEditor,
@@ -136,7 +137,7 @@ test("the live region announces comment added, filter change, and accept-all (RE
   // Comment added.
   await page.keyboard.type("ANNOUNCE_COMMENT");
   for (let i = 0; i < "ANNOUNCE_COMMENT".length; i++) await page.keyboard.press("Shift+ArrowLeft");
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
   await sidebar.locator('[data-testid="review-comment-composer"]').fill("Announce me");
   await sidebar.locator('[data-testid="review-comment-submit"]').click();
   await expect(live).toHaveText(/Comment added/);

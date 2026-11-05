@@ -1630,12 +1630,9 @@
   "autocorrect.statusOn": "{name} ein",
   "autocorrect.statusOff": "{name} aus",
   "pasteBtn.paste": "Einfügen",
-  "pasteOptions.dismiss.title": "Schließen",
-  "pasteOptions.dismissPasteOptions.label": "Einfügeoptionen schließen",
   "pasteOptions.keepPastedEmphasisBut.title": "Hervorhebungen des eingefügten Texts beibehalten, aber die Formatierung dieses Dokuments übernehmen",
   "pasteOptions.keepTextOnly": "Nur den Text übernehmen",
   "pasteOptions.keepTextOnlyV.title": "Nur den Text übernehmen (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "Formatierung zusammenführen",
   "proofDocument.disposed": "Die Rechtschreibprüfung wurde für dieses Dokument beendet.",
   "proofDocument.notAvailable": "Das gesamte Dokument auf einmal zu prüfen ist noch nicht möglich. Die Prüfung erfasst die Seiten, die Sie gerade ansehen — blättern Sie also durch das Dokument, um alles zu prüfen.",
   "proofDocument.notConfigured": "Die Rechtschreibprüfung ist für dieses Dokument nicht eingerichtet.",
@@ -3647,5 +3644,13 @@
   "plugins.assistant.unparsableFormat": "Das Modell hat nicht in der verlangten strukturierten Form geantwortet, daher wurde nichts geändert. Versuchen Sie es erneut; ein größeres Modell kann das zuverlässiger.",
   "plugins.assistant.skipped": "Unverändert gelassen: Tabellen und Inhaltsverzeichnisse in der Auswahl ({count}).",
   "plugins.assistant.truncatedLocal": "Nur ein Teil des Dokuments wurde gelesen: Ein lokales Modell fasst vermutlich etwa {tokens} Tokens, die Antwort kann also anderes übersehen.",
-  "panelHome.casualAi": "Casual AI"
+  "panelHome.casualAi": "Casual AI",
+  "table.tools.typeSubmenu": "Tabelle",
+  "object.cropSubmenu": "Zuschneiden",
+  "context.more": "Mehr",
+  "link.followHint": "{key}+Klick, um dem Link zu folgen",
+  "pasteOptions.toggle.title": "Einfügeoptionen (Strg)",
+  "pasteOptions.keepSource": "Ursprüngliche Formatierung beibehalten",
+  "pasteOptions.keepSource.title": "Die Formatierung beibehalten, mit der der Text kopiert wurde",
+  "pasteOptions.matchDestination": "Zielformatierung übernehmen"
 }

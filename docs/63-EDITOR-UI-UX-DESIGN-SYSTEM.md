@@ -83,6 +83,20 @@ Reuse these; don't invent per-feature variants.
 - **Popover** (`.context-menu` + the shared popover manager in `main.js`) — anchored
   under its trigger, one open at a time, dismiss on outside-pointerdown / Escape;
   used for spacing, paragraph options, table & cell, insert-table.
+- **Context menu** (`.editor-context-menu` + `.editor-submenu`, `docs/184` D12) — the
+  approved right-click anatomy: 32px rows (`--h-ctl`) at `--fs-md`, a neutral `--hover`
+  wash (the accent marks a current choice, not the row under the pointer), the leading
+  icon in `--icon`, the shortcut right-aligned in the quiet ink, hairline dividers that
+  run edge to edge, `--r-md` and `--e2`. A spelling suggestion is a bold row. What the
+  menu SAYS (a mode's refusal, a grammar rule, "no suggestions") is a `.menu-note`, text
+  and not a disabled command. The policy is `context_menu.mjs`'s, applied once in
+  `showContextMenu` for every builder: no Undo/Redo, no refused top-level row, at most
+  16 rows and 480px, the trailing groups folding into one "More" submenu when over.
+- **Floating surface** (link card, object bar, table insert markers, mini-toolbar,
+  paste chip; `floating_arbiter.mjs`, `docs/184` D12) — one shows at a time, in that
+  priority, and never over the selection. The mini-toolbar is earned by a pointer
+  selection and fades with the pointer's distance; the paste chip is a collapsed
+  `--h-dense` icon at the end of the paste whose choices open as a context menu.
 - **Dialog** (`.dialog-overlay` + `.dialog-card`) — centered, modal, titled, and
   focus-contained for multi-section document actions such as Document Properties
   and Page Setup. Dialogs use a dimmed backdrop, explicit Close/Cancel/Apply

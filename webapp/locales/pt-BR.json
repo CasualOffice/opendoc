@@ -1631,12 +1631,9 @@
   "autocorrect.statusOn": "{name}: ativado",
   "autocorrect.statusOff": "{name}: desativado",
   "pasteBtn.paste": "Colar",
-  "pasteOptions.dismiss.title": "Descartar",
-  "pasteOptions.dismissPasteOptions.label": "Descartar as opções de colagem",
   "pasteOptions.keepPastedEmphasisBut.title": "Manter a ênfase colada, mas adotar a formatação deste documento",
   "pasteOptions.keepTextOnly": "Manter somente texto",
   "pasteOptions.keepTextOnlyV.title": "Manter somente texto (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "Mesclar formatação",
   "proofDocument.disposed": "A revisão foi encerrada para este documento.",
   "proofDocument.notAvailable": "Verificar todo o documento de uma vez ainda não está disponível. A revisão verifica as páginas que você está vendo — role o documento para verificar tudo.",
   "proofDocument.notConfigured": "A revisão não está configurada para este documento.",
@@ -3658,5 +3655,13 @@
   "plugins.assistant.unparsableFormat": "O modelo não respondeu no formato estruturado pedido, então nada foi alterado. Tente de novo; um modelo maior faz isso com mais confiabilidade.",
   "plugins.assistant.skipped": "Mantidos como estavam: tabelas e sumários na seleção ({count}).",
   "plugins.assistant.truncatedLocal": "Só parte do documento foi lida: supõe-se que um modelo local comporte cerca de {tokens} tokens, então a resposta pode deixar passar o que está em outro lugar.",
-  "panelHome.casualAi": "Casual AI"
+  "panelHome.casualAi": "Casual AI",
+  "table.tools.typeSubmenu": "Tabela",
+  "object.cropSubmenu": "Cortar",
+  "context.more": "Mais",
+  "link.followHint": "{key}+clique para seguir o link",
+  "pasteOptions.toggle.title": "Opções de colagem (Ctrl)",
+  "pasteOptions.keepSource": "Manter formatação original",
+  "pasteOptions.keepSource.title": "Manter a formatação com que o texto foi copiado",
+  "pasteOptions.matchDestination": "Corresponder à formatação de destino"
 }

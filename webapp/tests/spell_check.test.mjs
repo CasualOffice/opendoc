@@ -427,10 +427,12 @@ test("turning it off clears every marker and stops the scan", async () => {
 
 // ---- The context-menu rows -----------------------------------------------------
 
-test("zero suggestions still renders a row, disabled, saying so", () => {
+test("zero suggestions still renders a note saying so, never an empty menu", () => {
   const rows = spellingContextCommands({ word: "qzxtypo" }, [], {});
   assert.equal(rows[0].id, "spell.noSuggestions");
-  assert.equal(rows[0].enabled, false);
+  // A NOTE, not a disabled command: the short-menu policy hides refused rows
+  // (docs/184 D-12), and this is something the menu says rather than offers.
+  assert.equal(rows[0].note, true);
   assert.match(rows[0].disabledReason, /qzxtypo/, "and it names the word");
   assert.deepEqual(
     rows.slice(1).map((r) => r.id),
@@ -439,27 +441,32 @@ test("zero suggestions still renders a row, disabled, saying so", () => {
   );
 });
 
-test("the suggestions lead the menu, and only they are gated by the review mode", () => {
+test("the suggestions lead the menu in bold, at most three of them", () => {
+  const rows = spellingContextCommands(
+    { word: "recieve" },
+    ["receive", "relieve", "recite", "revive", "reprieve"],
+    {},
+  );
+  assert.deepEqual(
+    rows.map((r) => r.id),
+    ["spell.suggestion.0", "spell.suggestion.1", "spell.suggestion.2", "spell.ignoreOnce", "spell.ignoreAll", "spell.addToDictionary"],
+  );
+  assert.equal(rows[0].label, "receive");
+  assert.ok(rows.slice(0, 3).every((row) => row.emphasis === true), "the suggestions are bold, as in Word and Docs");
+  assert.equal(rows[3].label, "Ignore", "the approved menu's label for ignoring this occurrence");
+});
+
+test("in a mode that cannot change the document, the menu says so once and the dismissals stay", () => {
   const rows = spellingContextCommands(
     { word: "recieve" },
     ["receive", "relieve"],
     {},
     "Switch to Editing mode to correct the spelling",
   );
-  assert.deepEqual(
-    rows.map((r) => r.id),
-    [
-      "spell.suggestion.0",
-      "spell.suggestion.1",
-      "spell.ignoreOnce",
-      "spell.ignoreAll",
-      "spell.addToDictionary",
-    ],
-  );
-  assert.equal(rows[0].label, "receive");
-  assert.equal(rows[0].enabled, false);
-  assert.match(rows[0].disabledReason, /Editing mode/);
-  for (const row of rows.slice(2)) {
+  assert.deepEqual(rows.map((r) => r.id), ["spell.blocked", "spell.ignoreOnce", "spell.ignoreAll", "spell.addToDictionary"]);
+  assert.equal(rows[0].note, true);
+  assert.match(rows[0].label, /Editing mode/);
+  for (const row of rows.slice(1)) {
     assert.notEqual(
       row.enabled,
       false,
@@ -640,7 +647,7 @@ test("a grammar menu explains the rule, offers its correction, and can turn it o
     rows.map((r) => r.id),
     ["grammar.explain", "grammar.suggestion.0", "grammar.ignoreRule"],
   );
-  assert.equal(rows[0].enabled, false, "the explanation is a label, not an action");
+  assert.equal(rows[0].note, true, "the explanation is a note, not an action");
   assert.equal(rows[0].label, flagged.message);
   rows[1].run();
   rows[2].run();

@@ -8,6 +8,8 @@ import { edgeScrollStep } from "./edge_scroll.mjs";
 import { t } from "./i18n.mjs";
 import { createTouchSelection, pointerDragSelects } from "./touch_selection.mjs";
 import { followExternalTarget } from "./link_targets.mjs";
+// Own line (anti-conflict): the link hover hint names the platform chord.
+import { formatShortcut } from "./keyboard.mjs";
 import { createPointerHover } from "./pointer_hover.mjs";
 import { createTableChrome } from "./table_chrome.mjs";
 import { createTableGutter } from "./table_gutter.mjs";
@@ -114,6 +116,7 @@ export function createPointer(ed) {
     materializedPages: ed.materializedPages,
     pointToTwip: ed.pointToTwip,
     linkAt,
+    followHint: () => t("link.followHint", { key: formatShortcut("⌘") }),
     tocEntryAt: (node, offset) => !!tocEntryTargetAt(node, offset),
     pointInsideObject: ed.pointInsideObject,
     objectCapabilities: ed.objectCapabilities,
@@ -141,14 +144,11 @@ export function createPointer(ed) {
       hideLinkChip();
       return false;
     }
-    // Selecting the link's own text is what a click on TEXT does. A click on a
-    // linked OBJECT has already selected the object, and replacing that with a
-    // text range would drop the handles the same gesture just put up.
-    ed.selection = {
-      anchor: { node: link.startNode, offset: link.startOffset },
-      focus: { node: link.endNode, offset: link.endOffset },
-    };
-    ed.drawSelection();
+    // The click has already put the caret where it landed, and that is where it
+    // stays: Docs and Word place a caret in a link and show its card, they do
+    // not select the link (docs/184 D-12, audit CANVAS-06/16). Selecting it put
+    // the mini-toolbar up under the card and made a click into a link a
+    // gesture that could not edit one letter of it.
     return showLinkChip(link, event);
   }
 
@@ -624,7 +624,12 @@ export function createPointer(ed) {
       Math.hypot(event.clientX - gesture.clientX, event.clientY - gesture.clientY) <= 4
     ) {
       const link = linkAt(gesture.page, event);
-      if (link?.kind === "internal" && link.targetNode && link.targetPage) {
+      // Ctrl/Cmd+click follows ANY link, Word's chord (audit CANVAS-16); a plain
+      // click follows an internal one (a contents entry), as before.
+      const follow = !!(event.ctrlKey || event.metaKey);
+      if (link && follow) {
+        activateLink(link);
+      } else if (link?.kind === "internal" && link.targetNode && link.targetPage) {
         activateLink(link);
       } else if (!link && followTocEntry(ed.selection?.focus?.node, ed.selection?.focus?.offset)) {
         // A contents entry whose field carried no `\h`, so there is no authored
