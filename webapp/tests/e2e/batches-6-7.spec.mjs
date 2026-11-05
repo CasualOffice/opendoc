@@ -23,7 +23,9 @@ test('page presets, unequal columns, mirror and color remain undoable through pa
   await gotoEditor(page); await clickIntoFirstPage(page);
   await runPaletteCommand(page, 'layout.pageSetup', 'page setup');
   await page.locator('#pagePaperPreset').selectOption('legal');
-  await page.locator('#pageMarginsPreset').selectOption('narrow');
+  // The margin preset is a row of chips (a radiogroup), not a select (D2).
+  await page.locator('#pageMarginsPreset [data-margins="narrow"]').click();
+  await expect(page.locator('#pageMarginsPreset [data-margins="narrow"]')).toHaveAttribute('aria-checked', 'true');
   // Columns, gutter, mirror margins and vertical alignment sit under Advanced
   // (approved Page setup design D2).
   await page.locator('#pageSetupMenu .dialog-advanced').evaluate((d) => { d.open = true; });

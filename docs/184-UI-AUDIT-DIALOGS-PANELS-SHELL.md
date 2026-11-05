@@ -61,6 +61,13 @@ the add-in list inline), or the first closes and the second opens in its place, 
 confirmation becomes inline inside the same dialog. Guarded in `modal.mjs` and by
 `e2e/dialog-stacking.spec.mjs`.
 
+*Status (2026-11-06, lane L8, `109` UX-066):* built. Until now `modal.mjs` stacked a second
+modal over the first and the stacking spec did not exist. It now hides the dialog underneath
+(keeping its state: no `onClose`, so a half-filled form survives) while the second is open,
+and shows it again, with focus on the control that opened the second, when the second
+closes. One mechanism for every registered dialog: Settings ▸ AutoCorrect options…, an
+add-in's permission prompt from Settings, a confirmation from any dialog.
+
 **D2 — Page setup rebuilt** (Google Docs + Word/ONLYOFFICE). One column, M width. An "Apply
 to" select (the scopes the engine supports) replaces every per-property Apply button.
 Orientation is a segmented Portrait/Landscape; Paper size and Page colour selects in a row;
@@ -70,12 +77,37 @@ Cancel, Apply ("Set as default" only if the engine has a default; it has not, so
 omitted). The Layout ribbon tab's Margins ▾, Size ▾, Orientation ▾ and Columns ▾ are preset
 menus, each ending with "Custom…", which opens this dialog.
 
+*Amended 2026-11-06 (lane L8, approved mockup `v2-dialog`, `109` UX-066):* the card is L, not
+M: the fields on the left and the page preview on the right. Paper size is a select of named
+sizes ("A4 · 210 × 297 mm") plus "Custom size", which alone shows Width and Height; a size is
+recognised within 1 mm, so an A4 page no longer reads "Custom" (audit DIALOGS-10). Page colour
+is a swatch control shaped like a select. "Apply to" sits on the footer's left. It lists the
+scopes the engine writes in one undo step, which is one section: a one-section document reads
+"Whole document"; with several, the caret's section reads "This section (n)" and the others
+"Section n". A true whole-document Apply over several sections waits for an engine call that
+writes them as one undo step. The Layout tab's preset menus (Margins ▾, Size ▾ …) are lane L4's
+ribbon work and are not built here.
+
 **D3 — Settings with a left navigation** (Word Options + Docs). L width, a 12.5rem
 `tablist` (arrow keys move) with General / Proofing / AutoCorrect / Saving / AI and add-ins /
 About. One option per row, min-height 3rem, label left and control right, at most one short
 help line; explanations behind "Learn more". The AI provider and Manage add-ins are rows of the
 "AI and add-ins" page. Changes apply as they are made. Footer: "Reset to defaults" (utility,
 left) and Done.
+
+*Amended 2026-11-06 (lane L8, approved mockups `v2-settings-light/dark`, `109` UX-066):* built.
+The card takes the XL rung (60rem, `.dialog-card-reference`), as the mockup draws it (880px):
+at L every row's help line wrapped beside its 13.75rem control. The frame has ONE height,
+`min(34rem, 100dvh - 2rem)`, on every page; only the page scrolls (audit DIALOGS-09, held by
+`dialog-anatomy.spec.mjs`). "Settings" heads the navigation; each page has its own title and
+the close button. Switches (`role="switch"` checkboxes) for on/off rows. The footer is Reset to
+defaults, "Changes apply as you make them" and Done. The add-in list is rows with switches on
+the AI and add-ins page, with its own install row (DIALOGS-08); Manage add-ins remains a dialog
+for Review ▸ Add-ins and the palette. The AI provider keeps one press-to-save button, now
+secondary ("Save provider"), because its fields only make sense together; Done is the only
+primary. AutoCorrect's switches are a page; its replacement lists stay in the AutoCorrect
+options dialog, which takes Settings' place (D1a) rather than moving in. About shows the engine
+version, licence and links.
 
 **D4 — Docked side panels** (Google Docs). Every side panel is docked to the window edge at full
 workspace height: no floating card, no radius, no shadow, a hairline border. Default width
@@ -177,8 +209,11 @@ margin (CANVAS-18).
 
 | Decision | Guard |
 | --- | --- |
-| D1 | `tests/dialog_density.test.mjs` (a card's width is a rung, chosen by class; bands read the tokens); `tests/e2e/dialog-anatomy.spec.mjs` (every dialog at 1280×720 and 390×844 in both themes: S/M/L or full-width sheet, 20px title, pinned footer inside card and window, no wrapped button label, no sideways scroll, equal control heights) |
-| D1a | `e2e/dialog-stacking.spec.mjs`, and `modal.mjs` refusing to open a second modal |
+| D1 | `tests/dialog_density.test.mjs` (a card's width is a rung, chosen by class; bands read the tokens); `tests/e2e/dialog-anatomy.spec.mjs` (every dialog at 1280×720 and 390×844 in both themes: S/M/L or full-width sheet, 15px title, pinned footer inside card and window, no wrapped button label, no sideways scroll, equal control heights, a one-line description at 1280, no text in the footer but actions, a labelled footer field, a live status or the declared Settings note) |
+| D2 | `tests/page_presets.test.mjs` (an A4 page read back through two-decimal inches is A4) |
+| D3 | `tests/e2e/dialog-anatomy.spec.mjs` (the Settings frame is the same height on all six pages) |
+| D-13 | `tests/e2e/link-popover.spec.mjs`, `tests/link_popover_model.test.mjs`; `tests/command_ellipsis.test.mjs` (a command that opens a dialog ends in “…”, and nothing else does) |
+| D1a | `e2e/dialog-stacking.spec.mjs`, and `modal.mjs` hiding the dialog underneath while a second one is open |
 | D4–D5 | `e2e/panel-dock.spec.mjs` (one per side for every panel opened in turn; page gaps equal ±2px at 1280 and 1440; Escape focus); `e2e/review-layout.spec.mjs` (the comment column's bar and cards) |
 | D6 | `e2e/shell-sparse.spec.mjs` |
 | D7 | `e2e/a11y-floor.spec.mjs`; `theme-contrast.spec.mjs` |

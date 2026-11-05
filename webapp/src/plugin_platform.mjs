@@ -29,6 +29,7 @@
 // Complexity: O(plugins) per registry build; nothing here reads the document.
 import { t, has, activeLocale, direction } from "./i18n.mjs";
 import { registerModal } from "./modal.mjs";
+import { onSettingsRefresh } from "./settings_refresh.mjs";
 import { onButton, registerPopover, closePopover, openPopover } from "./popover_manager.mjs";
 import { commandContract } from "./host_contract.mjs";
 import { fetchVocabulary } from "./ai_webmcp.mjs";
@@ -863,6 +864,14 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
   }
 
   // ---- Manage add-ins ----------------------------------------------------------
+  //
+  // TWO renderings of one list: the Manage add-ins dialog (Review ▸ Add-ins, the
+  // palette) and the "AI and add-ins" page of Settings (`docs/184` D3, audit
+  // DIALOGS-08). Settings used to SWAP itself for the 960px dialog, with no way
+  // back; Word Options ▸ Add-ins and Docs' extensions keep the list in place.
+  // Both renderings are built by `renderList`, so they cannot drift, and on/off
+  // is a switch on the row's right (a filled "Turn on" button repeated down the
+  // list read as N primary actions).
 
   const manager = doc.getElementById("pluginsDialog");
   const managerList = doc.getElementById("pluginsList");
@@ -871,28 +880,53 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
   const installUrl = doc.getElementById("pluginsInstallUrl");
   const installBtn = doc.getElementById("pluginsInstallBtn");
   const managedNote = doc.getElementById("pluginsManaged");
+  const settingsList = doc.getElementById("settingsAddinsList");
+  const settingsStatus = doc.getElementById("settingsAddinsStatus");
+  const settingsInstall = doc.getElementById("settingsAddinsInstall");
+  const settingsInstallUrl = doc.getElementById("settingsAddinsInstallUrl");
+  const settingsInstallBtn = doc.getElementById("settingsAddinsInstallBtn");
   const managerController = manager
-    ? registerModal(manager, { initialFocus: () => doc.getElementById("pluginsClose"), fallbackFocus: () => shown(doc.getElementById("settingsAddinsBtn")) ?? shown(doc.getElementById("reviewAddinsBtn")) ?? ed.pagesEl })
+    ? registerModal(manager, { initialFocus: () => doc.getElementById("pluginsClose"), fallbackFocus: () => shown(doc.getElementById("reviewAddinsBtn")) ?? ed.pagesEl })
     : null;
 
-  function button(labelKey, params, onClick, primary = false) {
+  /** A secondary action on a row (Remove, Forget permission). */
+  function button(labelKey, params, onClick) {
     const node = doc.createElement("button");
     node.type = "button";
-    node.className = primary ? "dialog-button dialog-button-primary" : "dialog-button";
+    node.className = "dialog-button dialog-button-utility";
     node.textContent = t(labelKey, params);
     node.addEventListener("click", onClick);
     return node;
   }
 
-  function renderManager() {
-    if (!managerList || !manager || manager.hidden) return;
-    managedNote.hidden = catalogue.mode !== "host";
-    installRow.hidden = !catalogue.allowInstall;
+  /** On/off for one add-in: a real checkbox with `role="switch"`, named by the
+   *  add-in. Turning on can ask for permission first; a refusal re-renders the
+   *  list, which puts the switch back off. */
+  function toggle(record) {
+    const node = doc.createElement("input");
+    node.type = "checkbox";
+    node.className = "settings-switch";
+    node.setAttribute("role", "switch");
+    node.checked = record.enabled;
+    node.dataset.pluginSwitch = record.manifest.id;
+    node.setAttribute("aria-label", nameOf(record.manifest));
+    node.addEventListener("change", () => {
+      if (node.checked) void enable(record).then((on) => { if (!on) renderManager(); });
+      else disable(record);
+    });
+    return node;
+  }
+
+  /** The rows, for either rendering. */
+  function renderList(list) {
     const rows = [];
     for (const record of plugins.values()) {
       const { manifest } = record;
       const item = doc.createElement("li");
       item.className = "plugins-row";
+      item.dataset.plugin = manifest.id;
+      const text = doc.createElement("div");
+      text.className = "plugins-row-text";
       const name = doc.createElement("strong");
       name.textContent = nameOf(manifest);
       const meta = doc.createElement("span");
@@ -910,16 +944,6 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
         : t("plugins.permissionsNone");
       const actions = doc.createElement("div");
       actions.className = "plugins-actions";
-      if (record.entry.source === "host") {
-        const state = doc.createElement("span");
-        state.className = "plugins-meta";
-        state.textContent = t(record.enabled ? "plugins.state.onByHost" : "plugins.state.offByHost");
-        actions.append(state);
-      } else if (record.enabled) {
-        actions.append(button("plugins.turnOff", {}, () => disable(record)));
-      } else {
-        actions.append(button("plugins.turnOn", {}, () => void enable(record), true));
-      }
       if (record.enabled && !present(record)) {
         const state = doc.createElement("span");
         state.className = "plugins-meta";
@@ -929,8 +953,18 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
       if (record.entry.source === "installed" || (record.entry.source !== "host" && !record.entry.hostGrant && grantFor(manifest.id, view))) {
         actions.append(button(record.entry.source === "installed" ? "plugins.remove" : "plugins.forgetGrant", {}, () => remove(record)));
       }
+      if (record.entry.source === "host") {
+        // The host decides; the row says which way, and offers no control.
+        const state = doc.createElement("span");
+        state.className = "plugins-meta";
+        state.textContent = t(record.enabled ? "plugins.state.onByHost" : "plugins.state.offByHost");
+        actions.append(state);
+      } else {
+        actions.append(toggle(record));
+      }
       meta.append(" · ", perms);
-      item.append(name, meta, description, actions);
+      text.append(name, meta, description);
+      item.append(text, actions);
       rows.push(item);
     }
     if (!rows.length) {
@@ -939,30 +973,46 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
       empty.textContent = t(catalogue.mode === "none" ? "plugins.noneHere" : "plugins.empty");
       rows.push(empty);
     }
-    managerList.replaceChildren(...rows);
+    list.replaceChildren(...rows);
   }
 
-  installBtn?.addEventListener("click", async () => {
-    const raw = installUrl.value.trim();
+  function renderManager() {
+    if (managerList && manager && !manager.hidden) {
+      managedNote.hidden = catalogue.mode !== "host";
+      installRow.hidden = !catalogue.allowInstall;
+      renderList(managerList);
+    }
+    if (settingsList) {
+      if (settingsInstall) settingsInstall.hidden = !catalogue.allowInstall;
+      renderList(settingsList);
+    }
+  }
+
+  /** Installs the manifest at `field`'s address and turns it on, saying how it
+   *  went in `status`. One path for both renderings' install rows. */
+  async function installFrom(field, status) {
+    const raw = field.value.trim();
     let url;
     try {
       url = new URL(raw, view.location.href).href;
     } catch {
-      managerStatus.textContent = t("plugins.install.badUrl");
+      status.textContent = t("plugins.install.badUrl");
       return;
     }
-    managerStatus.textContent = t("plugins.install.checking");
+    status.textContent = t("plugins.install.checking");
     const admitted = await admit({ manifestUrl: url, source: "installed", hostGrant: null, enabled: false, when: null });
     if (!admitted.ok) {
-      managerStatus.textContent = t("plugins.install.refused", { reason: admitted.reason });
+      status.textContent = t("plugins.install.refused", { reason: admitted.reason });
       return;
     }
     addInstalled(url, view);
-    installUrl.value = "";
-    managerStatus.textContent = "";
+    field.value = "";
+    status.textContent = "";
     renderManager();
     await enable(admitted.record);
-  });
+  }
+  installBtn?.addEventListener("click", () => void installFrom(installUrl, managerStatus));
+  settingsInstallBtn?.addEventListener("click", () => void installFrom(settingsInstallUrl, settingsStatus));
 
   function openManager() {
     if (!managerController) return;
@@ -971,13 +1021,12 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
     renderManager();
   }
   doc.getElementById("pluginsClose")?.addEventListener("click", () => managerController?.close());
-  doc.getElementById("settingsAddinsBtn")?.addEventListener("click", () => {
-    // Replaces Settings instead of stacking a second dialog over it (owner,
-    // 2026-11-02). Closed through its ✕, the same path as Escape.
-    const settings = doc.getElementById("settingsPanel");
-    if (settings && !settings.hidden) settings.querySelector(".dialog-close")?.click();
-    openManager();
-  });
+  // Settings shows the list whenever it opens, by ANY route, and again when the
+  // language changes, so the page is never stale (`settings_refresh.mjs`).
+  onSettingsRefresh(() => {
+    if (settingsStatus) settingsStatus.textContent = catalogue.problems.length ? t("plugins.catalogueProblem") : "";
+    renderManager();
+  }, doc);
   doc.getElementById("pluginsDone")?.addEventListener("click", () => managerController?.close());
 
   // ---- Menus: Add-ins (ribbon) and ✦ (selection toolbar) --------------------

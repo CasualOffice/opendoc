@@ -147,7 +147,9 @@ test("each Page setup button opens the dialog on the field it names", async ({
 
   for (const [button, focused] of [
     ["#layoutMarginsBtn", "pageMarginTop"],
-    ["#layoutSizeBtn", "pageWidth"],
+    // Size lands on the paper-size select: Width and Height show only for a
+    // custom size (`docs/184` D2), so the select is the field Size names.
+    ["#layoutSizeBtn", "pagePaperPreset"],
     ["#layoutColumnsBtn", "pageColumnCount"],
   ]) {
     await page.locator(button).click();

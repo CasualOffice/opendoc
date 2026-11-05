@@ -159,7 +159,7 @@ test("relabelling replaces an element's own words and keeps what it contains", a
   );
   expect(controls, "the settings form lost its controls to a relabel").toBeGreaterThan(6);
   // The label still says something, and it is the label's own words that moved.
-  await expect(page.locator('label:has(#authorInitials)')).toContainText(/\w/);
+  await expect(page.locator('label[for="authorInitials"]')).toContainText(/\w/);
   expect(consoleErrors).toEqual([]);
 });
 

@@ -168,7 +168,7 @@ function buildDialog(view) {
   overlay.setAttribute("role", "dialog");
   overlay.setAttribute("aria-modal", "true");
   overlay.setAttribute("aria-labelledby", `${ID}Title`);
-  overlay.setAttribute("aria-describedby", `${ID}Description`);
+  overlay.setAttribute("aria-describedby", `${ID}Intro`);
   const card = make("section", { className: "dialog-card findings-dialog" });
   const head = make("header", { className: "dialog-head" });
   const heading = make("div", { className: "dialog-heading" });
@@ -401,13 +401,17 @@ export function createCompatibilityFindings(io) {
 
   function render() {
     view.getElementById(`${ID}Title`).textContent = t("findings.title");
-    view.getElementById(`${ID}Description`).textContent = t(
-      current.phase === "export" ? "findings.exportIntro" : "findings.importIntro",
-    );
+    // The intro is a sentence of two clauses, so it opens the BODY rather than
+    // wrapping under the title: a dialog's description is one line (`docs/184`
+    // D1, audit DIALOGS-13). It stays the dialog's accessible description.
+    view.getElementById(`${ID}Description`).textContent = "";
+    const intro = make("p", "findings-note findings-intro");
+    intro.id = `${ID}Intro`;
+    intro.textContent = t(current.phase === "export" ? "findings.exportIntro" : "findings.importIntro");
     parts.close.setAttribute("aria-label", t("findings.closeLabel"));
     parts.close.title = t("findings.close");
     parts.done.textContent = t("findings.close");
-    parts.body.replaceChildren();
+    parts.body.replaceChildren(intro);
     if (disclosing()) parts.body.append(pdfDisclosure());
     const ocr = disclosing() ? ocrSection() : null;
     if (ocr) parts.body.append(ocr);

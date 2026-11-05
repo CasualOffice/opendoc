@@ -17,7 +17,8 @@
 //     focus that has already escaped;
 //   * application shortcuts do not fire while a modal is open, but text-editing
 //     chords still reach the dialog's own fields;
-//   * the topmost modal owns the keyboard, so nesting is well-defined.
+//   * the topmost modal owns the keyboard, and it is the ONLY one painted:
+//     a modal opened from a modal stands in for it until it closes (D1a).
 //
 // The primitive ADOPTS existing markup rather than generating it. The dialogs
 // are authored in editor.html with their real labels, `aria-labelledby` and
@@ -235,6 +236,8 @@ export function registerModal(element, options = {}) {
     closing: false,
     controller: null,
     backdropArmed: false,
+    /** Hidden because another modal opened over it (`docs/184` D1a). */
+    suspended: false,
   };
 
   // Backdrop dismissal requires press AND release on the backdrop. Closing on
@@ -269,6 +272,18 @@ export function registerModal(element, options = {}) {
       entry.returnFocus =
         document.activeElement instanceof HTMLElement ? document.activeElement : null;
       entry.closing = false;
+      // NEVER A MODAL OVER A MODAL (`docs/184` D1a, the owner, 2026-11-01:
+      // "popup over a popup — who designed it"). The dialog underneath steps
+      // aside instead of staying painted under a second scrim: it is hidden but
+      // keeps its place on the stack and all of its state (no `onClose`, so a
+      // half-filled form is not reset), and it comes back, with focus on the
+      // control that opened the second one, when the second one closes. At most
+      // one `.dialog-overlay` is ever visible; `dialog-stacking.spec.mjs` holds it.
+      const below = top();
+      if (below && !below.element.hidden) {
+        below.element.hidden = true;
+        below.suspended = true;
+      }
       element.hidden = false;
       stack.push(entry);
       document.body.classList.add("modal-open");
@@ -289,8 +304,17 @@ export function registerModal(element, options = {}) {
       const index = stack.indexOf(entry);
       if (index === -1) return controller;
       entry.closing = true;
+      const wasTop = index === stack.length - 1;
       stack.splice(index, 1);
       element.hidden = true;
+      entry.suspended = false;
+      // The dialog this one stood in for comes back BEFORE focus is restored:
+      // the opener lives inside it, and a hidden opener has no client rects.
+      const resumed = wasTop ? top() : null;
+      if (resumed?.suspended) {
+        resumed.element.hidden = false;
+        resumed.suspended = false;
+      }
       if (stack.length === 0) document.body.classList.remove("modal-open");
       options.onClose?.(reason);
       const opener = entry.returnFocus;

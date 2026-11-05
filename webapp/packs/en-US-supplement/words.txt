@@ -82,7 +82,6 @@ metaverse
 microservice
 microservices
 middleware
-mockup
 monorepo
 multifactor
 nearshoring

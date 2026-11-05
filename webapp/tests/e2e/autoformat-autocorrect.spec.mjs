@@ -62,7 +62,7 @@ test("switched off in Settings, nothing is converted", async ({ page, consoleErr
   await page.locator("#settingsBtn").click();
   await expect(page.locator("#settingsPanel")).toBeVisible();
   // Settings shows one topic per page (approved design D3, docs/184).
-  await page.locator('#settingsPanel [data-settings-tab="proofing"]').click();
+  await page.locator('#settingsPanel [data-settings-tab="autocorrect"]').click();
   await page.locator("#autocorrectToggle").uncheck();
   await page.locator("#autoFormatListsToggle").uncheck();
   await page.keyboard.press("Escape");

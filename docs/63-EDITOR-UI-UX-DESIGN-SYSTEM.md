@@ -258,6 +258,27 @@ dialog pass (UX-053) and the shell pass (UX-054), and each needs its own
 screenshots and ribbon-budget measurement. Until then they are the only
 off-scale lengths the guard does not refuse.
 
+### 7.2a Dialog-type anatomy (2026-11-06, `109` UX-066, lane L8)
+
+Components added for `docs/184` D-13, D2 and D3, each in a delimited block at the
+end of `style.css` and built only from the tokens above:
+
+| Component | Anatomy | Where |
+| --- | --- | --- |
+| Settings frame | XL card (`.dialog-card-reference`), a 12.5rem `--bg-2` navigation, ONE height `min(34rem, 100dvh - 2rem)` on every page; only the page scrolls | `#settingsPanel` |
+| Settings row (`.settings-row`) | label left (`--fw-medium`) with at most one `--fs-sm` help line, control right (13.75rem select or input, 15rem segmented), min-height 3rem, hairline between rows | Settings pages |
+| Switch (`.settings-switch`) | a real checkbox with `role="switch"`, 36×24px track, `--accent` when on; Space toggles and its label clicks it | Settings, the add-in list |
+| Colour select (`.color-select`) | a `--h-input` box shaped like a select: swatch, name, caret, with the native colour input laid transparently over it | Page setup's page colour |
+| Footer field (`.dialog-foot-field`) | a label beside a select on the footer's left, where D1 keeps everything that is not an action | Page setup's Apply to |
+| Footer status (`.dialog-foot-status`) | one muted `--fs-sm` line, only where the dialog declares it (`data-foot-note`) | Settings' "Changes apply as you make them" |
+| Link popover (`.link-popover`) | `--r-lg`, `--e3`, no scrim, 22.5rem; two fields and one action row, hung from the selection by `popover_position.mjs` | ⌘K |
+
+A dialog's footer holds actions only: no "One undoable action." filler (a note
+that carries information belongs in the body), and the description under a title
+is one line at 1280px (`dialog-anatomy.spec.mjs`). A label ends in "…" exactly
+when the command opens a dialog or a picker, never a pane (`COMMAND_OPENS`,
+`command_ellipsis.test.mjs`).
+
 ### 7.3 What v2 deliberately keeps
 
 - The accent `#3355c4` and the settable-accent presets.

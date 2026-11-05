@@ -71,7 +71,7 @@ export function createPalette(ed) {
         run: () => ed.showDraftRecovery(),
       },
       { id: "file.print", label: "Print", group: "File", kw: "print pages paper hard copy pdf", enabled: ed.HOST_CAPS.has("print"), disabledReason: t("capability.notGranted"), run: () => void printDocument(ed.doc).finally(() => { void ed.renderAll(); ed.scheduleChromeRefresh({ stats: true, outline: true }); }) },
-      { id: "file.properties", label: "Document properties", group: "File", kw: "metadata title author", run: () => ed.propertiesUi.toggle(true) },
+      { id: "file.properties", label: "Document properties…", group: "File", kw: "metadata title author", run: () => ed.propertiesUi.toggle(true) },
       // Version history. `docs/139` §8.1's first entry point, and the primary one:
       // File is where Docs, ONLYOFFICE and Word all keep it, and a File row costs
       // no ribbon width at all. The View band carries the second durable surface.
@@ -296,7 +296,7 @@ export function createPalette(ed) {
       // are held at exact parity by `insert-surface.spec.mjs` and adding a control
       // to both is a chrome change, not this fix.
       { id: "insert.lineBreak", label: "Line break", group: "Insert", kw: "soft line break newline same paragraph shift enter", enabled: !!ed.selection && ed.reviewMode !== "suggesting", disabledReason: ed.reviewMode === "suggesting" ? "Line breaks cannot be tracked yet" : "Place the caret where the break belongs", run: () => void ed.insertLineBreakAtSelection() },
-      { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", enabled: ed.insertCommandEnabled("insert.link", context), disabledReason: t("insert.reason.linkNeedsText"), run: () => ed.editSelectionLink() },
+      { id: "insert.link", label: "Add or edit link…", group: "Insert", kw: "hyperlink url bookmark toc", enabled: ed.insertCommandEnabled("insert.link", context), disabledReason: t("insert.reason.linkNeedsText"), run: () => ed.editSelectionLink() },
       { id: "layout.firstPageVariant", label: t("headerFooter.firstPageSwitch", { state: t(ed.headerFooterSettings.variantState().firstPage ? "headerFooter.stateOn" : "headerFooter.stateOff") }), group: "Layout", kw: "different first page header footer title page cover", enabled: !!ed.doc, disabledReason: "Open a document first", run: () => ed.headerFooterSettings.toggleVariant("firstPage") },
       { id: "layout.evenOddVariant", label: t("headerFooter.evenOddSwitch", { state: t(ed.headerFooterSettings.variantState().evenOdd ? "headerFooter.stateOn" : "headerFooter.stateOff") }), group: "Layout", kw: "different odd even pages header footer mirrored", enabled: !!ed.doc, disabledReason: "Open a document first", run: () => ed.headerFooterSettings.toggleVariant("evenOdd") },
       { id: "layout.headerFooterSettings", label: t("headerFooter.settingsCommand"), group: "Layout", kw: "header footer position from top bottom distance page numbering number format start at continue link to previous", enabled: !!ed.doc, disabledReason: "Open a document first", run: () => ed.headerFooterSettings.open(true) },
@@ -390,7 +390,7 @@ export function createPalette(ed) {
       // accent and reviewer identity are host preferences that do not need a
       // document open, and the gear is the only other way to reach them.
       { id: "view.settings", label: "Settings", group: "View", kw: "theme accent dark appearance preferences identity author name initials", noDoc: true, run: () => revealOnSettings(ed.SETTINGS_SURFACE) },
-      { id: "layout.pageSetup", label: "Page setup", group: "Layout", kw: "margins orientation paper size", run: () => ed.pageSetup.open(true) },
+      { id: "layout.pageSetup", label: "Page setup…", group: "Layout", kw: "margins orientation paper size", run: () => ed.pageSetup.open(true) },
       { id: "layout.paragraph", label: "Paragraph properties", group: "Layout", kw: "spacing borders shading indent", enabled: !!ed.selection, disabledReason: "Place the caret in a paragraph", run: () => ed.toggleParagraphProperties(true) },
       { id: "layout.tabStops", label: t("tabStops.command"), group: "Layout", kw: "tab tabs stop stops ruler decimal bar align position", enabled: !!ed.selection && ed.reviewMode !== "viewing", disabledReason: ed.selection ? mutationBlockedMessage({ editingUnavailableReason: ed.readOnlyReason }) : t("paragraph.caretRequired"), run: () => ed.tabStopsDialog.open() },
       // The Layout and References tabs' own rows, generated from the SAME tables
@@ -417,7 +417,7 @@ export function createPalette(ed) {
         run: entry.run ?? (() => {}),
       })),
       { id: "help.commands", label: "Find a command…", group: "Help", kw: "help command palette search run", noDoc: true, run: () => ed.openCmd() },
-      { id: "help.shortcuts", label: "Keyboard shortcuts", group: "Help", kw: "help shortcuts keys chords reference cheat sheet", noDoc: true, run: () => ed.toggleShortcutsReference(true) },
+      { id: "help.shortcuts", label: "Keyboard shortcuts…", group: "Help", kw: "help shortcuts keys chords reference cheat sheet", noDoc: true, run: () => ed.toggleShortcutsReference(true) },
       { id: "help.about", label: "About OpenDoc", group: "Help", kw: "about version licence license apache build source repository issue report credits", noDoc: true, run: () => ed.toggleAbout(true) },
       // Resolve/Delete must have a menu home, not only a ribbon button:
       // `docs/105` command-surface parity forbids a capability reachable from one

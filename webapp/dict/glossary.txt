@@ -59,6 +59,7 @@ Commenter
 CommonMark
 Ctrl
 DAI
+DIALOGS
 DOCX
 DOCXF
 DOM
@@ -371,6 +372,7 @@ codepoint
 col
 collab
 com
+combobox
 commenter
 compat
 composable
@@ -530,6 +532,7 @@ min
 minified
 mis
 mjs
+mockup
 mockups
 mousedown
 moveFrom
