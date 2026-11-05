@@ -70,7 +70,24 @@ async function caretOnPage(page, index) {
   await wrap.evaluate((el) => el.scrollIntoView({ block: "center" }));
   await expect.poll(() => wrap.locator("canvas.page").count()).toBe(1);
   const box = await stableBox(wrap);
-  await page.mouse.click(box.x + box.width / 2, box.y + Math.min(140, box.height / 2));
+  // Click the part of the sheet the reader can SEE. A sheet taller than the
+  // scroll viewport, centred, has its top under the chrome, and the sticky
+  // ruler sits over the viewport's top edge: a fixed `top + 140px` press landed
+  // on the ruler's content span on CI after #928's chrome grew, which drops a
+  // tab stop on the page-1 paragraph instead of moving the caret, and every
+  // assertion below then measured page 1 (the run of 41501064693).
+  const visible = await page.evaluate(() => {
+    const viewport = document.getElementById("viewport").getBoundingClientRect();
+    const ruler = document.querySelector(".ruler").getBoundingClientRect();
+    return { top: Math.max(viewport.top, ruler.bottom), bottom: viewport.bottom };
+  });
+  const top = Math.max(box.y, visible.top);
+  const bottom = Math.min(box.y + box.height, visible.bottom);
+  expect(bottom - top, `page ${index + 1} has no visible area to click`).toBeGreaterThan(40);
+  await page.mouse.click(box.x + box.width / 2, top + Math.min(140, (bottom - top) / 2));
+  // The precondition, stated: the caret is on that page. Without it a missed
+  // press reads as the ruler failing to follow, which is a different defect.
+  await expect(page.locator("#statPages")).toHaveText(new RegExp(`^Page ${index + 1} of\\b`));
 }
 
 /** The ruler's width, and where its unshaded content span sits inside it, as
