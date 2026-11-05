@@ -809,6 +809,54 @@ mod semantic_tests {
         assert_eq!(m1, m2, "the model survives write -> reopen unchanged");
     }
 
+    /// `docs/174` TA-17: a U+0009 that reached a run's text (a legacy model, a
+    /// snapshot, a paste from before the editor mapped it) is written as Word's
+    /// `<w:tab/>`, never as a literal inside `<w:t>`, which Word reads as plain
+    /// whitespace. Mutation proof: writing `run.text` verbatim again leaves
+    /// `<w:t xml:space="preserve">a\tb</w:t>` and this goes red.
+    #[test]
+    fn a_tab_character_in_run_text_is_written_as_w_tab() {
+        use casual_doc_model::v1::{BlockNode, InlineNode};
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:rPr><w:b/></w:rPr><w:t>placeholder</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let mut document = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let Some(BlockNode::Paragraph(paragraph)) = document.body_mut().first_mut() else {
+            panic!("one paragraph");
+        };
+        let Some(InlineNode::Run(run)) = paragraph.inlines.first_mut() else {
+            panic!("one run");
+        };
+        run.text = "a\tb\t".to_owned();
+        let written = written_document_xml(&document);
+        assert!(
+            written.contains(
+                r#"<w:t xml:space="preserve">a</w:t><w:tab/><w:t xml:space="preserve">b</w:t><w:tab/></w:r>"#
+            ),
+            "{written}"
+        );
+        assert!(
+            !written.contains('\t'),
+            "no literal tab is written: {written}"
+        );
+        // The run keeps its formatting across the split, and reopening reads two
+        // real tabs.
+        assert!(written.contains("<w:b/>"), "{written}");
+        let bytes = write_document(&document, &BTreeMap::new()).unwrap();
+        let reopened = reopen(&bytes);
+        let Some(BlockNode::Paragraph(paragraph)) = reopened.body().first() else {
+            panic!("one paragraph");
+        };
+        let tabs = paragraph
+            .inlines
+            .iter()
+            .filter(|inline| matches!(inline, InlineNode::Tab(_)))
+            .count();
+        assert_eq!(tabs, 2);
+    }
+
     /// The complex-script run properties (P1F-37): `w:bCs`/`w:iCs`/`w:szCs`. A run
     /// carrying all three must import them to the dedicated CS fields (independent
     /// of the Latin `w:b`/`w:i`/`w:sz`) and survive write -> reopen unchanged; the

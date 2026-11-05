@@ -1607,6 +1607,9 @@ export const EN_STRINGS = Object.freeze({
   // the live region is the only channel a reader who cannot see it has.
   "table.rowAppended": "Row added at the end of the table",
   "table.atFirstCell": "The caret is already in the first cell of the table",
+  // Tab types a tab character in body text (UX-057). Suggesting mode cannot record
+  // an inserted tab as a suggestion yet, so it refuses and says how to proceed.
+  "editing.tabNotTrackable": "A tab character cannot be tracked as a suggestion yet; switch to Editing to insert one",
   // A table's size, COLUMNS first — Word's own convention ("4x3 Table" over its
   // Insert grid for four columns and three rows). The Insert grid and the Table
   // band's hint both read this one sentence, because they used to print the

@@ -190,6 +190,7 @@ impl WasmDocument {
             dirty: Vec::new(),
             paste_loss: Vec::new(),
             placed_object: String::new(),
+            anchor: None,
         }
     }
 

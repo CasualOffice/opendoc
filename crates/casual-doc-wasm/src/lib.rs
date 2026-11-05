@@ -194,6 +194,12 @@ mod table_merge_matrix_tests;
 #[path = "command_parity_tests.rs"]
 mod command_parity_tests;
 
+// Tab types a tab, Undo re-selects, a range delete removes covered tables
+// (`docs/109` UX-057..UX-059).
+#[cfg(test)]
+#[path = "editing_ux_tests.rs"]
+mod editing_ux_tests;
+
 // An edited save states the current `app.xml` counts (`docs/109` FID-AT-04).
 #[cfg(test)]
 #[path = "save_statistics_tests.rs"]
@@ -3903,12 +3909,12 @@ impl WasmDocument {
     ) -> Result<EditResult, JsValue> {
         let runs: Vec<ClipboardRun> = serde_json::from_str(&runs_json)
             .map_err(|e| to_js(format!("invalid clipboard payload: {e}")))?;
-        let (start, _end) = self
+        let (start, end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
-        let mut ops = self
-            .selection_delete_ops(start_node, start_offset, end_node, end_offset)
-            .map_err(to_js)?;
+        // The plan's start, not the selection's: a covered table that held the
+        // start is removed, and the edit collapses to the paragraph after it.
+        let (mut ops, start) = self.selection_delete_plan(start, end).map_err(to_js)?;
 
         let mut cursor = start;
         for run in &runs {
@@ -4968,6 +4974,7 @@ impl WasmDocument {
                 dirty: Vec::new(),
                 paste_loss: Vec::new(),
                 placed_object: String::new(),
+                anchor: None,
             });
         }
         self.apply_action_caret_as(
@@ -5449,6 +5456,50 @@ impl WasmDocument {
             .map_err(to_js)
     }
 
+    /// The Tab key in body text: a real tab character (`InlineNode::Tab`, Word's
+    /// `<w:tab/>`) replacing the selection, as one undoable action (`docs/109`
+    /// UX-057).
+    ///
+    /// Word, Google Docs and ONLYOFFICE all type a tab here; the editor used to
+    /// indent the whole paragraph instead, wherever the caret was, so there was
+    /// no keystroke at all that typed one. The host keeps Tab's structural
+    /// meanings — next cell in a table, demote at the start of a list item,
+    /// indent over several paragraphs — and calls this for everything else.
+    ///
+    /// No new operation (ADR-030 I2): the tab is the same `InsertInlineObject`
+    /// a pasted tab lowers to in `plain_text_ops`, so typing and pasting a tab
+    /// cannot store it two ways. The caret lands after the tab.
+    ///
+    /// Complexity: ordering the endpoints walks the paragraphs once
+    /// (O(paragraphs)), as every selection-replacing edit does; a collapsed
+    /// caret's insert is O(1) beyond that.
+    #[wasm_bindgen(js_name = insertTab)]
+    pub fn insert_tab(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+    ) -> Result<EditResult, JsValue> {
+        self.insert_tab_inner(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)
+    }
+
+    /// [`Self::insert_tab`] with a plain message, for native tests.
+    fn insert_tab_inner(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+    ) -> Result<EditResult, String> {
+        let (start, end) = self.order_endpoints(start_node, start_offset, end_node, end_offset)?;
+        let (mut ops, start) = self.selection_delete_plan(start, end)?;
+        let (mut insert, caret) = self.plain_text_ops(start, "\t")?;
+        ops.append(&mut insert);
+        self.apply_action_caret_as(ops, caret, HistoryKind::Typing)
+    }
+
     /// Ctrl+Enter / Ctrl+Shift+Enter: an explicit **page** or **column** break at
     /// the caret — the first two items of both Word's and ONLYOFFICE's Breaks menu
     /// (`docs/130` 4.3, OO-022). `kind` is `"page"` or `"column"`.
@@ -5694,12 +5745,12 @@ impl WasmDocument {
         end_node: &str,
         end_offset: u32,
     ) -> Result<EditResult, JsValue> {
-        let (start, _end) = self
+        let (start, end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
-        let ops = self
-            .selection_delete_ops(start_node, start_offset, end_node, end_offset)
-            .map_err(to_js)?;
+        // The plan's start, not the selection's: a covered table that held the
+        // start is removed, and the edit collapses to the paragraph after it.
+        let (ops, start) = self.selection_delete_plan(start, end).map_err(to_js)?;
         if ops.is_empty() {
             return Err(to_js("empty selection".into()));
         }
@@ -5717,12 +5768,12 @@ impl WasmDocument {
         end_offset: u32,
         text: String,
     ) -> Result<EditResult, JsValue> {
-        let (start, _end) = self
+        let (start, end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
-        let mut ops = self
-            .selection_delete_ops(start_node, start_offset, end_node, end_offset)
-            .map_err(to_js)?;
+        // The plan's start, not the selection's: a covered table that held the
+        // start is removed, and the edit collapses to the paragraph after it.
+        let (mut ops, start) = self.selection_delete_plan(start, end).map_err(to_js)?;
         if !text.is_empty() {
             ops.push(Operation::InsertText { at: start, text });
         }
@@ -5843,12 +5894,12 @@ impl WasmDocument {
         text: String,
         kind: HistoryKind,
     ) -> Result<EditResult, JsValue> {
-        let (start, _end) = self
+        let (start, end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
-        let mut ops = self
-            .selection_delete_ops(start_node, start_offset, end_node, end_offset)
-            .map_err(to_js)?;
+        // The plan's start, not the selection's: a covered table that held the
+        // start is removed, and the edit collapses to the paragraph after it.
+        let (mut ops, start) = self.selection_delete_plan(start, end).map_err(to_js)?;
         let (mut insert_ops, caret) = self.plain_text_ops(start, &text).map_err(to_js)?;
         // A checklist item's CHECKED state is its numbering instance, and a split
         // clones the paragraph's properties wholesale — so pressing Enter at the
@@ -5898,9 +5949,7 @@ impl WasmDocument {
             .map_err(to_js)?;
         // The ordered endpoints, not the strings again: the string-taking form
         // re-orders them, and ordering walks every paragraph on every surface.
-        let mut ops = self
-            .selection_delete_ops_ordered(start, end)
-            .map_err(to_js)?;
+        let (mut ops, start) = self.selection_delete_plan(start, end).map_err(to_js)?;
         let (mut insert_ops, caret) = self.plain_text_ops(start, &text).map_err(to_js)?;
         ops.append(&mut insert_ops);
         if ops.is_empty() {
@@ -7313,7 +7362,14 @@ impl WasmDocument {
             definition.multi_level_type = Some(casual_doc_model::v1::MultiLevelType::Multilevel);
             definition.levels = (0..9)
                 .map(|index| {
-                    let mut level = casual_doc_command::lists::level(preset != "bullet", index);
+                    // "decimal" is the gallery's `1. / 1.1. / 1.1.1.` legal outline, which
+                    // is no longer the default numbered list (HF-227): it keeps the joined
+                    // marker, with the wider hanging indents a joined marker needs.
+                    let mut level = if preset == "decimal" {
+                        casual_doc_command::lists::legal_level(index)
+                    } else {
+                        casual_doc_command::lists::level(preset != "bullet", index)
+                    };
                     if preset == "outline" {
                         apply_marker_spec(
                             &mut level,
@@ -10679,6 +10735,7 @@ impl WasmDocument {
                     dirty: Vec::new(),
                     paste_loss: Vec::new(),
                     placed_object: String::new(),
+                    anchor: None,
                 });
             };
             return self.remove_drop_cap(cap, body);
@@ -13960,7 +14017,82 @@ impl WasmDocument {
         let caret = self
             .apply_group(&operations, label, Coalesce::New, Origin::Undo { group })
             .map_err(|e| format!("undo failed: {e}"))?;
-        Ok(self.finish_edit_with(caret, &damage_of(&operations)))
+        let restored = self.replayed_selection(group, true);
+        let mut result = self.finish_edit_with(caret, &damage_of(&operations));
+        result.select(restored);
+        Ok(result)
+    }
+
+    /// The selection an Undo or Redo of `group` hands back (`docs/109` UX-058).
+    ///
+    /// Word, Google Docs and ONLYOFFICE re-select what an Undo restored; this
+    /// editor used to collapse the caret, and after a format undo it landed at
+    /// the start of the paragraph (the formatting inverse is a whole-paragraph
+    /// `SetInlines`, whose natural caret is offset 0). The span is derived from
+    /// the **original edit's own operations**, read off the log — so no
+    /// selection state is stored in the history, and a step and its replay
+    /// cannot disagree:
+    ///
+    /// | Original edit | After Undo | After Redo |
+    /// | --- | --- | --- |
+    /// | Formatting over a range | the range | the range |
+    /// | A delete, or typing over a selection | the restored text | the natural caret |
+    /// | Typing, a tab, a break | collapsed where it was typed | the natural caret |
+    /// | Anything else | the natural caret | the natural caret |
+    ///
+    /// Positions are in the coordinates of the document the replay produced:
+    /// an Undo restores the pre-edit document, where the edit's first-applied
+    /// operations' positions hold, and a format edit moves no position. Every
+    /// end is checked against the live document before it is returned, so a step
+    /// rebased over a collaborator's edit (`selective_history_step`) falls back
+    /// to the natural caret rather than selecting the wrong text.
+    ///
+    /// Complexity: O(commits the log retains), which the group bound caps, plus
+    /// one paragraph lookup per end. Paid on an Undo press, never a keystroke.
+    fn replayed_selection(
+        &self,
+        group: casual_doc_transaction::GroupId,
+        undo: bool,
+    ) -> Option<(Pos, Pos)> {
+        // Follow Undo/Redo commits back to the user edit they replay. Bounded:
+        // each hop moves to an older group, and the log retains a bounded number.
+        let mut target = group;
+        for _ in 0..self.log.commits().len().max(1) {
+            let origin = self
+                .log
+                .commits()
+                .find(|commit| commit.group() == target)?
+                .origin();
+            match origin {
+                Origin::Edit => {
+                    let forward: Vec<&Operation> = self
+                        .log
+                        .commits()
+                        .filter(|commit| commit.group() == target)
+                        .flat_map(|commit| commit.operations().iter())
+                        .collect();
+                    // An Undo of any group in the chain leaves the document as it
+                    // was before this edit; a Redo leaves it as the edit made it.
+                    let span = history_span(&forward, undo)?;
+                    return [span.0, span.1]
+                        .iter()
+                        .all(|end| {
+                            find_paragraph_any(&self.document, end.node).is_some_and(|paragraph| {
+                                end.offset
+                                    <= paragraph
+                                        .inlines
+                                        .iter()
+                                        .map(casual_doc_edit::inline_text_len)
+                                        .sum::<u32>()
+                            })
+                        })
+                        .then_some(span);
+                }
+                Origin::Undo { group } | Origin::Redo { group } => target = group,
+                Origin::Remote => return None,
+            }
+        }
+        None
     }
 
     /// Redoes the last undone action.
@@ -13988,7 +14120,10 @@ impl WasmDocument {
         let caret = self
             .apply_group(&operations, label, Coalesce::New, Origin::Redo { group })
             .map_err(|e| format!("redo failed: {e}"))?;
-        Ok(self.finish_edit_with(caret, &damage_of(&operations)))
+        let restored = self.replayed_selection(group, false);
+        let mut result = self.finish_edit_with(caret, &damage_of(&operations));
+        result.select(restored);
+        Ok(result)
     }
 
     /// Serializes the current (edited) document to a `.docx` package the host can
@@ -14919,7 +15054,10 @@ impl WasmDocument {
 
     /// Builds the closed operation group for inserting normalized plain text at
     /// `start`. Line breaks are structural paragraph splits, never literal
-    /// newline characters inside a run.
+    /// newline characters inside a run; a tab is a real `InlineNode::Tab`
+    /// (Word's `<w:tab/>`), never a literal U+0009 inside a run, which layout
+    /// would not advance to a tab stop and Word reads as plain whitespace
+    /// (`docs/174` TA-17). O(text).
     fn plain_text_ops(&mut self, start: Pos, text: &str) -> Result<(Vec<Operation>, Pos), String> {
         let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
         let mut ops = Vec::new();
@@ -14937,19 +15075,37 @@ impl WasmDocument {
                 });
                 cursor = Pos::new(new_id, 0);
             }
-            if line.is_empty() {
-                continue;
+            for (piece_index, piece) in line.split('\t').enumerate() {
+                if piece_index > 0 {
+                    let id = self
+                        .edit_ids
+                        .next_id()
+                        .map_err(|_| "id space exhausted".to_owned())?;
+                    let node = InlineNode::Tab(casual_doc_model::v1::Tab { id });
+                    let width = casual_doc_edit::inline_text_len(&node);
+                    ops.push(Operation::InsertInlineObject {
+                        at: cursor,
+                        node: Box::new(node),
+                    });
+                    cursor.offset = cursor
+                        .offset
+                        .checked_add(width)
+                        .ok_or_else(|| "text offset overflow".to_owned())?;
+                }
+                if piece.is_empty() {
+                    continue;
+                }
+                let byte_len = u32::try_from(piece.len())
+                    .map_err(|_| "inserted text is too large".to_owned())?;
+                ops.push(Operation::InsertText {
+                    at: cursor,
+                    text: piece.to_owned(),
+                });
+                cursor.offset = cursor
+                    .offset
+                    .checked_add(byte_len)
+                    .ok_or_else(|| "text offset overflow".to_owned())?;
             }
-            let byte_len =
-                u32::try_from(line.len()).map_err(|_| "inserted text is too large".to_owned())?;
-            ops.push(Operation::InsertText {
-                at: cursor,
-                text: line.to_owned(),
-            });
-            cursor.offset = cursor
-                .offset
-                .checked_add(byte_len)
-                .ok_or_else(|| "text offset overflow".to_owned())?;
         }
         Ok((ops, cursor))
     }
@@ -15742,6 +15898,7 @@ impl WasmDocument {
             // degrade content fills this in on the result it returns.
             paste_loss: Vec::new(),
             placed_object: String::new(),
+            anchor: None,
         }
     }
 
@@ -15893,51 +16050,152 @@ impl WasmDocument {
     /// `type_text` ordered its endpoints and then called the string-taking form,
     /// which ordered them again — two full walks per keystroke.
     fn selection_delete_ops_ordered(&self, start: Pos, end: Pos) -> Result<Vec<Operation>, String> {
+        self.selection_delete_plan(start, end).map(|(ops, _)| ops)
+    }
+
+    /// The operations that delete the ordered selection `[start, end]`, and the
+    /// position the deletion collapses to — where the caret rests and where a
+    /// replacement (typing, a paste, a tab) is inserted.
+    ///
+    /// **A body table the range covers is removed, not emptied** (`docs/109`
+    /// UX-059, `docs/174` TA-02). A table is covered when the range runs past it
+    /// on both sides, or starts at the very beginning of its first cell and runs
+    /// past its end (select-all in a document that opens with a table), or ends
+    /// at the very end of its last cell having started before it. It goes as one
+    /// `DeleteTable`, whose inverse re-inserts it verbatim, and the paragraphs on
+    /// either side of it join as if it had never been there. This used to emit
+    /// one `DeleteText` per cell paragraph, and so left an empty grid behind on
+    /// every cut, type-over and paste across a table — and in a document that
+    /// starts with a table, nothing the user could select would clear it. Word
+    /// leaves one empty paragraph after Ctrl+A, Delete; so does this.
+    ///
+    /// A table the range only partly covers keeps its structure and loses the
+    /// covered text, which is also Word's answer. A range that lies wholly inside
+    /// one table never removes it: selecting a whole table and pressing Delete
+    /// clears its cells in Word too. Tables nested in a cell, in a header or in a
+    /// text box are emptied rather than removed, as before.
+    ///
+    /// When the start lies in a removed table, the collapse point is the first
+    /// paragraph after it, at offset 0 — the paragraph the remaining text joins
+    /// into.
+    ///
+    /// Complexity: O(paragraphs + body blocks) — one ordered-paragraph walk, one
+    /// id index over it, one pass over the body's top-level tables. The same
+    /// order as before; ordering the endpoints was already O(paragraphs).
+    fn selection_delete_plan(&self, start: Pos, end: Pos) -> Result<(Vec<Operation>, Pos), String> {
         if start.node == end.node {
             if start.offset == end.offset {
-                return Ok(Vec::new());
+                return Ok((Vec::new(), start));
             }
-            return Ok(vec![Operation::DeleteText {
-                range: EditRange { start, end },
-            }]);
+            return Ok((
+                vec![Operation::DeleteText {
+                    range: EditRange { start, end },
+                }],
+                start,
+            ));
         }
         let paras = self.ordered_paragraphs();
-        let si = paras
+        let index: HashMap<NodeId, usize> = paras
             .iter()
-            .position(|(id, _)| *id == start.node)
-            .ok_or("start not found")?;
-        let ei = paras
-            .iter()
-            .position(|(id, _)| *id == end.node)
-            .ok_or("end not found")?;
-        let start_len = paras[si].1;
+            .enumerate()
+            .map(|(at, (id, _))| (*id, at))
+            .collect();
+        let mut si = *index.get(&start.node).ok_or("start not found")?;
+        let mut ei = *index.get(&end.node).ok_or("end not found")?;
+        let mut start = start;
+        let mut end = end;
+
+        // The body's top-level tables as (table, first paragraph index, last
+        // paragraph index, every paragraph id inside it), in document order.
+        let mut tables: Vec<(NodeId, usize, usize, Vec<NodeId>)> = Vec::new();
+        for block in self.document.body() {
+            let BlockNode::Table(table) = block else {
+                continue;
+            };
+            let mut inside = Vec::new();
+            casual_doc_model::v1::visit_paragraphs(std::slice::from_ref(block), &mut |p| {
+                inside.push(p.id);
+            });
+            let mut positions = inside.iter().filter_map(|id| index.get(id).copied());
+            let Some(first) = positions.next() else {
+                continue;
+            };
+            let last = positions.fold(first, usize::max);
+            tables.push((table.id, first, last, inside));
+        }
+
+        let mut removed: Vec<NodeId> = Vec::new();
+        let mut gone: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+        let mut remove = |table: &(NodeId, usize, usize, Vec<NodeId>),
+                          removed: &mut Vec<NodeId>| {
+            removed.push(table.0);
+            gone.extend(table.3.iter().copied());
+        };
+        // A range that starts at the very beginning of a table and runs past it
+        // removes it, and starts again after it — repeatedly, for tables back to
+        // back.
+        for table in &tables {
+            if table.1 == si && start.offset == 0 && table.2 < ei {
+                remove(table, &mut removed);
+                si = table.2 + 1;
+                start = Pos::new(paras[si].0, 0);
+            }
+        }
+        // Likewise at the end, walking backwards.
+        for table in tables.iter().rev() {
+            if table.2 == ei && end.offset == paras[ei].1 && table.1 > si {
+                remove(table, &mut removed);
+                ei = table.1 - 1;
+                end = Pos::new(paras[ei].0, paras[ei].1);
+            }
+        }
+        // And every table strictly between the two ends.
+        for table in &tables {
+            if table.1 > si && table.2 < ei && !removed.contains(&table.0) {
+                remove(table, &mut removed);
+            }
+        }
 
         let mut ops = Vec::new();
-        if start.offset < start_len {
-            ops.push(Operation::DeleteText {
-                range: EditRange {
-                    start,
-                    end: Pos::new(start.node, start_len),
-                },
-            });
-        }
-        for (id, len) in paras.iter().take(ei).skip(si + 1) {
-            if *len > 0 {
+        if si == ei {
+            if start.offset < end.offset {
+                ops.push(Operation::DeleteText {
+                    range: EditRange { start, end },
+                });
+            }
+        } else {
+            let start_len = paras[si].1;
+            if start.offset < start_len {
                 ops.push(Operation::DeleteText {
                     range: EditRange {
-                        start: Pos::new(*id, 0),
-                        end: Pos::new(*id, *len),
+                        start,
+                        end: Pos::new(start.node, start_len),
+                    },
+                });
+            }
+            for (id, len) in paras.iter().take(ei).skip(si + 1) {
+                if *len > 0 && !gone.contains(id) {
+                    ops.push(Operation::DeleteText {
+                        range: EditRange {
+                            start: Pos::new(*id, 0),
+                            end: Pos::new(*id, *len),
+                        },
+                    });
+                }
+            }
+            if end.offset > 0 {
+                ops.push(Operation::DeleteText {
+                    range: EditRange {
+                        start: Pos::new(end.node, 0),
+                        end,
                     },
                 });
             }
         }
-        if end.offset > 0 {
-            ops.push(Operation::DeleteText {
-                range: EditRange {
-                    start: Pos::new(end.node, 0),
-                    end,
-                },
-            });
+        // The covered tables go before any join, so the paragraphs on either
+        // side of one are adjacent in the body when they are joined.
+        for table in &removed {
+            ops.extend(casual_doc_command::table::delete_table(*table));
         }
         // Join every following paragraph (now empty in the middle) up to and
         // including the end paragraph into its nearest preceding paragraph —
@@ -15946,11 +16204,15 @@ impl WasmDocument {
         // dissolve a table/cell by trying to merge a body paragraph with one
         // living inside it. A boundary paragraph is left in place (already
         // emptied by the `DeleteText` ops above) and becomes the new join
-        // anchor for any further same-container run after it.
+        // anchor for any further same-container run after it. A removed table's
+        // paragraphs are skipped, so the body paragraphs around it join.
         let containers = self.paragraph_container_map();
         let mut anchor = start.node;
         let mut anchor_container = containers.get(&start.node).copied().unwrap_or(0);
         for (id, _) in paras.iter().take(ei + 1).skip(si + 1) {
+            if gone.contains(id) {
+                continue;
+            }
             let container = containers.get(id).copied().unwrap_or(0);
             if container == anchor_container {
                 ops.push(Operation::JoinParagraphs {
@@ -15963,7 +16225,7 @@ impl WasmDocument {
                 anchor_container = container;
             }
         }
-        Ok(ops)
+        Ok((ops, start))
     }
 
     /// The per-paragraph sub-ranges an ordered selection covers: `(node, start,
@@ -24700,6 +24962,63 @@ fn apply_marker_spec(level: &mut NumberingLevel, spec: &str) -> Result<(), Strin
     Ok(())
 }
 
+/// The `(anchor, focus)` an Undo (`undo`) or Redo of a user edit made of
+/// `forward` hands back — the table on `WasmDocument::replayed_selection`.
+/// `None` keeps the replay's natural caret. A pure function of the operations,
+/// O(operations).
+fn history_span(forward: &[&Operation], undo: bool) -> Option<(Pos, Pos)> {
+    // The union of a run of ranges, in the order the edit applied them: within
+    // one paragraph the extremes, across paragraphs first start to last end
+    // (every range-producing path emits its paragraphs in document order).
+    fn union(ranges: &[EditRange]) -> Option<(Pos, Pos)> {
+        let first = ranges.first()?;
+        let last = ranges.last()?;
+        if ranges
+            .iter()
+            .all(|range| range.start.node == first.start.node)
+        {
+            let start = ranges.iter().map(|range| range.start.offset).min()?;
+            let end = ranges.iter().map(|range| range.end.offset).max()?;
+            return Some((
+                Pos::new(first.start.node, start),
+                Pos::new(first.start.node, end),
+            ));
+        }
+        Some((first.start, last.end))
+    }
+    let formatted: Option<Vec<EditRange>> = forward
+        .iter()
+        .map(|op| match op {
+            Operation::FormatText { range, .. }
+            | Operation::ClearFormatting { range }
+            | Operation::SetHyperlink { range, .. } => Some(*range),
+            _ => None,
+        })
+        .collect();
+    if let Some(ranges) = formatted.filter(|ranges| !ranges.is_empty()) {
+        return union(&ranges).filter(|(start, end)| start != end);
+    }
+    if !undo {
+        return None;
+    }
+    let deleted: Vec<EditRange> = forward
+        .iter()
+        .filter_map(|op| match op {
+            Operation::DeleteText { range } => Some(*range),
+            _ => None,
+        })
+        .collect();
+    if !deleted.is_empty() {
+        return union(&deleted);
+    }
+    match forward.first()? {
+        Operation::InsertText { at, .. }
+        | Operation::InsertInlineObject { at, .. }
+        | Operation::SplitParagraph { at, .. } => Some((*at, *at)),
+        _ => None,
+    }
+}
+
 fn caret_after(op: &Operation, inverse: Option<&Operation>, document: &Document) -> Pos {
     let doc_id = document.id();
     let table_anchor = |table| {
@@ -24940,10 +25259,43 @@ pub struct EditResult {
     /// Empty on every other path. A field rather than the caret, because the
     /// caret must stay a TEXT position the host can draw.
     placed_object: String,
+    /// The other end of the selection this edit hands back, when it hands back a
+    /// range rather than a caret — Undo and Redo re-selecting what they restored
+    /// (`docs/109` UX-058). `None` on every path that leaves a collapsed caret.
+    anchor: Option<Pos>,
+}
+
+impl EditResult {
+    /// Makes this result hand back the selection `span` (`anchor`, `focus`), or
+    /// leaves it a collapsed caret when `span` is `None`. O(1).
+    fn select(&mut self, span: Option<(Pos, Pos)>) {
+        if let Some((anchor, focus)) = span {
+            self.node = focus.node.to_string();
+            self.offset = focus.offset;
+            self.anchor = (anchor != focus).then_some(anchor);
+        }
+    }
 }
 
 #[wasm_bindgen]
 impl EditResult {
+    /// The selection anchor's node id: the caret's own node unless this edit
+    /// hands back a range (an Undo re-selecting restored text, `docs/109` UX-058).
+    #[wasm_bindgen(getter, js_name = anchorNode)]
+    #[must_use]
+    pub fn anchor_node(&self) -> String {
+        self.anchor
+            .map_or_else(|| self.node.clone(), |anchor| anchor.node.to_string())
+    }
+
+    /// The selection anchor's byte offset; equal to [`Self::offset`] when the
+    /// result is a collapsed caret.
+    #[wasm_bindgen(getter, js_name = anchorOffset)]
+    #[must_use]
+    pub fn anchor_offset(&self) -> u32 {
+        self.anchor.map_or(self.offset, |anchor| anchor.offset)
+    }
+
     /// The object this edit placed for the host to select (a dragged copy), or
     /// `""` when it placed none.
     #[wasm_bindgen(getter, js_name = placedObject)]
