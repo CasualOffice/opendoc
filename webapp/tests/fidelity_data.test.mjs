@@ -25,9 +25,12 @@ const STAGES = ["modeled", "rendered", "editable", "roundtrips"];
 const VALUES = new Set(["full", "partial", "placeholder", "preserved", "none"]);
 
 test("format pipeline rows are complete and do not overstate ODT", () => {
+  // RTF, PDF, HTML and Markdown all open in the editor (docs/18's generated
+  // format table, from the registry's descriptors); a format table that left
+  // them out understated the product by omission (SKILL §9 rule 3).
   assert.deepEqual(
     FORMAT_SUPPORT.map((row) => row.format),
-    ["DOCX", "Normalized JSON", "Plain text", "ODT"],
+    ["DOCX", "Normalized JSON", "Plain text", "ODT", "RTF", "PDF", "HTML", "Markdown"],
   );
   for (const row of FORMAT_SUPPORT) {
     assert.ok(
@@ -63,6 +66,33 @@ test("format pipeline rows are complete and do not overstate ODT", () => {
   );
 });
 
+// The four formats added on 2026-11-06, each graded from the code that decides
+// it. RTF's export cell reads the adapter's own descriptor, so it fails in both
+// directions: a writer landing while the cell still says "none", or the cell
+// rising while the descriptor still says it cannot export. PDF, HTML and
+// Markdown import are reconstructions or narrow mappings — a PDF has no
+// paragraphs, Markdown has no styles — so none may ever claim "full".
+test("the RTF, PDF, HTML and Markdown rows are derived, not remembered", () => {
+  const by = Object.fromEntries(FORMAT_SUPPORT.map((row) => [row.format, row]));
+  const io = (file) =>
+    readFileSync(new URL(`../../crates/casual-doc-io/src/${file}`, import.meta.url), "utf8");
+  const rtfWrites = /can_export: true/.test(io("rtf.rs"));
+  if (rtfWrites) {
+    assert.notEqual(by.RTF.export, "none", "casual-doc-io/src/rtf.rs declares an RTF writer; raise RTF.export");
+  } else {
+    assert.equal(by.RTF.export, "none", "casual-doc-io/src/rtf.rs declares can_export: false, so there is no RTF writer");
+    assert.match(by.RTF.note, /no RTF writer/, "the RTF note must say there is no writer");
+  }
+  assert.ok(
+    /descriptor\.can_import = true/.test(io("pdf_import.rs")),
+    "the PDF import capability is gone from casual-doc-io/src/pdf_import.rs; re-grade the PDF row",
+  );
+  for (const format of ["PDF", "HTML", "Markdown"]) {
+    assert.notEqual(by[format].import, "full", `${format} import is a reconstruction, never full`);
+    assert.notEqual(by[format].import, "none", `${format} opens in the editor, so import is not "none"`);
+  }
+});
+
 test("every construct family in the expected set is present exactly once", () => {
   const expected = [
     "Paragraphs & text",
@@ -76,6 +106,7 @@ test("every construct family in the expected set is present exactly once", () =>
     "Footnotes & endnotes",
     "Sections, columns & page setup",
     "Fields",
+    "Table of contents, captions & cross-references",
     "Document protection & forms",
     "Math (OMML)",
     "Charts",
@@ -142,9 +173,12 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   // effects (shadow/glow/3-D), linked boxes and renumbered drawing ids.
   assert.equal(by["Text boxes & shapes"].modeled, "full");
   assert.equal(by["Text boxes & shapes"].roundtrips, "partial");
-  // Notes can be inserted and their bodies edited like any other surface;
-  // footnote/endnote conversion and number-format options are not there, so
-  // partial rather than full.
+  // CORRECTED 2026-11-06: this said "footnote/endnote conversion and
+  // number-format options are not there". Both shipped in #917 (RM-24,
+  // `setNoteSettings`/`convertNotes`, `note-commands.spec.mjs`), and the pin
+  // stayed green on a false reason. What keeps editable off "full" is the
+  // separator: nothing edits `w:separator`/`w:continuationSeparator`. The same
+  // gap keeps modeled and round-trip off "full" — derived in its own test below.
   assert.equal(by["Footnotes & endnotes"].editable, "partial");
   // Legacy form fields are operable (`docs/109` HF-175): a FORMCHECKBOX ticks
   // and a FORMTEXT accepts typing into its result. No other field kind is
@@ -187,18 +221,21 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   assert.equal(by["Math (OMML)"].modeled, "full");
   assert.equal(by["Math (OMML)"].rendered, "partial");
   assert.equal(by["Math (OMML)"].editable, "none");
-  // Character rendering stays partial because emphasis/outline/shadow effects
-  // remain unpainted. Typed underline styles, including wavy and words-only,
-  // render. Paragraphs and Lists render their common surface in full — the
+  // Character rendering stays partial. CORRECTED 2026-11-06: the reason given
+  // here was "emphasis/outline/shadow effects remain unpainted", false since
+  // #835 (`compose_emphasis_marks`, `compose_run_border`, `GlyphEffects` in
+  // casual-doc-render). The reason now is the Word 2010 `w14` text effects,
+  // run `w:fitText` and `w:eastAsianLayout`, which are not painted. Typed
+  // underline styles, including wavy and words-only, render. Paragraphs and Lists render their common surface in full — the
   // remainders (docGrid/autospace on paragraphs, unknown numFmt on lists) are
   // niche/bounded, not common gaps.
   assert.equal(by["Character / run formatting"].rendered, "partial");
-  // Numbering renders in full, but it is NOT fully modeled: `w:lvlPicBulletId`
-  // and the `w:numPicBullet` definitions it references have zero representation
-  // in the model (`grep -rn "numPicBullet" crates/` is empty), so picture
-  // bullets are dropped on import without a finding. Upgrading this to "full"
-  // requires typing them; the note must stop calling it a render-only gap.
-  assert.equal(by["Lists & numbering"].modeled, "partial");
+  // Numbering renders in full. `modeled` was pinned to "partial" here on the
+  // evidence that `grep -rn "numPicBullet" crates/` was empty — false since
+  // #827 typed picture bullets (`casual-doc-import/src/picture_bullets.rs`, the
+  // `w:numPicBullet` writer in casual-doc-export). That pin held the public page
+  // BELOW the code for a month (SKILL §9.6), so the cell is now derived from the
+  // importer and the writer in its own test below rather than pinned.
   assert.equal(by["Lists & numbering"].rendered, "full");
   // Comments render only under the read-only markup review view
   // (casual-doc-layout/src/flow.rs:2908-2919 gates the highlight on
@@ -257,7 +294,7 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
 
   // No hyphenator, dictionary, or consumer for w:autoHyphenation /
   // w:hyphenationZone exists; only w:suppressAutoHyphens is cascaded
-  // (casual-doc-layout/src/cascade.rs:560-561).
+  // (casual-doc-layout/src/cascade.rs).
   assert.equal(by["Hyphenation"].rendered, "none");
   // This cell used to be pinned to "none" with the justification "no
   // generator" — a guard holding a public page to a claim that had gone FALSE.
@@ -281,15 +318,20 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   //  * WordArt itself (`a:prstTxWarp`, and every warped preset but plain text) is
   //    still neither typed nor painted — this family covers both.
   //  * A DrawingML watermark is not recognised on import.
-  //  * The semantic DOCX writer does not write the watermark back yet, so
-  //    `roundtrips` stays "partial" too.
+  //  * A picture watermark's authored scale becomes "Auto" at import, so it
+  //    does not come back as authored, and WordArt has no typed round trip —
+  //    `roundtrips` stays "partial" for those. (This used to say the semantic
+  //    writer did not put the watermark back; it has since 2026-09-25,
+  //    `watermark_plan` in casual-doc-export/src/semantic.rs.)
   // Raise either cell only when the corresponding half actually closes.
   assert.equal(by["Watermarks & WordArt"].modeled, "partial");
   assert.equal(by["Watermarks & WordArt"].rendered, "partial");
   assert.equal(by["Watermarks & WordArt"].roundtrips, "partial");
-  // One writing-mode axis only: every layout reference to text_direction is
-  // `None` in test scaffolding.
-  assert.equal(by["Vertical & rotated text"].rendered, "none");
+  // "Vertical & rotated text" was pinned here to rendered "none" and editable
+  // "none" ("every layout reference to text_direction is `None` in test
+  // scaffolding"). Both went false in #917/#899: cell text direction turns in
+  // layout and is authored from the Table band, and text-box bodyPr vert/rot
+  // turns. The cells are now derived from the code in their own test below.
   // Previously pinned to "partial" on the grounds that embedded .odttf faces
   // were never de-obfuscated. That shipped: `deobfuscate_odttf` and
   // `register_embedded_fonts` (casual-doc-layout/src/font_registry.rs), wired
@@ -304,8 +346,9 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   // The shaper exposes no paragraph base-direction control and levels collapse
   // to a single RTL flag (casual-doc-layout/src/shape.rs:480-505, :1125).
   assert.equal(by["Bidi, RTL & CJK grid"].rendered, "partial");
-  // Neither of these is authorable from the editor today.
-  for (const family of ["Hyphenation", "Vertical & rotated text"]) {
+  // Not authorable from the editor today: nothing in webapp/src sets
+  // `w:autoHyphenation` or the zone.
+  for (const family of ["Hyphenation"]) {
     assert.equal(
       by[family].editable,
       "none",
@@ -404,6 +447,70 @@ test("no fidelity note denies an authoring path the engine ships", () => {
       denial: /authoring rotation\/flip/i,
       file: "objects.rs",
       declaration: "js_name = setObjectFlip",
+    },
+    // Added 2026-11-06. Each of these denials was PUBLISHED, in fidelity.js
+    // or docs/18, after the binding beside it had shipped (#827, #911, #912,
+    // #917, #918, and ad30feb8 for styles); the page understated the editor
+    // by every one of them (SKILL §9.6).
+    {
+      family: "Images & inline drawings",
+      denial: /replacing an existing picture[^.]*not there/i,
+      file: "objects.rs",
+      declaration: "js_name = replacePicture",
+    },
+    {
+      family: "Text boxes & shapes",
+      denial: /Edit Points (are|is) not there/i,
+      file: "shape_points.rs",
+      declaration: "js_name = setShapeEditPoints",
+    },
+    {
+      family: "Footnotes & endnotes",
+      denial: /converting a footnote to an endnote[^.]*not there/i,
+      file: "notes_settings.rs",
+      declaration: "js_name = convertNotes",
+    },
+    {
+      family: "Footnotes & endnotes",
+      denial: /number-format and restart options[^.]*not there/i,
+      file: "notes_settings.rs",
+      declaration: "js_name = setNoteSettings",
+    },
+    {
+      family: "Sections, columns & page setup",
+      denial: /no section insert/i,
+      file: "lib.rs",
+      declaration: "js_name = insertSectionBreak",
+    },
+    {
+      family: "Paragraph & named styles",
+      denial: /creating a new named style[^.]*not there/i,
+      file: "lib.rs",
+      declaration: "js_name = createStyleFromSelection",
+    },
+    {
+      family: "Lists & numbering",
+      denial: /picture bullets[^.]*not modeled/i,
+      file: "lib.rs",
+      declaration: "js_name = setListPictureBullet",
+    },
+    {
+      family: "Tracked changes",
+      denial: /binary show\/hide/i,
+      file: "review_display.rs",
+      declaration: "js_name = showAsOriginal",
+    },
+    {
+      family: "Content controls (w:sdt)",
+      denial: /(drop-?down|combo|date)[^.]*cannot be operated/i,
+      file: "content_controls.rs",
+      declaration: "js_name = fillContentControl",
+    },
+    {
+      family: "Vertical & rotated text",
+      denial: /^Not implemented\./,
+      file: "table_tools.rs",
+      declaration: "js_name = setCellTextDirection",
     },
   ];
   const stale = [];
@@ -718,4 +825,110 @@ test("every Charts grade is derived from the painter, the writer and the host su
         `"${charts.editable}" claims editing that nothing provides`,
     );
   }
+});
+
+// The cells re-graded on 2026-11-06, each derived from the code that decides it
+// rather than pinned (SKILL §9.6: a pin outlives its reason — four of the pins
+// this file carried had gone false while staying green). Every check fails in
+// both directions: the grade may not rise above the code, and the code may not
+// move past the grade.
+test("the 2026-11-06 re-grades are derived from the importer, the writer and the layout", () => {
+  const by = Object.fromEntries(FIDELITY.map((row) => [row.family, row]));
+  const crate = (path) => readFileSync(new URL(`../../crates/${path}`, import.meta.url), "utf8");
+  const exporter = crate("casual-doc-export/src/semantic.rs");
+
+  // Lists: picture bullets are read and written back, so the one reason the
+  // cell was "partial" is gone.
+  const picBulletsRead = crate("casual-doc-import/src/picture_bullets.rs").includes("numPicBullet");
+  const picBulletsWritten = exporter.includes("w:numPicBullet");
+  if (picBulletsRead && picBulletsWritten) {
+    assert.equal(by["Lists & numbering"].modeled, "full", "picture bullets are imported and exported (#827)");
+  } else {
+    assert.notEqual(by["Lists & numbering"].modeled, "full", "picture bullets lost a reader or a writer");
+  }
+
+  // Hyphenation: the four document settings are typed and written back. The
+  // cell may be "full" only while the writer spells every one of them.
+  const HYPHENATION = ["w:autoHyphenation", "w:hyphenationZone", "w:consecutiveHyphenLimit", "w:doNotHyphenateCaps"];
+  const unwritten = HYPHENATION.filter((name) => !exporter.includes(`"${name}"`));
+  if (unwritten.length === 0) {
+    assert.equal(by["Hyphenation"].roundtrips, "full", "every hyphenation setting is written back by semantic.rs");
+    assert.equal(by["Hyphenation"].modeled, "full", "every hyphenation setting is typed and written back");
+  } else {
+    assert.notEqual(by["Hyphenation"].roundtrips, "full", `semantic.rs no longer writes ${unwritten.join(", ")}`);
+  }
+  assert.doesNotMatch(by["Hyphenation"].note, /hyphenationRules/, "w:hyphenationRules is not a WordprocessingML element");
+
+  // Vertical & rotated text: a turned cell is laid out, and the host authors it.
+  const turnsCells = crate("casual-doc-layout/src/flow.rs").includes("Some(CellTurn::Down)");
+  const turnsBoxes = crate("casual-doc-layout/src/anchor.rs").includes("vertical_text");
+  const vertical = by["Vertical & rotated text"];
+  if (turnsCells || turnsBoxes) {
+    assert.notEqual(vertical.rendered, "none", "cell text direction or bodyPr vert is laid out and painted");
+  } else {
+    assert.equal(vertical.rendered, "none", "nothing in layout turns text any more");
+  }
+  // Section and paragraph text direction are still never consumed, and there
+  // is no upright CJK, so the cell is not "full".
+  assert.notEqual(vertical.rendered, "full");
+  // The engine binding, the host module that calls it, and the command that
+  // puts it on the Table band, the cell's context menu and the palette.
+  const src = (file) => readFileSync(new URL(`../src/${file}`, import.meta.url), "utf8");
+  const authorsCells =
+    crate("casual-doc-wasm/src/table_tools.rs").includes("js_name = setCellTextDirection") &&
+    src("table_tools.mjs").includes("doc.setCellTextDirection(") &&
+    src("table_commands.mjs").includes("host.setCellTextDirection(");
+  if (authorsCells) {
+    assert.notEqual(vertical.editable, "none", "the Table band's Text direction authors w:textDirection");
+  } else {
+    assert.equal(vertical.editable, "none", "no host surface reaches setCellTextDirection");
+  }
+  assert.notEqual(vertical.editable, "full", "a text box's vertical text and a section's direction cannot be set");
+
+  // Footnotes: separator and continuation-separator notes are skipped at
+  // import, and a customised one is reported as a loss. While that skip is in
+  // the importer the separator is neither modeled nor round-tripped.
+  const notes = by["Footnotes & endnotes"];
+  if (crate("casual-doc-import/src/body.rs").includes("skip_note_customised")) {
+    assert.notEqual(notes.modeled, "full", "a customised w:separator is skipped at import, so notes are not fully modeled");
+    assert.notEqual(notes.roundtrips, "full", "a customised w:separator is dropped by a semantic save");
+    assert.match(notes.note, /separator/i, "the note must name the separator gap");
+  } else {
+    assert.fail("casual-doc-import/src/body.rs no longer skips separator notes; re-derive Footnotes & endnotes modeled/roundtrips");
+  }
+
+  // Images: picture effects have no field in the model (`109` UX-OB-01). While
+  // that row is open, the picture family is neither fully modeled nor fully
+  // round-tripped; when it closes, this check asks for a re-grade.
+  const backlog = readFileSync(new URL("../../docs/109-BACKLOG.md", import.meta.url), "utf8");
+  const effects = backlog.match(/^\| \d+ \| UX-OB-01 \|(?:[^|]*\|){4}([^|]*)\|/m);
+  assert.ok(effects, "docs/109 has no UX-OB-01 row; re-derive the Images cells from the model");
+  if (/^\s*(Open|Partly|In progress)/.test(effects[1])) {
+    assert.notEqual(by["Images & inline drawings"].modeled, "full", "UX-OB-01 is open: picture effects are not modeled");
+    assert.notEqual(by["Images & inline drawings"].roundtrips, "full", "UX-OB-01 is open: picture effects are dropped on save");
+  } else {
+    assert.fail("UX-OB-01 is closed; re-grade Images & inline drawings modeled/roundtrips and update this check");
+  }
+});
+
+// SKILL §9.6: a "Not yet" (a `none` cell) cites an open row. Every family with
+// a `none` cell names, in its note, at least one docs/109 row as `109` ID, and
+// at least one of the rows it names is still open — so a gap the page admits is
+// a gap the queue carries, and a closed row cannot keep a cell at "none".
+test("every none cell cites an open docs/109 row", () => {
+  const backlog = readFileSync(new URL("../../docs/109-BACKLOG.md", import.meta.url), "utf8");
+  const status = new Map(
+    [...backlog.matchAll(/^\| \d+ \| ([A-Z][A-Z0-9-]*\d[a-z]?) \|(?:[^|]*\|){4}([^|]*)\|/gm)].map((m) => [m[1], m[2].trim()]),
+  );
+  const missing = [];
+  for (const row of FIDELITY) {
+    if (!STAGES.some((stage) => row[stage] === "none")) continue;
+    const cited = [...row.note.matchAll(/`109` ((?:[A-Z][A-Z0-9-]*\d[a-z]?)(?:,? (?:and )?[A-Z][A-Z0-9-]*\d[a-z]?)*)/g)]
+      .flatMap((m) => m[1].split(/,? (?:and )?/));
+    const open = cited.filter((id) => /^(Open|Partly|In progress|Re-opened)/.test(status.get(id) ?? ""));
+    if (open.length === 0) {
+      missing.push(`${row.family} grades a cell "none" and cites ${cited.length ? cited.join(", ") + ", none of them open" : "no docs/109 row"}`);
+    }
+  }
+  assert.deepEqual(missing, []);
 });
