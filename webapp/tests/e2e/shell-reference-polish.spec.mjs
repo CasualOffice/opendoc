@@ -1,4 +1,5 @@
 import {
+  pointerSelectHighlight,
   appMenuButton,
   test,
   expect,
@@ -112,6 +113,8 @@ test("the selection formatting toolbar follows light and dark panel surfaces", a
   await gotoEditor(page);
   await clickIntoFirstPage(page);
   await page.keyboard.press(`${MOD}+a`);
+  // The mini-toolbar is earned by a pointer selection (docs/184 D-12).
+  await pointerSelectHighlight(page);
 
   const toolbar = page.locator("#selToolbar");
   await expect(toolbar).toBeVisible();
@@ -162,12 +165,13 @@ test("the selection formatting toolbar follows light and dark panel surfaces", a
   expect(consoleErrors).toEqual([]);
 });
 
-// The outline is a DOCKED panel since the approved UI audit (`docs/184` D4,
-// UX-055, Google Docs): docked to the workspace edge at full workspace height,
-// no floating card, no radius, no shadow, one hairline on the side that faces
-// the page, and the page beside it, never under it. Until #928 this test held
-// the opposite design, a rounded floating card with a shadow and a gap below
-// it; D4 retired that card on purpose, so this asserts the docked guarantee.
+// The outline is a DOCKED panel (`docs/184` D4 as amended 2026-11-06, UX-055,
+// PROPOSAL D-10, the approved v2-desktop-editor mockup): one anatomy for every
+// docked panel, a rounded card on the grey desk at full workspace height, flush
+// against the rail on its outer edge, `--dock-gap` from the top and bottom, and
+// the page beside it, never under it. #928 briefly held a flush, borderless
+// docked panel; lane L5 replaced it with this card on purpose. The card's edge
+// is a hairline RING (box-shadow), not a border, so it reads in the dark theme.
 test("the outline inspector is docked to the workspace edge, beside the page", async ({
   page,
   consoleErrors,
@@ -200,20 +204,22 @@ test("the outline inspector is docked to the workspace edge, beside the page", a
       overlap: bounds.right - viewport.left,
     };
   });
-  expect(style.radius).toBe("0px");
-  expect(style.shadow).toBe("none");
-  // One hairline, on the side that faces the page (the outline docks left).
+  // `--r-md`, the one card radius (`docs/63` §7, UX-052).
+  expect(style.radius).toBe("8px");
+  // The ring and lift are a box-shadow; there is no border.
+  expect(style.shadow).not.toBe("none");
   expect([
     style.borderTop,
     style.borderRight,
     style.borderBottom,
     style.borderLeft,
-  ]).toEqual(["0px", "1px", "0px", "0px"]);
-  // Full workspace height, flush against the rail: no floating inset.
-  expect(Math.abs(style.topInset)).toBeLessThanOrEqual(0.5);
-  expect(Math.abs(style.bottomInset)).toBeLessThanOrEqual(0.5);
+  ]).toEqual(["0px", "0px", "0px", "0px"]);
+  // Full workspace height less the dock gap (0.375rem) above and below, and
+  // flush against the rail on the outer edge (margin-inline-start: 0).
+  expect(Math.abs(style.topInset - 6)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(style.bottomInset - 6)).toBeLessThanOrEqual(0.5);
   expect(Math.abs(style.leftInset)).toBeLessThanOrEqual(0.5);
-  // The page re-centres beside the panel: the viewport starts where it ends.
+  // The page re-centres beside the panel: the viewport starts after it ends.
   expect(style.overlap).toBeLessThanOrEqual(0.5);
   expect(consoleErrors).toEqual([]);
 });
@@ -319,13 +325,13 @@ test("the status bar keeps its counts and live controls at 720px", async ({ page
   await expect(page.locator("#statWords")).toBeVisible();
   await expect(page.locator("#statChars")).toBeVisible();
   await expect(page.locator("#statPages")).toBeVisible();
-  await expect(page.locator("#reviewModeControl")).toBeVisible();
   await expect(page.locator(".zoom")).toBeVisible();
 
-  // Every mode segment is fully readable — not squeezed to an ellipsis — and the
-  // zoom control is clickable rather than merely on-screen.
+  // Every footer item is fully readable — not squeezed to an ellipsis — and the
+  // zoom control is clickable rather than merely on-screen. (The mode switch left
+  // the status bar for the header in `docs/184` D6.)
   const clipped = await page.evaluate(() =>
-    [...document.querySelectorAll(".footer .review-mode-seg")].filter((el) => el.scrollWidth > el.clientWidth).length,
+    [...document.querySelectorAll(".footer button:not([hidden])")].filter((el) => el.getClientRects().length > 0 && el.scrollWidth > el.clientWidth + 1).length,
   );
   expect(clipped).toBe(0);
   await page.locator("#zoomIn").click();

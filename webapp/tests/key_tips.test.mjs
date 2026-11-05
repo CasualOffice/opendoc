@@ -19,7 +19,7 @@ import {
   matchKeyTips,
   tabKeyTips,
 } from "../src/key_tips.mjs";
-import { nextRowIndex, readSegments } from "../src/header_mode.mjs";
+import { nextRowIndex, readModeRows } from "../src/header_mode.mjs";
 
 /** Unique and prefix-free, the two properties the key sequence relies on. */
 function assertPrefixFree(codes) {
@@ -153,32 +153,32 @@ test("only a field that is not the document counts as somewhere a person is typi
   assert.equal(isForeignTextEntry(null), false);
 });
 
-// ---- the header's mode selector reads the status bar ------------------------
+// ---- the header's mode selector reads its own rows -------------------------
 
-const segment = (mode, { pressed = false, disabled = false, title = "" } = {}) => ({
+const modeRow = (mode, { checked = false, disabled = false, title = "" } = {}) => ({
   dataset: { reviewMode: mode },
-  disabled,
-  getAttribute: (name) => (name === "aria-pressed" ? String(pressed) : name === "title" ? title : null),
+  getAttribute: (name) =>
+    name === "aria-checked" ? String(checked) : name === "aria-disabled" ? (disabled ? "true" : null) : name === "title" ? title : null,
 });
 
-test("the header's mode is the pressed segment, with each row's availability and reason", () => {
-  const state = readSegments([
-    segment("editing", { disabled: true, title: "This document is read-only" }),
-    segment("suggesting", { disabled: true, title: "This document is read-only" }),
-    segment("viewing", { pressed: true }),
+test("the header's mode is the checked row, with each row's availability and reason", () => {
+  const state = readModeRows([
+    modeRow("editing", { disabled: true, title: "This document is read-only" }),
+    modeRow("suggesting", { disabled: true, title: "This document is read-only" }),
+    modeRow("viewing", { checked: true }),
   ]);
   assert.equal(state.current, "viewing");
   assert.deepEqual(state.rows[0], {
     mode: "editing",
-    pressed: false,
+    checked: false,
     disabled: true,
     reason: "This document is read-only",
   });
   assert.equal(state.rows[2].reason, "");
 });
 
-test("with no segment pressed the header says Editing, setReviewMode's own fallback", () => {
-  assert.equal(readSegments([segment("editing"), segment("suggesting")]).current, "editing");
+test("with no row checked the header says Editing, setReviewMode's own fallback", () => {
+  assert.equal(readModeRows([modeRow("editing"), modeRow("suggesting")]).current, "editing");
 });
 
 test("the menu's arrow keys wrap, and Home and End jump", () => {

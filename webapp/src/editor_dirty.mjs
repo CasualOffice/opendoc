@@ -3,6 +3,7 @@
 // and drafts all read. Moved out of `main.js` unchanged (docs/177); it reaches
 // the rest of the editor only through the context `ed`.
 import { CAPTURE_REASON } from "./version_history.mjs";
+import { withdrawUndoSnackbarOnEdit } from "./undo_snackbar.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -55,6 +56,9 @@ export function createDirtyTracking(ed) {
     ed.objectPresence.forget();
     if (revision === null || revision === undefined) ed.revisionUnreadable = true;
     else ed.currentRevision = revision;
+    // A blind "Undo" offer (Accept all's snackbar) undoes the LAST step; this
+    // edit is now the last step, so the offer goes (`undo_snackbar.mjs`). O(1).
+    withdrawUndoSnackbarOnEdit({ unreadable: revision === null || revision === undefined });
     ed.setDocumentState("edited");
     // Autosave's only contact with the edit path, and it must stay O(1) in
     // document size (docs/107 §4): this stores an integer and re-arms a timer.
@@ -81,6 +85,8 @@ export function createDirtyTracking(ed) {
     savedName = name;
     ed.revisionUnreadable = false;
     ed.restoredFromDraft = false;
+    // Another document: an offer to undo the last one's step is meaningless.
+    withdrawUndoSnackbarOnEdit({ replaced: true });
   }
 
   /** The bytes have left the editor, so the current state is now the saved one. */

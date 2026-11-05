@@ -764,8 +764,9 @@ export function allowsMode(capabilities, mode) {
 }
 
 /**
- * Reflects a host's grant onto the review-mode buttons: a mode the host
- * withheld is DISABLED WITH A REASON, never removed.
+ * Reflects a host's grant onto the review-mode rows (the header's mode menu):
+ * a mode the host withheld is DISABLED WITH A REASON (`aria-disabled` and
+ * `title`), never removed.
  *
  * Here rather than in `main.js` because it is the same question as
  * `allowsMode` asked of the DOM, and because putting it here makes "a withheld
@@ -778,7 +779,7 @@ export function allowsMode(capabilities, mode) {
  *
  * `bannerEdit` is the Viewing banner's "Switch to editing" offer, and it is the
  * one control here that is REMOVED rather than disabled, because it is an OFFER
- * rather than a state: a disabled segment still tells the reader which of three
+ * rather than a state: a disabled mode row still tells the reader which of three
  * modes they are in, where a disabled "Switch to editing" says only "no". It is
  * hidden for a document the engine refuses — and, since this, for a container
  * whose host withheld `edit`, which is the same "never, for you" arriving from
@@ -810,10 +811,13 @@ export function reflectReviewModeAccess({ buttons, bannerEdit, capabilities, rea
     const mode = button.dataset?.reviewMode;
     const withheld = !allowsMode(capabilities, mode);
     const room = withheld ? null : roomRefusal(mode);
-    button.disabled = !!readOnlyReason || withheld || !!room;
-    if (readOnlyReason) button.title = readOnlyReason;
-    else if (withheld) button.title = withheldReason;
-    else if (room) button.title = room;
+    // `aria-disabled`, not `disabled`: the mode rows are the header menu's
+    // `menuitemradio`s (`header_mode.mjs`), and a refused row has to stay
+    // focusable so a keyboard user can land on it and hear its reason (SKILL §10).
+    const reason = readOnlyReason || (withheld ? withheldReason : room) || "";
+    if (readOnlyReason || withheld || room) button.setAttribute("aria-disabled", "true");
+    else button.removeAttribute("aria-disabled");
+    if (reason) button.setAttribute("title", reason);
     else button.removeAttribute("title");
   }
   if (bannerEdit) {

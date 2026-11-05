@@ -50,9 +50,12 @@ test("an external HTML table pastes as a real table with all cells; one undo rev
   </tbody></table>`;
   await pasteHtml(page, html, "CELLAA\tCELLAB\nCELLBA\tCELLBB");
 
-  // A real table was reconstructed: the caret landed inside it, so the contextual
-  // Table ribbon activates (a flattened text paste would leave the caret in prose
-  // with the Table tab disabled).
+  // The caret lands AFTER the pasted table, as in Word and Docs (`109` UX-063),
+  // and a real table was reconstructed: one ArrowUp steps into it, so the
+  // contextual Table ribbon activates (a flattened text paste would leave only
+  // prose above the caret, with the Table tab disabled).
+  await expect(page.locator("#tabTable")).toBeDisabled();
+  await page.keyboard.press("ArrowUp");
   await expect(page.locator("#tabTable")).toBeEnabled();
 
   // All four cell texts survived.

@@ -12,9 +12,10 @@ test("gallery demos open the editor in distinct, capability-specific states", as
     .poll(() => page.evaluate(() => document.querySelector('.ribbon-tab[aria-selected="true"]')?.dataset.tab))
     .toBe("insert");
 
-  // Tracked changes -> Suggesting mode (its banner shows).
+  // Tracked changes -> Suggesting mode (the header chip says so; there is no
+  // banner, PROPOSAL D-6).
   await page.goto("/editor.html?demo=changes");
-  await expect(page.locator("#suggestingBanner")).toBeVisible();
+  await expect(page.locator("#headerModeBtn")).toHaveAttribute("data-mode", "suggesting");
 
   // Find -> the find panel is open.
   await page.goto("/editor.html?demo=find");

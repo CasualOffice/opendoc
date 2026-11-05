@@ -4,7 +4,7 @@
       "schemaVersion": 1,
       "packId": "casual-proof-en-US-supplement",
       "locale": "en-US",
-      "packVersion": "1.8f6814b422b7",
+      "packVersion": "1.9bb8147481c5",
       "engineApiRange": "1",
       "capabilities": [
         "spelling"
@@ -13,15 +13,15 @@
         {
           "id": "words",
           "url": "packs/en-US-supplement/words.txt",
-          "bytes": 1749,
-          "sha256": "8f6814b422b77c56c4981d5dde3a8a1070e5f3c8226091cb9fe438dc965d256b",
+          "bytes": 1726,
+          "sha256": "9bb8147481c5264340a65640c110f26915a4f8523c7f35e6321fb2d85cd2455a",
           "format": "words-plain-1"
         }
       ],
       "provenance": [
         {
           "name": "OpenDoc contemporary English supplement",
-          "version": "1.8f6814b422b7",
+          "version": "1.9bb8147481c5",
           "license": "Apache-2.0",
           "url": "https://github.com/CasualOffice/opendoc/blob/main/webapp/packs/sources/en-US-supplement.txt"
         }
@@ -29,7 +29,7 @@
       "selfTest": {
         "known": [
           "abortable",
-          "metaverse",
+          "memoization",
           "workstreams"
         ],
         "unknown": [

@@ -9,7 +9,9 @@ export function createFonts(ed) {
   async function provisionFonts(name, target = ed.doc, state = ed.fontState) {
     if (!target || state.retired) return [];
     const warnings = [];
-    ed.statusChannel.progress(`Fetching web fonts for ${name}…`);
+    // Silently, as Docs and Word do: the status line said "Fetching fonts for
+    // sample.docx (arabic, devanagari, …)" on every open, an internal detail the
+    // reader cannot act on (audit FILE-17). A face that FAILS still says so below.
 
     const named = await Promise.allSettled(
       NAMED_WEB_FONT_FACES.map((face) => fetchSharedFontBytes(face.url, ed.fontCache)),
@@ -52,7 +54,6 @@ export function createFonts(ed) {
       (key) => !provisionedFallbackKeys.has(key) && !inFlightFallbackKeys.has(key),
     );
     if (keys.length === 0) return warnings;
-    if (ed.doc === target) ed.statusChannel.progress(`Fetching fonts for ${label} (${keys.join(", ")})…`);
     for (const key of keys) inFlightFallbackKeys.add(key);
     for (const key of keys) {
       const { url, scripts } = SCRIPT_FALLBACK_FONTS[key];

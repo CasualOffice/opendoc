@@ -20,6 +20,20 @@ export function createParagraphInspector(ed) {
     input.checked = state === 1;
   }
 
+  /** `paragraphSpacing(node)` as plain numbers, cached for one document version
+   *  and one paragraph. O(1) on a hit; one engine call on a miss. */
+  let spacingKey = null;
+  let spacingValue = null;
+  function effectiveSpacing(node) {
+    const key = `${ed.revisionUnreadable ? "?" : ed.documentVersion()}|${node}`;
+    if (key === spacingKey && !ed.revisionUnreadable) return spacingValue;
+    const spacing = ed.doc.paragraphSpacing(node);
+    spacingValue = { lineRule: spacing.lineRule, linePercent: spacing.linePercent, beforeTwip: spacing.beforeTwip, afterTwip: spacing.afterTwip };
+    spacing.free?.();
+    spacingKey = key;
+    return spacingValue;
+  }
+
   function reflectParagraphProperties() {
     if (!ed.doc || !ed.selection) return;
     const [startNode, startOffset, endNode, endOffset] = ed.selEndpoints();
@@ -27,6 +41,19 @@ export function createParagraphInspector(ed) {
     ed.listAdvanced.reflect();
     ed.styleAdvanced.reflect();
     const state = ed.doc.selectionParagraphState(startNode, startOffset, endNode, endOffset);
+    // The EFFECTIVE values, as Word's Paragraph dialog shows them (audit
+    // DIALOGS-07): a Heading 1 paragraph is 0" from the margin, not a blank box,
+    // and its spacing is what its style resolves to, not "Mixed or inherited".
+    // `paragraphSpacing` resolves the style cascade. It is O(document) in the
+    // engine (resolving the node is a block walk), so it is asked only when a
+    // value is missing from the paragraph's own properties, only for a single
+    // paragraph (a range keeps its honest Mixed), and at most once per
+    // (document version, paragraph): caret moves inside a paragraph reuse it.
+    // The residue — one call per edit while Properties is open — is recorded in
+    // `docs/109` UX-055 against a by-node resolver in the engine.
+    const needsEffective = state.count === 1 && (!state.linePercent || state.beforeTwip < 0 || state.afterTwip < 0);
+    const effective = needsEffective ? effectiveSpacing(startNode) : null;
+    const inches = (twips) => (twips === 0 ? "0" : twipsToInchText(twips));
     ed.paragraphPropertiesContext.textContent =
       state.count === 1 ? "1 paragraph" : `${state.count} paragraphs`;
 
@@ -43,11 +70,11 @@ export function createParagraphInspector(ed) {
 
     if (document.activeElement !== ed.indentLeftInput) {
       ed.indentLeftInput.placeholder = state.startMixed ? "Mixed" : "";
-      ed.indentLeftInput.value = state.startMixed ? "" : twipsToInchText(state.startTwip);
+      ed.indentLeftInput.value = state.startMixed ? "" : inches(state.startTwip);
     }
     if (document.activeElement !== ed.indentRightInput) {
       ed.indentRightInput.placeholder = state.endMixed ? "Mixed" : "";
-      ed.indentRightInput.value = state.endMixed ? "" : twipsToInchText(state.endTwip);
+      ed.indentRightInput.value = state.endMixed ? "" : inches(state.endTwip);
     }
     if (![ed.indentSpecialByInput, ed.indentSpecialSel].includes(document.activeElement)) {
       if (state.firstLineMixed || state.hangingMixed) {
@@ -70,21 +97,30 @@ export function createParagraphInspector(ed) {
     }
 
     if (document.activeElement !== ed.paraLineSpacing) {
-      ed.paraLineSpacing.value = state.lineMixed ? "" : String(state.linePercent || "");
+      const percent = state.lineMixed ? 0 : state.linePercent || (effective?.lineRule === 0 ? effective.linePercent : 0);
+      // Word's 1.08 (Normal in Office 2013+) is not one of the presets; it is
+      // the paragraph's value all the same, so it gets a row of its own.
+      if (percent && ![...ed.paraLineSpacing.options].some((o) => o.value === String(percent))) {
+        ed.paraLineSpacing.querySelector("option[data-effective]")?.remove();
+        const option = document.createElement("option");
+        option.value = String(percent);
+        option.dataset.effective = "true";
+        option.textContent = String(Math.round(percent) / 100);
+        ed.paraLineSpacing.append(option);
+      }
+      ed.paraLineSpacing.value = percent ? String(percent) : "";
     }
     if (document.activeElement !== ed.paraSpaceBefore) {
       ed.paraSpaceBefore.placeholder = state.beforeMixed ? "Mixed" : "";
+      const before = state.beforeTwip >= 0 ? state.beforeTwip : effective?.beforeTwip ?? -1;
       ed.paraSpaceBefore.value =
-        state.beforeMixed || state.beforeTwip < 0
-          ? ""
-          : String(Math.round(state.beforeTwip / ed.TWIPS_PER_POINT));
+        state.beforeMixed || before < 0 ? (state.beforeMixed ? "" : "0") : String(Math.round(before / ed.TWIPS_PER_POINT));
     }
     if (document.activeElement !== ed.paraSpaceAfter) {
       ed.paraSpaceAfter.placeholder = state.afterMixed ? "Mixed" : "";
+      const after = state.afterTwip >= 0 ? state.afterTwip : effective?.afterTwip ?? -1;
       ed.paraSpaceAfter.value =
-        state.afterMixed || state.afterTwip < 0
-          ? ""
-          : String(Math.round(state.afterTwip / ed.TWIPS_PER_POINT));
+        state.afterMixed || after < 0 ? (state.afterMixed ? "" : "0") : String(Math.round(after / ed.TWIPS_PER_POINT));
     }
 
     setMixedCheckbox(ed.pgKeepNext, state.keepNextState);
@@ -98,6 +134,10 @@ export function createParagraphInspector(ed) {
     if (!state.shadingMixed && state.shading >= 0 && document.activeElement !== ed.paraShade) {
       ed.paraShade.value = `#${state.shading.toString(16).padStart(6, "0")}`;
     }
+    // The swatch shows the paragraph, not the colour the picker would apply
+    // (audit DIALOGS-V-01): an unshaded paragraph reads "no fill" (a slashed
+    // swatch, Word's "No Color"); the picker keeps the last colour to apply.
+    ed.paraShade.closest(".shade-pick")?.classList.toggle("is-none", !state.shadingMixed && state.shading < 0);
     ed.paraBordersMixed.hidden = !state.bordersMixed;
     const bit = { top: 1, bottom: 2, left: 4, right: 8 };
     for (const b of ed.paragraphPropertiesPanel.querySelectorAll(".border-btn")) {
@@ -117,11 +157,13 @@ export function createParagraphInspector(ed) {
   // the user asked for. The panel owns the real indent/spacing values — the ribbon
   // deliberately holds no second copy of them — so the deep link is what makes the
   // ribbon button honest about what it does.
-  function toggleParagraphProperties(open, focusTarget = null) {
+  function toggleParagraphProperties(open, focusTarget = null, { follow = false } = {}) {
     const show = open ?? ed.paragraphPropertiesPanel.hidden;
     if (show && (!ed.doc || !ed.selection)) return;
-    const returnFocus =
-      !show && ed.paragraphPropertiesPanel.contains(document.activeElement);
+    // Where focus goes on close is the dock's to decide (`dock_manager.mjs`,
+    // audit DIALOGS-05): back to the invoker it recorded, or to the document
+    // when the panel came from the palette, a menu or a shortcut. This used to
+    // send it to the ribbon's Paragraph button whatever had opened the panel.
     ed.paragraphPropertiesPanel.hidden = !show;
     ed.paraOptsBtn.setAttribute("aria-expanded", String(show));
     if (show) {
@@ -134,7 +176,7 @@ export function createParagraphInspector(ed) {
       // Indent / Spacing) still scrolls to the field it asked for.
       const body = ed.paragraphPropertiesPanel.querySelector(".panel-body");
       if (body) body.scrollTop = 0;
-      queueMicrotask(() => {
+      if (!follow) queueMicrotask(() => {
         const target = focusTarget?.();
         // A deep link into "More options" (list settings, style management)
         // opens that disclosure first, or the field would be unreachable.
@@ -143,8 +185,6 @@ export function createParagraphInspector(ed) {
         if (target) target.focus();
         else ed.paraPanelStyle.focus({ preventScroll: true });
       });
-    } else if (returnFocus) {
-      ed.paraOptsBtn.focus({ preventScroll: true });
     }
   }
 
@@ -158,12 +198,15 @@ export function createParagraphInspector(ed) {
   document.getElementById("paragraphPropertiesClose").addEventListener("click", () =>
     toggleParagraphProperties(false),
   );
+  // Escape on the ribbon button that opened the panel closes it, focus staying
+  // on the button. Escape from INSIDE the panel is the dock's, like every
+  // panel's: it closes the panel and returns focus to the invoker.
   document.addEventListener("keydown", (event) => {
     if (
       event.key === "Escape" &&
+      !event.defaultPrevented &&
       !ed.paragraphPropertiesPanel.hidden &&
-      (document.activeElement === ed.paraOptsBtn ||
-        ed.paragraphPropertiesPanel.contains(document.activeElement))
+      document.activeElement === ed.paraOptsBtn
     ) {
       event.preventDefault();
       toggleParagraphProperties(false);

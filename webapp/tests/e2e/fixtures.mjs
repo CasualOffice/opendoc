@@ -291,15 +291,21 @@ export async function moveCaretToDocStart(page) {
   await page.keyboard.press(`${MOD}+Home`);
 }
 
-// The three-state review-mode control (`#reviewModeControl`: Editing /
-// Suggesting / Viewing) lives in the persistent footer. Selects `mode` and
-// confirms its segment became the pressed one.
+// The three-state review mode (Editing / Suggesting / Viewing) is switched from
+// the header's one mode selector (`docs/184` D6: the status bar's duplicate is
+// gone). Opens its menu, chooses `mode` and confirms its row became the checked
+// one. `modeRow` is the row itself, for asserting the published state
+// (`aria-checked`, `aria-disabled`) without opening the menu.
+export function modeRow(page, mode) {
+  return page.locator(`#headerModeMenu [data-review-mode="${mode}"]`);
+}
+
 export async function setReviewMode(page, mode) {
-  const button = page.locator(
-    `#reviewModeControl [data-review-mode="${mode}"]`,
-  );
-  await button.click();
-  await expect(button).toHaveAttribute("aria-pressed", "true");
+  const row = modeRow(page, mode);
+  await page.locator("#headerModeBtn").click();
+  await expect(row).toBeVisible();
+  await row.click();
+  await expect(row).toHaveAttribute("aria-checked", "true");
 }
 
 /** Proves nothing entered the undo history — from a surface that survives when
@@ -321,6 +327,33 @@ export async function expectNothingToUndo(page) {
   await expect(row, "a refused edit must not enter the undo history").toBeDisabled();
   await page.keyboard.press("Escape");
   await expect(popover).toBeHidden();
+}
+
+/** Opens the comment composer for the current selection by its chord
+ *  (⌘⌥M, Ctrl+Alt+M elsewhere). Specs used to click the mini-toolbar's Comment
+ *  button after a KEYBOARD selection; the mini-toolbar is earned by a pointer
+ *  selection only (docs/184 D-12, audit CANVAS-06), as Word's is, so a
+ *  keyboard-made selection reaches the command by its keyboard route. */
+export async function commentOnSelection(page) {
+  await page.keyboard.press("ControlOrMeta+Alt+m");
+}
+
+/** Re-makes the current (first-line) selection with the POINTER: a drag across
+ *  the first painted highlight. The mini-toolbar appears only for pointer-made
+ *  selections (docs/184 D-12, audit CANVAS-06), so a spec about the toolbar
+ *  makes its selection the way a reader who sees the toolbar does. Waits for
+ *  the toolbar. */
+export async function pointerSelectHighlight(page) {
+  const box = await stableBox(page.locator("#pages .overlay .highlight").first());
+  // Collapse first: a press INSIDE a selection starts a text drag (a move).
+  await page.keyboard.press("ArrowLeft");
+  const y = box.y + box.height / 2;
+  await page.mouse.move(box.x + 1, y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, y, { steps: 3 });
+  await page.mouse.move(box.x + box.width - 1, y, { steps: 3 });
+  await page.mouse.up();
+  await expect(page.locator("#selToolbar")).toBeVisible();
 }
 
 /** Runs a command by its COMMAND ID through the command palette, which belongs to
@@ -730,3 +763,13 @@ export function expectTypedIntoOneBlock(before, after, typed) {
     `more than one block changed: ${remaining.join(" | ")}`,
   ).toBeLessThanOrEqual(1);
 }
+
+/** Runs a row of the comments bar's ⋯ menu (PROPOSAL D-11, `docs/109` UX-065):
+ *  Previous, Next, Accept all, Reject all and Close live there, one click
+ *  behind the bar, the way a person reaches them. `id` is the row's selector. */
+export async function reviewBarAction(page, id) {
+  await page.locator("#reviewMoreBtn").click();
+  await expect(page.locator("#reviewMoreMenu")).toBeVisible();
+  await page.locator(id).click();
+}
+

@@ -11,7 +11,7 @@
 // so the popover manager's "one popover open at a time" holds across both.
 //
 //   * `header_mode.mjs`  — the editing-mode selector at the top right (UX-025),
-//                          a second face of the status bar's segmented control.
+//                          the one mode switch on screen (UX-054).
 //   * `status_line.mjs`  — the status line's full text on hover when it is cut.
 //   * `key_tips.mjs`     — Alt key tips over the ribbon.
 
@@ -29,7 +29,6 @@ export function wireChrome(doc) {
       text: doc.getElementById("headerModeText"),
       icon: doc.getElementById("headerModeIcon"),
       menu: doc.getElementById("headerModeMenu"),
-      segments: doc.getElementById("reviewModeControl"),
       registerPopover,
     }),
     statusLine: installStatusLineTitle(doc.getElementById("status")),

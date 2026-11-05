@@ -68,10 +68,14 @@ async function painted(frame) {
       withheld: document.body.dataset.chromeWithheld ?? "",
       // Which review mode the container arrived in, and which ones it is allowed to
       // choose. A host-withheld mode is DISABLED WITH A REASON rather than removed
-      // (`reflectReviewModeAccess`), so both halves are worth reading.
+      // (`reflectReviewModeAccess`), so both halves are worth reading. Since the
+      // status-bar control was removed (docs/184 D6), the header menu's rows are the
+      // published state: `aria-checked` marks the mode and a refused row is
+      // `aria-disabled` (still focusable, so its reason can be heard).
       mode:
-        document.querySelector("[data-review-mode][aria-pressed='true']")?.dataset.reviewMode ?? "",
-      editingOffered: !document.querySelector("[data-review-mode='editing']")?.disabled,
+        document.querySelector("[data-review-mode][aria-checked='true']")?.dataset.reviewMode ?? "",
+      editingOffered:
+        document.querySelector("[data-review-mode='editing']")?.getAttribute("aria-disabled") !== "true",
     };
   });
 }

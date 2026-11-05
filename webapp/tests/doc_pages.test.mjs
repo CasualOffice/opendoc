@@ -588,14 +588,15 @@ test("how much English the reference pages put on the site, measured and publish
   // 4037 -> 4126: docs/176 §12.12 records editing pictures, headers and footers, notes and sections. MEASURED.
   // 4126 -> 4155: docs/176 §12.13 records SVG pages. MEASURED.
   // 4155 -> 4170: docs/176 §12.14 records the C ABI fuzz target. MEASURED.
+  // 4170 -> 4172: docs/162 says how the container caches the stamped wasm (UX-064). MEASURED.
   const sites = Object.fromEntries(
     BUILT.map((page) => [page.file, scanMarkup(page.committed).length]),
   );
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    4170,
-    `the fourteen reference pages carry ${total} unrouted English strings (was 4170). That ` +
+    4172,
+    `the fourteen reference pages carry ${total} unrouted English strings (was 4172). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose, or a page was published. Regenerate the pages, then MEASURE and record ` +
       `the new figure here — do not calculate it. Per page: ` +

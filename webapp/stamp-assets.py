@@ -25,6 +25,21 @@ Four things have to carry the version, because four different mechanisms fetch:
    hours: `opendoc-mark.svg` is served `max-age=14400` from a fixed URL, exactly
    the defect this script exists to prevent, one file type over.
 
+One more thing rides along, on the wasm preload only: `data-bytes`, the binary's
+raw size. The editor's boot progress bar (`engine_boot.mjs`, docs/109 UX-064)
+counts the bytes the stream yields, and Pages gzips the wasm, so the stream yields
+DECOMPRESSED bytes while `Content-Length` counts compressed ones; dividing one by
+the other would be a bar that reaches 100% at 45%. Only the build knows the raw
+size, so the build writes it down.
+
+Why not `Cache-Control: immutable` on the wasm as well (PROPOSAL D-16): GitHub
+Pages sets every response header itself (the cache lifetimes above among
+them) and offers no way to add one; there is no `_headers` file and no
+`<meta>` that reaches the HTTP cache. The `?v=` stamp is what makes a long cache
+safe, and it is in place, so a host that serves `webapp/` from a server it
+controls should send `Cache-Control: public, max-age=31536000, immutable` for
+any `?v=`-stamped `.wasm`, `.js`, `.mjs` and `.css` (docs/63 §8).
+
 Run on the deploy artifact only (see .github/workflows/pages.yml). It rewrites
 files in place, so running it in a working tree would dirty tracked pages;
 `webapp/tests/stamp_assets.test.mjs` runs it on a copy.
@@ -138,6 +153,25 @@ def module_preloads(html: str, build: str, root: Path | None) -> str:
     return html[:at] + block + html[at:]
 
 
+def wasm_bytes(html: str, root: Path | None) -> str:
+    """Writes the wasm's raw size onto its `<link rel=preload>` as `data-bytes`.
+
+    Replaces a previous stamp, so re-running is idempotent; leaves the link alone
+    when the binary is absent (a unit-test checkout without `pkg/`)."""
+    if root is None:
+        return html
+    binary = root / "pkg" / WASM
+    if not binary.is_file():
+        return html
+    size = binary.stat().st_size
+
+    def sized(match: re.Match[str]) -> str:
+        tag = re.sub(r'\s+data-bytes="\d*"', "", match.group(0))
+        return re.sub(r"\s*/?>$", lambda end: f' data-bytes="{size}"{end.group(0)}', tag, count=1)
+
+    return re.sub(r'<link rel="preload"[^>]*\bhref="\./pkg/' + re.escape(WASM) + r'[^"]*"[^>]*>', sized, html)
+
+
 def stamp_page(html: str, build: str, modules: list[str], root: Path | None = None) -> str:
     # 1. Direct references. Only local ./src/ and ./pkg/ assets: an absolute or
     #    third-party URL is not ours to version.
@@ -179,7 +213,7 @@ def stamp_page(html: str, build: str, modules: list[str], root: Path | None = No
             + "</script>"
         )
         html = html.replace("<head>", "<head>" + block, 1)
-    return module_preloads(html, build, root)
+    return wasm_bytes(module_preloads(html, build, root), root)
 
 
 def stamp_stylesheet(css: str, build: str) -> str:

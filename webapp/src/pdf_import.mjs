@@ -98,7 +98,10 @@ function buildDialog(view) {
   const head = make("header", { className: "dialog-head" });
   const heading = make("div", { className: "dialog-heading" });
   const words = make("div");
-  words.append(make("h2", { id: `${ID}Title` }), make("p", { id: `${ID}Description` }));
+  // The intro is a sentence, so it opens the BODY rather than wrapping under
+  // the title: a description is one line (`docs/184` D1, audit DIALOGS-13).
+  const intro = make("p", { id: `${ID}Description`, className: "pdf-import-intro" });
+  words.append(make("h2", { id: `${ID}Title` }));
   heading.append(words);
   const close = make("button", { id: `${ID}Close`, type: "button", className: "dialog-close" });
   close.append(make("span", { className: "ms", textContent: "close" }));
@@ -123,7 +126,7 @@ function buildDialog(view) {
   keepLabel.htmlFor = keep.id;
   const keepHint = make("p", { id: `${ID}KeepLayoutHint`, className: "pdf-import-phase" });
   layout.append(keep, keepLabel, keepHint);
-  body.append(bar, count, phase, layout);
+  body.append(intro, bar, count, phase, layout);
   const foot = make("footer", { className: "dialog-foot" });
   const actions = make("div", { className: "dialog-actions" });
   const cancel = make("button", { id: `${ID}Cancel`, type: "button", className: "dialog-button" });
@@ -145,7 +148,7 @@ function buildDialog(view) {
     keepLabel,
     keepHint,
     title: words.firstChild,
-    description: words.lastChild,
+    description: intro,
   };
 }
 

@@ -24,8 +24,13 @@ export function shareLink(base, shared) {
 
 export function createShare({ document, provider, base, name, joined, clipboard, showLink, status, t, existingLink = () => null }) {
   let busy = false;
+  /** Whether sharing exists here at all: a document, and a host that can mint a
+   *  share (or a link already minted). Without it Share is not offered. */
+  const configured = () => Boolean(document()) && (Boolean(existingLink()) || typeof provider()?.createShare === "function");
   return {
-    available: () => Boolean(document()) && (Boolean(existingLink()) || typeof provider()?.createShare === "function") && !busy,
+    configured,
+    /** `configured`, and not in the middle of minting one. */
+    available: () => configured() && !busy,
     async share() {
       if (busy) return;
       const existing = existingLink();

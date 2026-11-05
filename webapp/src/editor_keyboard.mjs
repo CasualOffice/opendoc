@@ -9,6 +9,8 @@ import { orderedSelectionEnds } from "./caret_navigation.mjs";
 import { smartQuoteForTyped } from "./text_rules.mjs";
 import { typeArmedCharacter } from "./font_advanced.mjs";
 import { cellContentsSelection } from "./table_tab.mjs";
+import { storyBoundary } from "./editor_selection_commands.mjs";
+import { exitEmptyListItem } from "./list_enter.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -145,7 +147,10 @@ export function createKeyboard(ed) {
     }
     if (navDir === "docStart" || navDir === "docEnd") {
       e.preventDefault();
-      ed.navToPosition(navDir === "docStart" ? ed.doc.firstPosition() : ed.doc.lastPosition(), e.shiftKey);
+      // The body's start/end, or the open header/footer's — never a band the
+      // reader did not open (CRITIC-01: Ctrl+End used to land in the footer).
+      const scope = { runningOpen: !!ed.runningEditBand };
+      ed.navToPosition(storyBoundary(ed.doc, ed.selection.focus.node, scope, navDir === "docEnd"), e.shiftKey);
       return;
     }
     if (navDir === "pageUp" || navDir === "pageDown") {
@@ -391,17 +396,7 @@ export function createKeyboard(ed) {
       // Word/Docs convention: Enter on an empty list item exits the list instead
       // of creating another empty bullet/number. The current paragraph remains in
       // place, so the caret does not jump and Undo restores the list marker.
-      if (!range) {
-        const listKind = ed.doc.listStyleAt(focus.node);
-        if (listKind && ed.doc.paragraphLength(focus.node) === 0) {
-          const level = ed.doc.listLevelAt?.(focus.node) ?? 0;
-          await ed.runToolbarEdit((a, b, c, d) =>
-            level > 0
-              ? ed.doc.adjustListLevel(a, b, c, d, -1)
-              : ed.doc.toggleList(a, b, c, d, listKind), { paragraphLevel: true });
-          return;
-        }
-      }
+      if (!range && (await exitEmptyListItem(ed))) return;
       const landed = await ed.runEdit(() =>
         ed.doc.insertPlainTextAs(
           anchor.node,

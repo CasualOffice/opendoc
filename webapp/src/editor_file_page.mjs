@@ -8,6 +8,7 @@ import { onButton } from "./popover_manager.mjs";
 import { APP_MENU_SECTIONS, fileMenuSections } from "./command_taxonomy.mjs";
 import { createMenuBar, renderCommandRows } from "./command_menu.mjs";
 import { fileCategoryRowFor, renderFilePane, setFilePane } from "./file_pane.mjs";
+import { announceSettings } from "./settings_refresh.mjs";
 import { DOCUMENT_TEMPLATES, templateBytes, templateName, templateThumbnail } from "./blank_document.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
@@ -79,6 +80,7 @@ export function createFilePage(ed) {
         }
         if (pane === "about") ed.toggleAbout.stampVersion?.(); else if (pane === "pageSetup") ed.pageSetup.reflect?.();
         if (pane === "properties") ed.propertiesUi.fill();
+        if (pane === "settings") announceSettings("open");
       },
     });
     // The rail lists every File command, but three kinds of them are rendered as

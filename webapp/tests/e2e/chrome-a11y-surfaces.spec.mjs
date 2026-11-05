@@ -13,6 +13,7 @@
 //           keyboard way into a freshly loaded editor.
 //   HF-072  the floating selection toolbar never showed Bold/Italic/Underline state
 import {
+  pointerSelectHighlight,
   test,
   expect,
   gotoEditor,
@@ -231,6 +232,8 @@ test("the floating selection toolbar reflects the selection's format", async ({
   await page.keyboard.press("Enter");
   await page.keyboard.type("SELTOOLBAR");
   for (let i = 0; i < "SELTOOLBAR".length; i++) await page.keyboard.press("Shift+ArrowLeft");
+  // The mini-toolbar is earned by a pointer selection (docs/184 D-12).
+  await pointerSelectHighlight(page);
 
   const selBold = page.locator('#selToolbar [data-fmt="bold"]');
   const selItalic = page.locator('#selToolbar [data-fmt="italic"]');
@@ -246,7 +249,11 @@ test("the floating selection toolbar reflects the selection's format", async ({
   await expect(selItalic).toHaveAttribute("aria-pressed", "false");
 
   // And clicking the bar's own B on already-bold text removes it, rather than
-  // the state being decorative.
+  // the state being decorative. The press on the ribbon retired the bar, as a
+  // press anywhere off the pages does in Word (docs/184 D-12); the pointer
+  // selection earns it back, still showing the bold it now reflects.
+  await pointerSelectHighlight(page);
+  await expect(selBold).toHaveAttribute("aria-pressed", "true");
   await selBold.click();
   await expect(page.locator("#bold")).toHaveAttribute("aria-pressed", "false");
   await expect(selBold).toHaveAttribute("aria-pressed", "false");

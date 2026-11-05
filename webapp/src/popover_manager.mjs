@@ -23,10 +23,19 @@ const popovers = [];
  *  without one; CHROME popovers opt out per-popover with `needsDocument:
  *  false`. Replaced once, at boot, by whoever owns the selection. */
 let documentReady = () => true;
+/** Where focus goes when a popover closes holding it and neither its invoker nor
+ *  its trigger can take it back: the document (installed at boot). */
+let focusFallback = null;
 
-/** Installs the host's "is there something to act on" test. */
+/** Installs the host's "is there something to act on" test and focus fallback. */
 export function configurePopovers(hooks) {
   documentReady = hooks?.documentReady ?? documentReady;
+  focusFallback = hooks?.focusFallback ?? focusFallback;
+}
+
+/** Whether `el` can take focus back: attached, enabled, rendered, not `<body>`. */
+function canTakeFocus(el) {
+  return !!el && el.isConnected && el !== document.body && !el.disabled && el.getClientRects().length > 0;
 }
 
 /** Re-syncs every popover that is currently on screen. The caret can move while
@@ -54,7 +63,11 @@ export function onButton(el, handler) {
   });
 }
 
-export function openPopover(p, { keyboard = false, anchor = p.btn } = {}) {
+/** `anchorRect` is the client rectangle to hang the menu from when neither the
+ *  requested anchor nor the trigger is on screen (a chord that opens a
+ *  toolbar's menu while that toolbar is hidden): placing it from a hidden
+ *  element's empty rect put it in the window's top-left corner. */
+export function openPopover(p, { keyboard = false, anchor = p.btn, anchorRect = null } = {}) {
   // An object can be selected with no text caret behind it (clicking a float
   // first thing), and its Fill/Outline pickers must still open. A CHROME
   // popover skips the gate entirely: the language picker is not about the
@@ -65,7 +78,12 @@ export function openPopover(p, { keyboard = false, anchor = p.btn } = {}) {
   for (const q of popovers) if (q !== p) closePopover(q);
   // Measure the control the user actually activated, never a hidden popover owner.
   const visibleAnchor = popoverAnchor(anchor, p.btn);
-  const r = visibleAnchor.getBoundingClientRect();
+  const r = !visibleAnchor.getClientRects().length && anchorRect ? anchorRect : visibleAnchor.getBoundingClientRect();
+  // Who had focus when it opened: the trigger when opened from the keyboard,
+  // the document when opened by pointer (the trigger's mousedown keeps focus
+  // there) or from the palette (which hands focus back before it runs).
+  const before = document.activeElement;
+  p.invoker = before && before !== document.body && !p.menu.contains(before) ? before : null;
   p.menu.hidden = false;
   p.activeTrigger = visibleAnchor;
   p.btn.setAttribute("aria-expanded", String(visibleAnchor === p.btn));
@@ -106,19 +124,30 @@ export function focusFirstIn(container) {
 }
 
 export function closePopover(p) {
-  // Closing must not strand the keyboard: if focus is inside the menu it goes
-  // back to the trigger, which is where the user's place was.
+  // Closing must not strand the keyboard (audit DIALOGS-05): if focus is inside
+  // the menu it goes back to where the person was when it opened — the trigger
+  // for a keyboard open, the document for a pointer or palette open. When that
+  // is gone, the trigger; when the trigger is not on screen either (a gallery
+  // opened from the palette while its ribbon tab is not showing), the document,
+  // never `<body>`.
   const holdsFocus = p.menu.contains(document.activeElement);
   const trigger = p.activeTrigger ?? p.btn;
+  const invoker = p.invoker;
   p.menu.hidden = true;
   p.btn.setAttribute("aria-expanded", "false");
   if (trigger !== p.btn) trigger.setAttribute("aria-expanded", "false");
-  if (holdsFocus) trigger.focus({ preventScroll: true });
+  if (holdsFocus) {
+    if (canTakeFocus(invoker)) invoker.focus({ preventScroll: true });
+    else if (canTakeFocus(trigger)) trigger.focus({ preventScroll: true });
+    else if (focusFallback) focusFallback();
+    else trigger.focus({ preventScroll: true });
+  }
   p.activeTrigger = null;
+  p.invoker = null;
 }
 
 export function registerPopover(btn, menu, reflect, { needsDocument = true } = {}) {
-  const p = { btn, menu, reflect, activeTrigger: null, needsDocument };
+  const p = { btn, menu, reflect, activeTrigger: null, invoker: null, needsDocument };
   // A handle, so a menu that acts on a click can dismiss itself through the
   // manager rather than hiding the element behind its back and stranding
   // `aria-expanded` and the keyboard's place.

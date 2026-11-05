@@ -209,10 +209,10 @@ export function createFormatting(ed) {
    *
    *  A keyboard activation arrives as a `click` with `detail === 0` and no
    *  preceding mouse event, so both routes are the same one listener. */
-  /** Opens the Insert link dialog for the selected same-paragraph text (⌘K, the
-   * ribbon Link button, and the command palette). The dialog owns the external
-   * URL / bookmark / ScreenTip entry and applies through the same gated
-   * setHyperlink path the raw prompt used. */
+  /** Opens the link popover for the selected same-paragraph text (⌘K, the
+   * ribbon Link button, and the command palette); its "More options…" is the
+   * Insert link dialog with the ScreenTip (`editor_link_dialog.mjs`). Both apply
+   * through the same gated setHyperlink path. */
   function editSelectionLink() {
     if (!ed.doc || !ed.selection || !ed.hasRange()) return;
     const { anchor, focus } = ed.selection;

@@ -317,7 +317,7 @@ export function createFormatPainter(ed) {
   // alike. The manager does not know what a selection is; this is the one thing
   // it asks the editor, so a menu that would act on the caret does not open when
   // there is no caret to act on.
-  configurePopovers({ documentReady: () => !!ed.selection || !!ed.objectSelection });
+  configurePopovers({ documentReady: () => !!ed.selection || !!ed.objectSelection, focusFallback: () => ed.focusEditorSurface() });
   const TWIPS_PER_POINT = 20;
   ed.tableStylePopover = registerPopover(ed.tableStyleBtn, ed.tableStyleMenu, () => {});
 

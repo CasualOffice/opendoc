@@ -262,6 +262,11 @@ test("properties and page setup are keyboard-safe, mobile-bounded modal dialogs"
   await expect(page.locator("#pageSetupApply")).toBeVisible();
 
   await expectInchFields(page);
+  // Width and height show only for a custom paper size (`docs/184` D2), and
+  // sample.docx is A4, so the reader picks Custom size before typing one.
+  await expect(page.locator("#pagePaperPreset")).toHaveValue("a4");
+  await expect(page.locator("#pageWidth")).toBeHidden();
+  await page.locator("#pagePaperPreset").selectOption("custom");
   await page.locator("#pageWidth").fill("10");
   // `10.00`, not `10`. The caption is PROSE, so it goes through the preference's
   // `display()` — fixed at the unit's own decimal places and carrying the

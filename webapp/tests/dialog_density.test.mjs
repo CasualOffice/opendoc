@@ -92,7 +92,6 @@ test("dialog and panel chrome take their padding from the tokens, not from pixel
     [".dialog-foot", /--dlg-pad-[xy]/],
     [".panel-head", /--pnl-pad-[xy]/],
     [".panel-body", /--pnl-pad-[xy]/],
-    [".find-panel-head", /--pnl-pad-[xy]/],
     [".find-panel-body", /--pnl-pad-[xy]/],
   ];
   for (const [selector, token] of SUBJECTS) {
@@ -190,7 +189,10 @@ test("the review column reads the panel pair rather than a literal that matches 
   // (the geometry, and header-against-card agreement) and this one reads the
   // stylesheet. Written down because the first version of that e2e test claimed
   // to catch a literal and was measured not to.
-  for (const selector of [".review-sidebar-header", ".review-margin-card"]) {
+  // The header is now the one-row comments bar (PROPOSAL D-11): its title sits
+  // on the cards' left edge, not inside an inset of its own, and
+  // `e2e/panel-alignment.spec.mjs` measures that edge.
+  for (const selector of [".review-margin-card"]) {
     for (const body of rules(selector)) {
       const padding = body.match(/(?:^|\n)\s*padding:\s*([^;]+);/);
       if (!padding) continue;

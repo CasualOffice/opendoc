@@ -53,6 +53,10 @@ export function revealControl(el, options = {}) {
   const schedule = options.frame ?? ((callback) => requestAnimationFrame(callback));
   schedule(() => {
     if (!el) return;
+    // The owning surface may page its content (Settings shows one page at a
+    // time, `docs/184` D3): told first, it brings the control's page forward,
+    // since a control on a hidden page can be neither scrolled to nor focused.
+    if (typeof CustomEvent === "function") el.dispatchEvent?.(new CustomEvent("surface-reveal", { bubbles: true }));
     const group = options.group ? el.closest(options.group) : null;
     (group ?? el).scrollIntoView?.({ block: "nearest" });
     el.focus?.({ preventScroll: true });

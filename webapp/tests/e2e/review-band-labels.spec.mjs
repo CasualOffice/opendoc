@@ -20,6 +20,7 @@ import {
   MOD,
   shortcutHint,
   stableBox,
+  setReviewMode,
 } from "./fixtures.mjs";
 
 async function openReview(page) {
@@ -81,15 +82,15 @@ test("the chord the tooltip names does what the tooltip says", async ({ page }) 
   // A tooltip asserted without driving the chord is a label test; this drives it.
   await gotoEditor(page);
   await clickIntoFirstPage(page);
-  const segment = (mode) => page.locator(`#reviewModeControl [data-review-mode="${mode}"]`);
-  await expect(segment("editing")).toHaveAttribute("aria-pressed", "true");
+  const segment = (mode) => page.locator(`#headerModeMenu [data-review-mode="${mode}"]`);
+  await expect(segment("editing")).toHaveAttribute("aria-checked", "true");
   await page.keyboard.press(`${MOD}+Shift+E`);
-  await expect(segment("suggesting")).toHaveAttribute("aria-pressed", "true");
+  await expect(segment("suggesting")).toHaveAttribute("aria-checked", "true");
   await expect(page.locator("#reviewTrackBtn")).toHaveAttribute("aria-pressed", "true");
   await page.keyboard.press(`${MOD}+Shift+E`);
-  await expect(segment("viewing")).toHaveAttribute("aria-pressed", "true");
+  await expect(segment("viewing")).toHaveAttribute("aria-checked", "true");
   await page.keyboard.press(`${MOD}+Shift+E`);
-  await expect(segment("editing")).toHaveAttribute("aria-pressed", "true");
+  await expect(segment("editing")).toHaveAttribute("aria-checked", "true");
 });
 
 test("Accept and Reject advertise the chords that run them", async ({ page }) => {
@@ -98,7 +99,7 @@ test("Accept and Reject advertise the chords that run them", async ({ page }) =>
   await openReview(page);
   // Disabled until there is a change to decide, and a disabled control's tooltip
   // is its reason — so make one first.
-  await page.locator('#reviewModeControl [data-review-mode="suggesting"]').click();
+  await setReviewMode(page, "suggesting");
   await clickIntoFirstPage(page);
   await page.keyboard.type("Q");
   await expect(page.locator("#reviewAcceptBtn")).toBeEnabled();

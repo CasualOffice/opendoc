@@ -3,12 +3,14 @@
 // Accept-all/Reject-all — plus caret-driven card expansion and card→canvas
 // scroll-to-anchor for both comments and tracked changes.
 import {
+  commentOnSelection,
   test,
   expect,
   gotoEditor,
   clickIntoFirstPage,
   moveCaretToDocStart,
   setReviewMode,
+  reviewBarAction,
 } from "./fixtures.mjs";
 
 async function pastePlainText(page, text) {
@@ -25,7 +27,7 @@ async function pastePlainText(page, text) {
 async function addComment(page, target, body) {
   await page.keyboard.type(target);
   for (let i = 0; i < target.length; i++) await page.keyboard.press("Shift+ArrowLeft");
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
   const sidebar = page.locator("#reviewSidebar");
   await sidebar.locator('[data-testid="review-comment-composer"]').fill(body);
   await sidebar.locator('[data-testid="review-comment-submit"]').click();
@@ -80,7 +82,7 @@ test("Accept all decides every tracked change at once (REVIEW-GAP-018)", async (
   await expect(insertions).toHaveCount(2);
 
   // Accept all lives in the fixed header; it decides every change in one action.
-  await page.locator("#reviewAcceptAll").click();
+  await reviewBarAction(page, "#reviewAcceptAll");
   await expect(insertions).toHaveCount(0);
 
   expect(consoleErrors).toEqual([]);
@@ -102,7 +104,7 @@ test("Next change navigates between tracked changes and expands the target card 
   const card = sidebar.locator(".review-margin-card.review-margin-insertion");
   await expect(card).toHaveAttribute("aria-expanded", "false");
 
-  await page.locator("#reviewNext").click();
+  await reviewBarAction(page, "#reviewNext");
   // Navigating to the change selects its range and surfaces (expands) its card.
   await expect(card).toHaveAttribute("aria-expanded", "true");
 

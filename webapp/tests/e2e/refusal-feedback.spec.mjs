@@ -139,15 +139,18 @@ test("a confirmation does not throw a card over the document when the line is sh
   await gotoEditor(page);
   await clickIntoFirstPage(page);
   await page.locator("#modeCompact").click();
-  await expect(page.locator("#status")).toContainText("Compact toolbar");
 
-  // The rule has to cut both ways or it is just "always show a card", and a card
-  // for every toolbar press would be worse than the defect it fixes.
+  // Since docs/184 D6 (audit SHELL-V-02) a chrome-mode switch is SPOKEN, never
+  // painted: the change is visible on its own, and the status line kept saying
+  // "Compact toolbar" beside the word count. So the confirmation must reach the
+  // accessibility tree, and nothing may paint it, least of all a card over the
+  // document. The rule still cuts both ways: no card for a toolbar press.
+  await expect.poll(() => axNodesCarrying(page, "Compact toolbar")).toBeGreaterThan(0);
   const painted = await paintedCarriers(page, "Compact toolbar");
   expect(
     painted.map((p) => p.id),
-    "a confirmation the status line is already showing must not be escalated",
-  ).toEqual(["status"]);
+    "a chrome-mode confirmation is announced, not painted, and never escalated to a card",
+  ).toEqual([]);
 
   expect(consoleErrors).toEqual([]);
 });

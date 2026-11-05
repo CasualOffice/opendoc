@@ -209,7 +209,8 @@ implement in small increments → test → update docs and ADRs.
 
 ## 11. Repo traps
 
-- Design tokens are deliberate (`--radius: 3px`, `--accent: #3355c4`, an AA sweep in both
+- Design tokens are deliberate (the v2 scale in `docs/63` §7: radii 4/6/8/12/pill, so
+  `--radius` is 0.5rem; `--accent: #3355c4`, never orange; an AA sweep in both
   themes). Adopt the structure; propose visual changes to the owner instead of making them.
 - Fonts are self-hosted (Inter, Material Symbols Outlined) and `chrome_fonts.test.mjs`
   forbids the Google Fonts CDN. Never add a CDN font.

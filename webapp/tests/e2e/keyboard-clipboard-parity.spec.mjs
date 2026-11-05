@@ -92,7 +92,11 @@ test("paste options: 'Merge formatting' keeps emphasis but drops the pasted font
   // The paste-options chip now offers "Merge formatting". Click it before any
   // caret/selection keystroke, which would dismiss the chip (matching how the
   // user reaches for the affordance right after pasting).
+  // The chip is collapsed at the end of the paste (audit CRITIC-10); its
+  // choices open from it, Word's (Ctrl) chip.
   const mergeBtn = page.locator("#pasteOptionsMerge");
+  await expect(mergeBtn).toBeHidden();
+  await page.locator("#pasteOptionsToggle").click();
   await expect(mergeBtn).toBeVisible();
   await mergeBtn.click();
 

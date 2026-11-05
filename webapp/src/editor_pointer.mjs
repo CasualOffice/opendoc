@@ -8,11 +8,14 @@ import { edgeScrollStep } from "./edge_scroll.mjs";
 import { t } from "./i18n.mjs";
 import { createTouchSelection, pointerDragSelects } from "./touch_selection.mjs";
 import { followExternalTarget } from "./link_targets.mjs";
+// Own line (anti-conflict): the link hover hint names the platform chord.
+import { formatShortcut } from "./keyboard.mjs";
 import { createPointerHover } from "./pointer_hover.mjs";
 import { createTableChrome } from "./table_chrome.mjs";
 import { createTableGutter } from "./table_gutter.mjs";
 import { tableDrawMode } from "./table_draw_mode.mjs";
 import { installViewportFocusGuard } from "./viewport_focus.mjs";
+import { createClickCounter, extendByUnit, unitForClickCount, unitRange } from "./unit_selection.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -113,6 +116,7 @@ export function createPointer(ed) {
     materializedPages: ed.materializedPages,
     pointToTwip: ed.pointToTwip,
     linkAt,
+    followHint: () => t("link.followHint", { key: formatShortcut("⌘") }),
     tocEntryAt: (node, offset) => !!tocEntryTargetAt(node, offset),
     pointInsideObject: ed.pointInsideObject,
     objectCapabilities: ed.objectCapabilities,
@@ -140,14 +144,11 @@ export function createPointer(ed) {
       hideLinkChip();
       return false;
     }
-    // Selecting the link's own text is what a click on TEXT does. A click on a
-    // linked OBJECT has already selected the object, and replacing that with a
-    // text range would drop the handles the same gesture just put up.
-    ed.selection = {
-      anchor: { node: link.startNode, offset: link.startOffset },
-      focus: { node: link.endNode, offset: link.endOffset },
-    };
-    ed.drawSelection();
+    // The click has already put the caret where it landed, and that is where it
+    // stays: Docs and Word place a caret in a link and show its card, they do
+    // not select the link (docs/184 D-12, audit CANVAS-06/16). Selecting it put
+    // the mini-toolbar up under the card and made a click into a link a
+    // gesture that could not edit one letter of it.
     return showLinkChip(link, event);
   }
 
@@ -216,6 +217,10 @@ export function createPointer(ed) {
   /** Touch selection — the long press, the two handles, the loupe and the caret
    *  drag (`105` UX-018, `148` §9 item 2). Every tunable and the whole gesture
    *  live in the module; this is all the shell owes it. */
+  /** The unit ("word" / "paragraph") the latest press selected, so the `dblclick`
+   *  and triple `click` that follow its release do not select again. */
+  let unitClick = null;
+  const clickCounter = createClickCounter();
   const touchSelection = createTouchSelection({
     view: window,
     surface: ed.pagesEl,
@@ -236,6 +241,8 @@ export function createPointer(ed) {
 
   function onPointerDown(page, event) {
     if (event.button !== 0) return;
+    unitClick = null; // every press decides afresh whether it started a unit selection
+    const clicks = event.detail || clickCounter.press(event.clientX, event.clientY, event.timeStamp);
     // No caret region: a press neither places an insertion point nor starts a
     // drag-selection. Scrolling and zooming are not gestures on the document.
     // This precedes the shape gate deliberately — a container offered no caret is
@@ -444,6 +451,21 @@ export function createPointer(ed) {
       event.shiftKey && ed.selection && !crossedStory
         ? { anchor: ed.selection.anchor, focus: anchor }
         : { anchor, focus: anchor };
+    // A double or triple press selects its word or paragraph NOW, on the press,
+    // and the drag that may follow grows it a whole unit at a time (UX-059,
+    // `unit_selection.mjs`). The post-release `dblclick` / triple `click` then
+    // has nothing left to do for text. A press in a margin band it is not
+    // editing is left to `dblclick`, which enters that header or footer.
+    const unit = event.shiftKey || !pointerDragSelects(event) ? null : unitForClickCount(clicks);
+    const band = unit ? ed.runningBandAt(page, y) : null;
+    const entersBand = !!band && !(band === ed.runningEditBand && page.pageNumber === ed.runningEditPage);
+    unitClick = unit && !entersBand ? unit : null;
+    if (unitClick) {
+      const origin = unitRange(ed.doc, anchor, unitClick);
+      ed.pointerGesture.unit = unitClick;
+      ed.pointerGesture.unitOrigin = origin;
+      ed.selection = { anchor: origin.start, focus: origin.end };
+    }
     // Non-blocking secondary effect (REVIEW-GAP-005): surface the sidebar card
     // for a comment the click landed inside, without altering the caret/range
     // hit-testing just computed above.
@@ -535,7 +557,8 @@ export function createPointer(ed) {
     // turns into a drag it is no longer a confirming click.
     if (ed.tableRange.dragTo(ed.pointerGesture.cellAnchor, focus.node, ed.pointerGesture)) return syncSelectionToCellRange();
     ed.tableRange.clear();
-    ed.selection = { anchor: ed.selection.anchor, focus };
+    const { unit, unitOrigin } = ed.pointerGesture;
+    ed.selection = unit ? extendByUnit(ed.doc, unitOrigin, focus, unit) : { anchor: ed.selection.anchor, focus };
     ed.drawSelection();
   }
 
@@ -601,7 +624,12 @@ export function createPointer(ed) {
       Math.hypot(event.clientX - gesture.clientX, event.clientY - gesture.clientY) <= 4
     ) {
       const link = linkAt(gesture.page, event);
-      if (link?.kind === "internal" && link.targetNode && link.targetPage) {
+      // Ctrl/Cmd+click follows ANY link, Word's chord (audit CANVAS-16); a plain
+      // click follows an internal one (a contents entry), as before.
+      const follow = !!(event.ctrlKey || event.metaKey);
+      if (link && follow) {
+        activateLink(link);
+      } else if (link?.kind === "internal" && link.targetNode && link.targetPage) {
         activateLink(link);
       } else if (!link && followTocEntry(ed.selection?.focus?.node, ed.selection?.focus?.offset)) {
         // A contents entry whose field carried no `\h`, so there is no authored
@@ -898,11 +926,15 @@ export function createPointer(ed) {
       void ed.editRunningContent(bandAtPoint, page);
       return;
     }
+    // The press already selected the word, and a drag may have grown it: selecting
+    // the word under the RELEASE point here is what collapsed a double-click-drag.
+    if (unitClick === "word") return;
     touchSelection.selectWord(page, e); // the SAME routine the long press uses
   });
   // Triple-click selects the paragraph (the click's `detail` is the click count).
   ed.pagesEl.addEventListener("click", (e) => {
     if (e.detail !== 3) return;
+    if (unitClick === "paragraph") return; // the press selected it (UX-059)
     const page = pageFromEvent(e);
     if (!page) return;
     const a = ed.anchorAt(page, e);

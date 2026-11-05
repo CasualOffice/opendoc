@@ -11,7 +11,7 @@ import { registerModal } from './modal.mjs';
  *  rung hides.
  *
  *  Uses the editor's modal contract so application shortcuts cannot fire behind the link. */
-export function createShareChrome({ root, parent, share, available, t }) {
+export function createShareChrome({ root, parent, share, available, configured = available, t }) {
   const button = root.createElement('button');
   button.id = 'shareBtn'; button.type = 'button'; button.className = 'btn btn-primary share-btn';
   const icon = root.createElement('span'); icon.className = 'ms'; icon.setAttribute('aria-hidden', 'true'); icon.textContent = 'person_add';
@@ -24,8 +24,16 @@ export function createShareChrome({ root, parent, share, available, t }) {
     reflect() {
       text.textContent = t('collab.share');
       button.setAttribute('aria-label', t('collab.share'));
+      // HIDDEN, not disabled, when no host configured sharing (`docs/184` D6,
+      // `109` UX-054): a disabled primary button is the loudest thing in the
+      // header and does nothing, and its reason was unreachable — a disabled
+      // button takes no focus. ONLYOFFICE shows its sharing button only when the
+      // host sets the sharing callback. The palette's `collab.share` row still
+      // names the reason for anyone who looks for it.
+      button.hidden = !configured();
+      // Disabled only for the moment a share is being minted.
       button.disabled = !available();
-      button.title = t(button.disabled ? 'collab.shareHostRequired' : 'collab.share');
+      button.title = t('collab.share');
     },
     bind() { button.addEventListener('click', () => share()); },
     showLink(link) {

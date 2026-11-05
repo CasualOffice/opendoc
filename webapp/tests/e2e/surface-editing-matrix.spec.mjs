@@ -10,6 +10,7 @@
 // the user would see. Nothing is asserted from internal state that a broken build
 // could still satisfy.
 import {
+  commentOnSelection,
   MOD,
   clickIntoFirstPage,
   expect,
@@ -236,7 +237,7 @@ for (const surface of SURFACES) {
     await surface.enter(page, box);
     await page.keyboard.type("CMT");
     for (let i = 0; i < 3; i += 1) await page.keyboard.press("Shift+ArrowLeft");
-    await page.locator("#selComment").click();
+    await commentOnSelection(page);
     const sidebar = page.locator("#reviewSidebar");
     await sidebar.locator('[data-testid="review-comment-composer"]').fill("note");
     await sidebar.locator('[data-testid="review-comment-submit"]').click();

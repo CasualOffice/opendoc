@@ -4,6 +4,7 @@
 // unified Next/Previous over comments AND changes (Q4), and an always-ready
 // multi-line reply composer (Q5).
 import {
+  commentOnSelection,
   test,
   expect,
   gotoEditor,
@@ -11,6 +12,7 @@ import {
   moveCaretToDocStart,
   setReviewMode,
   MOD,
+  reviewBarAction,
 } from "./fixtures.mjs";
 
 async function pastePlainText(page, text) {
@@ -27,7 +29,7 @@ async function pastePlainText(page, text) {
 async function addComment(page, target, body) {
   await page.keyboard.type(target);
   for (let i = 0; i < target.length; i++) await page.keyboard.press("Shift+ArrowLeft");
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
   const sidebar = page.locator("#reviewSidebar");
   await sidebar.locator('[data-testid="review-comment-composer"]').fill(body);
   await sidebar.locator('[data-testid="review-comment-submit"]').click();
@@ -109,7 +111,7 @@ test("Accept and move to Next accepts the caret's change and advances (Q3)", asy
 
   // Land the caret on the first change via unified Next, then Accept ▸ Next.
   await moveCaretToDocStart(page);
-  await page.locator("#reviewNext").click();
+  await reviewBarAction(page, "#reviewNext");
   await expect(insertions.filter({ hasText: "AONE" })).toHaveAttribute("aria-expanded", "true");
 
   await page.keyboard.press(`${MOD}+Alt+Enter`);
@@ -151,16 +153,16 @@ test("Next/Previous traverse a document-ordered mix of a comment and a change (Q
   // From document start, Next visits the comment first, then the change — one
   // merged, document-ordered loop over both kinds (Q4).
   await moveCaretToDocStart(page);
-  await page.locator("#reviewNext").click();
+  await reviewBarAction(page, "#reviewNext");
   await expect(comment).toHaveAttribute("aria-expanded", "true");
 
-  await page.locator("#reviewNext").click();
+  await reviewBarAction(page, "#reviewNext");
   await expect(change).toHaveAttribute("aria-expanded", "true");
   await expect(comment).toHaveAttribute("aria-expanded", "false");
 
   // Previous walks back to the comment, proving the loop is bidirectional over
   // both item kinds.
-  await page.locator("#reviewPrevious").click();
+  await reviewBarAction(page, "#reviewPrevious");
   await expect(comment).toHaveAttribute("aria-expanded", "true");
 
   expect(consoleErrors).toEqual([]);

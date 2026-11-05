@@ -298,30 +298,32 @@ for (const panel of PANELS) {
   });
 }
 
-// Find and replace is the one panel that was ALREADY right, and it is the only
-// one that was padded from tokens — which is where `--pnl-pad-x`/`--pnl-pad-y`
-// came from. Its GEOMETRY is deliberately not the shell's: it is fixed to the
-// top right so it does not cover the text you are searching, which is Word's
-// and Google Docs' model and not a defect. Its INSET is the shell's, and this
-// is what keeps the two from drifting apart again.
-test("Find and replace keeps its own geometry and the shell's inset", async ({ page }) => {
+// Find and replace is a compact bar now (audit CRITIC-07): no title row, three
+// slim rows — the query with its counter and buttons, the scope toggles, the
+// replacement with its actions. Its GEOMETRY is deliberately not the shell's:
+// it is fixed to the top right so it does not cover the text you are searching,
+// which is Word's and Google Docs' model. What it shares with the shell is ONE
+// inset: every row starts at the same content edge, and that edge is symmetric.
+test("Find and replace keeps its own geometry and one inset for its rows", async ({ page }) => {
   await page.setViewportSize(LAPTOP);
   await gotoEditor(page);
   await page.keyboard.press(`${MOD}+f`);
   await expect(page.locator("#findPanel")).toBeVisible();
-  const m = await page.evaluate(PROBE, {
-    selector: "#findPanel",
-    titleSelector: ".find-panel-head",
-    bodySelector: ".find-panel-body",
+  const m = await page.evaluate(() => {
+    const body = document.querySelector("#findPanel .find-panel-body");
+    const style = getComputedStyle(body);
+    const rows = [...body.children].filter((el) => el.getClientRects().length > 0);
+    return {
+      rowLefts: rows.map((el) => Math.round(el.getBoundingClientRect().left * 100) / 100),
+      contentLeft: Math.round((body.getBoundingClientRect().left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft)) * 100) / 100,
+      paddingLeft: style.paddingLeft,
+      paddingRight: style.paddingRight,
+      rows: rows.length,
+    };
   });
-  expect(m.bodyContent).toBe(m.headContent);
-  expect(m.headPaddingLeft).toBe(m.bodyPaddingLeft);
-  // Symmetric too, as the shell's are. This panel's head was
-  // `var(--space-2) var(--space-3) var(--space-2) var(--space-4)` — the one
-  // panel that was right about the LEFT edge and still tuned its right side
-  // separately, which is the same four-sided padding the nine panels had.
-  expect(m.headPaddingRight).toBe(m.headPaddingLeft);
-  expect(m.bodyPaddingRight).toBe(m.bodyPaddingLeft);
+  expect(m.rows, "the bar has its three rows").toBe(3);
+  expect(m.rowLefts.filter((left) => left !== m.contentLeft), `every row starts at ${m.contentLeft}`).toEqual([]);
+  expect(m.paddingRight).toBe(m.paddingLeft);
   // Fixed, and on the right-hand side of the window — the property that makes
   // it not cover the search target. Asserted as a relation to the viewport, not
   // as an x: the panel is `right: 18px` and its width is a `min()`.
@@ -332,6 +334,7 @@ test("Find and replace keeps its own geometry and the shell's inset", async ({ p
       position: getComputedStyle(el).position,
       rightGap: Math.round(window.innerWidth - box.right),
       pastHalf: box.left > window.innerWidth / 2,
+      height: box.height,
     };
   });
   expect(geometry.position).toBe("fixed");
@@ -342,9 +345,9 @@ test("Find and replace keeps its own geometry and the shell's inset", async ({ p
 // The review column takes the PADDING convention and not the geometry one. It is
 // absolutely positioned and rides the document scroll so each card stays pinned
 // to the text it annotates — forcing it into the panel shell would break the one
-// thing it is built to do. What it shares with the shell is the inset: its header
-// and its cards both said `8px 10px`, two more raw pixel pairs in a family that
-// now has a token.
+// thing it is built to do. Its cards take the shell's inset. Its header is the
+// one-row comments bar (PROPOSAL D-11), whose title starts on the cards' own
+// left edge, as the approved v2-review mockup draws it.
 //
 // MEASURED, not inferred: a resolved `8px 16px` is indistinguishable from
 // `var(--pnl-pad-y) var(--pnl-pad-x)` to `getComputedStyle`, so this asserts the
@@ -371,9 +374,16 @@ test("the review column keeps its geometry and agrees with its own cards", async
     document.body.append(probe);
     const want = inset(probe);
     probe.remove();
+    const textLeft = (el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      return Math.round(range.getClientRects()[0].left);
+    };
     return {
       position: getComputedStyle(document.querySelector(".review-sidebar")).position,
       header: inset(head),
+      titleLeft: textLeft(head.querySelector(".review-sidebar-title")),
+      columnLeft: Math.round(document.querySelector(".review-sidebar-body").getBoundingClientRect().left),
       want,
       // `.review-margin-card` only exists once there is a comment to card, and
       // the demo document has none — so the composer, which is painted in the
@@ -387,9 +397,10 @@ test("the review column keeps its geometry and agrees with its own cards", async
   // The geometry it keeps: a column riding the document scroll, not a flex item
   // in the shell row.
   expect(m.position).toBe("absolute");
-  // The inset it shares, resolved from the token pair.
-  expect(m.header).toBe(m.want);
-  if (m.card !== null) expect(m.card).toBe(m.header);
+  // The cards' inset, resolved from the token pair.
+  if (m.card !== null) expect(m.card).toBe(m.want);
+  // The bar's title sits on the column's (and so every card's) left edge.
+  expect(m.titleLeft).toBe(m.columnLeft);
 });
 
 // The roster above cannot fall behind the product. `dialog-fit.spec.mjs` carried

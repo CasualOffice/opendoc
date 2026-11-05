@@ -23,7 +23,7 @@ import { isShortcutLike } from "./shortcut_labels.mjs";
 
 /** The controls a tooltip is offered for. Icon-only chrome, and nothing with a
  *  visible label of its own. */
-export const TIP_SELECTOR = ".fmt, .ribbon-tab, .review-mode-seg, .styles-trigger";
+export const TIP_SELECTOR = ".fmt, .ribbon-tab, .styles-trigger";
 
 /**
  * Installs the delayed-tooltip behaviour over one or more hover surfaces.

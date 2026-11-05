@@ -3,12 +3,14 @@
 // that announces review events, keyboard-activatable controls, and focus return
 // on close.
 import {
+  commentOnSelection,
   test,
   expect,
   gotoEditor,
   clickIntoFirstPage,
   moveCaretToDocStart,
   setReviewMode,
+  reviewBarAction,
 } from "./fixtures.mjs";
 
 async function pastePlainText(page, text) {
@@ -52,6 +54,8 @@ test("header controls are labeled real buttons and keyboard-activatable (REVIEW-
   // Accept-all is keyboard-activatable: focus it and press Enter clears changes.
   const acceptAll = page.locator("#reviewAcceptAll");
   await expect(acceptAll).toHaveJSProperty("tagName", "BUTTON");
+  // It is a row of the bar's ⋯ menu (PROPOSAL D-11): opened, then focused.
+  await page.locator("#reviewMoreBtn").click();
   await acceptAll.focus();
   await expect(acceptAll).toBeFocused();
   await page.keyboard.press("Enter");
@@ -136,7 +140,7 @@ test("the live region announces comment added, filter change, and accept-all (RE
   // Comment added.
   await page.keyboard.type("ANNOUNCE_COMMENT");
   for (let i = 0; i < "ANNOUNCE_COMMENT".length; i++) await page.keyboard.press("Shift+ArrowLeft");
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
   await sidebar.locator('[data-testid="review-comment-composer"]').fill("Announce me");
   await sidebar.locator('[data-testid="review-comment-submit"]').click();
   await expect(live).toHaveText(/Comment added/);
@@ -161,7 +165,7 @@ test("closing the sidebar returns focus to the rail toggle (REVIEW-GAP-023)", as
   const sidebar = page.locator("#reviewSidebar");
   await expect(sidebar).toBeVisible();
 
-  await page.locator("#reviewClose").click();
+  await reviewBarAction(page, "#reviewClose");
   await expect(sidebar).toBeHidden();
   // Focus returned to the rail toggle that owns the sidebar (not stranded).
   await expect(page.locator("#railReview")).toBeFocused();
