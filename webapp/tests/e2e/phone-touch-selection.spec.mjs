@@ -182,8 +182,20 @@ test("the two handles are hittable targets, and they bracket the selection", asy
   // bar takes the touch and the handle under it cannot be grabbed at all.
   // FOUND BY LOOKING at a screenshot — the bar cut the start dot in half, and
   // nothing clickable could fail.
+  //
+  // The bar is earned when the pointer gesture ENDS (docs/184 D12, audit
+  // CANVAS-06, lane L7), as a phone's selection menu appears when the finger
+  // lifts, so the overlap is measured once the finger is up and the bar is
+  // shown. Asserting it visible first keeps this from passing on no bar.
+  await touch.up(at.x, at.y);
+  await expect(page.locator("#selToolbar")).toBeVisible();
+  await expect(handles).toHaveCount(2);
   const bar = await stableBox(page.locator("#selToolbar"));
-  for (const box of [start, end]) {
+  const lifted = [
+    await stableBox(page.locator(".overlay .touch-handle.is-start")),
+    await stableBox(page.locator(".overlay .touch-handle.is-end")),
+  ];
+  for (const box of lifted) {
     const overlaps =
       box.x < bar.x + bar.width &&
       bar.x < box.x + box.width &&
@@ -192,7 +204,6 @@ test("the two handles are hittable targets, and they bracket the selection", asy
     expect(overlaps, "the floating format bar covers part of a selection handle").toBe(false);
   }
 
-  await touch.up(at.x, at.y);
   expect(consoleErrors).toEqual([]);
 });
 
