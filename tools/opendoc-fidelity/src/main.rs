@@ -19,6 +19,11 @@
 //!   import recovers the document's textual content; it says nothing about where
 //!   anything is on the page.
 //!
+//! - `pagebreaks <file.docx> [--any-producer]` — our page starts against the
+//!   ones Word recorded in the file itself (`w:lastRenderedPageBreak`,
+//!   `docs/94` §H2d). Needs no LibreOffice, and measures against Word rather
+//!   than against another engine; see [`pagebreaks`].
+//!
 //! With no subcommand the arguments are treated as `text` targets, which is how
 //! this tool was invoked before `compare` existed.
 //!
@@ -26,6 +31,7 @@
 //! ```text
 //! cargo run -p opendoc-fidelity -- compare file.docx [--tolerance TWIPS] [--page N] [--keep DIR]
 //! cargo run -p opendoc-fidelity -- text file.docx [more.docx ...]
+//! cargo run -p opendoc-fidelity -- pagebreaks file.docx [--any-producer]
 //! ```
 
 // A CLI reporting tool legitimately writes to stdout/stderr.
@@ -33,6 +39,7 @@
 
 mod compare;
 mod oracle;
+mod pagebreaks;
 
 use std::error::Error;
 use std::fs;
@@ -58,10 +65,14 @@ const USAGE: &str = "\
 usage:
   opendoc-fidelity compare <file.docx> [--tolerance TWIPS] [--page N] [--keep DIR]
   opendoc-fidelity text <file.docx> [more.docx ...]
+  opendoc-fidelity pagebreaks <file.docx> [--any-producer]
 
   compare  geometry against LibreOffice: page count, text extents, line
            positions, words per line, resolved fonts
-  text     content against LibreOffice: word-multiset agreement";
+  text     content against LibreOffice: word-multiset agreement
+  pagebreaks
+           page starts against Word's own (w:lastRenderedPageBreak) in a
+           Word-saved file; refuses other producers unless --any-producer";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -72,6 +83,7 @@ fn main() {
         }
         Some("compare") => run_compare(&args[1..]),
         Some("text") => run_text(&args[1..]),
+        Some("pagebreaks") => run_pagebreaks(&args[1..]),
         // Back-compatible: bare paths mean the original text differential.
         Some(_) => run_text(&args),
     };
@@ -175,6 +187,62 @@ fn compare_document(
         }
     }
     Ok(i32::from(!findings.is_empty()))
+}
+
+/// The Word page-break comparison. Exit code 0 when every page start Word
+/// recorded is reproduced on the same paragraph, 1 when not, 2 on a usage or
+/// tool error or a refused producer.
+fn run_pagebreaks(args: &[String]) -> i32 {
+    let any_producer = args.iter().any(|arg| arg == "--any-producer");
+    let Some(path) = args.iter().find(|arg| !arg.starts_with("--")) else {
+        eprintln!("{USAGE}");
+        return 2;
+    };
+    let measured = fs::read(path)
+        .map_err(Into::into)
+        .and_then(|bytes| pagebreaks::measure(&bytes));
+    let comparison = match measured {
+        Ok(comparison) => comparison,
+        Err(error) => {
+            eprintln!("ERROR {path}: {error}");
+            return 2;
+        }
+    };
+    if !any_producer && !pagebreaks::is_word(comparison.producer.as_deref()) {
+        eprintln!(
+            "REFUSED {path}: written by {:?}, not Word, so its page-break markers are not Word's pagination (--any-producer to measure anyway)",
+            comparison
+                .producer
+                .as_deref()
+                .unwrap_or("an unnamed producer")
+        );
+        return 2;
+    }
+    print!("{}", pagebreaks::report(path, &comparison));
+    let (agreed, _) = comparison.agreement();
+    i32::from(agreed != comparison.word.len())
+}
+
+/// Registers the package's embedded (`.odttf`) faces on `shaper`, exactly as the
+/// editor does at open (`casual-doc-wasm`'s `register_embedded_fonts` call), so
+/// a document that carries its own faces is measured in them and not in a
+/// substitute. Failures degrade to substitution, as in the editor.
+pub(crate) fn register_package_fonts(
+    shaper: &casual_doc_layout::shape::ParleyShaper,
+    document: &casual_doc_model::v1::Document,
+    package: &mut DocxPackage<'_>,
+) {
+    let mut parts = std::collections::BTreeMap::new();
+    for font in &document.definitions().font_table {
+        for (_, face) in font.embedded.faces() {
+            if let Ok(bytes) = package.read_part(&face.part_name) {
+                parts.insert(face.part_name.clone(), bytes);
+            }
+        }
+    }
+    casual_doc_layout::font_registry::register_embedded_fonts(shaper, document, |part| {
+        parts.get(part).map(Vec::as_slice)
+    });
 }
 
 /// The original text differential, over one or more documents.

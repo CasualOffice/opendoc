@@ -244,52 +244,12 @@ const KNOWN_DIVERGENCES: &[Divergence] = &[
     // The self-generated fixtures (fixtures/tools/make_oracle_fixtures.py). Each
     // isolates one layout family, so each entry below names a cause measured
     // line by line with `opendoc-fidelity compare` against the same pinned build.
-    Divergence {
-        fixture: "docx-oracle-line-spacing",
-        page: 1,
-        edge: "x1",
-        delta: 100,
-        row: "FID-L-26",
-        reason: "our line 8 (the 2x paragraph) keeps a 15th word whose pen end is \
-                 10813 twips, 13 PAST the 10800 right margin; LibreOffice wraps it \
-                 (14 words, ends 9854). Every later line wraps differently from \
-                 there, so the widest line is ours",
-    },
-    Divergence {
-        fixture: "docx-oracle-line-spacing",
-        page: 1,
-        edge: "y1",
-        delta: -952,
-        row: "FID-L-26",
-        reason: "the same overrun: keeping that word saves the paragraph a line \
-                 (12 comparable lines against 14), and at 2x and atLeast pitch the \
-                 missing two lines are the whole 952 twips",
-    },
-    Divergence {
-        fixture: "docx-oracle-font-families",
-        page: 1,
-        edge: "x1",
-        delta: 80,
-        row: "FID-L-27",
-        reason: "wrapping agrees through line 17 and diverges from line 18, in the \
-                 Liberation Mono paragraphs (12 words against 19), 36 comparable \
-                 lines against 34. Cause NOT yet isolated; the bottom edge agrees \
-                 to the twip on both pages",
-    },
-    Divergence {
-        fixture: "docx-oracle-sections-tabs",
-        page: 2,
-        edge: "x1",
-        delta: 249,
-        row: "FID-L-27",
-        reason: "our Caladea lines run SHORT of LibreOffice's: every line flagged \
-                 beyond the band is 42-87 twips shorter (page 1 lines 1, 2 and 10; \
-                 page 2 lines 1-4) and none is longer, from the byte-identical \
-                 Caladea-Regular.ttf on both sides, so it is shaping (kerning or \
-                 OpenType features, cf. FID-L-15), not metrics. On the landscape \
-                 page it admits one more word on line 5 (25 against 24), which \
-                 becomes the widest line",
-    },
+    // FID-L-26 (line-spacing x1 +100, y1 -952) and the font-families (+80) and
+    // sections-tabs (+249) halves of FID-L-27 were all one cause: every run was
+    // kerned, including runs with no `w:kern`, which Word (and LibreOffice) set
+    // unkerned. Switching `kern` off for those runs (`shape.rs`, FID-L-15) moved
+    // all four edges inside the band, and this gate's
+    // `known_divergences_are_still_divergent` check is what proved it.
     Divergence {
         fixture: "docx-oracle-plain-table",
         page: 1,

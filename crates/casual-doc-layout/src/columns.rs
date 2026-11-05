@@ -565,7 +565,9 @@ impl ColPaginator {
                 j = i + k;
             }
             let group = &frags[i..j];
-            let group_h: i32 = group.iter().map(|f| f.height().raw()).sum();
+            // Keep-with-next carries only the chain's last member's head lines
+            // (`109` FID-L-29), as in the single-column paginator.
+            let group_h = crate::paginate::keep_group_height(group);
             let col_full = self.content.size.height.raw();
             let group_fits_col = group_h <= col_full;
             let is_keep_group = group.len() > 1 || group[0].break_control().keep_lines;
@@ -581,8 +583,11 @@ impl ColPaginator {
             }
 
             let allow_split = !is_keep_group || !group_fits_col;
+            let last = group.len() - 1;
             for offset in 0..group.len() {
-                self.place(run, i + offset, allow_split);
+                // The chain's last member was counted by its head lines only, so
+                // it splits like any paragraph (`place` still honours keepLines).
+                self.place(run, i + offset, allow_split || (offset == last && last > 0));
             }
             i = j;
         }

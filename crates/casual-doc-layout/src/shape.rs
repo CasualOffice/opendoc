@@ -1179,12 +1179,16 @@ impl ParleyShaper {
             .iter()
             .map(|(_, _, run)| {
                 let mut settings = Vec::new();
-                if let Some(threshold) = run.decoration.kerning_half_points {
-                    settings.push(format!(
-                        "'kern' {}",
-                        u8::from(i64::from(run.size.raw()) >= i64::from(threshold) * 10)
-                    ));
-                }
+                // Word kerns a run only when it carries `w:kern` (ECMA-376
+                // §17.3.2.19) and its size reaches that threshold. With no
+                // `w:kern` at any cascade layer the run is set unkerned, so the
+                // shaper's on-by-default `kern` feature is switched off
+                // explicitly; leaving it on narrowed every line of unkerned
+                // documents (FID-L-15, FID-L-26, FID-L-27(b)).
+                let kern = run.decoration.kerning_half_points.is_some_and(|threshold| {
+                    i64::from(run.size.raw()) >= i64::from(threshold) * 10
+                });
+                settings.push(format!("'kern' {}", u8::from(kern)));
                 if let Some(groups) = run.decoration.ligatures {
                     for (tag, mask) in [("liga", 1), ("clig", 2), ("hlig", 4), ("dlig", 8)] {
                         settings.push(format!("'{tag}' {}", u8::from(groups.bits() & mask != 0)));
@@ -1954,6 +1958,34 @@ mod tests {
             "horizontal scale must not change threshold units"
         );
         assert_eq!(on.lines[0].range.end.offset, "office ffi".len() as u32);
+    }
+
+    #[test]
+    fn a_run_without_w_kern_is_set_unkerned() {
+        // FID-L-15: Word kerns only runs that carry `w:kern`. A run with no
+        // threshold at any cascade layer must shape exactly as one whose
+        // threshold is out of reach, and wider than a kerned run.
+        let shaper = ParleyShaper::new();
+        let width = |kerning: Option<u32>| {
+            let mut styled = run("AVAVToTo");
+            styled.decoration.kerning_half_points = kerning;
+            shaper
+                .shape_paragraph(&[styled], constraints(500), para_range())
+                .lines
+                .iter()
+                .flat_map(|l| &l.runs)
+                .flat_map(|r| &r.glyphs)
+                .map(|g| g.advance.raw())
+                .sum::<i32>()
+        };
+        let absent = width(None);
+        let unreachable = width(Some(65534));
+        let kerned = width(Some(2));
+        assert_eq!(
+            absent, unreachable,
+            "no w:kern means no kerning (unkerned sum of advances)"
+        );
+        assert!(kerned < absent, "w:kern=2 at 11pt kerns the AV/To pairs");
     }
 
     #[test]

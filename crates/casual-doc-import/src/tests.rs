@@ -6553,6 +6553,15 @@ fn word_text_watermark_is_lifted_onto_the_section_with_its_values() {
     );
     assert!(!text.bold);
     assert!(!text.italic);
+    // `width:527.85pt;height:131.95pt` is the box Word measured from the text
+    // and stretches it into (`fitshape`); Auto size is that box (FID-L-10).
+    assert_eq!(
+        text.shape_box,
+        Some(casual_doc_model::v1::WatermarkBox {
+            width_twips: 10_557,
+            height_twips: 2_639,
+        })
+    );
 }
 
 #[test]

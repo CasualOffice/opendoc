@@ -427,6 +427,7 @@ fn a_watermarked_document_exports_a_multiplied_stamp() {
                 },
                 bold: false,
                 italic: false,
+                shape_box: None,
             }),
             layout: WatermarkLayout::Diagonal,
             semi_transparent: true,

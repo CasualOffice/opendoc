@@ -9544,6 +9544,7 @@ mod watermark_tests {
                 },
                 bold: false,
                 italic: false,
+                shape_box: None,
             }),
             layout: WatermarkLayout::Diagonal,
             semi_transparent: true,

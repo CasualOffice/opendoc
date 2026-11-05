@@ -4078,3 +4078,59 @@ fn a_page_relative_tight_wrap_follows_its_contour_in_the_following_paragraph() {
         "{checked} lines, {beside_arm} beside the arm"
     );
 }
+
+/// A 1"x1" grouped text box carrying `geometry`, with one short paragraph and
+/// `bodyPr`'s default insets.
+fn text_box_document(geometry: ShapeGeometry) -> Document {
+    single_child_group_document(GroupChild::TextBox(GroupTextBox {
+        hyperlink: None,
+        id: node(91),
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent: Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        },
+        geometry,
+        preset: None,
+        adjustments: Vec::new(),
+        blocks: vec![BlockNode::Paragraph(Paragraph {
+            id: node(92),
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![run(93, "Inside the shape")],
+        })],
+        fill: None,
+        border: None,
+        body_properties: TextBoxBodyProperties::default(),
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
+        shadow: None,
+    }))
+}
+
+/// The content origin x a text box's text starts at, inside its frame.
+fn text_origin_x(document: &Document) -> i32 {
+    let content = only_anchor_content(document);
+    let AnchorContent::TextBox { content_layout, .. } = &content else {
+        panic!("expected a text box, got {content:?}");
+    };
+    content_layout.origin.x.raw()
+}
+
+/// `109` FID-SH-01: the text of a shape runs in its geometry's text rectangle
+/// (`a:rect`), not the whole box. An ellipse's rectangle is the inscribed one,
+/// `(1 - 1/sqrt 2)/2` of the box in from each side, so its text starts that far
+/// further in than a rectangle's, which keeps the whole box.
+#[test]
+fn shape_text_flows_inside_the_geometrys_text_rectangle() {
+    let rectangle = text_origin_x(&text_box_document(ShapeGeometry::Rectangle));
+    let ellipse = text_origin_x(&text_box_document(ShapeGeometry::Ellipse));
+    let side = 1_440.0_f64; // the 1" box, in twips
+    let inscribed = ((1.0 - std::f64::consts::FRAC_1_SQRT_2) / 2.0 * side).round() as i32;
+    assert!(
+        (ellipse - rectangle - inscribed).abs() <= 2,
+        "the ellipse's text starts {inscribed} twips further in than the rectangle's (rectangle {rectangle}, ellipse {ellipse})"
+    );
+    // The rectangle keeps exactly its bodyPr inset (91,440 EMU = 144 twips).
+    assert_eq!(rectangle, 144, "a rectangle's text box is unchanged");
+}

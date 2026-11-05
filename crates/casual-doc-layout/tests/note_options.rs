@@ -605,3 +605,95 @@ fn endnote_num_fmt_applies_to_the_reference_marker() {
         "w:endnotePr's w:numFmt and w:numStart reach the endnote reference marker"
     );
 }
+
+/// FID-L-31: an endnote body is flowed as blocks appended to the body, not as a
+/// note galley, so it used to lose its own number (the in-body `w:endnoteRef`
+/// had no label) and had no separator above it. With no `w:numFmt` anywhere the
+/// endnote is numbered in Word's default lower-case Roman.
+fn one_endnote_document() -> Document {
+    let endnote = NoteId::new(node(580));
+    let mut definitions = Definitions::default();
+    definitions
+        .endnotes
+        .insert(endnote, note_body(730, NoteKind::Endnote, "endnote text"));
+    definitions.sections.push(section(480));
+    document(
+        vec![
+            reference(270, endnote, NoteKind::Endnote),
+            paragraph(280, "last body paragraph"),
+        ],
+        definitions,
+    )
+}
+
+#[test]
+fn an_appended_endnote_body_prints_its_own_number_in_the_default_roman() {
+    let (_, recorder) = paginate_recording(&one_endnote_document());
+    assert_eq!(
+        recorder.last(270),
+        "bodyi",
+        "the reference marker is lowerRoman"
+    );
+    assert_eq!(
+        recorder.last(730),
+        "iendnote text",
+        "the endnote body starts with its own number, matching the reference"
+    );
+}
+
+#[test]
+fn the_endnote_block_is_preceded_by_a_separator_rule() {
+    use casual_doc_layout::compose::compose_page;
+    use casual_doc_layout::display::PaintItem;
+    let shaper = ParleyShaper::new();
+    let layout = paginate_document(&one_endnote_document(), &shaper);
+    let page = &layout.pages[0];
+    let top_of = |id: u64| {
+        page.placed
+            .iter()
+            .find(|placed| placed.fragment.node_id() == node(id))
+            .map(|placed| placed.rect)
+            .unwrap_or_else(|| panic!("block {id} is on page 1"))
+    };
+    let body = top_of(280);
+    let endnote = top_of(730);
+    let first_line_top = endnote.origin.y
+        + match &page
+            .placed
+            .iter()
+            .find(|placed| placed.fragment.node_id() == node(730))
+            .unwrap()
+            .fragment
+        {
+            casual_doc_layout::block::BlockFragment::Paragraph { box_metrics, .. } => {
+                box_metrics.space_before
+            }
+            _ => unreachable!(),
+        };
+    let list = compose_page(page);
+    let rule = list.items.iter().find_map(|item| match item {
+        PaintItem::Rect {
+            rect,
+            fill: Some(_),
+            ..
+        } if rect.size.width == casual_doc_layout::units::Twip(2_880)
+            && rect.size.height.raw() <= 20 =>
+        {
+            Some(*rect)
+        }
+        _ => None,
+    });
+    let rule = rule.expect("a short separator hairline is painted before the endnotes");
+    assert!(
+        rule.origin.y >= body.origin.y + body.size.height && rule.origin.y < first_line_top,
+        "the separator sits between the last body line and the endnote's first line \
+         (rule y {:?}, body bottom {:?}, endnote first line {:?})",
+        rule.origin.y,
+        body.origin.y + body.size.height,
+        first_line_top
+    );
+    assert_eq!(
+        rule.origin.x, page.content_area.origin.x,
+        "flush with the margin"
+    );
+}

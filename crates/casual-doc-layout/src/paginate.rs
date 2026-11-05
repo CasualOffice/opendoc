@@ -186,6 +186,44 @@ fn content_area_with_reservation(config: &PageConfig, reservation: Twip) -> Rect
 /// count) when a paragraph carries `w:widowControl`.
 const MIN_WIDOW_ORPHAN: usize = 2;
 
+/// The height a keep-with-next chain must carry of its final member `fragment`:
+/// the space before it plus its first line (its first two under widow/orphan
+/// control) when the paragraph may split there, else its whole height. A
+/// paragraph that is `keep_lines`, a table row, or one too short to split
+/// without breaking widow/orphan control is carried whole. O(lines kept).
+fn keep_head_height<F: Paginable>(fragment: &F) -> i32 {
+    let control = fragment.break_control();
+    let n = fragment.line_count();
+    let min = if control.widow_control {
+        MIN_WIDOW_ORPHAN
+    } else {
+        1
+    };
+    if fragment.row_info().is_some() || control.keep_lines || n < 2 * min {
+        return fragment.height().raw();
+    }
+    (0..min)
+        .map(|line| fragment.line_height(line).raw())
+        .sum::<i32>()
+        .saturating_add(fragment.space_before().raw())
+}
+
+/// The height a keep group must find room for: every member of a keep-with-next
+/// chain whole except the last, which counts only by [`keep_head_height`]; a
+/// single fragment by its own height. Both paginators (this one and the column
+/// driver in `columns.rs`) decide a group's move with it, so they cannot
+/// disagree about keep-with-next. O(group).
+pub(crate) fn keep_group_height<F: Paginable>(group: &[F]) -> i32 {
+    match group.split_last() {
+        Some((last, chain)) if !chain.is_empty() => chain
+            .iter()
+            .map(|f| f.height().raw())
+            .sum::<i32>()
+            .saturating_add(keep_head_height(last)),
+        _ => group.iter().map(|f| f.height().raw()).sum(),
+    }
+}
+
 /// Paginates a galley of block fragments into pages under one section geometry.
 ///
 /// A paragraph that does not fit the remaining space is **split at a line
@@ -903,9 +941,14 @@ impl<'a, F: Paginable> Paginator<'a, F> {
                 j = i + k;
             }
             let group = &fragments[i..j];
-            let group_height: i32 = group.iter().map(|f| f.height().raw()).sum();
-            let group_fits_page = group_height <= self.content_height;
             let is_keep_group = group.len() > 1 || group[0].break_control().keep_lines;
+            // What the group must keep together. Keep-with-next binds a paragraph
+            // to the *start* of the next one, not to all of it (Word, ECMA-376
+            // §17.3.1.15): the chain's last member contributes only its head lines
+            // when it may split. Summing its full height moved a heading plus a
+            // long paragraph to the next page whole, leaving a blank page foot.
+            let group_height = keep_group_height(group);
+            let group_fits_page = group_height <= self.content_height;
             let is_vertical_merge_group = group.iter().any(Paginable::is_vertical_merge_row);
 
             let forced = group[0].break_control().page_break_before;
@@ -943,7 +986,12 @@ impl<'a, F: Paginable> Paginator<'a, F> {
             };
             let target_height = group_height.saturating_add(repeated_header_height);
             let force_overflow = is_vertical_merge_group && target_height > self.content_height;
+            let last = group.len() - 1;
             for (offset, fragment) in group.iter().enumerate() {
+                // The chain's last member was only counted by its head lines, so
+                // it splits like any paragraph (`place` still honours keepLines).
+                let allow_split =
+                    allow_split || (offset == last && group.len() > 1 && !is_vertical_merge_group);
                 self.place(i + offset, fragment, allow_split, force_overflow);
                 if self.halted.is_some() {
                     return;
@@ -2665,6 +2713,113 @@ mod tests {
                 && page2_nodes.contains(&NodeId::from_parts(3, 1).unwrap()),
             "keepNext keeps the heading with its body on page 2"
         );
+    }
+
+    /// FID-L-29: a keepNext heading, then a 20-line widow-controlled paragraph,
+    /// with room left on page 1 for the heading plus exactly five lines.
+    fn heading_then_long_paragraph(body_control: BreakControl) -> (PageConfig, Vec<BlockFragment>) {
+        let config = letter_config();
+        let content_h = config.content_area().size.height.raw();
+        let line = 240;
+        let mut fragments = vec![paragraph(1, Twip(content_h - (300 + 5 * line)))];
+        fragments.push(paragraph_with(2, Twip(300), with(false, true)));
+        fragments.push(multiline(3, 20, Twip(line), body_control));
+        (config, fragments)
+    }
+
+    fn page_nodes(layout: &PaginatedLayout, page: usize) -> Vec<NodeId> {
+        layout.pages[page]
+            .placed
+            .iter()
+            .map(|p| p.fragment.node_id())
+            .collect()
+    }
+
+    #[test]
+    fn keep_next_keeps_the_heading_with_the_first_lines_not_the_whole_paragraph() {
+        let widow = BreakControl {
+            widow_control: true,
+            ..BreakControl::default()
+        };
+        let (config, fragments) = heading_then_long_paragraph(widow);
+        let layout = paginate(&fragments, &config);
+        let heading = NodeId::from_parts(2, 1).unwrap();
+        let body = NodeId::from_parts(3, 1).unwrap();
+        assert!(
+            page_nodes(&layout, 0).contains(&heading),
+            "the heading stays on page 1 with the start of its paragraph"
+        );
+        assert!(
+            page_nodes(&layout, 0).contains(&body) && page_nodes(&layout, 1).contains(&body),
+            "the paragraph after the heading splits across the page break"
+        );
+        let first_chunk_lines = layout.pages[0]
+            .placed
+            .iter()
+            .find(|p| p.fragment.node_id() == body)
+            .map(|p| p.fragment.line_count())
+            .unwrap();
+        assert_eq!(first_chunk_lines, 5, "page 1 is filled to its foot");
+    }
+
+    #[test]
+    fn keep_next_moves_the_whole_group_when_the_next_paragraph_is_keep_lines() {
+        // Precondition kept explicit: the same galley, with the body under
+        // keepLines, so it cannot split and the group must move whole.
+        let (config, fragments) = heading_then_long_paragraph(BreakControl {
+            keep_lines: true,
+            widow_control: true,
+            ..BreakControl::default()
+        });
+        let layout = paginate(&fragments, &config);
+        let heading = NodeId::from_parts(2, 1).unwrap();
+        let body = NodeId::from_parts(3, 1).unwrap();
+        assert!(!page_nodes(&layout, 0).contains(&heading));
+        assert!(
+            page_nodes(&layout, 1).contains(&heading) && page_nodes(&layout, 1).contains(&body)
+        );
+    }
+
+    #[test]
+    fn keep_next_with_too_few_lines_to_split_moves_whole() {
+        // Three widow-controlled lines cannot split 2+2, so the heading keeps
+        // the whole paragraph and both move when it does not fit.
+        let config = letter_config();
+        let content_h = config.content_area().size.height.raw();
+        let widow = BreakControl {
+            widow_control: true,
+            ..BreakControl::default()
+        };
+        let fragments = vec![
+            paragraph(1, Twip(content_h - (300 + 2 * 240))),
+            paragraph_with(2, Twip(300), with(false, true)),
+            multiline(3, 3, Twip(240), widow),
+        ];
+        let layout = paginate(&fragments, &config);
+        assert!(!page_nodes(&layout, 0).contains(&NodeId::from_parts(2, 1).unwrap()));
+    }
+
+    #[test]
+    fn incremental_equals_full_when_a_keep_next_heading_splits_its_next_paragraph() {
+        let config = letter_config();
+        let widow = BreakControl {
+            widow_control: true,
+            ..BreakControl::default()
+        };
+        let mut prev = Vec::new();
+        for i in 0..40u64 {
+            if i % 4 == 0 {
+                prev.push(paragraph_with(i + 1, Twip(300), with(false, true)));
+            } else {
+                prev.push(multiline(i + 1, 7, Twip(240), widow));
+            }
+        }
+        let mut new = prev.clone();
+        new[5] = multiline(6, 9, Twip(240), widow);
+        golden(&prev, &new, &config);
+        let mut new = prev.clone();
+        new[20] = paragraph(21, Twip(100));
+        golden(&prev, &new, &config);
     }
 
     // --- Incremental re-pagination (P1D-004a) ----------------------------------

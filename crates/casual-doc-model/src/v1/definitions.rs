@@ -739,6 +739,30 @@ pub struct WatermarkText {
     /// Italic (`w:i`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub italic: bool,
+    /// The box the producer sized the stamp into (the VML shape's `width` and
+    /// `height`, the text stretched into it by `v:textpath@fitshape`). Word's
+    /// Auto size is this box, measured from the text when the stamp was made,
+    /// so layout fits an auto-sized stamp to it rather than to the page. `None`
+    /// when no box was authored (a stamp made here); layout then fits the page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape_box: Option<WatermarkBox>,
+}
+
+/// The longest side a watermark's authored shape box may have, in twips: the
+/// largest page the model admits (`w:pgSz`'s 31,680-twip maximum) twice over, so
+/// any box a producer could fit to a page is accepted and a hostile one is not.
+pub const MAX_WATERMARK_BOX_TWIPS: u32 = 63_360;
+
+/// A text watermark's authored shape box, in twips (see
+/// [`WatermarkText::shape_box`]). Both sides are non-zero and at most
+/// [`MAX_WATERMARK_BOX_TWIPS`].
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WatermarkBox {
+    /// Width along the stamp's own (unrotated) axis.
+    pub width_twips: u32,
+    /// Height across it.
+    pub height_twips: u32,
 }
 
 /// A picture watermark: an image stamped behind the text, usually washed out.
