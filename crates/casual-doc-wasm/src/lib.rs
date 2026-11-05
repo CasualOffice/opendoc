@@ -228,6 +228,17 @@ mod save_identity;
 #[path = "identity_tests.rs"]
 mod identity_tests;
 
+// The caret and story contract: navigation never leaves the story it is in,
+// and list level changes take the level's own indent (`docs/109` UX-057).
+#[cfg(test)]
+#[path = "caret_contract_tests.rs"]
+mod caret_contract_tests;
+// The story contract: document edges are the body's (`docs/109` UX-057).
+mod story;
+// List levels and indent on style-inherited numbering (`docs/109` UX-058).
+mod list_levels;
+use list_levels::set_list_numbering;
+
 // Captions and cross-references (`docs/105` OO-005). Its own module rather than
 // more of this file: it is one feature with one document walk, and this file is
 // already 35k lines and is owned by other lanes.
@@ -4148,14 +4159,11 @@ impl WasmDocument {
         for block in &fragment.blocks {
             blocks.push(self.fresh_block(block, &mut report).map_err(to_js)?);
         }
-        let caret = blocks
-            .first()
-            .map(first_pos_of_block)
-            .unwrap_or_else(|| Pos::new(start.node, 0));
 
         // Position the insertion between whole body blocks: before the caret block
         // (caret at its start), after it (caret at its end), or split it (mid-way).
         let mut ops = Vec::new();
+        let mut split = None;
         let insert_index = if start.offset == 0 {
             block_index as u32
         } else if start.offset >= paragraph_len {
@@ -4165,6 +4173,7 @@ impl WasmDocument {
                 .edit_ids
                 .next_id()
                 .map_err(|_| to_js("id space exhausted".into()))?;
+            split = Some(new_id);
             ops.push(Operation::SplitParagraph {
                 at: start,
                 new_id,
@@ -4172,6 +4181,9 @@ impl WasmDocument {
             });
             block_index as u32 + 1
         };
+        let caret = self
+            .paste_landing(&mut blocks, start, block_index, split)
+            .map_err(to_js)?;
         ops.push(Operation::InsertBlocks {
             container: None,
             index: insert_index,
@@ -4282,11 +4294,6 @@ impl WasmDocument {
                 .into(),
             ));
         }
-        let caret = blocks
-            .first()
-            .map(first_pos_of_block)
-            .unwrap_or_else(|| Pos::new(start.node, 0));
-
         // Position the insertion between whole body blocks: before the caret block
         // (caret at its start), after it (caret at its end), or split it (mid-way) —
         // the same placement `paste_structured` uses.
@@ -4294,6 +4301,7 @@ impl WasmDocument {
         // The numbering definitions the pasted list paragraphs name come FIRST: an
         // operation must never be ordered before the thing it references.
         let mut ops = install;
+        let mut split = None;
         let insert_index = if start.offset == 0 {
             block_index as u32
         } else if start.offset >= paragraph_len {
@@ -4303,6 +4311,7 @@ impl WasmDocument {
                 .edit_ids
                 .next_id()
                 .map_err(|_| to_js("id space exhausted".into()))?;
+            split = Some(new_id);
             ops.push(Operation::SplitParagraph {
                 at: start,
                 new_id,
@@ -4310,6 +4319,9 @@ impl WasmDocument {
             });
             block_index as u32 + 1
         };
+        let caret = self
+            .paste_landing(&mut blocks, start, block_index, split)
+            .map_err(to_js)?;
         ops.push(Operation::InsertBlocks {
             container: None,
             index: insert_index,
@@ -5575,10 +5587,12 @@ impl WasmDocument {
     pub fn delete_backward(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
         let nid = node_id(node)?;
         if offset == 0 {
-            let paras = self.ordered_paragraphs();
-            let idx = paras.iter().position(|(id, _)| *id == nid);
+            // The previous paragraph of the SAME story: Backspace at the start
+            // of a footer must not reach back into a note body or the body.
+            let paras = self.ordered_paragraphs_by_surface();
+            let idx = paras.iter().position(|(id, _, _)| *id == nid);
             return match idx {
-                Some(i) if i > 0 => self
+                Some(i) if i > 0 && paras[i - 1].2 == paras[i].2 => self
                     .apply_action_as(
                         vec![Operation::JoinParagraphs {
                             first: paras[i - 1].0,
@@ -5609,10 +5623,12 @@ impl WasmDocument {
         let nid = node_id(node)?;
         let text = self.paragraph_text(nid);
         if offset as usize >= text.len() {
-            let paras = self.ordered_paragraphs();
-            let idx = paras.iter().position(|(id, _)| *id == nid);
+            // The next paragraph of the SAME story: Delete at the end of the body
+            // used to name the first header paragraph as its join partner.
+            let paras = self.ordered_paragraphs_by_surface();
+            let idx = paras.iter().position(|(id, _, _)| *id == nid);
             return match idx {
-                Some(i) if i + 1 < paras.len() => self
+                Some(i) if i + 1 < paras.len() && paras[i + 1].2 == paras[i].2 => self
                     .apply_action_as(
                         vec![Operation::JoinParagraphs {
                             first: nid,
@@ -5966,36 +5982,24 @@ impl WasmDocument {
         NodeId::from_str(node).map_or(0, |nid| self.paragraph_text(nid).len() as u32)
     }
 
-    /// The first caret position in the document (⌘↑ / select-all anchor).
+    /// The first caret position of the BODY (Ctrl+Home / select-all anchor).
+    ///
+    /// The body's, never another story's: the flat paragraph order appends
+    /// headers, footers and notes after the body, so its first and last entries
+    /// are not the document's edges (`story.rs`, `docs/109` UX-057).
     #[wasm_bindgen(js_name = firstPosition)]
     #[must_use]
     pub fn first_position(&self) -> Caret {
-        self.ordered_paragraphs().first().map_or_else(
-            || Caret {
-                node: self.document.id().to_string(),
-                offset: 0,
-            },
-            |(id, _)| Caret {
-                node: id.to_string(),
-                offset: 0,
-            },
-        )
+        self.body_edge(false)
     }
 
-    /// The last caret position in the document (⌘↓ / select-all focus).
+    /// The last caret position of the BODY (Ctrl+End / select-all focus) — never
+    /// a footer's, which is where the flat order's last paragraph lives and
+    /// where Ctrl+End used to put the caret (audit CRITIC-01).
     #[wasm_bindgen(js_name = lastPosition)]
     #[must_use]
     pub fn last_position(&self) -> Caret {
-        self.ordered_paragraphs().last().map_or_else(
-            || Caret {
-                node: self.document.id().to_string(),
-                offset: 0,
-            },
-            |(id, len)| Caret {
-                node: id.to_string(),
-                offset: *len,
-            },
-        )
+        self.body_edge(true)
     }
 
     /// The ordered text bounds of the innermost table cell containing `node`.
@@ -6634,9 +6638,10 @@ impl WasmDocument {
         end_offset: u32,
         delta_twips: i32,
     ) -> Result<EditResult, JsValue> {
-        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
-            casual_doc_command::paragraph::ParagraphChange::AdjustIndent(delta_twips).apply(p);
-        })
+        // From where the paragraph is DRAWN, style indent included: from the
+        // direct indent alone, Increase moved a style-indented paragraph left
+        // (`list_levels.rs`, `docs/109` UX-058).
+        self.adjust_indent_inner(start_node, start_offset, end_node, end_offset, delta_twips)
     }
 
     /// Sets the left (start) indent to an absolute `twips` (clamped ≥ 0) — the
@@ -6723,13 +6728,23 @@ impl WasmDocument {
         let (start, _end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
-        let current = paragraph_properties(&self.document, start.node).and_then(|p| p.numbering);
+        // The list the reader SEES, style-supplied included, and any bullet list
+        // counts as "already bulleted" — an imported List Bullet item turns its
+        // bullets off, as in Word, instead of being re-pointed at the session's
+        // own bullet list (which is why Enter on an empty imported item never
+        // left the list, `docs/109` UX-058).
+        let current = self.effective_numbering(start.node);
         let already = if checklist {
             current.is_some_and(|n| self.checklist_state_of_instance(n.instance).is_some())
         } else {
-            current.is_some_and(|n| n.instance == instance)
+            current.is_some_and(|n| {
+                n.instance == instance
+                    || (self.checklist_state_of_instance(n.instance).is_none()
+                        && !self.numbering_ordered(&n))
+            })
         };
         let target = (!already).then_some(NumberingRef { instance, level: 0 });
+        let styled = self.styles_supplying_numbering();
         self.apply_paragraph_props_after(
             install,
             start_node,
@@ -6737,9 +6752,7 @@ impl WasmDocument {
             end_node,
             end_offset,
             HistoryKind::ListFormatting,
-            move |p| {
-                casual_doc_command::paragraph::ParagraphChange::Numbering(target).apply(p);
-            },
+            move |p| set_list_numbering(p, target, &styled),
         )
     }
 
@@ -6751,8 +6764,8 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = toggleChecklistItem)]
     pub fn toggle_checklist_item(&mut self, node: &str) -> Result<EditResult, JsValue> {
         let nid = node_id(node)?;
-        let reference = paragraph_properties(&self.document, nid)
-            .and_then(|p| p.numbering)
+        let reference = self
+            .effective_numbering(nid)
             .ok_or_else(|| to_js("not a list item".into()))?;
         let checked = self
             .checklist_state_of_instance(reference.instance)
@@ -6986,27 +6999,9 @@ impl WasmDocument {
         end_offset: u32,
         delta: i32,
     ) -> Result<EditResult, JsValue> {
-        let (start, _) = self
-            .order_endpoints(start_node, start_offset, end_node, end_offset)
-            .map_err(to_js)?;
-        if paragraph_properties(&self.document, start.node)
-            .and_then(|p| p.numbering)
-            .is_none()
-        {
-            return Err(to_js(
-                "list level adjustment requires a list paragraph".into(),
-            ));
-        }
-        self.apply_paragraph_props_as(
-            start_node,
-            start_offset,
-            end_node,
-            end_offset,
-            HistoryKind::ListFormatting,
-            move |p| {
-                casual_doc_command::paragraph::ParagraphChange::ListLevel(delta).apply(p);
-            },
-        )
+        // On the numbering the reader sees, style-supplied included, landing the
+        // item where its new level draws it (`list_levels.rs`, `docs/109` UX-058).
+        self.adjust_list_level_inner(start_node, start_offset, end_node, end_offset, delta)
     }
 
     /// Restarts a numbered list at the caret's paragraph and carries the new
@@ -7120,8 +7115,7 @@ impl WasmDocument {
         let Ok(nid) = NodeId::from_str(node) else {
             return String::new();
         };
-        let Some(reference) = paragraph_properties(&self.document, nid).and_then(|p| p.numbering)
-        else {
+        let Some(reference) = self.effective_numbering(nid) else {
             return String::new();
         };
         // A checklist (bullet with a checkbox marker) is recognized by its glyph,
@@ -7164,8 +7158,7 @@ impl WasmDocument {
         let Ok(nid) = NodeId::from_str(node) else {
             return String::new();
         };
-        let Some(reference) = paragraph_properties(&self.document, nid).and_then(|p| p.numbering)
-        else {
+        let Some(reference) = self.effective_numbering(nid) else {
             return String::new();
         };
         let resolver = self.document.definitions().numbering_resolver();
@@ -7407,9 +7400,7 @@ impl WasmDocument {
         edit: impl FnOnce(&mut AbstractNumbering, u8) -> Result<(), String>,
     ) -> Result<EditResult, JsValue> {
         let start_node = node_id(node)?;
-        let Some(current) =
-            paragraph_properties(&self.document, start_node).and_then(|p| p.numbering)
-        else {
+        let Some(current) = self.effective_numbering(start_node) else {
             return Err(to_js(
                 refused!(
                     "list.format-not-list",
@@ -7712,8 +7703,7 @@ impl WasmDocument {
         let Ok(nid) = NodeId::from_str(node) else {
             return -1;
         };
-        paragraph_properties(&self.document, nid)
-            .and_then(|p| p.numbering)
+        self.effective_numbering(nid)
             .map_or(-1, |reference| i32::from(reference.level))
     }
 
@@ -15901,15 +15891,22 @@ impl WasmDocument {
                 range: EditRange { start, end },
             }]);
         }
-        let paras = self.ordered_paragraphs();
-        let si = paras
+        let stories = self.ordered_paragraphs_by_surface();
+        let si = stories
             .iter()
-            .position(|(id, _)| *id == start.node)
+            .position(|(id, _, _)| *id == start.node)
             .ok_or("start not found")?;
-        let ei = paras
+        let ei = stories
             .iter()
-            .position(|(id, _)| *id == end.node)
+            .position(|(id, _, _)| *id == end.node)
             .ok_or("end not found")?;
+        // A deletion never spans two stories (`story.rs`): a range from the body
+        // into a footer would empty every header, footer and note body the flat
+        // order happens to put between them.
+        if stories[si].2 != stories[ei].2 {
+            return Err("selection crosses editing surfaces".to_owned());
+        }
+        let paras: Vec<(NodeId, u32)> = stories.iter().map(|(id, len, _)| (*id, *len)).collect();
         let start_len = paras[si].1;
 
         let mut ops = Vec::new();
@@ -16709,8 +16706,9 @@ impl WasmDocument {
         let (start, end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
-        let current = paragraph_properties(&self.document, start.node).and_then(|p| p.numbering);
+        let current = self.effective_numbering(start.node);
         let already = current.is_some_and(|n| self.is_numbered_reference(&n));
+        let styled = self.styles_supplying_numbering();
         let (target, install) = if already {
             (None, Vec::new())
         } else if let Some(join) = self.adjacent_numbered_list(start.node, end.node) {
@@ -16729,9 +16727,7 @@ impl WasmDocument {
             end_node,
             end_offset,
             HistoryKind::ListFormatting,
-            move |p| {
-                casual_doc_command::paragraph::ParagraphChange::Numbering(target).apply(p);
-            },
+            move |p| set_list_numbering(p, target, &styled),
         )
     }
 
@@ -17011,18 +17007,23 @@ impl WasmDocument {
                     None => (nid, 0),
                 }
             }
+            // Paragraph steps stay in the caret's story, as `left`/`right` do:
+            // Ctrl+Down in the last body paragraph used to step into the first
+            // header of the flat order (`story.rs`, `docs/109` UX-057).
             "paragraphUp" => {
-                let paras = self.ordered_paragraphs();
-                match paras.iter().position(|(id, _)| *id == nid) {
+                let paras = self.ordered_paragraphs_by_surface();
+                match paras.iter().position(|(id, _, _)| *id == nid) {
                     Some(_) if offset > 0 => (nid, 0),
-                    Some(i) if i > 0 => (paras[i - 1].0, 0),
+                    Some(i) if i > 0 && paras[i - 1].2 == paras[i].2 => (paras[i - 1].0, 0),
                     _ => (nid, 0),
                 }
             }
             "paragraphDown" => {
-                let paras = self.ordered_paragraphs();
-                match paras.iter().position(|(id, _)| *id == nid) {
-                    Some(i) if i + 1 < paras.len() => (paras[i + 1].0, 0),
+                let paras = self.ordered_paragraphs_by_surface();
+                match paras.iter().position(|(id, _, _)| *id == nid) {
+                    Some(i) if i + 1 < paras.len() && paras[i + 1].2 == paras[i].2 => {
+                        (paras[i + 1].0, 0)
+                    }
                     Some(i) => (nid, paras[i].1),
                     None => (nid, offset),
                 }

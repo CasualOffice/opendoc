@@ -8,6 +8,7 @@ import { createLanguageSelection } from "./language_selection.mjs";
 import { readPref, writePref } from "./prefs.mjs";
 import { smartQuoteForTyped } from "./text_rules.mjs";
 import { orderedSelectionEnds } from "./caret_navigation.mjs";
+import { exitEmptyListItem } from "./list_enter.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -60,6 +61,8 @@ export function createTextInput(ed) {
     }
     if (type === "insertLineBreak" || type === "insertParagraph") {
       e.preventDefault(); // An IME / on-screen-keyboard soft break IS Shift+Enter, not a new paragraph (HF-296, `docs/174` TA-01).
+      // The same empty-list-item rule the Enter key runs (UX-058, `list_enter.mjs`).
+      if (type === "insertParagraph" && ed.reviewMode !== "suggesting" && (await exitEmptyListItem(ed))) return;
       await (type === "insertLineBreak" ? ed.insertLineBreakAtSelection() : ed.pasteText("\n", "typing"));
     }
   });

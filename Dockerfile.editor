@@ -155,6 +155,13 @@ RUN ./webapp/build.sh
 # means nothing in a container, and naming somebody else's domain inside a
 # self-hosted image is worse than leaving it out.
 #
+# Last, the staged site is versioned exactly as the Pages deploy versions it
+# (`stamp-assets.py`), with a hash of the staged files as the build id: every
+# script, stylesheet and the wasm are asked for by `?v=<hash>`, which is what lets
+# `deploy/editor-nginx.conf` serve the wasm `immutable` (docs/109 UX-064). A hash
+# rather than a commit: the image is built from a checkout that need not be a git
+# repository, and the same files always give the same id.
+#
 # (The comments are here and not inside the RUN: a `#` line inside a continued
 # shell command is a Dockerfile comment on some parsers and the start of a shell
 # comment that swallows the rest of the joined line on others.)
@@ -164,7 +171,9 @@ RUN set -eu; \
     cp -a *.html *.txt *.svg *.png *.docx sitemap.xml brand.json /stage/; \
     cp -a src assets locales dict packs pkg reference /stage/; \
     rm -f /stage/*.page.html /stage/llms.page.txt; \
-    find /stage -name '.DS_Store' -delete
+    find /stage -name '.DS_Store' -delete; \
+    build="$(cd /stage && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)"; \
+    python3 ./stamp-assets.py /stage "$build"
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
 # nginx alpine: a static file server and nothing more. No Rust, no cargo, no

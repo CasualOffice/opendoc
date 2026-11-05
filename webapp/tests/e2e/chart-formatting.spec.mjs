@@ -185,7 +185,7 @@ test("axis titles, trendlines, a combination and fonts survive Save as DOCX", as
   // The reopened file may show the compact toolbar, which has no ribbon tabs;
   // the chart's own right-click menu is on every layout.
   await page.mouse.click(box.x + box.width * 0.3, box.y + box.height * 0.12, { button: "right" });
-  await page.getByRole("menuitem", { name: /^Chart settings…/ }).click();
+  await page.getByRole("menuitem", { name: /^Chart settings/ }).click();
   await expect(settings(page)).toBeVisible();
   await expect(control(page, "verticalAxisTitle")).toHaveValue("Axis Title");
   await expect(control(page, "trendline")).toHaveValue("exp");

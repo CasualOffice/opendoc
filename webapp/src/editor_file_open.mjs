@@ -15,7 +15,9 @@ import { isPdfBytes } from "./pdf_import_scheduler.mjs";
 import { createPdfCommands, ocrSummaryOf } from "./pdf_commands.mjs";
 import { createPdfLayoutChip } from "./pdf_layout_chip.mjs";
 import { registerPopover } from "./popover_manager.mjs";
-import { hostParams } from "./capabilities.mjs";
+import { hostConfig, hostParams } from "./capabilities.mjs";
+import { shouldFocusOnOpen } from "./open_focus.mjs";
+import { createEngineBoot, loadEngine } from "./engine_boot.mjs";
 
 // Curated `?demo=<kind>` presets for the editor. `?demo=1` — used by the Home
 // hero live embed — is the plain sample with no panel; the named kinds boot the
@@ -129,25 +131,23 @@ export function createFileOpen(ed) {
       if (early) prefetchStartup(early.src);
     }
 
-    try {
-      await init();
-      // The engine is only now instantiated. `createMeasurementUnits` runs during
-      // module evaluation -- long before this line -- so its roster is faulted in
-      // rather than read at construction, and THIS is the call that fills the
-      // chooser. Reaching for a free function on an uninstantiated wasm module
-      // throws `Cannot read properties of undefined (reading
-      // '__wbindgen_add_to_stack_pointer')`, and a throw during module evaluation
-      // takes the whole editor down: nothing after it runs, so the document never
-      // opens at all.
-      ed.measurement.reflect();
-      ed.setStatus(t("fileOpen.ready"));
-      ed.fileEl.disabled = false;
-      if (ed.openBtn) ed.openBtn.disabled = false;
-    } catch (err) {
-      console.error(err);
-      ed.setStatus("Failed to load the WASM engine", "error");
-      return;
-    }
+    // The splash's progress bar, the failure card and the inert chrome (UX-064).
+    // `loadEngine` returns only once the engine is in: a failed download shows a
+    // card with Try again over an inert chrome and waits for it, instead of the
+    // red status line it used to leave behind with a ribbon that looked usable.
+    await loadEngine(init, createEngineBoot(document), { onError: (err) => console.error(err) });
+    // The engine is only now instantiated. `createMeasurementUnits` runs during
+    // module evaluation -- long before this line -- so its roster is faulted in
+    // rather than read at construction, and THIS is the call that fills the
+    // chooser. Reaching for a free function on an uninstantiated wasm module
+    // throws `Cannot read properties of undefined (reading
+    // '__wbindgen_add_to_stack_pointer')`, and a throw during module evaluation
+    // takes the whole editor down: nothing after it runs, so the document never
+    // opens at all.
+    ed.measurement.reflect();
+    ed.setStatus(t("fileOpen.ready"));
+    ed.fileEl.disabled = false;
+    if (ed.openBtn) ed.openBtn.disabled = false;
 
     // A host that said it will send an identity (`awaitIdentity=1`, `docs/175`
     // §3.2) gets it in before anything opens: a startup document, and above all a
@@ -156,11 +156,22 @@ export function createFileOpen(ed) {
     if (identityPromised(window.location.search)) await hostIdentity.settled();
 
     const startup = startupDocument(params);
+    let startupTried = false;
     if (await ed.loadSharedStartup(params, loadStartupDocument)) {
     } else if (startup?.preset) {
+      startupTried = true;
       await applyDemoPreset(startup.preset);
     } else if (startup) {
+      startupTried = true;
       await loadStartupDocument(startup.src, startup.name);
+    }
+    // The head script promised a document (`doc-expected`) from the URL alone. If
+    // the startup document was tried and did not open, take the promise back: the
+    // boot skeleton gives way to the upload card it was standing in for, instead
+    // of covering the desk for ever (UX-064). Only then: a room still syncing, or
+    // a host that will post the document in, is a document still on its way.
+    if (startupTried && !document.body.classList.contains("doc-loaded")) {
+      document.documentElement.classList.remove("doc-expected");
     }
 
     // Last, and deliberately after the startup document: the recovery bar is an
@@ -484,6 +495,15 @@ export function createFileOpen(ed) {
       ed.tocCommands.fields.refresh();
       ed.buildAccessibilityTree();
       ed.drawSelection();
+      // Open ready to type, as Word and Docs do — unless that would take focus
+      // from someone (`open_focus.mjs`, UX-060).
+      if (ed.doc === next && shouldFocusOnOpen({
+        framed: hostConfig(window).framed,
+        activeElement: document.activeElement,
+        body: document.body,
+        editable: !ed.readOnlyReason && ed.reviewMode !== "viewing" && ed.chromeShows("caret"),
+        coarsePointer: window.matchMedia?.("(pointer: coarse)")?.matches === true,
+      })) ed.focusEditorSurface();
       ed.armBackgroundMeasure();
       if (typeof onRendered === "function") onRendered();
 

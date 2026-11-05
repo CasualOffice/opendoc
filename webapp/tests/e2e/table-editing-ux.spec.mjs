@@ -116,25 +116,21 @@ test("table properties commit live, undo per interaction, and restore focus", as
   await expect(page.locator("body")).not.toHaveClass(/modal-open/);
   await expect(page.locator("#tablePropertiesApply")).toHaveCount(0);
   await expect(page.locator("#tablePropertiesReset")).toHaveCount(0);
+  // Docked as a card on the desk (docs/184 D4 as amended 2026-11-06, the
+  // approved v2 mockup, `docs/63` §7.4): the shared panel radius and a frame,
+  // laid out in the work area beside the page rather than floated over it.
   const surface = await panel.evaluate((element) => {
+    const probe = document.createElement("div");
+    probe.style.borderRadius = "var(--r-md)";
+    document.body.append(probe);
+    const expected = getComputedStyle(probe).borderTopLeftRadius;
+    probe.remove();
     const style = getComputedStyle(element);
-    return {
-      radius: style.borderRadius,
-      borders: [
-        style.borderTopWidth,
-        style.borderRightWidth,
-        style.borderBottomWidth,
-        style.borderLeftWidth,
-      ],
-      shadow: style.boxShadow,
-    };
+    return { radius: style.borderTopLeftRadius, expected, position: style.position, shadow: style.boxShadow };
   });
-  // Docked, not a floating card (approved design P1, docs/184, 2026-11-02;
-  // Google Docs' side panels): no radius, no shadow, and one hairline on the
-  // side that faces the page — the left edge of a right-hand panel.
-  expect(surface.radius).toBe("0px");
-  expect(surface.borders).toEqual(["0px", "0px", "0px", "1px"]);
-  expect(surface.shadow).toBe("none");
+  expect(surface.radius).toBe(surface.expected);
+  expect(surface.position).toBe("relative");
+  expect(surface.shadow).not.toBe("none");
   const original = await tablePropertyValues(page);
 
   await page.locator('#tableAlign button[data-talign="center"]').click();

@@ -103,14 +103,21 @@ test("every pane starts at the same left edge — one measure, not four", async 
       // And the text inside that box, which a dialog's own body padding used
       // to indent by a further 22px — the pane's heading said one left edge,
       // the content another.
-      const leaves = box
-        ? [...box.querySelectorAll("*")].filter(
-            (el) =>
-              !el.querySelector("*") &&
-              el.textContent.trim() &&
-              el.getBoundingClientRect().width > 0,
-          )
-        : [];
+      // Text NODES, not leaf elements: a label that wraps its input
+      // (`<label>Title<input></label>`) is no leaf, and once Document
+      // properties lost its footer filler (audit DIALOGS-13) no leaf ELEMENT
+      // was left in its first column, so the measure read the second.
+      const leaves = [];
+      if (box) {
+        const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          if (!node.textContent.trim()) continue;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          const rect = [...range.getClientRects()].find((r) => r.width > 0);
+          if (rect) leaves.push({ getBoundingClientRect: () => rect });
+        }
+      }
       return {
         heading: Math.round(heading.getBoundingClientRect().left),
         content: box ? Math.round(box.getBoundingClientRect().left) : null,

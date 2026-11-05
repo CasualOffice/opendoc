@@ -11,7 +11,7 @@
 // `105` UX-019 (the whole editor at 390px: the Home tab collapsing to a single
 // `⋯` menu, no way to type on a touch device) is a separate, larger row and is
 // NOT addressed here. This spec deliberately says nothing about the ribbon.
-import { clickIntoFirstPage, expect, gotoEditor, moveCaretToDocStart, stableBox, test } from "./fixtures.mjs";
+import { clickIntoFirstPage, expect, gotoEditor, moveCaretToDocStart, stableBox, test, reviewBarAction, commentOnSelection } from "./fixtures.mjs";
 
 const WIDE = { width: 1440, height: 900 };
 const TABLET = { width: 860, height: 900 };
@@ -27,7 +27,7 @@ async function addComment(page, body) {
   await moveCaretToDocStart(page);
   await page.keyboard.type("NARROWANCHOR");
   await page.keyboard.press("Shift+Home");
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
   const sidebar = page.locator("#reviewSidebar");
   await sidebar.locator('[data-testid="review-comment-composer"]').fill(body);
   await sidebar.locator('[data-testid="review-comment-submit"]').click();
@@ -259,7 +259,7 @@ for (const [name, size] of [
     // without them. (That remaining scroll is the 816px sheet itself at phone
     // width — `105` UX-019 / HF-083, not this row.)
     const openOverflow = box.viewportScrollWidth - box.viewportClientWidth;
-    await page.locator("#reviewClose").click();
+    await reviewBarAction(page, "#reviewClose");
     await expect(page.locator("#reviewSidebar")).toBeHidden();
     const closed = await columnBox(page);
     expect(openOverflow).toBe(closed.viewportScrollWidth - closed.viewportClientWidth);
@@ -282,7 +282,7 @@ test("the sheet is dismissable and gives the screen back", async ({
     .poll(async () => (await hitTestPage(page, Math.round(PHONE.height / 2))).reviewPoints)
     .toEqual([]);
 
-  await page.locator("#reviewClose").click();
+  await reviewBarAction(page, "#reviewClose");
   await expect(page.locator("#reviewSidebar")).toBeHidden();
 
   // Every sampled point over the page is document again, including the bottom

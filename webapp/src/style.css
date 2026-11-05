@@ -1171,6 +1171,12 @@ button.presence-row:hover {
   font-size: var(--icon-sm);
 }
 
+/* `.btn` sets a display, which would otherwise beat the `hidden` attribute that
+   takes Share away when no host configured sharing (`docs/184` D6). */
+.btn.share-btn[hidden] {
+  display: none;
+}
+
 /* A remote caret the reader just asked to be shown: its label pulses once. */
 .remote-caret.is-located > span {
   animation: presence-located 1.2s ease-out 1;
@@ -4824,6 +4830,75 @@ body.phone-mode .autocorrect-body {
   background: var(--line);
 }
 
+/* ==== L7 right-click menu (docs/184 D-12) — BEGIN ===========================
+   Values are the approved right-click menu (proposal-v2
+   `v2-dropdowns-para-light`: `.menu`, `.mi`, `.msep`). 32px rows, a neutral
+   hover (the accent marks the current choice, not the row under the pointer),
+   the icon in the icon ink, shortcuts in the quiet ink. */
+.context-menu {
+  min-width: 11.25rem;
+  border-color: transparent;
+}
+.context-menu .menu-item {
+  min-height: var(--h-ctl);
+  padding: 0 0.625rem 0 0.375rem;
+  column-gap: 0.5rem;
+  font-size: var(--fs-md);
+}
+.context-menu .menu-item-icon {
+  color: var(--icon);
+  opacity: 1;
+}
+.context-menu .menu-item:hover,
+.context-menu .menu-item.active,
+.context-menu .menu-item:focus-visible,
+.context-menu .menu-item.has-submenu[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--ink);
+}
+.context-menu .menu-item:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.context-menu .menu-item-hint {
+  margin-left: 1.5rem;
+  font-size: var(--fs-sm);
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.context-menu .menu-divider {
+  margin: 0.25rem -0.25rem;
+}
+/* A spelling suggestion is bold, as in Word and Docs (audit CRITIC-09). */
+.context-menu .menu-item.emphasis .menu-item-label {
+  font-weight: 600;
+}
+/* What the menu SAYS (a mode's refusal, a grammar rule, "no suggestions"):
+   text, not a disabled command, so "no disabled rows" never costs the reader
+   the reason (docs/184 D-12). */
+.context-menu .menu-note {
+  max-width: 18rem;
+  padding: 0.375rem 0.625rem 0.375rem 2rem;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+  white-space: normal;
+}
+/* The floating-chrome arbiter (`floating_arbiter.mjs`, docs/184 D-12): of the
+   link card, object bar, table insert markers, mini-toolbar and paste chip, a
+   surface outranked by another that is showing steps aside. Its owner still
+   holds it open, so it returns when the one above it closes. `!important`
+   because each owner writes its own display state. */
+[data-float-suppressed="true"] {
+  display: none !important;
+}
+/* The mini-toolbar fades with the pointer's distance (Word's behaviour). The
+   level itself is a CSSOM rule editor_selection_toolbar.mjs writes, so a
+   pointermove never touches the bar's own style attribute. */
+.sel-toolbar {
+  transition: opacity 120ms ease;
+}
+/* ==== L7 right-click menu — END ============================================ */
+
 .table-style-menu {
   min-width: 13.75rem;
   display: grid;
@@ -5251,34 +5326,10 @@ body.phone-mode .autocorrect-body {
 }
 
 /* Find and replace keeps its GEOMETRY — fixed, top-right, so it does not cover
- * the text you are searching, which is Word's and Google Docs' model and not a
- * defect — but takes the shell's PADDING from the same pair as every other
- * panel. It was already the only panel whose head and body agreed, and
- * `var(--space-2) var(--space-4)` is where `--pnl-pad-y`/`--pnl-pad-x` came
- * from; naming them here is what stops the two drifting apart again. The right
- * inset was `--space-3` and is now symmetric, as the dialog heads are. */
-.find-panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  min-height: 3rem;
-  padding: var(--pnl-pad-y) var(--pnl-pad-x);
-  border-bottom: 1px solid var(--line);
-}
-
-.find-panel-head > div {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: var(--space-2);
-}
-
-.find-panel-title {
-  color: var(--ink);
-  font-size: var(--fs-lg);
-  font-weight: 600;
-}
+ * the text you are searching, which is Word's and Google Docs' model — and
+ * takes the shell's inset from the panel pair. Its title row is gone (audit
+ * CRITIC-07, the compact bar at the end of this file); the title remains for
+ * assistive technology only. */
 
 .find-panel-body {
   display: grid;
@@ -5763,6 +5814,11 @@ body.compact-mode {
   font-weight: 600;
   cursor: pointer;
   border-bottom: 2px solid transparent;
+  /* One line, always: "Header & Footer" wrapped at 1024px and "Kopf- und
+     Fußzeile" at 1280px in German, and the second line was cut off by the band
+     (audit MOBILE-17, CRITIC-06). Word keeps tab labels on one line; when the
+     strip runs out of room it scrolls under its fade instead. */
+  white-space: nowrap;
 }
 
 .ribbon-tab:hover:not(:disabled) {
@@ -6060,7 +6116,10 @@ body.compact-mode {
   gap: 0.125rem;
 }
 
-.fmt-big .ms {
+/* Two classes: `.fmt .ms` (below, same specificity as `.fmt-big .ms`) came
+   later and won, so every big button drew the small 20px glyph and the ribbon
+   read flat (audit SYSTEM-06). */
+.fmt.fmt-big .ms {
   font-size: var(--icon-lg);
 }
 
@@ -6564,6 +6623,14 @@ body.compact-mode {
   background: var(--bg-2);
 }
 
+/* Pressed: one step past hover, as Word and ONLYOFFICE darken on mouse-down. It
+   was identical to hover, so a click gave no feedback until the command ran
+   (audit SHELL-11). After the hover rule, which has the same specificity; it
+   outranks the toggled wash. */
+.fmt:active:not(:disabled) {
+  background: var(--press);
+}
+
 .fmt[aria-pressed="true"] {
   background: var(--accent-soft);
   border-color: var(--accent-line);
@@ -6847,13 +6914,6 @@ body.is-format-painting .page-wrap * {
    that are not selected still read as parts of one switch rather than as loose
    words in the status bar. The track was `--bg-2` — the footer's own colour, in
    both themes — which is why only the selected pill was visible. */
-.review-mode-segmented { display: inline-flex; gap: 0; padding: 1px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); }
-.review-mode-seg { display: inline-flex; align-items: center; gap: 0.25rem; border: 1px solid transparent; border-radius: var(--r-pill); padding: 0.25rem 0.5rem; background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-xs); font-weight: 600; cursor: pointer; white-space: nowrap; }
-.review-mode-seg .ms { font-size: var(--fs-lg); }
-.review-mode-seg[aria-pressed="true"] { color: var(--review-insert); border-color: var(--review-insert-line); background: var(--review-insert-soft); }
-.review-mode-seg[data-review-mode="viewing"][aria-pressed="true"] { color: var(--ink); border-color: var(--accent-text); background: var(--accent-soft); }
-.review-mode-seg:disabled { opacity: 0.45; cursor: default; }
-.review-mode-seg:not(:disabled):not([aria-pressed="true"]):hover { background: var(--accent-soft); color: var(--ink); }
 .viewing-banner { border-color: color-mix(in srgb, var(--accent-text) 42%, var(--line)); background: color-mix(in srgb, var(--accent-text) 12%, var(--surface)); }
 .viewing-banner .ms { color: var(--accent-text); }
 .suggesting-banner {
@@ -7083,53 +7143,80 @@ body.is-format-painting .page-wrap * {
   background: transparent;
 }
 .review-sidebar[hidden] { display: none; }
-/* Fixed workflow chrome above the (virtualized, document-scroll-positioned) card
-   area (REVIEW-GAP-018/019). The card body rides the canvas scroll, so the header
-   is `sticky` to stay visible; `.review-sidebar-body`'s negative margin (set from
-   JS to the header's height) cancels the header's flow offset so cards stay
-   pixel-aligned to their canvas anchors. */
+/* The comments bar (PROPOSAL D-11; audit REVIEW-01, REVIEW-V-02, DIALOGS-03).
+   One 2.5rem row, as the approved v2-review mockup draws it: "Comments", the
+   open count, the Open/Resolved/All segmented filter and a ⋯ menu. It was a
+   124px floating card three rows tall that cards slid under, and that cards
+   escaped above into the ribbon band when scrolled.
+
+   STICKY AT 0 ON AN OPAQUE DESK BAND. The card layer rides the document's one
+   scroll (the model above), so cards move under the bar; the bar sits at the
+   very top of the scroller with the desk colour, so a card leaving the top
+   passes UNDER it and is clipped by the scroller's own edge, never shown in a
+   strip above it. `.review-sidebar-body`'s negative margin (set from JS to this
+   bar's height) still cancels the bar's flow offset, so cards stay pixel-aligned
+   to their anchors. */
 .review-sidebar-header {
   position: sticky;
-  top: 0.5rem;
+  top: 0;
   z-index: 6;
-  margin: 0.5rem 0 0.375rem;
-  /* The PADDING convention, not the geometry one (HF-265). This column is
-     absolutely positioned and rides the document scroll so each card stays
-     pinned to its anchor — that is the model, and it is deliberately outside
-     the `.panel-head`/`.panel-body` shell. What it shares with the shell is the
-     inset: this header and `.review-margin-card` below both said `8px 10px`,
-     which was already self-consistent and was two more raw pixel values in a
-     family that now has a token pair. */
-  padding: var(--pnl-pad-y) var(--pnl-pad-x);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: var(--surface);
-  box-shadow: var(--e1);
-  display: grid;
+  box-sizing: border-box;
+  min-block-size: 2.5rem;
+  margin: 0;
+  padding: 0 0.125rem 0 0;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
   gap: 0.5rem;
 }
-.review-sidebar-headrow { display: flex; align-items: center; gap: 0.5rem; }
-.review-sidebar-title { flex: 1; font-size: var(--fs-sm); font-weight: 600; color: var(--ink); }
-.review-sidebar-nav { display: flex; gap: 0.25rem; }
-.review-nav-button {
-  width: 1.625rem; height: 1.625rem; padding: 0;
-  display: inline-grid; place-items: center;
-  border: 1px solid var(--line); border-radius: var(--r-sm);
-  background: transparent; color: var(--ink); cursor: pointer;
+.review-sidebar-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--ink);
 }
-.review-nav-button:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent-text); }
+.review-count {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 0.125rem 0.5rem;
+  border-radius: var(--r-pill);
+  background: var(--selected);
+  color: var(--accent-text);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.review-count[hidden] { display: none; }
+.review-nav-button {
+  width: var(--h-tool); height: var(--h-tool); padding: 0; flex: 0 0 auto;
+  display: inline-grid; place-items: center;
+  border: 0; border-radius: var(--r-sm);
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.review-nav-button:hover:not(:disabled),
+.review-nav-button[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
 .review-nav-button:disabled { opacity: 0.4; cursor: default; }
+.review-nav-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .review-nav-button .ms { font-size: var(--icon-md); }
-.review-sidebar-controlrow { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap; }
-.review-sidebar-header .review-bulk-actions { padding: 0; margin: 0; }
-.review-sidebar-header .review-bulk-actions[hidden] { display: none; }
-.review-sidebar-header .review-card-action { margin-top: 0; }
+.review-more { margin-inline-start: 0; }
+/* The menu's bulk group is a plain run of rows; hidden, not disabled, while
+   the document carries nothing to decide (audit REVIEW-04). */
+.review-more-menu .review-bulk-actions { display: block; padding: 0; }
+.review-more-menu .review-bulk-actions[hidden] { display: none; }
 .review-sidebar-body {
   position: relative;
   width: 100%;
 }
 .review-sidebar-empty {
-  margin-top: 0.75rem;
+  /* Below the bar, never under it (audit DIALOGS-03): the body is pulled up by
+     the bar's height to align cards with anchors, so the empty state, which has
+     no anchor, is pushed back down by the same token plus a gap. */
+  margin-top: calc(2.5rem + 0.75rem);
   padding: 1.5rem 1rem;
   border-radius: var(--r-md);
   color: var(--muted);
@@ -8248,9 +8335,13 @@ body.is-format-painting .page-wrap * {
 .review-mode { display: flex; align-items: center; gap: 0.25rem; padding: 0.5rem 0.625rem 0; font-size: var(--fs-xs); color: var(--muted); }
 .review-mode-button { border: 1px solid var(--line); border-radius: var(--r-pill); padding: 0.25rem 0.5rem; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
 .review-mode-button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent-text); color: var(--accent-strong); }
-.review-filters { display: flex; gap: 0.25rem; padding: 0.5rem 0.625rem 0; }
-.review-filter { border: 1px solid var(--line); border-radius: var(--r-pill); padding: 0.25rem 0.5rem; background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer; }
-.review-filter[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent-text); color: var(--accent-strong); }
+/* The filter is the pill segmented control the header's mode switch and
+   Compact/Ribbon use (v2-review): one track, the chosen segment filled. */
+.review-filters { display: inline-flex; flex: 0 0 auto; margin-inline-start: auto; gap: 0.125rem; padding: 0.125rem; border-radius: var(--r-pill); background: var(--bg-2); }
+.review-filter { min-block-size: var(--h-dense); border: 0; border-radius: var(--r-pill); padding: 0 0.5rem; background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-xs); font-weight: 500; cursor: pointer; white-space: nowrap; }
+.review-filter:hover:not([aria-pressed="true"]) { color: var(--ink); }
+.review-filter[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.review-filter:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .review-empty, .review-readonly-note { color: var(--muted); font-size: var(--fs-sm); line-height: 1.5; }
 .review-card { border: 1px solid var(--line); border-radius: var(--r-md); padding: 0.5rem 0.625rem; background: var(--surface); }
 .review-card strong, .review-card small { display: block; }
@@ -8267,22 +8358,27 @@ body.is-format-painting .page-wrap * {
   overflow: auto;
   position: relative;
   padding: 12px 0 48px;
+  /* The ruler sticks at the scroller's top edge and takes the pointer (audit
+     SHELL-V-01), so anything scrolled into view with block "start" (Go to page,
+     a find match, a page the caret moves to) must stop below it, not under it. */
+  scroll-padding-top: 1.75rem;
   background: var(--bg);
 }
 
-.viewport.dragging::after {
+/* The whole window, because a file is caught anywhere in it (audit FILE-14). */
+body.file-dragging::after {
   content: "Drop to open";
   position: fixed;
-  inset: 116px 16px 16px;
+  inset: 1rem;
   border: 2px dashed var(--accent-text);
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   display: grid;
   place-items: center;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--accent-text);
   background: color-mix(in srgb, var(--accent) 9%, transparent);
   pointer-events: none;
-  z-index: 5;
+  z-index: var(--z-palette);
 }
 
 /* `width: max-content` is what makes the horizontal scroll REACHABLE. A
@@ -8484,7 +8580,14 @@ body.is-format-painting .page-wrap * {
    span between the page margins, hairline ticks, and pentagon indent markers) - */
 .ruler {
   position: sticky;
-  top: 0;
+  /* Flush against the chrome once the document scrolls (audit SHELL-V-01).
+     Sticky offsets are measured from the scroller's CONTENT edge, so `top: 0`
+     parked the ruler 12px (`.viewport`'s top padding) below the ribbon, and the
+     scrolled page painted in that band: content showed above the ruler and
+     `elementFromPoint` there hit the page. Minus the padding, it sticks at the
+     scroller's top edge, so nothing can scroll above it. At rest it is
+     unchanged: the padding still sets it on the desk below the ribbon. */
+  top: -12px;
   z-index: 4;
   height: 24px;
   /* Cancel most of the .pages flex gap (22px) so the ruler hugs the page top. */
@@ -8493,9 +8596,12 @@ body.is-format-painting .page-wrap * {
   border: 1px solid var(--line);
   border-radius: 5px;
   user-select: none;
-  /* The strip itself never intercepts a page click; only the small indent
-     markers below opt back in (pointer-events: auto) so they can be dragged. */
-  pointer-events: none;
+  /* The strip is opaque to the pointer as well as to the eye. It used to let
+     clicks through to the page, which while scrolled is text hidden UNDER the
+     ruler: a press on its margin zone put the caret somewhere the reader could
+     not see. At rest the ruler never overlaps a page (22px gap, -16px margin),
+     so nothing that was clickable is lost. */
+  cursor: default;
 }
 
 .ruler[hidden] {
@@ -8516,9 +8622,10 @@ body.is-format-painting .page-wrap * {
   background: var(--surface);
   border-radius: 2px;
   box-shadow: inset 0 0 0 1px var(--line);
-  /* Click the content strip to drop a tab stop at that position. */
+  /* Click the content strip to drop a tab stop at that position. The plain
+     arrow, as Word's ruler (audit CANVAS-18; `copy` read as a drag copy). */
   pointer-events: auto;
-  cursor: copy;
+  cursor: default;
 }
 
 /* Word-style tab-type box at the ruler's left; shows/cycles the next tab type. */
@@ -9939,7 +10046,12 @@ body.ribbon-mode #appMenuBar { display: none; }
  * because the band it would compete with is not there. ONLYOFFICE does the same
  * thing from the other side: their read-only viewport declares the File tab and
  * nothing else (`Toolbar.js:1885`). */
-body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
+/* Only on the bare upload screen (`?blank=1`, no `doc-expected`), where the
+ * band really is hidden. While a document is on its way the tab strip is drawn
+ * from the first frame (UX-064), so revealing the bar there painted BOTH axes,
+ * one over the other, through every cold load and for ever when the engine
+ * failed (audit FILE-01, SYSTEM-01). */
+html:not(.doc-expected) body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
 
 /* The File tab: a page, not a band. Set apart from the command tabs the way
  * ONLYOFFICE sets theirs apart (`x-lone`) and Word tints its File tab, so it
@@ -9958,6 +10070,36 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
  * when its object does. */
 .ribbon-tab-contextual {
   margin-left: 0.375rem;
+  color: var(--accent-text);
+}
+
+/* Contextual tabs are HIDDEN, not greyed, until their object is selected
+   (`docs/184` D6, audit SHELL-03), as Word shows Table Design or Picture Format
+   only while the table or picture is selected. One rule for all of them: the
+   three modules that own the tabs (`main.js` for Table, `chart_surface.mjs` for
+   Chart, `editor_header_footer.mjs` for Header & Footer) already keep `disabled`
+   true exactly while there is nothing for the tab to act on, so hiding the
+   disabled ones cannot disagree with them. A hidden tab is out of the
+   accessibility tree and the arrow-key roving skips disabled tabs already. */
+.ribbon-tab-contextual:disabled {
+  display: none;
+}
+
+/* The contextual set reads as a group, as in the approved mockup: a hairline
+   before the FIRST contextual tab that is showing. */
+.ribbon-tab-contextual:not(:disabled):not(.ribbon-tab-contextual:not(:disabled) ~ .ribbon-tab-contextual) {
+  position: relative;
+  margin-left: 0.75rem;
+}
+
+.ribbon-tab-contextual:not(:disabled):not(.ribbon-tab-contextual:not(:disabled) ~ .ribbon-tab-contextual)::before {
+  content: "";
+  position: absolute;
+  left: -0.375rem;
+  top: 0.5rem;
+  bottom: 0.5rem;
+  width: 1px;
+  background: var(--line-strong);
 }
 
 /* The File page COVERS the work area — it is a route, not an overlay.
@@ -10544,13 +10686,11 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   cursor: default;
 }
 
-/* Before a document is open the mode means nothing — the status bar that carries
-   the other face is hidden then too — and on a phone the status bar's own
-   segments are the one face: the two-row phone header has no room for a third
-   cluster, and a control repeated in a 390px viewport is the clutter the phone
-   tier exists to remove. */
-body:not(.doc-loaded) .header-mode,
-body.phone-mode .header-mode {
+/* Before a document is open the mode means nothing. On a phone the selector
+   stays: it is the one mode switch at every width (`docs/184` D6; the phone
+   mockup draws "Editing ▾" in the header), and the status bar that used to carry
+   a duplicate is not on a phone's screen at all. */
+body:not(.doc-loaded) .header-mode {
   display: none;
 }
 
@@ -10667,6 +10807,207 @@ body:not(.doc-loaded) .drop {
   min-height: calc(100vh - var(--h-header));
 }
 
+/* ---- Designed boot (docs/109 UX-064, PROPOSAL D-16) ------------------------
+ * The chrome mode, the phone rung and "a document is coming" are all decided in
+ * <head> before the first frame, so the header, the band and the desk are drawn
+ * at their final geometry at once and nothing moves when the modules arrive.
+ * What changes on arrival is paint, never layout:
+ *   - the chrome is inert (`data-boot-inert`, markup) and drawn dimmed until the
+ *     engine is instantiated, because nothing in it can run before then
+ *     (audit FILE-03: the ribbon looked usable at 800 ms and answered nothing);
+ *   - a skeleton sheet and a progress bar sit OVER the desk, absolutely
+ *     positioned, so taking them away shifts nothing;
+ *   - a failed download replaces them with a card that offers Try again. */
+:is(.ribbon, .compact-toolbar, .rail, .footer)[data-boot-inert],
+.controls[data-boot-inert] > *,
+.document-chrome[data-boot-inert] :is(.ribbon-nav, .app-menu-bar) {
+  opacity: 0.5;
+}
+
+.boot-splash {
+  display: none;
+}
+
+html.doc-expected body:not(.doc-loaded) .boot-splash:not([hidden]) {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+  padding: var(--space-3) var(--space-4) 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.boot-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  width: min(51rem, 100%);
+  aspect-ratio: 8.5 / 11;
+  align-self: flex-start;
+  padding: 4.5rem 4rem;
+  background: var(--paper);
+  box-shadow: var(--shadow-page);
+}
+
+.boot-line {
+  display: block;
+  height: 0.625rem;
+  border-radius: var(--r-pill);
+  background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--paper-ink) 7%, transparent) 0%,
+      color-mix(in srgb, var(--paper-ink) 13%, transparent) 50%,
+      color-mix(in srgb, var(--paper-ink) 7%, transparent) 100%
+    )
+    0 0 / 200% 100%;
+  animation: boot-shimmer 1.6s linear infinite;
+}
+
+.boot-line-title {
+  width: 45%;
+  height: 1.125rem;
+  margin-bottom: 0.75rem;
+}
+
+.boot-line-short {
+  width: 62%;
+  margin-bottom: 0.75rem;
+}
+
+@keyframes boot-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.boot-status {
+  position: absolute;
+  top: 14rem;
+  left: 50%;
+  width: min(18rem, calc(100% - 4rem));
+  transform: translateX(-50%);
+  text-align: center;
+}
+
+.boot-progress {
+  height: 0.25rem;
+  border-radius: var(--r-pill);
+  background: var(--line);
+  overflow: hidden;
+}
+
+.boot-progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left center;
+  transform: scaleX(var(--boot-progress, 0));
+  transition: transform 0.2s linear;
+}
+
+[dir="rtl"] .boot-progress-fill {
+  transform-origin: right center;
+}
+
+.boot-progress[data-state="indeterminate"] .boot-progress-fill {
+  width: 30%;
+  transform: none;
+  animation: boot-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes boot-indeterminate {
+  from {
+    translate: -100% 0;
+  }
+  to {
+    translate: 340% 0;
+  }
+}
+
+/* The engine is in and the document is being opened: the bar is full and the
+   caption says what it is waiting for now. */
+html.engine-ready .boot-progress .boot-progress-fill {
+  width: 100%;
+  transform: none;
+  animation: none;
+}
+
+.boot-caption {
+  margin: var(--space-2) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.boot-caption-document,
+html.engine-ready .boot-caption-engine,
+html.engine-ready .boot-percent {
+  display: none;
+}
+
+html.engine-ready .boot-caption-document {
+  display: inline;
+}
+
+.boot-percent {
+  margin-inline-start: 0.25em;
+  font-variant-numeric: tabular-nums;
+}
+
+.boot-failure:not([hidden]) {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: start center;
+  padding: 12vh var(--space-4) 0;
+  background: var(--bg);
+}
+
+.boot-failure-card {
+  width: min(26rem, 100%);
+  padding: 2rem 2.25rem 1.5rem;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--e2);
+  text-align: center;
+}
+
+.boot-failure-icon {
+  color: var(--muted);
+  font-size: var(--icon-lg);
+}
+
+.boot-failure-title {
+  margin: var(--space-2) 0 var(--space-2);
+  font-size: var(--fs-xl);
+  font-weight: 600;
+}
+
+.boot-failure-body {
+  margin: 0 0 var(--space-5);
+  color: var(--muted);
+}
+
+.boot-failure-details {
+  margin-top: var(--space-5);
+  text-align: start;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.boot-failure-details summary {
+  cursor: pointer;
+}
+
+.boot-failure-detail {
+  display: block;
+  margin-top: var(--space-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* A document is on its way (anything but `?blank=1`, decided in <head> before
    the first paint): the chrome keeps its space from the first frame instead of
    snapping in when the document lands, which moved the work area 94px and was
@@ -10773,26 +11114,6 @@ body:not(.doc-loaded) .drop-title {
 
 .foot-right {
   flex: 0 0 auto;
-}
-
-.footer-mode {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  white-space: nowrap;
-}
-
-.footer .review-mode-seg {
-  padding: 0.125rem 0.5rem;
-  font-size: var(--fs-xs);
-}
-
-.rgroup-mode .review-mode-seg {
-  padding: 0.25rem;
-}
-
-.rgroup-mode .review-mode-seg .ms {
-  display: none;
 }
 
 /* Inside the left half the transient engine message comes FIRST. It used to be
@@ -11130,11 +11451,6 @@ body:not(.doc-loaded) .drop-title {
   .foot-left,
   .foot-right {
     gap: 0.5rem;
-  }
-
-  .footer .review-mode-seg {
-    padding-inline: 0.25rem;
-    font-size: var(--fs-xs);
   }
 }
 
@@ -12883,69 +13199,113 @@ body[data-shape-draw] .page-wrap * {
   white-space: normal;
 }
 
-/* ---- Paste-options chip ---------------------------------------------------- */
+/* ==== L7 paste-options chip (docs/184 D-12, audit CRITIC-10) — BEGIN =======
+   Word's collapsed (Ctrl) chip at the END of the paste: a clipboard icon and
+   a drop arrow, opening the four choices as a menu in the right-click menu's
+   anatomy. Measured before: a 229px row of labelled buttons over the second
+   pasted paragraph. */
 .paste-options {
   position: fixed;
   z-index: var(--z-paste-options);
   display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.25rem 0.375rem 0.25rem 0.625rem;
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-md);
-  box-shadow: var(--e2);
   color: var(--ink);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-md);
 }
 
 .paste-options[hidden] {
   display: none;
 }
 
-.paste-options-icon {
+.paste-options-toggle {
+  display: inline-flex;
+  align-items: center;
+  height: var(--h-dense);
+  padding: 0 0.125rem 0 0.25rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  box-shadow: var(--e1);
+  color: var(--icon);
+  cursor: pointer;
+}
+
+.paste-options-toggle .ms {
   font-size: var(--icon-sm);
-  color: var(--muted);
+}
+
+.paste-options-toggle .paste-options-caret {
+  margin-left: -0.125rem;
+}
+
+.paste-options-toggle:hover,
+.paste-options-toggle[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.paste-options-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.paste-options-menu {
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  display: grid;
+  min-width: 13.75rem;
+  padding: 0.25rem;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--e2);
+}
+
+.paste-options-menu.opens-up {
+  top: auto;
+  bottom: calc(100% + 0.25rem);
+}
+
+.paste-options-menu[hidden] {
+  display: none;
 }
 
 .paste-options-action {
+  display: flex;
+  align-items: center;
+  min-height: var(--h-ctl);
+  padding: 0 0.625rem 0 2rem;
   border: 0;
   border-radius: var(--r-sm);
-  padding: 0.25rem 0.5rem;
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  font-size: var(--fs-sm);
-  font-weight: 600;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-md);
+  text-align: left;
+  white-space: nowrap;
   cursor: pointer;
+}
+
+.paste-options-action[hidden] {
+  display: none;
+}
+
+/* The current choice carries the accent tick, as a radio row in a menu does. */
+.paste-options-action[aria-checked="true"] {
+  background-image: radial-gradient(circle, var(--accent-text) 0.1875rem, transparent 0.21875rem);
+  background-size: 0.5rem 0.5rem;
+  background-position: 0.75rem 50%;
+  background-repeat: no-repeat;
 }
 
 .paste-options-action:hover,
 .paste-options-action:focus-visible {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  background-color: var(--hover);
   outline: none;
 }
 
-.paste-options-close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.375rem;
-  height: 1.375rem;
-  border: 0;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
+.paste-options-action:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
-
-.paste-options-close .ms {
-  font-size: var(--icon-sm);
-}
-
-.paste-options-close:hover {
-  background: var(--bg-2);
-  color: var(--ink);
-}
+/* ==== L7 paste-options chip — END ========================================== */
 
 /* ---- Header / footer editing context ---------------------------------------- */
 /* Every reference editor de-emphasises the body while running content is being
@@ -13497,10 +13857,8 @@ body.chrome-no-history #versionPreviewBanner,
    A host whose own product decides who is reviewing does not want a switch
    offered; the GRANT still decides what the editor does, so taking the control
    away neither widens nor narrows anything. */
-body.chrome-no-review #reviewModeControl,
-/* …and its second face at the top right, and the menu that face opens. A region
-   that took the status-bar switch away and left the header one on screen would
-   be a host believing they had withheld a surface that is still there. */
+/* The switch is the header's selector and the menu it opens (the status bar's
+   duplicate was removed, `docs/184` D6): withholding the region takes both. */
 body.chrome-no-review #headerModeControl,
 body.chrome-no-review #headerModeMenu,
 body.chrome-no-status .footer,
@@ -14514,31 +14872,6 @@ body.phone-mode .plugin-panel { height: 55vh; }
 }
 .dialog-field-note:empty { display: none; }
 
-/* AI provider as a section of Settings (owner, 2026-11-02): spans the whole
-   body under the two columns, same field rhythm as every dialog. */
-#settingsPanel .settings-ai {
-  grid-column: 1 / -1;
-  display: grid;
-  gap: var(--dlg-gap-in);
-  padding-top: var(--dlg-gap);
-  border-top: 1px solid var(--line);
-}
-#settingsPanel .settings-ai #aiProviderForm {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--dlg-gap-in);
-}
-#settingsPanel .settings-ai #aiProviderForm > :is(.dialog-field-note, .dialog-check) {
-  grid-column: 1 / -1;
-}
-#settingsPanel .settings-ai-actions {
-  display: flex;
-  gap: var(--space-2);
-  justify-content: flex-end;
-}
-#settingsPanel .settings-ai-actions .dialog-button-utility { margin-inline-end: auto; }
-#settingsPanel .settings-ai-actions .dialog-button-utility + .dialog-button-utility { margin-inline-end: 0; }
-
 /* Ask Casual AI in the header (owner, 2026-11-02; Gemini's placement). */
 .ai-header-btn {
   display: inline-flex;
@@ -14582,103 +14915,100 @@ body.phone-mode .plugin-panel { height: 55vh; }
 .ai-help-write:hover { background: var(--accent-soft); color: var(--accent-text); }
 .ai-help-write:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* Settings with a left navigation (approved design D3; Word Options). The
-   body is two columns: the nav, which stays put, and the pages, which scroll
-   on their own. Only the chosen page's sections show. */
-#settingsPanel .settings-dialog {
-  width: min(var(--dialog-width-l), 100%);
+/* ==== Dock (L5: `docs/184` D4 as amended 2026-11-06, PROPOSAL D-10) ========
+   One slot per side, kept by `dock_manager.mjs`. Every docked panel is ONE
+   anatomy: a rounded card on the grey desk, like the floating ribbon card above
+   it, docked to its edge at full workspace height, in the work area's flex row
+   so the page re-centres in what is left and is never covered (the approved
+   v2-desktop-editor mockup). Left = navigate (Outline, Pages); right = context
+   and collaboration (Properties, Comments, Versions, Compare, Symbol, Emoji, the
+   add-in panel). One width per side, `--dock-w-left`/`--dock-w-right`, 20rem by
+   default, 17.5-30rem by the splitter, remembered by the manager.
+   The AI/add-in panel keeps its own edge-docked frame and splitter: its rules
+   let it run past the status bar to the window's bottom (ai-panel.spec). */
+:root {
+  --dock-w-left: 20rem;
+  --dock-w-right: 20rem;
+  --dock-gap: 0.375rem;
 }
-#settingsPanel .settings-body {
-  display: grid;
-  grid-template-columns: 11rem minmax(0, 1fr);
-  column-gap: var(--dlg-gap);
-  columns: auto;
-  overflow: hidden;
-  min-block-size: 26rem;
-  padding-block-end: 0;
-}
-#settingsPanel .settings-nav {
-  overscroll-behavior: contain;
-  display: grid;
-  align-content: start;
-  gap: 0.125rem;
-  padding-inline-end: var(--space-3);
-  border-inline-end: 1px solid var(--line);
-  overflow-y: auto;
-}
-#settingsPanel .settings-pages {
-  overscroll-behavior: contain;
-  display: grid;
-  align-content: start;
-  gap: var(--dlg-gap);
-  overflow-y: auto;
-  min-block-size: 0;
-  padding-block-end: var(--dlg-pad-y);
-  padding-inline-end: var(--space-1);
-}
-#settingsPanel .settings-nav button {
-  display: flex;
-  align-items: center;
-  min-block-size: var(--h-input);
-  padding: 0 var(--space-3);
-  border: 0;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: var(--fs-md);
-  text-align: start;
-  cursor: pointer;
-}
-#settingsPanel .settings-nav button:hover { background: var(--hover); color: var(--ink); }
-#settingsPanel .settings-nav button[aria-selected="true"] {
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  font-weight: var(--fw-medium);
-}
-#settingsPanel .settings-nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-#settingsPanel .settings-pages > [data-settings-page] { margin: 0; break-inside: auto; }
-#settingsPanel .settings-body:not([data-settings-page="general"]) [data-settings-page="general"],
-#settingsPanel .settings-body:not([data-settings-page="proofing"]) [data-settings-page="proofing"],
-#settingsPanel .settings-body:not([data-settings-page="saving"]) [data-settings-page="saving"],
-#settingsPanel .settings-body:not([data-settings-page="ai"]) [data-settings-page="ai"] {
-  display: none;
-}
-#settingsPanel .settings-pages > .settings-ai { border-top: 0; padding-top: 0; }
-#settingsPanel .dialog-foot .dialog-button-utility { margin-inline-end: auto; }
-@media (max-width: 40rem) {
-  #settingsPanel .settings-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); row-gap: var(--space-4); }
-  #settingsPanel .settings-nav { grid-auto-flow: column; overflow-x: auto; border: 0; padding: 0; }
-}
-
-/* Docked side panels (approved design P1; Google Docs). Every panel is docked
-   to the workspace edge at full height: no floating card, no radius, no
-   shadow, one hairline on the side that faces the page. Left = navigate
-   (Outline, Pages, Compare), 16rem. Right = context (Properties, Versions,
-   AI, add-ins, Symbol), 20rem. The page re-centres in what is left and scrolls
-   sideways rather than being covered. */
-/* The AI/add-in panel is left out: it already docked this way, and its own
-   rules let it run past the status bar to the window's bottom (ai-panel.spec). */
 body:not(.phone-mode) .workarea > .side-panel:not(.plugin-panel) {
-  margin: 0;
+  position: relative;
+  flex: 0 0 var(--dock-w-right);
+  width: var(--dock-w-right);
+  min-width: 0;
+  max-width: var(--dock-w-right);
+  margin: var(--dock-gap);
   border: 0;
-  border-radius: 0;
-  box-shadow: none;
+  border-radius: var(--r-md);
+  /* The review cards' edge (v2-review): a hairline ring, which is what carries
+     the card in the dark theme where a shadow does not read, plus the lift. */
+  box-shadow: 0 0 0 1px var(--line), var(--e1);
   background: var(--surface);
   align-self: stretch;
 }
-body:not(.phone-mode) .workarea > .side-panel:where(#outlinePanel, #pagesPanel, #comparePanel) {
-  flex: 0 0 16rem;
-  width: 16rem;
-  max-width: 16rem;
-  border-inline-end: 1px solid var(--line);
+/* `:not(.plugin-panel)` is here for its SPECIFICITY, matching the reset above.
+   Without it this rule weighed (0,3,1) against the reset's (0,4,1), so the
+   reset's width and margin won and the left side ignored `--dock-w-left`. */
+body:not(.phone-mode) .workarea > .side-panel:not(.plugin-panel):where(#outlinePanel, #pagesPanel) {
+  flex-basis: var(--dock-w-left);
+  width: var(--dock-w-left);
+  max-width: var(--dock-w-left);
+  margin-inline-start: 0;
 }
-body:not(.phone-mode) .workarea > .side-panel:not(.plugin-panel, :where(#outlinePanel, #pagesPanel, #comparePanel)) {
-  flex: 0 0 20rem;
-  width: 20rem;
-  max-width: 20rem;
-  border-inline-start: 1px solid var(--line);
+/* The splitter on the panel's inner edge (the add-in panel's, generalised):
+   a 6px strip that turns accent on hover, focus and while dragging. */
+.dock-resize {
+  position: absolute;
+  inset-block: 0;
+  z-index: 2;
+  width: 0.375rem;
+  cursor: col-resize;
+  touch-action: none;
 }
+.dock-resize[data-dock-side="right"] { inset-inline-start: 0; }
+.dock-resize[data-dock-side="left"] { inset-inline-end: 0; }
+.dock-resize::after {
+  content: "";
+  position: absolute;
+  inset-block: var(--r-md);
+  inset-inline-start: 0.125rem;
+  width: 0.125rem;
+  border-radius: var(--r-xs);
+  background: transparent;
+}
+.dock-resize:hover::after,
+.dock-resize.dragging::after,
+.dock-resize:focus-visible::after { background: var(--accent); }
+.dock-resize:focus-visible { outline: none; }
+body.phone-mode .dock-resize { display: none; }
+/* An unshaded paragraph's Fill swatch reads "no fill" (audit DIALOGS-V-01):
+   the colour the picker would apply is hidden under Word's "No Color" slash. */
+.shade-pick.is-none input[type="color"] {
+  background: linear-gradient(to top right, transparent calc(50% - 0.0625rem), var(--danger) 50%, transparent calc(50% + 0.0625rem)), var(--surface);
+}
+.shade-pick.is-none input[type="color"]::-webkit-color-swatch { opacity: 0; }
+.shade-pick.is-none input[type="color"]::-moz-color-swatch { opacity: 0; }
+/* On a phone the slot is a bottom sheet (audit DIALOGS-06). The 900px rung
+   above pins the properties, version and glyph panels from the TOP as drawers;
+   at the phone rung that left them floating 123px down with the document
+   showing beneath. The sheet is anchored to the bottom chrome only, and carries
+   a grab handle like Docs' and Word's mobile sheets. */
+body.phone-mode .workarea > .side-panel {
+  top: auto;
+  bottom: var(--phone-bottom-chrome, calc(var(--h-footer) + var(--phone-bottom-inset, 0px)));
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+}
+body.phone-mode .workarea > .side-panel::before {
+  content: "";
+  flex: none;
+  align-self: center;
+  inline-size: 2.5rem;
+  block-size: 0.25rem;
+  margin-block: 0.375rem 0;
+  border-radius: var(--r-pill);
+  background: var(--line-strong);
+}
+/* ==== end Dock ============================================================ */
 .workarea > .side-panel .panel-head {
   min-block-size: 3.5rem;
   /* The head's inset is the body's (--pnl-pad-x): one shell, one inset
@@ -14870,5 +15200,468 @@ body:not(.phone-mode) .workarea > .side-panel:not(.plugin-panel, :where(#outline
 /* Settings borrowed into the File page (file_pane.mjs adds .panel-in-page):
    the pane is the scroller there, so the dialog's own nav/pages scrolling and
    overscroll containment step aside (file-page-scroll.spec). */
-#settingsPanel.panel-in-page .settings-body { overflow: visible; min-block-size: 0; }
-#settingsPanel.panel-in-page :is(.settings-pages, .settings-nav) { overflow: visible; overscroll-behavior: auto; }
+
+/* Reduced motion, once, for the whole editor (audit A11Y-20). The scattered
+   per-surface blocks above caught the tabs, the rail, the side panel and the
+   palette, and missed 206 elements, the ribbon buttons among them. Docs and Word
+   drop transitions entirely under this preference. 0.01ms rather than 0 so
+   `transitionend`/`animationend` still fire for code that waits on them. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ==== Review shell (L5: PROPOSAL D-11, the approved v2-review mockup) ======
+   Margin cards are white cards on the desk with a hairline ring (the dock
+   panels' edge), the active one lifted with an accent ring; a long comment is
+   clamped to three lines with "Show more" (audit REVIEW-10); comment text runs
+   in its own direction (`dir="auto"`, REVIEW-11). */
+.review-margin-card {
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--line), var(--e1);
+}
+.review-margin-card.expanded,
+.review-margin-card.review-margin-composer {
+  box-shadow: 0 0 0 1px var(--accent-line), var(--e2);
+}
+.review-margin-card:not(.expanded) .review-margin-body.is-clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.review-show-more {
+  display: inline-block;
+  margin: 0 0 0.25rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+.review-show-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* A suggestion carries Accept and Reject on the card itself, collapsed or not
+   (v2-review: "Reviewers want Accept and Reject on the card"). */
+.review-margin-revision:not(.expanded) .review-margin-card-actions { display: flex; margin-top: 0.5rem; }
+.review-margin-body a { color: var(--accent-text); text-decoration: underline; overflow-wrap: anywhere; }
+/* A draft kept by Escape (audit REVIEW-05): the composer stays, marked. */
+.review-margin-composer.is-draft { box-shadow: 0 0 0 1px var(--line-strong), var(--e1); }
+.review-draft-label { display: block; margin-block-end: 0.25rem; color: var(--muted); font-size: var(--fs-xs); font-weight: 600; }
+.review-empty-show {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.review-sidebar-empty p { margin: 0.25rem 0 0; }
+
+/* The undo snackbar (`undo_snackbar.mjs`): the status toast's place, inverted
+   like Docs' snackbar, with a real button, so it takes pointer events. */
+.undo-snackbar {
+  position: fixed;
+  inset-inline-start: var(--space-3);
+  bottom: calc(var(--h-footer) + var(--space-3));
+  z-index: var(--z-toast);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: min(26.25rem, calc(100vw - 2 * var(--space-3)));
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-radius: var(--r-md);
+  background: var(--ink);
+  color: var(--surface);
+  box-shadow: var(--e3);
+  font-size: var(--fs-sm);
+}
+.undo-snackbar[hidden] { display: none; }
+.undo-snackbar-action {
+  min-block-size: var(--h-tool);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: color-mix(in srgb, var(--accent) 45%, var(--surface));
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.undo-snackbar-action:hover { background: color-mix(in srgb, var(--surface) 12%, transparent); }
+.undo-snackbar-action:focus-visible { outline: 2px solid var(--surface); outline-offset: 1px; }
+body.phone-mode .undo-snackbar { bottom: calc(var(--phone-bottom-chrome, var(--h-footer)) + var(--space-3)); }
+/* Suggesting is the chip and a 2px rule along the top of the canvas, no banner
+   (PROPOSAL D-6, audit REVIEW-08). An inset shadow on the scroller paints over
+   its own background and under nothing, and takes no layout: the page moves 0px. */
+body[data-editing-mode="suggesting"] .viewport { box-shadow: inset 0 2px 0 var(--review-insert-line); }
+/* ==== end Review shell ===================================================== */
+
+/* ==== Find bar (L5: audit CRITIC-07) =======================================
+   Three slim rows instead of a dialog: query + counter + previous/next/close,
+   the scope toggles, then the replacement with its actions. Narrower, and the
+   no-match state is the field's error colour (`aria-invalid`). */
+.find-panel { width: min(25rem, calc(100vw - 2.25rem)); }
+.find-panel .find-panel-body { gap: var(--space-2); padding: var(--pnl-pad-y); }
+.find-panel .find-search-row {
+  grid-template-columns: minmax(0, 1fr) auto var(--h-control) var(--h-control) var(--h-control);
+  gap: 0.25rem;
+}
+.find-panel .find-search-row .find-status { padding-inline: 0.25rem; }
+.find-panel .find-search-row .dialog-close { inline-size: var(--h-control); block-size: var(--h-control); margin: 0; }
+.find-panel .find-options { display: flex; flex-wrap: wrap; gap: 0.125rem 0.75rem; padding-inline: 0.25rem; font-size: var(--fs-sm); }
+.find-panel .find-replace-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.25rem;
+}
+.find-panel .find-replace-row .dialog-button { min-inline-size: 0; padding-inline: var(--space-2); white-space: nowrap; }
+.find-panel input[type="text"][aria-invalid="true"],
+.find-panel input[type="text"][aria-invalid="true"]:focus {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 18%, transparent);
+}
+/* A docked right panel holds the window's right edge; the bar sits beside it
+   rather than over it (the add-in panel already did this, `plugin-panel-open`). */
+:root[data-dock-right] body:not(.phone-mode, .plugin-panel-open) .find-panel { right: calc(var(--dock-w-right) + 2 * var(--dock-gap) + 0.75rem); }
+/* ==== end Find bar ========================================================= */
+/* ==== L8 Settings (docs/184 D3, mockup v2-settings; audit DIALOGS-08/09) ====
+   One FIXED frame: the card is the same height on every page, so the footer
+   and the close button never jump when a page is chosen (Word Options and Docs
+   settings). A 12.5rem navigation, the page on the right with its own title
+   and close, one option per row (label left, control right, min-height 3rem,
+   one short help line), and a footer spanning both: Reset to defaults, the
+   "changes apply as you make them" line, Done. `dialog-anatomy.spec.mjs`
+   holds the height. */
+#settingsPanel .settings-dialog {
+  display: grid;
+  grid-template-columns: 12.5rem minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  block-size: min(34rem, calc(100dvh - 2rem));
+  max-height: calc(100dvh - 2rem);
+}
+#settingsPanel .settings-head {
+  grid-column: 1;
+  grid-row: 1;
+  padding: var(--space-5) var(--space-5) var(--space-3);
+  background: var(--bg-2);
+  border-inline-end: 1px solid var(--line);
+}
+#settingsPanel .settings-nav {
+  grid-column: 1;
+  grid-row: 2;
+  display: grid;
+  align-content: start;
+  gap: 0.125rem;
+  padding: 0 var(--space-3) var(--space-3);
+  border-inline-end: 1px solid var(--line);
+  background: var(--bg-2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+#settingsPanel .settings-nav button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-block-size: var(--h-input);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  text-align: start;
+  cursor: pointer;
+}
+#settingsPanel .settings-nav button .ms { font-size: var(--icon-sm); color: var(--muted); }
+#settingsPanel .settings-nav button:hover { background: var(--hover); }
+#settingsPanel .settings-nav button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent-text); }
+#settingsPanel .settings-nav button[aria-selected="true"] .ms { color: var(--accent-text); }
+#settingsPanel .settings-nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+#settingsPanel .settings-main {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+}
+#settingsPanel .settings-page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-block-size: var(--h-input);
+  padding: var(--space-4) var(--space-5) var(--space-2) var(--space-6);
+}
+#settingsPanel .settings-page-title { margin: 0; font-size: var(--fs-lg); font-weight: 600; }
+#settingsPanel .settings-body {
+  /* Not the old two-column flow (`.settings-body` above): one page, one column. */
+  columns: auto;
+  display: block;
+  flex: 1 1 auto;
+  min-block-size: 0;
+  padding: 0 var(--space-6) var(--space-4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+#settingsPanel .settings-page[hidden] { display: none; }
+#settingsPanel .settings-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-block-size: 3rem;
+  padding: var(--space-2) 0;
+  border-block-start: 1px solid var(--line);
+}
+#settingsPanel .settings-page > .settings-row:first-child,
+#settingsPanel .settings-group > .settings-row:first-child { border-block-start: 0; }
+#settingsPanel .settings-row[hidden],
+#settingsPanel .settings-group[hidden] { display: none; }
+#settingsPanel .settings-row-label { flex: 1 1 auto; min-width: 0; display: grid; gap: 0.125rem; }
+#settingsPanel .settings-row-label .settings-label { margin: 0; font-weight: var(--fw-medium); }
+#settingsPanel .settings-help {
+  display: block;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+#settingsPanel .settings-help[hidden],
+#settingsPanel .settings-help:empty { display: none; }
+#settingsPanel .settings-row-control {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-inline-size: 60%;
+}
+#settingsPanel .settings-row-control .dialog-select,
+#settingsPanel .settings-input { inline-size: 13.75rem; max-inline-size: 100%; block-size: var(--h-input); }
+#settingsPanel .settings-input-short { inline-size: 5.625rem; }
+.settings-input {
+  min-width: 0;
+  padding: 0 0.625rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-md);
+  block-size: var(--h-input);
+}
+.settings-input:focus { outline: none; border-color: var(--accent-text); box-shadow: 0 0 0 0.1875rem var(--accent-soft); }
+#settingsPanel .settings-row-actions .settings-row-control { max-inline-size: none; flex-wrap: wrap; justify-content: flex-end; }
+#settingsPanel .settings-row-control .segmented { inline-size: 15rem; }
+#settingsPanel .settings-row-stack { flex-direction: column; align-items: stretch; gap: var(--space-2); }
+#settingsPanel .settings-row-actions { justify-content: space-between; }
+#settingsPanel .settings-row-actions .settings-status { flex: 1 1 auto; margin: 0; }
+#settingsPanel .settings-page-lede { margin: var(--space-1) 0 var(--space-2); color: var(--muted); font-size: var(--fs-sm); }
+#settingsPanel .settings-page-lede[hidden] { display: none; }
+#settingsPanel .settings-value { color: var(--ink); font-size: var(--fs-md); }
+#settingsPanel .settings-links { gap: var(--space-4); }
+/* The custom swatch has no ring of its own, so its colour input fills all of
+   it (a 26px target, over the 24px floor) without painting past its box. */
+#settingsPanel .acc-custom { border-width: 0; }
+#settingsPanel .settings-foot { grid-column: 1 / -1; grid-row: 3; background: var(--bg-2); }
+#settingsPanel .settings-foot .dialog-button-utility { display: inline-flex; align-items: center; gap: var(--space-1); }
+#settingsPanel .settings-foot .dialog-button-utility .ms { font-size: var(--icon-sm); }
+#settingsPanel .settings-foot .dialog-actions { flex: 0 0 auto; margin-left: 0; }
+.dialog-foot-status { margin-inline-start: auto; color: var(--muted); font-size: var(--fs-sm); }
+
+/* The add-in list, inline (DIALOGS-08): one row per add-in with a switch on
+   the right, never a primary button repeated down the list. */
+.settings-addins { display: grid; margin: 0; padding: 0; list-style: none; }
+.settings-addins .plugins-row { display: flex; align-items: center; gap: var(--space-4); min-block-size: 3rem; padding: var(--space-2) 0; border-block-start: 1px solid var(--line); }
+.settings-addins .plugins-row:first-child { border-block-start: 0; }
+.settings-addins .plugins-row-text { flex: 1 1 auto; min-width: 0; display: grid; gap: 0.125rem; }
+.settings-addins .plugins-description { margin: 0; color: var(--muted); font-size: var(--fs-sm); }
+.settings-addins .plugins-actions { flex: 0 0 auto; display: flex; align-items: center; gap: var(--space-2); }
+.settings-addins .plugins-empty { color: var(--muted); font-size: var(--fs-sm); }
+.settings-addins-install { display: flex; gap: var(--space-2); }
+.settings-addins-install[hidden] { display: none; }
+#settingsPanel .settings-addins-install .settings-input { flex: 1 1 auto; inline-size: auto; }
+
+/* A switch: a real checkbox with `role="switch"`, drawn as a track and thumb.
+   Native semantics (Space toggles, its label clicks it, `checked` is the
+   state); both themes from the palette. Used by Settings and Manage add-ins. */
+.settings-switch {
+  appearance: none;
+  position: relative;
+  flex: 0 0 auto;
+  inline-size: 2.25rem;
+  block-size: var(--h-dense);
+  margin: 0;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--ink) 28%, var(--surface));
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+.settings-switch::after {
+  content: "";
+  position: absolute;
+  inset-block-start: 0.1875rem;
+  inset-inline-start: 0.1875rem;
+  inline-size: 1.125rem;
+  block-size: 1.125rem;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--e1);
+  transition: transform 0.12s ease;
+}
+.settings-switch:checked { background: var(--accent); }
+.settings-switch:checked::after { transform: translateX(0.75rem); }
+[dir="rtl"] .settings-switch:checked::after { transform: translateX(-0.75rem); }
+.settings-switch:disabled { opacity: 0.5; cursor: not-allowed; }
+.settings-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* A phone (or any window under 40rem): the frame is the bottom sheet, the
+   navigation a row of tabs above the page, and a row's control drops under
+   its label. */
+@media (max-width: 40rem) {
+  #settingsPanel .settings-dialog { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; block-size: 86vh; }
+  #settingsPanel .settings-head { grid-row: 1; border: 0; }
+  #settingsPanel .settings-nav { grid-column: 1; grid-row: 2; grid-auto-flow: column; justify-content: start; padding: 0 var(--space-3) var(--space-2); overflow-x: auto; border: 0; }
+  #settingsPanel .settings-main { grid-column: 1; grid-row: 3; min-width: 0; }
+  #settingsPanel .settings-foot { grid-row: 4; }
+  #settingsPanel .settings-body { padding-inline: var(--space-4); }
+  /* A grid, not a wrapping flex row: a column of `minmax(0, 1fr)` is the only
+     box a percentage-wide control cannot push past the sheet. */
+  #settingsPanel .settings-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+  #settingsPanel .settings-row:has(> .settings-row-control > .settings-switch) { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  #settingsPanel .settings-row-control { max-inline-size: none; min-width: 0; flex-wrap: wrap; }
+  #settingsPanel .settings-row-control .dialog-select,
+  #settingsPanel .settings-row-control .segmented,
+  #settingsPanel .settings-input { inline-size: 100%; }
+  #settingsPanel .settings-input-short { inline-size: 5.625rem; }
+}
+
+/* Borrowed into the File page (`file_pane.mjs`): the pane scrolls, so the frame
+   lets go of its fixed height and its inner scrolling. */
+#settingsPanel.panel-in-page .settings-dialog { block-size: auto; max-height: none; }
+#settingsPanel.panel-in-page .settings-body,
+#settingsPanel.panel-in-page .settings-nav { overflow: visible; overscroll-behavior: auto; }
+/* The page's measure starts at its heading's edge, so the navigation and the
+   page give up the dialog's own inset there (file-page-panes.spec). */
+#settingsPanel.panel-in-page .settings-nav { padding-inline: 0 var(--space-3); background: none; }
+#settingsPanel.panel-in-page .settings-nav button { padding-inline-start: 0; }
+/* ==== end L8 Settings ==== */
+
+/* ==== L8 Page setup (docs/184 D2, mockup v2-dialog; audit DIALOGS-10) ====
+   L width: the fields on the left, the sheet on the right, pinned to the top.
+   Paper size and page colour share a row; the margin presets are chips; the
+   footer carries Apply to on the left. */
+#pageSetupMenu .page-setup-dialog { width: min(var(--dialog-width-l), 100%); }
+#pageSetupMenu .page-setup-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 12.5rem;
+  gap: var(--dlg-gap);
+  align-items: start;
+}
+#pageSetupMenu .ps-fields { display: grid; gap: var(--space-5); min-width: 0; }
+#pageSetupMenu .ps-fields > .dialog-group { margin: 0; display: grid; gap: var(--dlg-gap-in); }
+#pageSetupMenu [hidden] { display: none; }
+#pageSetupMenu .orientation-segmented { inline-size: 100%; }
+#pageSetupMenu .orientation-segmented .ms { display: inline-block; font-size: var(--icon-sm); }
+#pageSetupMenu .orientation-segmented button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); }
+#pageSetupMenu .ps-margin-chips { inline-size: 100%; block-size: var(--h-input); }
+#pageSetupMenu .ps-margin-chips button { min-block-size: 0; block-size: 100%; }
+#pageSetupMenu .page-preview {
+  display: flex;
+  align-self: stretch;
+  justify-content: center;
+  padding: var(--space-6) var(--space-4);
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+}
+#pageSetupMenu .page-preview-sheet { width: min(8.5rem, 100%); }
+#pageSetupMenu .page-preview-sheet[data-orientation="landscape"] { width: min(11rem, 100%); }
+#pageSetupMenu .dialog-advanced > summary { gap: var(--space-2); }
+#pageSetupMenu .dialog-advanced-hint { color: var(--muted); font-size: var(--fs-sm); font-weight: 400; }
+#pageSetupMenu .dialog-advanced[open] .dialog-advanced-hint { display: none; }
+
+/* A colour control shaped like a select: swatch, name, caret. The native
+   picker is the transparent input laid over it, so the hit target is the whole
+   control and the keyboard reaches it as one colour input. */
+.color-select {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  block-size: var(--h-input);
+  padding: 0 var(--space-2) 0 0.625rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--fs-md);
+  font-weight: 400;
+  cursor: pointer;
+}
+.color-select:focus-within { border-color: var(--accent-text); box-shadow: 0 0 0 0.1875rem var(--accent-soft); }
+.color-select-swatch { flex: 0 0 auto; inline-size: 1.125rem; block-size: 1.125rem; border: 1px solid var(--line-strong); border-radius: var(--r-xs); background: var(--swatch, var(--paper)); }
+.color-select-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.color-select-caret { flex: 0 0 auto; font-size: var(--icon-sm); color: var(--muted); }
+#pageSetupMenu .color-select input[type="color"] {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* A labelled field in a footer (Page setup's Apply to): the label beside its
+   select, on the left where D1 puts everything that is not an action. */
+.dialog-foot-field { display: flex; align-items: center; gap: var(--space-3); color: var(--muted); font-size: var(--fs-sm); font-weight: 600; }
+.dialog-foot-field .dialog-select { inline-size: 12rem; }
+
+@media (max-width: 40rem) {
+  #pageSetupMenu .page-setup-body { grid-template-columns: minmax(0, 1fr); }
+  #pageSetupMenu .page-preview { display: none; }
+}
+body.phone-mode #pageSetupMenu .page-preview { display: none; }
+body.phone-mode #pageSetupMenu .page-setup-body { grid-template-columns: minmax(0, 1fr); }
+/* ==== end L8 Page setup ==== */
+
+/* ==== L8 Link popover (docs/184 D-13, audit DIALOGS-11) ====
+   Hangs under the selection like Google Docs' link popover: no scrim, the
+   dialog radius and shadow, two fields and one action row. */
+.link-popover {
+  position: fixed;
+  z-index: 60;
+  inline-size: min(22.5rem, calc(100vw - 1rem));
+  padding: var(--space-4);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--e3);
+}
+.link-popover[hidden] { display: none; }
+.link-popover-form { display: grid; gap: var(--space-3); }
+.link-popover-field { display: grid; gap: 0.375rem; color: var(--muted); font-size: var(--fs-sm); font-weight: 600; }
+.link-popover-field .settings-input { inline-size: 100%; box-sizing: border-box; }
+.link-popover-field .settings-input[aria-invalid="true"] { border-color: var(--danger, var(--accent-text)); }
+.link-popover-places { display: grid; max-block-size: 12rem; margin: calc(-1 * var(--space-2)) 0 0; padding: var(--space-1); overflow-y: auto; overscroll-behavior: contain; list-style: none; border: 1px solid var(--line); border-radius: var(--r-sm); }
+.link-popover-places[hidden] { display: none; }
+.link-popover-place { display: flex; align-items: center; min-block-size: var(--h-ctl); padding: 0 var(--space-2); border-radius: var(--r-xs); color: var(--ink); font-size: var(--fs-md); cursor: pointer; }
+.link-popover-place:hover { background: var(--hover); }
+/* The row the keyboard is on: the field keeps focus and names it through
+   aria-activedescendant, so the state is aria-selected, not :focus. */
+.link-popover-place[aria-selected="true"] { background: var(--accent-soft); color: var(--ink); box-shadow: inset 2px 0 0 var(--accent-text); }
+.link-popover-error { margin: 0; color: var(--danger, var(--ink)); font-size: var(--fs-sm); }
+.link-popover-error:empty { display: none; }
+.link-popover-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); }
+.link-popover-actions .dialog-button-utility { margin-inline-end: auto; }
+/* ==== end L8 Link popover ==== */

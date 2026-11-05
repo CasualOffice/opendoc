@@ -51,7 +51,7 @@ export function createDocTools(ed) {
     setStatus: ed.setStatus,
     openChooser: () => {
       revealOnSettings(ed.SETTINGS_SURFACE, document.getElementById("measurementUnitSelect"), {
-        group: ".settings-section",
+        group: ".settings-row",
       });
     },
   });

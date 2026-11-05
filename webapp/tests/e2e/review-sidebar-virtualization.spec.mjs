@@ -6,7 +6,7 @@
 // comments far apart vertically, and proves that only the cards inside (or near)
 // the viewport are ever mounted: a card off screen is detached, and scrolling it
 // back into view remounts it — while the item itself is never lost.
-import { test, expect, pageSheet } from "./fixtures.mjs";
+import { test, expect, pageSheet, commentOnSelection } from "./fixtures.mjs";
 
 const MOD = process.platform === "darwin" ? "Meta" : "Control";
 
@@ -43,7 +43,7 @@ function scrollViewportTo(page, top) {
 async function addCommentAtCaret(page, marker, note) {
   await page.keyboard.type(marker);
   for (let i = 0; i < marker.length; i++) await page.keyboard.press("Shift+ArrowLeft");
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
   const composer = page.locator('[data-testid="review-comment-composer"]');
   await expect(composer).toBeVisible();
   await composer.fill(note);

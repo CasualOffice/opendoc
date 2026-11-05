@@ -148,7 +148,7 @@ test("the review-mode chord cycles all three modes", async ({ page, consoleError
   await clickIntoFirstPage(page);
   const mode = () =>
     page.evaluate(
-      () => document.querySelector('.review-mode-seg[aria-pressed="true"]')?.dataset.reviewMode,
+      () => document.querySelector('#headerModeMenu [aria-checked="true"]')?.dataset.reviewMode,
     );
   // UX-007's example: this chord worked and was advertised nowhere. It is a named
   // command now, so it is both discoverable and still has to actually cycle.
@@ -168,6 +168,9 @@ test("a chord whose command cannot run says why instead of doing nothing", async
   // was never bound — which is the defect this row is about.
   await page.keyboard.press(`${MOD}+k`);
   await expect(page.locator("#status")).toContainText("Select text to add a link");
+  // ⌘K opens the link POPOVER (`docs/184` D-13), so that is the surface a
+  // refusal must keep shut; the dialog behind its More options stays shut too.
+  await expect(page.locator("#linkPopover")).toBeHidden();
   await expect(page.locator("#linkDialog")).toBeHidden();
 });
 

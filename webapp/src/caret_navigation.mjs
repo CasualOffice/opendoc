@@ -211,3 +211,57 @@ export function probeVerticalNeighbour(direction, from, io) {
   }
   return null;
 }
+
+// ---- Visual arrow movement in right-to-left text (`docs/109` UX-061, CANVAS-03)
+//
+// The engine's "left"/"right" are LOGICAL: back and forward in reading order.
+// Word's default (visual cursor movement), Google Docs and ONLYOFFICE all move
+// the caret in the direction of the arrow ON SCREEN, so in Hebrew or Arabic
+// text ArrowLeft goes FORWARD. Ours went backward, i.e. right, on every press.
+
+/** Strong right-to-left letters: Hebrew, Arabic, Syriac, Thaana, NKo and the
+ *  presentation forms. */
+const RTL_STRONG = /[֐-ࣿיִ-﷿ﹰ-﻿]/u;
+/** Strong left-to-right: any other letter. Digits, spaces and punctuation are
+ *  weak or neutral and take the direction of their context. */
+const LTR_STRONG = /\p{L}/u;
+
+/** "rtl", "ltr" or null for one character. */
+export function strongDirection(ch) {
+  if (!ch) return null;
+  if (RTL_STRONG.test(ch)) return "rtl";
+  return LTR_STRONG.test(ch) ? "ltr" : null;
+}
+
+/** The characters either side of a UTF-8 byte `offset` in `text` (the
+ *  engine's offsets are bytes; JavaScript strings are UTF-16). O(paragraph). */
+export function charsAroundByteOffset(text, offset) {
+  let bytes = 0;
+  let before = "";
+  for (const ch of text) {
+    if (bytes >= offset) return { before, after: ch };
+    before = ch;
+    const cp = ch.codePointAt(0);
+    bytes += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+  }
+  return { before, after: "" };
+}
+
+/** Whether the caret between `before` and `after` sits in right-to-left text:
+ *  the neighbours' strong direction when they agree or only one is strong,
+ *  otherwise the paragraph's own base direction. */
+export function caretInRtl({ before, after, baseRtl = false }) {
+  const b = strongDirection(before);
+  const a = strongDirection(after);
+  if (a && b) return a === b ? a === "rtl" : baseRtl;
+  if (a || b) return (a ?? b) === "rtl";
+  return baseRtl;
+}
+
+const VISUAL_SWAP = Object.freeze({ left: "right", right: "left", wordLeft: "wordRight", wordRight: "wordLeft" });
+
+/** The logical engine direction an arrow key means: swapped in RTL text, the
+ *  rest (up, down, line and document edges) unchanged. */
+export function visualDirection(dir, rtl) {
+  return rtl && Object.hasOwn(VISUAL_SWAP, dir) ? VISUAL_SWAP[dir] : dir;
+}

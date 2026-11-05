@@ -22,9 +22,10 @@ project's production-grade bar (not an MVP).
 
 Borrowed from the reference, adapted to the CasualOffice brand:
 
-- **Accent** — a single settable accent (Settings ⚙). Brand default is orange
-  (`--accent`, casualoffice.org "Studio"); the reference's blue is one of the
-  presets. Everything tints from `--accent` via `color-mix`.
+- **Accent** — a single settable accent (Settings ⚙). The default is blue,
+  `--accent: #3355c4` (owner decision, 2026-11-03: never orange as the editor's
+  accent); the Settings presets, orange among them, are the reader's choice.
+  Everything tints from `--accent` via `color-mix`.
 - **Type** — self-hosted Inter for deterministic cross-platform chrome, with the
   native system stack as fallback. Chrome text is 13px; headings and titles are
   slightly heavier. Tabular numerals remain in use for measures (ruler, zoom,
@@ -68,7 +69,7 @@ toolbar, context menus, toolbar popovers.
 | 1 | **Top bar + toolbar** | identity + primary actions + formatting | brand; two-row document block with title, honest local `Opened`/`Edited`/`Downloaded` state, and functional File/Edit/View/Insert/Format/Tools/Help menus; Open/Save/Properties/Settings; tabbed formatting ribbon. |
 | 3 | **Left nav rail + panel** | document navigation | **Outline** (heading tree → scroll-to) first; later Pages (thumbnails), Search/Find. The rail only shows an icon once its panel is functional. |
 | 4 | **Right context panel** | inspect/act on the selection | later: Styles (apply), Properties (paragraph/table inspector), Comments (needs a comments model — a later phase). Collapsible; never empty. |
-| 5 | **Status bar** | document state | page X of Y, word/paragraph counts, zoom (−/＋/%), later language, edit mode, view toggles, save/sync state. |
+| 5 | **Status bar** | document state | page X of Y, word/paragraph counts, zoom (−/＋/%), language, view toggles, save/sync state. Never the editing mode (it is the header selector's alone, `docs/184` D6) and never an echo of the toolbar layout or a font download. |
 | 6 | **Command palette (⌘⇧P)** | fast command access | fuzzy search over every action (insert table, apply style, export, …). `⌘K` remains the document-standard Add/Edit Link shortcut. |
 | — | **Floating selection toolbar** | quick format at the selection | mini B/I/U · highlight · color · link · comment above a range; complements our engine-drawn selection. |
 | — | **Rulers** | measure + indent/tabs | horizontal (done: margins, indent markers, tab stops); vertical (top/bottom margins) later. |
@@ -82,6 +83,22 @@ Reuse these; don't invent per-feature variants.
 - **Popover** (`.context-menu` + the shared popover manager in `main.js`) — anchored
   under its trigger, one open at a time, dismiss on outside-pointerdown / Escape;
   used for spacing, paragraph options, table & cell, insert-table.
+- **Context menu** (`.editor-context-menu` + `.editor-submenu`, `docs/184` D12) — the
+  approved right-click anatomy: 32px rows (`--h-ctl`) at `--fs-md`, a neutral `--hover`
+  wash (the accent marks a current choice, not the row under the pointer), the leading
+  icon in `--icon`, the shortcut right-aligned in the quiet ink, hairline dividers that
+  run edge to edge, `--r-md` and `--e2`. A spelling suggestion is a bold row. What the
+  menu SAYS (a mode's refusal, a grammar rule, "no suggestions") is a `.menu-note`, text
+  and not a disabled command. The policy is `context_menu.mjs`'s, applied once in
+  `showContextMenu` for every builder: no Undo/Redo, no refused top-level row, at most
+  16 rows and 480px, the trailing groups folding into one "More" submenu when over.
+- **Floating surface** (link card, object bar, table insert markers, mini-toolbar,
+  paste chip; `floating_arbiter.mjs`, `docs/184` D12) — one shows at a time, in that
+  priority, and never over the selection. The mini-toolbar is earned by a pointer
+  selection and fades with the pointer's distance (a CSSOM rule, never the bar's own
+  style attribute, which the arbiter observes), hidden once fully faded; only a
+  `position: fixed` surface is ever moved off the selection; the paste chip is a collapsed
+  `--h-dense` icon at the end of the paste whose choices open as a context menu.
 - **Dialog** (`.dialog-overlay` + `.dialog-card`) — centered, modal, titled, and
   focus-contained for multi-section document actions such as Document Properties
   and Page Setup. Dialogs use a dimmed backdrop, explicit Close/Cancel/Apply
@@ -130,8 +147,8 @@ Where things live, so we stay consistent as we add features:
 
 ## 5. Decisions
 
-- Keep the **single settable accent**; brand default orange, reference blue is a
-  preset. Structure/spacing follow the reference; colour does not have to.
+- Keep the **single settable accent**; default blue `#3355c4`, the other
+  presets (orange among them) a reader's choice. Structure/spacing follow the reference; colour does not have to.
 - **Tabbed ribbon**: the working Home/Insert/Table/View/**Review** ribbon is now the
   primary toolbar (five tabs as shipped; this doc and `64` both said four until
   2026-09-15). A **Layout** tab is the next one this rule licenses — the page/section
@@ -183,14 +200,14 @@ px figures below are at the 16px root that holds from 1280 to 1440px.
 
 | Family | Tokens | Values | Roles |
 | --- | --- | --- | --- |
-| Type size | `--fs-xs` `--fs-sm` `--fs-md` `--fs-lg` `--fs-xl` | 11 / 12 / 13 / 15 / 20 | chips, shortcut hints, big-button labels · status, meta, field labels · body, menus, tabs · dialog and panel titles · File page heading |
+| Type size | `--fs-xs` `--fs-sm` `--fs-md` `--fs-lg` `--fs-xl` | 12 / 12 / 13 / 15 / 20 (`--fs-xs` was 11 until the D7 floor raised chrome text to 12; the two names are kept for their roles) | chips, shortcut hints, big-button labels · status, meta, field labels · body, menus, tabs · dialog and panel titles · File page heading |
 | Weight | `--fw-regular` `--fw-medium` `--fw-semibold` | 400 / 500 / 600 | body · controls, tabs, labels · titles and headings |
 | Icon | `--icon-sm` `--icon-md` `--icon-lg` | 16 / 20 / 24 | status bar, chips, menu trailing · toolbar, menus, panel actions · big ribbon buttons, mobile |
 | Radius | `--r-xs` `--r-sm` `--r-md` `--r-lg` `--r-pill` | 4 / 6 / 8 / 12 / pill | checkbox, chip, swatch · buttons, inputs, tool buttons · menus, popovers, cards, panels, toolbar card · dialogs, sheets · avatars, mode chip |
 | Height | `--h-dense` `--h-tool` `--h-ctl` `--h-touch` | 24 / 28 / 32 / 44 | status items, chips · toolbar and ribbon buttons · dialog buttons, inputs, selects · coarse pointer |
 | Space | `--space-1`..`--space-6` | 4 / 8 / 12 / 16 / 20 / 24 | the 4px grid; a 2px half-step inside dense controls; never an odd pixel (1px is a hairline, not spacing) |
 | Elevation | `--e1` `--e2` `--e3` | card · menu/popover · dialog | light: hairline plus soft shadow; dark: `none` / hairline ring only |
-| State | `--hover` `--press` `--selected` `--selected-ink` | ink 6% / 10% · accent 12% | washes every control shares |
+| State | `--hover` `--press` `--selected` `--selected-ink` | ink 6% / 10% · accent 12% | washes every control shares; a ribbon button held under the mouse takes `--press`, one step past hover (`shell-sparse.spec.mjs`) |
 | Roles | `--surface-raised` `--icon` `--line-control` `--ink-disabled` `--scrim` | | dialogs over panels · toolbar glyphs · input boundary (3:1, WCAG 1.4.11) · disabled text · modal backdrop |
 
 **Primary.** `--primary-bg` is `var(--accent)` in both themes, `--primary-ink`
@@ -241,6 +258,27 @@ dialog pass (UX-053) and the shell pass (UX-054), and each needs its own
 screenshots and ribbon-budget measurement. Until then they are the only
 off-scale lengths the guard does not refuse.
 
+### 7.2a Dialog-type anatomy (2026-11-06, `109` UX-066, lane L8)
+
+Components added for `docs/184` D-13, D2 and D3, each in a delimited block at the
+end of `style.css` and built only from the tokens above:
+
+| Component | Anatomy | Where |
+| --- | --- | --- |
+| Settings frame | XL card (`.dialog-card-reference`), a 12.5rem `--bg-2` navigation, ONE height `min(34rem, 100dvh - 2rem)` on every page; only the page scrolls | `#settingsPanel` |
+| Settings row (`.settings-row`) | label left (`--fw-medium`) with at most one `--fs-sm` help line, control right (13.75rem select or input, 15rem segmented), min-height 3rem, hairline between rows | Settings pages |
+| Switch (`.settings-switch`) | a real checkbox with `role="switch"`, 36×24px track, `--accent` when on; Space toggles and its label clicks it | Settings, the add-in list |
+| Colour select (`.color-select`) | a `--h-input` box shaped like a select: swatch, name, caret, with the native colour input laid transparently over it | Page setup's page colour |
+| Footer field (`.dialog-foot-field`) | a label beside a select on the footer's left, where D1 keeps everything that is not an action | Page setup's Apply to |
+| Footer status (`.dialog-foot-status`) | one muted `--fs-sm` line, only where the dialog declares it (`data-foot-note`) | Settings' "Changes apply as you make them" |
+| Link popover (`.link-popover`) | `--r-lg`, `--e3`, no scrim, 22.5rem; two fields and one action row, hung from the selection by `popover_position.mjs` | ⌘K |
+
+A dialog's footer holds actions only: no "One undoable action." filler (a note
+that carries information belongs in the body), and the description under a title
+is one line at 1280px (`dialog-anatomy.spec.mjs`). A label ends in "…" exactly
+when the command opens a dialog or a picker, never a pane (`COMMAND_OPENS`,
+`command_ellipsis.test.mjs`).
+
 ### 7.3 What v2 deliberately keeps
 
 - The accent `#3355c4` and the settable-accent presets.
@@ -249,3 +287,60 @@ off-scale lengths the guard does not refuse.
   (see the `.rgroup-label` comment in `style.css`), so the audit's "captions off"
   is not taken.
 - The paper layer (`--paper-*`): the document is white in both themes.
+
+### 7.4 The dock and the review shell (2026-11-06, `109` UX-055, UX-065)
+
+One anatomy for every docked panel, and one rule for where it goes
+(`docs/184` D4 as amended, PROPOSAL D-10/D-11, the approved v2 mockups).
+
+| Part | Value | Token |
+| --- | --- | --- |
+| Slot | one per side; opening a panel closes the one on its side | `dock_manager.mjs` |
+| Width | 20rem default, 17.5–30rem by the inner-edge splitter, remembered per side | `--dock-w-left`, `--dock-w-right` |
+| Frame | a card on the desk: `--r-md` radius, a hairline ring plus `--e1`, `--dock-gap` (0.375rem) from the edges | `--dock-gap` |
+| Header | 3.125rem (`--h-rail-control`), `--fs-lg` (15px)/600 title, ghost close. PROPOSAL D-10 and `docs/184` D4 write 3.5rem/17px and the approved mockups draw 48px/14px; open for the owner (`109` UX-055) | `.panel-head` |
+| Splitter | 6px strip on the inner edge, accent on hover/focus/drag, `role="separator"` | `.dock-resize` |
+| Phone | a bottom sheet above the bottom chrome, with a grab handle | `body.phone-mode .workarea > .side-panel` |
+| Comments bar | 2.5rem row: title, `--selected` count chip, pill filter, ⋯; sticky on an opaque `--bg` band | `.review-sidebar-header` |
+| Margin card | `--surface`, `0 0 0 1px var(--line), var(--e1)`; active `--accent-line` ring and `--e2`; 3-line clamp | `.review-margin-card` |
+| Undo snackbar | inverted (`--ink` on `--surface`), bottom-start, one at a time, 6s; a blind Undo (the editor's last step) is withdrawn by the next edit, a bound one (Resolve) survives it; focus never left on `<body>` | `.undo-snackbar` |
+| Find bar | three rows: query + counter + ↑ ↓ ×, scope toggles, replacement + actions; 25rem | `.find-panel` |
+
+Left is navigation (Outline, Pages). Right is context and collaboration
+(Properties, Comments, Version history, Compare, Symbol, Emoji, the add-in panel).
+The comment column is in the right slot: a right panel displaces it and gives it
+back when it closes. The add-in panel keeps its own edge-docked frame and splitter
+(`docs/183` §21) and takes the right slot like the others.
+
+## 8. Boot (2026-11-03, `109` UX-064, redesign PROPOSAL D-16)
+
+What a person sees between the first frame and an editable document is designed, not
+left to whatever the modules happen to paint while they load.
+
+- **One chrome from the first frame.** An inline script in `editor.html`'s `<head>`
+  sets `html[data-chrome]` to `ribbon`, `compact` or `phone` (the saved preference, and
+  the phone rung as an em media query), and the first lines of `<body>` set the matching
+  `ribbon-mode` / `compact-mode` / `phone-mode` body classes, before any chrome is
+  parsed. `chrome_boot.mjs` holds the same rule; `chrome_boot.test.mjs` runs the inline
+  script against it at every preference and width.
+- **Final geometry, then paint.** The header, the band and the desk take their final size
+  at once; the two chrome faces are preloaded. A skeleton sheet and a progress bar sit
+  over the desk, absolutely positioned, so taking them away moves nothing (CLS < 0.01).
+- **A real progress bar.** `engine_boot.mjs` counts the wasm stream on its way into
+  `instantiateStreaming`. The denominator is the raw size the deploy stamps on the
+  preload (`data-bytes`), since a gzipped response's `Content-Length` counts the wrong
+  bytes; with no honest total the bar is indeterminate rather than wrong.
+- **Nothing clickable that cannot run.** Every chrome region is `inert` (and drawn
+  dimmed) in the markup until the engine is instantiated.
+- **A failure says so, and offers a way out.** A failed engine download shows a card
+  with Try again, which re-instantiates in place, and the technical message behind
+  Details. Not a toast and not the status bar. A startup document that fails to open
+  gives way to the upload card.
+- **Caching.** The container (`Dockerfile.editor`) stamps its staged site with a content
+  hash, and `deploy/editor-nginx.conf` serves a `?v=`-stamped wasm
+  `public, max-age=31536000, immutable`, an unstamped one for an hour. GitHub Pages sets
+  its own response headers and cannot send `immutable`; the `?v=` stamp still keeps a
+  cached engine from outliving its page there. A host serving `webapp/` itself should
+  send `immutable` for any `?v=`-stamped asset.
+
+Guard: `tests/e2e/boot.spec.mjs`, which samples the page every 50 ms from commit.

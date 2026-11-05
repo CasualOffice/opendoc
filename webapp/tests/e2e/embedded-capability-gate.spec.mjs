@@ -155,13 +155,16 @@ test(`a ${READER} host cannot mutate the document through the engine, chrome def
   // Read from the authority, not hardcoded: if `editingModeFor` ever maps
   // `readonly` elsewhere, this follows it rather than passing on the wrong mode.
   await expect(
-    frame.locator('#reviewModeControl [data-review-mode="' + READER_MODE + '"]'),
+    frame.locator('#headerModeMenu [data-review-mode="' + READER_MODE + '"]'),
     'a ' + READER + ' embed must be in ' + READER_MODE + ' on arrival, not merely disabled',
-  ).toHaveAttribute("aria-pressed", "true");
+  ).toHaveAttribute("aria-checked", "true");
   // And the modes it was not granted are refused with a reason, still present —
   // a host reading a MISSING button cannot tell a permission from a bug.
-  const editingButton = frame.locator('#reviewModeControl [data-review-mode="editing"]');
+  const editingButton = frame.locator('#headerModeMenu [data-review-mode="editing"]');
+  await frame.locator("#headerModeBtn").click();
   await expect(editingButton, "a withheld mode must still be offered").toBeVisible();
+  await expect(editingButton).toBeDisabled();
+  await frame.locator("#headerModeBtn").click();
   await expect(editingButton).toBeDisabled();
   await expect(editingButton).not.toHaveAttribute("title", "");
 
@@ -453,7 +456,7 @@ test("an ONLYOFFICE-shaped configuration changes the container, and reports what
   expect(withheld).toContain("ruler");
   expect(withheld).toContain("review");
   await expect(
-    frame.locator("#reviewModeControl"),
+    frame.locator("#headerModeControl"),
     "customization.review.hideReviewDisplay must take the switcher off the page",
   ).toBeHidden();
   // The positive control for the region half: a band the host said nothing about

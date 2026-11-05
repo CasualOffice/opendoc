@@ -5,6 +5,7 @@
 import { engineVersion } from "../pkg/casual_doc_wasm.js";
 import { findingTotals } from "./compat_findings.mjs";
 import { downloadNameForFormat, formatInfo } from "./format_io.mjs";
+import { ensurePdfSavePlanner, needsPdfSavePlanner } from "./pdf_module.mjs";
 import { DRAFT_EXPORT_MODES, DRAFT_WRITE_REASONS, DraftPresence, DraftScheduler, HEARTBEAT_MS, bindDraftFlushOnExit, describeDraftAge, describeDraftSize, documentKey, draftFormatFor, draftSlotId, evictableSlots, offerableDrafts, openDraftStore, slotIsLive } from "./drafts.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
@@ -192,6 +193,15 @@ export function createDrafts(ed) {
     if (!ed.doc || !autosaveEnabled() || !ed.documentIsDirty()) return;
     const store = await ensureDraftStore();
     if (!store) return;
+    // A PDF session's draft is a PDF save: without the PDF module's planner on
+    // this thread it would be the semantic writer's new file, not the original
+    // plus the edit (`needsPdfSavePlanner`). The first draft loads it, so the
+    // synchronous snapshots after it (versions, the hand-over) have it too.
+    if (needsPdfSavePlanner(ed.currentSourceFormat, draftFormatFor(ed.currentSourceFormat))) {
+      const doc = ed.doc;
+      await ensurePdfSavePlanner();
+      if (ed.doc !== doc) return;
+    }
 
     let snapshot;
     try {

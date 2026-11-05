@@ -242,17 +242,34 @@ test.describe("the pointer says what the thing under it will do", () => {
     for (let i = 0; i < 6; i += 1) await page.keyboard.press("Shift+ArrowRight");
     const highlight = await stableBox(page.locator(".overlay .highlight").first());
     await page.keyboard.press(`${MOD}+k`);
-    await expect(page.locator("#linkDialog")).toBeVisible();
-    await page.locator("#linkUrlInput").fill("https://example.com");
-    await page.locator("#linkUrlInput").press("Enter");
-    await expect(page.locator("#linkDialog")).toBeHidden();
+    await expect(page.locator("#linkPopover")).toBeVisible();
+    await page.locator("#linkPopoverUrl").fill("https://example.com");
+    await page.locator("#linkPopoverUrl").press("Enter");
+    await expect(page.locator("#linkPopover")).toBeHidden();
 
     const onLink = await routed(
       page,
       highlight.x + highlight.width / 2,
       highlight.y + highlight.height / 2,
     );
-    expect(onLink).toMatchObject({ cursor: "pointer", target: "hyperlink" });
+    // In Editing, an external link keeps the I-beam: a plain click places the
+    // caret and shows the link card (docs/184 D-12, audit CANVAS-16)…
+    expect(onLink).toMatchObject({ cursor: "text", target: "hyperlink-text" });
+    // …and the sheet's tooltip names the target and the follow chord.
+    await expect
+      .poll(() => page.evaluate(() => document.querySelector(".page-wrap [title]")?.title ?? ""))
+      .toContain("https://example.com");
+    // The hand appears while the follow chord (Ctrl, or Cmd on a Mac) is held,
+    // and on the KEY, as Word's does: the pointer does not move between the
+    // press, the hand, the release and the I-beam again.
+    const linkX = highlight.x + highlight.width / 2;
+    const linkY = highlight.y + highlight.height / 2;
+    await page.keyboard.down(MOD);
+    await expect.poll(async () => (await read(page, linkX, linkY)).target).toBe("hyperlink");
+    expect((await read(page, linkX, linkY)).cursor).toBe("pointer");
+    await page.keyboard.up(MOD);
+    await expect.poll(async () => (await read(page, linkX, linkY)).target).toBe("hyperlink-text");
+    expect((await read(page, linkX, linkY)).cursor).toBe("text");
 
     // Arming the format painter is a whole-surface mode, and its brush must win
     // over whatever the router would otherwise have written here — including the

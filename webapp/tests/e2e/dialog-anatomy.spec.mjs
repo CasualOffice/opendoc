@@ -8,15 +8,26 @@
 // roster (`modal-roster.mjs`, which `dialog-contract.spec.mjs` proves complete
 // against `editor.html`) and asserts the anatomy as a browser lays it out:
 //
-//   * at 1280x720 the card is 400, 560 or 720px wide (S/M/L), or 960px for the one
-//     reference card (Keyboard shortcuts), and nothing else;
+//   * at 1280x720 the card is 400, 560 or 720px wide (S/M/L), or 960px for the two
+//     reference cards (Keyboard shortcuts and the Settings frame), and nothing
+//     else; Manage add-ins is L since its list moved into Settings (DIALOGS-08);
 //     at 390x844 it is a full-width bottom sheet;
 //   * the title is 15px (--fs-lg; owner, 2026-11-02: 20px was too large);
 //   * the footer is painted inside the card and inside the window — pinned,
 //     not scrolled away;
 //   * no button label wraps, and nothing scrolls sideways;
 //   * every input, select, dialog button and segmented control is the same
-//     height (36px with a fine pointer).
+//     height (36px with a fine pointer);
+//   * the description under the title is at most ONE line (D1: "help text is at
+//     most one line"; audit DIALOGS-13 measured ten dialogs wrapping to two);
+//   * the footer holds actions and nothing else: no filler sentence such as
+//     "One undoable action." (DIALOGS-13). Text is allowed only in a button, a
+//     labelled footer field (Page setup's Apply to), a live status
+//     (`role="status"`, empty until something happens) or the one declared
+//     note, Settings' "Changes apply as you make them" (`data-foot-note`).
+//
+// Settings keeps ONE frame on every page (D3, DIALOGS-09): the card measures
+// the same height whichever page is chosen.
 //
 // Both themes are measured with the card open: the theme changes no length,
 // and this is what proves it.
@@ -26,6 +37,8 @@ import { DIALOGS } from "./modal-roster.mjs";
 const LAPTOP = { width: 1280, height: 720 };
 const PHONE = { width: 390, height: 844 };
 const RUNGS = [400, 560, 720, 960];
+/** The only cards on the XL rung: the shortcuts reference and the Settings frame. */
+const XL_CARDS = ["shortcutsDialog", "settingsPanel"];
 
 /** Everything the anatomy promises, measured in the page. */
 async function measure(page, id) {
@@ -41,15 +54,30 @@ async function measure(page, id) {
     const wrapped = buttons
       .filter((b) => b.classList.contains("dialog-button"))
       .filter((b) => {
-        const range = document.createRange();
-        range.selectNodeContents(b);
-        const lines = new Set([...range.getClientRects()].map((r) => Math.round(r.top)));
-        return lines.size > 1;
+        // Lines are runs of TEXT whose boxes overlap vertically. An icon glyph
+        // beside a label sits at a different top without being a second line,
+        // so icon fonts (`.ms`) are left out and boxes are merged by overlap.
+        const boxes = [];
+        const walker = document.createTreeWalker(b, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          if (!node.textContent.trim() || node.parentElement?.closest(".ms")) continue;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          boxes.push(...[...range.getClientRects()].filter((r) => r.width > 0));
+        }
+        boxes.sort((a, c) => a.top - c.top);
+        let lines = 0;
+        let bottom = -Infinity;
+        for (const r of boxes) {
+          if (r.top >= bottom - 1) lines += 1;
+          bottom = Math.max(bottom, r.bottom);
+        }
+        return lines > 1;
       })
       .map((b) => b.textContent.trim());
     const controls = [
       ...card.querySelectorAll(
-        ".dialog-button, .dialog-select, .dialog-field > select, .number-control, .dialog-body .segmented:not(.segmented-stacked), " +
+        ".dialog-button, .dialog-select, .dialog-field > select, .number-control, .dialog-body .segmented:not(.segmented-stacked), .settings-input, .color-select, " +
           '.dialog-field > input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]):not([type="file"])',
       ),
     ]
@@ -64,6 +92,28 @@ async function measure(page, id) {
       .filter((el) => el.scrollWidth > el.clientWidth + 1)
       .map((el) => `${el.className} ${el.scrollWidth}>${el.clientWidth}`);
     const input = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--h-input")) * 16;
+    // The description: one line, measured as line boxes, so a long word that
+    // merely touches the edge is not counted twice.
+    const description = card.querySelector(".dialog-heading p");
+    let descriptionLines = 0;
+    if (description && shown(description) && description.textContent.trim()) {
+      const range = document.createRange();
+      range.selectNodeContents(description);
+      descriptionLines = new Set([...range.getClientRects()].filter((r) => r.width > 0).map((r) => Math.round(r.top))).size;
+    }
+    // Filler: visible footer text that is not an action, a labelled field, a
+    // live status, or the declared note.
+    const filler = [];
+    if (foot && shown(foot)) {
+      const walker = document.createTreeWalker(foot, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const text = node.textContent.trim();
+        const host = node.parentElement;
+        if (!text || !host || !shown(host)) continue;
+        if (host.closest("button, select, option, .dialog-foot-field, [role='status'], [data-foot-note]")) continue;
+        filler.push(text);
+      }
+    }
     return {
       width: Math.round(box.width),
       left: Math.round(box.left),
@@ -77,6 +127,8 @@ async function measure(page, id) {
       controls,
       overflow,
       input,
+      descriptionLines,
+      filler,
     };
   }, id);
 }
@@ -92,6 +144,14 @@ function assertAnatomy(m, id, where) {
   }
   const off = m.controls.filter((c) => Math.abs(c.height - m.input) > 1);
   expect(off, `#${id} (${where}) has a control that is not ${m.input}px tall`).toEqual([]);
+  // Measured on the laptop, where the audit measured it; a phone sheet is
+  // narrower than any rung and may wrap the same sentence.
+  // The confirmation dialog is exempt: its "description" IS the question, set by
+  // whoever asks it, not help text under a title.
+  if (where.startsWith("1280") && id !== "confirmDialog") {
+    expect(m.descriptionLines, `#${id} (${where}) has a description longer than one line`).toBeLessThanOrEqual(1);
+  }
+  expect(m.filler, `#${id} (${where}) has filler text in its footer`).toEqual([]);
 }
 
 for (const dialog of DIALOGS()) {
@@ -103,6 +163,9 @@ for (const dialog of DIALOGS()) {
       await page.evaluate((t) => document.documentElement.setAttribute("data-theme", t), theme);
       const m = await measure(page, dialog.id);
       expect(RUNGS, `#${dialog.id} (${theme}) is ${m.width}px wide, not S/M/L`).toContain(m.width);
+      // XL is for the reference cards only, so a dialog cannot reach it by
+      // borrowing their class (Manage add-ins did, at 960px; audit DIALOGS-08).
+      if (m.width === 960) expect(XL_CARDS, `#${dialog.id} (${theme}) is XL but is not a reference card`).toContain(dialog.id);
       assertAnatomy(m, dialog.id, `1280 ${theme}`);
     }
     expect(consoleErrors).toEqual([]);
@@ -126,3 +189,22 @@ for (const dialog of DIALOGS()) {
     }
   });
 }
+
+// D3 / DIALOGS-09: the audit measured the Settings card at 776, 608, 562 and
+// 701px on its four pages, so the footer and the close button jumped on every
+// click. One frame now: every page measures the same.
+test("Settings: the frame is the same height on every page", async ({ page }) => {
+  await page.setViewportSize(LAPTOP);
+  await gotoEditor(page);
+  await page.locator("#settingsBtn").click();
+  await expect(page.locator("#settingsPanel")).toBeVisible();
+  const tabs = await page.locator("#settingsPanel [data-settings-tab]").evaluateAll((els) => els.map((el) => el.dataset.settingsTab));
+  expect(tabs).toEqual(["general", "proofing", "autocorrect", "saving", "ai", "about"]);
+  const heights = {};
+  for (const tab of tabs) {
+    await page.locator(`#settingsPanel [data-settings-tab="${tab}"]`).click();
+    await expect(page.locator(`#settingsPanel [data-settings-tab="${tab}"]`)).toHaveAttribute("aria-selected", "true");
+    heights[tab] = await page.locator("#settingsPanel .dialog-card").evaluate((el) => Math.round(el.getBoundingClientRect().height));
+  }
+  expect(new Set(Object.values(heights)).size, `Settings card heights per page: ${JSON.stringify(heights)}`).toBe(1);
+});

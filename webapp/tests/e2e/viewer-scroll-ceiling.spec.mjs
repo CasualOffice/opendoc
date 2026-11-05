@@ -18,7 +18,7 @@
 // and it opens in seconds instead of the two minutes 775,000 paragraphs would
 // cost. It is the same ceiling — the viewer caps the CSS height of the band,
 // not a page count — and it is a real thing a reader can do to a long report.
-import { test, expect, documentPageCount, gotoEditor, pageSheet } from "./fixtures.mjs";
+import { test, expect, documentPageCount, gotoEditor, pageSheet, commentOnSelection } from "./fixtures.mjs";
 import { makeLargeDocx } from "./large-docx.mjs";
 
 /** The wall, as the usual figure has it: 2^24. This Chromium's own is 2^25 —
@@ -203,7 +203,7 @@ test.describe("a document taller than the browser can scroll", () => {
     await page.mouse.click(point.x, point.y);
     await page.keyboard.press("Home");
     for (let i = 0; i < 6; i++) await page.keyboard.press("Shift+ArrowRight");
-    await page.locator("#selComment").click();
+    await commentOnSelection(page);
     const composer = page.locator('[data-testid="review-comment-composer"]');
     await expect(composer).toBeVisible();
     // QZX, not a marker containing "@": the corpus is full of e-mail addresses

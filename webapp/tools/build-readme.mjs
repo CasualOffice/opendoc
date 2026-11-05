@@ -174,14 +174,17 @@ const NOTES = {
   PDF: () => [
     anchor(`${IO_DIR}/pdf_import.rs`, "descriptor.can_import = true") &&
       anchor("webapp/src/pdf_import.mjs", "beginPdfImport") &&
-      "Opens as fixed-layout pages (each page a section of page-anchored text boxes, pictures and shapes), through a PDF module the editor loads the first time a PDF is opened (`docs/182`); headless hosts register it with `enable_pdf_import`.",
-    anchor("webapp/src/pdf_import.mjs", "openPdfReflow") &&
-      "File ▸ Convert to flowing document rebuilds it as paragraphs, headings, lists, tables and columns, as a new document.",
+      "Opens through a PDF module the editor loads the first time a PDF is opened (`docs/182`); headless hosts register it with `enable_pdf_import`.",
+    anchor("webapp/src/pdf_import.mjs", "A PDF opens as a FLOWING document") &&
+      anchor("webapp/src/pdf_import.mjs", "openPdfReflow") &&
+      "In the editor a PDF opens as a flowing document (paragraphs, headings, lists, tables, header and footer, footnotes), the way Word and Google Docs open one; the summary says the layout was inferred.",
+    anchor("webapp/src/pdf_commands.mjs", "file.pdf.keepExactLayout") &&
+      "File ▸ PDF ▸ Keep exact page layout reopens it with every page as drawn (page-anchored text boxes, pictures and shapes), the only layout whose save goes back into the original; Convert to flowing document goes the other way, as a new document.",
     anchor("crates/casual-doc-wasm-pdf/src/lib.rs", "beginPdfImportWithOcr") &&
       "Scanned pages: text recognition (PaddleOCR on `rten`) runs only when the host names a model manifest (`?pdfOcrModels=`) and the reader agrees to the download.",
     anchor("crates/casual-doc-wasm-pdf/src/lib.rs", "planSave") &&
       anchor(`${IO_DIR}/pdf_preserve.rs`, "pdf.export.preserve_fallback") &&
-      "An unedited PDF saves back byte for byte; an edited one is written as an incremental update that keeps the original bytes, falling back to a regenerated PDF where an edit cannot be expressed that way (the save says so).",
+      "With its exact layout kept, an unedited PDF saves back byte for byte; an edited one is written as an incremental update that keeps the original bytes, falling back to a regenerated PDF where an edit cannot be expressed that way (the save says so).",
     "Export: real, selectable text with embedded subset fonts (`docs/98`).",
   ],
   DOCX: () => ["Unedited files save back byte for byte."],

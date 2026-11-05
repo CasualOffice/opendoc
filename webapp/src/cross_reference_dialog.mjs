@@ -122,6 +122,15 @@ export function createCrossReferenceDialog(io) {
     modal.close();
   }
 
+  /** Word's secondary button: "Cancel" until a reference has been inserted,
+   *  then "Close" (audit DIALOGS-13), since after an insert there is nothing
+   *  left to cancel. The key is swapped too, so a relabel keeps the right word. */
+  function reflectDone(inserted) {
+    const key = inserted ? "fieldDialog.close.title" : "confirmDialog.cancel";
+    doneBtn.dataset.i18n = key;
+    doneBtn.textContent = t(key);
+  }
+
   /** "Include above/below" is live only where Word offers it AND where the engine
    *  can carry it. Two different refusals, and the difference matters to the
    *  reader: "Word does not offer it for this kind of reference" is a rule they
@@ -254,6 +263,7 @@ export function createCrossReferenceDialog(io) {
     fillTypes(labels);
     fillReferenceTo();
     loadTargets();
+    reflectDone(false);
     modal.open();
   }
 
@@ -306,6 +316,7 @@ export function createCrossReferenceDialog(io) {
     });
     if (!inserted) return;
     io.status(t("crossReference.inserted"));
+    reflectDone(true);
     // The dialog stays open (Word, ONLYOFFICE), so the list has to be refreshed
     // rather than left describing the document as it was before the insert —
     // page numbers move, and the reference itself is now part of the flow.

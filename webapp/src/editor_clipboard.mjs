@@ -395,6 +395,7 @@ export function createClipboard(ed) {
   }
 
   function hidePasteOptions() {
+    expandPasteOptions(false);
     pasteOptionsEl.hidden = true;
     pasteOptionsPlain = null;
     pasteOptionsRuns = null;
@@ -421,21 +422,51 @@ export function createClipboard(ed) {
     pasteOptionsRuns = runsJson;
     pasteOptionsRevision = ed.revisionUnreadable ? null : ed.currentRevision;
     pasteOptionsMergeBtn.hidden = !runsJson;
+    expandPasteOptions(false);
     pasteOptionsEl.hidden = false;
     requestAnimationFrame(positionPasteOptions);
   }
+
+  // The chip is COLLAPSED until asked (audit CRITIC-10): Word's (Ctrl) chip,
+  // a 1.5rem clipboard icon at the end of the paste, opened by a click or by
+  // Ctrl pressed and released on its own. Measured before: a 229px row of three
+  // labelled buttons drawn over the second pasted paragraph.
+  const pasteOptionsToggle = document.getElementById("pasteOptionsToggle");
+  const pasteOptionsMenu = document.getElementById("pasteOptionsMenu");
+  function expandPasteOptions(open, { focus = false } = {}) {
+    pasteOptionsMenu.hidden = !open;
+    pasteOptionsToggle.setAttribute("aria-expanded", String(open));
+    pasteOptionsEl.classList.toggle("is-open", open);
+    if (!open) return;
+    placePasteOptionsMenu();
+    if (focus) pasteOptionsMenu.querySelector("button:not([hidden])")?.focus({ preventScroll: true });
+  }
+  /** Opens the choices below the chip, or above it when the window has no room. */
+  function placePasteOptionsMenu() {
+    pasteOptionsMenu.classList.remove("opens-up");
+    const chip = pasteOptionsToggle.getBoundingClientRect();
+    const height = pasteOptionsMenu.offsetHeight;
+    const vp = ed.viewportEl.getBoundingClientRect();
+    if (chip.bottom + 4 + height > vp.bottom - 8 && chip.top - 4 - height >= vp.top + 8) {
+      pasteOptionsMenu.classList.add("opens-up");
+    }
+  }
+  /** The chip sits at the END of the paste: just after the caret the paste left
+   *  there, on its line, so the pasted text itself is never under it (the
+   *  floating-chrome arbiter, `floating_arbiter.mjs`, also keeps it off the
+   *  selection and yields it to any other floating surface). */
   function positionPasteOptions() {
     if (pasteOptionsEl.hidden) return;
     const caret = ed.pagesEl.querySelector(".overlay .caret");
-    const w = pasteOptionsEl.offsetWidth;
-    const h = pasteOptionsEl.offsetHeight;
+    const w = pasteOptionsToggle.offsetWidth;
+    const h = pasteOptionsToggle.offsetHeight;
     const vp = ed.viewportEl.getBoundingClientRect();
     let x;
     let y;
     if (caret) {
       const r = caret.getBoundingClientRect();
-      x = r.left;
-      y = r.bottom + 6;
+      x = r.right + 4;
+      y = r.top + (r.height - h) / 2;
     } else {
       x = vp.left + 16;
       y = vp.bottom - h - 16;
@@ -444,6 +475,7 @@ export function createClipboard(ed) {
     y = Math.max(vp.top + 8, Math.min(y, vp.bottom - h - 8));
     pasteOptionsEl.style.left = `${Math.round(x)}px`;
     pasteOptionsEl.style.top = `${Math.round(y)}px`;
+    if (!pasteOptionsMenu.hidden) placePasteOptionsMenu();
   }
   async function switchPasteToTextOnly() {
     const text = pasteOptionsPlain;
@@ -520,7 +552,14 @@ export function createClipboard(ed) {
   onButton(document.getElementById("pasteOptionsTextOnly"), () => void switchPasteToTextOnly());
   onButton(document.getElementById("pasteOptionsPicture"), () => void switchPasteToPicture());
   onButton(pasteOptionsMergeBtn, () => void switchPasteToMergeFormatting());
-  onButton(document.getElementById("pasteOptionsClose"), hidePasteOptions);
+  // Keep source formatting is what the paste already did: choosing it closes.
+  onButton(document.getElementById("pasteOptionsKeepSource"), () => {
+    hidePasteOptions();
+    ed.focusEditorSurface();
+  });
+  onButton(pasteOptionsToggle, (event) =>
+    expandPasteOptions(pasteOptionsMenu.hidden, { focus: event?.detail === 0 }),
+  );
   pasteOptionsEl.addEventListener("mousedown", (e) => {
     if (e.target.tagName !== "BUTTON") e.preventDefault();
   });
@@ -528,9 +567,35 @@ export function createClipboard(ed) {
   document.addEventListener("pointerdown", (e) => {
     if (!pasteOptionsEl.hidden && !pasteOptionsEl.contains(e.target)) hidePasteOptions();
   });
+  // Ctrl pressed and released ON ITS OWN opens the choices, Word's chord for
+  // its paste-options chip. Any other key in between makes it a chord, not this.
+  let ctrlAlone = false;
+  document.addEventListener("keyup", (e) => {
+    if (e.key === "Control" && ctrlAlone && !pasteOptionsEl.hidden) {
+      expandPasteOptions(pasteOptionsMenu.hidden, { focus: true });
+    }
+    ctrlAlone = false;
+  }, true);
+  pasteOptionsMenu.addEventListener("keydown", (e) => {
+    const items = [...pasteOptionsMenu.querySelectorAll("button:not([hidden])")];
+    const at = items.indexOf(document.activeElement);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      items[(at + step + items.length) % items.length]?.focus({ preventScroll: true });
+    }
+  });
   document.addEventListener("keydown", (e) => {
+    ctrlAlone = e.key === "Control" && !e.shiftKey && !e.altKey && !e.metaKey;
     if (pasteOptionsEl.hidden) return;
-    if (e.key === "Escape") return hidePasteOptions();
+    if (e.key === "Escape") {
+      const inMenu = pasteOptionsMenu.contains(document.activeElement);
+      hidePasteOptions();
+      if (inMenu) ed.focusEditorSurface();
+      return;
+    }
+    // Keys INSIDE the open choices drive the choices, not the document.
+    if (pasteOptionsEl.contains(e.target)) return;
     const editingKey = [...e.key].length === 1
       || ["Backspace", "Delete", "Enter", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key);
     if (editingKey && !e.metaKey && !e.ctrlKey && !e.altKey) hidePasteOptions();

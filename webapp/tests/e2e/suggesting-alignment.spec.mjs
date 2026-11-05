@@ -13,7 +13,7 @@
 // The two spaces are relatable: markup space is editing space plus the deleted
 // spans, so `view_pos`/`edit_pos` map between them and every screen-to-model
 // boundary now uses the layout that produced the pixels.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, stableBox } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, stableBox, setReviewMode } from "./fixtures.mjs";
 
 const mirrorText = (page) =>
   page.locator("#a11yDocument").evaluate((el) => el.textContent.trim());
@@ -21,7 +21,7 @@ const mirrorText = (page) =>
 /** Enters Suggesting and strikes the leading "Rich " from the demo's heading. */
 async function strikeLeadingWord(page) {
   await clickIntoFirstPage(page);
-  await page.locator('#reviewModeControl [data-review-mode="suggesting"]').click();
+  await setReviewMode(page, "suggesting");
   await moveCaretToDocStart(page);
   for (let i = 0; i < 5; i++) await page.keyboard.press("Shift+ArrowRight");
   await page.keyboard.press("Backspace");

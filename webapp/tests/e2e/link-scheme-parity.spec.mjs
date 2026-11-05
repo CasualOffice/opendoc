@@ -37,6 +37,9 @@ async function linkFirstWord(page, url) {
   await moveCaretToDocStart(page);
   for (let i = 0; i < 8; i++) await page.keyboard.press("Shift+ArrowRight");
   await page.keyboard.press(`${MOD}+k`);
+  // The popover refuses a scheme a link may not follow; the full dialog, its
+  // "More options…", writes any target verbatim, as an imported file can.
+  await page.locator("#linkPopoverMore").click();
   await expect(page.locator("#linkDialog")).toBeVisible();
   await page.locator("#linkUrlInput").fill(url);
   await page.locator("#linkApplyBtn").click();

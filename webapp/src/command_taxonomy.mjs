@@ -977,3 +977,57 @@ export function tableMenuPlaceholders(disabledReason) {
     };
   });
 }
+
+// ---- What a command OPENS, and the ellipsis that says so (audit DIALOGS-16) --
+//
+// Word and Google Docs end a command's label with "…" when it does not act at
+// once but opens a surface where you finish it: a dialog, or a picker (a
+// gallery, a grid, a popover asking for a value). A command that opens a PANE
+// beside the document does not take one: the pane is a place you go, not a
+// question asked before the command acts. The audit found both halves broken:
+// Page setup, Watermark, Table of contents, Insert caption, Cross-reference,
+// Keyboard shortcuts and Document properties opened dialogs with no "…", while
+// Paragraph properties and Table properties opened panes with one.
+//
+// The rule is DATA, declared per command: `command_ellipsis.test.mjs` reads every
+// label in the source and fails when a declared dialog or picker lacks "…", when
+// a pane or an immediate command has one, or when an entry here names a command
+// no surface labels. A command that opens a dialog is declared here in the commit
+// that adds it.
+export const COMMAND_OPENS = new Map([
+  // Dialogs.
+  ...[
+    "file.open", "file.recoverDrafts", "file.compatibilityReport", "file.properties",
+    "layout.pageSetup", "layout.margins", "layout.orientation", "layout.size", "layout.columns",
+    "layout.watermark", "layout.headerFooterSettings", "layout.tabStops",
+    "insert.tableDialog", "insert.textToTable", "insert.bookmark", "insert.field", "insert.dropCap",
+    "insert.imageFromUrl", "insert.textFromFile",
+    "reference.tableOfContents", "reference.caption", "reference.crossReference", "reference.updateFields",
+    "review.restrictEditing", "review.compare",
+    "tools.autoCorrectOptions", "tools.checkAccessibility", "tools.wordCount", "tools.languages",
+    "tools.personalDictionary", "format.language", "style.createFromSelection",
+    "help.shortcuts", "object.altText", "table.cellFormat", "table.borderStyle",
+  ].map((id) => [id, "dialog"]),
+  // Pickers: a gallery, grid or popover that asks for a value first.
+  ...[
+    "insert.table", "insert.image", "insert.shape", "insert.symbol", "insert.emoji",
+    "format.family", "format.size", "format.color", "format.highlight",
+    "view.zoom", "help.commands",
+    // Every route to a link opens the link popover first (`docs/184` D-13).
+    "insert.link", "link.add", "link.edit",
+  ].map((id) => [id, "picker"]),
+  // Panes: no ellipsis. Indentation and Paragraph spacing open the Paragraph
+  // properties pane on their own field, the same pane `paragraph.properties` opens.
+  ...[
+    "paragraph.properties", "layout.paragraph", "layout.indent", "layout.spacing",
+    "table.properties", "object.properties",
+    "chart.settings", "file.versionHistory",
+  ].map((id) => [id, "pane"]),
+]);
+
+/** Whether a label for `id` must end in "…" (Word/Docs: it opens a dialog or a
+ *  picker), from `COMMAND_OPENS`. */
+export function labelTakesEllipsis(id) {
+  const opens = COMMAND_OPENS.get(id);
+  return opens === "dialog" || opens === "picker";
+}

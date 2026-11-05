@@ -14,9 +14,12 @@ async function selectForward(page, count) {
   for (let i = 0; i < count; i += 1) await page.keyboard.press("Shift+ArrowRight");
 }
 
-// Opens the link dialog on the current selection through the real ⌘K binding.
+// Opens the link dialog on the current selection through the real ⌘K binding:
+// ⌘K opens the popover (docs/184 D-13) and its "More options…" is this dialog.
 async function openLinkDialog(page) {
   await page.keyboard.press(`${MOD}+k`);
+  await expect(page.locator("#linkPopover")).toBeVisible();
+  await page.locator("#linkPopoverMore").click();
   await expect(page.locator("#linkDialog")).toBeVisible();
 }
 
@@ -86,6 +89,7 @@ test("hyperlink dialog: insert a URL, edit it via the chip, and remove it", asyn
   // Edit → the dialog reopens as "Edit link", prefilled with the existing URL
   // and offering Remove.
   await page.locator("#linkChipEdit").click();
+  await page.locator("#linkPopoverMore").click();
   await expect(dialog).toBeVisible();
   await expect(page.locator("#linkDialogTitle")).toHaveText("Edit link");
   await expect(page.locator("#linkUrlInput")).toHaveValue("https://example.com");
@@ -146,6 +150,7 @@ test("hyperlink dialog: fails closed in Viewing mode", async ({ page, consoleErr
 
   await page.keyboard.press(`${MOD}+k`);
   await expect(page.locator("#linkDialog")).toBeHidden();
+  await expect(page.locator("#linkPopover")).toBeHidden();
   await expect(page.locator("#status")).toContainText("read-only");
 
   expect(consoleErrors).toEqual([]);

@@ -1,4 +1,5 @@
 import {
+  pointerSelectHighlight,
   appMenuButton,
   test,
   expect,
@@ -112,6 +113,8 @@ test("the selection formatting toolbar follows light and dark panel surfaces", a
   await gotoEditor(page);
   await clickIntoFirstPage(page);
   await page.keyboard.press(`${MOD}+a`);
+  // The mini-toolbar is earned by a pointer selection (docs/184 D-12).
+  await pointerSelectHighlight(page);
 
   const toolbar = page.locator("#selToolbar");
   await expect(toolbar).toBeVisible();
@@ -162,7 +165,14 @@ test("the selection formatting toolbar follows light and dark panel surfaces", a
   expect(consoleErrors).toEqual([]);
 });
 
-test("the outline inspector uses the shared rounded panel surface", async ({
+// The outline is a DOCKED panel (`docs/184` D4 as amended 2026-11-06, UX-055,
+// PROPOSAL D-10, the approved v2-desktop-editor mockup): one anatomy for every
+// docked panel, a rounded card on the grey desk at full workspace height, flush
+// against the rail on its outer edge, `--dock-gap` from the top and bottom, and
+// the page beside it, never under it. #928 briefly held a flush, borderless
+// docked panel; lane L5 replaced it with this card on purpose. The card's edge
+// is a hairline RING (box-shadow), not a border, so it reads in the dark theme.
+test("the outline inspector is docked to the workspace edge, beside the page", async ({
   page,
   consoleErrors,
 }) => {
@@ -176,6 +186,11 @@ test("the outline inspector uses the shared rounded panel surface", async ({
   const style = await panel.evaluate((element) => {
     const computed = getComputedStyle(element);
     const bounds = element.getBoundingClientRect();
+    const work = element.closest(".workarea").getBoundingClientRect();
+    const viewport = document.getElementById("viewport").getBoundingClientRect();
+    // The left edge it docks to is the rail's, the workarea's first column.
+    const rail = element.parentElement.querySelector(":scope > .rail");
+    const edge = rail && rail.offsetParent !== null ? rail.getBoundingClientRect().right : work.left;
     return {
       radius: computed.borderRadius,
       borderTop: computed.borderTopWidth,
@@ -183,21 +198,29 @@ test("the outline inspector uses the shared rounded panel surface", async ({
       borderBottom: computed.borderBottomWidth,
       borderLeft: computed.borderLeftWidth,
       shadow: computed.boxShadow,
-      bottomGap: window.innerHeight - bounds.bottom,
+      topInset: bounds.top - work.top,
+      bottomInset: work.bottom - bounds.bottom,
+      leftInset: bounds.left - edge,
+      overlap: bounds.right - viewport.left,
     };
   });
-  // 8px since design system v2 (`docs/63` §7, UX-052): panels, menus and
-  // popovers share the one card radius, `--r-md`. It was 10px when floating
-  // surfaces carried a fourth radius of their own.
+  // `--r-md`, the one card radius (`docs/63` §7, UX-052).
   expect(style.radius).toBe("8px");
+  // The ring and lift are a box-shadow; there is no border.
+  expect(style.shadow).not.toBe("none");
   expect([
     style.borderTop,
     style.borderRight,
     style.borderBottom,
     style.borderLeft,
-  ]).toEqual(["1px", "1px", "1px", "1px"]);
-  expect(style.shadow).not.toBe("none");
-  expect(style.bottomGap).toBeGreaterThanOrEqual(8);
+  ]).toEqual(["0px", "0px", "0px", "0px"]);
+  // Full workspace height less the dock gap (0.375rem) above and below, and
+  // flush against the rail on the outer edge (margin-inline-start: 0).
+  expect(Math.abs(style.topInset - 6)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(style.bottomInset - 6)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(style.leftInset)).toBeLessThanOrEqual(0.5);
+  // The page re-centres beside the panel: the viewport starts after it ends.
+  expect(style.overlap).toBeLessThanOrEqual(0.5);
   expect(consoleErrors).toEqual([]);
 });
 
@@ -302,13 +325,13 @@ test("the status bar keeps its counts and live controls at 720px", async ({ page
   await expect(page.locator("#statWords")).toBeVisible();
   await expect(page.locator("#statChars")).toBeVisible();
   await expect(page.locator("#statPages")).toBeVisible();
-  await expect(page.locator("#reviewModeControl")).toBeVisible();
   await expect(page.locator(".zoom")).toBeVisible();
 
-  // Every mode segment is fully readable — not squeezed to an ellipsis — and the
-  // zoom control is clickable rather than merely on-screen.
+  // Every footer item is fully readable — not squeezed to an ellipsis — and the
+  // zoom control is clickable rather than merely on-screen. (The mode switch left
+  // the status bar for the header in `docs/184` D6.)
   const clipped = await page.evaluate(() =>
-    [...document.querySelectorAll(".footer .review-mode-seg")].filter((el) => el.scrollWidth > el.clientWidth).length,
+    [...document.querySelectorAll(".footer button:not([hidden])")].filter((el) => el.getClientRects().length > 0 && el.scrollWidth > el.clientWidth + 1).length,
   );
   expect(clipped).toBe(0);
   await page.locator("#zoomIn").click();
