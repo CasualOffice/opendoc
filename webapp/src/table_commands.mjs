@@ -368,7 +368,7 @@ export function tableToolCommands(context, host) {
     },
     {
       id: "table.properties",
-      label: "Table properties…",
+      label: "Table properties",
       group: "table-properties",
       icon: "settings",
       enabled: structuralEnabled,

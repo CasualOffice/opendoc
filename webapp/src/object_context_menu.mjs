@@ -422,7 +422,7 @@ export function buildObjectContextCommands(context, io) {
   // the write.
   commands.push({
     id: "object.properties",
-    label: "Properties…",
+    label: "Properties",
     group: "arrange",
     icon: "tune",
     enabled: true,

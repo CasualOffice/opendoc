@@ -480,6 +480,15 @@ export const EN_STRINGS = Object.freeze({
   // the Section dropdown's options are one per section, and the preview's label
   // reads out whatever the size fields currently say.
   "pageSetup.sectionNumber": "Section {number}",
+  // Page setup's Apply to (docs/184 D2) and its page-colour name.
+  "pageSetup.wholeDocument": "Whole document",
+  "pageSetup.thisSection": "This section ({number})",
+  "pageSetup.colorWhite": "White",
+  // The link popover's one field (docs/184 D-13; link_popover_model.mjs).
+  "linkPopover.empty": "Enter a web address, an email address or a #bookmark.",
+  "linkPopover.invalid": "That is not a web address, an email address or a #bookmark.",
+  "linkPopover.scheme": "A link can open a web page or an email only.",
+  "linkPopover.noBookmark": "There is no bookmark with that name.",
   // The unit is a PARAMETER now, not the English word "in" baked into the
   // sentence. Every locale translated that word — "po" in French, "\u30a4\u30f3\u30c1" in
   // Japanese — which was correct while the only unit was inches and became a
@@ -2381,7 +2390,7 @@ export const EN_STRINGS = Object.freeze({
   "chart.element.axes": "Axes",
   "chart.element.gridlines": "Gridlines",
   "chart.style": "Chart style",
-  "chart.settings": "Chart settings…",
+  "chart.settings": "Chart settings",
   "chart.dataTitle": "Chart data",
   "chart.closeData": "Close chart data",
   "chart.dataUndoNote": "Changes apply to the chart as you make them. Each change can be undone.",
@@ -2755,8 +2764,6 @@ export const EN_STRINGS = Object.freeze({
   "plugins.source.installed": "Installed by you · {origin} · version {version}",
   "plugins.state.onByHost": "On, set by your application",
   "plugins.state.offByHost": "Off, set by your application",
-  "plugins.turnOn": "Turn on",
-  "plugins.turnOff": "Turn off",
   "plugins.remove": "Remove",
   "plugins.forgetGrant": "Forget permissions",
   "plugins.empty": "No add-ins are available yet.",

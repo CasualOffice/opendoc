@@ -1,7 +1,13 @@
-// The Insert / edit link dialog: a web address or a place in this document,
-// its text and tooltip, Apply and Remove. Moved out of `main.js` unchanged
-// (docs/177); it reaches the rest of the editor only through the context `ed`.
+// Links: the popover at the selection that every route opens first (⌘K, Insert
+// ▸ Link, the link card's Edit, the context menu; `docs/184` D-13, audit
+// DIALOGS-11), and the Insert / edit link dialog behind its "More options…"
+// (a web address or a place in this document, its text and ScreenTip, Apply and
+// Remove). Moved out of `main.js` (docs/177); it reaches the rest of the editor
+// only through the context `ed`.
 import { registerModal } from "./modal.mjs";
+import { t } from "./i18n.mjs";
+import { popoverPosition } from "./popover_position.mjs";
+import { matchPlaces, resolveLinkInput } from "./link_popover_model.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -30,7 +36,7 @@ export function createLinkDialog(ed) {
   const linkDialogClose = document.getElementById("linkDialogClose");
   const linkCancelBtn = document.getElementById("linkCancelBtn");
   const linkRemoveBtn = document.getElementById("linkRemoveBtn");
-  const LINK_DIALOG_HINT = "Enter applies; Esc cancels.";
+  const LINK_DIALOG_HINT = "";
   /** The range a currently-open link dialog targets. `null` when it is closed. */
   let linkDialogCtx = null;
   let linkDialogMode = "url";
@@ -94,7 +100,7 @@ export function createLinkDialog(ed) {
    *  shows Remove; a fresh insert leaves them empty. `text` is the current display
    *  text. Fails closed in Viewing/Suggesting (the same gate the apply path
    *  enforces) so the dialog never opens onto a dead Apply. */
-  function openLinkDialog({ node, start, end, link = null, text = "" }) {
+  function openLinkModal({ node, start, end, link = null, text = "", editing = !!link }) {
     if (!ed.doc || !linkDialog) return;
     if (ed.blockMutationInViewing() || ed.blockUntrackedInSuggesting()) return;
     linkDialogCtx = { node, start, end, editing: !!link, originalText: text };
@@ -106,8 +112,9 @@ export function createLinkDialog(ed) {
     linkUrlInput.value = internal ? "" : (link?.url || "");
     setLinkDialogMode(internal && hasPlaces ? "place" : "url");
     setLinkDialogNote("", false);
-    linkDialogTitle.textContent = link ? "Edit link" : "Insert link";
-    linkRemoveBtn.hidden = !link;
+    linkDialogTitle.textContent = editing ? "Edit link" : "Insert link";
+    linkRemoveBtn.hidden = !editing;
+    linkUrlInput.removeAttribute("aria-invalid");
 
     linkModal.open();
   }
@@ -119,9 +126,24 @@ export function createLinkDialog(ed) {
   /** The target string the active mode resolves to: a trimmed URL, or the picked
    *  bookmark's `#anchor` value. */
   function linkDialogTarget() {
-    return linkDialogMode === "place"
-      ? linkPlaceSelect.value.trim()
-      : linkUrlInput.value.trim();
+    if (linkDialogMode === "place") return linkPlaceSelect.value.trim();
+    // The same rules as the popover's field (audit DIALOGS-14): a bare domain
+    // gains https://, an email gains mailto:, and what is no address at all is
+    // refused here, with the field marked, rather than written as a dead link.
+    const typed = linkUrlInput.value.trim();
+    if (!typed) return "";
+    const resolved = resolveLinkInput(typed, { bookmarks: bookmarkNames() });
+    // The full dialog is the power surface, as Word's is: it writes any scheme
+    // verbatim (a document may need a custom app link), and the follow paths
+    // refuse what may not be opened (`link_targets.mjs`). It still refuses text
+    // that is no address at all.
+    if (resolved.why === "scheme") return typed;
+    linkUrlInput.setAttribute("aria-invalid", String(!resolved.ok));
+    if (!resolved.ok) {
+      setLinkDialogNote(t(`linkPopover.${resolved.why}`), true);
+      return null;
+    }
+    return resolved.target;
   }
 
   /** Applies the dialog as one undoable, gated action. An empty target is
@@ -134,6 +156,10 @@ export function createLinkDialog(ed) {
     if (!ed.doc || !linkDialogCtx) return;
     const { node, start, end, originalText } = linkDialogCtx;
     const target = linkDialogTarget();
+    if (target === null) {
+      linkUrlInput.focus();
+      return;
+    }
     if (!target) {
       setLinkDialogNote(
         linkDialogMode === "place"
@@ -144,8 +170,17 @@ export function createLinkDialog(ed) {
       (linkDialogMode === "place" ? linkPlaceSelect : linkUrlInput).focus();
       return;
     }
-    const tooltip = linkTooltipInput.value.trim();
-    const displayText = linkTextInput.value;
+    await writeLink({ node, start, end, originalText }, target, linkTooltipInput.value.trim(), linkTextInput.value);
+    closeLinkDialog();
+  }
+
+  /** Writes a link over `[node, start)..[node, end)` as ONE undoable, gated
+   *  action, for both surfaces (the popover and the dialog). Unchanged text sets
+   *  the link in place with its ScreenTip; changed text, or a link inserted at a
+   *  caret, re-applies text and link together through the rich-run paste op. */
+  async function writeLink({ node, start, end, originalText }, target, tooltip, typedText) {
+    // At a caret there is no text to link: the address is the text, as in Docs.
+    const displayText = start === end && !typedText ? target.replace(/^mailto:/, "") : typedText;
     const textChanged = displayText.length > 0 && displayText !== originalText;
     // Point the model selection at the target range so the shared, gated apply
     // paths (which read the live selection) act on exactly this link.
@@ -167,7 +202,6 @@ export function createLinkDialog(ed) {
       await ed.pasteRichRunsJson(JSON.stringify([run]));
       if (tooltip) ed.setStatus("Link added. Its ScreenTip needs the display text left unchanged.");
     }
-    closeLinkDialog();
   }
 
   /** Removes the link over the dialog's range (`removeHyperlink`, one gated
@@ -200,6 +234,7 @@ export function createLinkDialog(ed) {
     for (const field of [linkUrlInput, linkTextInput, linkTooltipInput]) {
       field.addEventListener("input", () => {
         if (linkDialogNote.classList.contains("error")) setLinkDialogNote("", false);
+        linkUrlInput.removeAttribute("aria-invalid");
       });
     }
     linkRemoveBtn.addEventListener("click", () => void removeLinkDialog());
@@ -214,5 +249,203 @@ export function createLinkDialog(ed) {
     });
   }
 
-  return { openLinkDialog };
+  // ---- Link popover -----------------------------------------------------------
+  // The default link surface (`docs/184` D-13, audit DIALOGS-11), Google Docs'
+  // shape: anchored under the selection, no scrim, Text and one Link field, the
+  // document's bookmarks listed under the field as you type, Apply. Esc, a click
+  // outside and Apply all close it and give the caret back to the document.
+  // The dialog above is its "More options…", opened in its place with what was
+  // typed carried over, for the ScreenTip and the explicit bookmark picker.
+  const pop = document.getElementById("linkPopover");
+  const popForm = document.getElementById("linkPopoverForm");
+  const popText = document.getElementById("linkPopoverText");
+  const popUrl = document.getElementById("linkPopoverUrl");
+  const popPlaces = document.getElementById("linkPopoverPlaces");
+  const popError = document.getElementById("linkPopoverError");
+  const popApply = document.getElementById("linkPopoverApply");
+  const popRemove = document.getElementById("linkPopoverRemove");
+  const popMore = document.getElementById("linkPopoverMore");
+  /** What the open popover targets; `null` while it is closed. */
+  let popCtx = null;
+
+  function bookmarkNames() {
+    return ed.bookmarkManager?.entries?.().map((entry) => entry.name) ?? [];
+  }
+
+  /** The rectangle to hang the popover from: the selection's painted
+   *  highlight, else the caret, else the top of the page area. */
+  function anchorRect() {
+    const boxes = [...ed.pagesEl.querySelectorAll(".overlay .highlight, .overlay .caret")]
+      .map((el) => el.getBoundingClientRect())
+      .filter((r) => r.width > 0 || r.height > 0);
+    if (!boxes.length) return ed.pagesEl.getBoundingClientRect();
+    const top = Math.min(...boxes.map((r) => r.top));
+    const bottom = Math.max(...boxes.map((r) => r.bottom));
+    const left = Math.min(...boxes.map((r) => r.left));
+    const right = Math.max(...boxes.map((r) => r.right));
+    return { top, bottom, left, right, width: right - left, height: bottom - top };
+  }
+
+  function placePopover() {
+    const at = popoverPosition(
+      anchorRect(),
+      { width: pop.offsetWidth, height: pop.offsetHeight },
+      { width: window.innerWidth, height: window.innerHeight },
+    );
+    pop.style.left = `${at.left}px`;
+    pop.style.top = `${at.top}px`;
+  }
+
+  /** Validates the Link field. Apply is disabled while it holds nothing that
+   *  can be linked; the reason is shown, and the field marked invalid, only once
+   *  the reader has typed something (an empty field is not yet an error). */
+  function validatePopover() {
+    const resolved = resolveLinkInput(popUrl.value, { bookmarks: bookmarkNames() });
+    const typed = popUrl.value.trim().length > 0;
+    popApply.disabled = !resolved.ok;
+    popUrl.setAttribute("aria-invalid", String(typed && !resolved.ok));
+    popError.textContent = typed && !resolved.ok && resolved.why !== "empty" ? t(`linkPopover.${resolved.why}`) : "";
+    return resolved;
+  }
+
+  /** The bookmarks matching what is typed, shown while the field reads as a
+   *  search (a leading #, or a word with no dot or colon in it). */
+  function renderPlaces() {
+    const query = popUrl.value.trim();
+    const searching = query.startsWith("#") || (query.length > 0 && !/[.:@/]/.test(query));
+    const names = searching ? matchPlaces(bookmarkNames(), query) : [];
+    popPlaces.replaceChildren(
+      ...names.map((name, index) => {
+        const row = document.createElement("li");
+        row.id = `linkPopoverPlace${index}`;
+        row.setAttribute("role", "option");
+        row.className = "link-popover-place";
+        row.dataset.anchor = name;
+        row.textContent = name;
+        return row;
+      }),
+    );
+    popPlaces.hidden = names.length === 0;
+    popUrl.setAttribute("aria-expanded", String(names.length > 0));
+  }
+
+  function choosePlace(name) {
+    popUrl.value = `#${name}`;
+    popPlaces.hidden = true;
+    popUrl.setAttribute("aria-expanded", "false");
+    validatePopover();
+    popUrl.focus();
+  }
+
+  function openLinkPopover({ node, start, end, link = null, text = "" }) {
+    if (!ed.doc) return;
+    if (ed.blockMutationInViewing() || ed.blockUntrackedInSuggesting()) return;
+    popCtx = { node, start, end, link, originalText: text };
+    popText.value = text;
+    popUrl.value = link ? (link.kind === "internal" ? `#${link.anchor}` : link.url || "") : "";
+    popRemove.hidden = !link;
+    const selToolbar = document.getElementById("selToolbar");
+    if (selToolbar) selToolbar.hidden = true; // one floating surface at a time
+    pop.hidden = false;
+    renderPlaces();
+    validatePopover();
+    placePopover();
+    // With text already chosen the address is what is missing; at a caret the
+    // text is, as in Docs.
+    const first = start === end && !text ? popText : popUrl;
+    first.focus({ preventScroll: true });
+    first.select();
+  }
+
+  function closeLinkPopover({ restoreFocus = true } = {}) {
+    if (pop.hidden) return;
+    pop.hidden = true;
+    popPlaces.hidden = true;
+    popCtx = null;
+    if (restoreFocus) ed.focusEditorSurface?.();
+  }
+
+  async function applyLinkPopover() {
+    if (!ed.doc || !popCtx) return;
+    const resolved = validatePopover();
+    if (!resolved.ok) {
+      if (resolved.why === "empty") popError.textContent = t("linkPopover.empty");
+      popUrl.focus();
+      return;
+    }
+    const ctx = popCtx;
+    closeLinkPopover({ restoreFocus: false });
+    await writeLink(ctx, resolved.target, ctx.link?.tooltip ?? "", popText.value);
+    ed.focusEditorSurface?.();
+  }
+
+  if (pop) {
+    popForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void applyLinkPopover();
+    });
+    popUrl.addEventListener("input", () => {
+      renderPlaces();
+      validatePopover();
+    });
+    popUrl.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown" && !popPlaces.hidden) {
+        event.preventDefault();
+        popPlaces.querySelector("[role=option]")?.focus?.();
+      }
+    });
+    popPlaces.addEventListener("mousedown", (event) => event.preventDefault());
+    popPlaces.addEventListener("click", (event) => {
+      const row = event.target.closest?.("[data-anchor]");
+      if (row) choosePlace(row.dataset.anchor);
+    });
+    popRemove.addEventListener("click", async () => {
+      if (!ed.doc || !popCtx) return;
+      const { node, start, end } = popCtx;
+      closeLinkPopover({ restoreFocus: false });
+      ed.selection = { anchor: { node, offset: start }, focus: { node, offset: end } };
+      ed.drawSelection();
+      await ed.runToolbarEdit(() => ed.doc.removeHyperlink(node, start, end));
+      ed.focusEditorSurface?.();
+    });
+    // More options: the dialog takes the popover's place, with what was typed.
+    popMore.addEventListener("click", () => {
+      if (!popCtx) return;
+      const { node, start, end, link } = popCtx;
+      const typed = popUrl.value.trim();
+      const resolved = resolveLinkInput(typed, { bookmarks: bookmarkNames() });
+      const carried = resolved.ok
+        ? resolved.kind === "place"
+          ? { kind: "internal", anchor: resolved.target.slice(1), tooltip: link?.tooltip }
+          : { kind: "external", url: resolved.target, tooltip: link?.tooltip }
+        : typed
+          ? { kind: "external", url: typed, tooltip: link?.tooltip }
+          : link;
+      const text = popText.value;
+      closeLinkPopover({ restoreFocus: false });
+      // A fresh insert carried over is still an insert: no Remove, "Insert link".
+      openLinkModal({ node, start, end, link: carried, text, editing: !!link });
+    });
+    pop.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeLinkPopover();
+      }
+    });
+    document.addEventListener("pointerdown", (event) => {
+      if (!pop.hidden && !pop.contains(event.target)) closeLinkPopover({ restoreFocus: false });
+    });
+    ed.viewportEl?.addEventListener("scroll", () => !pop.hidden && placePopover(), { passive: true });
+    window.addEventListener("resize", () => !pop.hidden && placePopover());
+  }
+
+  /** Every route to a link opens the popover first; without its markup (an
+   *  embed that strips it) the dialog still works on its own. */
+  function openLinkDialog(args) {
+    if (pop) openLinkPopover(args);
+    else openLinkModal(args);
+  }
+
+  return { openLinkDialog, openLinkModal };
 }

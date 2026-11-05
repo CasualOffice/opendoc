@@ -59,6 +59,7 @@ Commenter
 CommonMark
 Ctrl
 DAI
+DIALOGS
 DOCX
 DOCXF
 DOM

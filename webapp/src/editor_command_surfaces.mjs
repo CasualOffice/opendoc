@@ -152,10 +152,10 @@ export function createCommandSurfaces(ed) {
     // Page setup: one dialog, four fieldsets. Word's four buttons are four routes
     // into the same section geometry; each one opens the dialog with its own
     // fieldset focused rather than pretending to be a separate dialog.
-    { command: "layout.margins", label: "Page margins", kw: "margins page setup top bottom left right gutter", buttons: () => [ed.layoutMarginsBtn], requires: "doc", run: () => ed.pageSetup.open(true, "margins") },
-    { command: "layout.orientation", label: "Page orientation", kw: "orientation portrait landscape rotate page setup", buttons: () => [ed.layoutOrientationBtn], requires: "doc", run: () => ed.pageSetup.open(true, "orientation") },
-    { command: "layout.size", label: "Page size", kw: "size paper a4 letter legal width height page setup", buttons: () => [ed.layoutSizeBtn], requires: "doc", run: () => ed.pageSetup.open(true, "size") },
-    { command: "layout.columns", label: "Text columns", kw: "columns newspaper two three spacing separator page setup", buttons: () => [ed.layoutColumnsBtn], requires: "doc", run: () => ed.pageSetup.open(true, "columns") },
+    { command: "layout.margins", label: "Page margins…", kw: "margins page setup top bottom left right gutter", buttons: () => [ed.layoutMarginsBtn], requires: "doc", run: () => ed.pageSetup.open(true, "margins") },
+    { command: "layout.orientation", label: "Page orientation…", kw: "orientation portrait landscape rotate page setup", buttons: () => [ed.layoutOrientationBtn], requires: "doc", run: () => ed.pageSetup.open(true, "orientation") },
+    { command: "layout.size", label: "Page size…", kw: "size paper a4 letter legal width height page setup", buttons: () => [ed.layoutSizeBtn], requires: "doc", run: () => ed.pageSetup.open(true, "size") },
+    { command: "layout.columns", label: "Text columns…", kw: "columns newspaper two three spacing separator page setup", buttons: () => [ed.layoutColumnsBtn], requires: "doc", run: () => ed.pageSetup.open(true, "columns") },
     // The button's click is the popover's own (`registerPopover`), so this row
     // declares `ownsClick` and contributes only the command id, the enablement
     // rule and the palette row — the same split INSERT_SURFACE spells `activate:
@@ -169,7 +169,7 @@ export function createCommandSurfaces(ed) {
     // Page borders: a modal this table's own wiring opens, the watermark's shape.
     // `label` is a getter so the palette reads it after the catalogue lands.
     { command: "layout.pageBorders", get label() { return t("pageBorders.command"); }, kw: "page border borders box frame outline around page art", buttons: () => [document.getElementById("pageBordersBtn")].filter(Boolean), requires: "doc", run: () => pageBorders.open() },
-    { command: "layout.watermark", label: "Watermark", kw: "watermark draft confidential sample stamp diagonal background behind text", buttons: () => [ed.watermarkBtn], requires: "doc", run: () => ed.pageSetup.openWatermark(true) },
+    { command: "layout.watermark", label: "Watermark…", kw: "watermark draft confidential sample stamp diagonal background behind text", buttons: () => [ed.watermarkBtn], requires: "doc", run: () => ed.pageSetup.openWatermark(true) },
     // Paragraph: the existing relative nudges, plus the two fieldsets of the
     // paragraph-properties panel that hold the absolute indent and spacing values.
     // The ribbon deliberately does NOT carry its own numeric fields: the panel
@@ -222,7 +222,7 @@ export function createCommandSurfaces(ed) {
   const REFERENCE_SURFACE = [
     {
       command: "reference.tableOfContents",
-      label: "Table of contents",
+      label: "Table of contents…",
       kw: "table of contents toc outline headings index navigation",
       buttons: () => [ed.refTocBtn],
       // Body-only, and for the engine's own reason: `insertTableOfContents`
@@ -257,7 +257,7 @@ export function createCommandSurfaces(ed) {
       // English, like every other row here: these labels are read at import, before
       // a catalogue exists, so `t()` would put the KEY in the palette. The
       // context-menu row is built on demand and does route through the catalogue.
-      label: "Insert caption",
+      label: "Insert caption…",
       kw: "caption figure table equation label numbering sequence seq chapter",
       buttons: () => [ed.refCaptionBtn],
       requires: "bodyCaret",
@@ -266,7 +266,7 @@ export function createCommandSurfaces(ed) {
     },
     {
       command: "reference.crossReference",
-      label: "Cross-reference",
+      label: "Cross-reference…",
       kw: "cross reference ref heading bookmark figure numbered item caption footnote endnote",
       buttons: () => [ed.refCrossRefBtn],
       requires: "caret",
@@ -289,7 +289,7 @@ export function createCommandSurfaces(ed) {
     // changed is that it now runs something. The two MODES are commands of their
     // own, so neither is reachable only from inside a modal — the same
     // >=2-surface rule the rest of this table follows.
-    { command: "reference.updateFields", label: "Update table of contents", kw: "update fields refresh recalculate table of contents toc page numbers rebuild", buttons: () => [ed.refUpdateFieldsBtn], requires: "tocField", run: () => ed.tocCommands.update.open() },
+    { command: "reference.updateFields", label: "Update table of contents…", kw: "update fields refresh recalculate table of contents toc page numbers rebuild", buttons: () => [ed.refUpdateFieldsBtn], requires: "tocField", run: () => ed.tocCommands.update.open() },
     { command: "reference.updateToc.pageNumbers", label: "Update table of contents: page numbers only", kw: "toc contents update page numbers only repaginate refresh", buttons: () => [], requires: "tocField", run: () => void ed.tocCommands.update.run("pageNumbers") },
     { command: "reference.updateToc.entire", label: "Update table of contents: entire table", kw: "toc contents update entire rebuild regenerate headings refresh", buttons: () => [], requires: "tocField", run: () => void ed.tocCommands.update.run("entire") },
     // Remove, Table of figures and Add text (`docs/153` RM-25), with their

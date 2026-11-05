@@ -392,7 +392,6 @@
           </div>
         </div>
         <footer class="dialog-foot">
-          <span data-i18n="propertiesPanel.changesApplyAsOne" class="dialog-note">Changes apply as one undoable action.</span>
           <div class="dialog-actions">
             <button data-i18n="propertiesPanel.cancel" type="button" id="propertiesCancel" class="dialog-button">Cancel</button>
             <button data-i18n="propertiesPanel.apply" type="button" id="propertiesApply" class="dialog-button dialog-button-primary">Apply</button>
@@ -412,194 +411,306 @@
          Options are both modal dialogs. So is this, in the same shell every
          other dialog here uses — which is also the shell the File page already
          knows how to borrow. -->
-    <div id="settingsPanel" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="settingsTitle" aria-describedby="settingsDescription">
-      <section class="dialog-card dialog-card-wide settings-dialog">
-        <header class="dialog-head">
+    <!-- Settings (`docs/184` D3, approved mockup v2-settings; Word Options and
+         Docs settings). One fixed frame: a 12.5rem navigation on the left, one
+         page on the right, and a footer that never moves, so switching pages
+         never moves the frame (audit DIALOGS-09). One option per row, label left
+         and control right, at most one short help line under the label.
+         Changes apply as they are made, which is why the footer says so and has
+         Done rather than Save. A second step is a page in here or replaces this
+         dialog; it is never a dialog stacked over it (D1a, `modal.mjs`). -->
+    <div id="settingsPanel" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <section class="dialog-card dialog-card-reference settings-dialog">
+        <header class="dialog-head settings-head">
           <div class="dialog-heading">
-                        <div>
+            <div>
               <h2 data-i18n="settingsPanel.settings" id="settingsTitle">Settings</h2>
-              <p data-i18n="settingsPanel.appearanceYourReviewerIdentity" id="settingsDescription">Appearance, your reviewer identity, autosave and proofing. Everything here is stored in this browser.</p>
             </div>
           </div>
-          <button data-i18n-title="settingsPanel.close.title" data-i18n-label="settingsPanel.closeSettings.label" id="settingsClose" type="button" class="dialog-close" title="Close" aria-label="Close settings">
-            <span class="ms" aria-hidden="true">close</span>
-          </button>
         </header>
-        <div class="dialog-body settings-body">
         <nav class="settings-nav" role="tablist" data-i18n-label="ui.settings.label" aria-label="Settings" aria-orientation="vertical">
-          <button type="button" role="tab" data-settings-tab="general" data-i18n="settingsNav.general">General</button>
-          <button type="button" role="tab" data-settings-tab="proofing" data-i18n="settingsNav.proofing">Proofing</button>
-          <button type="button" role="tab" data-settings-tab="saving" data-i18n="settingsNav.saving">Saving</button>
-          <button type="button" role="tab" data-settings-tab="ai" data-i18n="settingsNav.ai">AI and add-ins</button>
+          <button type="button" role="tab" id="settingsTabGeneral" aria-controls="settingsPageGeneral" data-settings-tab="general"><span class="ms" aria-hidden="true">tune</span><span data-i18n="settingsNav.general">General</span></button>
+          <button type="button" role="tab" id="settingsTabProofing" aria-controls="settingsPageProofing" data-settings-tab="proofing"><span class="ms" aria-hidden="true">spellcheck</span><span data-i18n="settingsNav.proofing">Proofing</span></button>
+          <button type="button" role="tab" id="settingsTabAutocorrect" aria-controls="settingsPageAutocorrect" data-settings-tab="autocorrect"><span class="ms" aria-hidden="true">auto_fix_high</span><span data-i18n="settingsPanel.autoCorrect">AutoCorrect</span></button>
+          <button type="button" role="tab" id="settingsTabSaving" aria-controls="settingsPageSaving" data-settings-tab="saving"><span class="ms" aria-hidden="true">save</span><span data-i18n="settingsNav.saving">Saving</span></button>
+          <button type="button" role="tab" id="settingsTabAi" aria-controls="settingsPageAi" data-settings-tab="ai"><span class="ms" aria-hidden="true">extension</span><span data-i18n="settingsNav.ai">AI and add-ins</span></button>
+          <button type="button" role="tab" id="settingsTabAbout" aria-controls="settingsPageAbout" data-settings-tab="about"><span class="ms" aria-hidden="true">info</span><span data-i18n="settingsNav.about">About</span></button>
         </nav>
-        <div class="settings-pages">
-      <div class="settings-section" data-settings-page="general">
-        <div data-i18n="settingsPanel.theme" class="settings-label">Theme</div>
-        <div data-i18n-label="settingsPanel.theme.label" class="segmented" id="themeSeg" role="radiogroup" aria-label="Theme">
-          <button data-i18n="themeSeg.system" type="button" data-theme="system">System</button>
-          <button data-i18n="themeSeg.light" type="button" data-theme="light">Light</button>
-          <button data-i18n="themeSeg.dark" type="button" data-theme="dark">Dark</button>
-        </div>
-      </div>
-      <!-- Language. First in the section because it is the setting that
-           decides what every other label in this dialog says: a user who
-           cannot read the dialog needs to reach this control without reading
-           the dialog, so it is at the top and its options name themselves
-           (docs/124 §5). -->
-      <div class="settings-section" data-settings-page="general">
-        <div class="settings-label" data-i18n="settings.language.label">Language</div>
-        <select id="languageSelect" class="dialog-select" data-i18n-label="settings.language.label" aria-label="Language"></select>
-        <p class="settings-note" id="languageNote" data-i18n="settings.language.note">Translations other than English are machine-produced and have not been reviewed by a native speaker.</p>
-      </div>
-      <!-- Measurement units (`docs/153` `shell.measurement-units`). ONLYOFFICE's
-           own home for this is File ▸ Advanced Settings (`cmbUnit`,
-           `FileMenuPanels.js:747`) and Word's is File ▸ Options ▸ Advanced ▸
-           Display; this editor has no Options backstage, so Settings is the
-           equivalent place, and it sits beside Language because both decide how
-           the chrome speaks rather than what the document says.
-
-           The rows are the ENGINE's, filled by `measurement_units.mjs`: five units
-           with their own display precision and spinner step, in the engine's order.
-           What is persisted is the string ID — ONLYOFFICE persists an integer
-           (`setItem("de-settings-unit", cmbUnit.getValue())`, read back through
-           `parseInt`) and pays for it with two disagreeing unit enums.
-
-           The note says what the preference does NOT yet govern. The ruler draws
-           its own inch lattice from `twipsPerInch` and a centimetre preference
-           does not move those ticks, so a reader is told rather than left to
-           discover it — `docs/99` §9.6: understating is as false as overstating,
-           and a preference that silently governs some surfaces and not others is
-           worse than one that says which. -->
-      <div class="settings-section" data-settings-page="general">
-        <div class="settings-label" data-i18n="settings.units.label" id="measurementUnitLabel">Measurement units</div>
-        <select id="measurementUnitSelect" class="dialog-select" aria-labelledby="measurementUnitLabel"></select>
-        <p class="settings-note" data-i18n="settings.units.note">Used by Page setup. The ruler still draws inch ticks whatever is chosen here.</p>
-      </div>
-      <div class="settings-section" data-settings-page="general">
-        <div data-i18n="settingsPanel.accent" class="settings-label">Accent</div>
-        <div class="swatches" id="accentSwatches">
-          <button data-i18n-title="accentSwatches.orange.title" data-i18n-label="accentSwatches.orange.label" type="button" class="acc" data-accent="#e2622a" style="--c:#e2622a" title="Orange" aria-label="Orange"></button>
-          <button data-i18n-title="accentSwatches.blue.title" data-i18n-label="accentSwatches.blue.label" type="button" class="acc" data-accent="#3355c4" style="--c:#3355c4" title="Blue" aria-label="Blue"></button>
-          <button data-i18n-title="accentSwatches.green.title" data-i18n-label="accentSwatches.green.label" type="button" class="acc" data-accent="#2aa775" style="--c:#2aa775" title="Green" aria-label="Green"></button>
-          <button data-i18n-title="accentSwatches.purple.title" data-i18n-label="accentSwatches.purple.label" type="button" class="acc" data-accent="#8a63d2" style="--c:#8a63d2" title="Purple" aria-label="Purple"></button>
-          <button data-i18n-title="accentSwatches.rose.title" data-i18n-label="accentSwatches.rose.label" type="button" class="acc" data-accent="#d64562" style="--c:#d64562" title="Rose" aria-label="Rose"></button>
-          <button data-i18n-title="accentSwatches.amber.title" data-i18n-label="accentSwatches.amber.label" type="button" class="acc" data-accent="#c88a1a" style="--c:#c88a1a" title="Amber" aria-label="Amber"></button>
-          <label data-i18n-title="accentSwatches.customColor.title" class="acc acc-custom" title="Custom color">
-            <input data-i18n-label="accentSwatches.customAccentColor.label" id="accentCustom" type="color" value="#3355c4" aria-label="Custom accent color" />
-          </label>
-        </div>
-      </div>
-      <div class="settings-section" data-settings-page="general">
-        <div data-i18n="settingsPanel.reviewerIdentity" class="settings-label">Reviewer identity</div>
-        <div class="dialog-field-grid">
-          <label data-i18n="settingsPanel.name" class="dialog-field">Name<input data-i18n-placeholder="settingsPanel.you.placeholder" id="authorName" type="text" maxlength="255" placeholder="You" autocomplete="off" /></label>
-          <label data-i18n="settingsPanel.initials" class="dialog-field">Initials<input id="authorInitials" type="text" maxlength="8" placeholder="Auto" autocomplete="off" /></label>
-        </div>
-        <p data-i18n="settingsPanel.attributedCommentsTrackedChanges" class="settings-note">Attributed on comments and tracked changes you create. This is the only identity source — the engine never invents an author.</p>
-        <!-- Shown, and named by both fields' aria-describedby, only when the host
-             supplied an identity (docs/175 §3.1): the fields are then disabled,
-             and a disabled control says why (SKILL §10). -->
-        <p data-i18n="settingsPanel.identitySetByHost" id="authorIdentityReason" class="settings-note" hidden>Your name is set by the application you opened this in</p>
-      </div>
-      <!-- Autosave. The retention posture D-1 required be written down before
-           any document bytes were kept on-device is stated HERE, next to the
-           control that turns it off, rather than only in docs/112. -->
-      <div class="settings-section" data-settings-page="saving">
-        <div data-i18n="settingsPanel.autosave" class="settings-label">Autosave</div>
-        <label class="dialog-check">
-          <input id="autosaveToggle" type="checkbox" checked />
-          <span><strong data-i18n="settingsPanel.keepLocalDraftUnsaved">Keep a local draft of unsaved work</strong><small data-i18n="settingsPanel.soTabCrashOs">So a tab crash, an OS restart or a power cut does not take the document with it.</small></span>
-        </label>
-        <p data-i18n="settingsPanel.draftsStayBrowserDevice" class="settings-note" id="draftRetentionNote">Drafts stay in this browser, on this device, for up to 24 hours. They are never uploaded, and are deleted as soon as you save.</p>
-        <button data-i18n="settingsPanel.deleteSavedDrafts" type="button" id="draftsClearBtn" class="dialog-button">Delete saved drafts</button>
-      </div>
-      <!-- Spelling (docs/114). The word lists are fetched from this site on
-           first use and nothing is ever sent anywhere; the note says so,
-           because "spell check" is a phrase people reasonably assume means a
-           server. It also says where a word added to the dictionary goes,
-           since there is no surface yet that can take one back out. -->
-      <div class="settings-section" data-settings-page="proofing">
-        <div data-i18n="settingsPanel.spelling" class="settings-label">Spelling</div>
-        <label class="dialog-check">
-          <input id="spellCheckToggle" type="checkbox" checked />
-          <span><strong data-i18n="settingsPanel.checkSpellingAsYou">Check spelling as you type</strong><small data-i18n="settingsPanel.misspelledWordsAreUnderlined">Misspelled words are underlined in red. Right-click one for corrections.</small></span>
-        </label>
-        <label class="dialog-check">
-          <input id="grammarCheckToggle" type="checkbox" checked />
-          <span><strong data-i18n="settingsPanel.checkGrammarAsYou">Check grammar as you type</strong><small data-i18n="settingsPanel.doubledWordsAgreementPunctuation">Doubled words, a/an, agreement and punctuation are underlined in blue.</small></span>
-        </label>
-        <p data-i18n="settingsPanel.checkingHappensBrowserDictionary" class="settings-note">Checking happens in this browser: the dictionary is downloaded once from this site and your text is never sent anywhere. Words you add are stored in this browser only, and can currently be removed only by clearing this site's data.</p>
-      </div>
-      <!-- AI provider (docs/183 §3.9). Bring your own key, standalone only; the
-           note says, before anything is sent, which endpoint receives text, and
-           that nothing is sent at all until a provider is set up. -->
-      <!-- AutoCorrect (docs/174 TA-05, TA-06): Word's "AutoFormat As You Type"
-           switches. Each is also a command-palette switch; `autocorrect.mjs`
-           owns all three. -->
-      <div class="settings-section" data-settings-page="proofing">
-        <div data-i18n="settingsPanel.autoCorrect" class="settings-label">AutoCorrect</div>
-        <label class="dialog-check">
-          <input id="smartQuotesToggle" type="checkbox" checked />
-          <span><strong data-i18n="settingsPanel.smartQuotes">Smart quotes</strong><small data-i18n="settingsPanel.smartQuotesDetail">Straight quotes become curly ones as you type.</small></span>
-        </label>
-        <label class="dialog-check">
-          <input id="autoFormatListsToggle" type="checkbox" checked />
-          <span><strong data-i18n="settingsPanel.automaticLists">Automatic bulleted and numbered lists</strong><small data-i18n="settingsPanel.automaticListsDetail">Typing 1. or - and a space at the start of a paragraph starts a list.</small></span>
-        </label>
-        <label class="dialog-check">
-          <input id="autocorrectToggle" type="checkbox" checked />
-          <span><strong data-i18n="settingsPanel.replaceAsYouType">Replace text as you type</strong><small data-i18n="settingsPanel.replaceAsYouTypeDetail">(c) becomes ©, (tm) ™ and common typos are fixed, from a list you can edit for each language. Undo straight after reverses a correction.</small></span>
-        </label>
-        <!-- RM-19: every other switch (capitals, dashes, links) and the two
-             editable lists live in the AutoCorrect options dialog. -->
-        <button data-i18n="settingsPanel.autoCorrectOptions" type="button" id="settingsAutoCorrectOptions" class="dialog-button" aria-haspopup="dialog">AutoCorrect options…</button>
-      </div>
-          <section id="settingsAiSection" class="settings-section settings-ai" data-settings-page="ai" aria-labelledby="settingsAiLabel">
-            <div id="settingsAiLabel" class="settings-label" data-i18n="aiProviderDialog.title">AI provider</div>
-            <p id="aiProviderManaged" class="dialog-field-note" hidden></p>
-          <div id="aiProviderForm">
-            <label data-i18n="aiProviderDialog.service" class="dialog-field field-wide">Service<select id="aiProviderPreset" class="dialog-select">
-              <option data-i18n="aiProviderDialog.preset.openai" value="openai">OpenAI</option>
-              <option data-i18n="aiProviderDialog.preset.azure" value="azure">Azure OpenAI</option>
-              <option data-i18n="aiProviderDialog.preset.anthropic" value="anthropic">Anthropic</option>
-              <option data-i18n="aiProviderDialog.preset.gemini" value="gemini">Google Gemini</option>
-              <option data-i18n="aiProviderDialog.preset.mistral" value="mistral">Mistral</option>
-              <option data-i18n="aiProviderDialog.preset.openrouter" value="openrouter">OpenRouter</option>
-              <option data-i18n="aiProviderDialog.preset.ollama" value="ollama">Ollama (this computer)</option>
-              <option data-i18n="aiProviderDialog.preset.lmstudio" value="lmstudio">LM Studio (this computer)</option>
-              <option data-i18n="aiProviderDialog.preset.vllm" value="vllm">vLLM (this computer)</option>
-              <option data-i18n="aiProviderDialog.preset.custom" value="custom">Other OpenAI-compatible service</option>
-            </select></label>
-            <label data-i18n="aiProviderDialog.endpoint" class="dialog-field field-wide">Endpoint URL<input id="aiProviderUrl" type="url" maxlength="2048" autocomplete="off" spellcheck="false" /></label>
-            <label data-i18n="aiProviderDialog.model" class="dialog-field field-wide">Model<input data-i18n-placeholder="aiProviderDialog.model.placeholder" id="aiProviderModel" type="text" maxlength="256" autocomplete="off" spellcheck="false" placeholder="The model name your service uses" /></label>
-            <label data-i18n="aiProviderDialog.key" class="dialog-field field-wide">API key<input id="aiProviderKey" type="password" maxlength="4096" autocomplete="off" spellcheck="false" aria-describedby="aiProviderKeyNote" /></label>
-            <p id="aiProviderKeyNote" class="dialog-field-note"></p>
-            <label class="dialog-check">
-              <input id="aiProviderLegacy" type="checkbox" />
-              <span><strong data-i18n="aiProviderDialog.legacy">Send max_tokens instead of max_completion_tokens</strong><small data-i18n="aiProviderDialog.legacyNote">Only for an older or local server that refuses the newer field name.</small></span>
-            </label>
+        <div class="settings-main">
+          <div class="settings-page-head">
+            <h3 data-i18n="settingsNav.general" id="settingsPageTitle" class="settings-page-title">General</h3>
+            <button data-i18n-title="settingsPanel.close.title" data-i18n-label="settingsPanel.closeSettings.label" id="settingsClose" type="button" class="dialog-close" title="Close" aria-label="Close settings">
+              <span class="ms" aria-hidden="true">close</span>
+            </button>
           </div>
-          <p id="aiProviderDisclosure" class="dialog-field-note"></p>
-          <!-- "AI edits as" (`docs/183` §23.3): the person's choice, kept on this
-               device and capped by the document and their role. Outside the form,
-               so it is offered when a host manages the provider too. -->
-          <div class="settings-section ai-edit-as">
-            <div data-i18n="aiProviderDialog.editAs" class="settings-label" id="aiEditAsLabel">AI edits as</div>
-            <div class="segmented" id="aiEditAs" role="radiogroup" aria-labelledby="aiEditAsLabel" aria-describedby="aiEditAsNote">
-              <button data-i18n="aiProviderDialog.editAs.suggest" type="button" data-ai-edit-as="suggest" role="radio" aria-checked="true" tabindex="0">Suggestions</button>
-              <button data-i18n="aiProviderDialog.editAs.direct" type="button" data-ai-edit-as="direct" role="radio" aria-checked="false" tabindex="-1">Direct edits</button>
-            </div>
-            <p id="aiEditAsNote" class="dialog-field-note"></p>
+          <div class="dialog-body settings-body settings-pages" data-settings-page="general">
+            <!-- GENERAL. Language first among the selects: it decides what every
+                 other label here says, so a reader who cannot read this dialog can
+                 still reach it, and its options name themselves (docs/124 §5). -->
+            <section class="settings-page" id="settingsPageGeneral" role="tabpanel" aria-labelledby="settingsTabGeneral" data-settings-page="general">
+              <div class="settings-row">
+                <div class="settings-row-label"><span data-i18n="settingsPanel.theme" class="settings-label" id="themeLabel">Theme</span></div>
+                <div class="settings-row-control">
+                  <div data-i18n-label="settingsPanel.theme.label" class="segmented" id="themeSeg" role="radiogroup" aria-label="Theme">
+                    <button data-i18n="themeSeg.system" type="button" data-theme="system">System</button>
+                    <button data-i18n="themeSeg.light" type="button" data-theme="light">Light</button>
+                    <button data-i18n="themeSeg.dark" type="button" data-theme="dark">Dark</button>
+                  </div>
+                </div>
+              </div>
+              <div class="settings-row">
+                <div class="settings-row-label">
+                  <label class="settings-label" for="languageSelect" data-i18n="settings.language.label">Language</label>
+                  <small class="settings-help" id="languageNote" data-i18n="settingsD3.languageHelp">Languages other than English are machine-translated.</small>
+                </div>
+                <div class="settings-row-control">
+                  <select id="languageSelect" class="dialog-select" aria-describedby="languageNote"></select>
+                </div>
+              </div>
+              <!-- Measurement units (`docs/153` `shell.measurement-units`; Word's
+                   File ▸ Options ▸ Advanced ▸ Display). The rows are the engine's,
+                   filled by `measurement_units.mjs`. The help says what the
+                   preference does not govern yet: the ruler keeps inch ticks. -->
+              <div class="settings-row">
+                <div class="settings-row-label">
+                  <label class="settings-label" for="measurementUnitSelect" data-i18n="settings.units.label" id="measurementUnitLabel">Measurement units</label>
+                  <small class="settings-help" id="measurementUnitHelp" data-i18n="settingsD3.unitsHelp">Used by Page setup. The ruler keeps inch ticks.</small>
+                </div>
+                <div class="settings-row-control">
+                  <select id="measurementUnitSelect" class="dialog-select" aria-describedby="measurementUnitHelp"></select>
+                </div>
+              </div>
+              <div class="settings-row">
+                <div class="settings-row-label"><span data-i18n="settingsPanel.accent" class="settings-label" id="accentLabel">Accent</span></div>
+                <div class="settings-row-control">
+                  <div class="swatches" id="accentSwatches" role="group" aria-labelledby="accentLabel">
+                    <button data-i18n-title="accentSwatches.orange.title" data-i18n-label="accentSwatches.orange.label" type="button" class="acc" data-accent="#e2622a" style="--c:#e2622a" title="Orange" aria-label="Orange"></button>
+                    <button data-i18n-title="accentSwatches.blue.title" data-i18n-label="accentSwatches.blue.label" type="button" class="acc" data-accent="#3355c4" style="--c:#3355c4" title="Blue" aria-label="Blue"></button>
+                    <button data-i18n-title="accentSwatches.green.title" data-i18n-label="accentSwatches.green.label" type="button" class="acc" data-accent="#2aa775" style="--c:#2aa775" title="Green" aria-label="Green"></button>
+                    <button data-i18n-title="accentSwatches.purple.title" data-i18n-label="accentSwatches.purple.label" type="button" class="acc" data-accent="#8a63d2" style="--c:#8a63d2" title="Purple" aria-label="Purple"></button>
+                    <button data-i18n-title="accentSwatches.rose.title" data-i18n-label="accentSwatches.rose.label" type="button" class="acc" data-accent="#d64562" style="--c:#d64562" title="Rose" aria-label="Rose"></button>
+                    <button data-i18n-title="accentSwatches.amber.title" data-i18n-label="accentSwatches.amber.label" type="button" class="acc" data-accent="#c88a1a" style="--c:#c88a1a" title="Amber" aria-label="Amber"></button>
+                    <label data-i18n-title="accentSwatches.customColor.title" class="acc acc-custom" title="Custom color">
+                      <input data-i18n-label="accentSwatches.customAccentColor.label" id="accentCustom" type="color" value="#3355c4" aria-label="Custom accent color" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+              <!-- Reviewer identity: the only identity source, so the engine never
+                   invents an author. When a host supplies one (docs/175 §3.1) the
+                   fields are disabled and #authorIdentityReason says why. -->
+              <div class="settings-row">
+                <div class="settings-row-label">
+                  <label class="settings-label" for="authorName" data-i18n="settingsD3.yourName">Your name</label>
+                  <small class="settings-help" data-i18n="settingsD3.yourNameHelp">Shown on comments and tracked changes you make.</small>
+                  <small data-i18n="settingsPanel.identitySetByHost" id="authorIdentityReason" class="settings-help" hidden>Your name is set by the application you opened this in</small>
+                </div>
+                <div class="settings-row-control">
+                  <input data-i18n-placeholder="settingsPanel.you.placeholder" id="authorName" class="settings-input" type="text" maxlength="255" placeholder="You" autocomplete="off" />
+                </div>
+              </div>
+              <div class="settings-row">
+                <div class="settings-row-label"><label class="settings-label" for="authorInitials" data-i18n="settingsPanel.initials">Initials</label></div>
+                <div class="settings-row-control">
+                  <input id="authorInitials" class="settings-input settings-input-short" type="text" maxlength="8" placeholder="Auto" autocomplete="off" />
+                </div>
+              </div>
+            </section>
+
+            <!-- PROOFING (docs/114). Checked in this browser; the word lists come
+                 from this site once and nothing is sent anywhere. -->
+            <section class="settings-page" id="settingsPageProofing" role="tabpanel" aria-labelledby="settingsTabProofing" data-settings-page="proofing" hidden>
+              <div class="settings-row">
+                <div class="settings-row-label">
+                  <label class="settings-label" for="spellCheckToggle" data-i18n="settingsPanel.checkSpellingAsYou">Check spelling as you type</label>
+                  <small class="settings-help" id="spellCheckHelp" data-i18n="settingsD3.spellingHelp">Underlined in red. Checked in this browser; nothing is sent.</small>
+                </div>
+                <div class="settings-row-control"><input id="spellCheckToggle" class="settings-switch" type="checkbox" role="switch" aria-describedby="spellCheckHelp" checked /></div>
+              </div>
+              <div class="settings-row">
+                <div class="settings-row-label">
+                  <label class="settings-label" for="grammarCheckToggle" data-i18n="settingsPanel.checkGrammarAsYou">Check grammar as you type</label>
+                  <small class="settings-help" id="grammarCheckHelp" data-i18n="settingsD3.grammarHelp">Doubled words, a/an, agreement and punctuation, in blue.</small>
+                </div>
+                <div class="settings-row-control"><input id="grammarCheckToggle" class="settings-switch" type="checkbox" role="switch" aria-describedby="grammarCheckHelp" checked /></div>
+              </div>
+            </section>
+
+            <!-- AUTOCORRECT (docs/174 TA-05/06; Word's AutoFormat As You Type).
+                 Each switch is also a palette switch; `autocorrect.mjs` owns them.
+                 The replace list and the exceptions are the AutoCorrect options
+                 dialog, which takes this dialog's place while it is open. -->
+            <section class="settings-page" id="settingsPageAutocorrect" role="tabpanel" aria-labelledby="settingsTabAutocorrect" data-settings-page="autocorrect" hidden>
+              <div class="settings-row">
+                <div class="settings-row-label">
+                  <label class="settings-label" for="smartQuotesToggle" data-i18n="settingsPanel.smartQuotes">Smart quotes</label>
+                  <small class="settings-help" id="smartQuotesHelp" data-i18n="settingsPanel.smartQuotesDetail">Straight quotes become curly ones as you type.</small>
+                </div>
+                <div class="settings-row-control"><input id="smartQuotesToggle" class="settings-switch" type="checkbox" role="switch" aria-describedby="smartQuotesHelp" checked /></div>
+              </div>
+              <div class="settings-row">
+                <div class="settings-row-label">
+                  <label class="settings-label" for="autoFormatListsToggle" data-i18n="settingsPanel.automaticLists">Automatic bulleted and numbered lists</label>
+                  <small class="settings-help" id="autoListsHelp" data-i18n="settingsD3.listsHelp">Typing 1. or - and a space starts a list.</small>
+                </div>
+                <div class="settings-row-control"><input id="autoFormatListsToggle" class="settings-switch" type="checkbox" role="switch" aria-describedby="autoListsHelp" checked /></div>
+              </div>
+              <div class="settings-row">
+                <div class="settings-row-label">
+                  <label class="settings-label" for="autocorrectToggle" data-i18n="settingsPanel.replaceAsYouType">Replace text as you type</label>
+                  <small class="settings-help" id="replaceHelp" data-i18n="settingsD3.replaceHelp">(c) becomes ©, and common typos are fixed. Undo reverses one.</small>
+                </div>
+                <div class="settings-row-control"><input id="autocorrectToggle" class="settings-switch" type="checkbox" role="switch" aria-describedby="replaceHelp" checked /></div>
+              </div>
+              <div class="settings-row">
+                <div class="settings-row-label">
+                  <span class="settings-label" data-i18n="settingsD3.replaceLists">Replacements and exceptions</span>
+                  <small class="settings-help" data-i18n="settingsD3.replaceListsHelp">Capitals, dashes, links and the lists for each language.</small>
+                </div>
+                <div class="settings-row-control"><button data-i18n="settingsPanel.autoCorrectOptions" type="button" id="settingsAutoCorrectOptions" class="dialog-button" aria-haspopup="dialog">AutoCorrect options…</button></div>
+              </div>
+            </section>
+
+            <!-- SAVING. The retention posture D-1 required before any document
+                 bytes were kept on-device is stated next to the switch that turns
+                 it off, not only in docs/112. -->
+            <section class="settings-page" id="settingsPageSaving" role="tabpanel" aria-labelledby="settingsTabSaving" data-settings-page="saving" hidden>
+              <div class="settings-row">
+                <div class="settings-row-label">
+                  <label class="settings-label" for="autosaveToggle" data-i18n="settingsPanel.keepLocalDraftUnsaved">Keep a local draft of unsaved work</label>
+                  <small class="settings-help" id="draftRetentionNote" data-i18n="settingsD3.draftsHelp">Kept in this browser for up to 24 hours, never uploaded.</small>
+                </div>
+                <div class="settings-row-control"><input id="autosaveToggle" class="settings-switch" type="checkbox" role="switch" aria-describedby="draftRetentionNote" checked /></div>
+              </div>
+              <div class="settings-row">
+                <div class="settings-row-label">
+                  <span class="settings-label" data-i18n="settingsD3.savedDrafts">Saved drafts</span>
+                  <small class="settings-help" data-i18n="settingsD3.savedDraftsHelp">Deleted as soon as you save the document.</small>
+                </div>
+                <div class="settings-row-control"><button data-i18n="settingsPanel.deleteSavedDrafts" type="button" id="draftsClearBtn" class="dialog-button">Delete saved drafts</button></div>
+              </div>
+            </section>
+
+            <!-- AI AND ADD-INS (docs/183 §3.9). Bring your own key, standalone
+                 only; the disclosure says which endpoint receives text before
+                 anything is sent. The add-in list is HERE, as rows with switches
+                 (audit DIALOGS-08): it used to replace Settings with a 960px
+                 dialog with no way back. Manage add-ins stays as its own dialog
+                 for the Review tab and the palette. -->
+            <section id="settingsAiSection" class="settings-page settings-ai" role="tabpanel" aria-labelledby="settingsTabAi" data-settings-page="ai" hidden>
+              <p data-i18n="settingsPanel.aiProviderNote" id="aiProviderSummary" class="settings-page-lede" role="status">No AI provider is set up, so no text is sent anywhere.</p>
+              <p id="aiProviderManaged" class="settings-page-lede" hidden></p>
+              <div id="aiProviderForm" class="settings-group">
+                <div class="settings-row">
+                  <div class="settings-row-label"><label class="settings-label" for="aiProviderPreset" data-i18n="aiProviderDialog.service">Service</label></div>
+                  <div class="settings-row-control"><select id="aiProviderPreset" class="dialog-select">
+                    <option data-i18n="aiProviderDialog.preset.openai" value="openai">OpenAI</option>
+                    <option data-i18n="aiProviderDialog.preset.azure" value="azure">Azure OpenAI</option>
+                    <option data-i18n="aiProviderDialog.preset.anthropic" value="anthropic">Anthropic</option>
+                    <option data-i18n="aiProviderDialog.preset.gemini" value="gemini">Google Gemini</option>
+                    <option data-i18n="aiProviderDialog.preset.mistral" value="mistral">Mistral</option>
+                    <option data-i18n="aiProviderDialog.preset.openrouter" value="openrouter">OpenRouter</option>
+                    <option data-i18n="aiProviderDialog.preset.ollama" value="ollama">Ollama (this computer)</option>
+                    <option data-i18n="aiProviderDialog.preset.lmstudio" value="lmstudio">LM Studio (this computer)</option>
+                    <option data-i18n="aiProviderDialog.preset.vllm" value="vllm">vLLM (this computer)</option>
+                    <option data-i18n="aiProviderDialog.preset.custom" value="custom">Other OpenAI-compatible service</option>
+                  </select></div>
+                </div>
+                <div class="settings-row">
+                  <div class="settings-row-label">
+                    <label class="settings-label" for="aiProviderUrl" data-i18n="aiProviderDialog.endpoint">Endpoint URL</label>
+                    <small id="aiProviderDisclosure" class="settings-help"></small>
+                  </div>
+                  <div class="settings-row-control"><input id="aiProviderUrl" class="settings-input" type="url" maxlength="2048" autocomplete="off" spellcheck="false" aria-describedby="aiProviderDisclosure" /></div>
+                </div>
+                <div class="settings-row">
+                  <div class="settings-row-label"><label class="settings-label" for="aiProviderModel" data-i18n="aiProviderDialog.model">Model</label></div>
+                  <div class="settings-row-control"><input data-i18n-placeholder="aiProviderDialog.model.placeholder" id="aiProviderModel" class="settings-input" type="text" maxlength="256" autocomplete="off" spellcheck="false" placeholder="The model name your service uses" /></div>
+                </div>
+                <div class="settings-row">
+                  <div class="settings-row-label">
+                    <label class="settings-label" for="aiProviderKey" data-i18n="aiProviderDialog.key">API key</label>
+                    <small id="aiProviderKeyNote" class="settings-help"></small>
+                  </div>
+                  <div class="settings-row-control"><input id="aiProviderKey" class="settings-input" type="password" maxlength="4096" autocomplete="off" spellcheck="false" aria-describedby="aiProviderKeyNote" /></div>
+                </div>
+                <div class="settings-row">
+                  <div class="settings-row-label">
+                    <label class="settings-label" for="aiProviderLegacy" data-i18n="aiProviderDialog.legacy">Send max_tokens instead of max_completion_tokens</label>
+                    <small class="settings-help" id="aiProviderLegacyHelp" data-i18n="aiProviderDialog.legacyNote">Only for an older or local server that refuses the newer field name.</small>
+                  </div>
+                  <div class="settings-row-control"><input id="aiProviderLegacy" class="settings-switch" type="checkbox" role="switch" aria-describedby="aiProviderLegacyHelp" /></div>
+                </div>
+                <!-- The provider is a set of fields that only make sense
+                     together, so it is the one thing on this page that is saved
+                     on a press rather than as it changes; a secondary button,
+                     because Done is this dialog's only primary (DIALOGS-09). -->
+                <div class="settings-row settings-row-actions">
+                  <p id="aiProviderStatus" class="settings-help settings-status" role="status" aria-live="polite"></p>
+                  <div class="settings-row-control">
+                    <button data-i18n="aiProviderDialog.forget" id="aiProviderForget" type="button" class="dialog-button dialog-button-utility">Forget</button>
+                    <button data-i18n="aiProviderDialog.test" id="aiProviderTest" type="button" class="dialog-button">Test connection</button>
+                    <button data-i18n="settingsD3.saveProvider" id="aiProviderSave" type="button" class="dialog-button">Save provider</button>
+                  </div>
+                </div>
+              </div>
+              <!-- "AI edits as" (`docs/183` §23.3): the person's choice, kept on
+                   this device and capped by the document and their role. Outside
+                   the form, so it is offered when a host manages the provider. -->
+              <div class="settings-row ai-edit-as">
+                <div class="settings-row-label">
+                  <span data-i18n="aiProviderDialog.editAs" class="settings-label" id="aiEditAsLabel">AI edits as</span>
+                  <small id="aiEditAsNote" class="settings-help"></small>
+                </div>
+                <div class="settings-row-control">
+                  <div class="segmented" id="aiEditAs" role="radiogroup" aria-labelledby="aiEditAsLabel" aria-describedby="aiEditAsNote">
+                    <button data-i18n="aiProviderDialog.editAs.suggest" type="button" data-ai-edit-as="suggest" role="radio" aria-checked="true" tabindex="0">Suggestions</button>
+                    <button data-i18n="aiProviderDialog.editAs.direct" type="button" data-ai-edit-as="direct" role="radio" aria-checked="false" tabindex="-1">Direct edits</button>
+                  </div>
+                </div>
+              </div>
+              <div class="settings-row settings-row-stack">
+                <div class="settings-row-label">
+                  <span class="settings-label" id="settingsAddinsLabel" data-i18n="settingsD3.addins">Add-ins</span>
+                  <small class="settings-help" id="settingsAddinsStatus" role="status" aria-live="polite"></small>
+                </div>
+                <ul id="settingsAddinsList" class="settings-addins" aria-labelledby="settingsAddinsLabel"></ul>
+                <div id="settingsAddinsInstall" class="settings-addins-install" hidden>
+                  <input id="settingsAddinsInstallUrl" class="settings-input" type="url" autocomplete="off" spellcheck="false" data-i18n-label="settingsD3.addinUrl.label" aria-label="Add-in manifest address" data-i18n-placeholder="settingsD3.addinUrl.placeholder" placeholder="https://example.com/manifest.json" />
+                  <button id="settingsAddinsInstallBtn" type="button" class="dialog-button" data-i18n="settingsD3.install">Install</button>
+                </div>
+              </div>
+              <button data-i18n="settingsPanel.aiProviderSetUp" type="button" id="aiProviderSettingsBtn" class="dialog-button" hidden>AI provider settings…</button>
+            </section>
+
+            <!-- ABOUT. Which build this is, for anyone reporting a problem. The
+                 version comes from the engine's own `engineVersion()`. -->
+            <section class="settings-page" id="settingsPageAbout" role="tabpanel" aria-labelledby="settingsTabAbout" data-settings-page="about" hidden>
+              <div class="settings-row">
+                <div class="settings-row-label"><span class="settings-label" data-i18n="aboutDialog.engineVersion">Engine version</span></div>
+                <div class="settings-row-control"><span id="settingsAboutVersion" class="settings-value">—</span></div>
+              </div>
+              <div class="settings-row">
+                <div class="settings-row-label"><span class="settings-label" data-i18n="aboutDialog.licence">Licence</span></div>
+                <div class="settings-row-control"><span class="settings-value" data-i18n="aboutDialog.apache20">Apache-2.0</span></div>
+              </div>
+              <div class="settings-row">
+                <div class="settings-row-label"><span class="settings-label" data-i18n="aboutDialog.rendering">Rendering</span></div>
+                <div class="settings-row-control"><span class="settings-value" data-i18n="settingsD3.renderingLocal">Local, on this device</span></div>
+              </div>
+              <div class="settings-row">
+                <div class="settings-row-label"><span class="settings-label" data-i18n="settingsD3.links">Links</span></div>
+                <div class="settings-row-control settings-links">
+                  <a data-i18n="aboutDialog.sourceCode" href="https://github.com/CasualOffice/opendoc" rel="noreferrer noopener" target="_blank">Source code</a>
+                  <a data-i18n="aboutDialog.reportIssue" href="https://github.com/CasualOffice/opendoc/issues" rel="noreferrer noopener" target="_blank">Report an issue</a>
+                </div>
+              </div>
+            </section>
           </div>
-          <p id="aiProviderStatus" class="dialog-field-note" role="status" aria-live="polite"></p>
-            <div class="settings-ai-actions"><button data-i18n="settingsPanel.addinsManage" type="button" id="settingsAddinsBtn" class="dialog-button dialog-button-utility">Manage add-ins…</button><button data-i18n="aiProviderDialog.forget" id="aiProviderForget" type="button" class="dialog-button dialog-button-utility">Forget</button><button data-i18n="aiProviderDialog.test" id="aiProviderTest" type="button" class="dialog-button dialog-button-utility">Test connection</button><button data-i18n="aiProviderDialog.save" id="aiProviderSave" type="button" class="dialog-button dialog-button-primary">Save</button></div>
-          </section>
         </div>
-        </div>
-        <footer class="dialog-foot">
-          <span data-i18n="settingsPanel.aiProviderNote" id="aiProviderSummary" class="dialog-note" hidden>No AI provider is set up, so no text is sent anywhere.</span>
-          <button data-i18n="settingsPanel.aiProviderSetUp" type="button" id="aiProviderSettingsBtn" class="dialog-button" hidden>AI provider settings…</button>
-          <button data-i18n="settingsPanel.resetDefaults" type="button" id="settingsReset" class="dialog-button dialog-button-utility">Reset to defaults</button>
+        <footer class="dialog-foot settings-foot">
+          <button type="button" id="settingsReset" class="dialog-button dialog-button-utility"><span class="ms" aria-hidden="true">restart_alt</span><span data-i18n="settingsPanel.resetDefaults">Reset to defaults</span></button>
+          <span class="dialog-foot-status" data-foot-note="apply-live" data-i18n="settingsD3.appliesLive">Changes apply as you make them</span>
           <div class="dialog-actions">
             <button data-i18n="bookmarkDialog.done" type="button" id="settingsDone" class="dialog-button dialog-button-primary">Done</button>
           </div>
@@ -1625,7 +1736,7 @@
         <footer class="dialog-foot">
           <div class="dialog-actions">
             <button data-i18n="watermarkDialog.cancel" id="controlPropsCancel" type="button" class="dialog-button">Cancel</button>
-            <button data-i18n="controls.props.ok" id="controlPropsOk" type="button" class="dialog-button dialog-button-primary">OK</button>
+            <button data-i18n="controls.props.apply" id="controlPropsOk" type="button" class="dialog-button dialog-button-primary">Apply</button>
           </div>
         </footer>
       </section>
@@ -1651,7 +1762,7 @@
         <footer class="dialog-foot">
           <div class="dialog-actions">
             <button data-i18n="watermarkDialog.cancel" id="controlFillCancel" type="button" class="dialog-button">Cancel</button>
-            <button data-i18n="controls.props.ok" id="controlFillOk" type="button" class="dialog-button dialog-button-primary">OK</button>
+            <button data-i18n="controls.props.apply" id="controlFillOk" type="button" class="dialog-button dialog-button-primary">Apply</button>
           </div>
         </footer>
       </section>
@@ -1665,7 +1776,7 @@
           <div class="dialog-heading">
             <div>
               <h2 data-i18n="formRoles.title" id="formRolesTitle">Form roles</h2>
-              <p data-i18n="formRoles.description" id="formRolesDescription">Who fills which field. Roles are kept by this editor beside the document; they are not saved inside the .docx.</p>
+              <p data-i18n="formRoles.descriptionShort" id="formRolesDescription">Who fills which field. Not saved in the .docx.</p>
             </div>
           </div>
           <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="formRoles.close" id="formRolesClose" type="button" class="dialog-close" title="Close" aria-label="Close form roles"><span class="ms" aria-hidden="true">close</span></button>
@@ -1729,7 +1840,7 @@
           <div class="dialog-heading">
             <div>
               <h2 data-i18n="dictionaryDialog.title" id="dictionaryTitle">Personal dictionary</h2>
-              <p data-i18n="dictionaryDialog.description" id="dictionaryDescription">Words you added are never marked as misspelled. They are kept in this browser only.</p>
+              <p data-i18n="dictionaryDialog.descriptionShort" id="dictionaryDescription">Words here are never marked as misspelled.</p>
             </div>
           </div>
           <button data-dictionary-dismiss data-i18n-title="dictionaryDialog.close.title" data-i18n-label="dictionaryDialog.close.label" id="dictionaryClose" type="button" class="dialog-close" title="Close" aria-label="Close personal dictionary"><span class="ms" aria-hidden="true">close</span></button>
@@ -1843,7 +1954,7 @@
         <footer class="dialog-foot">
           <div class="dialog-actions">
             <button data-text-language-dismiss data-i18n="textLanguageDialog.cancel" id="textLanguageCancel" type="button" class="dialog-button">Cancel</button>
-            <button data-i18n="textLanguageDialog.apply" id="textLanguageApply" type="submit" form="textLanguageForm" class="dialog-button dialog-button-primary">OK</button>
+            <button data-i18n="textLanguageDialog.applyButton" id="textLanguageApply" type="submit" form="textLanguageForm" class="dialog-button dialog-button-primary">Apply</button>
           </div>
         </footer>
       </section>
@@ -1855,7 +1966,7 @@
             <img class="about-mark" src="./opendoc-mark.svg" alt="" width="36" height="36" />
             <div>
               <h2 data-i18n="aboutDialog.aboutOpendoc" id="aboutTitle">About OpenDoc</h2>
-              <p data-i18n="aboutDialog.apache20Document" id="aboutDescription">An Apache-2.0 document editor that runs entirely in this browser.</p>
+              <p data-i18n="aboutDialog.descriptionShort" id="aboutDescription">Apache-2.0, and it runs in this browser.</p>
             </div>
           </div>
           <button data-about-dismiss data-i18n-title="aboutDialog.close.title" data-i18n-label="aboutDialog.closeAbout.label" id="aboutClose" type="button" class="dialog-close" title="Close" aria-label="Close about">
@@ -1888,13 +1999,20 @@
       </section>
     </div>
 
+    <!-- Page setup (`docs/184` D2, approved mockup v2-dialog; Google Docs' Page
+         setup with Word's presets). L width: the fields on the left, the sheet
+         on the right. Paper size and page colour in one row; orientation; the
+         margin presets as chips over the four edges; gutter, mirror margins,
+         vertical alignment and columns behind Advanced. The footer is Apply to,
+         then Cancel and Apply: one Apply writes everything, as one undo per
+         property family. No "Set as default": the engine has no default. -->
     <div id="pageSetupMenu" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="pageSetupTitle" aria-describedby="pageSetupDescription">
-      <section class="dialog-card page-setup-dialog">
+      <section class="dialog-card dialog-card-wide page-setup-dialog">
         <header class="dialog-head">
           <div class="dialog-heading">
-                        <div>
+            <div>
               <h2 data-i18n="pageSetupMenu.pageSetup" id="pageSetupTitle">Page setup</h2>
-              <p data-i18n="pageSetupMenu.sizeOrientationMarginsCurrent" id="pageSetupDescription">Size, orientation, and margins for the current section.</p>
+              <p data-i18n="pageSetupMenu.paperMarginsOrientation" id="pageSetupDescription">Paper, margins and orientation for this document.</p>
             </div>
           </div>
           <button data-i18n-title="pageSetupMenu.close.title" data-i18n-label="pageSetupMenu.closePageSetup.label" id="pageSetupClose" type="button" class="dialog-close" title="Close" aria-label="Close page setup">
@@ -1902,7 +2020,89 @@
           </button>
         </header>
         <div class="dialog-body page-setup-body">
-          <div class="page-preview" hidden aria-hidden="true">
+          <div class="ps-fields">
+            <div class="dialog-field-grid ps-cols-2">
+              <label class="dialog-field"><span data-i18n="pageSetupMenu.paperSize">Paper size</span><select id="pagePaperPreset" class="dialog-select">
+                <option value="letter" data-i18n="pagePresets.letterSize">Letter · 8.5 × 11 in</option>
+                <option value="legal" data-i18n="pagePresets.legalSize">Legal · 8.5 × 14 in</option>
+                <option value="a4" data-i18n="pagePresets.a4Size">A4 · 210 × 297 mm</option>
+                <option value="a5" data-i18n="pagePresets.a5Size">A5 · 148 × 210 mm</option>
+                <option value="custom" data-i18n="pagePresets.customSize">Custom size</option>
+              </select></label>
+              <!-- The colour is a swatch button, not a bare native colour input
+                   stretched into what looked like an empty text field (audit
+                   DIALOGS-10). The native picker is the input under the swatch. -->
+              <div class="dialog-field"><span data-i18n="pageExtras.color" id="pageColorLabel">Page color</span>
+                <label class="color-select">
+                  <span class="color-select-swatch" id="pageColorSwatch" aria-hidden="true"></span>
+                  <span class="color-select-name" id="pageColorName" aria-hidden="true">White</span>
+                  <span class="ms color-select-caret" aria-hidden="true">expand_more</span>
+                  <input id="pageBackgroundColor" type="color" value="#ffffff" aria-labelledby="pageColorLabel pageColorName" />
+                </label>
+              </div>
+            </div>
+            <div class="dialog-field-grid ps-cols-2" id="pageCustomSize" hidden>
+              <label data-i18n="pageSetupMenu.width" class="dialog-field">Width<span class="number-control"><input id="pageWidth" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+              <label data-i18n="pageSetupMenu.height" class="dialog-field">Height<span class="number-control"><input id="pageHeight" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+            </div>
+            <div class="dialog-field ps-orientation"><span data-i18n="pageSetupMenu.orientation" id="pageOrientationLabel">Orientation</span><div class="segmented orientation-segmented" id="pageOrientationSeg" role="radiogroup" aria-labelledby="pageOrientationLabel">
+                <button type="button" data-orientation="portrait"><span class="ms" aria-hidden="true">crop_portrait</span><span data-i18n="pageSetupMenu.portrait">Portrait</span></button>
+                <button type="button" data-orientation="landscape"><span class="ms" aria-hidden="true">crop_landscape</span><span data-i18n="pageSetupMenu.landscape">Landscape</span></button>
+              </div></div>
+            <fieldset class="dialog-group ps-margins">
+              <legend data-i18n="pageSetupMenu.margins">Margins</legend>
+              <div class="segmented ps-margin-chips" id="pageMarginsPreset" role="radiogroup" data-i18n-label="pagePresets.margins" aria-label="Margin preset">
+                <button type="button" data-margins="normal" data-i18n="pagePresets.normal">Normal</button>
+                <button type="button" data-margins="narrow" data-i18n="pagePresets.narrow">Narrow</button>
+                <button type="button" data-margins="moderate" data-i18n="pagePresets.moderate">Moderate</button>
+                <button type="button" data-margins="wide" data-i18n="pagePresets.wide">Wide</button>
+                <button type="button" data-margins="custom" data-i18n="pagePresets.custom">Custom</button>
+              </div>
+              <div class="dialog-field-grid ps-cols-4">
+                <label data-i18n="pageSetupMenu.top" class="dialog-field">Top<span class="number-control"><input id="pageMarginTop" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+                <label data-i18n="pageSetupMenu.bottom" class="dialog-field">Bottom<span class="number-control"><input id="pageMarginBottom" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+                <label data-i18n="pageSetupMenu.left" class="dialog-field">Left<span class="number-control"><input id="pageMarginLeft" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+                <label data-i18n="pageSetupMenu.right" class="dialog-field">Right<span class="number-control"><input id="pageMarginRight" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+              </div>
+            </fieldset>
+            <details class="dialog-advanced">
+              <summary><span data-i18n="pageSetupMenu.advanced">Advanced</span><small class="dialog-advanced-hint" data-i18n="pageSetupMenu.advancedHint">Gutter, mirror margins, columns</small></summary>
+              <div class="dialog-advanced-body">
+                <div class="dialog-field-grid ps-cols-2">
+                  <label data-i18n="pageSetupMenu.gutter" class="dialog-field">Gutter<span class="number-control"><input id="pageMarginGutter" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+                  <label data-i18n="pageSetupMenu.verticalAlignment" class="dialog-field">Vertical alignment<select id="pageVerticalAlignment" class="dialog-select">
+                    <option data-i18n="pageSetupMenu.vAlignTop" value="top">Top</option>
+                    <option data-i18n="pageSetupMenu.vAlignCenter" value="center">Center</option>
+                    <option data-i18n="pageSetupMenu.vAlignBoth" value="both">Justified</option>
+                    <option data-i18n="pageSetupMenu.vAlignBottom" value="bottom">Bottom</option>
+                  </select></label>
+                </div>
+                <label class="dialog-check"><input id="pageMirrorMargins" type="checkbox" /><span data-i18n="pageExtras.mirror">Mirror margins on facing pages</span></label>
+                <fieldset class="dialog-group">
+                  <legend data-i18n="pageSetupMenu.columns">Columns</legend>
+                  <div class="dialog-field-grid ps-cols-2">
+                    <label data-i18n="pageSetupMenu.number" class="dialog-field">Number<select id="pageColumnCount" class="dialog-select">
+                      <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+                    </select></label>
+                    <label data-i18n="pageSetupMenu.spacing" class="dialog-field">Spacing<span class="number-control"><input id="pageColumnGap" type="number" data-measure-min-twip="0" data-measure-max-twip="7200" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+                  </div>
+                  <label class="dialog-check"><input id="pageColumnSeparator" type="checkbox" /><span data-i18n="pageSetupMenu.lineBetweenColumns">Line between columns</span></label>
+                  <label class="dialog-check"><input id="pageColumnEqual" type="checkbox" checked /><span data-i18n="pageColumns.equal">Equal column widths</span></label>
+                  <div class="dialog-field-grid ps-cols-2">
+                    <label class="dialog-field"><span data-i18n="pageColumns.width0">Column 1 width</span><span class="number-control"><input id="pageColumnWidth0" type="number" data-measure-min-twip="1" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+                    <label class="dialog-field"><span data-i18n="pageColumns.space0">Space after column 1</span><span class="number-control"><input id="pageColumnSpace0" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+                    <label class="dialog-field"><span data-i18n="pageColumns.width1">Column 2 width</span><span class="number-control"><input id="pageColumnWidth1" type="number" data-measure-min-twip="1" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+                    <label class="dialog-field"><span data-i18n="pageColumns.space1">Space after column 2</span><span class="number-control"><input id="pageColumnSpace1" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+                    <label class="dialog-field"><span data-i18n="pageColumns.width2">Column 3 width</span><span class="number-control"><input id="pageColumnWidth2" type="number" data-measure-min-twip="1" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+                    <label class="dialog-field"><span data-i18n="pageColumns.space2">Space after column 3</span><span class="number-control"><input id="pageColumnSpace2" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+                    <label class="dialog-field"><span data-i18n="pageColumns.width3">Column 4 width</span><span class="number-control"><input id="pageColumnWidth3" type="number" data-measure-min-twip="1" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+                    <label class="dialog-field"><span data-i18n="pageColumns.space3">Space after column 4</span><span class="number-control"><input id="pageColumnSpace3" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
+                  </div>
+                </fieldset>
+              </div>
+            </details>
+          </div>
+          <div class="page-preview" aria-hidden="true">
             <div id="pagePreviewSheet" class="page-preview-sheet" data-orientation="portrait">
               <div id="pagePreviewMargins" class="page-preview-margins">
                 <span></span><span></span><span></span><span></span>
@@ -1910,70 +2110,9 @@
             </div>
             <span data-i18n="pageSetupMenu.8271169" id="pagePreviewLabel" class="page-preview-label">8.27 × 11.69 in</span>
           </div>
-          
-          <div class="dialog-field-grid ps-cols-2 ps-top">
-            <label data-i18n="pageSetupMenu.section" class="dialog-field">Section<select id="pageSetupSection" class="dialog-select"></select></label>
-            <div class="dialog-field ps-orientation"><span data-i18n="pageSetupMenu.orientation">Orientation</span><div data-i18n-label="pageSetupMenu.orientation.label" class="segmented orientation-segmented" id="pageOrientationSeg" role="radiogroup" aria-label="Orientation">
-                <button type="button" data-orientation="portrait"><span class="ms" aria-hidden="true">stay_current_portrait</span>Portrait</button>
-                <button type="button" data-orientation="landscape"><span class="ms" aria-hidden="true">stay_current_landscape</span>Landscape</button>
-              </div></div>
-          </div>
-          <div class="dialog-field-grid ps-cols-2">
-              <label class="dialog-field"><span data-i18n="pagePresets.paper">Paper size preset</span><select id="pagePaperPreset" class="dialog-select"><option value="custom" data-i18n="pagePresets.custom">Custom</option><option value="letter" data-i18n="pagePresets.letter">Letter</option><option value="legal" data-i18n="pagePresets.legal">Legal</option><option value="a4">A4</option><option value="a5">A5</option></select></label>
-              <label class="dialog-field"><span data-i18n="pageExtras.color">Page color</span><input id="pageBackgroundColor" type="color" value="#ffffff" /></label>
-            </div>
-            <div class="dialog-field-grid ps-cols-2">
-              <label data-i18n="pageSetupMenu.width" class="dialog-field">Width<span class="number-control"><input id="pageWidth" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-              <label data-i18n="pageSetupMenu.height" class="dialog-field">Height<span class="number-control"><input id="pageHeight" type="number" data-measure-min-twip="1440" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-            </div>
-          <fieldset class="dialog-group">
-            <legend data-i18n="pageSetupMenu.margins">Margins</legend>
-            <label class="dialog-field"><span data-i18n="pagePresets.margins">Margin preset</span><select id="pageMarginsPreset" class="dialog-select"><option value="custom" data-i18n="pagePresets.custom">Custom</option><option value="normal" data-i18n="pagePresets.normal">Normal</option><option value="narrow" data-i18n="pagePresets.narrow">Narrow</option><option value="moderate" data-i18n="pagePresets.moderate">Moderate</option><option value="wide" data-i18n="pagePresets.wide">Wide</option></select></label>
-            <div class="dialog-field-grid ps-cols-4">
-              <label data-i18n="pageSetupMenu.top" class="dialog-field">Top<span class="number-control"><input id="pageMarginTop" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-              <label data-i18n="pageSetupMenu.bottom" class="dialog-field">Bottom<span class="number-control"><input id="pageMarginBottom" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-              <label data-i18n="pageSetupMenu.left" class="dialog-field">Left<span class="number-control"><input id="pageMarginLeft" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-              <label data-i18n="pageSetupMenu.right" class="dialog-field">Right<span class="number-control"><input id="pageMarginRight" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-            </div>
-          </fieldset>
-          <details class="dialog-advanced">
-            <summary data-i18n="pageSetupMenu.advanced">Advanced</summary>
-            <div class="dialog-advanced-body">
-              <div class="dialog-field-grid ps-cols-2">
-                <label data-i18n="pageSetupMenu.gutter" class="dialog-field">Gutter<span class="number-control"><input id="pageMarginGutter" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-                <label data-i18n="pageSetupMenu.verticalAlignment" class="dialog-field">Vertical alignment<select id="pageVerticalAlignment" class="dialog-select">
-                  <option data-i18n="pageSetupMenu.vAlignTop" value="top">Top</option>
-                  <option data-i18n="pageSetupMenu.vAlignCenter" value="center">Center</option>
-                  <option data-i18n="pageSetupMenu.vAlignBoth" value="both">Justified</option>
-                  <option data-i18n="pageSetupMenu.vAlignBottom" value="bottom">Bottom</option>
-                </select></label>
-              </div>
-              <label class="dialog-check"><input id="pageMirrorMargins" type="checkbox" /><span data-i18n="pageExtras.mirror">Mirror margins on facing pages</span></label>
-              <fieldset class="dialog-group">
-              <legend data-i18n="pageSetupMenu.columns">Columns</legend>
-              <div class="dialog-field-grid">
-                <label data-i18n="pageSetupMenu.number" class="dialog-field">Number<select id="pageColumnCount" class="dialog-select">
-                  <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
-                </select></label>
-                <label data-i18n="pageSetupMenu.spacing" class="dialog-field">Spacing<span class="number-control"><input id="pageColumnGap" type="number" data-measure-min-twip="0" data-measure-max-twip="7200" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-              </div>
-              <label class="dialog-check"><input id="pageColumnSeparator" type="checkbox" /> Line between columns</label>
-<label class="dialog-check"><input id="pageColumnEqual" type="checkbox" checked /><span data-i18n="pageColumns.equal">Equal column widths</span></label>
-<label class="dialog-field"><span data-i18n="pageColumns.width0">Column 1 width</span><span class="number-control"><input id="pageColumnWidth0" type="number" data-measure-min-twip="1" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-<label class="dialog-field"><span data-i18n="pageColumns.space0">Space after column 1</span><span class="number-control"><input id="pageColumnSpace0" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-<label class="dialog-field"><span data-i18n="pageColumns.width1">Column 2 width</span><span class="number-control"><input id="pageColumnWidth1" type="number" data-measure-min-twip="1" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-<label class="dialog-field"><span data-i18n="pageColumns.space1">Space after column 2</span><span class="number-control"><input id="pageColumnSpace1" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-<label class="dialog-field"><span data-i18n="pageColumns.width2">Column 3 width</span><span class="number-control"><input id="pageColumnWidth2" type="number" data-measure-min-twip="1" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-<label class="dialog-field"><span data-i18n="pageColumns.space2">Space after column 3</span><span class="number-control"><input id="pageColumnSpace2" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-<label class="dialog-field"><span data-i18n="pageColumns.width3">Column 4 width</span><span class="number-control"><input id="pageColumnWidth3" type="number" data-measure-min-twip="1" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-<label class="dialog-field"><span data-i18n="pageColumns.space3">Space after column 4</span><span class="number-control"><input id="pageColumnSpace3" type="number" data-measure-min-twip="0" data-measure-max-twip="31680" inputmode="decimal" /><span data-measure-suffix>in</span></span></label>
-
-            </fieldset>
-            </div>
-          </details>
         </div>
         <footer class="dialog-foot">
-          <span data-i18n="pageSetupMenu.appliesSectionCanBe" class="dialog-note">Applies to this section and can be undone.</span>
+          <label class="dialog-foot-field"><span data-i18n="pageSetupMenu.applyTo">Apply to</span><select id="pageSetupSection" class="dialog-select"></select></label>
           <div class="dialog-actions">
             <button data-i18n="pageSetupMenu.cancel" type="button" id="pageSetupCancel" class="dialog-button">Cancel</button>
             <button data-i18n="pageSetupMenu.apply2" type="button" id="pageSetupApply" class="dialog-button dialog-button-primary">Apply</button>
@@ -2013,7 +2152,7 @@
           <div class="dialog-heading">
             <div>
               <h2 data-i18n="headerFooterSettingsDialog.title" id="headerFooterSettingsTitle">Header and footer</h2>
-              <p data-i18n="headerFooterSettingsDialog.description" id="headerFooterSettingsDescription">Where the running bands sit, which pages get their own, and how the pages are numbered.</p>
+              <p data-i18n="headerFooterSettingsDialog.descriptionShort" id="headerFooterSettingsDescription">Position, different pages and page numbers.</p>
             </div>
           </div>
           <button data-i18n-title="headerFooterSettingsDialog.close.title" data-i18n-label="headerFooterSettingsDialog.close.label" id="headerFooterSettingsClose" type="button" class="dialog-close" title="Close" aria-label="Close header and footer settings">
@@ -2104,7 +2243,6 @@
           </fieldset>
         </div>
         <footer class="dialog-foot">
-          <span data-i18n="headerFooterSettingsDialog.note" class="dialog-note">Applies to this section and can be undone.</span>
           <div class="dialog-actions">
             <button data-i18n="headerFooterSettingsDialog.cancel" type="button" id="headerFooterSettingsCancel" class="dialog-button">Cancel</button>
             <button data-i18n="headerFooterSettingsDialog.apply" type="button" id="headerFooterSettingsApply" class="dialog-button dialog-button-primary">Apply</button>
@@ -2182,9 +2320,9 @@
             <option data-i18n="pageBordersDialog.wholeDocument" value="document">Whole document</option>
             <option data-i18n="pageBordersDialog.thisSection" value="section">This section</option>
           </select></label>
+          <p data-i18n="pageBordersDialog.note" class="dialog-field-note">Clear every edge to remove the border. Can be undone.</p>
         </div>
         <footer class="dialog-foot">
-          <span data-i18n="pageBordersDialog.note" class="dialog-note">Clear every edge to remove the border. Can be undone.</span>
           <div class="dialog-actions">
             <button data-i18n="pageBordersDialog.cancel" type="button" id="pageBordersCancel" class="dialog-button">Cancel</button>
             <button data-i18n="pageBordersDialog.apply" type="button" id="pageBordersApply" class="dialog-button dialog-button-primary">Apply</button>
@@ -2241,7 +2379,6 @@
           </fieldset>
         </div>
         <footer class="dialog-foot">
-          <span data-i18n="watermarkDialog.appliesSectionCanBe" class="dialog-note">Applies to the whole document and can be undone.</span>
           <div class="dialog-actions">
             <button data-i18n="watermarkDialog.cancel" type="button" id="watermarkCancel" class="dialog-button">Cancel</button>
             <button data-i18n="watermarkDialog.apply" type="button" id="watermarkApply" class="dialog-button dialog-button-primary">Apply</button>
@@ -2856,7 +2993,6 @@
           <p data-i18n="tableTools.insert.limits" class="dialog-field-note">Up to 20 columns and 50 rows. In a table cell, the new table goes inside the cell.</p>
         </div>
         <footer class="dialog-foot">
-          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
             <button data-i18n="watermarkDialog.cancel" type="button" class="dialog-button" data-dialog-cancel>Cancel</button>
             <button data-i18n="tableTools.insert.apply" type="button" class="dialog-button dialog-button-primary" data-dialog-apply>Insert</button>
@@ -2871,7 +3007,7 @@
           <div class="dialog-heading">
             <div>
               <h2 data-i18n="tableTools.textToTable.title" id="textToTableTitle">Convert text to table</h2>
-              <p data-i18n="tableTools.textToTable.description" id="textToTableDescription">Each selected paragraph becomes a row, divided into cells where the separator is.</p>
+              <p data-i18n="tableTools.textToTable.descriptionShort" id="textToTableDescription">Each selected paragraph becomes a row.</p>
             </div>
           </div>
           <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="tableTools.textToTable.close.label" id="textToTableClose" type="button" class="dialog-close" data-dialog-cancel title="Close" aria-label="Close convert text to table"><span class="ms" aria-hidden="true">close</span></button>
@@ -2895,7 +3031,6 @@
           </fieldset>
         </div>
         <footer class="dialog-foot">
-          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
             <button data-i18n="watermarkDialog.cancel" type="button" class="dialog-button" data-dialog-cancel>Cancel</button>
             <button data-i18n="tableTools.convert.apply" type="button" class="dialog-button dialog-button-primary" data-dialog-apply>Convert</button>
@@ -2910,7 +3045,7 @@
           <div class="dialog-heading">
             <div>
               <h2 data-i18n="tableTools.tableToText.title" id="tableToTextTitle">Convert table to text</h2>
-              <p data-i18n="tableTools.tableToText.description" id="tableToTextDescription">Each row becomes a paragraph, its cells joined by the separator.</p>
+              <p data-i18n="tableTools.tableToText.descriptionShort" id="tableToTextDescription">Each row becomes a paragraph.</p>
             </div>
           </div>
           <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="tableTools.tableToText.close.label" id="tableToTextClose" type="button" class="dialog-close" data-dialog-cancel title="Close" aria-label="Close convert table to text"><span class="ms" aria-hidden="true">close</span></button>
@@ -2928,7 +3063,6 @@
           <label class="dialog-check"><input id="tableToTextNested" type="checkbox" checked /><span data-i18n="tableTools.tableToText.nested">Convert nested tables</span></label>
         </div>
         <footer class="dialog-foot">
-          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
             <button data-i18n="watermarkDialog.cancel" type="button" class="dialog-button" data-dialog-cancel>Cancel</button>
             <button data-i18n="tableTools.convert.apply" type="button" class="dialog-button dialog-button-primary" data-dialog-apply>Convert</button>
@@ -2943,7 +3077,7 @@
           <div class="dialog-heading">
             <div>
               <h2 data-i18n="tableTools.insertCells.title" id="tableInsertCellsTitle">Insert cells</h2>
-              <p data-i18n="tableTools.insertCells.description" id="tableInsertCellsDescription">Insert cells at the selected cells and move the others out of the way.</p>
+              <p data-i18n="tableTools.insertCells.descriptionShort" id="tableInsertCellsDescription">Choose where the other cells move.</p>
             </div>
           </div>
           <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="tableTools.insertCells.close.label" id="tableInsertCellsClose" type="button" class="dialog-close" data-dialog-cancel title="Close" aria-label="Close insert cells"><span class="ms" aria-hidden="true">close</span></button>
@@ -2957,7 +3091,6 @@
           </fieldset>
         </div>
         <footer class="dialog-foot">
-          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
             <button data-i18n="watermarkDialog.cancel" type="button" class="dialog-button" data-dialog-cancel>Cancel</button>
             <button data-i18n="tableTools.insert.apply" type="button" class="dialog-button dialog-button-primary" data-dialog-apply>Insert</button>
@@ -2986,7 +3119,6 @@
           </fieldset>
         </div>
         <footer class="dialog-foot">
-          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
             <button data-i18n="watermarkDialog.cancel" type="button" class="dialog-button" data-dialog-cancel>Cancel</button>
             <button data-i18n="tableTools.deleteCells.apply" type="button" class="dialog-button dialog-button-primary" data-dialog-apply>Delete</button>
@@ -3049,7 +3181,6 @@
           </div>
         </div>
         <footer class="dialog-foot">
-          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
             <button data-i18n="watermarkDialog.cancel" type="button" class="dialog-button" data-dialog-cancel>Cancel</button>
             <button data-i18n="tableBordersDialog.apply" type="button" class="dialog-button dialog-button-primary" data-dialog-apply>Apply</button>
@@ -3128,7 +3259,6 @@
           </div>
         </div>
         <footer class="dialog-foot">
-          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
             <button data-i18n="watermarkDialog.cancel" type="button" class="dialog-button" data-dialog-cancel>Cancel</button>
             <button data-i18n="tablePositionDialog.apply" type="button" class="dialog-button dialog-button-primary" data-dialog-apply>Apply</button>
@@ -3155,7 +3285,7 @@
           </div>
           <p data-i18n="splitCellDialog.splitCellIntoGrid" id="splitCellNote" class="dialog-field-note">Split the cell into a grid of rows &times; columns.</p>
         </div>
-        <footer class="dialog-foot"><span data-i18n="splitCellDialog.oneUndoableTableEdit" class="dialog-note">One undoable table edit.</span><div class="dialog-actions"><button data-i18n="splitCellDialog.cancel" id="splitCellCancel" type="button" class="dialog-button">Cancel</button><button data-i18n="splitCellDialog.split" id="splitCellConfirm" type="button" class="dialog-button dialog-button-primary">Split</button></div></footer>
+        <footer class="dialog-foot"><div class="dialog-actions"><button data-i18n="splitCellDialog.cancel" id="splitCellCancel" type="button" class="dialog-button">Cancel</button><button data-i18n="splitCellDialog.split" id="splitCellConfirm" type="button" class="dialog-button dialog-button-primary">Split</button></div></footer>
       </section>
     </div>
 
@@ -3175,7 +3305,7 @@
           </div>
           <button data-i18n-title="confirmDialog.close.title" data-i18n-label="confirmDialog.closeConfirmationDialog.label" id="confirmClose" type="button" class="dialog-close" title="Close" aria-label="Close confirmation dialog"><span class="ms" aria-hidden="true">close</span></button>
         </header>
-        <footer class="dialog-foot"><span class="dialog-note" id="confirmNote"></span><div class="dialog-actions"><button data-i18n="confirmDialog.cancel" id="confirmCancel" type="button" class="dialog-button">Cancel</button><button data-i18n="confirmDialog.ok" id="confirmAccept" type="button" class="dialog-button dialog-button-primary">OK</button></div></footer>
+        <footer class="dialog-foot"><span class="dialog-note" id="confirmNote" data-foot-note="confirm"></span><div class="dialog-actions"><button data-i18n="confirmDialog.cancel" id="confirmCancel" type="button" class="dialog-button">Cancel</button><button data-i18n="confirmDialog.ok" id="confirmAccept" type="button" class="dialog-button dialog-button-primary">OK</button></div></footer>
       </section>
     </div>
 
@@ -3188,7 +3318,7 @@
           <div class="dialog-heading">
             <div>
               <h2 data-i18n="pictureUrlDialog.title" id="pictureUrlTitle">Insert picture from URL</h2>
-              <p data-i18n="pictureUrlDialog.description" id="pictureUrlDescription">The picture is downloaded once and saved inside the document.</p>
+              <p data-i18n="pictureUrlDialog.descriptionShort" id="pictureUrlDescription">Downloaded once and saved in the document.</p>
             </div>
           </div>
           <button data-i18n-title="pictureUrlDialog.close.title" data-i18n-label="pictureUrlDialog.close.label" id="pictureUrlClose" type="button" class="dialog-close" title="Close" aria-label="Close insert picture from URL dialog"><span class="ms" aria-hidden="true">close</span></button>
@@ -3198,7 +3328,7 @@
           <progress id="pictureUrlProgress" class="dialog-progress" max="1" hidden></progress>
           <p id="pictureUrlStatus" class="dialog-field-note" role="status" aria-live="polite"></p>
         </div>
-        <footer class="dialog-foot"><span data-i18n="pictureUrlDialog.oneUndoableAction" class="dialog-note">One undoable action.</span><div class="dialog-actions"><button data-i18n="pictureUrlDialog.cancel" id="pictureUrlCancel" type="button" class="dialog-button">Cancel</button><button data-i18n="pictureUrlDialog.insert" id="pictureUrlInsert" type="button" class="dialog-button dialog-button-primary">Insert</button></div></footer>
+        <footer class="dialog-foot"><div class="dialog-actions"><button data-i18n="pictureUrlDialog.cancel" id="pictureUrlCancel" type="button" class="dialog-button">Cancel</button><button data-i18n="pictureUrlDialog.insert" id="pictureUrlInsert" type="button" class="dialog-button dialog-button-primary">Insert</button></div></footer>
       </section>
     </div>
     <!-- AI provider settings (docs/183 §3.9): bring your own key. Opened from
@@ -3229,8 +3359,9 @@
             <button data-i18n="pluginsDialog.install" id="pluginsInstallBtn" type="button" class="dialog-button">Install</button>
           </div>
           <p id="pluginsStatus" class="dialog-field-note" role="status" aria-live="polite"></p>
+          <p data-i18n="pluginsDialog.codeNote" class="dialog-field-note">Add-ins belong to this browser, never to a document.</p>
         </div>
-        <footer class="dialog-foot"><span data-i18n="pluginsDialog.codeNote" class="dialog-note">Add-ins belong to this browser, never to a document.</span><div class="dialog-actions"><button data-i18n="bookmarkDialog.done" id="pluginsDone" type="button" class="dialog-button">Done</button></div></footer>
+        <footer class="dialog-foot"><div class="dialog-actions"><button data-i18n="bookmarkDialog.done" id="pluginsDone" type="button" class="dialog-button">Done</button></div></footer>
       </section>
     </div>
     <!-- The grant prompt (docs/183 §6.1): editor chrome, outside the plugin's
@@ -3263,7 +3394,7 @@
           <div class="dialog-heading">
                         <div>
               <h2 data-i18n="styleNameDialog.createStyle" id="styleNameTitle">Create a style</h2>
-              <p data-i18n="styleNameDialog.saveSelectionSFormatting" id="styleNameDescription">Save the selection's formatting as a new paragraph style.</p>
+              <p data-i18n="styleNameDialog.descriptionShort" id="styleNameDescription">Save this formatting as a paragraph style.</p>
             </div>
           </div>
           <button data-i18n-title="styleNameDialog.close.title" data-i18n-label="styleNameDialog.closeCreateStyleDialog.label" id="styleNameClose" type="button" class="dialog-close" title="Close" aria-label="Close create style dialog"><span class="ms" aria-hidden="true">close</span></button>
@@ -3272,7 +3403,7 @@
           <label data-i18n="styleNameDialog.styleName" class="dialog-field field-wide">Style name<input data-i18n-placeholder="styleNameDialog.eGCallout.placeholder" id="styleNameInput" type="text" maxlength="253" autocomplete="off" spellcheck="false" placeholder="e.g. Callout" /></label>
           <p data-i18n="styleNameDialog.newStyleBasedCurrent" id="styleNameNote" class="dialog-field-note">The new style is based on the current paragraph style and applied to the selection.</p>
         </div>
-        <footer class="dialog-foot"><span data-i18n="styleNameDialog.oneUndoableAction" class="dialog-note">One undoable action.</span><div class="dialog-actions"><button data-i18n="styleNameDialog.cancel" id="styleNameCancel" type="button" class="dialog-button">Cancel</button><button data-i18n="styleNameDialog.create" id="styleNameConfirm" type="button" class="dialog-button dialog-button-primary">Create</button></div></footer>
+        <footer class="dialog-foot"><div class="dialog-actions"><button data-i18n="styleNameDialog.cancel" id="styleNameCancel" type="button" class="dialog-button">Cancel</button><button data-i18n="styleNameDialog.create" id="styleNameConfirm" type="button" class="dialog-button dialog-button-primary">Create</button></div></footer>
       </section>
     </div>
     <!-- "Name this version" (docs/139 §8.3). The same card as Create a style,
@@ -3287,7 +3418,7 @@
           <div class="dialog-heading">
             <div>
               <h2 data-i18n="versionNameDialog.nameThisVersion" id="versionNameTitle">Name this version</h2>
-              <p data-i18n="versionNameDialog.namedVersionsAreKept" id="versionNameDescription">A named version is kept until you delete it, and can be found by name.</p>
+              <p data-i18n="versionNameDialog.descriptionShort" id="versionNameDescription">A named version is kept until you delete it.</p>
             </div>
           </div>
           <button data-i18n-title="versionNameDialog.close.title" data-i18n-label="versionNameDialog.closeNameVersion.label" id="versionNameClose" type="button" class="dialog-close" title="Close" aria-label="Close name this version"><span class="ms" aria-hidden="true">close</span></button>
@@ -3296,7 +3427,7 @@
           <label data-i18n="versionNameDialog.versionName" class="dialog-field field-wide">Version name<input data-i18n-placeholder="versionNameDialog.egBeforeReview.placeholder" id="versionNameInput" type="text" maxlength="120" autocomplete="off" spellcheck="false" placeholder="e.g. Before the legal review" /></label>
           <p data-i18n="versionNameDialog.namingDoesNotChange" id="versionNameNote" class="dialog-field-note">Naming a version changes nothing in the document — only how this version is listed and how long it is kept.</p>
         </div>
-        <footer class="dialog-foot"><span data-i18n="versionNameDialog.twoVersionsMayShare" class="dialog-note">Two versions may share a name; they are told apart by time.</span><div class="dialog-actions"><button data-i18n="versionNameDialog.cancel" id="versionNameCancel" type="button" class="dialog-button">Cancel</button><button data-i18n="versionNameDialog.save" id="versionNameConfirm" type="button" class="dialog-button dialog-button-primary">Save name</button></div></footer>
+        <footer class="dialog-foot"><div class="dialog-actions"><button data-i18n="versionNameDialog.cancel" id="versionNameCancel" type="button" class="dialog-button">Cancel</button><button data-i18n="versionNameDialog.save" id="versionNameConfirm" type="button" class="dialog-button dialog-button-primary">Save name</button></div></footer>
       </section>
     </div>
     <div id="bookmarkDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="bookmarkTitle" aria-describedby="bookmarkDescription">
@@ -3328,7 +3459,7 @@
           <ul id="bookmarkList" class="bookmark-list" aria-labelledby="bookmarkListLabel"></ul>
           <p data-i18n="bookmarkDialog.noBookmarksYetSelect" id="bookmarkEmpty" class="bookmark-empty" hidden>No bookmarks yet. Select text and add one above.</p>
         </div>
-        <footer class="dialog-foot"><span data-i18n="bookmarkDialog.eachChangeOneUndoable" class="dialog-note">Each change is one undoable action.</span><div class="dialog-actions"><button data-i18n="bookmarkDialog.done" id="bookmarkDone" type="button" class="dialog-button">Done</button></div></footer>
+        <footer class="dialog-foot"><div class="dialog-actions"><button data-i18n="bookmarkDialog.done" id="bookmarkDone" type="button" class="dialog-button">Done</button></div></footer>
       </section>
     </div>
     <!-- Proofing languages. Word's File ▸ Options ▸ Language table, which is the
@@ -3344,7 +3475,7 @@
           <div class="dialog-heading">
             <div>
               <h2 data-i18n="proofLanguagesDialog.title" id="proofLanguagesTitle">Proofing languages</h2>
-              <p data-i18n="proofLanguagesDialog.description" id="proofLanguagesDescription">Install a language's proofing data to check spelling in it, offline, in this browser.</p>
+              <p data-i18n="proofLanguagesDialog.descriptionShort" id="proofLanguagesDescription">Check spelling offline in more languages.</p>
             </div>
           </div>
           <button data-i18n-title="bookmarkDialog.close.title" data-i18n-label="proofLanguagesDialog.close.label" id="proofLanguagesClose" type="button" class="dialog-close" title="Close" aria-label="Close proofing languages"><span class="ms" aria-hidden="true">close</span></button>
@@ -3363,8 +3494,9 @@
           </table>
           <p data-i18n="proofLanguagesDialog.storedHere" id="proofLanguagesStored" class="dialog-field-note">Packs are stored in this browser only. Removing one frees the space it used and never touches your own words.</p>
           <p id="proofLanguagesNote" class="dialog-field-note" role="status" aria-live="polite"></p>
+          <p data-i18n="proofLanguagesDialog.windowNote" class="dialog-field-note">Proofing checks the pages you are looking at, so scroll through a long document to check all of it.</p>
         </div>
-        <footer class="dialog-foot"><span data-i18n="proofLanguagesDialog.windowNote" class="dialog-note">Proofing checks the pages you are looking at, so scroll through a long document to check all of it.</span><div class="dialog-actions"><button data-i18n="proofLanguagesDialog.done" id="proofLanguagesDone" type="button" class="dialog-button">Done</button></div></footer>
+        <footer class="dialog-foot"><div class="dialog-actions"><button data-i18n="proofLanguagesDialog.done" id="proofLanguagesDone" type="button" class="dialog-button">Done</button></div></footer>
       </section>
     </div>
     <!-- Review ▸ Restrict Editing (ADR-052, ADR-059; `docs/153`
@@ -3407,7 +3539,6 @@
           <label data-i18n="noteSettings.scope" class="dialog-field">Apply changes to<select id="noteSettingsScope" class="dialog-select"><option data-i18n="noteSettings.scope.section" value="section">This section</option><option data-i18n="noteSettings.scope.document" value="document">Whole document</option></select></label>
         </div>
         <footer class="dialog-foot">
-          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
             <button data-i18n="noteSettings.convert" id="noteSettingsConvert" type="button" class="dialog-button dialog-button-utility">Convert…</button>
             <button data-i18n="watermarkDialog.cancel" id="noteSettingsCancel" type="button" class="dialog-button">Cancel</button>
@@ -3433,7 +3564,6 @@
           <label class="dialog-check"><input id="convertNotesSelection" type="checkbox" /><span data-i18n="convertNotes.selectionOnly">Only the notes in the selection</span></label>
         </div>
         <footer class="dialog-foot">
-          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
             <button data-i18n="watermarkDialog.cancel" id="convertNotesCancel" type="button" class="dialog-button">Cancel</button>
             <button data-i18n="convertNotes.apply" id="convertNotesApply" type="button" class="dialog-button dialog-button-primary">Convert</button>
@@ -3447,7 +3577,7 @@
           <div class="dialog-heading">
             <div>
               <h2 data-i18n="protect.title" id="restrictEditingTitle">Restrict editing</h2>
-              <p data-i18n="protect.description" id="restrictEditingDescription">Choose what this document asks readers to limit themselves to.</p>
+              <p data-i18n="protect.descriptionShort" id="restrictEditingDescription">What readers of this document may change.</p>
             </div>
           </div>
           <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="protect.close.label" id="restrictEditingClose" type="button" class="dialog-close" title="Close" aria-label="Close restrict editing"><span class="ms" aria-hidden="true">close</span></button>
@@ -3515,7 +3645,6 @@
           <p data-i18n="protect.passwordUnverifiable" class="settings-note" id="restrictEditingPassword" hidden>This restriction carries a password this editor cannot check. Changing or stopping the restriction here removes that password.</p>
         </div>
         <footer class="dialog-foot">
-          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
             <!-- Word's Stop Protection, as its own button while a restriction is
                  in force; the "No restriction" row above reaches the same state. -->
@@ -3545,7 +3674,7 @@
           <div class="dialog-heading">
             <div>
               <h2 data-i18n="rights.title" id="sessionRightsTitle">Manage access</h2>
-              <p data-i18n="rights.description" id="sessionRightsDescription">Change what the other people in this shared document may do. Each person can only be moved within the access they were given when they joined.</p>
+              <p data-i18n="rights.descriptionShort" id="sessionRightsDescription">What the others in this document may do.</p>
             </div>
           </div>
           <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="rights.close.label" id="sessionRightsClose" type="button" class="dialog-close" title="Close" aria-label="Close manage access"><span class="ms" aria-hidden="true">close</span></button>
@@ -3561,9 +3690,9 @@
             <p data-i18n="rights.empty" class="settings-note" id="sessionRightsEmpty">Nobody else has this document open, so there is nothing to change yet.</p>
           </div>
           <p data-i18n="rights.authority" class="settings-note">Access here lasts as long as each person stays connected. The permissions they were given when the document was opened are what they get again if they reconnect, and changing those is done where the document is shared from.</p>
+          <p data-i18n="rights.note" class="dialog-field-note">Everyone in the document is told.</p>
         </div>
         <footer class="dialog-foot">
-          <span data-i18n="rights.note" class="dialog-note">Everyone in the document is told.</span>
           <div class="dialog-actions">
             <button data-i18n="watermarkDialog.cancel" id="sessionRightsCancel" type="button" class="dialog-button">Cancel</button>
             <button data-i18n="watermarkDialog.apply" id="sessionRightsApply" type="button" class="dialog-button dialog-button-primary">Apply</button>
@@ -3597,7 +3726,6 @@
           <label data-i18n="dropCap.lines" class="dialog-field drop-cap-lines">Lines<input id="dropCapLines" type="number" min="1" max="10" step="1" inputmode="numeric" value="3" /></label>
         </form>
         <footer class="dialog-foot">
-          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
             <button data-i18n="watermarkDialog.cancel" id="dropCapCancel" type="button" class="dialog-button">Cancel</button>
             <button data-i18n="watermarkDialog.apply" type="submit" form="dropCapForm" class="dialog-button dialog-button-primary">Apply</button>
@@ -3632,7 +3760,7 @@
           <div class="dialog-heading">
             <div>
               <h2 data-i18n="tabStopsDialog.title" id="tabStopsTitle">Tab stops</h2>
-              <p data-i18n="tabStopsDialog.description" id="tabStopsDescription">Set where the Tab key lands in the selected paragraphs.</p>
+              <p data-i18n="tabStopsDialog.descriptionShort" id="tabStopsDescription">Where Tab lands in the selected paragraphs.</p>
             </div>
           </div>
           <button data-i18n-title="fieldDialog.close.title" data-i18n-label="tabStopsDialog.closeTabStops.label" id="tabStopsClose" type="button" class="dialog-close" title="Close" aria-label="Close tab stops">
@@ -3688,7 +3816,6 @@
           </div>
         </form>
         <footer class="dialog-foot">
-          <span data-i18n="bookmarkDialog.eachChangeOneUndoable" class="dialog-note">Each change is one undoable action.</span>
           <div class="dialog-actions">
             <button data-i18n="bookmarkDialog.done" id="tabStopsDone" type="button" class="dialog-button">Done</button>
           </div>
@@ -3707,7 +3834,7 @@
           <div class="dialog-heading">
             <div>
               <h2 id="tocTitle"><span data-i18n="toc.title" data-toc-mode="contents">Table of contents</span><span data-i18n="toc.figures.title" data-toc-mode="figures" hidden>Table of figures</span></h2>
-              <p id="tocDescription"><span data-i18n="toc.description" data-toc-mode="contents">Lists every heading with the page it is on, as a field you can update later.</span><span data-i18n="toc.figures.description" data-toc-mode="figures" hidden>Lists every caption of one label with the page it is on, as a field you can update later.</span></p>
+              <p id="tocDescription"><span data-i18n="toc.descriptionShort" data-toc-mode="contents">Every heading and its page, kept updatable.</span><span data-i18n="toc.figures.descriptionShort" data-toc-mode="figures" hidden>Every caption of one label and its page.</span></p>
             </div>
           </div>
           <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="toc.close.label" id="tocClose" type="button" class="dialog-close" title="Close" aria-label="Close table of contents"><span class="ms" aria-hidden="true">close</span></button>
@@ -3749,7 +3876,6 @@
           </div>
         </form>
         <footer class="dialog-foot">
-          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
             <button data-i18n="watermarkDialog.cancel" id="tocCancel" type="button" class="dialog-button">Cancel</button>
             <button data-i18n="toc.insert" type="submit" form="tocForm" class="dialog-button dialog-button-primary">Insert</button>
@@ -3766,7 +3892,7 @@
           <div class="dialog-heading">
             <div>
               <h2 data-i18n="toc.update.title" id="tocUpdateTitle">Update table of contents</h2>
-              <p data-i18n="toc.update.description" id="tocUpdateDescription">Re-read the page numbers, or rebuild the entries from the headings.</p>
+              <p data-i18n="toc.update.descriptionShort" id="tocUpdateDescription">Update page numbers, or rebuild the entries.</p>
             </div>
           </div>
           <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="toc.update.close.label" id="tocUpdateClose" type="button" class="dialog-close" title="Close" aria-label="Close update table of contents"><span class="ms" aria-hidden="true">close</span></button>
@@ -3778,7 +3904,6 @@
           </fieldset>
         </form>
         <footer class="dialog-foot">
-          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
             <button data-i18n="watermarkDialog.cancel" id="tocUpdateCancel" type="button" class="dialog-button">Cancel</button>
             <button data-i18n="toc.update.apply" type="submit" form="tocUpdateForm" class="dialog-button dialog-button-primary">Update</button>
@@ -3864,7 +3989,6 @@
           <p class="caption-preview-row"><span data-i18n="captionDialog.preview" class="caption-preview-label">Preview</span><output id="captionPreview" class="caption-preview"></output></p>
         </form>
         <footer class="dialog-foot">
-          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
             <button data-i18n="linkDialog.cancel" id="captionCancel" type="button" class="dialog-button">Cancel</button>
             <button data-i18n="appMenuBar.insert" id="captionInsert" type="submit" form="captionForm" class="dialog-button dialog-button-primary">Insert</button>
@@ -3924,7 +4048,6 @@
           </div>
         </div>
         <footer class="dialog-foot">
-          <span data-i18n="crossRefDialog.oneUndoableActionEach" class="dialog-note">One undoable action each; the dialog stays open.</span>
           <div class="dialog-actions">
             <button data-i18n="fieldDialog.close.title" id="crossRefDone" type="button" class="dialog-button">Close</button>
             <button data-i18n="appMenuBar.insert" id="crossRefInsert" type="button" class="dialog-button dialog-button-primary" disabled>Insert</button>
@@ -3953,9 +4076,29 @@
             <li><button type="button" class="field-choice" data-field-kind="author"><span class="ms field-choice-icon" aria-hidden="true">person</span><span class="field-choice-text"><span data-i18n="fieldList.author" class="field-choice-label">Author</span><span data-i18n="fieldList.activeAuthor" class="field-choice-note">The active author</span></span></button></li>
           </ul>
         </div>
-        <footer class="dialog-foot"><span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span><div class="dialog-actions"><button data-i18n="fieldDialog.cancel" id="fieldCancel" type="button" class="dialog-button">Cancel</button></div></footer>
+        <footer class="dialog-foot"><div class="dialog-actions"><button data-i18n="fieldDialog.cancel" id="fieldCancel" type="button" class="dialog-button">Cancel</button></div></footer>
       </section>
     </div>
+    <!-- Link popover (`docs/184` D-13, audit DIALOGS-11; Google Docs' link
+         popover, Word for the web's link callout). ⌘K, Insert ▸ Link, the link
+         card's Edit and the context menu open THIS at the selection, with no
+         scrim: Text, one Link field that takes a web address, an email address or
+         a bookmark (the bookmarks are listed under it as you type), and Apply.
+         The full Insert link dialog, with the ScreenTip, is "More options…". -->
+    <div id="linkPopover" class="link-popover" role="dialog" data-i18n-label="linkPopover.label" aria-label="Link" hidden>
+      <form id="linkPopoverForm" class="link-popover-form" novalidate>
+        <label class="link-popover-field"><span data-i18n="linkDialogForm.textDisplay">Text to display</span><input id="linkPopoverText" class="settings-input" type="text" autocomplete="off" spellcheck="false" /></label>
+        <label class="link-popover-field"><span data-i18n="linkPopover.link">Link</span><input id="linkPopoverUrl" class="settings-input" type="text" inputmode="url" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="linkPopoverPlaces" aria-describedby="linkPopoverError" data-i18n-placeholder="linkPopover.placeholder" placeholder="Paste a link, or type # for a bookmark" /></label>
+        <ul id="linkPopoverPlaces" class="link-popover-places" role="listbox" data-i18n-label="linkPopover.places.label" aria-label="Places in this document" hidden></ul>
+        <p id="linkPopoverError" class="link-popover-error" role="alert"></p>
+        <div class="link-popover-actions">
+          <button id="linkPopoverMore" type="button" class="dialog-button dialog-button-utility" aria-haspopup="dialog" data-i18n="linkPopover.more">More options…</button>
+          <button id="linkPopoverRemove" type="button" class="dialog-button" data-i18n="linkDialog.removeLink" hidden>Remove link</button>
+          <button id="linkPopoverApply" type="submit" class="dialog-button dialog-button-primary" data-i18n="linkDialog.apply">Apply</button>
+        </div>
+      </form>
+    </div>
+
     <div id="linkDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="linkDialogTitle" aria-describedby="linkDialogDescription">
       <section class="dialog-card link-dialog">
         <header class="dialog-head">
@@ -3995,10 +4138,9 @@
 
           <label data-i18n="linkDialogForm.screentip" for="linkTooltipInput">ScreenTip <span data-i18n="linkDialogForm.optional" class="link-optional">(optional)</span></label>
           <input data-i18n-placeholder="linkDialogForm.textShownHover.placeholder" id="linkTooltipInput" type="text" autocomplete="off" spellcheck="false" placeholder="Text shown on hover" aria-describedby="linkDialogNote" />
-          <p data-i18n="linkDialogForm.enterAppliesEscCancels" id="linkDialogNote" class="dialog-field-note" role="status" aria-live="polite">Enter applies; Esc cancels.</p>
+          <p id="linkDialogNote" class="dialog-field-note" role="status" aria-live="polite"></p>
         </form>
         <footer class="dialog-foot">
-          <span data-i18n="linkDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
             <button data-i18n="linkDialog.removeLink" id="linkRemoveBtn" type="button" class="dialog-button" hidden>Remove link</button>
             <button data-i18n="linkDialog.cancel" id="linkCancelBtn" type="button" class="dialog-button">Cancel</button>
@@ -4014,7 +4156,7 @@
           <div class="dialog-heading">
                         <div>
               <h2 data-i18n="altTextDialog.altText" id="altTextTitle">Alt text</h2>
-              <p data-i18n="altTextDialog.describeObjectScreenReaders" id="altTextDescription">Describe this object for screen readers and search.</p>
+              <p data-i18n="altTextDialog.descriptionShort" id="altTextDescription">Describe this object for screen readers.</p>
             </div>
           </div>
           <button data-i18n-title="altTextDialog.close.title" data-i18n-label="altTextDialog.closeAltText.label" id="altTextClose" type="button" class="dialog-close" title="Close" aria-label="Close alt text"><span class="ms" aria-hidden="true">close</span></button>
@@ -4025,7 +4167,6 @@
           <p data-i18n="altTextForm.leaveEmptyRemoveAlt" id="altTextNote" class="dialog-field-note" role="status" aria-live="polite">Leave empty to remove the alt text. Enter applies; Shift+Enter adds a line.</p>
         </form>
         <footer class="dialog-foot">
-          <span data-i18n="altTextDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
             <button data-i18n="altTextDialog.cancel" id="altTextCancel" type="button" class="dialog-button">Cancel</button>
             <button data-i18n="altTextDialog.apply" id="altTextApply" type="submit" form="altTextForm" class="dialog-button dialog-button-primary">Apply</button>
@@ -4047,7 +4188,7 @@
           <div class="dialog-heading">
             <div>
               <h2 data-i18n="objectLayoutDialog.title" id="objectLayoutTitle">Layout options</h2>
-              <p data-i18n="objectLayoutDialog.description" id="objectLayoutDescription">How far text keeps from this object, and whether it moves with its paragraph.</p>
+              <p data-i18n="objectLayoutDialog.descriptionShort" id="objectLayoutDescription">Text distance, and what the object moves with.</p>
             </div>
           </div>
           <button data-i18n-title="altTextDialog.close.title" data-i18n-label="objectLayoutDialog.close.label" id="objectLayoutClose" type="button" class="dialog-close" title="Close" aria-label="Close layout options"><span class="ms" aria-hidden="true">close</span></button>
@@ -4065,7 +4206,6 @@
           <p id="objectLayoutNote" class="dialog-field-note" role="status" aria-live="polite"></p>
         </form>
         <footer class="dialog-foot">
-          <span data-i18n="altTextDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
             <button data-i18n="altTextDialog.cancel" id="objectLayoutCancel" type="button" class="dialog-button">Cancel</button>
             <button data-i18n="altTextDialog.apply" id="objectLayoutApply" type="submit" form="objectLayoutForm" class="dialog-button dialog-button-primary">Apply</button>
@@ -4100,7 +4240,6 @@
           <p id="shapeShadowNote" class="dialog-field-note" role="status" aria-live="polite"></p>
         </form>
         <footer class="dialog-foot">
-          <span data-i18n="altTextDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
           <div class="dialog-actions">
             <button data-i18n="altTextDialog.cancel" id="shapeShadowCancel" type="button" class="dialog-button">Cancel</button>
             <button data-i18n="altTextDialog.apply" id="shapeShadowApply" type="submit" form="shapeShadowForm" class="dialog-button dialog-button-primary">Apply</button>

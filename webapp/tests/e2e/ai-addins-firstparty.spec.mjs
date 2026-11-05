@@ -14,14 +14,14 @@ const TYPO = "Zorbly";
 
 async function openManager(page) {
   await page.locator("#settingsBtn").click();
-  // Manage add-ins sits on Settings' "AI and add-ins" page (approved design D3).
+  // The add-in list is ON Settings' "AI and add-ins" page (`docs/184` D3, audit
+  // DIALOGS-08): rows with a switch, not a second dialog.
   await page.locator('#settingsPanel [data-settings-tab="ai"]').click();
-  await page.locator("#settingsAddinsBtn").click();
-  await expect(page.locator("#pluginsDialog")).toBeVisible();
+  await expect(page.locator("#settingsAddinsList")).toBeVisible();
 }
 
 function row(page, name) {
-  return page.locator("#pluginsList .plugins-row", { has: page.locator("strong", { hasText: name }) });
+  return page.locator("#settingsAddinsList .plugins-row", { has: page.locator("strong", { hasText: name }) });
 }
 
 /** The mock server: every "Zorbly" is a misspelling (autocorrect leaves it alone). */
@@ -46,16 +46,16 @@ async function mockLanguageTool(page) {
 
 async function turnOn(page, name, { prompt }) {
   await openManager(page);
-  await row(page, name).locator("button", { hasText: "Turn on" }).click();
+  await row(page, name).locator('[role="switch"]').click();
   if (prompt) {
     await expect(page.locator("#pluginGrantDialog")).toBeVisible();
     await page.locator("#pluginGrantAllow").click();
   } else {
     await expect(page.locator("#pluginGrantDialog")).toBeHidden();
   }
-  await page.locator("#pluginsDone").click();
-  // Settings is still open behind Manage add-ins.
-  await page.keyboard.press("Escape");
+  await expect(row(page, name).locator('[role="switch"]')).toBeChecked();
+  // Settings took the permission dialog's place and is back; close it.
+  await page.locator("#settingsDone").click();
 }
 
 /** Types `text` as a new paragraph after the first one. */
@@ -81,8 +81,8 @@ test("both first-party add-ins are listed, off, and change nothing until turned 
   await expect(page.locator("#reviewAddinsBtn")).toBeHidden();
   await expect(page.locator("#addinIssuesStatus")).toBeHidden();
   await openManager(page);
-  await expect(row(page, "LanguageTool")).toContainText("Turn on");
-  await expect(row(page, "Readability")).toContainText("Turn on");
+  await expect(row(page, "LanguageTool").locator('[role="switch"]')).not.toBeChecked();
+  await expect(row(page, "Readability").locator('[role="switch"]')).not.toBeChecked();
   await expect(page.locator("iframe[data-plugin]")).toHaveCount(0);
 });
 

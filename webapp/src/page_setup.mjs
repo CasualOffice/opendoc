@@ -96,17 +96,23 @@ export function createPageSetup(io) {
 
   const columnEditor = createColumnEditor({ el, measure: io.measure, count: columnCount, gap: columnGap, separator: columnSeparator, contentWidth: () => fieldTwips(widthInput) - fieldTwips(marginLeft) - fieldTwips(marginRight) - fieldTwips(marginGutter) });
 
-  for (const [id, change] of [
-    ['pageMirrorApply', doc => doc.setMirroredMargins(el('pageMirrorMargins').checked)],
-    ['pageBackgroundApply', doc => doc.setPageColor(el('pageBackgroundColor').value)],
-    ['pageBackgroundClear', doc => doc.setPageColor('')],
-  ]) el(id)?.addEventListener('click', async () => { const doc = io.getDoc(); if (doc) { await io.runEdit(() => change(doc), { gate: true }); reflectDocumentSettings(); } });
   function reflectDocumentSettings() {
     const doc = io.getDoc();
     if (!doc) return;
     el('pageMirrorMargins').checked = doc.mirroredMargins();
     el('pageBackgroundColor').value = doc.pageColor() || '#ffffff';
+    reflectPageColour();
   }
+  /** The page-colour control is a swatch and a name, like a select (audit
+   *  DIALOGS-10: a bare native colour input stretched to 250px read as an empty
+   *  text field). White is named; any other colour is its hex value. */
+  function reflectPageColour() {
+    const value = (el('pageBackgroundColor')?.value || '#ffffff').toLowerCase();
+    el('pageColorSwatch')?.style.setProperty('--swatch', value);
+    const name = el('pageColorName');
+    if (name) name.textContent = value === '#ffffff' ? t('pageSetup.colorWhite') : value.toUpperCase();
+  }
+  el('pageBackgroundColor')?.addEventListener('input', reflectPageColour);
 
   // ---- Line numbers --------------------------------------------------------
   const lineNumbersBtn = el("lineNumbersBtn");
@@ -131,7 +137,7 @@ export function createPageSetup(io) {
   const INTENTS = new Map([
     ["orientation", () => orientationGroup.selected()],
     ["margins", () => marginTop],
-    ["size", () => widthInput],
+    ["size", () => el("pagePaperPreset")],
     ["columns", () => columnCount],
   ]);
 
@@ -346,11 +352,23 @@ export function createPageSetup(io) {
     const list = sections();
     if (!list) return false;
     applyUnits();
+    // "Apply to" (`docs/184` D2), offering the scopes the engine writes: one
+    // section per Apply. A document with one section says so in the words a
+    // reader uses, "Whole document"; with several, the caret's own section reads
+    // "This section" and the others keep their numbers. A true "Whole document"
+    // over several sections would be one write per section, so several undo
+    // steps for one Apply, and it is not offered until the engine can do it as
+    // one (recorded in `docs/109` UX-064).
     sectionSelect.replaceChildren();
+    const single = list.sections.length === 1;
     for (const [index, section] of list.sections.entries()) {
       const option = document.createElement("option");
       option.value = section.section;
-      option.textContent = t("pageSetup.sectionNumber", { number: index + 1 });
+      option.textContent = single
+        ? t("pageSetup.wholeDocument")
+        : section.section === list.current
+          ? t("pageSetup.thisSection", { number: index + 1 })
+          : t("pageSetup.sectionNumber", { number: index + 1 });
       sectionSelect.appendChild(option);
     }
     sectionSelect.value = list.current;

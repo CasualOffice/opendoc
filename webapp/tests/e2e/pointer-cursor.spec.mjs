@@ -242,10 +242,10 @@ test.describe("the pointer says what the thing under it will do", () => {
     for (let i = 0; i < 6; i += 1) await page.keyboard.press("Shift+ArrowRight");
     const highlight = await stableBox(page.locator(".overlay .highlight").first());
     await page.keyboard.press(`${MOD}+k`);
-    await expect(page.locator("#linkDialog")).toBeVisible();
-    await page.locator("#linkUrlInput").fill("https://example.com");
-    await page.locator("#linkUrlInput").press("Enter");
-    await expect(page.locator("#linkDialog")).toBeHidden();
+    await expect(page.locator("#linkPopover")).toBeVisible();
+    await page.locator("#linkPopoverUrl").fill("https://example.com");
+    await page.locator("#linkPopoverUrl").press("Enter");
+    await expect(page.locator("#linkPopover")).toBeHidden();
 
     const onLink = await routed(
       page,

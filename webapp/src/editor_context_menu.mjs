@@ -547,7 +547,7 @@ export function createContextMenu(ed) {
     ];
     const paragraphProperties = {
       id: "paragraph.properties",
-      label: "Paragraph properties…",
+      label: "Paragraph properties",
       enabled: structuralEnabled,
       disabledReason: structuralReason,
       run: () => ed.toggleParagraphProperties(true),

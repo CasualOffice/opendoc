@@ -14541,31 +14541,6 @@ body.phone-mode .plugin-panel { height: 55vh; }
 }
 .dialog-field-note:empty { display: none; }
 
-/* AI provider as a section of Settings (owner, 2026-11-02): spans the whole
-   body under the two columns, same field rhythm as every dialog. */
-#settingsPanel .settings-ai {
-  grid-column: 1 / -1;
-  display: grid;
-  gap: var(--dlg-gap-in);
-  padding-top: var(--dlg-gap);
-  border-top: 1px solid var(--line);
-}
-#settingsPanel .settings-ai #aiProviderForm {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--dlg-gap-in);
-}
-#settingsPanel .settings-ai #aiProviderForm > :is(.dialog-field-note, .dialog-check) {
-  grid-column: 1 / -1;
-}
-#settingsPanel .settings-ai-actions {
-  display: flex;
-  gap: var(--space-2);
-  justify-content: flex-end;
-}
-#settingsPanel .settings-ai-actions .dialog-button-utility { margin-inline-end: auto; }
-#settingsPanel .settings-ai-actions .dialog-button-utility + .dialog-button-utility { margin-inline-end: 0; }
-
 /* Ask Casual AI in the header (owner, 2026-11-02; Gemini's placement). */
 .ai-header-btn {
   display: inline-flex;
@@ -14608,75 +14583,6 @@ body.phone-mode .plugin-panel { height: 55vh; }
 .ai-help-write .ms { font-size: var(--icon-sm); color: var(--accent-text); }
 .ai-help-write:hover { background: var(--accent-soft); color: var(--accent-text); }
 .ai-help-write:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-/* Settings with a left navigation (approved design D3; Word Options). The
-   body is two columns: the nav, which stays put, and the pages, which scroll
-   on their own. Only the chosen page's sections show. */
-#settingsPanel .settings-dialog {
-  width: min(var(--dialog-width-l), 100%);
-}
-#settingsPanel .settings-body {
-  display: grid;
-  grid-template-columns: 11rem minmax(0, 1fr);
-  column-gap: var(--dlg-gap);
-  columns: auto;
-  overflow: hidden;
-  min-block-size: 26rem;
-  padding-block-end: 0;
-}
-#settingsPanel .settings-nav {
-  overscroll-behavior: contain;
-  display: grid;
-  align-content: start;
-  gap: 0.125rem;
-  padding-inline-end: var(--space-3);
-  border-inline-end: 1px solid var(--line);
-  overflow-y: auto;
-}
-#settingsPanel .settings-pages {
-  overscroll-behavior: contain;
-  display: grid;
-  align-content: start;
-  gap: var(--dlg-gap);
-  overflow-y: auto;
-  min-block-size: 0;
-  padding-block-end: var(--dlg-pad-y);
-  padding-inline-end: var(--space-1);
-}
-#settingsPanel .settings-nav button {
-  display: flex;
-  align-items: center;
-  min-block-size: var(--h-input);
-  padding: 0 var(--space-3);
-  border: 0;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: var(--fs-md);
-  text-align: start;
-  cursor: pointer;
-}
-#settingsPanel .settings-nav button:hover { background: var(--hover); color: var(--ink); }
-#settingsPanel .settings-nav button[aria-selected="true"] {
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  font-weight: var(--fw-medium);
-}
-#settingsPanel .settings-nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-#settingsPanel .settings-pages > [data-settings-page] { margin: 0; break-inside: auto; }
-#settingsPanel .settings-body:not([data-settings-page="general"]) [data-settings-page="general"],
-#settingsPanel .settings-body:not([data-settings-page="proofing"]) [data-settings-page="proofing"],
-#settingsPanel .settings-body:not([data-settings-page="saving"]) [data-settings-page="saving"],
-#settingsPanel .settings-body:not([data-settings-page="ai"]) [data-settings-page="ai"] {
-  display: none;
-}
-#settingsPanel .settings-pages > .settings-ai { border-top: 0; padding-top: 0; }
-#settingsPanel .dialog-foot .dialog-button-utility { margin-inline-end: auto; }
-@media (max-width: 40rem) {
-  #settingsPanel .settings-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); row-gap: var(--space-4); }
-  #settingsPanel .settings-nav { grid-auto-flow: column; overflow-x: auto; border: 0; padding: 0; }
-}
 
 /* Docked side panels (approved design P1; Google Docs). Every panel is docked
    to the workspace edge at full height: no floating card, no radius, no
@@ -14897,8 +14803,6 @@ body:not(.phone-mode) .workarea > .side-panel:not(.plugin-panel, :where(#outline
 /* Settings borrowed into the File page (file_pane.mjs adds .panel-in-page):
    the pane is the scroller there, so the dialog's own nav/pages scrolling and
    overscroll containment step aside (file-page-scroll.spec). */
-#settingsPanel.panel-in-page .settings-body { overflow: visible; min-block-size: 0; }
-#settingsPanel.panel-in-page :is(.settings-pages, .settings-nav) { overflow: visible; overscroll-behavior: auto; }
 
 /* Reduced motion, once, for the whole editor (audit A11Y-20). The scattered
    per-surface blocks above caught the tabs, the rail, the side panel and the
@@ -14915,3 +14819,332 @@ body:not(.phone-mode) .workarea > .side-panel:not(.plugin-panel, :where(#outline
     scroll-behavior: auto !important;
   }
 }
+
+/* ==== L8 Settings (docs/184 D3, mockup v2-settings; audit DIALOGS-08/09) ====
+   One FIXED frame: the card is the same height on every page, so the footer
+   and the close button never jump when a page is chosen (Word Options and Docs
+   settings). A 12.5rem navigation, the page on the right with its own title
+   and close, one option per row (label left, control right, min-height 3rem,
+   one short help line), and a footer spanning both: Reset to defaults, the
+   "changes apply as you make them" line, Done. `dialog-anatomy.spec.mjs`
+   holds the height. */
+#settingsPanel .settings-dialog {
+  display: grid;
+  grid-template-columns: 12.5rem minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  block-size: min(34rem, calc(100dvh - 2rem));
+  max-height: calc(100dvh - 2rem);
+}
+#settingsPanel .settings-head {
+  grid-column: 1;
+  grid-row: 1;
+  padding: var(--space-5) var(--space-5) var(--space-3);
+  background: var(--bg-2);
+  border-inline-end: 1px solid var(--line);
+}
+#settingsPanel .settings-nav {
+  grid-column: 1;
+  grid-row: 2;
+  display: grid;
+  align-content: start;
+  gap: 0.125rem;
+  padding: 0 var(--space-3) var(--space-3);
+  border-inline-end: 1px solid var(--line);
+  background: var(--bg-2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+#settingsPanel .settings-nav button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-block-size: var(--h-input);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  text-align: start;
+  cursor: pointer;
+}
+#settingsPanel .settings-nav button .ms { font-size: var(--icon-sm); color: var(--muted); }
+#settingsPanel .settings-nav button:hover { background: var(--hover); }
+#settingsPanel .settings-nav button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent-text); }
+#settingsPanel .settings-nav button[aria-selected="true"] .ms { color: var(--accent-text); }
+#settingsPanel .settings-nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+#settingsPanel .settings-main {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+}
+#settingsPanel .settings-page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-block-size: var(--h-input);
+  padding: var(--space-4) var(--space-5) var(--space-2) var(--space-6);
+}
+#settingsPanel .settings-page-title { margin: 0; font-size: var(--fs-lg); font-weight: 600; }
+#settingsPanel .settings-body {
+  /* Not the old two-column flow (`.settings-body` above): one page, one column. */
+  columns: auto;
+  display: block;
+  flex: 1 1 auto;
+  min-block-size: 0;
+  padding: 0 var(--space-6) var(--space-4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+#settingsPanel .settings-page[hidden] { display: none; }
+#settingsPanel .settings-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-block-size: 3rem;
+  padding: var(--space-2) 0;
+  border-block-start: 1px solid var(--line);
+}
+#settingsPanel .settings-page > .settings-row:first-child,
+#settingsPanel .settings-group > .settings-row:first-child { border-block-start: 0; }
+#settingsPanel .settings-row[hidden],
+#settingsPanel .settings-group[hidden] { display: none; }
+#settingsPanel .settings-row-label { flex: 1 1 auto; min-width: 0; display: grid; gap: 0.125rem; }
+#settingsPanel .settings-row-label .settings-label { margin: 0; font-weight: var(--fw-medium); }
+#settingsPanel .settings-help {
+  display: block;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+#settingsPanel .settings-help[hidden],
+#settingsPanel .settings-help:empty { display: none; }
+#settingsPanel .settings-row-control {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-inline-size: 60%;
+}
+#settingsPanel .settings-row-control .dialog-select,
+#settingsPanel .settings-input { inline-size: 13.75rem; max-inline-size: 100%; block-size: var(--h-input); }
+#settingsPanel .settings-input-short { inline-size: 5.625rem; }
+.settings-input {
+  min-width: 0;
+  padding: 0 0.625rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-md);
+  block-size: var(--h-input);
+}
+.settings-input:focus { outline: none; border-color: var(--accent-text); box-shadow: 0 0 0 0.1875rem var(--accent-soft); }
+#settingsPanel .settings-row-actions .settings-row-control { max-inline-size: none; flex-wrap: wrap; justify-content: flex-end; }
+#settingsPanel .settings-row-control .segmented { inline-size: 15rem; }
+#settingsPanel .settings-row-stack { flex-direction: column; align-items: stretch; gap: var(--space-2); }
+#settingsPanel .settings-row-actions { justify-content: space-between; }
+#settingsPanel .settings-row-actions .settings-status { flex: 1 1 auto; margin: 0; }
+#settingsPanel .settings-page-lede { margin: var(--space-1) 0 var(--space-2); color: var(--muted); font-size: var(--fs-sm); }
+#settingsPanel .settings-page-lede[hidden] { display: none; }
+#settingsPanel .settings-value { color: var(--ink); font-size: var(--fs-md); }
+#settingsPanel .settings-links { gap: var(--space-4); }
+/* The custom swatch has no ring of its own, so its colour input fills all of
+   it (a 26px target, over the 24px floor) without painting past its box. */
+#settingsPanel .acc-custom { border-width: 0; }
+#settingsPanel .settings-foot { grid-column: 1 / -1; grid-row: 3; background: var(--bg-2); }
+#settingsPanel .settings-foot .dialog-button-utility { display: inline-flex; align-items: center; gap: var(--space-1); }
+#settingsPanel .settings-foot .dialog-button-utility .ms { font-size: var(--icon-sm); }
+#settingsPanel .settings-foot .dialog-actions { flex: 0 0 auto; margin-left: 0; }
+.dialog-foot-status { margin-inline-start: auto; color: var(--muted); font-size: var(--fs-sm); }
+
+/* The add-in list, inline (DIALOGS-08): one row per add-in with a switch on
+   the right, never a primary button repeated down the list. */
+.settings-addins { display: grid; margin: 0; padding: 0; list-style: none; }
+.settings-addins .plugins-row { display: flex; align-items: center; gap: var(--space-4); min-block-size: 3rem; padding: var(--space-2) 0; border-block-start: 1px solid var(--line); }
+.settings-addins .plugins-row:first-child { border-block-start: 0; }
+.settings-addins .plugins-row-text { flex: 1 1 auto; min-width: 0; display: grid; gap: 0.125rem; }
+.settings-addins .plugins-description { margin: 0; color: var(--muted); font-size: var(--fs-sm); }
+.settings-addins .plugins-actions { flex: 0 0 auto; display: flex; align-items: center; gap: var(--space-2); }
+.settings-addins .plugins-empty { color: var(--muted); font-size: var(--fs-sm); }
+.settings-addins-install { display: flex; gap: var(--space-2); }
+.settings-addins-install[hidden] { display: none; }
+#settingsPanel .settings-addins-install .settings-input { flex: 1 1 auto; inline-size: auto; }
+
+/* A switch: a real checkbox with `role="switch"`, drawn as a track and thumb.
+   Native semantics (Space toggles, its label clicks it, `checked` is the
+   state); both themes from the palette. Used by Settings and Manage add-ins. */
+.settings-switch {
+  appearance: none;
+  position: relative;
+  flex: 0 0 auto;
+  inline-size: 2.25rem;
+  block-size: var(--h-dense);
+  margin: 0;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--ink) 28%, var(--surface));
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+.settings-switch::after {
+  content: "";
+  position: absolute;
+  inset-block-start: 0.1875rem;
+  inset-inline-start: 0.1875rem;
+  inline-size: 1.125rem;
+  block-size: 1.125rem;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--e1);
+  transition: transform 0.12s ease;
+}
+.settings-switch:checked { background: var(--accent); }
+.settings-switch:checked::after { transform: translateX(0.75rem); }
+[dir="rtl"] .settings-switch:checked::after { transform: translateX(-0.75rem); }
+.settings-switch:disabled { opacity: 0.5; cursor: not-allowed; }
+.settings-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* A phone (or any window under 40rem): the frame is the bottom sheet, the
+   navigation a row of tabs above the page, and a row's control drops under
+   its label. */
+@media (max-width: 40rem) {
+  #settingsPanel .settings-dialog { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; block-size: 86vh; }
+  #settingsPanel .settings-head { grid-row: 1; border: 0; }
+  #settingsPanel .settings-nav { grid-column: 1; grid-row: 2; grid-auto-flow: column; justify-content: start; padding: 0 var(--space-3) var(--space-2); overflow-x: auto; border: 0; }
+  #settingsPanel .settings-main { grid-column: 1; grid-row: 3; min-width: 0; }
+  #settingsPanel .settings-foot { grid-row: 4; }
+  #settingsPanel .settings-body { padding-inline: var(--space-4); }
+  /* A grid, not a wrapping flex row: a column of `minmax(0, 1fr)` is the only
+     box a percentage-wide control cannot push past the sheet. */
+  #settingsPanel .settings-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+  #settingsPanel .settings-row:has(> .settings-row-control > .settings-switch) { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  #settingsPanel .settings-row-control { max-inline-size: none; min-width: 0; flex-wrap: wrap; }
+  #settingsPanel .settings-row-control .dialog-select,
+  #settingsPanel .settings-row-control .segmented,
+  #settingsPanel .settings-input { inline-size: 100%; }
+  #settingsPanel .settings-input-short { inline-size: 5.625rem; }
+}
+
+/* Borrowed into the File page (`file_pane.mjs`): the pane scrolls, so the frame
+   lets go of its fixed height and its inner scrolling. */
+#settingsPanel.panel-in-page .settings-dialog { block-size: auto; max-height: none; }
+#settingsPanel.panel-in-page .settings-body,
+#settingsPanel.panel-in-page .settings-nav { overflow: visible; overscroll-behavior: auto; }
+/* The page's measure starts at its heading's edge, so the navigation and the
+   page give up the dialog's own inset there (file-page-panes.spec). */
+#settingsPanel.panel-in-page .settings-nav { padding-inline: 0 var(--space-3); background: none; }
+#settingsPanel.panel-in-page .settings-nav button { padding-inline-start: 0; }
+/* ==== end L8 Settings ==== */
+
+/* ==== L8 Page setup (docs/184 D2, mockup v2-dialog; audit DIALOGS-10) ====
+   L width: the fields on the left, the sheet on the right, pinned to the top.
+   Paper size and page colour share a row; the margin presets are chips; the
+   footer carries Apply to on the left. */
+#pageSetupMenu .page-setup-dialog { width: min(var(--dialog-width-l), 100%); }
+#pageSetupMenu .page-setup-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 12.5rem;
+  gap: var(--dlg-gap);
+  align-items: start;
+}
+#pageSetupMenu .ps-fields { display: grid; gap: var(--space-5); min-width: 0; }
+#pageSetupMenu .ps-fields > .dialog-group { margin: 0; display: grid; gap: var(--dlg-gap-in); }
+#pageSetupMenu [hidden] { display: none; }
+#pageSetupMenu .orientation-segmented { inline-size: 100%; }
+#pageSetupMenu .orientation-segmented .ms { display: inline-block; font-size: var(--icon-sm); }
+#pageSetupMenu .orientation-segmented button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); }
+#pageSetupMenu .ps-margin-chips { inline-size: 100%; block-size: var(--h-input); }
+#pageSetupMenu .ps-margin-chips button { min-block-size: 0; block-size: 100%; }
+#pageSetupMenu .page-preview {
+  display: flex;
+  align-self: stretch;
+  justify-content: center;
+  padding: var(--space-6) var(--space-4);
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+}
+#pageSetupMenu .page-preview-sheet { width: min(8.5rem, 100%); }
+#pageSetupMenu .page-preview-sheet[data-orientation="landscape"] { width: min(11rem, 100%); }
+#pageSetupMenu .dialog-advanced > summary { gap: var(--space-2); }
+#pageSetupMenu .dialog-advanced-hint { color: var(--muted); font-size: var(--fs-sm); font-weight: 400; }
+#pageSetupMenu .dialog-advanced[open] .dialog-advanced-hint { display: none; }
+
+/* A colour control shaped like a select: swatch, name, caret. The native
+   picker is the transparent input laid over it, so the hit target is the whole
+   control and the keyboard reaches it as one colour input. */
+.color-select {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  block-size: var(--h-input);
+  padding: 0 var(--space-2) 0 0.625rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--fs-md);
+  font-weight: 400;
+  cursor: pointer;
+}
+.color-select:focus-within { border-color: var(--accent-text); box-shadow: 0 0 0 0.1875rem var(--accent-soft); }
+.color-select-swatch { flex: 0 0 auto; inline-size: 1.125rem; block-size: 1.125rem; border: 1px solid var(--line-strong); border-radius: var(--r-xs); background: var(--swatch, var(--paper)); }
+.color-select-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.color-select-caret { flex: 0 0 auto; font-size: var(--icon-sm); color: var(--muted); }
+#pageSetupMenu .color-select input[type="color"] {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* A labelled field in a footer (Page setup's Apply to): the label beside its
+   select, on the left where D1 puts everything that is not an action. */
+.dialog-foot-field { display: flex; align-items: center; gap: var(--space-3); color: var(--muted); font-size: var(--fs-sm); font-weight: 600; }
+.dialog-foot-field .dialog-select { inline-size: 12rem; }
+
+@media (max-width: 40rem) {
+  #pageSetupMenu .page-setup-body { grid-template-columns: minmax(0, 1fr); }
+  #pageSetupMenu .page-preview { display: none; }
+}
+body.phone-mode #pageSetupMenu .page-preview { display: none; }
+body.phone-mode #pageSetupMenu .page-setup-body { grid-template-columns: minmax(0, 1fr); }
+/* ==== end L8 Page setup ==== */
+
+/* ==== L8 Link popover (docs/184 D-13, audit DIALOGS-11) ====
+   Hangs under the selection like Google Docs' link popover: no scrim, the
+   dialog radius and shadow, two fields and one action row. */
+.link-popover {
+  position: fixed;
+  z-index: 60;
+  inline-size: min(22.5rem, calc(100vw - 1rem));
+  padding: var(--space-4);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--e3);
+}
+.link-popover[hidden] { display: none; }
+.link-popover-form { display: grid; gap: var(--space-3); }
+.link-popover-field { display: grid; gap: 0.375rem; color: var(--muted); font-size: var(--fs-sm); font-weight: 600; }
+.link-popover-field .settings-input { inline-size: 100%; box-sizing: border-box; }
+.link-popover-field .settings-input[aria-invalid="true"] { border-color: var(--danger, var(--accent-text)); }
+.link-popover-places { display: grid; max-block-size: 12rem; margin: calc(-1 * var(--space-2)) 0 0; padding: var(--space-1); overflow-y: auto; overscroll-behavior: contain; list-style: none; border: 1px solid var(--line); border-radius: var(--r-sm); }
+.link-popover-places[hidden] { display: none; }
+.link-popover-place { display: flex; align-items: center; min-block-size: var(--h-ctl); padding: 0 var(--space-2); border-radius: var(--r-xs); color: var(--ink); font-size: var(--fs-md); cursor: pointer; }
+.link-popover-place:hover,
+.link-popover-place:focus { background: var(--hover); outline: none; }
+.link-popover-error { margin: 0; color: var(--danger, var(--ink)); font-size: var(--fs-sm); }
+.link-popover-error:empty { display: none; }
+.link-popover-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); }
+.link-popover-actions .dialog-button-utility { margin-inline-end: auto; }
+/* ==== end L8 Link popover ==== */
