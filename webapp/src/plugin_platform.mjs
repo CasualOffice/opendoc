@@ -41,6 +41,7 @@ import { createCoEditor } from "./ai_coeditor.mjs";
 import { registerAiLive } from "./ai_live.mjs";
 import { capabilityLine, loadAiEditSetting, saveAiEditSetting } from "./ai_edit_mode.mjs";
 import { addCommandSource, shown } from "./plugin_command_sources.mjs";
+import { paintedSelectionRect } from "./floating_arbiter.mjs";
 import {
   addInstalled,
   admitInOrder,
@@ -1048,8 +1049,18 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
   /** The ✦ actions on a selection, or the first AI plugin's panel with none. */
   function actions() {
     if (ed.hasRange?.() && selPopover && contributed("selection").length) {
-      ed.positionSelToolbar?.();
-      openPopover(selPopover, { keyboard: true, anchor: shown(selButton) ?? selButton });
+      // The ✦ menu hangs off the mini-toolbar, which only a pointer selection
+      // earns (docs/184 D-12) and whose next key retires it, the ⌘/ that got
+      // here included. This command earns it back for the current selection.
+      // If it still is not on screen (outranked by a link card or object bar),
+      // the menu hangs off the selection itself, never the window's corner.
+      ed.positionSelToolbar?.({ earn: true });
+      const onScreen = shown(selButton);
+      openPopover(selPopover, {
+        keyboard: true,
+        anchor: onScreen ?? selButton,
+        anchorRect: onScreen ? null : paintedSelectionRect(ed.pagesEl),
+      });
       return;
     }
     const first = contributed("selection")[0]?.[0] ?? null;

@@ -60,6 +60,8 @@ test("floating toolbar text-color picker opens the ribbon swatch menu and applie
   await expect(textCtl).not.toHaveClass(/is-mixed/);
 
   await reselectFromStart(page, 6);
+  // The keys retire the bar (docs/184 D-12); the pointer earns it back.
+  await pointerSelectHighlight(page);
   await page.locator("#selTextColorBtn").click();
   const menu = page.locator("#selTextColorMenu");
   await expect(menu).toBeVisible();
@@ -113,7 +115,9 @@ test("floating toolbar highlight picker applies a named highlight and clears it 
   await reselectFromStart(page, 6);
   await expect.poll(() => barColor(page, "#highlightBar")).toBe("rgb(0, 255, 0)");
 
-  // Clearing the highlight (No color) removes it from the run.
+  // Clearing the highlight (No color) removes it from the run. The keys of the
+  // reselect retired the bar (docs/184 D-12); the pointer earns it back.
+  await pointerSelectHighlight(page);
   await page.locator("#selHighlightBtn").click();
   await menu.locator('[data-highlight="none"]').click();
   await expect(menu).toBeHidden();

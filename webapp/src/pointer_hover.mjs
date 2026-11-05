@@ -51,6 +51,10 @@ function dragOf(state) {
 export function createPointerHover(host) {
   let frame = 0;
   let pending = null;
+  // Where the pointer last rested over a sheet, so a change of the follow chord
+  // alone (Ctrl/Cmd pressed or released with the pointer still) can re-probe:
+  // Word swaps the I-beam for the hand on the key, not on the next mouse move.
+  let resting = null;
 
   /** Writes one router answer onto the surface. `page` is the sheet the pointer
    *  is over, or `null` during a drag, when the gesture owns the whole window
@@ -162,13 +166,14 @@ export function createPointerHover(host) {
     return probe;
   }
 
-  return {
+  const router = {
     /** The gesture in flight, as `pointer_cursor.mjs` names it, or `""`. */
     dragKind: () => dragOf(host.state()),
 
     /** Drops the router's cursor everywhere, back to the CSS default. */
     clear() {
       pending = null;
+      resting = null;
       if (frame) cancelAnimationFrame(frame);
       frame = 0;
       apply(null, "", "");
@@ -179,32 +184,57 @@ export function createPointerHover(host) {
      *  asks the engine real questions. `page` may be null during a drag. */
     schedule(page, event) {
       pending = { page, clientX: event.clientX, clientY: event.clientY, modifier: !!(event.ctrlKey || event.metaKey) };
-      if (frame) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        const at = pending;
-        pending = null;
-        if (!host.doc() || !at) return;
-        const state = host.state();
-        const drag = dragOf(state);
-        if (!drag && !host.pages().includes(at.page)) return;
-        // A gesture in flight outranks position and needs no engine query: the
-        // handle it grabbed already says which way the drag goes. `rotation` is
-        // 0 until the engine models object rotation (see `pointer_cursor.mjs`).
-        const probe = drag
-          ? {
-              drag,
-              handle: state.resizeDrag?.handleKind ?? state.cropDrag?.handleKind ?? 0,
-              rotation: 0,
-            }
-          : probeAt(at.page, at, state);
-        const { target, cursor } = resolvePointerCursor(probe);
-        apply(drag ? null : at.page, cursor, target);
-        // The hover hint Word gives a link: where it goes, and how to follow it
-        // (audit CANVAS-16). A native tooltip on the sheet, so it costs no node
-        // and a screen reader's hover reading gets it too.
-        tipLink(drag ? null : at.page, probe.link ? probe : null);
-      });
+      resting = page ? { page, clientX: event.clientX, clientY: event.clientY } : null;
+      run();
+    },
+
+    /** The follow chord changed with the pointer still (a Control/Meta key
+     *  event, or the window losing focus with it held): re-route the resting
+     *  position with the new chord. O(1) when the pointer is not over a sheet. */
+    modifierChanged(held) {
+      if (!resting) return;
+      pending = { ...resting, modifier: held };
+      run();
     },
   };
+
+  /** One probe per animation frame, of the latest pending position. */
+  function run() {
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      const at = pending;
+      pending = null;
+      if (!host.doc() || !at) return;
+      const state = host.state();
+      const drag = dragOf(state);
+      if (!drag && !host.pages().includes(at.page)) return;
+      // A gesture in flight outranks position and needs no engine query: the
+      // handle it grabbed already says which way the drag goes. `rotation` is
+      // 0 until the engine models object rotation (see `pointer_cursor.mjs`).
+      const probe = drag
+        ? {
+            drag,
+            handle: state.resizeDrag?.handleKind ?? state.cropDrag?.handleKind ?? 0,
+            rotation: 0,
+          }
+        : probeAt(at.page, at, state);
+      const { target, cursor } = resolvePointerCursor(probe);
+      apply(drag ? null : at.page, cursor, target);
+      // The hover hint Word gives a link: where it goes, and how to follow it
+      // (audit CANVAS-16). A native tooltip on the sheet, so it costs no node
+      // and a screen reader's hover reading gets it too.
+      tipLink(drag ? null : at.page, probe.link ? probe : null);
+    });
+  }
+
+  if (typeof window !== "undefined") {
+    const chord = (event) => {
+      if (event.key === "Control" || event.key === "Meta") router.modifierChanged(!!(event.ctrlKey || event.metaKey));
+    };
+    window.addEventListener("keydown", chord, true);
+    window.addEventListener("keyup", chord, true);
+    window.addEventListener("blur", () => router.modifierChanged(false));
+  }
+  return router;
 }

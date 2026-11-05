@@ -4891,7 +4891,9 @@ body.phone-mode .autocorrect-body {
 [data-float-suppressed="true"] {
   display: none !important;
 }
-/* The mini-toolbar fades with the pointer's distance (Word's behaviour). */
+/* The mini-toolbar fades with the pointer's distance (Word's behaviour). The
+   level itself is a CSSOM rule editor_selection_toolbar.mjs writes, so a
+   pointermove never touches the bar's own style attribute. */
 .sel-toolbar {
   transition: opacity 120ms ease;
 }

@@ -54,7 +54,11 @@ export function onButton(el, handler) {
   });
 }
 
-export function openPopover(p, { keyboard = false, anchor = p.btn } = {}) {
+/** `anchorRect` is the client rectangle to hang the menu from when neither the
+ *  requested anchor nor the trigger is on screen (a chord that opens a
+ *  toolbar's menu while that toolbar is hidden): placing it from a hidden
+ *  element's empty rect put it in the window's top-left corner. */
+export function openPopover(p, { keyboard = false, anchor = p.btn, anchorRect = null } = {}) {
   // An object can be selected with no text caret behind it (clicking a float
   // first thing), and its Fill/Outline pickers must still open. A CHROME
   // popover skips the gate entirely: the language picker is not about the
@@ -65,7 +69,7 @@ export function openPopover(p, { keyboard = false, anchor = p.btn } = {}) {
   for (const q of popovers) if (q !== p) closePopover(q);
   // Measure the control the user actually activated, never a hidden popover owner.
   const visibleAnchor = popoverAnchor(anchor, p.btn);
-  const r = visibleAnchor.getBoundingClientRect();
+  const r = !visibleAnchor.getClientRects().length && anchorRect ? anchorRect : visibleAnchor.getBoundingClientRect();
   p.menu.hidden = false;
   p.activeTrigger = visibleAnchor;
   p.btn.setAttribute("aria-expanded", String(visibleAnchor === p.btn));

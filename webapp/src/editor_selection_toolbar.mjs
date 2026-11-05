@@ -48,6 +48,9 @@ export function createSelectionToolbar(ed) {
     "keydown",
     (event) => {
       if (selToolbar.contains(event.target)) return;
+      // Keys inside the bar's own popovers (✦ actions, the two colour menus)
+      // are the bar being used, not the reader moving on.
+      if (event.target?.closest?.("#selAiMenu, #selTextColorMenu, #selHighlightMenu")) return;
       if (["Shift", "Control", "Meta", "Alt"].includes(event.key)) return;
       pointerMade = false;
       if (!selToolbar.hidden) selToolbar.hidden = true;
@@ -57,21 +60,45 @@ export function createSelectionToolbar(ed) {
   // Fade with distance, as Word's does: the bar is fully there while the
   // pointer is near it and fades out as the pointer leaves for the document,
   // so it never sits opaque over text the reader has moved on to.
+  //
+  // The fade is written to a CSSOM rule, never to an element's attributes: the
+  // floating arbiter watches the bar's `style` (an owner re-placing it) and the
+  // plugin platform watches the root's (a theme change), and a write per
+  // pointermove queued a settle, with a layout read of every highlight, and a
+  // theme broadcast to every plugin, per move. Faded all the way out, the bar is
+  // gone, as Word's is: `hidden`, so it no longer outranks the paste chip and
+  // its buttons leave the tab order and the accessibility tree; the next
+  // pointer selection earns it back.
+  const fadeRule = selToolbarFadeRule(document);
+  const setFade = (opacity) => {
+    if (!fadeRule) return;
+    fadeRule.style.opacity = opacity >= 1 ? "" : String(opacity);
+    fadeRule.style.pointerEvents = opacity < 0.1 ? "none" : "";
+  };
   window.addEventListener(
     "pointermove",
     (event) => {
       if (selToolbar.hidden || event.pointerType === "touch") return;
       const opacity = miniToolbarOpacity(selToolbar.getBoundingClientRect(), event.clientX, event.clientY);
-      selToolbar.style.opacity = String(opacity);
-      selToolbar.style.pointerEvents = opacity < 0.1 ? "none" : "";
+      if (opacity <= 0) {
+        pointerMade = false;
+        selToolbar.hidden = true;
+        setFade(1);
+        return;
+      }
+      setFade(opacity);
     },
     { passive: true },
   );
 
   /** Shows the floating toolbar centred just above the current range selection (or
    *  below it when there's no room), or hides it when the selection is collapsed
-   *  or was not made with the pointer. */
-  function positionSelToolbar() {
+   *  or was not made with the pointer. `earn` is for a command that acts
+   *  through the bar on the current selection however it was made (⌘/ opens
+   *  the bar's ✦ actions, which hang off the bar): it shows the bar for a
+   *  keyboard selection too, until the next key retires it. */
+  function positionSelToolbar({ earn = false } = {}) {
+    if (earn) pointerMade = true;
     if (ed.activeLink || !ed.selection || !ed.hasRange() || !pointerMade) {
       selToolbar.hidden = true;
       return;
@@ -94,10 +121,7 @@ export function createSelectionToolbar(ed) {
     }
     const wasHidden = selToolbar.hidden;
     selToolbar.hidden = false; // must be visible to measure
-    if (wasHidden) {
-      selToolbar.style.opacity = "";
-      selToolbar.style.pointerEvents = "";
-    }
+    if (wasHidden) setFade(1);
     const tw = selToolbar.offsetWidth;
     const th = selToolbar.offsetHeight;
     const viewport = ed.viewportEl.getBoundingClientRect();
@@ -153,4 +177,26 @@ export function createSelectionToolbar(ed) {
   );
 
   return { positionSelToolbar };
+}
+
+/** One CSSOM rule, `.sel-toolbar { }`, that the bar's fade writes into: a
+ *  constructed sheet where the browser has them, else a `<style>` of its own.
+ *  Neither write is a DOM mutation, so no MutationObserver hears a fade. */
+function selToolbarFadeRule(doc) {
+  try {
+    let sheet;
+    if (typeof CSSStyleSheet === "function" && "adoptedStyleSheets" in doc) {
+      sheet = new CSSStyleSheet();
+      doc.adoptedStyleSheets = [...doc.adoptedStyleSheets, sheet];
+    } else {
+      const style = doc.createElement("style");
+      style.dataset.owner = "sel-toolbar-fade";
+      doc.head.append(style);
+      sheet = style.sheet;
+    }
+    sheet.insertRule("#selToolbar.sel-toolbar {}", 0);
+    return sheet.cssRules[0];
+  } catch {
+    return null;
+  }
 }

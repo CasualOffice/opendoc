@@ -107,6 +107,9 @@ test("the mini-toolbar is earned by a pointer selection, not by a keyboard one",
   expect(consoleErrors).toEqual([]);
 });
 
+// This one guards the pointer-only rule, not the arbiter: a keyboard selection
+// never earns the toolbar, so there is nothing to arbitrate. (Seen red with
+// `!pointerMade` dropped from positionSelToolbar.)
 test("Tab into a table cell raises no toolbar over the row above", async ({ page, consoleErrors }) => {
   await gotoEditor(page);
   await clickIntoFirstPage(page);
@@ -184,5 +187,96 @@ test("when two surfaces want the screen, the higher one wins and the other retur
   await page.evaluate(() => {
     document.getElementById("pasteOptions").hidden = true;
   });
+  expect(consoleErrors).toEqual([]);
+});
+
+// The table + disc is `position: absolute` inside the page overlay, and it IS
+// its own hit box (HF-341): `gutterAt` answers for the box it paints. The
+// arbiter's keep-off-the-selection move writes CLIENT coordinates, right only
+// for the `position: fixed` surfaces; written into the disc they put it off by
+// the page's own offset, away from where a press inserts. So the disc is only
+// ever suppressed or left where the gutter put it.
+test("the arbiter never moves the table insert disc, even over the selection", async ({ page, consoleErrors }) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+  await page.keyboard.type("Above the table.");
+  await page.locator('[data-tab="insert"]').click();
+  await page.locator("#insertTableBtn").click();
+  await page.locator('.gc[data-r="3"][data-c="3"]').click();
+  await expect(page.locator("#tabTable")).toBeEnabled();
+  const cell = await page.evaluate(() => {
+    const r = document.querySelector(".overlay .cell-outline").getBoundingClientRect();
+    return { x: r.x, y: r.y, w: r.width, h: r.height };
+  });
+  await page.mouse.move(cell.x - 37, cell.y + cell.h);
+  await page.mouse.move(cell.x - 36, cell.y + cell.h);
+  const disc = page.locator(".overlay .table-insert-target");
+  await expect(disc).toHaveCount(1);
+  const before = await stableBox(disc);
+  // Create the condition: a painted selection over the disc (the union rect the
+  // arbiter avoids), the disc the only surface that wants the screen, and a
+  // change on a watched surface so the arbiter settles.
+  const moved = await page.evaluate(async () => {
+    const el = document.querySelector(".overlay .table-insert-target");
+    const r = el.getBoundingClientRect();
+    const overlay = el.closest(".overlay");
+    const o = overlay.getBoundingClientRect();
+    const mark = document.createElement("div");
+    mark.className = "highlight";
+    Object.assign(mark.style, { position: "absolute", left: `${r.left - o.left}px`, top: `${r.top - o.top}px`, width: `${r.width}px`, height: `${r.height}px` });
+    overlay.append(mark);
+    // Any change on a watched surface makes the arbiter settle; the toolbar is
+    // watched from boot (the disc is re-created by each overlay repaint).
+    const bar = document.getElementById("selToolbar");
+    bar.classList.add("arbiter-probe");
+    await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+    const after = el.getBoundingClientRect();
+    bar.classList.remove("arbiter-probe");
+    mark.remove();
+    return { dx: Math.round(after.left - r.left), dy: Math.round(after.top - r.top), inline: el.style.top };
+  });
+  expect(moved, `the disc at ${before.x},${before.y} was moved`).toMatchObject({ dx: 0, dy: 0 });
+  expect(consoleErrors).toEqual([]);
+});
+
+// The fade follows every pointermove, so it must not write anything a
+// MutationObserver hears: the arbiter watches the bar's `style` and settles
+// (a layout read of every highlight) on each record, and the plugin platform
+// broadcasts a theme change on the root's. Faded all the way out, the bar is
+// gone (hidden), so it stops outranking the paste chip and leaves the tab order.
+test("the mini-toolbar fades without style writes, and is gone once fully faded", async ({ page, consoleErrors }) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+  await page.keyboard.type("FADEWORD ");
+  await moveCaretToDocStart(page);
+  for (let i = 0; i < 8; i += 1) await page.keyboard.press("Shift+ArrowRight");
+  const word = await stableBox(page.locator("#pages .overlay .highlight").first());
+  await page.keyboard.press("ArrowLeft");
+  await page.mouse.move(word.x + 2, word.y + word.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(word.x + word.width - 2, word.y + word.height / 2, { steps: 4 });
+  await page.mouse.up();
+  const bar = page.locator("#selToolbar");
+  await expect(bar).toBeVisible();
+  const box = await stableBox(bar);
+  await page.evaluate(() => {
+    window.__fadeWrites = 0;
+    const count = (records) => (window.__fadeWrites += records.length);
+    window.__fadeObserver = new MutationObserver(count);
+    window.__fadeObserver.observe(document.getElementById("selToolbar"), { attributes: true, attributeFilter: ["style"] });
+    window.__fadeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
+  });
+  // Partly away: fading, still there, and not one style write for it.
+  const cx = box.x + box.width / 2;
+  for (const dy of [60, 90, 120]) await page.mouse.move(cx, box.y + box.height + dy);
+  await expect.poll(() => bar.evaluate((el) => Number(getComputedStyle(el).opacity))).toBeLessThan(1);
+  await expect(bar).toBeVisible();
+  expect(await page.evaluate(() => window.__fadeWrites), "style writes per pointermove").toBe(0);
+  // All the way away: hidden, not merely transparent.
+  await page.mouse.move(cx, box.y + box.height + 400);
+  await expect(bar).toBeHidden();
+  await page.evaluate(() => window.__fadeObserver.disconnect());
   expect(consoleErrors).toEqual([]);
 });

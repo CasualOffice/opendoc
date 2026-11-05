@@ -95,7 +95,9 @@ Reuse these; don't invent per-feature variants.
 - **Floating surface** (link card, object bar, table insert markers, mini-toolbar,
   paste chip; `floating_arbiter.mjs`, `docs/184` D12) — one shows at a time, in that
   priority, and never over the selection. The mini-toolbar is earned by a pointer
-  selection and fades with the pointer's distance; the paste chip is a collapsed
+  selection and fades with the pointer's distance (a CSSOM rule, never the bar's own
+  style attribute, which the arbiter observes), hidden once fully faded; only a
+  `position: fixed` surface is ever moved off the selection; the paste chip is a collapsed
   `--h-dense` icon at the end of the paste whose choices open as a context menu.
 - **Dialog** (`.dialog-overlay` + `.dialog-card`) — centered, modal, titled, and
   focus-contained for multi-section document actions such as Document Properties

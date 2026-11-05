@@ -33,15 +33,8 @@ export function createSelectionCommands(ed) {
     ed.verticalGoal.clear();
     if (typeof caret.free === "function") caret.free();
     ed.selection = extend ? { anchor: ed.selection.anchor, focus: to } : { anchor: to, focus: to };
-    // The VIEW moves by the same step, so the caret keeps its place on screen
-    // (Word and Docs). Scrolling only until the caret showed moved the view by
-    // whatever was left below the caret, a fraction of a screen.
-    const moved = ed.doc.caretRect(to.node, to.offset);
-    const movedPage = moved.length >= 5 ? ed.pages[moved[0] - 1] : null;
-    if (movedPage) {
-      const now = ed.scaleOf(movedPage);
-      ed.viewportEl.scrollTop += now.rect.top + moved[2] * now.sy - caretClientY;
-    }
+    // A jump (Ctrl+Home/End, Go to) brings the caret into view; only the
+    // viewport step below keeps the caret's screen height.
     ed.drawSelection();
     ed.focusEditorSurface();
     ed.scrollCaretIntoView();

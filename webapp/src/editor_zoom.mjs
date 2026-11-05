@@ -5,7 +5,7 @@
 import { closePopover, registerPopover } from "./popover_manager.mjs";
 import { fitPageIndex, fitZoomFactor, parseZoomInput, reflectZoomMenu } from "./view_zoom.mjs";
 import { TWIPS_PER_INCH } from "./units.mjs";
-import { anchorPoint, anchorScrollDelta, captureAnchor } from "./zoom_anchor.mjs";
+import { anchorPoint, anchorScrollDelta, captureAnchor, sideGutterScroll } from "./zoom_anchor.mjs";
 import { createPageInView } from "./page_in_view.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
@@ -30,6 +30,7 @@ export function createZoom(ed) {
   }
 
   // ---- Zoom anchoring (audit CANVAS-08, CANVAS-V-02; `zoom_anchor.mjs`) -----
+  // The anchor, then the side-gutter cap for a page wider than the window.
   // `renderAll` calls `updateZoomDisplay` once the new factor is decided and
   // BEFORE it lays the band out again, and the relayout after it is synchronous.
   // So this is the one place that sees every zoom change, whatever asked for it
@@ -72,6 +73,12 @@ export function createZoom(ed) {
     const { dx, dy } = anchorScrollDelta(anchor, rect, sx, sy);
     ed.viewportEl.scrollLeft += dx;
     ed.viewportEl.scrollTop += dy;
+    // A page wider than the window shows at most a 24px gutter beside it
+    // (CANVAS-V-02): measured once more, after the scroll above.
+    const view = ed.viewportEl.getBoundingClientRect();
+    const left = view.left + ed.viewportEl.clientLeft;
+    const now = ed.scaleOf(page).rect;
+    ed.viewportEl.scrollLeft += sideGutterScroll(now, { left, right: left + ed.viewportEl.clientWidth });
   }
 
   function noteZoomForAnchor() {

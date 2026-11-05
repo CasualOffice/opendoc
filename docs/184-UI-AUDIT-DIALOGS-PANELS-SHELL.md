@@ -121,11 +121,14 @@ toolbar, Docs' link card, Word's 14-entry table menu). Of the link card, the obj
 table insert markers, the selection mini-toolbar and the paste chip, at most one shows, in
 that priority, and none covers the selection (`floating_arbiter.mjs`: the owners keep showing
 and placing their own element, and one observer settles after every change, so no path can
-forget to ask). A click on an external link places the caret and shows the card (Ctrl/Cmd+click
+forget to ask; only a `position: fixed` surface is moved off the selection, because the table
+insert disc is page-relative and is its own hit box, so it is only ever suppressed). A click on an external link places the caret and shows the card (Ctrl/Cmd+click
 follows it; the pointer is an I-beam until the chord is held, and the sheet's tooltip names the
 target and the chord); an internal link, a contents entry, still jumps on a plain click. The
-mini-toolbar appears only for a pointer-made selection and fades as the pointer leaves it; a
-keyboard selection, Tab into a cell and a link click raise none. Context menus follow the
+mini-toolbar appears only for a pointer-made selection and fades as the pointer leaves it,
+gone once fully faded; a keyboard selection, Tab into a cell and a link click raise none. ⌘/
+(Casual AI on the selection) earns it for the selection it acts on, and its menu hangs off
+the selection if the bar cannot show. The hand over a link follows the Ctrl/Cmd key itself. Context menus follow the
 approved right-click anatomy (`docs/63` §3) and one policy for every builder: no Undo/Redo,
 no refused top-level row (several rows hidden for one reason leave that reason as a note), at
 most 16 rows and 480px with the trailing groups folding into "More"; a table cell offers
@@ -136,7 +139,8 @@ keyboard neighbours and vowels cost less) plus a word-frequency term. The paste 
 collapsed icon at the end of the paste, opened by a click or by Ctrl alone, offering Keep
 source formatting, Match destination formatting, Keep text only and Picture. A zoom keeps the
 point the reader is on (the pointer for Ctrl+wheel and pinch, the caret when it is in view,
-else the middle of the view); PageDown steps one screen less a line and keeps the caret's
+else the middle of the view), and a page then wider than the window keeps at most a 24px side
+gutter; PageDown steps one screen less a line and keeps the caret's
 place on screen; "Page X of Y" names the page most in view while scrolling, and the caret's
 page while the caret is on screen.
 
@@ -157,6 +161,6 @@ margin (CANVAS-18).
 | D6 | `e2e/shell-sparse.spec.mjs` |
 | D7 | `e2e/a11y-floor.spec.mjs`; `theme-contrast.spec.mjs` |
 | D8 | `tests/chrome_units.test.mjs`, `tests/chrome_js_units.test.mjs`, `tests/design_scale.test.mjs` |
-| D12 | `e2e/overlay-arbiter.spec.mjs` (at most one floating surface, none over the selection, in every state; link click; pointer-only mini-toolbar; Tab into a cell; the paste chip); `e2e/context-menu.spec.mjs` (≤16 rows, ≤480px, no Undo/Redo, no disabled top-level row, on text, table and picture); `e2e/zoom-anchor.spec.mjs` (the caret stays in view at 300%; Ctrl+wheel keeps the pointer's point within 4px; PageDown; Page X of Y); `tests/context_menu.test.mjs`, `tests/floating_arbiter.test.mjs`, `tests/zoom_anchor.test.mjs`, `tests/page_in_view.test.mjs`, `tests/spelling.test.mjs` |
+| D12 | `e2e/overlay-arbiter.spec.mjs` (at most one floating surface, none over the selection, in every state; link click; pointer-only mini-toolbar; Tab into a cell; the paste chip; the disc never moved; the fade with no style write); `e2e/context-menu.spec.mjs` (≤16 rows, ≤480px, no Undo/Redo, no disabled top-level row, on text, table and picture); `e2e/zoom-anchor.spec.mjs` (the caret stays in view at 300%; Ctrl+wheel keeps the pointer's point within 4px; the 24px side gutter at 161%; PageDown and Page X of Y on a multi-page document; Ctrl+Home/End); `e2e/ai-assistant.spec.mjs` (⌘/ menu beside the selection); `e2e/pointer-cursor.spec.mjs` (the hand on the key); `tests/context_menu.test.mjs`, `tests/floating_arbiter.test.mjs`, `tests/zoom_anchor.test.mjs`, `tests/page_in_view.test.mjs`, `tests/spelling.test.mjs` |
 
 Implementation status per decision is kept in the `docs/109` rows, not here.

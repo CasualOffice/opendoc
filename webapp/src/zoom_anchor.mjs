@@ -14,6 +14,16 @@
 // arithmetic has a node test; `editor_zoom.mjs` feeds them the live geometry.
 //
 // Complexity: O(1) — one page rectangle before and one after.
+//
+// THE SIDE-GUTTER CAP (audit CANVAS-V-02, the rest of CANVAS-08). Keeping the
+// caret still is not the whole answer once the zoomed page is wider than the
+// window: a caret at the left margin pinned the page's left edge where the
+// margin used to be, so 161% showed a 233px grey band on the left while the
+// page's right edge was off screen. Word and ONLYOFFICE never leave a wide empty
+// band beside a page that does not fit: the page's edge comes to about 24px from
+// the window's. So after the anchor, a page wider than the view (less both
+// gutters) has its near edge pulled in to that gutter; the anchored point moves
+// by exactly the excess, which is what Word does too.
 
 /**
  * The document point under `client` on a page whose sheet occupies `rect` at
@@ -64,4 +74,26 @@ export function anchorPoint(pointer, caret, view) {
     return { x: caret.x, y: caret.y, source: "caret" };
   }
   return { x: (view.left + view.right) / 2, y: (view.top + view.bottom) / 2, source: "view" };
+}
+
+/** Word's side gutter beside a page wider than the window, CSS px. */
+export const SIDE_GUTTER_PX = 24;
+
+/**
+ * The horizontal scroll that pulls a too-wide page's edge to `gutter` px from
+ * the view's edge: positive scrolls right (the page moves left). Zero while the
+ * page fits inside the view less both gutters (it is centred then) or neither
+ * side shows more than the gutter.
+ *
+ * @param {{left:number,right:number}} pageRect the page sheet, client px
+ * @param {{left:number,right:number}} view the viewport's content box, client px
+ */
+export function sideGutterScroll(pageRect, view, gutter = SIDE_GUTTER_PX) {
+  const width = pageRect.right - pageRect.left;
+  if (width <= view.right - view.left - 2 * gutter) return 0;
+  const leftGap = pageRect.left - view.left;
+  if (leftGap > gutter) return leftGap - gutter;
+  const rightGap = view.right - pageRect.right;
+  if (rightGap > gutter) return -(rightGap - gutter);
+  return 0;
 }

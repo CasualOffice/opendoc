@@ -259,15 +259,17 @@ test.describe("the pointer says what the thing under it will do", () => {
     await expect
       .poll(() => page.evaluate(() => document.querySelector(".page-wrap [title]")?.title ?? ""))
       .toContain("https://example.com");
-    // The hand appears while the follow chord (Ctrl, or Cmd on a Mac) is held.
+    // The hand appears while the follow chord (Ctrl, or Cmd on a Mac) is held,
+    // and on the KEY, as Word's does: the pointer does not move between the
+    // press, the hand, the release and the I-beam again.
     const linkX = highlight.x + highlight.width / 2;
     const linkY = highlight.y + highlight.height / 2;
     await page.keyboard.down(MOD);
-    await page.mouse.move(linkX - 1, linkY);
-    await page.mouse.move(linkX, linkY);
     await expect.poll(async () => (await read(page, linkX, linkY)).target).toBe("hyperlink");
     expect((await read(page, linkX, linkY)).cursor).toBe("pointer");
     await page.keyboard.up(MOD);
+    await expect.poll(async () => (await read(page, linkX, linkY)).target).toBe("hyperlink-text");
+    expect((await read(page, linkX, linkY)).cursor).toBe("text");
 
     // Arming the format painter is a whole-surface mode, and its brush must win
     // over whatever the router would otherwise have written here — including the

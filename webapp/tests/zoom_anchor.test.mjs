@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { anchorPoint, anchorScrollDelta, captureAnchor } from "../src/zoom_anchor.mjs";
+import { SIDE_GUTTER_PX, anchorPoint, anchorScrollDelta, captureAnchor, sideGutterScroll } from "../src/zoom_anchor.mjs";
 
 test("the anchored document point returns to its client position after a zoom", () => {
   // A page at (252, 100), 1 CSS px per twip-unit for simplicity; the pointer at
@@ -34,4 +34,22 @@ test("the pointer wins, then a caret in view, then the middle of the view", () =
   const away = anchorPoint(null, { x: 50, y: 2000 }, view);
   assert.equal(away.source, "view");
   assert.deepEqual([away.x, away.y], [500, 450]);
+});
+
+test("a page wider than the window keeps at most a 24px side gutter (CANVAS-V-02)", () => {
+  const view = { left: 40, right: 1280 };
+  // Measured: 161% with the caret at the left margin left the page's left edge
+  // at 233 (a 193px band past the viewport's edge) and its right edge off screen.
+  const wide = { left: 233, right: 233 + 1314 };
+  const dx = sideGutterScroll(wide, view);
+  assert.equal(wide.left - dx - view.left, SIDE_GUTTER_PX, "the near edge comes to the gutter");
+  // The mirror case: a band on the right while the left edge is off screen.
+  const right = { left: -400, right: -400 + 1314 };
+  const back = sideGutterScroll(right, view);
+  assert.equal(view.right - (right.right - back), SIDE_GUTTER_PX);
+  // Both edges past the view, or inside the gutter: nothing to do.
+  assert.equal(sideGutterScroll({ left: 10, right: 1400 }, view), 0);
+  assert.equal(sideGutterScroll({ left: 60, right: 1300 }, view), 0);
+  // A page that fits is centred by the layout, never pulled to one side.
+  assert.equal(sideGutterScroll({ left: 300, right: 1100 }, view), 0);
 });

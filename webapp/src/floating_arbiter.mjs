@@ -25,6 +25,10 @@
 //
 // Complexity: O(surfaces) per settle, five elements and one rectangle union of
 // the painted selection highlights (the visible lines only); no document call.
+// A settle runs only when a surface is shown, hidden or re-placed (its `hidden`,
+// `class` or `style` changes). The mini-toolbar's pointer fade is therefore NOT
+// written to its own `style`: it is a custom property on the root, so a
+// pointermove never queues a settle.
 
 /** Higher wins. The order is decision D-12's. */
 export const FLOATING_PRIORITY = Object.freeze({
@@ -144,7 +148,7 @@ export function createFloatingArbiter({ surfaces, selectionRect, viewportRect, p
   }
 
   function keepOffSelection(el) {
-    if (!el || el.dataset.floatAnchored === "selection") return;
+    if (!el || !movable(el)) return;
     const avoid = selectionRect();
     if (!avoid) return;
     const rect = el.getBoundingClientRect();
@@ -155,6 +159,17 @@ export function createFloatingArbiter({ surfaces, selectionRect, viewportRect, p
     if (next.left === rect.left && next.top === rect.top) return;
     el.style.left = `${Math.round(next.left)}px`;
     el.style.top = `${Math.round(next.top)}px`;
+  }
+
+  /** Only a `position: fixed` surface can be moved: its left/top ARE client
+   *  coordinates, the space `placeClear` answers in. The table insert disc is
+   *  absolute inside a page overlay (offset by the page, scaled by the zoom),
+   *  and it is also its own hit box (HF-341: `gutterAt` answers for the
+   *  painted disc), so moving it would separate what is painted from what is
+   *  clicked. Such a surface is only ever suppressed or shown where its owner
+   *  put it. */
+  function movable(el) {
+    return (el.ownerDocument?.defaultView ?? window).getComputedStyle(el).position === "fixed";
   }
 
   watch();
