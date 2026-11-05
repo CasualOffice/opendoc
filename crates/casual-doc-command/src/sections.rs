@@ -152,6 +152,7 @@ pub fn text_watermark(
             color,
             bold,
             italic,
+            shape_box: None,
         }),
         layout,
         semi_transparent,

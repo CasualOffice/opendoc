@@ -10,6 +10,8 @@ use crate::block::{
     BlockFragment, BorderPattern, CellBorders, CellVerticalMerge, ParagraphDecor,
     ResolvedBorderSegment, ResolvedEdge,
 };
+// Own line (anti-conflict): table edge ownership (`109` FID-L-30).
+use crate::block::CellFragment;
 use crate::display::{
     Color, DisplayList, Fill, Gradient, GradientKind, GradientStop, PaintItem, ShapeGeometry,
     ShapeOutline, Stroke,
@@ -17,6 +19,8 @@ use crate::display::{
 // Own line (anti-conflict): the inline picture's paint transform.
 use crate::display::ShapeTransform;
 use crate::page::{AnchorContent, AnchorStroke, Page, PlacedAnchor, ResolvedPageBorders};
+// Own line (anti-conflict): placed-stack composition (`109` FID-L-30).
+use crate::page::PlacedFragment;
 // Own line: keeps the watermark's import out of the shared sorted list above.
 use crate::display::LayerBlend;
 // Own line (anti-conflict): a geometry path's `a:path@fill` mode.
@@ -38,7 +42,7 @@ const COLUMN_SEPARATOR_WIDTH: Twip = Twip(10);
 
 /// Stroke width (twips) of the footnote separator rule — Word's ~0.5pt hairline
 /// between the body and the footnote band, the same weight as a column rule.
-const FOOTNOTE_SEPARATOR_WIDTH: Twip = Twip(10);
+pub(crate) const FOOTNOTE_SEPARATOR_WIDTH: Twip = Twip(10);
 
 /// Length (twips) of a *fresh* footnote separator: Word draws a short 2-inch
 /// left-aligned hairline above a note first placed on this page. A note continued
@@ -482,47 +486,15 @@ pub fn compose_page_with(page: &Page, options: &ComposeOptions) -> DisplayList {
             },
         });
     }
-    for placed in &page.header {
-        compose_fragment(
-            &mut list,
-            &placed.fragment,
-            placed.rect.origin,
-            placed.rect.size.width,
-            &mut marks,
-        );
-    }
-    for placed in &page.placed {
-        compose_fragment(
-            &mut list,
-            &placed.fragment,
-            placed.rect.origin,
-            placed.rect.size.width,
-            &mut marks,
-        );
-    }
+    compose_placed_stack(&mut list, &page.header, &mut marks);
+    compose_placed_stack(&mut list, &page.placed, &mut marks);
     // The footnote separator rule: Word draws a short hairline between the body
     // and the footnote band (a full-band-width rule when the band continues a note
     // from the previous page). Painted before the note bodies as non-text
     // furniture — it never enters the caret/selection model.
     compose_footnote_separators(&mut list, page);
-    for placed in &page.footnotes {
-        compose_fragment(
-            &mut list,
-            &placed.fragment,
-            placed.rect.origin,
-            placed.rect.size.width,
-            &mut marks,
-        );
-    }
-    for placed in &page.footer {
-        compose_fragment(
-            &mut list,
-            &placed.fragment,
-            placed.rect.origin,
-            placed.rect.size.width,
-            &mut marks,
-        );
-    }
+    compose_placed_stack(&mut list, &page.footnotes, &mut marks);
+    compose_placed_stack(&mut list, &page.footer, &mut marks);
     // Margin line numbers (`w:lnNumType`): page furniture in the margin, already
     // positioned in page-local twips by the post-pagination pass. Painted after
     // the body — nothing overlaps them, the margin carries no glyphs — and before
@@ -1311,12 +1283,62 @@ fn text_box_clip(rect: Rect, layout: TextBoxContentLayout) -> Rect {
 /// how wide that is. `marks` collects the fragment's non-printing characters, so a
 /// cell's, a header's, a footnote's and a text box's marks all come from this one
 /// recursion rather than a second implementation (the uniform-flow rule).
+/// Production stacks go through `compose_placed_stack` / `compose_blocks`,
+/// which also pass the row below; this standalone form is the tests' entry.
+#[cfg(test)]
 fn compose_fragment(
     list: &mut DisplayList,
     fragment: &BlockFragment,
     origin: Point,
     measure: Twip,
     marks: &mut MarkLayer,
+) {
+    compose_fragment_above(list, fragment, origin, measure, marks, None);
+}
+
+/// Composes one of a page's placed stacks (header, body, footnotes, footer)
+/// through the same path, so every band gets the same cell-edge ownership
+/// (`109` FID-L-30; one pipeline for every block container).
+///
+/// A fragment is "followed by" the next placed one only when that one sits
+/// directly underneath it: same leading x and starting at this one's bottom.
+/// A multi-column page keeps all columns in one flat list, so the next entry
+/// after a column's foot row is the top of the next column, which is not the
+/// row below; treating it as such dropped the foot row's bottom rule. With no
+/// adjacent successor the row closes itself, exactly as at a page foot.
+///
+/// `O(fragments)`: one look-ahead per fragment.
+fn compose_placed_stack(list: &mut DisplayList, stack: &[PlacedFragment], marks: &mut MarkLayer) {
+    for (index, placed) in stack.iter().enumerate() {
+        let below = stack
+            .get(index + 1)
+            .filter(|next| {
+                next.rect.origin.x == placed.rect.origin.x
+                    && next.rect.origin.y == placed.rect.bottom()
+            })
+            .map(|next| &next.fragment);
+        compose_fragment_above(
+            list,
+            &placed.fragment,
+            placed.rect.origin,
+            placed.rect.size.width,
+            marks,
+            below,
+        );
+    }
+}
+
+/// `compose_fragment` for a fragment directly followed, in the same stack,
+/// by `below`. A table row uses it to leave a shared horizontal cell edge to the
+/// row underneath, which paints it as its top (FID-L-30): painting it in both
+/// cells doubled every interior rule.
+fn compose_fragment_above(
+    list: &mut DisplayList,
+    fragment: &BlockFragment,
+    origin: Point,
+    measure: Twip,
+    marks: &mut MarkLayer,
+    below: Option<&BlockFragment>,
 ) {
     match fragment {
         BlockFragment::Paragraph {
@@ -1350,8 +1372,13 @@ fn compose_fragment(
             );
             compose_paragraph_into(list, lines, content_origin, content_measure, marks);
         }
-        BlockFragment::TableRow { cells, clip, .. } => {
+        BlockFragment::TableRow {
+            cells, clip, table, ..
+        } => {
             let row_height = fragment.height();
+            // Shading first, for every cell, so a shared edge centred on the grid
+            // line (half of it over the neighbouring cell) is not painted over by
+            // that neighbour's fill.
             for cell in cells {
                 if matches!(cell.vertical_merge, CellVerticalMerge::Continue) {
                     continue;
@@ -1367,7 +1394,12 @@ fn compose_fragment(
                             cell_height + cell.cell_spacing.top + cell.cell_spacing.bottom,
                         ),
                     );
-                    compose_cell_borders(list, table_slot, &cell.table_borders);
+                    compose_cell_borders(
+                        list,
+                        table_slot,
+                        &cell.table_borders,
+                        EdgeOwnership::OWN_BOX,
+                    );
                 }
                 // Cell background shading (`w:shd`) fills the cell before anything
                 // else, behind both the grid line and the content.
@@ -1378,11 +1410,30 @@ fn compose_fragment(
                         stroke: None,
                     });
                 }
+            }
+            let below_row = match below {
+                Some(BlockFragment::TableRow {
+                    table: below_table,
+                    cells: below_cells,
+                    ..
+                }) if below_table == table => Some(below_cells.as_slice()),
+                _ => None,
+            };
+            // One index per row, so each cell's ownership is two binary
+            // searches instead of a scan of both rows.
+            let edges = RowEdgeIndex::new(cells, below_row);
+            for cell in cells {
+                if matches!(cell.vertical_merge, CellVerticalMerge::Continue) {
+                    continue;
+                }
+                let cell_height = cell.box_height(row_height);
+                let cell_origin = Point::new(origin.x + cell.x, origin.y + cell.cell_spacing.top);
+                let cell_rect = Rect::new(cell_origin, Size::new(cell.width, cell_height));
                 // Only the cell's RESOLVED borders are drawn — no default grid
                 // line. Word draws nothing for a border-less cell (common in
                 // layout tables); a gray default grid would show boundaries Word
                 // hides. Bordered tables get their borders via the resolved edges.
-                compose_cell_borders(list, cell_rect, &cell.borders);
+                compose_cell_borders(list, cell_rect, &cell.borders, edges.ownership(cell));
                 // A TURNED cell (`w:textDirection` tbRl/btLr): the blocks were
                 // flowed upright at the cell's content height, so they are
                 // composed upright in the exchanged content box and turned onto
@@ -1445,15 +1496,174 @@ enum BorderAxis {
     Vertical,
 }
 
+/// Which of a cell's resolved edges this cell paints, and where.
+///
+/// In a collapsed-border table (no `w:tblCellSpacing`) border-conflict
+/// resolution gives BOTH cells on a shared edge the same winner, so painting
+/// every cell's four sides drew each interior rule twice: two adjacent bars,
+/// one inside each cell, twice as wide as authored and off the grid line (the
+/// calendar table of a Word sample showed two 3pt bars over its day numbers).
+/// Word paints one rule per edge. So a shared vertical edge is painted once,
+/// by the cell on its leading side, centred on the grid line, where layout
+/// reserves half its thickness in each cell (`CellBorderReserve`); and a shared
+/// horizontal edge is painted once, by the row below, as its top, which is
+/// where layout reserves it. Separated borders (cell spacing) keep every side
+/// inside its own box.
+#[derive(Clone, Copy)]
+struct EdgeOwnership {
+    /// Vertical edges centred on the box's sides (collapsed) rather than inside.
+    centred: bool,
+    /// Paint the leading edge (false when the neighbour paints it as its end).
+    start: bool,
+    /// Paint the bottom edge (false when the row below paints it as its top).
+    bottom: bool,
+}
+
+impl EdgeOwnership {
+    /// Every side inside the box: separated cells and the table's own frame.
+    const OWN_BOX: Self = Self {
+        centred: false,
+        start: true,
+        bottom: true,
+    };
+}
+
+/// The two facts edge ownership needs about a row, indexed once per row
+/// (`109` FID-L-30): which x positions some cell of the row ends at (a cell
+/// starting there shares its leading edge), and which spans the row below
+/// covers with painted cells (a cell over a covered span shares its bottom).
+///
+/// Building is `O(n log n)` in the cells of the two rows; each
+/// [`RowEdgeIndex::ownership`] query is `O(log n)`, so a row costs
+/// `O(n log n)` where a per-cell scan of both rows cost `O(n² log n)`.
+struct RowEdgeIndex {
+    /// Every cell's right edge, sorted (duplicates kept, so a count can
+    /// discount the queried cell itself).
+    right_edges: Vec<Twip>,
+    /// The row below's painted spans, merged into disjoint sorted intervals
+    /// (touching spans merged), or `None` with no row of this table below.
+    below: Option<Vec<(Twip, Twip)>>,
+}
+
+impl RowEdgeIndex {
+    fn new(cells: &[CellFragment], below: Option<&[CellFragment]>) -> Self {
+        let mut right_edges: Vec<Twip> = cells
+            .iter()
+            .map(|cell| {
+                note_edge_visit();
+                cell.x + cell.width
+            })
+            .collect();
+        right_edges.sort_unstable();
+        let below = below.map(|row| {
+            let mut spans: Vec<(Twip, Twip)> = row
+                .iter()
+                .inspect(|_| note_edge_visit())
+                .filter(|cell| !matches!(cell.vertical_merge, CellVerticalMerge::Continue))
+                .map(|cell| (cell.x, cell.x + cell.width))
+                .collect();
+            spans.sort_unstable_by_key(|span| span.0);
+            let mut merged: Vec<(Twip, Twip)> = Vec::with_capacity(spans.len());
+            for (start, end) in spans {
+                match merged.last_mut() {
+                    Some(last) if start <= last.1 => last.1 = last.1.max(end),
+                    _ => merged.push((start, end)),
+                }
+            }
+            merged
+        });
+        Self { right_edges, below }
+    }
+
+    /// The ownership of `cell`'s edges (one cell of the indexed row).
+    /// `O(log n)`.
+    fn ownership(&self, cell: &CellFragment) -> EdgeOwnership {
+        if !cell.cell_spacing.is_empty() {
+            return EdgeOwnership::OWN_BOX;
+        }
+        let left = cell.x;
+        let right = cell.x + cell.width;
+        // Cells of the row ending exactly at `left`; a zero-width cell ends at
+        // its own start and does not share an edge with itself.
+        let ending_here = self.right_edges.partition_point(|&x| x <= left)
+            - self.right_edges.partition_point(|&x| x < left);
+        let shared_start = ending_here > usize::from(cell.width == Twip::ZERO);
+        // A vertically merged origin's bottom closes the merge further down, so
+        // it never abuts the next row and is always its own.
+        let bottom_shared = !matches!(cell.vertical_merge, CellVerticalMerge::Restart { .. })
+            && self
+                .below
+                .as_deref()
+                .is_some_and(|spans| covers(spans, left, right));
+        EdgeOwnership {
+            centred: true,
+            start: !shared_start,
+            bottom: !bottom_shared,
+        }
+    }
+}
+
+/// Whether the merged, sorted, disjoint `spans` cover `[left, right)` without a
+/// gap, so the row below's top edges draw everything a bottom edge over that
+/// span would. `O(log n)`.
+fn covers(spans: &[(Twip, Twip)], left: Twip, right: Twip) -> bool {
+    if left >= right {
+        return true;
+    }
+    // The last interval starting at or before `left` is the only one that can
+    // contain it, because the intervals are disjoint and do not touch.
+    let at = spans.partition_point(|span| span.0 <= left);
+    at > 0 && spans[at - 1].1 >= right
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Cells visited while working out edge ownership: the complexity probe
+    /// for the doubling test (SKILL §8 counts work, not milliseconds).
+    static EDGE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts one cell visit in the edge-ownership computation (tests only).
+#[inline]
+fn note_edge_visit() {
+    #[cfg(test)]
+    EDGE_VISITS.with(|visits| visits.set(visits.get() + 1));
+}
+
 /// Paints a cell's resolved (border-conflict-winning) edges. Horizontal sides
-/// may be independently resolved at abutting grid boundaries.
-fn compose_cell_borders(list: &mut DisplayList, rect: Rect, borders: &CellBorders) {
+/// may be independently resolved at abutting grid boundaries. Each edge is
+/// painted across its full reserved band (`ResolvedEdge::total_thickness`), so a
+/// `double` rule shows as line-gap-line, three times its authored width.
+fn compose_cell_borders(
+    list: &mut DisplayList,
+    rect: Rect,
+    borders: &CellBorders,
+    own: EdgeOwnership,
+) {
     compose_horizontal_border(list, rect, borders.top, &borders.top_segments, false);
-    compose_horizontal_border(list, rect, borders.bottom, &borders.bottom_segments, true);
-    if let Some(e) = borders.start {
+    if own.bottom {
+        compose_horizontal_border(list, rect, borders.bottom, &borders.bottom_segments, true);
+    }
+    let vertical = |x: Twip, e: ResolvedEdge, leading: bool| {
+        let band = e.total_thickness();
+        let left = if own.centred {
+            x - Twip(band.raw() / 2)
+        } else if leading {
+            x
+        } else {
+            x - band
+        };
+        Rect::new(
+            Point::new(left, rect.origin.y),
+            Size::new(band, rect.size.height),
+        )
+    };
+    if let Some(e) = borders.start
+        && own.start
+    {
         paint_border(
             list,
-            Rect::new(rect.origin, Size::new(e.width, rect.size.height)),
+            vertical(rect.origin.x, e, true),
             e,
             BorderAxis::Vertical,
         );
@@ -1461,10 +1671,7 @@ fn compose_cell_borders(list: &mut DisplayList, rect: Rect, borders: &CellBorder
     if let Some(e) = borders.end {
         paint_border(
             list,
-            Rect::new(
-                Point::new(rect.right() - e.width, rect.origin.y),
-                Size::new(e.width, rect.size.height),
-            ),
+            vertical(rect.right(), e, false),
             e,
             BorderAxis::Vertical,
         );
@@ -1482,8 +1689,9 @@ fn compose_horizontal_border(
         let Some(edge) = fallback else {
             return;
         };
+        let band = edge.total_thickness();
         let y = if bottom {
-            rect.bottom() - edge.width
+            rect.bottom() - band
         } else {
             rect.origin.y
         };
@@ -1491,7 +1699,7 @@ fn compose_horizontal_border(
             list,
             Rect::new(
                 Point::new(rect.origin.x, y),
-                Size::new(rect.size.width, edge.width),
+                Size::new(rect.size.width, band),
             ),
             edge,
             BorderAxis::Horizontal,
@@ -1499,8 +1707,9 @@ fn compose_horizontal_border(
         return;
     }
     for segment in segments {
+        let band = segment.edge.total_thickness();
         let y = if bottom {
-            rect.bottom() - segment.edge.width
+            rect.bottom() - band
         } else {
             rect.origin.y
         };
@@ -1508,7 +1717,7 @@ fn compose_horizontal_border(
             list,
             Rect::new(
                 Point::new(rect.origin.x + segment.offset, y),
-                Size::new(segment.length, segment.edge.width),
+                Size::new(segment.length, band),
             ),
             segment.edge,
             BorderAxis::Horizontal,
@@ -1760,8 +1969,15 @@ fn compose_blocks(
     marks: &mut MarkLayer,
 ) {
     let mut y = origin.y;
-    for block in blocks {
-        compose_fragment(list, block, Point::new(origin.x, y), measure, marks);
+    for (index, block) in blocks.iter().enumerate() {
+        compose_fragment_above(
+            list,
+            block,
+            Point::new(origin.x, y),
+            measure,
+            marks,
+            blocks.get(index + 1),
+        );
         y = y + block.height();
     }
 }
@@ -1878,6 +2094,362 @@ mod tests {
         assert_eq!(clip.origin.y, origin.y);
         assert_eq!(clip.size.height, Twip(120));
         assert!(matches!(list.items.last(), Some(PaintItem::PopClip)));
+    }
+
+    /// A 3000-twip cell at `x` with `borders`, for the edge-ownership tests.
+    fn bordered_cell(id: u64, x: i32, borders: CellBorders) -> crate::block::CellFragment {
+        use crate::block::{CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge};
+        CellFragment {
+            rotation: None,
+            id: NodeId::from_parts(id, 1).unwrap(),
+            grid_span: 1,
+            x: Twip(x),
+            width: Twip(3000),
+            cell_spacing: Default::default(),
+            blocks: Vec::new(),
+            margins: CellContentMargins::default(),
+            vertical_alignment: CellVAlign::default(),
+            vertical_merge: CellVerticalMerge::None,
+            borders,
+            border_reserve: crate::block::CellBorderReserve::default(),
+            table_borders: CellBorders::default(),
+            shading: None,
+        }
+    }
+
+    fn bordered_row(id: u64, cells: Vec<crate::block::CellFragment>) -> BlockFragment {
+        BlockFragment::TableRow {
+            id: NodeId::from_parts(id, 1).unwrap(),
+            table: NodeId::from_parts(900, 1).unwrap(),
+            cells,
+            height: Twip(400),
+            can_split: true,
+            header: false,
+            merge_keep_next: false,
+            clip: false,
+        }
+    }
+
+    fn edge_of(width: i32, pattern: BorderPattern) -> ResolvedEdge {
+        ResolvedEdge {
+            color: [0, 0, 0, 255],
+            width: Twip(width),
+            pattern,
+        }
+    }
+
+    /// Every filled rect painted, as (x, y, width, height) in twips.
+    fn filled(list: &DisplayList) -> Vec<(i32, i32, i32, i32)> {
+        list.items
+            .iter()
+            .filter_map(|item| match item {
+                PaintItem::Rect {
+                    rect,
+                    fill: Some(_),
+                    ..
+                } => Some((
+                    rect.origin.x.raw(),
+                    rect.origin.y.raw(),
+                    rect.size.width.raw(),
+                    rect.size.height.raw(),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// `109` FID-L-30: two cells share an edge that border-conflict resolution
+    /// gave BOTH the same 3pt (`w:sz=24`, 60-twip) winner. Word paints one rule,
+    /// centred on the grid line; painting each cell's own side drew two adjacent
+    /// 60-twip bars, one inside each cell, over the cell text.
+    #[test]
+    fn a_shared_vertical_cell_edge_is_painted_once_on_the_grid_line() {
+        let thick = edge_of(60, BorderPattern::Solid);
+        let left = bordered_cell(
+            1,
+            0,
+            CellBorders {
+                end: Some(thick),
+                ..CellBorders::default()
+            },
+        );
+        let right = bordered_cell(
+            2,
+            3000,
+            CellBorders {
+                start: Some(thick),
+                ..CellBorders::default()
+            },
+        );
+        let mut list = DisplayList::new();
+        compose_fragment(
+            &mut list,
+            &bordered_row(10, vec![left, right]),
+            Point::new(Twip::ZERO, Twip::ZERO),
+        );
+        let bands = filled(&list);
+        assert_eq!(
+            bands,
+            vec![(2970, 0, 60, 400)],
+            "one 60-twip band centred on the grid line at x=3000"
+        );
+    }
+
+    /// The row below paints a shared horizontal edge as its top, where layout
+    /// reserves it; the row above must not paint it again as its bottom. With
+    /// no row below on the page (a page break, or the table's last row), the
+    /// bottom is the row's own and is painted.
+    #[test]
+    fn a_shared_horizontal_cell_edge_is_painted_once_by_the_row_below() {
+        let rule = edge_of(60, BorderPattern::Solid);
+        let upper = bordered_row(
+            10,
+            vec![bordered_cell(
+                1,
+                0,
+                CellBorders {
+                    bottom: Some(rule),
+                    ..CellBorders::default()
+                },
+            )],
+        );
+        let lower = bordered_row(
+            11,
+            vec![bordered_cell(
+                2,
+                0,
+                CellBorders {
+                    top: Some(rule),
+                    ..CellBorders::default()
+                },
+            )],
+        );
+        let mut list = DisplayList::new();
+        compose_blocks(
+            &mut list,
+            &[upper.clone(), lower],
+            Point::new(Twip::ZERO, Twip::ZERO),
+            Twip(3000),
+            &mut MarkLayer::new(FormattingMarks::default()),
+        );
+        assert_eq!(
+            filled(&list),
+            vec![(0, 400, 3000, 60)],
+            "one band, at the top of the lower row"
+        );
+
+        let mut alone = DisplayList::new();
+        compose_fragment(&mut alone, &upper, Point::new(Twip::ZERO, Twip::ZERO));
+        assert_eq!(
+            filled(&alone),
+            vec![(0, 340, 3000, 60)],
+            "with nothing below, the row closes itself"
+        );
+    }
+
+    /// A row with one 3000-twip cell carrying a 60-twip top and bottom rule:
+    /// the shape of every row of a table whose `insideH` is heavy.
+    fn ruled_row(id: u64) -> BlockFragment {
+        let rule = edge_of(60, BorderPattern::Solid);
+        bordered_row(
+            id,
+            vec![bordered_cell(
+                id,
+                0,
+                CellBorders {
+                    top: Some(rule),
+                    bottom: Some(rule),
+                    ..CellBorders::default()
+                },
+            )],
+        )
+    }
+
+    /// `fragment` placed at (`x`, `y`) on a page, at its own height.
+    fn placed_at(fragment: BlockFragment, x: i32, y: i32) -> PlacedFragment {
+        let height = fragment.height();
+        PlacedFragment {
+            fragment,
+            rect: Rect::new(Point::new(Twip(x), Twip(y)), Size::new(Twip(3000), height)),
+            section: None,
+        }
+    }
+
+    /// A US-letter page with nothing on it, for composing hand-placed stacks.
+    fn empty_page() -> Page {
+        use crate::page::{FlowPos, FlowSpan};
+        let node = NodeId::from_parts(1, 1).unwrap();
+        let at = FlowPos {
+            fragment: 0,
+            line: 0,
+        };
+        Page {
+            number: 1,
+            section: casual_doc_model::v1::SectionId::new(node),
+            page_size: Size::new(Twip(12_240), Twip(15_840)),
+            content_area: Rect::new(
+                Point::new(Twip(1440), Twip(1440)),
+                Size::new(Twip(9360), Twip(12_960)),
+            ),
+            placed: Vec::new(),
+            header: Vec::new(),
+            footer: Vec::new(),
+            anchored: Vec::new(),
+            footnotes: Vec::new(),
+            separators: Vec::new(),
+            page_borders: None,
+            line_numbers: Vec::new(),
+            watermark: None,
+            start: ModelPos::new(node, 0),
+            end: ModelPos::new(node, 0),
+            flow: FlowSpan { start: at, end: at },
+        }
+    }
+
+    /// The horizontal bands painted on `page`, sorted, as (x, y, width, height).
+    fn page_bands(page: &Page) -> Vec<(i32, i32, i32, i32)> {
+        let mut bands = filled(&compose_page(page));
+        bands.sort_unstable();
+        bands
+    }
+
+    /// FID-L-30 at a column foot: a multi-column page keeps every column's
+    /// fragments in one flat `placed` list, so the entry after the last row of
+    /// column 1 is the first row of column 2. That is not the row below, and
+    /// the column-1 foot row must close itself, exactly as at a page foot
+    /// (where there is no next entry at all); the column-2 head row paints its
+    /// own top. Taking the next entry as the row below dropped the rule at the
+    /// column-1 foot.
+    #[test]
+    fn a_table_row_at_a_column_foot_paints_its_own_bottom_edge() {
+        let mut page = empty_page();
+        page.placed = vec![
+            placed_at(ruled_row(10), 0, 0),
+            placed_at(ruled_row(11), 0, 400),
+            // The same table continues at the top of column 2.
+            placed_at(ruled_row(12), 5000, 0),
+        ];
+        assert_eq!(
+            page_bands(&page),
+            vec![
+                // Row 10: its top; its bottom is row 11's top.
+                (0, 0, 3000, 60),
+                // Row 11: its top, and its own bottom at the column foot.
+                (0, 400, 3000, 60),
+                (0, 740, 3000, 60),
+                // Row 12 at the head of column 2: top and its own bottom.
+                (5000, 0, 3000, 60),
+                (5000, 340, 3000, 60),
+            ],
+            "the column-1 foot row keeps its bottom rule; the shared rule between \
+             rows 10 and 11 is painted once"
+        );
+    }
+
+    /// FID-L-30 in every band, not only the body: header, footer and footnote
+    /// tables go through the same stack composition, so a shared horizontal
+    /// edge between two of their rows is painted once, by the row below.
+    /// They used to be composed fragment by fragment with no row below, which
+    /// painted every heavy `insideH` rule as two stacked bars.
+    #[test]
+    fn header_footer_and_footnote_tables_paint_a_shared_row_edge_once() {
+        let stack = || {
+            vec![
+                placed_at(ruled_row(10), 0, 0),
+                placed_at(ruled_row(11), 0, 400),
+            ]
+        };
+        let once = vec![(0, 0, 3000, 60), (0, 400, 3000, 60), (0, 740, 3000, 60)];
+        for band in ["header", "footer", "footnotes"] {
+            let mut page = empty_page();
+            match band {
+                "header" => page.header = stack(),
+                "footer" => page.footer = stack(),
+                _ => page.footnotes = stack(),
+            }
+            assert_eq!(
+                page_bands(&page),
+                once,
+                "the {band} table paints the rule between its rows once, not as \
+                 the upper row's bottom plus the lower row's top"
+            );
+        }
+    }
+
+    /// SKILL §8: edge ownership runs on the paint path for every row of every
+    /// composed page, so its cost per row must be linear in the row's cells,
+    /// not quadratic. Asserted by DOUBLING the row and counting cells visited,
+    /// not by timing: a per-cell scan of both rows visits `2n²` cells, the
+    /// per-row index `2n`.
+    #[test]
+    fn doubling_a_row_doubles_the_edge_ownership_work_not_squares_it() {
+        let visits = |n: usize| {
+            let rule = edge_of(20, BorderPattern::Solid);
+            let row = |id: u64| {
+                let cells = (0..n)
+                    .map(|i| {
+                        bordered_cell(
+                            id * 1000 + i as u64,
+                            (i * 3000) as i32,
+                            CellBorders {
+                                top: Some(rule),
+                                bottom: Some(rule),
+                                start: Some(rule),
+                                end: Some(rule),
+                                ..CellBorders::default()
+                            },
+                        )
+                    })
+                    .collect();
+                bordered_row(id, cells)
+            };
+            EDGE_VISITS.with(|visits| visits.set(0));
+            let mut list = DisplayList::new();
+            compose_blocks(
+                &mut list,
+                &[row(1), row(2)],
+                Point::new(Twip::ZERO, Twip::ZERO),
+                Twip(3000),
+                &mut MarkLayer::new(FormattingMarks::default()),
+            );
+            EDGE_VISITS.with(std::cell::Cell::get)
+        };
+        let (small, double) = (visits(32), visits(64));
+        let ratio = double as f64 / small as f64;
+        assert!(
+            ratio < 2.6,
+            "doubling a row's cells must roughly double the edge-ownership work, \
+             not square it ({small} -> {double} cell visits, ratio {ratio:.2})"
+        );
+    }
+
+    /// RM-40: a `double` cell edge occupies three times its authored width in
+    /// layout (`ResolvedEdge::total_thickness`) and is painted as line, gap,
+    /// line across that band, each part the authored width. It used to paint
+    /// two thirds-of-a-width bands inside the authored width, which at `w:sz=2`
+    /// is one indistinguishable hairline.
+    #[test]
+    fn a_double_cell_edge_paints_line_gap_line_across_its_reserved_band() {
+        let double = edge_of(20, BorderPattern::Double);
+        let cell = bordered_cell(
+            1,
+            0,
+            CellBorders {
+                top: Some(double),
+                ..CellBorders::default()
+            },
+        );
+        let mut list = DisplayList::new();
+        compose_fragment(
+            &mut list,
+            &bordered_row(10, vec![cell]),
+            Point::new(Twip::ZERO, Twip::ZERO),
+        );
+        assert_eq!(
+            filled(&list),
+            vec![(0, 0, 3000, 20), (0, 40, 3000, 20)],
+            "two 20-twip lines with a 20-twip gap: a 60-twip band"
+        );
     }
 
     #[test]
@@ -2137,6 +2709,7 @@ mod tests {
                 Size::new(Twip(100), Twip(40)),
             ),
             &borders,
+            EdgeOwnership::OWN_BOX,
         );
         let painted: Vec<(i32, i32, Color)> = list
             .items

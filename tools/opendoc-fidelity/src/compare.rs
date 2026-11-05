@@ -61,7 +61,9 @@ pub fn our_document(docx: &[u8]) -> Result<OurDocument, Box<dyn Error>> {
         },
     )?
     .document;
-    let layout = paginate_document(&document, &ParleyShaper::new());
+    let shaper = ParleyShaper::new();
+    crate::register_package_fonts(&shaper, &document, &mut package);
+    let layout = paginate_document(&document, &shaper);
     Ok(OurDocument {
         pages: layout.pages.iter().map(page_text_region).collect(),
     })

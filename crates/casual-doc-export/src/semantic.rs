@@ -3035,13 +3035,22 @@ fn watermark_span_pt(layout: WatermarkLayout, page_size: PageSize) -> f64 {
 /// [`WATERMARK_AUTO_ASPECT`]; an explicit size is estimated from the glyph count
 /// (see [`WATERMARK_AVERAGE_ADVANCE_EM`] for why an estimate is the honest option
 /// here) and clamped to the same fraction of the span so an over-long string can
-/// never run off the page.
+/// never run off the page. A box the stamp was imported with
+/// (`WatermarkText::shape_box`) is written back unchanged.
 fn watermark_text_box_pt(
     text: &WatermarkText,
     layout: WatermarkLayout,
     page_size: PageSize,
 ) -> (f64, f64) {
     let span = watermark_span_pt(layout, page_size) * WATERMARK_AUTO_FIT_FRACTION;
+    // A box the stamp arrived with is the one Word measured from the text, so
+    // it is written back as it was rather than re-estimated.
+    if let Some(shape_box) = text.shape_box {
+        return (
+            f64::from(shape_box.width_twips) / TWIPS_PER_POINT,
+            f64::from(shape_box.height_twips) / TWIPS_PER_POINT,
+        );
+    }
     match text.size_half_points {
         None => (span, span / WATERMARK_AUTO_ASPECT),
         Some(half_points) => {

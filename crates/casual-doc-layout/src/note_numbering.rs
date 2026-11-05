@@ -54,6 +54,7 @@
 
 use std::collections::BTreeMap;
 
+use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     BlockNode, Document, GroupChild, InlineNode, NoteId, NoteKind, NoteNumberRestart, NotePosition,
     NoteProperties, NumberFormat, ReviewProjection, SectionBoundary, SectionId,
@@ -83,6 +84,16 @@ fn default_position(kind: NoteKind) -> NotePosition {
     match kind {
         NoteKind::Footnote => NotePosition::PageBottom,
         NoteKind::Endnote => NotePosition::DocumentEnd,
+    }
+}
+
+/// The number format a note kind uses when no layer declares `w:numFmt`:
+/// decimal for footnotes and lower-case Roman for endnotes (ECMA-376
+/// §17.11.17/§17.11.18, and Word), so the two reference marks stay distinct.
+fn default_format(kind: NoteKind) -> NumberFormat {
+    match kind {
+        NoteKind::Footnote => NumberFormat::Decimal,
+        NoteKind::Endnote => NumberFormat::LowerRoman,
     }
 }
 
@@ -124,7 +135,7 @@ fn resolve_props(
     .unwrap_or_else(|| default_position(kind));
     let format = layered(&|props: &NoteProperties| props.number_format.is_some())
         .and_then(|props| props.number_format.clone())
-        .unwrap_or(NumberFormat::Decimal);
+        .unwrap_or_else(|| default_format(kind));
     let start = layered(&|props: &NoteProperties| props.number_start.is_some())
         .and_then(|props| props.number_start)
         .unwrap_or(1)
@@ -180,6 +191,11 @@ pub(crate) fn note_props_for_section_id(
 pub struct NoteLabels {
     footnotes: BTreeMap<NoteId, String>,
     endnotes: BTreeMap<NoteId, String>,
+    /// The top-level block ids of every referenced endnote's body, to its note.
+    /// Endnote bodies are flowed as blocks appended to the body (or to a
+    /// `sectEnd` section), not as a separate note galley, so this is how the
+    /// body flow knows which note's number an in-body `w:endnoteRef` prints.
+    endnote_blocks: BTreeMap<NodeId, NoteId>,
     restarts_each_page: bool,
 }
 
@@ -189,6 +205,15 @@ impl NoteLabels {
     #[must_use]
     pub fn label(&self, kind: NoteKind, note: NoteId) -> Option<&str> {
         self.map(kind).get(&note).map(String::as_str)
+    }
+
+    /// The label of the endnote whose body starts at, or contains at its top
+    /// level, the block `block`, or `None` for any other block. `O(log n)` in
+    /// the number of endnote body blocks.
+    #[must_use]
+    pub(crate) fn endnote_body_label(&self, block: NodeId) -> Option<&str> {
+        let note = self.endnote_blocks.get(&block)?;
+        self.label(NoteKind::Endnote, *note)
     }
 
     /// Whether any resolved note container restarts numbering each page, so the
@@ -215,6 +240,11 @@ impl NoteLabels {
                 id.hash(&mut hasher);
                 label.hash(&mut hasher);
             }
+        }
+        self.endnote_blocks.len().hash(&mut hasher);
+        for (block, note) in &self.endnote_blocks {
+            block.hash(&mut hasher);
+            note.hash(&mut hasher);
         }
         self.restarts_each_page.hash(&mut hasher);
         hasher.finish()
@@ -307,7 +337,26 @@ pub(crate) fn resolve_note_labels(
                 .insert(reference.note, format_number(counter, &props.format));
         }
     }
+    for note in labels.endnotes.keys().copied().collect::<Vec<_>>() {
+        if let Some(definition) = document.definitions().endnotes.get(&note) {
+            for block in &definition.blocks {
+                labels
+                    .endnote_blocks
+                    .insert(top_level_block_id(block), note);
+            }
+        }
+    }
     labels
+}
+
+/// The identity of a top-level block, as the body flow sees it.
+fn top_level_block_id(block: &BlockNode) -> NodeId {
+    match block {
+        BlockNode::Paragraph(paragraph) => paragraph.id,
+        BlockNode::Table(table) => table.id,
+        BlockNode::Sdt(sdt) => sdt.id,
+        BlockNode::AltChunk(chunk) => chunk.id,
+    }
 }
 
 fn find_section(document: &Document, id: SectionId) -> Option<&SectionBoundary> {
@@ -559,6 +608,20 @@ mod tests {
             &NoteProperties::default(),
         );
         assert_eq!(resolved.position, NotePosition::DocumentEnd);
+    }
+
+    #[test]
+    fn with_no_declared_format_endnotes_are_roman_and_footnotes_decimal() {
+        let none = NoteProperties::default();
+        assert_eq!(
+            resolve_props(NoteKind::Endnote, None, &none).format,
+            NumberFormat::LowerRoman,
+            "Word's default endnote format is lowerRoman (i, ii, iii)"
+        );
+        assert_eq!(
+            resolve_props(NoteKind::Footnote, None, &none).format,
+            NumberFormat::Decimal
+        );
     }
 
     #[test]
