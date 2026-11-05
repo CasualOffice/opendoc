@@ -8,7 +8,8 @@ import { reflectReviewModeAccess } from "./capabilities.mjs";
 import { orderedSelectionEnds } from "./caret_navigation.mjs";
 import { reviewCardSignature, reviewCommentIsReplyTo, reviewStackHeight, stackReviewCards } from "./review_layout.mjs";
 import { attachComposerKeys, autoGrowTextarea, createCommentAffordance, reviewCardButton, reviewIconButton } from "./review_chrome.mjs";
-import { commentEditButton, commentEditor, commentQuoteElement } from "./review_comment_card.mjs";
+import { commentEditButton, commentEditor, commentQuoteElement, commentNeedsClamp, fillCommentText } from "./review_comment_card.mjs";
+import { showUndoSnackbar } from "./undo_snackbar.mjs";
 import { attachCommentMentions } from "./mention_composer.mjs";
 import { formatReviewDate, reviewAuthorColor, reviewAuthorKey, reviewCardAriaLabel, reviewChangeTypeLabel, reviewCommentTooltip, reviewFormattingDescription, reviewRevisionTooltip } from "./review_labels.mjs";
 
@@ -108,7 +109,22 @@ export function createReviewMargin(ed) {
       button.disabled = !canDecide;
       if (refusal) button.title = refusal;
     }
-    if (ed.reviewBulkActions) ed.reviewBulkActions.hidden = ed.reviewMode === "viewing";
+    // The comments bar's ⋯ offers Accept all / Reject all only while there is
+    // something to decide (PROPOSAL D-11, audit REVIEW-04): with no suggestion
+    // the two rows are absent, not two grey buttons that look live. A refusal
+    // by the container keeps them, disabled with the reason on their title.
+    if (ed.reviewBulkActions) ed.reviewBulkActions.hidden = count === 0 || ed.reviewMode === "viewing";
+  }
+
+  /** The bar's "n open": unresolved threads plus the suggestions on their cards,
+   *  whatever the filter shows (a count that changed with the filter would be a
+   *  second filter). Hidden at zero. O(1) DOM work per render. */
+  function reflectReviewBar(open) {
+    const chip = document.getElementById("reviewOpenCount");
+    if (!chip) return;
+    const text = open > 0 ? t("reviewBar.openCount", { count: open }) : "";
+    if (chip.textContent !== text) chip.textContent = text;
+    chip.hidden = open === 0;
   }
 
   /** The three review modes (docs/68 §"Suggesting mode"): `editing` applies
@@ -225,13 +241,47 @@ export function createReviewMargin(ed) {
     },
   });
 
+  /** A card to focus once the next render has mounted it (the render replaces
+   *  an expanded card's element, so focus has to be put back by id). */
+  let focusCardAfterRender = null;
   function scheduleReviewMarginRender() {
     if (ed.reviewMarginFrame) return;
     ed.reviewMarginFrame = requestAnimationFrame(() => {
       ed.reviewMarginFrame = 0;
       renderReviewMarginItems();
+      if (focusCardAfterRender) {
+        const id = focusCardAfterRender;
+        focusCardAfterRender = null;
+        const card = ed.reviewSidebarBody.querySelector(`[data-review-item-id="${CSS.escape(id)}"]`);
+        if (card) card.focus({ preventScroll: true });
+        else ed.focusEditorSurface();
+      }
     });
   }
+
+  // Escape in the comment column is two steps (audit REVIEW-06; D-10's "Esc
+  // returns focus to the invoker"): the first collapses the open card and keeps
+  // focus ON that card; the second closes the column and returns focus to the
+  // rail button that owns it (`toggleReview`). Focus never falls to <body>.
+  // A composer or an in-place editor answers its own Escape first (it stops
+  // the event), so typed text is never lost here.
+  ed.reviewSidebar?.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
+    if (event.target.closest?.("textarea, input")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const card = event.target.closest?.("[data-review-item-id]");
+    const open = ed.activeReviewItemId;
+    if (open) {
+      ed.activeReviewItemId = null;
+      ed.activeReviewCommentId = null;
+      ed.reviewDeleteConfirmId = null;
+      focusCardAfterRender = card?.dataset.reviewItemId ?? open;
+      scheduleReviewMarginRender();
+      return;
+    }
+    ed.toggleReview(false);
+  });
 
   /** The in-place editor for `comment` when it is the one being edited (RC-11), else `null`. */
   function commentEditorFor(comment, kind) {
@@ -357,6 +407,9 @@ export function createReviewMargin(ed) {
         revisions,
       });
     }
+    const openThreads = comments.filter((comment) => !comment.parentParaId && !comment.resolved).length;
+    const resolvedThreads = comments.filter((comment) => !comment.parentParaId && comment.resolved).length;
+    reflectReviewBar(openThreads + revisionItems.length);
     // Tracked changes are not "resolved" — the Resolved filter is comment-only, so
     // it hides revisions; Open and All show them (REVIEW-GAP-018/019).
     for (const revision of ed.reviewFilter === "resolved" ? [] : revisionItems) {
@@ -445,9 +498,33 @@ export function createReviewMargin(ed) {
       // above is a margin-column idea and would leave the sheet scrolling over
       // an empty area taller than the phone.
       if (sheet) ed.reviewSidebarBody.style.height = "auto";
+      // The empty state says what is true for THIS filter (audit REVIEW-12):
+      // "no open comments" with the resolved ones a click away, not "no comments
+      // yet" over a document that has resolved threads.
       const empty = document.createElement("div");
       empty.className = "review-sidebar-empty";
-      empty.innerHTML = '<span class="ms" aria-hidden="true">chat_bubble_outline</span><br>No comments or suggestions yet.<br>Select text and choose Add comment.';
+      const icon = document.createElement("span");
+      icon.className = "ms";
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent = "chat_bubble_outline";
+      const line = document.createElement("p");
+      const hint = document.createElement("p");
+      if (ed.reviewFilter === "open" && resolvedThreads > 0) {
+        line.textContent = t("reviewBar.noOpen");
+        const show = document.createElement("button");
+        show.type = "button";
+        show.className = "review-empty-show";
+        show.textContent = t("reviewBar.showResolved", { count: resolvedThreads });
+        show.addEventListener("click", () => ed.reviewFilters.find((b) => b.dataset.reviewFilter === "resolved")?.click());
+        hint.append(show);
+      } else if (ed.reviewFilter === "resolved") {
+        line.textContent = t("reviewBar.noResolved");
+      } else {
+        line.textContent = t("reviewBar.empty");
+        hint.textContent = t("reviewBar.emptyHint");
+      }
+      empty.append(icon, line);
+      if (hint.textContent || hint.childNodes.length) empty.append(hint);
       ed.reviewSidebarBody.appendChild(empty);
       ed.reviewLayout = [];
       ed.reviewCardCache.clear();
@@ -498,10 +575,11 @@ export function createReviewMargin(ed) {
         textarea.rows = 3;
         textarea.maxLength = 4096;
         textarea.placeholder = "Add a comment…";
+        textarea.dir = "auto";
         textarea.dataset.testid = "review-comment-composer";
         const actions = document.createElement("div");
         actions.className = "review-composer-actions";
-        const cancel = reviewCardButton("Cancel", () => { ed.closeReviewPopover(); ed.focusEditorSurface(); });
+        const cancel = reviewCardButton("Cancel", () => { ed.reviewComposerState = null; ed.closeReviewPopover(); ed.focusEditorSurface(); });
         cancel.dataset.testid = "review-comment-cancel";
         // `@` asks the host's directory, when there is one (`docs/175` §7). Attached
         // BEFORE the composer keys, so Enter picks a name while the list is open.
@@ -522,16 +600,43 @@ export function createReviewMargin(ed) {
           ed.focusEditorSurface();
         }, false, "Add comment");
         submit.dataset.testid = "review-comment-submit";
-        // Enter submits, Shift+Enter is a newline, Esc cancels — the modern
-        // Docs/Word comment interaction, identical to the reply composer (Q5).
+        // Enter submits, Shift+Enter is a newline. Esc on an empty composer
+        // cancels; Esc on typed text keeps it as a Draft card beside its anchor
+        // and returns to the document (audit REVIEW-05; Google Docs keeps an
+        // unsent comment the same way). Cancel is the one way to discard it.
+        const state = ed.reviewComposerState;
+        textarea.value = state?.draft ?? "";
+        textarea.addEventListener("input", () => {
+          if (ed.reviewComposerState) ed.reviewComposerState.draft = textarea.value;
+        });
+        textarea.addEventListener("focus", () => {
+          if (ed.reviewComposerState) ed.reviewComposerState.isDraft = false;
+          composer.classList.remove("is-draft");
+          draftLabel.hidden = true;
+        });
+        const draftLabel = document.createElement("span");
+        draftLabel.className = "review-draft-label";
+        draftLabel.textContent = t("reviewCard.draft");
+        draftLabel.hidden = !state?.isDraft;
+        if (state?.isDraft) composer.classList.add("is-draft");
         attachComposerKeys(textarea, {
           onSubmit: () => submit.click(),
-          onCancel: () => cancel.click(),
+          onCancel: () => {
+            if (!textarea.value.trim()) {
+              cancel.click();
+              return;
+            }
+            ed.reviewComposerState.draft = textarea.value;
+            ed.reviewComposerState.isDraft = true;
+            ed.announceReview(t("reviewCard.draftKept"));
+            ed.focusEditorSurface();
+            ed.scheduleReviewMarginRender();
+          },
         });
         autoGrowTextarea(textarea);
         actions.append(cancel, submit);
-        composer.append(textarea, actions);
-        entry = { el: composer, sig, height: 0, measured: false, focusTextarea: textarea, needsFocus: true };
+        composer.append(draftLabel, textarea, actions);
+        entry = { el: composer, sig, height: 0, measured: false, focusTextarea: textarea, needsFocus: !state?.isDraft };
         ed.reviewCardCache.set(itemId, entry);
         built.push({ itemId, item, entry });
         continue;
@@ -582,6 +687,12 @@ export function createReviewMargin(ed) {
             const resolving = !item.data.resolved;
             await ed.runEdit(() => ed.doc.setCommentResolved(item.data.id, resolving), { keepView: true });
             ed.announceReview(resolving ? "Comment resolved" : "Comment reopened");
+            // Resolving takes the card away under the Open filter; say so once,
+            // with the way back beside it (audit REVIEW-12).
+            if (resolving) {
+              const id = item.data.id;
+              showUndoSnackbar(t("reviewBar.resolved"), () => void ed.runEdit(() => ed.doc.setCommentResolved(id, false), { keepView: true }));
+            }
             if (resolving) {
               ed.activeReviewItemId = null;
               ed.activeReviewCommentId = null;
@@ -640,7 +751,19 @@ export function createReviewMargin(ed) {
           body.textContent = `${verb} “${String(item.data.text || "")}”`;
         }
       } else {
-        body.textContent = String(item.data.text || "");
+        // The person's own words: in their own direction (audit REVIEW-11), with
+        // web addresses as links (REVIEW-10), clamped to three lines with "Show
+        // more" while the card is collapsed (REVIEW-10).
+        fillCommentText(body, String(item.data.text || ""));
+      }
+      body.dir = "auto";
+      let showMore = null;
+      if (item.type === "comment" && !expanded && commentNeedsClamp(String(item.data.text || ""))) {
+        body.classList.add("is-clamped");
+        showMore = document.createElement("button");
+        showMore.type = "button";
+        showMore.className = "review-show-more";
+        showMore.textContent = t("reviewCard.showMore");
       }
       const quote = item.type === "comment" ? commentQuoteElement(item.quote, t) : null;
       const bodyOrEditor = item.type === "comment" && expanded ? commentEditorFor(item.data, "comment") ?? body : body;
@@ -732,20 +855,24 @@ export function createReviewMargin(ed) {
         scheduleReviewMarginRender();
       };
       card.addEventListener("click", (event) => {
-        if (event.target.closest("button, textarea, input, select")) return;
+        if (event.target.closest("a, button, textarea, input, select")) return;
         focus();
       });
       card.addEventListener("keydown", (event) => {
         // Let inner controls (Accept/Reject, the move source/destination
         // navigation buttons, composers) handle their own Enter/Space instead
         // of also toggling the card's expansion — mirrors the click guard above.
-        if (event.target.closest("button, textarea, input, select")) return;
+        if (event.target.closest("a, button, textarea, input, select")) return;
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           focus();
         }
       });
       card.append(header, ...(quote ? [quote] : []), bodyOrEditor);
+      if (showMore) {
+        showMore.addEventListener("click", () => focus());
+        card.append(showMore);
+      }
       if (item.type === "revision" && item.data.kind === "move") {
         const path = document.createElement("div");
         path.className = "review-move-path";
@@ -816,7 +943,8 @@ export function createReviewMargin(ed) {
             replyDate.textContent = `${reply.resolved ? "Resolved · " : ""}${formatReviewDate(reply.date)}`;
             replyHead.append(replyAuthor, replyDate);
             const replyBody = document.createElement("p");
-            replyBody.textContent = String(reply.text || "");
+            replyBody.dir = "auto";
+            fillCommentText(replyBody, String(reply.text || ""));
             replyItem.append(replyHead, (expanded && commentEditorFor(reply, "reply")) || replyBody);
             // REVIEW-GAP-011: edit or delete this specific reply (not just the
             // whole thread). Only on an expanded, unresolved parent card, so the

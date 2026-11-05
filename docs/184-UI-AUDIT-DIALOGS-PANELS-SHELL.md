@@ -87,6 +87,23 @@ padding 1rem 1.25rem; rows at least 2.25rem; a panel opens scrolled to the top a
 state; the rail button shows the active state; close or Esc returns focus to the invoker. At
 ≤390px a panel is a bottom sheet.
 
+*Amended 2026-11-06 (UI redesign programme, lane L5, `109` UX-055; the
+integrator's default where the owner did not answer, stated in the programme
+brief): every docked panel is drawn as in the approved v2 mockups — a ROUNDED CARD
+ON THE DESK (radius `--r-md`, a hairline ring and `--e1`, 0.375rem from the
+edges), docked to its side at full workspace height, the page re-centred beside
+it and never covered. This replaces "no floating card, no radius, no shadow" above;
+the rule that matters — docked, one per side, the page never covered — is
+unchanged. One per side is kept by a dock manager (`dock_manager.mjs`) that
+watches every panel's `hidden`, so no opener can bypass it; Compare is on the
+right; the comment column is a right-slot panel that a right panel displaces and
+gives back; Find is a compact bar at the top right, beside a docked right panel.
+The add-in panel keeps its edge-docked frame (`docs/183` §21). Built: one width
+per side with the splitter and memory, Escape from anywhere inside, focus to the
+invoker or the editor, the phone bottom sheet with a grab handle. Not built:
+zoom-to-fit when both sides leave less than a page, sheet detents, a find
+results list in the left slot. Tokens and anatomy: `docs/63` §7.4.*
+
 **D5 — One Properties panel** (ONLYOFFICE `RightMenu`). Paragraph, Table and Picture/Shape
 properties are one right panel titled "Properties" whose tab follows the selection; only the
 relevant tabs are shown. Every capability stays reachable from at least two surfaces, and the
@@ -121,7 +138,7 @@ from script.
 | --- | --- |
 | D1 | `tests/dialog_density.test.mjs` (a card's width is a rung, chosen by class; bands read the tokens); `tests/e2e/dialog-anatomy.spec.mjs` (every dialog at 1280×720 and 390×844 in both themes: S/M/L or full-width sheet, 20px title, pinned footer inside card and window, no wrapped button label, no sideways scroll, equal control heights) |
 | D1a | `e2e/dialog-stacking.spec.mjs`, and `modal.mjs` refusing to open a second modal |
-| D4–D5 | `e2e/panel-dock.spec.mjs` |
+| D4–D5 | `e2e/panel-dock.spec.mjs` (one per side for every panel opened in turn; page gaps equal ±2px at 1280 and 1440; Escape focus); `e2e/review-layout.spec.mjs` (the comment column's bar and cards) |
 | D6 | `e2e/shell-sparse.spec.mjs` |
 | D7 | `e2e/a11y-floor.spec.mjs`; `theme-contrast.spec.mjs` |
 | D8 | `tests/chrome_units.test.mjs`, `tests/chrome_js_units.test.mjs`, `tests/design_scale.test.mjs` |

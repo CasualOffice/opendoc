@@ -147,6 +147,7 @@ import { createCommandSurfaces } from "./editor_command_surfaces.mjs";
 import { createScroll } from "./editor_scroll.mjs";
 import { createDocumentSettings } from "./editor_document_settings.mjs";
 import { createChromeModes } from "./editor_chrome_modes.mjs";
+import { startDockManager } from "./dock_manager.mjs";
 // editor-context:begin
 /** The editor context (docs/177): the one object every extracted module is handed.
  *  Each entry is a live view of a binding this file still owns, read lazily, so a
@@ -1424,6 +1425,8 @@ function documentHasTrackedChanges() {
 let activeReviewItemId = null;
 let reviewPopover = null;
 let reviewSidebarPreference = null;
+/** Whether the caret was in a table at the last toolbar pass (the Properties tab follows it). */
+let propertiesFollowInTable = false;
 let reviewComposerState = null;
 let reviewDeleteConfirmId = null;
 let reviewMarginFrame = 0;
@@ -2597,6 +2600,16 @@ function updateToolbar() { fontAdvanced.reflect();
   const activeTableStyle = inTable && tableInfo?.found ? (doc.tableStyleAt?.(selection.focus.node) || "") : "";
   if (activeTableStyle) tableStyleBtn.title = t("table.styleNamed", { name: activeTableStyle });
   tableContext.textContent = tableInfo?.found ? tableContextLabel(tableInfo) : "";
+  // The Properties panel's tab follows the selection (docs/184 D5, audit
+  // DIALOGS-07; ONLYOFFICE's RightMenu): the caret entering a table moves an open
+  // panel to Table, leaving it moves it back to Paragraph. Only on that change,
+  // so a person who picks the Paragraph tab inside a table keeps it.
+  const inTableNow = !!tableInfo?.found;
+  if (inTableNow !== propertiesFollowInTable) {
+    propertiesFollowInTable = inTableNow;
+    if (inTableNow && !paragraphPropertiesPanel.hidden) toggleTableProperties(true, { follow: true });
+    else if (!inTableNow && !tablePropertiesPanel.hidden && hasSel) toggleParagraphProperties(true, null, { follow: true });
+  }
   if (!tablePropertiesPanel.hidden) {
     if (!tableInfo?.found) toggleTableProperties(false);
     else reflectTableProperties(selection.focus.node);
@@ -2823,11 +2836,8 @@ const pagesPanelView = createPagesPanel({
   getBandModel: () => pageBandModel,
   pageInView,
   bandTop: () => bandTopInScroller,
-  // Left panel: replaces the Outline only (one panel per side, design P1).
-  onExclusive: () => {
-    closeFlankingPanel(outlinePanel, railOutline);
-    reanchorPageOverlays();
-  },
+  // One panel per side is the dock manager's rule (`dock_manager.mjs`).
+  onExclusive: () => reanchorPageOverlays(),
   onJumped: () => {
     updatePageWindow();
     paintPagesInView();
@@ -2865,7 +2875,10 @@ function focusReviewComment(comment, expand = true) {
 function closeReviewPopover() {
   reviewPopover?.remove();
   reviewPopover = null;
-  reviewComposerState = null;
+  // A composer holding typed text survives Escape as a draft (audit REVIEW-05);
+  // only its own Cancel discards it.
+  if (reviewComposerState?.draft?.trim()) reviewComposerState.isDraft = true;
+  else reviewComposerState = null;
   scheduleReviewMarginRender();
 }
 
@@ -2977,6 +2990,7 @@ updateToolbar();
 boot();
 
 createChromeModes(ed);
+startDockManager(ed);
 // ---- The host contract: one session, two transports (`docs/126` phase 2) ----
 // `window.opendoc` is the in-process transport, and `attachHostBridge` puts THAT SAME OBJECT
 // behind `postMessage`, so the two can never answer differently. Commands, events, refusals

@@ -475,6 +475,7 @@ hotfix
 href
 hscroll
 html
+http
 hyphenator
 iOS
 idempotency
@@ -654,6 +655,7 @@ shaper
 shippable
 skia
 skrifa
+snackbar
 snapToGrid
 splitter
 src

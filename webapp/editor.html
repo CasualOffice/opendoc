@@ -2472,6 +2472,27 @@
       <button data-i18n="forms.protectCommand" type="button" role="menuitem" class="menu-item" data-command="review.protectForm">Protect form</button>
       <button data-i18n="formRoles.command" type="button" role="menuitem" class="menu-item" data-command="forms.roles">Form roles…</button>
     </div>
+    <!-- The comments bar's ⋯ menu (PROPOSAL D-11). The ids are the ones the
+         sidebar header carried, so every surface that names them keeps working;
+         `#reviewBulkActions` is hidden, not disabled, while there is nothing to
+         decide (audit REVIEW-04). -->
+    <div data-i18n-label="reviewBar.more.label" id="reviewMoreMenu" class="context-menu review-more-menu" hidden role="menu" aria-label="More review actions">
+      <button data-i18n-title="reviewSidebarHeader.previousCommentChange.title" data-i18n-label="reviewSidebarHeader.previousCommentChange.label" id="reviewPrevious" type="button" role="menuitem" class="menu-item" title="Previous comment or change" aria-label="Previous comment or change"><span class="ms" aria-hidden="true">arrow_upward</span><span data-i18n="reviewBar.previous">Previous</span></button>
+      <button data-i18n-title="reviewSidebarHeader.nextCommentChange.title" data-i18n-label="reviewSidebarHeader.nextCommentChange.label" id="reviewNext" type="button" role="menuitem" class="menu-item" title="Next comment or change" aria-label="Next comment or change"><span class="ms" aria-hidden="true">arrow_downward</span><span data-i18n="reviewBar.next">Next</span></button>
+      <div data-i18n-label="reviewSidebarHeader.bulkDecisions.label" id="reviewBulkActions" class="review-bulk-actions" role="group" aria-label="Bulk decisions" hidden>
+        <div class="menu-divider"></div>
+        <button data-i18n-title="reviewBulkActions.acceptAllChanges.title" id="reviewAcceptAll" type="button" role="menuitem" class="menu-item" title="Accept all changes"><span class="ms" aria-hidden="true">done_all</span><span data-i18n="reviewBulkActions.acceptAll">Accept all</span></button>
+        <button data-i18n-title="reviewBulkActions.rejectAllChanges.title" id="reviewRejectAll" type="button" role="menuitem" class="menu-item" title="Reject all changes"><span class="ms" aria-hidden="true">remove_done</span><span data-i18n="reviewBulkActions.rejectAll">Reject all</span></button>
+      </div>
+      <div class="menu-divider"></div>
+      <button data-i18n-title="reviewSidebarHeader.closeCommentsSuggestions.title" data-i18n-label="reviewSidebarHeader.closeCommentsSuggestions.label" id="reviewClose" type="button" role="menuitem" class="menu-item review-sidebar-close" title="Close comments and suggestions" aria-label="Close comments and suggestions"><span class="ms" aria-hidden="true">close</span><span data-i18n="reviewBar.close">Close comments</span></button>
+    </div>
+    <!-- An action that undoes (Accept all, Reject all, Resolve) says so once,
+         with Undo beside it (PROPOSAL D-11, audit REVIEW-12): Docs' snackbar. -->
+    <div id="undoSnackbar" class="undo-snackbar" role="status" aria-live="polite" hidden>
+      <span id="undoSnackbarText" class="undo-snackbar-text"></span>
+      <button id="undoSnackbarUndo" type="button" class="undo-snackbar-action">Undo</button>
+    </div>
     <div data-i18n-label="panelInsert.breaks.label" id="insertBreaksMenu" class="context-menu" hidden role="menu" aria-label="Breaks">
       <button data-i18n="break.blankPage" type="button" role="menuitem" class="menu-item" data-command="layout.blankPage">Blank page</button>
       <button data-i18n="break.page" type="button" role="menuitem" class="menu-item" data-command="layout.break.page">Page break</button>
@@ -4126,19 +4147,21 @@
       </div>
     </div>
 
+    <!-- Find and replace as a compact bar (audit CRITIC-07; Google Docs' find bar,
+         VS Code's find widget): the query, its match counter, previous/next and
+         close on ONE row; the scope options as a row of small toggles; the
+         replacement and its two actions on one row. It was a 440x281 dialog with
+         a title row that covered a quarter of the page's width. The title stays
+         for assistive technology (the dialog's name). -->
     <div data-i18n-label="ui.findReplace.label" id="findPanel" class="find-panel" role="dialog" aria-label="Find and replace" hidden>
-      <header class="find-panel-head">
-        <div>
-          <strong data-i18n="findPanel.findReplace" class="find-panel-title">Find and replace</strong>
-          <span id="findStatus" class="find-status"></span>
-        </div>
-        <button data-i18n-title="findPanel.closeEsc.title" data-i18n-label="findPanel.closeFind.label" id="findClose" type="button" class="dialog-close" title="Close (Esc)" aria-label="Close find"><span class="ms" aria-hidden="true">close</span></button>
-      </header>
+      <strong data-i18n="findPanel.findReplace" class="find-panel-title sr-only">Find and replace</strong>
       <div class="find-panel-body">
         <div class="find-search-row">
-          <input data-i18n-label="findPanel.find.label" data-i18n-placeholder="findPanel.find.placeholder" id="findInput" type="text" placeholder="Find" autocomplete="off" spellcheck="false" aria-label="Find" />
+          <input data-i18n-label="findPanel.find.label" data-i18n-placeholder="findPanel.find.placeholder" id="findInput" type="text" placeholder="Find" autocomplete="off" spellcheck="false" aria-label="Find" aria-describedby="findStatus" />
+          <span id="findStatus" class="find-status"></span>
           <button data-i18n-title="findPanel.previousMatchShiftEnter.title" data-i18n-label="findPanel.previousMatch.label" id="findPrev" type="button" class="btn icon-only" title="Previous match (Shift+Enter)" aria-label="Previous match"><span class="ms" aria-hidden="true">keyboard_arrow_up</span></button>
           <button data-i18n-title="findPanel.nextMatchEnter.title" data-i18n-label="findPanel.nextMatch.label" id="findNext" type="button" class="btn icon-only" title="Next match (Enter)" aria-label="Next match"><span class="ms" aria-hidden="true">keyboard_arrow_down</span></button>
+          <button data-i18n-title="findPanel.closeEsc.title" data-i18n-label="findPanel.closeFind.label" id="findClose" type="button" class="dialog-close" title="Close (Esc)" aria-label="Close find"><span class="ms" aria-hidden="true">close</span></button>
         </div>
         <div data-i18n-label="findPanel.findOptions.label" class="find-options" role="group" aria-label="Find options">
           <label class="find-option"><input id="findCase" type="checkbox" /> Match case</label>
@@ -4146,8 +4169,8 @@
           <label class="find-option"><input id="findSelection" type="checkbox" /> Selection only</label>
           <label class="find-option"><input id="findRegex" type="checkbox" /> <span data-i18n="findPanel.regex">Regular expression</span></label>
         </div>
-        <input data-i18n-label="findPanel.replace.label" data-i18n-placeholder="findPanel.replace.placeholder" id="replaceInput" class="find-replacement" type="text" placeholder="Replace with" autocomplete="off" spellcheck="false" aria-label="Replace with" />
-        <div class="find-actions">
+        <div class="find-replace-row">
+          <input data-i18n-label="findPanel.replace.label" data-i18n-placeholder="findPanel.replace.placeholder" id="replaceInput" class="find-replacement" type="text" placeholder="Replace with" autocomplete="off" spellcheck="false" aria-label="Replace with" />
           <button data-i18n="findPanel.replace" id="replaceOne" type="button" class="dialog-button">Replace</button>
           <button data-i18n="findPanel.replaceAll" id="replaceAll" type="button" class="dialog-button dialog-button-primary">Replace all</button>
         </div>
@@ -4306,20 +4329,6 @@
         </div>
         <div id="pagesBody" class="panel-body pages-grid"></div>
       </aside>
-      <!-- The comparison's change list. A SIDE PANEL and not a modal, for the
-           reason the outline is one: a reader comparing two documents is looking
-           at both the list and the page, and a dialog over the page hides half
-           of what they came for. The file input is the Word route — Review ▸
-           Compare picks a document off the disk — and its `accept` list is the
-           importers' own, because a comparison has to PARSE the other side. -->
-      <aside data-i18n-label="ui.compareDocuments.label2" id="comparePanel" class="side-panel compare-panel" hidden aria-label="Compare documents">
-        <div class="panel-head">
-          <span data-i18n="comparePanel.compare" class="panel-title">Compare</span>
-          <button data-i18n-title="comparePanel.closeCompare.title" data-i18n-label="comparePanel.closeCompare.label" id="compareClose" type="button" class="panel-close" title="Close compare" aria-label="Close compare"><span class="ms" aria-hidden="true">close</span></button>
-        </div>
-        <div id="compareBody" class="panel-body compare-body"></div>
-        <input id="compareFile" type="file" accept=".docx,.odt,.rtf,.json,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/rtf,text/rtf,application/json,text/plain" hidden />
-      </aside>
       <main id="viewport" class="viewport">
         <div id="drop" class="drop">
           <div class="drop-card">
@@ -4373,26 +4382,25 @@
              the margin is too thin to hold it — HF-088). -->
         <button data-i18n-title="reviewMarginComment.addComment.title" data-i18n-label="reviewMarginComment.addCommentOnSelectedText.label" id="reviewMarginComment" type="button" class="review-margin-add" hidden title="Add a comment" aria-label="Add a comment on the selected text"><span class="ms" aria-hidden="true">add_comment</span></button>
         <aside data-i18n-label="viewport.commentsSuggestions.label" id="reviewSidebar" class="review-sidebar" hidden aria-label="Comments and suggestions">
-          <div id="reviewSidebarHeader" class="review-sidebar-header">
-            <div class="review-sidebar-headrow">
-              <span data-i18n="reviewSidebarHeader.commentsAmpSuggestions" class="review-sidebar-title">Comments &amp; suggestions</span>
-              <div data-i18n-label="reviewSidebarHeader.navigateCommentsChanges.label" class="review-sidebar-nav" role="group" aria-label="Navigate comments and changes">
-                <button data-i18n-title="reviewSidebarHeader.previousCommentChange.title" data-i18n-label="reviewSidebarHeader.previousCommentChange.label" id="reviewPrevious" type="button" class="review-nav-button" title="Previous comment or change" aria-label="Previous comment or change"><span class="ms" aria-hidden="true">expand_less</span></button>
-                <button data-i18n-title="reviewSidebarHeader.nextCommentChange.title" data-i18n-label="reviewSidebarHeader.nextCommentChange.label" id="reviewNext" type="button" class="review-nav-button" title="Next comment or change" aria-label="Next comment or change"><span class="ms" aria-hidden="true">expand_more</span></button>
-                <button data-i18n-title="reviewSidebarHeader.closeCommentsSuggestions.title" data-i18n-label="reviewSidebarHeader.closeCommentsSuggestions.label" id="reviewClose" type="button" class="review-nav-button review-sidebar-close" title="Close comments and suggestions" aria-label="Close comments and suggestions"><span class="ms" aria-hidden="true">close</span></button>
-              </div>
+          <!-- The comments bar (PROPOSAL D-11, audit REVIEW-01/04, DIALOGS-03): one
+               2.5rem row, as the approved v2-review mockup draws it. "Comments",
+               how many are open, the Open/Resolved/All filter, and a ⋯ menu
+               (`#reviewMoreMenu`) holding Previous/Next, Accept all/Reject all
+               (present only while the document carries a suggestion) and Close.
+               It sticks to the top of the comment layer on an opaque desk band,
+               so a card scrolling up passes under it and never shows above it
+               (REVIEW-V-02). Previous/Next are also on the Review ribbon and in
+               the palette; Accept/Reject all on the ribbon, the Review menu and
+               the palette (SKILL §10). -->
+          <div id="reviewSidebarHeader" class="review-sidebar-header review-bar">
+            <span data-i18n="reviewBar.comments" class="review-sidebar-title">Comments</span>
+            <span id="reviewOpenCount" class="review-count" hidden></span>
+            <div data-i18n-label="reviewSidebarHeader.filterComments.label" class="review-filters" role="group" aria-label="Filter comments">
+              <button data-i18n="reviewSidebarHeader.open" type="button" class="review-filter" data-review-filter="open" aria-pressed="true">Open</button>
+              <button data-i18n="reviewSidebarHeader.resolved" type="button" class="review-filter" data-review-filter="resolved" aria-pressed="false">Resolved</button>
+              <button data-i18n="reviewSidebarHeader.all" type="button" class="review-filter" data-review-filter="all" aria-pressed="false">All</button>
             </div>
-            <div class="review-sidebar-controlrow">
-              <div data-i18n-label="reviewSidebarHeader.filterComments.label" class="review-filters" role="group" aria-label="Filter comments">
-                <button data-i18n="reviewSidebarHeader.open" type="button" class="review-filter" data-review-filter="open" aria-pressed="true">Open</button>
-                <button data-i18n="reviewSidebarHeader.resolved" type="button" class="review-filter" data-review-filter="resolved" aria-pressed="false">Resolved</button>
-                <button data-i18n="reviewSidebarHeader.all" type="button" class="review-filter" data-review-filter="all" aria-pressed="false">All</button>
-              </div>
-              <div data-i18n-label="reviewSidebarHeader.bulkDecisions.label" id="reviewBulkActions" class="review-bulk-actions" role="group" aria-label="Bulk decisions">
-                <button data-i18n-title="reviewBulkActions.acceptAllChanges.title" data-i18n="reviewBulkActions.acceptAll" id="reviewAcceptAll" type="button" class="review-card-action" title="Accept all changes">Accept all</button>
-                <button data-i18n-title="reviewBulkActions.rejectAllChanges.title" data-i18n="reviewBulkActions.rejectAll" id="reviewRejectAll" type="button" class="review-card-action" title="Reject all changes">Reject all</button>
-              </div>
-            </div>
+            <button data-i18n-title="reviewBar.more.title" data-i18n-label="reviewBar.more.label" id="reviewMoreBtn" type="button" class="review-nav-button review-more" title="More review actions" aria-label="More review actions" aria-haspopup="menu" aria-controls="reviewMoreMenu" aria-expanded="false"><span class="ms" aria-hidden="true">more_horiz</span></button>
           </div>
           <div id="reviewSidebarBody" class="review-sidebar-body"></div>
         </aside>
@@ -4424,6 +4432,23 @@
            deletes, and Shift+F10 opens the same menu the ⋮ does. Nothing is
            hover-only and the ⋮ is a 44px target, because the owner has said
            mobile is supported. -->
+      <!-- The comparison's change list. A SIDE PANEL and not a modal, for the
+           reason the outline is one: a reader comparing two documents is looking
+           at both the list and the page, and a dialog over the page hides half
+           of what they came for. The file input is the Word route — Review ▸
+           Compare picks a document off the disk — and its `accept` list is the
+           importers' own, because a comparison has to PARSE the other side.
+           On the RIGHT (`docs/184` D4, audit REVIEW-15): a comparison is review,
+           and Word's Revisions pane and ONLYOFFICE's compare sit on the review
+           side; the dock manager gives it the right slot. -->
+      <aside data-i18n-label="ui.compareDocuments.label2" id="comparePanel" class="side-panel compare-panel" hidden aria-label="Compare documents">
+        <div class="panel-head">
+          <span data-i18n="comparePanel.compare" class="panel-title">Compare</span>
+          <button data-i18n-title="comparePanel.closeCompare.title" data-i18n-label="comparePanel.closeCompare.label" id="compareClose" type="button" class="panel-close" title="Close compare" aria-label="Close compare"><span class="ms" aria-hidden="true">close</span></button>
+        </div>
+        <div id="compareBody" class="panel-body compare-body"></div>
+        <input id="compareFile" type="file" accept=".docx,.odt,.rtf,.json,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/rtf,text/rtf,application/json,text/plain" hidden />
+      </aside>
       <aside id="versionPanel" class="side-panel version-panel" hidden aria-labelledby="versionPanelTitle">
         <div class="panel-head">
           <span data-i18n="versionPanel.versionHistory" id="versionPanelTitle" class="panel-title">Version history</span>
@@ -4497,7 +4522,7 @@
         <header class="panel-head properties-panel-head">
           <div class="properties-panel-heading">
             <span>
-              <strong data-i18n="paragraphPropertiesPanel.paragraphProperties" id="paragraphPropertiesTitle" class="panel-title">Paragraph properties</strong>
+              <strong data-i18n="propertiesTabs.panelTitle" id="paragraphPropertiesTitle" class="panel-title">Properties</strong>
               <small id="paragraphPropertiesContext"></small>
             </span>
           </div>
@@ -4647,7 +4672,7 @@
         <header class="panel-head table-properties-head">
           <div class="table-panel-heading">
             <span>
-              <strong data-i18n="tablePropertiesPanel.tableProperties" id="tablePropertiesTitle" class="panel-title">Table properties</strong>
+              <strong data-i18n="propertiesTabs.panelTitle" id="tablePropertiesTitle" class="panel-title">Properties</strong>
               <small id="tablePropertiesContext"></small>
             </span>
           </div>

@@ -48,6 +48,10 @@ export function createFind(ed) {
   function setFindStatus(text, miss = false) {
     findStatus.textContent = text;
     findStatus.classList.toggle("miss", miss);
+    // No match is an error state of the field, in colour and to assistive
+    // technology (audit CRITIC-07), not only a word beside it.
+    if (miss) findInput.setAttribute("aria-invalid", "true");
+    else findInput.removeAttribute("aria-invalid");
   }
 
   const findParagraphTextCache = new Map();

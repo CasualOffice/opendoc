@@ -46,6 +46,29 @@ import { OUTLINE_MAX_LEVEL, parseOutlineRows, siblingPositions, treeKeyAction, v
  *  deliberately kept now that the rows are `treeitem`s — `aria-selected` would
  *  claim a selection model this tree does not have, and the caret's heading is a
  *  location rather than a selected item. */
+/**
+ * The heading whose section holds the point (`page`, `y` in twips): the last
+ * heading at or before it in reading order, or null before the first heading.
+ * `places` is `{ node, page, y }` in document order. Binary search, so
+ * O(log headings). Pure.
+ */
+export function outlineSectionAt(places, page, y) {
+  let lo = 0;
+  let hi = places.length - 1;
+  let found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const at = places[mid];
+    if (at.page < page || (at.page === page && at.y <= y)) {
+      found = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return found < 0 ? null : places[found].node;
+}
+
 export function reflectOutlineActive(body, activeNode) {
   for (const item of body.querySelectorAll(".outline-item")) {
     const active = item.dataset.node === activeNode;

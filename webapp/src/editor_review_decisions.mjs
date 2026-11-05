@@ -5,6 +5,10 @@
 import { mayDecideReview, reviewDecisionRefusal } from "./review_authority.mjs";
 import { formatReviewDate, reviewAuthorColor, reviewAuthorDisplay, reviewAuthorKey, reviewChangeTypeLabel } from "./review_labels.mjs";
 import { reviewCurrentTargetIndex } from "./review_target.mjs";
+import { registerPopover } from "./popover_manager.mjs";
+import { menuArrowKeys } from "./menu_keys.mjs";
+import { showUndoSnackbar } from "./undo_snackbar.mjs";
+import { t } from "./i18n.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -472,13 +476,37 @@ export function createReviewDecisions(ed) {
       return;
     }
     await ed.runEdit(() => ed.doc.decideAllRevisions(accept));
-    ed.announceReview(accept ? "All changes accepted" : "All changes rejected");
+    const said = t(accept ? "reviewBar.allAccepted" : "reviewBar.allRejected");
+    ed.announceReview(said);
     ed.scheduleReviewMarginRender();
+    // One Undo away, said once (PROPOSAL D-11): a bulk decision rewrites the
+    // whole document, and Docs offers its Undo on a snackbar for the same reason.
+    showUndoSnackbar(said, () => void ed.runEdit(() => ed.doc.undo()));
+    // Focus never falls to <body> (audit REVIEW-06): the menu row that ran this
+    // is gone, so the person is put back in the document.
+    if (!document.activeElement || document.activeElement === document.body || ed.reviewMoreMenu?.contains(document.activeElement)) {
+      ed.focusEditorSurface();
+    }
   }
   ed.reviewAcceptAll.addEventListener("click", () => void decideAllReviewChanges(true));
   ed.reviewRejectAll.addEventListener("click", () => void decideAllReviewChanges(false));
   ed.reviewPrevious.addEventListener("click", () => navigateReview(-1));
   ed.reviewNext.addEventListener("click", () => navigateReview(1));
+  // The comments bar's ⋯ (PROPOSAL D-11): the shared anchored-popover manager,
+  // so it dismisses, flips and returns focus like every other menu. A row
+  // closes the menu before it acts (capture phase, ahead of the row's own
+  // handler), so the menu is never left open over the place the action lands.
+  const moreBtn = document.getElementById("reviewMoreBtn");
+  const moreMenu = document.getElementById("reviewMoreMenu");
+  ed.reviewMoreMenu = moreMenu;
+  if (moreBtn && moreMenu) {
+    const more = registerPopover(moreBtn, moreMenu, () => ed.updateReviewControls?.(), { needsDocument: false });
+    moreMenu.addEventListener("click", (event) => {
+      const row = event.target.closest(".menu-item");
+      if (row && !row.disabled) more.close();
+    }, true);
+    menuArrowKeys(moreMenu, ".menu-item");
+  }
   // The mode switch is the header menu's three rows (`header_mode.mjs`); each
   // carries `data-review-mode` and is wired below.
   ed.suggestingBannerEdit.addEventListener("click", () => ed.setReviewMode("editing"));

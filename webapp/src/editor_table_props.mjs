@@ -126,7 +126,9 @@ export function createTableProps(ed) {
     return true;
   }
 
-  function toggleTableProperties(open) {
+  /** `follow`: opened because the Properties panel follows the selection into a
+   *  table (D5), so the caret stays in the document rather than moving here. */
+  function toggleTableProperties(open, { follow = false } = {}) {
     const show = open ?? ed.tablePropertiesPanel.hidden;
     if (show && !reflectTableProperties()) return;
     const returnFocus = !show && ed.tablePropertiesPanel.contains(document.activeElement);
@@ -135,9 +137,7 @@ export function createTableProps(ed) {
     if (show) {
       ed.toggleParagraphProperties(false);
       closePopover(ed.tablePopover);
-      queueMicrotask(() =>
-        tableAlignGroup.focusSelected(),
-      );
+      if (!follow) queueMicrotask(() => tableAlignGroup.focusSelected());
     } else if (returnFocus) {
       ed.tablePropertiesBtn.focus({ preventScroll: true });
     }

@@ -5257,34 +5257,10 @@ body.phone-mode .autocorrect-body {
 }
 
 /* Find and replace keeps its GEOMETRY — fixed, top-right, so it does not cover
- * the text you are searching, which is Word's and Google Docs' model and not a
- * defect — but takes the shell's PADDING from the same pair as every other
- * panel. It was already the only panel whose head and body agreed, and
- * `var(--space-2) var(--space-4)` is where `--pnl-pad-y`/`--pnl-pad-x` came
- * from; naming them here is what stops the two drifting apart again. The right
- * inset was `--space-3` and is now symmetric, as the dialog heads are. */
-.find-panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  min-height: 3rem;
-  padding: var(--pnl-pad-y) var(--pnl-pad-x);
-  border-bottom: 1px solid var(--line);
-}
-
-.find-panel-head > div {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: var(--space-2);
-}
-
-.find-panel-title {
-  color: var(--ink);
-  font-size: var(--fs-lg);
-  font-weight: 600;
-}
+ * the text you are searching, which is Word's and Google Docs' model — and
+ * takes the shell's inset from the panel pair. Its title row is gone (audit
+ * CRITIC-07, the compact bar at the end of this file); the title remains for
+ * assistive technology only. */
 
 .find-panel-body {
   display: grid;
@@ -7098,53 +7074,80 @@ body.is-format-painting .page-wrap * {
   background: transparent;
 }
 .review-sidebar[hidden] { display: none; }
-/* Fixed workflow chrome above the (virtualized, document-scroll-positioned) card
-   area (REVIEW-GAP-018/019). The card body rides the canvas scroll, so the header
-   is `sticky` to stay visible; `.review-sidebar-body`'s negative margin (set from
-   JS to the header's height) cancels the header's flow offset so cards stay
-   pixel-aligned to their canvas anchors. */
+/* The comments bar (PROPOSAL D-11; audit REVIEW-01, REVIEW-V-02, DIALOGS-03).
+   One 2.5rem row, as the approved v2-review mockup draws it: "Comments", the
+   open count, the Open/Resolved/All segmented filter and a ⋯ menu. It was a
+   124px floating card three rows tall that cards slid under, and that cards
+   escaped above into the ribbon band when scrolled.
+
+   STICKY AT 0 ON AN OPAQUE DESK BAND. The card layer rides the document's one
+   scroll (the model above), so cards move under the bar; the bar sits at the
+   very top of the scroller with the desk colour, so a card leaving the top
+   passes UNDER it and is clipped by the scroller's own edge, never shown in a
+   strip above it. `.review-sidebar-body`'s negative margin (set from JS to this
+   bar's height) still cancels the bar's flow offset, so cards stay pixel-aligned
+   to their anchors. */
 .review-sidebar-header {
   position: sticky;
-  top: 0.5rem;
+  top: 0;
   z-index: 6;
-  margin: 0.5rem 0 0.375rem;
-  /* The PADDING convention, not the geometry one (HF-265). This column is
-     absolutely positioned and rides the document scroll so each card stays
-     pinned to its anchor — that is the model, and it is deliberately outside
-     the `.panel-head`/`.panel-body` shell. What it shares with the shell is the
-     inset: this header and `.review-margin-card` below both said `8px 10px`,
-     which was already self-consistent and was two more raw pixel values in a
-     family that now has a token pair. */
-  padding: var(--pnl-pad-y) var(--pnl-pad-x);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: var(--surface);
-  box-shadow: var(--e1);
-  display: grid;
+  box-sizing: border-box;
+  min-block-size: 2.5rem;
+  margin: 0;
+  padding: 0 0.125rem 0 0;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
   gap: 0.5rem;
 }
-.review-sidebar-headrow { display: flex; align-items: center; gap: 0.5rem; }
-.review-sidebar-title { flex: 1; font-size: var(--fs-sm); font-weight: 600; color: var(--ink); }
-.review-sidebar-nav { display: flex; gap: 0.25rem; }
-.review-nav-button {
-  width: 1.625rem; height: 1.625rem; padding: 0;
-  display: inline-grid; place-items: center;
-  border: 1px solid var(--line); border-radius: var(--r-sm);
-  background: transparent; color: var(--ink); cursor: pointer;
+.review-sidebar-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--ink);
 }
-.review-nav-button:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent-text); }
+.review-count {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 0.125rem 0.5rem;
+  border-radius: var(--r-pill);
+  background: var(--selected);
+  color: var(--accent-text);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.review-count[hidden] { display: none; }
+.review-nav-button {
+  width: var(--h-tool); height: var(--h-tool); padding: 0; flex: 0 0 auto;
+  display: inline-grid; place-items: center;
+  border: 0; border-radius: var(--r-sm);
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.review-nav-button:hover:not(:disabled),
+.review-nav-button[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
 .review-nav-button:disabled { opacity: 0.4; cursor: default; }
+.review-nav-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .review-nav-button .ms { font-size: var(--icon-md); }
-.review-sidebar-controlrow { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap; }
-.review-sidebar-header .review-bulk-actions { padding: 0; margin: 0; }
-.review-sidebar-header .review-bulk-actions[hidden] { display: none; }
-.review-sidebar-header .review-card-action { margin-top: 0; }
+.review-more { margin-inline-start: 0; }
+/* The menu's bulk group is a plain run of rows; hidden, not disabled, while
+   the document carries nothing to decide (audit REVIEW-04). */
+.review-more-menu .review-bulk-actions { display: block; padding: 0; }
+.review-more-menu .review-bulk-actions[hidden] { display: none; }
 .review-sidebar-body {
   position: relative;
   width: 100%;
 }
 .review-sidebar-empty {
-  margin-top: 0.75rem;
+  /* Below the bar, never under it (audit DIALOGS-03): the body is pulled up by
+     the bar's height to align cards with anchors, so the empty state, which has
+     no anchor, is pushed back down by the same token plus a gap. */
+  margin-top: calc(2.5rem + 0.75rem);
   padding: 1.5rem 1rem;
   border-radius: var(--r-md);
   color: var(--muted);
@@ -8263,9 +8266,13 @@ body.is-format-painting .page-wrap * {
 .review-mode { display: flex; align-items: center; gap: 0.25rem; padding: 0.5rem 0.625rem 0; font-size: var(--fs-xs); color: var(--muted); }
 .review-mode-button { border: 1px solid var(--line); border-radius: var(--r-pill); padding: 0.25rem 0.5rem; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
 .review-mode-button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent-text); color: var(--accent-strong); }
-.review-filters { display: flex; gap: 0.25rem; padding: 0.5rem 0.625rem 0; }
-.review-filter { border: 1px solid var(--line); border-radius: var(--r-pill); padding: 0.25rem 0.5rem; background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer; }
-.review-filter[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent-text); color: var(--accent-strong); }
+/* The filter is the pill segmented control the header's mode switch and
+   Compact/Ribbon use (v2-review): one track, the chosen segment filled. */
+.review-filters { display: inline-flex; flex: 0 0 auto; margin-inline-start: auto; gap: 0.125rem; padding: 0.125rem; border-radius: var(--r-pill); background: var(--bg-2); }
+.review-filter { min-block-size: var(--h-dense); border: 0; border-radius: var(--r-pill); padding: 0 0.5rem; background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-xs); font-weight: 500; cursor: pointer; white-space: nowrap; }
+.review-filter:hover:not([aria-pressed="true"]) { color: var(--ink); }
+.review-filter[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.review-filter:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .review-empty, .review-readonly-note { color: var(--muted); font-size: var(--fs-sm); line-height: 1.5; }
 .review-card { border: 1px solid var(--line); border-radius: var(--r-md); padding: 0.5rem 0.625rem; background: var(--surface); }
 .review-card strong, .review-card small { display: block; }
@@ -14678,34 +14685,97 @@ body.phone-mode .plugin-panel { height: 55vh; }
   #settingsPanel .settings-nav { grid-auto-flow: column; overflow-x: auto; border: 0; padding: 0; }
 }
 
-/* Docked side panels (approved design P1; Google Docs). Every panel is docked
-   to the workspace edge at full height: no floating card, no radius, no
-   shadow, one hairline on the side that faces the page. Left = navigate
-   (Outline, Pages, Compare), 16rem. Right = context (Properties, Versions,
-   AI, add-ins, Symbol), 20rem. The page re-centres in what is left and scrolls
-   sideways rather than being covered. */
-/* The AI/add-in panel is left out: it already docked this way, and its own
-   rules let it run past the status bar to the window's bottom (ai-panel.spec). */
+/* ==== Dock (L5: `docs/184` D4 as amended 2026-11-06, PROPOSAL D-10) ========
+   One slot per side, kept by `dock_manager.mjs`. Every docked panel is ONE
+   anatomy: a rounded card on the grey desk, like the floating ribbon card above
+   it, docked to its edge at full workspace height, in the work area's flex row
+   so the page re-centres in what is left and is never covered (the approved
+   v2-desktop-editor mockup). Left = navigate (Outline, Pages); right = context
+   and collaboration (Properties, Comments, Versions, Compare, Symbol, Emoji, the
+   add-in panel). One width per side, `--dock-w-left`/`--dock-w-right`, 20rem by
+   default, 17.5-30rem by the splitter, remembered by the manager.
+   The AI/add-in panel keeps its own edge-docked frame and splitter: its rules
+   let it run past the status bar to the window's bottom (ai-panel.spec). */
+:root {
+  --dock-w-left: 20rem;
+  --dock-w-right: 20rem;
+  --dock-gap: 0.375rem;
+}
 body:not(.phone-mode) .workarea > .side-panel:not(.plugin-panel) {
-  margin: 0;
+  position: relative;
+  flex: 0 0 var(--dock-w-right);
+  width: var(--dock-w-right);
+  min-width: 0;
+  max-width: var(--dock-w-right);
+  margin: var(--dock-gap);
   border: 0;
-  border-radius: 0;
-  box-shadow: none;
+  border-radius: var(--r-md);
+  /* The review cards' edge (v2-review): a hairline ring, which is what carries
+     the card in the dark theme where a shadow does not read, plus the lift. */
+  box-shadow: 0 0 0 1px var(--line), var(--e1);
   background: var(--surface);
   align-self: stretch;
 }
-body:not(.phone-mode) .workarea > .side-panel:where(#outlinePanel, #pagesPanel, #comparePanel) {
-  flex: 0 0 16rem;
-  width: 16rem;
-  max-width: 16rem;
-  border-inline-end: 1px solid var(--line);
+body:not(.phone-mode) .workarea > .side-panel:where(#outlinePanel, #pagesPanel) {
+  flex-basis: var(--dock-w-left);
+  width: var(--dock-w-left);
+  max-width: var(--dock-w-left);
+  margin-inline-start: 0;
 }
-body:not(.phone-mode) .workarea > .side-panel:not(.plugin-panel, :where(#outlinePanel, #pagesPanel, #comparePanel)) {
-  flex: 0 0 20rem;
-  width: 20rem;
-  max-width: 20rem;
-  border-inline-start: 1px solid var(--line);
+/* The splitter on the panel's inner edge (the add-in panel's, generalised):
+   a 6px strip that turns accent on hover, focus and while dragging. */
+.dock-resize {
+  position: absolute;
+  inset-block: 0;
+  z-index: 2;
+  width: 0.375rem;
+  cursor: col-resize;
+  touch-action: none;
 }
+.dock-resize[data-dock-side="right"] { inset-inline-start: 0; }
+.dock-resize[data-dock-side="left"] { inset-inline-end: 0; }
+.dock-resize::after {
+  content: "";
+  position: absolute;
+  inset-block: var(--r-md);
+  inset-inline-start: 0.125rem;
+  width: 0.125rem;
+  border-radius: var(--r-xs);
+  background: transparent;
+}
+.dock-resize:hover::after,
+.dock-resize.dragging::after,
+.dock-resize:focus-visible::after { background: var(--accent); }
+.dock-resize:focus-visible { outline: none; }
+body.phone-mode .dock-resize { display: none; }
+/* An unshaded paragraph's Fill swatch reads "no fill" (audit DIALOGS-V-01):
+   the colour the picker would apply is hidden under Word's "No Color" slash. */
+.shade-pick.is-none input[type="color"] {
+  background: linear-gradient(to top right, transparent calc(50% - 0.0625rem), var(--danger) 50%, transparent calc(50% + 0.0625rem)), var(--surface);
+}
+.shade-pick.is-none input[type="color"]::-webkit-color-swatch { opacity: 0; }
+.shade-pick.is-none input[type="color"]::-moz-color-swatch { opacity: 0; }
+/* On a phone the slot is a bottom sheet (audit DIALOGS-06). The 900px rung
+   above pins the properties, version and glyph panels from the TOP as drawers;
+   at the phone rung that left them floating 123px down with the document
+   showing beneath. The sheet is anchored to the bottom chrome only, and carries
+   a grab handle like Docs' and Word's mobile sheets. */
+body.phone-mode .workarea > .side-panel {
+  top: auto;
+  bottom: var(--phone-bottom-chrome, calc(var(--h-footer) + var(--phone-bottom-inset, 0px)));
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+}
+body.phone-mode .workarea > .side-panel::before {
+  content: "";
+  flex: none;
+  align-self: center;
+  inline-size: 2.5rem;
+  block-size: 0.25rem;
+  margin-block: 0.375rem 0;
+  border-radius: var(--r-pill);
+  background: var(--line-strong);
+}
+/* ==== end Dock ============================================================ */
 .workarea > .side-panel .panel-head {
   min-block-size: 3.5rem;
   /* The head's inset is the body's (--pnl-pad-x): one shell, one inset
@@ -14915,3 +14985,118 @@ body:not(.phone-mode) .workarea > .side-panel:not(.plugin-panel, :where(#outline
     scroll-behavior: auto !important;
   }
 }
+
+/* ==== Review shell (L5: PROPOSAL D-11, the approved v2-review mockup) ======
+   Margin cards are white cards on the desk with a hairline ring (the dock
+   panels' edge), the active one lifted with an accent ring; a long comment is
+   clamped to three lines with "Show more" (audit REVIEW-10); comment text runs
+   in its own direction (`dir="auto"`, REVIEW-11). */
+.review-margin-card {
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--line), var(--e1);
+}
+.review-margin-card.expanded,
+.review-margin-card.review-margin-composer {
+  box-shadow: 0 0 0 1px var(--accent-line), var(--e2);
+}
+.review-margin-card:not(.expanded) .review-margin-body.is-clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.review-show-more {
+  display: inline-block;
+  margin: 0 0 0.25rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+.review-show-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* A suggestion carries Accept and Reject on the card itself, collapsed or not
+   (v2-review: "Reviewers want Accept and Reject on the card"). */
+.review-margin-revision:not(.expanded) .review-margin-card-actions { display: flex; margin-top: 0.5rem; }
+.review-margin-body a { color: var(--accent-text); text-decoration: underline; overflow-wrap: anywhere; }
+/* A draft kept by Escape (audit REVIEW-05): the composer stays, marked. */
+.review-margin-composer.is-draft { box-shadow: 0 0 0 1px var(--line-strong), var(--e1); }
+.review-draft-label { display: block; margin-block-end: 0.25rem; color: var(--muted); font-size: var(--fs-xs); font-weight: 600; }
+.review-empty-show {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.review-sidebar-empty p { margin: 0.25rem 0 0; }
+
+/* The undo snackbar (`undo_snackbar.mjs`): the status toast's place, inverted
+   like Docs' snackbar, with a real button, so it takes pointer events. */
+.undo-snackbar {
+  position: fixed;
+  inset-inline-start: var(--space-3);
+  bottom: calc(var(--h-footer) + var(--space-3));
+  z-index: var(--z-toast);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: min(26.25rem, calc(100vw - 2 * var(--space-3)));
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-radius: var(--r-md);
+  background: var(--ink);
+  color: var(--surface);
+  box-shadow: var(--e3);
+  font-size: var(--fs-sm);
+}
+.undo-snackbar[hidden] { display: none; }
+.undo-snackbar-action {
+  min-block-size: var(--h-tool);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: color-mix(in srgb, var(--accent) 45%, var(--surface));
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.undo-snackbar-action:hover { background: color-mix(in srgb, var(--surface) 12%, transparent); }
+.undo-snackbar-action:focus-visible { outline: 2px solid var(--surface); outline-offset: 1px; }
+body.phone-mode .undo-snackbar { bottom: calc(var(--phone-bottom-chrome, var(--h-footer)) + var(--space-3)); }
+/* ==== end Review shell ===================================================== */
+
+/* ==== Find bar (L5: audit CRITIC-07) =======================================
+   Three slim rows instead of a dialog: query + counter + previous/next/close,
+   the scope toggles, then the replacement with its actions. Narrower, and the
+   no-match state is the field's error colour (`aria-invalid`). */
+.find-panel { width: min(25rem, calc(100vw - 2.25rem)); }
+.find-panel .find-panel-body { gap: var(--space-2); padding: var(--pnl-pad-y); }
+.find-panel .find-search-row {
+  grid-template-columns: minmax(0, 1fr) auto var(--h-control) var(--h-control) var(--h-control);
+  gap: 0.25rem;
+}
+.find-panel .find-search-row .find-status { padding-inline: 0.25rem; }
+.find-panel .find-search-row .dialog-close { inline-size: var(--h-control); block-size: var(--h-control); margin: 0; }
+.find-panel .find-options { display: flex; flex-wrap: wrap; gap: 0.125rem 0.75rem; padding-inline: 0.25rem; font-size: var(--fs-sm); }
+.find-panel .find-replace-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.25rem;
+}
+.find-panel .find-replace-row .dialog-button { min-inline-size: 0; padding-inline: var(--space-2); white-space: nowrap; }
+.find-panel input[type="text"][aria-invalid="true"],
+.find-panel input[type="text"][aria-invalid="true"]:focus {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 18%, transparent);
+}
+/* A docked right panel holds the window's right edge; the bar sits beside it
+   rather than over it (the add-in panel already did this, `plugin-panel-open`). */
+:root[data-dock-right] body:not(.phone-mode, .plugin-panel-open) .find-panel { right: calc(var(--dock-w-right) + 2 * var(--dock-gap) + 0.75rem); }
+/* ==== end Find bar ========================================================= */

@@ -1,7 +1,7 @@
 // The Outline panel: the heading tree, scroll-to, and the flanking-panel
 // toggles it shares. Moved out of `main.js` unchanged (docs/177); it reaches
 // the rest of the editor only through the context `ed`.
-import { renderOutline, reflectOutlineActive } from "./outline_panel.mjs";
+import { renderOutline, reflectOutlineActive, outlineSectionAt } from "./outline_panel.mjs";
 import { t } from "./i18n.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
@@ -13,6 +13,7 @@ export function createOutline(ed) {
   /** Rebuilds the outline list from the document's headings (no-op when hidden). */
   function buildOutline() {
     if (!ed.doc || ed.outlinePanel.hidden) return;
+    places = null;
     ed.foldView.sync();
     renderOutline(ed.outlineBody, ed.doc.documentOutline(), {
       emptyText: t("outline.noHeadings"),
@@ -20,11 +21,40 @@ export function createOutline(ed) {
       activeNode: ed.selection?.focus?.node ?? "",
       ...ed.foldView.outlineOptions(),
     });
+    reflectOutlineSelection();
   }
 
-  /** Keeps the outline's active row synchronized with the model-backed caret. */
+  /** Where each heading row sits on the pages, `{ node, page, y }` in outline
+   *  (document) order, read once per layout revision: one `caretRect` per
+   *  heading, then reused for every caret move until the document changes. */
+  let places = null;
+  let placesRevision = null;
+  function headingPlaces() {
+    if (places && placesRevision === ed.currentRevision) return places;
+    places = [];
+    for (const row of ed.outlineBody.querySelectorAll(".outline-item")) {
+      const box = ed.doc.caretRect(row.dataset.node, 0);
+      if (box.length >= 3) places.push({ node: row.dataset.node, page: box[0], y: box[2] });
+    }
+    placesRevision = ed.currentRevision;
+    return places;
+  }
+
+  /** Keeps the outline's current row on the heading whose SECTION holds the
+   *  caret (audit CRITIC-08): Word's Navigation pane and the Docs outline both
+   *  highlight the heading you are under, not only a heading you are on. The
+   *  row carries `aria-current="location"` and is kept in view.
+   *  O(log headings) per caret move after the first read of a revision. */
   function reflectOutlineSelection() {
-    reflectOutlineActive(ed.outlineBody, ed.selection?.focus?.node ?? "");
+    const focus = ed.selection?.focus;
+    let node = focus?.node ?? "";
+    if (focus && ed.doc && !ed.outlineBody.querySelector(`.outline-item[data-node="${CSS.escape(node)}"]`)) {
+      const caret = ed.doc.caretRect(focus.node, focus.offset ?? 0);
+      if (caret.length >= 3) node = outlineSectionAt(headingPlaces(), caret[0], caret[2]) ?? "";
+    }
+    reflectOutlineActive(ed.outlineBody, node);
+    const current = ed.outlineBody.querySelector('.outline-item[aria-current="location"]');
+    current?.scrollIntoView?.({ block: "nearest" });
   }
 
   /** Places the caret at the start of `node` and scrolls it into view. */
@@ -61,10 +91,8 @@ export function createOutline(ed) {
 
   function toggleOutline() {
     ed.outlinePanel.hidden = !ed.outlinePanel.hidden;
-    // One panel per side (approved design P1, 2026-11-02): the outline replaces
-    // the other left-hand panel (Pages) and leaves the right side alone; the
-    // page re-centres between them and scrolls sideways when both are open.
-    if (!ed.outlinePanel.hidden) closeFlankingPanel(ed.pagesPanel, ed.railPages);
+    // One panel per side: the dock manager (`dock_manager.mjs`) closes Pages
+    // when the outline takes the left slot, as it does for every panel.
     ed.railOutline.setAttribute("aria-pressed", String(!ed.outlinePanel.hidden));
     buildOutline();
     reanchorPageOverlays();
