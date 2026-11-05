@@ -1007,17 +1007,20 @@ export const COMMAND_OPENS = new Map([
     "tools.autoCorrectOptions", "tools.checkAccessibility", "tools.wordCount", "tools.languages",
     "tools.personalDictionary", "format.language", "style.createFromSelection",
     "help.shortcuts", "object.altText", "table.cellFormat", "table.borderStyle",
-    "link.add", "link.edit",
   ].map((id) => [id, "dialog"]),
   // Pickers: a gallery, grid or popover that asks for a value first.
   ...[
     "insert.table", "insert.image", "insert.shape", "insert.symbol", "insert.emoji",
     "format.family", "format.size", "format.color", "format.highlight",
-    "layout.indent", "layout.spacing", "view.zoom", "help.commands",
+    "view.zoom", "help.commands",
+    // Every route to a link opens the link popover first (`docs/184` D-13).
+    "insert.link", "link.add", "link.edit",
   ].map((id) => [id, "picker"]),
-  // Panes: no ellipsis.
+  // Panes: no ellipsis. Indentation and Paragraph spacing open the Paragraph
+  // properties pane on their own field, the same pane `paragraph.properties` opens.
   ...[
-    "paragraph.properties", "layout.paragraph", "table.properties", "object.properties",
+    "paragraph.properties", "layout.paragraph", "layout.indent", "layout.spacing",
+    "table.properties", "object.properties",
     "chart.settings", "file.versionHistory",
   ].map((id) => [id, "pane"]),
 ]);

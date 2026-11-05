@@ -65,3 +65,13 @@ export function matchPlaces(bookmarks, query, limit = 6) {
   const needle = String(query ?? "").trim().replace(/^#/, "").toLowerCase();
   return bookmarks.filter((name) => name.toLowerCase().includes(needle)).slice(0, limit);
 }
+
+/** The row the keyboard lands on after ArrowDown or ArrowUp in a list of
+ *  `count` rows, from `index` (-1: none yet). Down from none is the first row,
+ *  Up from none the last, and both wrap, as the APG combobox's listbox does. */
+export function stepActiveOption(index, count, key) {
+  if (count <= 0) return -1;
+  if (key === "ArrowDown") return index < 0 || index >= count - 1 ? 0 : index + 1;
+  if (key === "ArrowUp") return index <= 0 ? count - 1 : index - 1;
+  return index;
+}

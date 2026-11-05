@@ -50,6 +50,73 @@ test("every command the taxonomy names is labelled somewhere", () => {
   assert.deepEqual(stale, [], "COMMAND_OPENS names commands no surface labels");
 });
 
+/** The object literal that contains `index`: from the `{` before it to its
+ *  matching `}`, skipping quoted strings. Labelled commands are object
+ *  literals, one line or several. */
+function objectAround(text, index) {
+  let start = index;
+  for (let depth = 0; start > 0; start -= 1) {
+    const c = text[start];
+    if (c === "}") depth += 1;
+    else if (c === "{") {
+      if (depth === 0) break;
+      depth -= 1;
+    }
+  }
+  let depth = 0;
+  let quote = null;
+  for (let i = start; i < text.length; i += 1) {
+    const c = text[i];
+    if (quote) {
+      if (c === "\\") i += 1;
+      else if (c === quote) quote = null;
+    } else if (c === '"' || c === "'" || c === "`") quote = c;
+    else if (c === "{") depth += 1;
+    else if (c === "}" && --depth === 0) return text.slice(start, i + 1);
+  }
+  return text.slice(start);
+}
+
+/** Every labelled command with the function its run/activate handler calls. */
+function openers() {
+  const out = [];
+  for (const name of readdirSync(SRC).filter((n) => n.endsWith(".mjs"))) {
+    const text = readFileSync(join(SRC, name), "utf8");
+    for (const m of text.matchAll(/\b(?:id|command):\s*"([a-z][\w.]*)",\s*(?:\/\/[^\n]*\n\s*)*label:/g)) {
+      const body = objectAround(text, m.index);
+      const call = /\b(?:run|activate):\s*(?:async\s*)?\([^)]*\)\s*=>\s*(?:\{\s*)?(?:void\s+)?(?:await\s+)?([\w.]+)\(/.exec(body)?.[1];
+      if (call) out.push({ id: m[1], call, file: name });
+    }
+  }
+  return out;
+}
+
+// Declaring a command is opt-in, so the first test cannot see a dialog command
+// nobody declared, nor a pane command declared as a picker: Indentation… and
+// Paragraph spacing… were declared pickers while opening the Paragraph
+// properties pane `paragraph.properties` opens as a pane, and "Add or edit link"
+// opened the link popover undeclared, beside "Add link…" declared a dialog.
+// Commands that run the SAME function open the same surface, so they must be
+// declared the same way, or not at all. Mutation (kept in the commit message):
+// declaring layout.indent a picker again, or dropping insert.link from the
+// table, turns this red.
+test("commands that open the same surface are declared to open the same kind", () => {
+  const byCall = new Map();
+  for (const entry of openers()) byCall.set(entry.call, [...(byCall.get(entry.call) ?? []), entry]);
+  const split = [];
+  for (const [call, entries] of byCall) {
+    const kinds = new Set(entries.map(({ id }) => COMMAND_OPENS.get(id) ?? "undeclared"));
+    if (kinds.size > 1) split.push(`${call}: ${entries.map(({ id }) => `${id}=${COMMAND_OPENS.get(id) ?? "undeclared"}`).join(", ")}`);
+  }
+  assert.deepEqual(split, []);
+});
+
+test("the opener scan sees the routes it is meant to compare", () => {
+  const calls = new Map(openers().map(({ id, call }) => [id, call]));
+  assert.equal(calls.get("layout.indent"), calls.get("layout.paragraph"));
+  assert.equal(calls.get("insert.link"), calls.get("link.add"));
+});
+
 test("three dots are never typed for an ellipsis", () => {
   const dots = labels().filter(({ label }) => /\.\.\.\s*$/.test(label));
   assert.deepEqual(dots.map(({ id, label }) => `${id} "${label}"`), []);

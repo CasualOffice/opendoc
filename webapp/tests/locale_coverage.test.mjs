@@ -130,26 +130,37 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  site every catalogue translates, so the six landed translated into all
  *  eighteen languages in the commit that routed them rather than leaving English
  *  column headings under a German header. MEASURED with this test's own counter
- *  on the regenerated catalogues, not incremented by six. */
+ *  on the regenerated catalogues, not incremented by six.
+ *
+ *  1,681 -> 3,648 is not new work: it is this floor catching up with the
+ *  catalogues. It had been left at 1,681 while every locale answered 3,635, so
+ *  the "never falls" gate had two thousand keys of slack, and a commit that
+ *  pruned about twenty translated dialog descriptions and minted sixty new keys
+ *  in English only (`109` UX-064, the dialog-types lane) dropped every locale to
+ *  3,588 and stayed green. The sixty are translated into all eighteen languages
+ *  now, and the floor is the figure this test's own counter reads on the merged
+ *  catalogues, so the next drop of even one translated key is a failure.
+ *  Mutation: restoring that commit's `de.json` reads "de: answers 3588 of 4571,
+ *  was 3648". */
 const COVERAGE = new Map([
-  ["ar", 1681],
-  ["de", 1681],
-  ["es", 1681],
-  ["fr", 1681],
-  ["hi", 1681],
-  ["id", 1681],
-  ["it", 1681],
-  ["ja", 1681],
-  ["ko", 1681],
-  ["nl", 1681],
-  ["pl", 1681],
-  ["pt-BR", 1681],
-  ["ru", 1681],
-  ["tr", 1681],
-  ["uk", 1681],
-  ["vi", 1681],
-  ["zh-Hans", 1681],
-  ["zh-Hant", 1681],
+  ["ar", 3648],
+  ["de", 3648],
+  ["es", 3648],
+  ["fr", 3648],
+  ["hi", 3648],
+  ["id", 3648],
+  ["it", 3648],
+  ["ja", 3648],
+  ["ko", 3648],
+  ["nl", 3648],
+  ["pl", 3648],
+  ["pt-BR", 3648],
+  ["ru", 3648],
+  ["tr", 3648],
+  ["uk", 3648],
+  ["vi", 3648],
+  ["zh-Hans", 3648],
+  ["zh-Hant", 3648],
 ]);
 
 /** 1,021 → 1,169 is version history's user interface (`docs/139`, `docs/140`;

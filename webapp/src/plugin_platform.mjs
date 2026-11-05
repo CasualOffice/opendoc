@@ -29,6 +29,7 @@
 // Complexity: O(plugins) per registry build; nothing here reads the document.
 import { t, has, activeLocale, direction } from "./i18n.mjs";
 import { registerModal } from "./modal.mjs";
+import { onSettingsRefresh } from "./settings_refresh.mjs";
 import { onButton, registerPopover, closePopover, openPopover } from "./popover_manager.mjs";
 import { commandContract } from "./host_contract.mjs";
 import { fetchVocabulary } from "./ai_webmcp.mjs";
@@ -1021,11 +1022,12 @@ export function startPluginPlatform(ed, { assistant, providers, config, openAiSe
     renderManager();
   }
   doc.getElementById("pluginsClose")?.addEventListener("click", () => managerController?.close());
-  // Settings shows the list whenever it opens, so the page is never stale.
-  doc.getElementById("settingsBtn")?.addEventListener("click", () => {
+  // Settings shows the list whenever it opens, by ANY route, and again when the
+  // language changes, so the page is never stale (`settings_refresh.mjs`).
+  onSettingsRefresh(() => {
     if (settingsStatus) settingsStatus.textContent = catalogue.problems.length ? t("plugins.catalogueProblem") : "";
     renderManager();
-  });
+  }, doc);
   doc.getElementById("pluginsDone")?.addEventListener("click", () => managerController?.close());
 
   // ---- Menus: Add-ins (ribbon) and ✦ (selection toolbar) --------------------

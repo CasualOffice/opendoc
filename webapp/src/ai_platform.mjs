@@ -18,6 +18,7 @@
 import { hostConfig } from "./capabilities.mjs";
 import { t } from "./i18n.mjs";
 import { registerModal } from "./modal.mjs";
+import { onSettingsRefresh } from "./settings_refresh.mjs";
 import { createAiProviders } from "./ai_provider_channel.mjs";
 import { createAiSettingsDialog, disclosureKey, loadAiSettings } from "./ai_settings.mjs";
 import { shown } from "./plugin_command_sources.mjs";
@@ -132,10 +133,12 @@ export function startAiPlatform(ed, { assistant = null, view = globalThis } = {}
   }
   const settingsRow = view.document?.getElementById("aiProviderSettingsBtn");
   settingsRow?.addEventListener("click", openSettings);
-  // Fill the form whenever Settings opens, so the section is never stale.
-  view.document?.getElementById("settingsBtn")?.addEventListener("click", () => {
-    queueMicrotask(() => { if (!view.document.getElementById("settingsPanel")?.hidden) openSettingsQuietly(); });
-  });
+  // Fill the form whenever Settings opens, by ANY route, so the section is never
+  // stale (`settings_refresh.mjs`). Not on a relabel: that would put the saved
+  // values back over what the reader was typing.
+  onSettingsRefresh((reason) => {
+    if (reason === "open") openSettingsQuietly();
+  }, view.document);
   function openSettingsQuietly() {
     dialog ??= createAiSettingsDialog({
       registerModal,
@@ -154,7 +157,8 @@ export function startAiPlatform(ed, { assistant = null, view = globalThis } = {}
   }
   // The Settings row's sentence follows the provider, computed when Settings is
   // opened — never at boot, when the catalogue may not have landed yet.
-  view.document?.getElementById("settingsBtn")?.addEventListener("click", refreshSummary);
+  // On every open and every relabel, since it is a sentence built in script.
+  onSettingsRefresh(refreshSummary, view.document);
 
   // No palette row and no menu row for the settings (owner rule, 2026-10-31: with
   // no provider the editor looks exactly as it does today). Settings is its home.

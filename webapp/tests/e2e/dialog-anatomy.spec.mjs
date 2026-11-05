@@ -8,8 +8,9 @@
 // roster (`modal-roster.mjs`, which `dialog-contract.spec.mjs` proves complete
 // against `editor.html`) and asserts the anatomy as a browser lays it out:
 //
-//   * at 1280x720 the card is 400, 560 or 720px wide (S/M/L), or 960px for the one
-//     reference card (Keyboard shortcuts), and nothing else;
+//   * at 1280x720 the card is 400, 560 or 720px wide (S/M/L), or 960px for the two
+//     reference cards (Keyboard shortcuts and the Settings frame), and nothing
+//     else; Manage add-ins is L since its list moved into Settings (DIALOGS-08);
 //     at 390x844 it is a full-width bottom sheet;
 //   * the title is 15px (--fs-lg; owner, 2026-11-02: 20px was too large);
 //   * the footer is painted inside the card and inside the window — pinned,
@@ -36,6 +37,8 @@ import { DIALOGS } from "./modal-roster.mjs";
 const LAPTOP = { width: 1280, height: 720 };
 const PHONE = { width: 390, height: 844 };
 const RUNGS = [400, 560, 720, 960];
+/** The only cards on the XL rung: the shortcuts reference and the Settings frame. */
+const XL_CARDS = ["shortcutsDialog", "settingsPanel"];
 
 /** Everything the anatomy promises, measured in the page. */
 async function measure(page, id) {
@@ -160,6 +163,9 @@ for (const dialog of DIALOGS()) {
       await page.evaluate((t) => document.documentElement.setAttribute("data-theme", t), theme);
       const m = await measure(page, dialog.id);
       expect(RUNGS, `#${dialog.id} (${theme}) is ${m.width}px wide, not S/M/L`).toContain(m.width);
+      // XL is for the reference cards only, so a dialog cannot reach it by
+      // borrowing their class (Manage add-ins did, at 960px; audit DIALOGS-08).
+      if (m.width === 960) expect(XL_CARDS, `#${dialog.id} (${theme}) is XL but is not a reference card`).toContain(dialog.id);
       assertAnatomy(m, dialog.id, `1280 ${theme}`);
     }
     expect(consoleErrors).toEqual([]);

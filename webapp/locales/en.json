@@ -2571,7 +2571,7 @@
   "pluginsDialog.close.title": "Close",
   "pluginsDialog.closeAddinsDialog.label": "Close add-ins dialog",
   "pluginsDialog.codeNote": "Add-ins belong to this browser, never to a document.",
-  "pluginsDialog.description": "Add-ins run in a sandbox and can do only what you allow. Every change they propose waits for you to accept it.",
+  "pluginsDialog.descriptionShort": "Add-ins run in a sandbox and do only what you allow.",
   "pluginsDialog.install": "Install",
   "pluginsDialog.installUrl": "Install from a manifest URL",
   "pluginsDialog.managed": "The add-ins here were chosen by the application you opened this editor in.",

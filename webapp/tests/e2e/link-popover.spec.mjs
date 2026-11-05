@@ -86,3 +86,72 @@ test("More options replaces the popover with the dialog and carries what was typ
   await expect(page.locator("#linkUrlInput")).toHaveValue("https://example.org");
   await expect(page.locator("#linkRemoveBtn")).toBeHidden();
 });
+
+// The bookmark list under the field is a combobox's listbox, so the keyboard
+// alone can pick a place (SKILL §10; WAI-ARIA APG combobox). Focus stays in the
+// field: Down puts the keyboard on a row, which the field names through
+// aria-activedescendant; Enter takes it; Enter again applies. Mutation: removing
+// the field's keydown handler leaves no active row after Down, and Enter then
+// submits "#" (no such bookmark), so this goes red at the first assertion.
+test("a bookmark is chosen from the keyboard alone", async ({ page, consoleErrors }) => {
+  await gotoEditor(page);
+  await selectFirstWord(page);
+  // A bookmark to link to, through the palette, which keeps the selection.
+  await page.keyboard.press(`${MOD}+Shift+P`);
+  await expect(page.locator("#cmdPalette")).toBeVisible();
+  await page.locator("#cmdInput").fill("bookmark manager");
+  await page.locator("#cmdInput").press("Enter");
+  await expect(page.locator("#bookmarkDialog")).toBeVisible();
+  await page.locator("#bookmarkNameInput").fill("Intro");
+  await page.locator("#bookmarkAddBtn").click();
+  await expect(page.locator("#bookmarkList .bookmark-row")).toHaveCount(1);
+  await page.locator("#bookmarkDone").click();
+  await expect(page.locator("#bookmarkDialog")).toBeHidden();
+
+  await page.keyboard.press(`${MOD}+k`);
+  const url = page.locator("#linkPopoverUrl");
+  await expect(url).toBeFocused();
+  await page.keyboard.type("#");
+  const option = page.locator('#linkPopoverPlaces [role="option"]', { hasText: "Intro" });
+  await expect(option).toBeVisible();
+  await expect(url).toHaveAttribute("aria-expanded", "true");
+
+  await page.keyboard.press("ArrowDown");
+  await expect(option).toHaveAttribute("aria-selected", "true");
+  await expect(url).toHaveAttribute("aria-activedescendant", (await option.getAttribute("id")) ?? "");
+  await expect(url, "the field keeps the keyboard while a row is active").toBeFocused();
+
+  await page.keyboard.press("Enter");
+  await expect(url).toHaveValue("#Intro");
+  await expect(page.locator("#linkPopoverPlaces")).toBeHidden();
+  await expect(page.locator("#linkPopover"), "taking a row does not apply yet").toBeVisible();
+
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#linkPopover")).toBeHidden();
+  await expect(page.locator("#undoBtn")).toHaveAttribute("aria-label", "Undo Link change");
+  await expectEditorFocused(page);
+  expect(consoleErrors).toEqual([]);
+});
+
+// Esc on an open bookmark list closes the LIST, not the popover: the reader
+// was dismissing the suggestions, not the link they were writing.
+test("Esc closes the bookmark list before the popover", async ({ page }) => {
+  await gotoEditor(page);
+  await selectFirstWord(page);
+  await page.keyboard.press(`${MOD}+Shift+P`);
+  await page.locator("#cmdInput").fill("bookmark manager");
+  await page.locator("#cmdInput").press("Enter");
+  await page.locator("#bookmarkNameInput").fill("Intro");
+  await page.locator("#bookmarkAddBtn").click();
+  await page.locator("#bookmarkDone").click();
+  await expect(page.locator("#bookmarkDialog")).toBeHidden();
+  await page.keyboard.press(`${MOD}+k`);
+  await expect(page.locator("#linkPopoverUrl")).toBeFocused();
+  await page.keyboard.type("#");
+  await expect(page.locator("#linkPopoverPlaces")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#linkPopoverPlaces")).toBeHidden();
+  await expect(page.locator("#linkPopover")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#linkPopover")).toBeHidden();
+});

@@ -15141,8 +15141,10 @@ body.phone-mode #pageSetupMenu .page-setup-body { grid-template-columns: minmax(
 .link-popover-places { display: grid; max-block-size: 12rem; margin: calc(-1 * var(--space-2)) 0 0; padding: var(--space-1); overflow-y: auto; overscroll-behavior: contain; list-style: none; border: 1px solid var(--line); border-radius: var(--r-sm); }
 .link-popover-places[hidden] { display: none; }
 .link-popover-place { display: flex; align-items: center; min-block-size: var(--h-ctl); padding: 0 var(--space-2); border-radius: var(--r-xs); color: var(--ink); font-size: var(--fs-md); cursor: pointer; }
-.link-popover-place:hover,
-.link-popover-place:focus { background: var(--hover); outline: none; }
+.link-popover-place:hover { background: var(--hover); }
+/* The row the keyboard is on: the field keeps focus and names it through
+   aria-activedescendant, so the state is aria-selected, not :focus. */
+.link-popover-place[aria-selected="true"] { background: var(--accent-soft); color: var(--ink); box-shadow: inset 2px 0 0 var(--accent-text); }
 .link-popover-error { margin: 0; color: var(--danger, var(--ink)); font-size: var(--fs-sm); }
 .link-popover-error:empty { display: none; }
 .link-popover-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); }

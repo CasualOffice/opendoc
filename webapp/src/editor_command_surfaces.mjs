@@ -177,8 +177,8 @@ export function createCommandSurfaces(ed) {
     // pair of inputs would be a second answer to "what is this paragraph's indent".
     { command: "paragraph.indent.decrease", buttons: () => [ed.layoutIndentDecBtn], requires: "caret", run: () => ed.adjustIndentCommand(-360) },
     { command: "paragraph.indent.increase", buttons: () => [ed.layoutIndentIncBtn], requires: "caret", run: () => ed.adjustIndentCommand(360) },
-    { command: "layout.indent", label: "Indentation…", kw: "indent left right first line hanging exact fields paragraph", buttons: () => [ed.layoutIndentFieldsBtn], requires: "caret", run: () => ed.toggleParagraphProperties(true, () => ed.indentLeftInput) },
-    { command: "layout.spacing", label: "Paragraph spacing…", kw: "spacing line before after leading paragraph fields", buttons: () => [ed.layoutSpacingFieldsBtn], requires: "caret", run: () => ed.toggleParagraphProperties(true, () => ed.paraLineSpacing) },
+    { command: "layout.indent", label: "Indentation", kw: "indent left right first line hanging exact fields paragraph", buttons: () => [ed.layoutIndentFieldsBtn], requires: "caret", run: () => ed.toggleParagraphProperties(true, () => ed.indentLeftInput) },
+    { command: "layout.spacing", label: "Paragraph spacing", kw: "spacing line before after leading paragraph fields", buttons: () => [ed.layoutSpacingFieldsBtn], requires: "caret", run: () => ed.toggleParagraphProperties(true, () => ed.paraLineSpacing) },
     // Arrange: the object inspector's own wrap and geometry sections, reached from
     // a durable affordance instead of only the floating bar that appears on hover.
     // The two running-content variants. No `label`/`kw`: `editorCommands` already

@@ -202,3 +202,22 @@ test("Readability highlights in the text, Hemingway-style, runs on the device, a
   const origin = new URL(page.url()).origin;
   expect(requested.filter((u) => /^https?:/.test(u) && new URL(u).origin !== origin)).toEqual([]);
 });
+
+// The add-in rows are built in script, so a language chosen on Settings' own
+// General page has to reach them without another click on the gear: Settings
+// announces a relabel (`settings_refresh.mjs`) and the list re-renders in the
+// new language. Mutation: dropping `announceSettings("relabel")` from the
+// Settings relabel hook leaves the row reading "By Casual Office", and this
+// goes red.
+test("the add-in rows follow a language chosen on the same Settings frame", async ({ page, consoleErrors }) => {
+  await gotoEditor(page);
+  await openManager(page);
+  const meta = page.locator(`#settingsAddinsList .plugins-row[data-plugin="${LT}"] .plugins-meta`).first();
+  await expect(meta).toContainText("By Casual Office");
+  await page.locator('#settingsPanel [data-settings-tab="general"]').click();
+  await page.locator("#languageSelect").selectOption("de");
+  await expect(page.locator("html")).toHaveAttribute("lang", "de");
+  await page.locator('#settingsPanel [data-settings-tab="ai"]').click();
+  await expect(meta).toContainText("Von Casual Office");
+  expect(consoleErrors).toEqual([]);
+});

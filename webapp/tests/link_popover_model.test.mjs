@@ -2,7 +2,7 @@
 // target means, and what is refused before anything is written.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { matchPlaces, resolveLinkInput } from "../src/link_popover_model.mjs";
+import { matchPlaces, resolveLinkInput, stepActiveOption } from "../src/link_popover_model.mjs";
 
 const bookmarks = ["Intro", "Results", "results_2024"];
 
@@ -41,4 +41,18 @@ test("places are matched by name, case-insensitively, in document order", () => 
   assert.deepEqual(matchPlaces(bookmarks, "#intro"), ["Intro"]);
   assert.deepEqual(matchPlaces(bookmarks, ""), bookmarks);
   assert.deepEqual(matchPlaces(bookmarks, "", 1), ["Intro"]);
+});
+
+// The bookmark list is a listbox the keyboard walks while focus stays in the
+// field (APG combobox). Mutation: making ArrowUp step forward like ArrowDown, or
+// dropping the wrap, turns this red.
+test("Down and Up walk the bookmark rows and wrap at both ends", () => {
+  assert.equal(stepActiveOption(-1, 3, "ArrowDown"), 0);
+  assert.equal(stepActiveOption(0, 3, "ArrowDown"), 1);
+  assert.equal(stepActiveOption(2, 3, "ArrowDown"), 0);
+  assert.equal(stepActiveOption(-1, 3, "ArrowUp"), 2);
+  assert.equal(stepActiveOption(1, 3, "ArrowUp"), 0);
+  assert.equal(stepActiveOption(0, 3, "ArrowUp"), 2);
+  assert.equal(stepActiveOption(1, 3, "Home"), 1);
+  assert.equal(stepActiveOption(0, 0, "ArrowDown"), -1);
 });

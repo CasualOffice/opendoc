@@ -7,7 +7,7 @@
 import { registerModal } from "./modal.mjs";
 import { t } from "./i18n.mjs";
 import { popoverPosition } from "./popover_position.mjs";
-import { matchPlaces, resolveLinkInput } from "./link_popover_model.mjs";
+import { matchPlaces, resolveLinkInput, stepActiveOption } from "./link_popover_model.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -267,6 +267,10 @@ export function createLinkDialog(ed) {
   const popMore = document.getElementById("linkPopoverMore");
   /** What the open popover targets; `null` while it is closed. */
   let popCtx = null;
+  /** The bookmark row the keyboard is on, or -1. The field keeps DOM focus and
+   *  names this row through `aria-activedescendant` (the APG combobox with a
+   *  listbox popup), so typing and arrowing never fight over focus. */
+  let activePlace = -1;
 
   function bookmarkNames() {
     return ed.bookmarkManager?.entries?.().map((entry) => entry.name) ?? [];
@@ -319,6 +323,7 @@ export function createLinkDialog(ed) {
         const row = document.createElement("li");
         row.id = `linkPopoverPlace${index}`;
         row.setAttribute("role", "option");
+        row.setAttribute("aria-selected", "false");
         row.className = "link-popover-place";
         row.dataset.anchor = name;
         row.textContent = name;
@@ -327,12 +332,32 @@ export function createLinkDialog(ed) {
     );
     popPlaces.hidden = names.length === 0;
     popUrl.setAttribute("aria-expanded", String(names.length > 0));
+    setActivePlace(-1);
+  }
+
+  /** Puts the keyboard on bookmark row `index` (-1: on none). */
+  function setActivePlace(index) {
+    const rows = [...popPlaces.querySelectorAll("[role=option]")];
+    activePlace = index >= 0 && index < rows.length ? index : -1;
+    rows.forEach((row, i) => row.setAttribute("aria-selected", String(i === activePlace)));
+    const active = rows[activePlace];
+    if (active) {
+      popUrl.setAttribute("aria-activedescendant", active.id);
+      active.scrollIntoView?.({ block: "nearest" });
+    } else {
+      popUrl.removeAttribute("aria-activedescendant");
+    }
+  }
+
+  function hidePlaces() {
+    popPlaces.hidden = true;
+    popUrl.setAttribute("aria-expanded", "false");
+    setActivePlace(-1);
   }
 
   function choosePlace(name) {
     popUrl.value = `#${name}`;
-    popPlaces.hidden = true;
-    popUrl.setAttribute("aria-expanded", "false");
+    hidePlaces();
     validatePopover();
     popUrl.focus();
   }
@@ -360,7 +385,7 @@ export function createLinkDialog(ed) {
   function closeLinkPopover({ restoreFocus = true } = {}) {
     if (pop.hidden) return;
     pop.hidden = true;
-    popPlaces.hidden = true;
+    hidePlaces();
     popCtx = null;
     if (restoreFocus) ed.focusEditorSurface?.();
   }
@@ -388,10 +413,23 @@ export function createLinkDialog(ed) {
       renderPlaces();
       validatePopover();
     });
+    // The bookmark list from the keyboard (SKILL §10; WAI-ARIA APG combobox):
+    // Up and Down move through the rows while focus stays in the field, Enter
+    // or Tab takes the row the keyboard is on, and Esc closes the list before
+    // it closes the popover.
     popUrl.addEventListener("keydown", (event) => {
-      if (event.key === "ArrowDown" && !popPlaces.hidden) {
+      if (popPlaces.hidden) return;
+      const rows = popPlaces.querySelectorAll("[role=option]");
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
-        popPlaces.querySelector("[role=option]")?.focus?.();
+        setActivePlace(stepActiveOption(activePlace, rows.length, event.key));
+      } else if ((event.key === "Enter" || event.key === "Tab") && activePlace >= 0) {
+        if (event.key === "Enter") event.preventDefault();
+        choosePlace(rows[activePlace].dataset.anchor);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        hidePlaces();
       }
     });
     popPlaces.addEventListener("mousedown", (event) => event.preventDefault());

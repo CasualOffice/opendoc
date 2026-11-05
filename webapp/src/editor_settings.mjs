@@ -14,6 +14,7 @@ import { setPaneRenderer, showSettingsPane } from "./file_pane.mjs";
 import { applyAppearance, brandAccent, reflectAppearance } from "./appearance.mjs";
 import { activeAuthor, hostIdentity, reflectAuthorIdentity } from "./host_identity.mjs";
 import { engineVersion } from "../pkg/casual_doc_wasm.js";
+import { announceSettings } from "./settings_refresh.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -164,6 +165,9 @@ export function createSettings(ed) {
   const settingsModal = registerModal(settingsPanel, {
     initialFocus: () => themeGroup.selected(),
     fallbackFocus: () => ed.settingsBtn,
+    // Every route that opens the dialog (the gear, the palette, a status-bar
+    // reveal, an AI entry point) refreshes its script-built parts.
+    onOpen: () => announceSettings("open"),
   });
 
   function toggleSettings(open) {
@@ -286,6 +290,9 @@ export function createSettings(ed) {
       reflectAuthorFields();
       // The page title is the chosen tab's name; the relabel reset it to General's.
       showSettingsPage(settingsBody?.dataset.settingsPage ?? "general");
+      // And the parts of Settings built in script (the add-in rows, the AI
+      // summary) were built in the previous language.
+      announceSettings("relabel");
     },
   });
 
