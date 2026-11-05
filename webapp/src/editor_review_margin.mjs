@@ -606,11 +606,12 @@ export function createReviewMargin(ed) {
         // unsent comment the same way). Cancel is the one way to discard it.
         const state = ed.reviewComposerState;
         textarea.value = state?.draft ?? "";
+        // Typing again un-marks the draft; a mere focus (a re-render putting
+        // the caret back) does not, or the marker would vanish on its own.
         textarea.addEventListener("input", () => {
-          if (ed.reviewComposerState) ed.reviewComposerState.draft = textarea.value;
-        });
-        textarea.addEventListener("focus", () => {
-          if (ed.reviewComposerState) ed.reviewComposerState.isDraft = false;
+          if (!ed.reviewComposerState) return;
+          ed.reviewComposerState.draft = textarea.value;
+          ed.reviewComposerState.isDraft = false;
           composer.classList.remove("is-draft");
           draftLabel.hidden = true;
         });

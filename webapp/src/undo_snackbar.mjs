@@ -11,7 +11,6 @@
 // element's own `role="status"`, so the sentence is also heard.
 //
 // Complexity: O(1).
-import { t } from "./i18n.mjs";
 
 /** How long the offer stays, in ms: long enough to read a short sentence and
  *  reach the button (Material's 4-10s band), short enough not to linger. */
@@ -60,7 +59,6 @@ export function showUndoSnackbar(message, undo, doc = document) {
   clearTimeout(timer);
   onUndo = undo;
   text.textContent = message;
-  button.textContent = t("undoSnackbar.undo");
   bar.hidden = false;
   timer = setTimeout(() => hideUndoSnackbar(doc), UNDO_SNACKBAR_MS);
 }

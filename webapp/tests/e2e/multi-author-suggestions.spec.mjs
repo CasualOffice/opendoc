@@ -11,7 +11,7 @@
 // wrapper is SPLIT (dividing the range without touching a character of its
 // content) and a deletion inside one NESTS, exactly as Word's `w:del` inside
 // `w:ins` does.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, setReviewMode } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, setReviewMode, reviewBarAction } from "./fixtures.mjs";
 
 async function reviewAs(page, author) {
   await page.locator("#settingsBtn").click();
@@ -111,7 +111,7 @@ test("rejecting everything restores the document after authors interleave", asyn
   await page.keyboard.type("XX");
   await expect.poll(() => documentText(page)).toContain("ADAXXWORD");
 
-  await page.locator("#reviewRejectAll").click();
+  await reviewBarAction(page, "#reviewRejectAll");
 
   await expect
     .poll(() => documentText(page), { timeout: 15_000 })

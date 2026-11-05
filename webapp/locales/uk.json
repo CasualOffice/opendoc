@@ -3675,7 +3675,7 @@
   "reviewBar.allAccepted": "Усі зміни прийнято",
   "reviewBar.allRejected": "Усі зміни відхилено",
   "reviewBar.resolved": "Коментар вирішено",
-  "undoSnackbar.undo": "Скасувати",
+  "undoSnackbar.undoButton": "Скасувати",
   "reviewCard.showMore": "Показати більше",
   "reviewCard.draft": "Чернетка",
   "reviewCard.draftKept": "Коментар збережено як чернетку",

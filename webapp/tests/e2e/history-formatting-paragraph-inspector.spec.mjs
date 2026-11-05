@@ -96,8 +96,18 @@ test("paragraph properties use a docked live inspector with per-action undo", as
   await expect(liveParagraphSections.locator('button:has-text("Apply")')).toHaveCount(0);
   await expect(panel.getByRole("button", { name: "Apply", exact: true })).toHaveCount(0);
   await expect(panel.locator('button:has-text("Reset")')).toHaveCount(0);
-  // Docked flush to the window edge (approved design P1, docs/184).
-  await expect(panel).toHaveCSS("border-radius", "0px");
+  // Docked as a card on the desk (docs/184 D4 as amended 2026-11-06, the
+  // approved v2 mockup): the shared panel radius, not a floating dialog.
+  const radius = await page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.style.borderRadius = "var(--r-md)";
+    document.body.append(probe);
+    const value = getComputedStyle(probe).borderTopLeftRadius;
+    probe.remove();
+    return value;
+  });
+  await expect(panel).toHaveCSS("border-top-left-radius", radius);
+  await expect(panel).toHaveCSS("position", "relative");
 
   const left = page.locator("#indentLeft");
   const original = await left.inputValue();

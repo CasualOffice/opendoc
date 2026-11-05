@@ -3653,7 +3653,7 @@
   "reviewBar.allAccepted": "Tüm değişiklikler kabul edildi",
   "reviewBar.allRejected": "Tüm değişiklikler reddedildi",
   "reviewBar.resolved": "Yorum çözüldü",
-  "undoSnackbar.undo": "Geri al",
+  "undoSnackbar.undoButton": "Geri al",
   "reviewCard.showMore": "Daha fazla göster",
   "reviewCard.draft": "Taslak",
   "reviewCard.draftKept": "Yorum taslak olarak saklandı",

@@ -9,6 +9,7 @@ import {
   clickIntoFirstPage,
   moveCaretToDocStart,
   setReviewMode,
+  reviewBarAction,
 } from "./fixtures.mjs";
 
 async function pastePlainText(page, text) {
@@ -80,7 +81,7 @@ test("Accept all decides every tracked change at once (REVIEW-GAP-018)", async (
   await expect(insertions).toHaveCount(2);
 
   // Accept all lives in the fixed header; it decides every change in one action.
-  await page.locator("#reviewAcceptAll").click();
+  await reviewBarAction(page, "#reviewAcceptAll");
   await expect(insertions).toHaveCount(0);
 
   expect(consoleErrors).toEqual([]);
@@ -102,7 +103,7 @@ test("Next change navigates between tracked changes and expands the target card 
   const card = sidebar.locator(".review-margin-card.review-margin-insertion");
   await expect(card).toHaveAttribute("aria-expanded", "false");
 
-  await page.locator("#reviewNext").click();
+  await reviewBarAction(page, "#reviewNext");
   // Navigating to the change selects its range and surfaces (expands) its card.
   await expect(card).toHaveAttribute("aria-expanded", "true");
 

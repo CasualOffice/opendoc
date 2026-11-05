@@ -3642,7 +3642,7 @@
   "reviewBar.allAccepted": "Đã chấp nhận tất cả thay đổi",
   "reviewBar.allRejected": "Đã từ chối tất cả thay đổi",
   "reviewBar.resolved": "Đã giải quyết nhận xét",
-  "undoSnackbar.undo": "Hoàn tác",
+  "undoSnackbar.undoButton": "Hoàn tác",
   "reviewCard.showMore": "Hiện thêm",
   "reviewCard.draft": "Bản nháp",
   "reviewCard.draftKept": "Đã giữ nhận xét làm bản nháp",

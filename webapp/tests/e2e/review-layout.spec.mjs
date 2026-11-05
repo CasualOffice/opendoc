@@ -162,6 +162,28 @@ test("Accept all and Reject all are absent with nothing to decide, and in the â‹
   expect(consoleErrors).toEqual([]);
 });
 
+test("Suggesting is the chip and a rule, not a banner: the page moves 0px", async ({ page, consoleErrors }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  const top = () => page.locator(".page-wrap").first().evaluate((el) => el.getBoundingClientRect().top);
+  const before = await top();
+  await setReviewMode(page, "suggesting");
+  await expect(page.locator("#headerModeBtn")).toHaveAttribute("data-mode", "suggesting");
+  await settle(page);
+  expect(await top(), "entering Suggesting moved the page").toBe(before);
+  await expect(page.locator("#suggestingBanner")).toBeHidden();
+  // Exactly one mode surface on screen: the header chip.
+  const surfaces = await page.evaluate(() =>
+    ["#headerModeBtn", "#reviewModeControl", "#suggestingBanner"].filter((s) => {
+      const el = document.querySelector(s);
+      return el && !el.hidden && el.getClientRects().length > 0;
+    }),
+  );
+  expect(surfaces).toEqual(["#headerModeBtn"]);
+  expect(consoleErrors).toEqual([]);
+});
+
 test("typed text in a new comment survives Escape as a Draft", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await gotoEditor(page);

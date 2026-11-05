@@ -3653,7 +3653,7 @@
   "reviewBar.allAccepted": "Alle wijzigingen geaccepteerd",
   "reviewBar.allRejected": "Alle wijzigingen geweigerd",
   "reviewBar.resolved": "Opmerking opgelost",
-  "undoSnackbar.undo": "Ongedaan maken",
+  "undoSnackbar.undoButton": "Ongedaan maken",
   "reviewCard.showMore": "Meer tonen",
   "reviewCard.draft": "Concept",
   "reviewCard.draftKept": "Opmerking bewaard als concept",

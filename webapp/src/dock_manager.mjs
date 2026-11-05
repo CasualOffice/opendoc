@@ -226,7 +226,8 @@ export function startDockManager(ed, { doc = document, view = window } = {}) {
         displacedReview = undefined;
         ed.reviewSidebarPreference = preference;
         ed.reanchorPageOverlays?.();
-      } else if (opened.has(ed.reviewSidebar)) {
+      } else if (opened.has(ed.reviewSidebar) && isShown(ed.reviewSidebar)) {
+        // The column took the slot itself; nothing is waiting to come back.
         displacedReview = undefined;
       }
       for (const side of ["left", "right"]) root.toggleAttribute(`data-dock-${side}`, visible(side).length > 0);
@@ -358,4 +359,21 @@ export function startDockManager(ed, { doc = document, view = window } = {}) {
     width: (side) => widths[side],
     setWidth,
   };
+}
+
+/** Whether the caret was in a table at the last toolbar pass. */
+let followInTable = false;
+
+/**
+ * The Properties panel's tab follows the selection (docs/184 D5, audit
+ * DIALOGS-07; ONLYOFFICE's RightMenu): the caret entering a table moves an open
+ * panel to Table, leaving it moves it back to Paragraph — without taking the
+ * caret out of the document. Only on that change, so a person who picks the
+ * Paragraph tab inside a table keeps it. Called from the toolbar pass; O(1).
+ */
+export function followPropertiesTab(ed, inTable, hasSelection) {
+  if (inTable === followInTable) return;
+  followInTable = inTable;
+  if (inTable && !ed.paragraphPropertiesPanel.hidden) ed.toggleTableProperties(true, { follow: true });
+  else if (!inTable && !ed.tablePropertiesPanel.hidden && hasSelection) ed.toggleParagraphProperties(true, null, { follow: true });
 }

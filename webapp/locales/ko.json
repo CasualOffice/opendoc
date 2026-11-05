@@ -3642,7 +3642,7 @@
   "reviewBar.allAccepted": "모든 변경 내용을 수락했습니다",
   "reviewBar.allRejected": "모든 변경 내용을 거부했습니다",
   "reviewBar.resolved": "댓글을 해결했습니다",
-  "undoSnackbar.undo": "실행 취소",
+  "undoSnackbar.undoButton": "실행 취소",
   "reviewCard.showMore": "더 보기",
   "reviewCard.draft": "초안",
   "reviewCard.draftKept": "댓글을 초안으로 보관했습니다",

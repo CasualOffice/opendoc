@@ -484,7 +484,7 @@ export function createReviewDecisions(ed) {
     showUndoSnackbar(said, () => void ed.runEdit(() => ed.doc.undo()));
     // Focus never falls to <body> (audit REVIEW-06): the menu row that ran this
     // is gone, so the person is put back in the document.
-    if (!document.activeElement || document.activeElement === document.body || ed.reviewMoreMenu?.contains(document.activeElement)) {
+    if (!document.activeElement || document.activeElement === document.body || document.getElementById("reviewMoreMenu")?.contains(document.activeElement)) {
       ed.focusEditorSurface();
     }
   }
@@ -498,7 +498,6 @@ export function createReviewDecisions(ed) {
   // handler), so the menu is never left open over the place the action lands.
   const moreBtn = document.getElementById("reviewMoreBtn");
   const moreMenu = document.getElementById("reviewMoreMenu");
-  ed.reviewMoreMenu = moreMenu;
   if (moreBtn && moreMenu) {
     const more = registerPopover(moreBtn, moreMenu, () => ed.updateReviewControls?.(), { needsDocument: false });
     moreMenu.addEventListener("click", (event) => {

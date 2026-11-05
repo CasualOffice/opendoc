@@ -213,9 +213,7 @@ test("table and suggestion contexts expose exact commands and mode-safe reasons"
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
 
-  await page.locator("#suggestingBanner").getByRole("button", {
-    name: "Switch to editing",
-  }).click();
+  await setReviewMode(page, "editing");
   await moveCaretToDocStart(page);
   await setReviewMode(page, "suggesting");
   await page.keyboard.type("REVIEW_CONTEXT");

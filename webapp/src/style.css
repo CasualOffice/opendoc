@@ -15069,6 +15069,10 @@ body.phone-mode .workarea > .side-panel::before {
 .undo-snackbar-action:hover { background: color-mix(in srgb, var(--surface) 12%, transparent); }
 .undo-snackbar-action:focus-visible { outline: 2px solid var(--surface); outline-offset: 1px; }
 body.phone-mode .undo-snackbar { bottom: calc(var(--phone-bottom-chrome, var(--h-footer)) + var(--space-3)); }
+/* Suggesting is the chip and a 2px rule along the top of the canvas, no banner
+   (PROPOSAL D-6, audit REVIEW-08). An inset shadow on the scroller paints over
+   its own background and under nothing, and takes no layout: the page moves 0px. */
+body[data-editing-mode="suggesting"] .viewport { box-shadow: inset 0 2px 0 var(--review-insert-line); }
 /* ==== end Review shell ===================================================== */
 
 /* ==== Find bar (L5: audit CRITIC-07) =======================================

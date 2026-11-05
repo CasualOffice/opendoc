@@ -3642,7 +3642,7 @@
   "reviewBar.allAccepted": "Semua perubahan diterima",
   "reviewBar.allRejected": "Semua perubahan ditolak",
   "reviewBar.resolved": "Komentar diselesaikan",
-  "undoSnackbar.undo": "Urungkan",
+  "undoSnackbar.undoButton": "Urungkan",
   "reviewCard.showMore": "Tampilkan lebih banyak",
   "reviewCard.draft": "Draf",
   "reviewCard.draftKept": "Komentar disimpan sebagai draf",

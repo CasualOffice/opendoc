@@ -4,7 +4,7 @@
 // open looking clean: the changes were kept on save but never listed, painted,
 // navigable or decidable, and Accept All reported "no tracked revisions"
 // (docs/104 HF-156). This drives the whole reviewer path through the real UI.
-import { expect, gotoEditor, stableBox, test } from "./fixtures.mjs";
+import { expect, gotoEditor, stableBox, test, reviewBarAction } from "./fixtures.mjs";
 import { makeParagraphRevisionsDocx } from "./large-docx.mjs";
 
 async function openParagraphRevisions(page) {
@@ -95,7 +95,7 @@ test("Next reaches paragraph-level suggestions, and Accept all decides them", as
   // Each step is asserted in document order, and waits for the card to change.
   const expanded = sidebar.locator('.review-margin-card[aria-expanded="true"]');
   for (const kind of ["paragraph-mark-deletion", "paragraph-format", "paragraph-mark-insertion"]) {
-    await page.locator("#reviewNext").click();
+    await reviewBarAction(page, "#reviewNext");
     await expect(expanded).toHaveCount(1);
     await expect(expanded).toHaveClass(new RegExp(`review-margin-${kind}`));
   }
@@ -107,7 +107,7 @@ test("Next reaches paragraph-level suggestions, and Accept all decides them", as
   const barBox = await stableBox(bar);
   expect(barBox.x - pageBox.x).toBeLessThan(pageBox.width * 0.2);
 
-  await page.locator("#reviewAcceptAll").click();
+  await reviewBarAction(page, "#reviewAcceptAll");
   await expect(cards).toHaveCount(0);
   await expect(page.locator(".review-paragraph-mark-marker")).toHaveCount(0);
   await expect(page.locator(".review-paragraph-format-bar")).toHaveCount(0);

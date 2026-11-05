@@ -3664,7 +3664,7 @@
   "reviewBar.allAccepted": "Tutte le modifiche accettate",
   "reviewBar.allRejected": "Tutte le modifiche rifiutate",
   "reviewBar.resolved": "Commento risolto",
-  "undoSnackbar.undo": "Annulla",
+  "undoSnackbar.undoButton": "Annulla",
   "reviewCard.showMore": "Mostra altro",
   "reviewCard.draft": "Bozza",
   "reviewCard.draftKept": "Commento conservato come bozza",

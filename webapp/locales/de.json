@@ -3653,7 +3653,7 @@
   "reviewBar.allAccepted": "Alle Änderungen angenommen",
   "reviewBar.allRejected": "Alle Änderungen abgelehnt",
   "reviewBar.resolved": "Kommentar erledigt",
-  "undoSnackbar.undo": "Rückgängig",
+  "undoSnackbar.undoButton": "Rückgängig",
   "reviewCard.showMore": "Mehr anzeigen",
   "reviewCard.draft": "Entwurf",
   "reviewCard.draftKept": "Kommentar als Entwurf behalten",

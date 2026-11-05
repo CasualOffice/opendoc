@@ -11,6 +11,7 @@ import {
   moveCaretToDocStart,
   setReviewMode,
   MOD,
+  reviewBarAction,
 } from "./fixtures.mjs";
 
 async function pastePlainText(page, text) {
@@ -109,7 +110,7 @@ test("Accept and move to Next accepts the caret's change and advances (Q3)", asy
 
   // Land the caret on the first change via unified Next, then Accept ▸ Next.
   await moveCaretToDocStart(page);
-  await page.locator("#reviewNext").click();
+  await reviewBarAction(page, "#reviewNext");
   await expect(insertions.filter({ hasText: "AONE" })).toHaveAttribute("aria-expanded", "true");
 
   await page.keyboard.press(`${MOD}+Alt+Enter`);
@@ -151,16 +152,16 @@ test("Next/Previous traverse a document-ordered mix of a comment and a change (Q
   // From document start, Next visits the comment first, then the change — one
   // merged, document-ordered loop over both kinds (Q4).
   await moveCaretToDocStart(page);
-  await page.locator("#reviewNext").click();
+  await reviewBarAction(page, "#reviewNext");
   await expect(comment).toHaveAttribute("aria-expanded", "true");
 
-  await page.locator("#reviewNext").click();
+  await reviewBarAction(page, "#reviewNext");
   await expect(change).toHaveAttribute("aria-expanded", "true");
   await expect(comment).toHaveAttribute("aria-expanded", "false");
 
   // Previous walks back to the comment, proving the loop is bidirectional over
   // both item kinds.
-  await page.locator("#reviewPrevious").click();
+  await reviewBarAction(page, "#reviewPrevious");
   await expect(comment).toHaveAttribute("aria-expanded", "true");
 
   expect(consoleErrors).toEqual([]);

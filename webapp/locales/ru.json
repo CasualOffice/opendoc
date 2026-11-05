@@ -3675,7 +3675,7 @@
   "reviewBar.allAccepted": "Все изменения приняты",
   "reviewBar.allRejected": "Все изменения отклонены",
   "reviewBar.resolved": "Комментарий решён",
-  "undoSnackbar.undo": "Отменить",
+  "undoSnackbar.undoButton": "Отменить",
   "reviewCard.showMore": "Показать больше",
   "reviewCard.draft": "Черновик",
   "reviewCard.draftKept": "Комментарий сохранён как черновик",

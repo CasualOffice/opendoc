@@ -4397,7 +4397,7 @@
   "ui.zoomPresets.label": "Zoom presets",
   "ui.zoomPresets.label2": "Zoom presets",
   "ui.zoomPresets.title": "Zoom presets",
-  "undoSnackbar.undo": "Undo",
+  "undoSnackbar.undoButton": "Undo",
   "unicodeToggle.command": "Toggle character code",
   "unicodeToggle.nothing": "Nothing before the insertion point to convert",
   "units.cm": "Centimetres",

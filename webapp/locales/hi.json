@@ -3653,7 +3653,7 @@
   "reviewBar.allAccepted": "सभी बदलाव स्वीकार किए गए",
   "reviewBar.allRejected": "सभी बदलाव अस्वीकार किए गए",
   "reviewBar.resolved": "टिप्पणी हल की गई",
-  "undoSnackbar.undo": "पूर्ववत करें",
+  "undoSnackbar.undoButton": "पूर्ववत करें",
   "reviewCard.showMore": "और दिखाएँ",
   "reviewCard.draft": "ड्राफ़्ट",
   "reviewCard.draftKept": "टिप्पणी ड्राफ़्ट के रूप में रखी गई",

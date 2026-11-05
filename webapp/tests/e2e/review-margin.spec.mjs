@@ -158,7 +158,7 @@ test("a reply can be edited and individually deleted (REVIEW-GAP-011)", async ({
   expect(consoleErrors).toEqual([]);
 });
 
-test("suggestions share the sidebar and decisions appear only on the active card", async ({
+test("suggestions share the sidebar and carry their decisions on the card", async ({
   page,
   consoleErrors,
 }) => {
@@ -167,7 +167,7 @@ test("suggestions share the sidebar and decisions appear only on the active card
   await moveCaretToDocStart(page);
 
   await setReviewMode(page, "suggesting");
-  await expect(page.locator("#suggestingBanner")).toBeVisible();
+  await expect(page.locator("#headerModeBtn")).toHaveAttribute("data-mode", "suggesting");
   await pastePlainText(page, "TRACKED_SIDEBAR_INSERT");
 
   const sidebar = page.locator("#reviewSidebar");
@@ -177,7 +177,9 @@ test("suggestions share the sidebar and decisions appear only on the active card
   await expect(card).toContainText("TRACKED_SIDEBAR_INSERT");
   await page.keyboard.press("Backspace");
   await expect(card.locator(".review-margin-body")).toHaveText("Added “TRACKED_SIDEBAR_INSER”");
-  await expect(card.getByRole("button", { name: "Accept" })).toBeHidden();
+  // Accept and Reject are on the suggestion card itself, collapsed or not
+  // (PROPOSAL D-11, the approved v2-review mockup).
+  await expect(card.getByRole("button", { name: "Accept" })).toBeVisible();
   await card.click();
   await expect(card.getByRole("button", { name: "Accept" })).toBeVisible();
   await expectSidebarBesideCanvas(page);
@@ -242,11 +244,11 @@ test("replacement and formatting pairs are one atomic suggestion card", async ({
   await paragraphFormat.getByRole("button", { name: "Reject" }).click();
   await expect(paragraphFormat).toHaveCount(0);
 
-  await page.locator("#suggestingBanner").getByRole("button", { name: "Switch to editing" }).click();
+  await setReviewMode(page, "editing");
   await expect(
     page.locator('#headerModeMenu [data-review-mode="editing"]'),
   ).toHaveAttribute("aria-checked", "true");
-  await expect(page.locator("#suggestingBanner")).toBeHidden();
+  await expect(page.locator("#headerModeBtn")).toHaveAttribute("data-mode", "editing");
   expect(consoleErrors).toEqual([]);
 });
 
@@ -318,7 +320,9 @@ test("an imported tracked move is one atomic source-to-destination card", async 
   await expect(page.locator(".overlay .highlight")).toHaveCount(0);
   await expect(page.locator(".overlay .caret")).toHaveCount(1);
 
-  await move.click();
+  // Activated by its head: the card's middle now holds its Accept/Reject
+  // and the move path's own buttons (PROPOSAL D-11).
+  await move.locator(".review-margin-card-head").click();
   await expect(page.locator(".review-revision-marker-active")).toHaveCount(2);
   await move.getByRole("button", { name: "Accept" }).click();
   await expect(move).toHaveCount(0);

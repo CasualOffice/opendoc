@@ -127,6 +127,17 @@ test("Keep writes one text edit into the document as a tracked change", async ({
   // produces changes".
   await expect(page.locator("body")).toHaveClass(/showing-changes/);
 
+  // The panel is the INDEX of that, and it leads with a sentence about the
+  // document rather than with a bare count.
+  await expect(page.locator("#compareBody [data-compare-marked]")).toBeVisible();
+  await expect(page.locator("#compareBody")).toContainText(/tracked changes in this document/i);
+
+  // Compare and the comment column share the right slot (docs/184 D4, the dock
+  // manager): the column gives way while the comparison's report is open and
+  // comes back when it closes, which is where the kept change is decided.
+  await page.locator("#compareClose").click();
+  await expect(page.locator("#comparePanel")).toBeHidden();
+
   // THE REVIEW SURFACE READS IT, which is the half a pixel count cannot tell you
   // and the half that makes the change acceptable and rejectable. One card, and
   // specifically a REPLACEMENT card — the engine writes the recorded deletion and
@@ -160,10 +171,6 @@ test("Keep writes one text edit into the document as a tracked change", async ({
   // replace it.
   expect((await mirrorBlocks(page)).join(" ")).toContain("gamma");
 
-  // The panel is the INDEX of that, and it leads with a sentence about the
-  // document rather than with a bare count.
-  await expect(page.locator("#compareBody [data-compare-marked]")).toBeVisible();
-  await expect(page.locator("#compareBody")).toContainText(/tracked changes in this document/i);
   expect(consoleErrors).toEqual([]);
 });
 

@@ -3664,7 +3664,7 @@
   "reviewBar.allAccepted": "Se aceptaron todos los cambios",
   "reviewBar.allRejected": "Se rechazaron todos los cambios",
   "reviewBar.resolved": "Comentario resuelto",
-  "undoSnackbar.undo": "Deshacer",
+  "undoSnackbar.undoButton": "Deshacer",
   "reviewCard.showMore": "Mostrar más",
   "reviewCard.draft": "Borrador",
   "reviewCard.draftKept": "Comentario guardado como borrador",

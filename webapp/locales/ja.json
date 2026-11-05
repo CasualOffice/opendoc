@@ -3642,7 +3642,7 @@
   "reviewBar.allAccepted": "すべての変更を承諾しました",
   "reviewBar.allRejected": "すべての変更を却下しました",
   "reviewBar.resolved": "コメントを解決しました",
-  "undoSnackbar.undo": "元に戻す",
+  "undoSnackbar.undoButton": "元に戻す",
   "reviewCard.showMore": "さらに表示",
   "reviewCard.draft": "下書き",
   "reviewCard.draftKept": "コメントを下書きとして保持しました",

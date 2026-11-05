@@ -3697,7 +3697,7 @@
   "reviewBar.allAccepted": "تم قبول كل التغييرات",
   "reviewBar.allRejected": "تم رفض كل التغييرات",
   "reviewBar.resolved": "تم حل التعليق",
-  "undoSnackbar.undo": "تراجع",
+  "undoSnackbar.undoButton": "تراجع",
   "reviewCard.showMore": "عرض المزيد",
   "reviewCard.draft": "مسودة",
   "reviewCard.draftKept": "تم الاحتفاظ بالتعليق كمسودة",

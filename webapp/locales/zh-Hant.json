@@ -3642,7 +3642,7 @@
   "reviewBar.allAccepted": "已接受所有變更",
   "reviewBar.allRejected": "已拒絕所有變更",
   "reviewBar.resolved": "註解已解決",
-  "undoSnackbar.undo": "復原",
+  "undoSnackbar.undoButton": "復原",
   "reviewCard.showMore": "顯示更多",
   "reviewCard.draft": "草稿",
   "reviewCard.draftKept": "註解已保留為草稿",

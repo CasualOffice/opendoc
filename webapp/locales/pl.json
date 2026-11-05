@@ -3675,7 +3675,7 @@
   "reviewBar.allAccepted": "Zaakceptowano wszystkie zmiany",
   "reviewBar.allRejected": "Odrzucono wszystkie zmiany",
   "reviewBar.resolved": "Komentarz rozwiązany",
-  "undoSnackbar.undo": "Cofnij",
+  "undoSnackbar.undoButton": "Cofnij",
   "reviewCard.showMore": "Pokaż więcej",
   "reviewCard.draft": "Wersja robocza",
   "reviewCard.draftKept": "Komentarz zachowano jako wersję roboczą",

@@ -2866,7 +2866,6 @@ export const EN_STRINGS = Object.freeze({
   "reviewBar.allAccepted": "All changes accepted",
   "reviewBar.allRejected": "All changes rejected",
   "reviewBar.resolved": "Comment resolved",
-  "undoSnackbar.undo": "Undo",
   "reviewCard.showMore": "Show more",
   "reviewCard.draft": "Draft",
   "reviewCard.draftKept": "Comment kept as a draft",

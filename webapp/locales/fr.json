@@ -3664,7 +3664,7 @@
   "reviewBar.allAccepted": "Toutes les modifications ont été acceptées",
   "reviewBar.allRejected": "Toutes les modifications ont été refusées",
   "reviewBar.resolved": "Commentaire résolu",
-  "undoSnackbar.undo": "Annuler",
+  "undoSnackbar.undoButton": "Annuler",
   "reviewCard.showMore": "Afficher plus",
   "reviewCard.draft": "Brouillon",
   "reviewCard.draftKept": "Commentaire conservé comme brouillon",
