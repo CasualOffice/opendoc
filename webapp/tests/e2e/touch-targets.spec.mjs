@@ -95,7 +95,7 @@ test.describe("with a coarse pointer", () => {
     // §5.3a), and the sheet — which is what this test is actually about — is
     // unchanged by which door was used.
     await (await menuCommandRow(page, "review", "review.toggle")).click();
-    const navButton = page.locator("#reviewNext");
+    const navButton = page.locator("#reviewMoreBtn");
     await expect(navButton).toBeVisible();
     const nav = await stableBox(navButton);
     expect(nav.width).toBeGreaterThanOrEqual(TOUCH_TARGET_PX);

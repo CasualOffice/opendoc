@@ -5,6 +5,7 @@ import {
   clickIntoFirstPage,
   moveCaretToDocStart,
   setReviewMode,
+  reviewBarAction,
 } from "./fixtures.mjs";
 
 // Regression: when a paragraph carries a comment AND a suggestion whose range
@@ -55,8 +56,8 @@ test("focusing a suggestion nested in a commented range activates the suggestion
   // suggestion (further right in the same paragraph). Landing on the suggestion
   // is the focusReviewTarget path the bug lived in.
   await moveCaretToDocStart(page);
-  await page.locator("#reviewNext").click();
-  await page.locator("#reviewNext").click();
+  await reviewBarAction(page, "#reviewNext");
+  await reviewBarAction(page, "#reviewNext");
 
   // The suggestion is the active item: its marker carries the active class and
   // its sidebar card is the expanded one; the comment is NOT active.

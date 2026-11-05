@@ -16,16 +16,15 @@ test("the ribbon Find button opens the panel", async ({ page, consoleErrors }) =
   await expect(page.locator("#findInput")).toBeFocused();
   await expect(page.locator(".find-panel-title")).toHaveText("Find and replace");
   await expect(page.locator(".find-options")).toBeVisible();
-  await expect(page.locator(".find-actions")).toBeVisible();
+  await expect(page.locator(".find-replace-row")).toBeVisible();
 
+  // The compact bar (audit CRITIC-07): three rows, in order, inside the bar.
   const desktopLayout = await page.evaluate(() => {
     const panel = document.querySelector("#findPanel").getBoundingClientRect();
     const rows = [
-      ".find-panel-head",
       ".find-search-row",
       ".find-options",
-      ".find-replacement",
-      ".find-actions",
+      ".find-replace-row",
     ].map((selector) => document.querySelector(selector).getBoundingClientRect());
     return {
       contained: rows.every(

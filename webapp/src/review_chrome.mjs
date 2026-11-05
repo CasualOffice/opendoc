@@ -181,7 +181,15 @@ export function createCommentAffordance({ button, viewport, rect }) {
 export function createReviewBanners({ suggesting, viewing, viewingText }) {
   const authored = viewingText?.textContent ?? "";
   return (mode, readOnlyReason) => {
-    if (suggesting) suggesting.hidden = mode !== "suggesting";
+    // Suggesting has NO banner (PROPOSAL D-6, audit REVIEW-08): the header chip
+    // turns green and a 2px green rule runs along the top of the canvas, as
+    // Google Docs shows it. The banner pushed the page down 38px on entering
+    // Suggesting and left a strip where page text showed through while
+    // scrolled. The rule is drawn from `data-editing-mode` on <body>; the page
+    // moves 0px. Switching back is the chip's menu, the shortcut and the
+    // palette — the banner's button was a fourth face of the same command.
+    if (suggesting) suggesting.hidden = true;
+    document.body.dataset.editingMode = mode || "";
     if (viewing) viewing.hidden = mode !== "viewing";
     if (viewingText) viewingText.textContent = readOnlyReason || authored;
   };

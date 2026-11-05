@@ -9,6 +9,7 @@ import {
   clickIntoFirstPage,
   moveCaretToDocStart,
   setReviewMode,
+  reviewBarAction,
 } from "./fixtures.mjs";
 
 async function pastePlainText(page, text) {
@@ -52,6 +53,8 @@ test("header controls are labeled real buttons and keyboard-activatable (REVIEW-
   // Accept-all is keyboard-activatable: focus it and press Enter clears changes.
   const acceptAll = page.locator("#reviewAcceptAll");
   await expect(acceptAll).toHaveJSProperty("tagName", "BUTTON");
+  // It is a row of the bar's ⋯ menu (PROPOSAL D-11): opened, then focused.
+  await page.locator("#reviewMoreBtn").click();
   await acceptAll.focus();
   await expect(acceptAll).toBeFocused();
   await page.keyboard.press("Enter");
@@ -161,7 +164,7 @@ test("closing the sidebar returns focus to the rail toggle (REVIEW-GAP-023)", as
   const sidebar = page.locator("#reviewSidebar");
   await expect(sidebar).toBeVisible();
 
-  await page.locator("#reviewClose").click();
+  await reviewBarAction(page, "#reviewClose");
   await expect(sidebar).toBeHidden();
   // Focus returned to the rail toggle that owns the sidebar (not stranded).
   await expect(page.locator("#railReview")).toBeFocused();

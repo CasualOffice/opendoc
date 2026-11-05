@@ -475,6 +475,7 @@ hotfix
 href
 hscroll
 html
+http
 hyphenator
 iOS
 idempotency
@@ -494,6 +495,7 @@ intra
 invariants
 invertible
 invocable
+invoker
 journalled
 json
 kashida
@@ -527,6 +529,7 @@ min
 minified
 mis
 mjs
+mockups
 mousedown
 moveFrom
 moveTo
@@ -656,6 +659,7 @@ shaper
 shippable
 skia
 skrifa
+snackbar
 snapToGrid
 splitter
 src

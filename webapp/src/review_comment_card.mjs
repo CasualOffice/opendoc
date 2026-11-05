@@ -274,3 +274,41 @@ export function createCommentEditState() {
     id: () => current?.id ?? null,
   });
 }
+
+/** Web addresses in a comment: http(s) only (a `javascript:` or `data:` link
+ *  in a comment is an attack, not a reference), up to the first space or a
+ *  closing bracket or quote, without trailing sentence punctuation. */
+const COMMENT_URL = /\bhttps?:\/\/[^\s<>"'()\[\]{}]+/g;
+
+/**
+ * Writes `text` into `el` as text nodes, with each web address an `<a>` that
+ * opens in a new tab without handing that tab this window (audit REVIEW-10).
+ * Never `innerHTML`: a comment is untrusted input from another author.
+ * O(length of text).
+ */
+export function fillCommentText(el, text) {
+  el.textContent = "";
+  let at = 0;
+  for (const match of text.matchAll(COMMENT_URL)) {
+    let url = match[0];
+    // "See https://example.com/a." — the full stop ends the sentence, not the URL.
+    while (/[.,;:!?]$/.test(url)) url = url.slice(0, -1);
+    if (match.index > at) el.append(text.slice(at, match.index));
+    const link = el.ownerDocument.createElement("a");
+    link.href = url;
+    link.textContent = url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    el.append(link);
+    at = match.index + url.length;
+  }
+  if (at < text.length) el.append(text.slice(at));
+}
+
+/** Whether a collapsed comment is long enough to clamp to three lines (Docs
+ *  clamps a margin comment the same way). A character budget rather than a
+ *  measurement, so the decision costs nothing per card: about three lines of
+ *  a 20rem card, or more than three lines written. Pure. */
+export function commentNeedsClamp(text) {
+  return text.length > 150 || text.split("\n").length > 3;
+}

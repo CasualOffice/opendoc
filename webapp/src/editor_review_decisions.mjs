@@ -5,9 +5,20 @@
 import { mayDecideReview, reviewDecisionRefusal } from "./review_authority.mjs";
 import { formatReviewDate, reviewAuthorColor, reviewAuthorDisplay, reviewAuthorKey, reviewChangeTypeLabel } from "./review_labels.mjs";
 import { reviewCurrentTargetIndex } from "./review_target.mjs";
+import { registerPopover } from "./popover_manager.mjs";
+import { menuArrowKeys } from "./menu_keys.mjs";
+import { showUndoSnackbar } from "./undo_snackbar.mjs";
+import { t } from "./i18n.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
+/** What survives the column closing: a composer holding typed text, marked as a
+ *  Draft; an empty composer is dropped. The same rule `closeReviewPopover` applies
+ *  on Escape (REVIEW-05). Pure. */
+export function keptDraft(state) {
+  return state?.draft?.trim() ? { ...state, isDraft: true } : null;
+}
+
 export function createReviewDecisions(ed) {
   // --- Inline accept/reject card (Q2) ------------------------------------------
 
@@ -443,12 +454,47 @@ export function createReviewDecisions(ed) {
     if (!show) {
       ed.activeReviewItemId = null;
       ed.activeReviewCommentId = null;
-      ed.reviewComposerState = null;
+      // Closing the column never throws typed text away (SKILL §12, audit
+      // REVIEW-05): a composer with text becomes a Draft, exactly as Escape on
+      // the composer makes it (`closeReviewPopover`), and is there when the
+      // column comes back. Cancel on the composer is the one way to discard it.
+      ed.reviewComposerState = keptDraft(ed.reviewComposerState);
     }
     ed.reanchorPageOverlays();
     // Focus management (REVIEW-GAP-023): closing the sidebar returns focus to the
     // rail toggle that owns it, so keyboard/AT users are not stranded.
     if (!show) ed.railReview?.focus?.({ preventScroll: true });
+  }
+
+  /** Takes the comment column out of the right slot for a panel that displaced
+   *  it (`dock_manager.mjs`), WITHOUT the "person closed the column" path:
+   *  nothing is discarded and focus does not move. Returns what `restoreReview`
+   *  needs to put the column back exactly as it was — its preference, the open
+   *  card, and the composer with whatever was typed in it. O(1). */
+  function displaceReview() {
+    const saved = {
+      preference: ed.reviewSidebarPreference ?? null,
+      itemId: ed.activeReviewItemId ?? null,
+      commentId: ed.activeReviewCommentId ?? null,
+      composer: ed.reviewComposerState ?? null,
+    };
+    // The composer's text field is about to be hidden with the column; its
+    // live value is the draft (the textarea only writes it back on input).
+    const field = ed.reviewSidebar?.querySelector?.("[data-testid='review-comment-composer']");
+    if (saved.composer && field && typeof field.value === "string") saved.composer = { ...saved.composer, draft: field.value };
+    ed.reviewSidebarPreference = false;
+    return saved;
+  }
+
+  /** Puts back what `displaceReview` saved. O(1). */
+  function restoreReview(saved) {
+    if (!saved) return;
+    ed.reviewSidebarPreference = saved.preference;
+    ed.activeReviewItemId = saved.itemId;
+    ed.activeReviewCommentId = saved.commentId;
+    // A composer the person finished or cancelled meanwhile is not resurrected.
+    if (saved.composer && !ed.reviewComposerState) ed.reviewComposerState = saved.composer;
+    ed.reanchorPageOverlays();
   }
   ed.reviewBtn.addEventListener("click", () => toggleReview());
   ed.railReview.addEventListener("click", () => toggleReview());
@@ -472,13 +518,42 @@ export function createReviewDecisions(ed) {
       return;
     }
     await ed.runEdit(() => ed.doc.decideAllRevisions(accept));
-    ed.announceReview(accept ? "All changes accepted" : "All changes rejected");
+    const said = t(accept ? "reviewBar.allAccepted" : "reviewBar.allRejected");
+    ed.announceReview(said);
     ed.scheduleReviewMarginRender();
+    // One Undo away, said once (PROPOSAL D-11): a bulk decision rewrites the
+    // whole document, and Docs offers its Undo on a snackbar for the same reason.
+    // A BLIND Undo (the editor's last step), so it is withdrawn by the next edit
+    // (`undo_snackbar.mjs`): typing after Accept all must never make this Undo
+    // take the typing back and leave the decision in place.
+    showUndoSnackbar(said, () => void ed.runEdit(() => ed.doc.undo()), {
+      version: () => (ed.revisionUnreadable ? null : ed.documentVersion()),
+      focusBack: () => ed.focusEditorSurface(),
+    });
+    // Focus never falls to <body> (audit REVIEW-06): the menu row that ran this
+    // is gone, so the person is put back in the document.
+    if (!document.activeElement || document.activeElement === document.body || document.getElementById("reviewMoreMenu")?.contains(document.activeElement)) {
+      ed.focusEditorSurface();
+    }
   }
   ed.reviewAcceptAll.addEventListener("click", () => void decideAllReviewChanges(true));
   ed.reviewRejectAll.addEventListener("click", () => void decideAllReviewChanges(false));
   ed.reviewPrevious.addEventListener("click", () => navigateReview(-1));
   ed.reviewNext.addEventListener("click", () => navigateReview(1));
+  // The comments bar's ⋯ (PROPOSAL D-11): the shared anchored-popover manager,
+  // so it dismisses, flips and returns focus like every other menu. A row
+  // closes the menu before it acts (capture phase, ahead of the row's own
+  // handler), so the menu is never left open over the place the action lands.
+  const moreBtn = document.getElementById("reviewMoreBtn");
+  const moreMenu = document.getElementById("reviewMoreMenu");
+  if (moreBtn && moreMenu) {
+    const more = registerPopover(moreBtn, moreMenu, () => ed.updateReviewControls?.(), { needsDocument: false });
+    moreMenu.addEventListener("click", (event) => {
+      const row = event.target.closest(".menu-item");
+      if (row && !row.disabled) more.close();
+    }, true);
+    menuArrowKeys(moreMenu, ".menu-item");
+  }
   // The mode switch is the header menu's three rows (`header_mode.mjs`); each
   // carries `data-review-mode` and is wired below.
   ed.suggestingBannerEdit.addEventListener("click", () => ed.setReviewMode("editing"));
@@ -543,6 +618,6 @@ export function createReviewDecisions(ed) {
   return {
     closeReviewInlineCard, decideAllReviewChanges, decideReviewAndAdvance, decideReviewAtCaret,
     focusReviewRevision, navigateReview, openReviewComposer, reviewMoveEndButton,
-    scheduleReviewInlineCardHide, showReviewInlineCard, toggleReview,
+    scheduleReviewInlineCardHide, showReviewInlineCard, toggleReview, displaceReview, restoreReview,
   };
 }

@@ -236,5 +236,8 @@ test("the surfaces excused from light dismiss still exist, and are docked or mod
     return { hidden: el.hidden, position: getComputedStyle(el).position };
   });
   expect(docked.hidden).toBe(false);
-  expect(docked.position).toBe("static");
+  // In flow: `relative` only anchors the dock's splitter on the panel's inner
+  // edge (`dock_manager.mjs`); it takes no element out of the flow, where
+  // `fixed` or `absolute` would.
+  expect(["static", "relative"]).toContain(docked.position);
 });

@@ -126,20 +126,19 @@ export function createTableProps(ed) {
     return true;
   }
 
-  function toggleTableProperties(open) {
+  /** `follow`: opened because the Properties panel follows the selection into a
+   *  table (D5), so the caret stays in the document rather than moving here. */
+  function toggleTableProperties(open, { follow = false } = {}) {
     const show = open ?? ed.tablePropertiesPanel.hidden;
     if (show && !reflectTableProperties()) return;
-    const returnFocus = !show && ed.tablePropertiesPanel.contains(document.activeElement);
+    // Close-focus is the dock's (`dock_manager.mjs`, audit DIALOGS-05): the
+    // recorded invoker, or the document. Not the ribbon's Table button.
     ed.tablePropertiesPanel.hidden = !show;
     ed.tablePropertiesBtn.setAttribute("aria-expanded", String(show));
     if (show) {
       ed.toggleParagraphProperties(false);
       closePopover(ed.tablePopover);
-      queueMicrotask(() =>
-        tableAlignGroup.focusSelected(),
-      );
-    } else if (returnFocus) {
-      ed.tablePropertiesBtn.focus({ preventScroll: true });
+      if (!follow) queueMicrotask(() => tableAlignGroup.focusSelected());
     }
   }
 
@@ -193,18 +192,13 @@ export function createTableProps(ed) {
       ed.setStatus("Table properties updated");
     }
   }
+  // Escape on the ribbon button closes the panel, focus staying there. Escape
+  // from INSIDE the panel is the dock's (`dock_manager.mjs`), like every panel's.
   document.addEventListener("keydown", (event) => {
-    if (
-      ed.tablePropertiesPanel.hidden ||
-      (document.activeElement !== ed.tablePropertiesBtn &&
-        !ed.tablePropertiesPanel.contains(document.activeElement))
-    ) {
-      return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      toggleTableProperties(false);
-    }
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    if (ed.tablePropertiesPanel.hidden || document.activeElement !== ed.tablePropertiesBtn) return;
+    event.preventDefault();
+    toggleTableProperties(false);
   });
 
   // -- Insert table: the size grid (`table_grid_picker.mjs`) --------------------

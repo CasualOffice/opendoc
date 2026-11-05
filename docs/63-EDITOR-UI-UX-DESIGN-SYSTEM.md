@@ -251,6 +251,30 @@ off-scale lengths the guard does not refuse.
   is not taken.
 - The paper layer (`--paper-*`): the document is white in both themes.
 
+### 7.4 The dock and the review shell (2026-11-06, `109` UX-055, UX-065)
+
+One anatomy for every docked panel, and one rule for where it goes
+(`docs/184` D4 as amended, PROPOSAL D-10/D-11, the approved v2 mockups).
+
+| Part | Value | Token |
+| --- | --- | --- |
+| Slot | one per side; opening a panel closes the one on its side | `dock_manager.mjs` |
+| Width | 20rem default, 17.5–30rem by the inner-edge splitter, remembered per side | `--dock-w-left`, `--dock-w-right` |
+| Frame | a card on the desk: `--r-md` radius, a hairline ring plus `--e1`, `--dock-gap` (0.375rem) from the edges | `--dock-gap` |
+| Header | 3.125rem (`--h-rail-control`), `--fs-lg` (15px)/600 title, ghost close. PROPOSAL D-10 and `docs/184` D4 write 3.5rem/17px and the approved mockups draw 48px/14px; open for the owner (`109` UX-055) | `.panel-head` |
+| Splitter | 6px strip on the inner edge, accent on hover/focus/drag, `role="separator"` | `.dock-resize` |
+| Phone | a bottom sheet above the bottom chrome, with a grab handle | `body.phone-mode .workarea > .side-panel` |
+| Comments bar | 2.5rem row: title, `--selected` count chip, pill filter, ⋯; sticky on an opaque `--bg` band | `.review-sidebar-header` |
+| Margin card | `--surface`, `0 0 0 1px var(--line), var(--e1)`; active `--accent-line` ring and `--e2`; 3-line clamp | `.review-margin-card` |
+| Undo snackbar | inverted (`--ink` on `--surface`), bottom-start, one at a time, 6s; a blind Undo (the editor's last step) is withdrawn by the next edit, a bound one (Resolve) survives it; focus never left on `<body>` | `.undo-snackbar` |
+| Find bar | three rows: query + counter + ↑ ↓ ×, scope toggles, replacement + actions; 25rem | `.find-panel` |
+
+Left is navigation (Outline, Pages). Right is context and collaboration
+(Properties, Comments, Version history, Compare, Symbol, Emoji, the add-in panel).
+The comment column is in the right slot: a right panel displaces it and gives it
+back when it closes. The add-in panel keeps its own edge-docked frame and splitter
+(`docs/183` §21) and takes the right slot like the others.
+
 ## 8. Boot (2026-11-03, `109` UX-064, redesign PROPOSAL D-16)
 
 What a person sees between the first frame and an editable document is designed, not

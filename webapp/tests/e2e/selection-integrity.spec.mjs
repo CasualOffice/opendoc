@@ -30,7 +30,7 @@
 //   (7925). Measured: Select Table paints 4 rects / 25,020 px² of accent
 //   fill; a Backspace then removes exactly ONE character and the 25,020 px²
 //   "whole table is selected" paint stays on screen over a collapsed caret.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD, setReviewMode } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD, setReviewMode, reviewBarAction } from "./fixtures.mjs";
 
 // ---- measurement helpers ---------------------------------------------------
 
@@ -225,7 +225,7 @@ test("Reject all changes leaves a live caret and keeps accepting typing", async 
   await page.waitForTimeout(400);
   await setEditing(page);
 
-  await page.locator("#reviewRejectAll").click();
+  await reviewBarAction(page, "#reviewRejectAll");
   await page.waitForTimeout(500);
 
   expect(await paint(page)).toMatchObject({ carets: 1 });
@@ -253,7 +253,7 @@ test("Accept all changes leaves a live caret and keeps accepting typing", async 
   await page.waitForTimeout(300);
   await setEditing(page);
 
-  await page.locator("#reviewAcceptAll").click();
+  await reviewBarAction(page, "#reviewAcceptAll");
   await page.waitForTimeout(500);
 
   expect(await paint(page)).toMatchObject({ carets: 1 });

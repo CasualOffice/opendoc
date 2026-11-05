@@ -736,3 +736,13 @@ export function expectTypedIntoOneBlock(before, after, typed) {
     `more than one block changed: ${remaining.join(" | ")}`,
   ).toBeLessThanOrEqual(1);
 }
+
+/** Runs a row of the comments bar's ⋯ menu (PROPOSAL D-11, `docs/109` UX-065):
+ *  Previous, Next, Accept all, Reject all and Close live there, one click
+ *  behind the bar, the way a person reaches them. `id` is the row's selector. */
+export async function reviewBarAction(page, id) {
+  await page.locator("#reviewMoreBtn").click();
+  await expect(page.locator("#reviewMoreMenu")).toBeVisible();
+  await page.locator(id).click();
+}
+
