@@ -1628,12 +1628,9 @@
   "autocorrect.statusOn": "已开启{name}",
   "autocorrect.statusOff": "已关闭{name}",
   "pasteBtn.paste": "粘贴",
-  "pasteOptions.dismiss.title": "关闭",
-  "pasteOptions.dismissPasteOptions.label": "关闭粘贴选项",
   "pasteOptions.keepPastedEmphasisBut.title": "保留粘贴内容的强调格式，但采用本文档的格式",
   "pasteOptions.keepTextOnly": "只保留文本",
   "pasteOptions.keepTextOnlyV.title": "只保留文本 (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "合并格式",
   "proofDocument.disposed": "此文档的校对已关闭。",
   "proofDocument.notAvailable": "暂不支持一次检查整个文档。校对只检查你正在查看的页面，因此请滚动文档以检查全部内容。",
   "proofDocument.notConfigured": "此文档尚未设置校对。",
@@ -3652,5 +3649,13 @@
   "reviewBar.previous": "上一条",
   "reviewBar.next": "下一条",
   "reviewBar.close": "关闭批注",
-  "propertiesTabs.panelTitle": "属性"
+  "propertiesTabs.panelTitle": "属性",
+  "table.tools.typeSubmenu": "表格",
+  "object.cropSubmenu": "裁剪",
+  "context.more": "更多",
+  "link.followHint": "按住 {key} 并单击以跟踪链接",
+  "pasteOptions.toggle.title": "粘贴选项 (Ctrl)",
+  "pasteOptions.keepSource": "保留源格式",
+  "pasteOptions.keepSource.title": "保留复制文本时的格式",
+  "pasteOptions.matchDestination": "匹配目标格式"
 }

@@ -1631,12 +1631,9 @@
   "autocorrect.statusOn": "{name}: wł.",
   "autocorrect.statusOff": "{name}: wył.",
   "pasteBtn.paste": "Wklej",
-  "pasteOptions.dismiss.title": "Odrzuć",
-  "pasteOptions.dismissPasteOptions.label": "Odrzuć opcje wklejania",
   "pasteOptions.keepPastedEmphasisBut.title": "Zachowaj wyróżnienia wklejonego tekstu, ale zastosuj formatowanie tego dokumentu",
   "pasteOptions.keepTextOnly": "Zachowaj tylko tekst",
   "pasteOptions.keepTextOnlyV.title": "Zachowaj tylko tekst (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "Scal formatowanie",
   "proofDocument.disposed": "Sprawdzanie zostało zamknięte dla tego dokumentu.",
   "proofDocument.notAvailable": "Sprawdzenie całego dokumentu naraz nie jest jeszcze możliwe. Sprawdzanie obejmuje strony, które właśnie oglądasz — przewiń dokument, aby sprawdzić całość.",
   "proofDocument.notConfigured": "Sprawdzanie nie jest skonfigurowane dla tego dokumentu.",
@@ -3685,5 +3682,13 @@
   "reviewBar.previous": "Poprzedni",
   "reviewBar.next": "Następny",
   "reviewBar.close": "Zamknij komentarze",
-  "propertiesTabs.panelTitle": "Właściwości"
+  "propertiesTabs.panelTitle": "Właściwości",
+  "table.tools.typeSubmenu": "Tabela",
+  "object.cropSubmenu": "Przytnij",
+  "context.more": "Więcej",
+  "link.followHint": "{key}+kliknij, aby przejść do łącza",
+  "pasteOptions.toggle.title": "Opcje wklejania (Ctrl)",
+  "pasteOptions.keepSource": "Zachowaj formatowanie źródłowe",
+  "pasteOptions.keepSource.title": "Zachowaj formatowanie, z jakim tekst skopiowano",
+  "pasteOptions.matchDestination": "Dopasuj do formatowania docelowego"
 }

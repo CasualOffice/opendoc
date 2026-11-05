@@ -1629,12 +1629,9 @@
   "autocorrect.statusOn": "{name} चालू",
   "autocorrect.statusOff": "{name} बंद",
   "pasteBtn.paste": "चिपकाएँ",
-  "pasteOptions.dismiss.title": "खारिज करें",
-  "pasteOptions.dismissPasteOptions.label": "चिपकाने के विकल्प खारिज करें",
   "pasteOptions.keepPastedEmphasisBut.title": "चिपकाए गए ज़ोर को बनाए रखें, पर इस दस्तावेज़ का स्वरूपण अपनाएँ",
   "pasteOptions.keepTextOnly": "केवल टेक्स्ट रखें",
   "pasteOptions.keepTextOnlyV.title": "केवल टेक्स्ट रखें (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "स्वरूपण मर्ज करें",
   "proofDocument.disposed": "इस दस्तावेज़ के लिए प्रूफ़िंग बंद कर दी गई है।",
   "proofDocument.notAvailable": "पूरे दस्तावेज़ की एक साथ जाँच अभी उपलब्ध नहीं है। प्रूफ़िंग उन पृष्ठों की जाँच करती है जिन्हें आप देख रहे हैं, इसलिए पूरा दस्तावेज़ जाँचने के लिए उसे स्क्रोल करें।",
   "proofDocument.notConfigured": "इस दस्तावेज़ के लिए प्रूफ़िंग सेट नहीं है।",
@@ -3663,5 +3660,13 @@
   "reviewBar.previous": "पिछला",
   "reviewBar.next": "अगला",
   "reviewBar.close": "टिप्पणियाँ बंद करें",
-  "propertiesTabs.panelTitle": "गुण"
+  "propertiesTabs.panelTitle": "गुण",
+  "table.tools.typeSubmenu": "तालिका",
+  "object.cropSubmenu": "क्रॉप करें",
+  "context.more": "और",
+  "link.followHint": "लिंक खोलने के लिए {key}+क्लिक करें",
+  "pasteOptions.toggle.title": "चिपकाने के विकल्प (Ctrl)",
+  "pasteOptions.keepSource": "स्रोत फ़ॉर्मैटिंग रखें",
+  "pasteOptions.keepSource.title": "पाठ जिस फ़ॉर्मैटिंग के साथ कॉपी हुआ था उसे रखें",
+  "pasteOptions.matchDestination": "गंतव्य फ़ॉर्मैटिंग से मिलाएँ"
 }

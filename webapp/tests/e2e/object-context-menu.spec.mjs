@@ -49,7 +49,8 @@ test("right-clicking an image shows the OBJECT menu, not the text menu", async (
 
   // Object commands are present and enabled (Editing mode).
   await expect(item(page, "object.altText")).toBeEnabled();
-  await expect(item(page, "object.crop")).toBeEnabled(); // picture-only
+  // Picture-only, and one Crop ▸ for the crop family (docs/184 D-12).
+  await expect(item(page, "object.cropMenu")).toBeVisible();
   await expect(item(page, "object.delete")).toBeEnabled();
   // Wrap is a submenu parent (the float image is anchored/floating).
   const wrap = item(page, "object.wrap");
@@ -120,7 +121,7 @@ test("Shift+F10 opens the object menu when an object is selected", async ({
   expect(consoleErrors).toEqual([]);
 });
 
-test("object menu commands are gated (disabled) in Viewing mode", async ({
+test("object menu commands are gated in Viewing mode, and the menu says why", async ({
   page,
   consoleErrors,
 }) => {
@@ -129,10 +130,14 @@ test("object menu commands are gated (disabled) in Viewing mode", async ({
   await rightClickImage(page);
 
   await expect(menu(page)).toBeVisible();
-  // Every mutating object command is greyed out fail-closed in read-only Viewing.
-  await expect(item(page, "object.altText")).toBeDisabled();
-  await expect(item(page, "object.crop")).toBeDisabled();
-  await expect(item(page, "object.delete")).toBeDisabled();
+  // Every mutating object command is refused fail-closed in read-only Viewing.
+  // The short-menu policy (docs/184 D-12) HIDES refused top-level rows rather
+  // than greying them, and the reason they share leads the menu as a note.
+  await expect(item(page, "object.altText")).toHaveCount(0);
+  await expect(item(page, "object.cropMenu")).toHaveCount(0);
+  await expect(item(page, "object.delete")).toHaveCount(0);
+  await expect(item(page, "context.refusedNote")).toContainText("Editing");
+  await expect(menu(page).locator(".menu-item:disabled")).toHaveCount(0);
 
   await page.keyboard.press("Escape");
 

@@ -507,6 +507,114 @@ function editKind(word, candidate) {
   return EDIT_SUBSTITUTE;
 }
 
+// ---- The ranking metric (audit CRITIC-09) -------------------------------------
+//
+// Plain edit distance cannot tell the typo a person makes from the one they do
+// not: `mispeled` is two edits from `misdeed`, `misled` AND `misspelled`, and
+// the first two came first. Typing errors are not uniform, so the edits are
+// not either. Each cost below is the noisy-channel idea in its simplest form
+// (Kernighan, Church and Gale's spelling corrector; Hunspell's REP/KEY tables):
+// the commoner a slip, the cheaper the edit that undoes it.
+//
+//   - a doubled or undoubled letter (`mispeled` → `misspelled`, `occurence`)  0.5
+//   - two neighbouring letters swapped (`teh` → `the`)                        0.5
+//   - a letter replaced by its keyboard neighbour (`ytpo` → `typo`)           0.6
+//   - a vowel replaced by another vowel (`seperate`, `definately`)            0.7
+//   - anything else (insert, delete, replace)                                 1
+
+/** QWERTY rows, for keyboard adjacency. A keyboard layout is a locale fact; the
+ *  metric only lowers costs, so on another layout it degrades to plain distance
+ *  rather than misranking. */
+const KEY_ROWS = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
+const KEY_NEIGHBOURS = (() => {
+  const near = new Map();
+  const add = (a, b) => {
+    if (!a || !b) return;
+    if (!near.has(a)) near.set(a, new Set());
+    near.get(a).add(b);
+  };
+  KEY_ROWS.forEach((row, r) => {
+    for (let i = 0; i < row.length; i += 1) {
+      add(row[i], row[i - 1]);
+      add(row[i], row[i + 1]);
+      // The row below is offset half a key to the right: its keys i-1 and i
+      // touch this row's key i, and symmetrically the row above's i and i+1.
+      const below = KEY_ROWS[r + 1];
+      if (below) {
+        add(row[i], below[i - 1]);
+        add(row[i], below[i]);
+        add(below[i - 1], row[i]);
+        add(below[i], row[i]);
+      }
+    }
+  });
+  return near;
+})();
+const VOWELS = new Set("aeiouy");
+
+function substitutionCost(a, b) {
+  if (a === b) return 0;
+  if (KEY_NEIGHBOURS.get(a)?.has(b)) return 0.6;
+  if (VOWELS.has(a) && VOWELS.has(b)) return 0.7;
+  return 1;
+}
+
+/**
+ * The weighted Damerau-Levenshtein distance from `typed` to `candidate`, with
+ * the costs above. Exported for its own tests.
+ *
+ * O(|typed| × |candidate|). It ranks the few dozen candidates the bounded
+ * search already found, never the dictionary, so it adds microseconds to a
+ * suggestion request and nothing to checking.
+ */
+export function weightedEditDistance(typed, candidate) {
+  const n = typed.length;
+  const m = candidate.length;
+  const d = Array.from({ length: n + 1 }, () => new Float64Array(m + 1));
+  // Inserting or deleting a letter beside an equal letter is a doubling slip.
+  const insertCost = (j) =>
+    candidate[j - 1] === candidate[j - 2] || candidate[j - 1] === candidate[j] ? 0.5 : 1;
+  const deleteCost = (i) =>
+    typed[i - 1] === typed[i - 2] || typed[i - 1] === typed[i] ? 0.5 : 1;
+  for (let i = 1; i <= n; i += 1) d[i][0] = d[i - 1][0] + deleteCost(i);
+  for (let j = 1; j <= m; j += 1) d[0][j] = d[0][j - 1] + insertCost(j);
+  for (let i = 1; i <= n; i += 1) {
+    for (let j = 1; j <= m; j += 1) {
+      let value = Math.min(
+        d[i - 1][j] + deleteCost(i),
+        d[i][j - 1] + insertCost(j),
+        d[i - 1][j - 1] + substitutionCost(typed[i - 1], candidate[j - 1]),
+      );
+      if (i > 1 && j > 1 && typed[i - 1] === candidate[j - 2] && typed[i - 2] === candidate[j - 1]) {
+        value = Math.min(value, d[i - 2][j - 2] + 0.5);
+      }
+      d[i][j] = value;
+    }
+  }
+  return d[n][m];
+}
+
+/** The doubling and undoubling edits two letters deep (`mispeled` →
+ *  `misspelled`, `acomodate` → `accommodate`). Plain distance-2 generation is
+ *  too expensive to run (`suggestionsFor` says why); this slice of it is the
+ *  commonest distance-2 typo and costs O(n²) strings, a few dozen. */
+function doublings2(word) {
+  const once = new Set();
+  for (let i = 0; i < word.length; i += 1) {
+    once.add(word.slice(0, i + 1) + word[i] + word.slice(i + 1)); // double letter i
+    if (i > 0 && word[i] === word[i - 1]) once.add(word.slice(0, i) + word.slice(i + 1)); // undouble
+  }
+  const twice = new Set();
+  for (const first of once) {
+    for (let i = 0; i < first.length; i += 1) {
+      twice.add(first.slice(0, i + 1) + first[i] + first.slice(i + 1));
+      if (i > 0 && first[i] === first[i - 1]) twice.add(first.slice(0, i) + first.slice(i + 1));
+    }
+  }
+  twice.delete(word);
+  return twice;
+}
+
 /**
  * Damerau-Levenshtein distance between `a` and `b`, or `max + 1` as soon as it
  * is provably greater than `max`.
@@ -677,6 +785,10 @@ export function suggestionsFor(
   if (casedSelf !== null && casedSelf !== foldApostrophes(typed)) consider(lower, 0);
 
   for (const candidate of edits1(lower)) consider(candidate, 1);
+  // The commonest two-edit typo, a doubled letter missed or added twice, is
+  // generated directly: it is cheap, and it must not depend on stage 2 running
+  // (stage 2 is skipped once stage 1 finds three candidates).
+  for (const candidate of doublings2(lower)) consider(candidate, 2);
 
   // `deepScan: false` keeps stage 1 and skips stage 2. It exists because
   // suggestions now run inside the proofing worker while checking rather than
@@ -725,8 +837,28 @@ export function suggestionsFor(
   const isCommon = (candidate) =>
     common.has(candidate) || common.has(candidate[0].toUpperCase() + candidate.slice(1));
 
+  // The rank (audit CRITIC-09): the weighted distance (above), plus a small
+  // penalty for a changed first letter (typists rarely get it wrong) and for a
+  // word outside the common tier (the frequency term: of two equally likely
+  // slips, the commoner word is the likelier intent). A capitalization-only fix
+  // (distance 0) still comes first. Then the old total order breaks ties.
+  const rank = new Map();
+  for (const [candidate, entry] of scored) {
+    rank.set(
+      candidate,
+      entry.distance === 0
+        ? -1
+        : weightedEditDistance(lower, candidate) +
+            (candidate[0] === lower[0] ? 0 : 0.3) +
+            (isCommon(candidate) ? 0 : 0.2),
+    );
+  }
+
   return [...scored.entries()]
     .sort(([wordA, a], [wordB, b]) => {
+      const rankA = rank.get(wordA);
+      const rankB = rank.get(wordB);
+      if (Math.abs(rankA - rankB) > 1e-9) return rankA - rankB;
       if (a.distance !== b.distance) return a.distance - b.distance;
       const headA = wordA[0] === lower[0];
       const headB = wordB[0] === lower[0];

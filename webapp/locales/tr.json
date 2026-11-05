@@ -1629,12 +1629,9 @@
   "autocorrect.statusOn": "{name} açık",
   "autocorrect.statusOff": "{name} kapalı",
   "pasteBtn.paste": "Yapıştır",
-  "pasteOptions.dismiss.title": "Kapat",
-  "pasteOptions.dismissPasteOptions.label": "Yapıştırma seçeneklerini kapat",
   "pasteOptions.keepPastedEmphasisBut.title": "Yapıştırılan vurguyu koru ama bu belgenin biçimlendirmesini kullan",
   "pasteOptions.keepTextOnly": "Yalnızca metni koru",
   "pasteOptions.keepTextOnlyV.title": "Yalnızca metni koru (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "Biçimlendirmeyi birleştir",
   "proofDocument.disposed": "Bu belge için denetim kapatıldı.",
   "proofDocument.notAvailable": "Belgenin tümünü bir kerede denetlemek henüz kullanılabilir değil. Denetim baktığınız sayfaları kontrol eder; tümünü denetlemek için belgeyi kaydırın.",
   "proofDocument.notConfigured": "Bu belge için denetim ayarlanmamış.",
@@ -3663,5 +3660,13 @@
   "reviewBar.previous": "Önceki",
   "reviewBar.next": "Sonraki",
   "reviewBar.close": "Yorumları kapat",
-  "propertiesTabs.panelTitle": "Özellikler"
+  "propertiesTabs.panelTitle": "Özellikler",
+  "table.tools.typeSubmenu": "Tablo",
+  "object.cropSubmenu": "Kırp",
+  "context.more": "Daha fazla",
+  "link.followHint": "Bağlantıyı izlemek için {key}+Tıklayın",
+  "pasteOptions.toggle.title": "Yapıştırma seçenekleri (Ctrl)",
+  "pasteOptions.keepSource": "Kaynak biçimlendirmesini koru",
+  "pasteOptions.keepSource.title": "Metnin kopyalandığı biçimlendirmeyi koru",
+  "pasteOptions.matchDestination": "Hedef biçimlendirmeyle eşleştir"
 }

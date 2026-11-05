@@ -1628,12 +1628,9 @@
   "autocorrect.statusOn": "Đã bật {name}",
   "autocorrect.statusOff": "Đã tắt {name}",
   "pasteBtn.paste": "Dán",
-  "pasteOptions.dismiss.title": "Bỏ qua",
-  "pasteOptions.dismissPasteOptions.label": "Bỏ qua tùy chọn dán",
   "pasteOptions.keepPastedEmphasisBut.title": "Giữ nhấn mạnh của nội dung dán nhưng theo định dạng của tài liệu này",
   "pasteOptions.keepTextOnly": "Chỉ giữ văn bản",
   "pasteOptions.keepTextOnlyV.title": "Chỉ giữ văn bản (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "Gộp định dạng",
   "proofDocument.disposed": "Việc soát lỗi đã dừng cho tài liệu này.",
   "proofDocument.notAvailable": "Việc kiểm tra toàn bộ tài liệu cùng lúc chưa khả dụng. Soát lỗi kiểm tra các trang bạn đang xem, vì vậy hãy cuộn qua tài liệu để kiểm tra hết.",
   "proofDocument.notConfigured": "Soát lỗi chưa được thiết lập cho tài liệu này.",
@@ -3652,5 +3649,13 @@
   "reviewBar.previous": "Trước",
   "reviewBar.next": "Tiếp",
   "reviewBar.close": "Đóng nhận xét",
-  "propertiesTabs.panelTitle": "Thuộc tính"
+  "propertiesTabs.panelTitle": "Thuộc tính",
+  "table.tools.typeSubmenu": "Bảng",
+  "object.cropSubmenu": "Cắt",
+  "context.more": "Thêm",
+  "link.followHint": "{key}+Nhấp để mở liên kết",
+  "pasteOptions.toggle.title": "Tùy chọn dán (Ctrl)",
+  "pasteOptions.keepSource": "Giữ định dạng nguồn",
+  "pasteOptions.keepSource.title": "Giữ định dạng khi văn bản được sao chép",
+  "pasteOptions.matchDestination": "Khớp định dạng đích"
 }

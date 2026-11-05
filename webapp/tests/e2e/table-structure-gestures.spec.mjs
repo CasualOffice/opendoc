@@ -143,16 +143,19 @@ test("merging a row and then unmerging it puts the cells back in the document", 
   expect(consoleErrors).toEqual([]);
 });
 
-test("Unmerge is offered but refused, with a reason, on a cell that is not merged", async ({
+test("Unmerge is offered on the context menu only where it applies", async ({
   page,
 }) => {
   await insertTable(page, 2, 2);
   const centre = await activeCellCentre(page);
   await page.mouse.click(centre.x, centre.y, { button: "right" });
-  const row = page.locator('.editor-context-menu [data-command-id="table.unmerge"]');
-  await expect(row, "never a hidden capability: the row is present").toBeVisible();
-  await expect(row, "…and disabled, because there is nothing to unmerge").toBeDisabled();
-  await expect(row).toHaveAttribute("title", "This cell is not merged");
+  // The short-menu policy (docs/184 D-12, audit CANVAS-07): a context menu
+  // offers merge or unmerge WHEN IT APPLIES and hides it otherwise, as Word's
+  // and Docs' table menus do. The capability is not hidden: the menu bar's
+  // Table ▸ Merge row and the palette still carry it with the reason.
+  await expect(page.locator(".editor-context-menu")).toBeVisible();
+  await expect(page.locator('.editor-context-menu [data-command-id="table.unmerge"]')).toHaveCount(0);
+  await expect(page.locator('.editor-context-menu [data-command-id="table.insert"]')).toBeVisible();
 });
 
 test("Tab in the last cell appends a row and puts the caret in it", async ({

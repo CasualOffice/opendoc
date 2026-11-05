@@ -4,6 +4,8 @@
 // through the context `ed`.
 import { mayDecideReview, reviewDecisionRefusal } from "./review_authority.mjs";
 import { buildObjectContextCommands } from "./object_context_menu.mjs";
+// Own line (anti-conflict): the right-click presentation of the object tree.
+import { compactObjectMenu } from "./object_context_menu.mjs";
 import { pictureToolCommands } from "./picture_tools.mjs";
 import { createObjectAlign } from "./object_align.mjs";
 import { outlineStyleCommands, readOutlineStyle } from "./shape_outline_style.mjs";
@@ -257,7 +259,9 @@ export function createContextMenu(ed) {
     // Right-clicking a selected drawing/image/text box shows OBJECT commands, not
     // the paragraph-text menu (docs/85 §4.1; Word/Google Docs image menu). The
     // object was already selected by the handler that resolved this context.
-    if (context.surface === "object") return buildObjectContextCommands(context, objectContextMenuHost);
+    // The right-click PRESENTATION is compacted (one Arrange ▸, one Crop ▸;
+    // docs/184 D-12); the palette flattens the full tree on its own.
+    if (context.surface === "object") return compactObjectMenu(buildObjectContextCommands(context, objectContextMenuHost), t);
     const registry = new Map(ed.editorCommands(context).map((command) => [command.id, command]));
     const pick = (id, extra = {}) => {
       const base = registry.get(id);
@@ -304,16 +308,20 @@ export function createContextMenu(ed) {
     // right-click menu and absent from it (docs/104 HF-076). A capability that is
     // reachable from one surface only is this repo's recurring defect; the cure is
     // one declaration feeding every surface instead of three hand-wired copies.
-    const CONTEXT_MENU_ICONS = { "edit.cut": "cut", "edit.copy": "copy", "edit.paste": "paste" };
+    //
+    // The declared set is the four clipboard rows of the approved menu (Cut,
+    // Copy, Paste, Paste without formatting; docs/184 D-12). Undo/Redo, Select
+    // all and Paste as picture are no longer declared: they keep the toolbar, the
+    // Edit menu, the palette and their chords, and a context menu is for what
+    // applies to the thing under the pointer (audit CANVAS-07).
+    const CONTEXT_MENU_ICONS = { "edit.cut": "cut", "edit.copy": "copy", "edit.paste": "paste", "edit.pasteText": "paste" };
     commands.push(
       ...[...registry.values()]
         .filter((command) => command.contextMenu)
         .map((command) => ({
           ...command,
           icon: CONTEXT_MENU_ICONS[command.id],
-          // The palette's own grouping decides the divider: "Edit" (undo/redo)
-          // and "Clipboard" become two blocks, as in the platform's text menus.
-          group: command.group === "Clipboard" ? "clipboard" : "history",
+          group: "clipboard",
         })),
     );
 
@@ -561,7 +569,8 @@ export function createContextMenu(ed) {
     // other question, and still says "not right now" with a reason.
     if (!ed.containerCanEdit) {
       return [
-        ...commands.filter((row) => row.id === "edit.copy" || row.id === "edit.selectAll"),
+        ...commands.filter((row) => row.id === "edit.copy"),
+        pick("edit.selectAll", { group: "clipboard" }),
         pick("edit.find", { group: "clipboard" }),
         // Printing reads the document, so a read-only container offers it too.
         context.hasRange ? pick("file.printSelection", { group: "clipboard" }) : null,
@@ -590,20 +599,42 @@ export function createContextMenu(ed) {
         icon: "list",
         submenu: listSubmenu,
       });
-      commands.push({ ...paragraphProperties, group: "arrange", icon: "paragraph" });
+      // The approved menu's last block (docs/184 D-12): the paragraph dialog and
+      // the format painter, the two "make this look like…" verbs.
+      commands.push({ ...paragraphProperties, group: "paragraph", icon: "paragraph" });
+      commands.push(pick("format.painter", { group: "paragraph", icon: "format" }));
       return commands.filter(Boolean);
     }
 
-    // Insert caption, on the TABLE menu as well as the picture menu: a table is
-    // the second thing Word captions, and right-clicking it is how a reader
-    // reaches it (`DocumentHolderExt.js:46`).
-    commands.push(...ed.referenceObjectMenuRows());
-
-    // 3 — Table cell: lead with the table tools (Insert / Delete / Merge / Split,
-    // then Select / Autofit & sort, then the property dialogs), matching Word's
-    // and Google Docs' table menus. The generic text-format rows are demoted to a
-    // single trailing "Format ▸" submenu.
-    commands.push(...tableToolCommands(context));
+    // 3 — Table cell, in Word's shape (about 14 entries, audit CANVAS-07): the
+    // operations a reader reaches for on a cell (Insert ▸, Delete ▸, Merge or
+    // Unmerge when it applies, Split cell, Select ▸), then ONE "Table ▸" type
+    // submenu for the long tail and one "Table properties…". The tree itself is
+    // `table_commands.mjs`'s and is unchanged, because the palette flattens the
+    // same tree; this is only how the right-click menu presents it.
+    const TABLE_TAIL = new Set([
+      "table.splitTable", "table.convertToText", "table.move", "table.layout",
+      "table.look", "table.textDirection", "table.cellFormat", "table.borderStyle",
+    ]);
+    const tableRows = tableToolCommands(context).filter(Boolean);
+    commands.push(
+      ...tableRows
+        .filter((row) => !TABLE_TAIL.has(row.id) && row.id !== "table.properties")
+        .map((row) => ({ ...row, group: "table" })),
+    );
+    commands.push({
+      id: "table.more",
+      label: t("table.tools.typeSubmenu"),
+      group: "table-properties",
+      icon: "tableLayout",
+      submenu: [
+        ...tableRows.filter((row) => TABLE_TAIL.has(row.id)),
+        // Insert caption, on the TABLE menu as well as the picture menu: a table
+        // is the second thing Word captions (`DocumentHolderExt.js:46`).
+        ...ed.referenceObjectMenuRows().map((row) => ({ ...row, group: "caption" })),
+      ],
+    });
+    commands.push(...tableRows.filter((row) => row.id === "table.properties"));
 
     // Annotations sit below the table tools, then the demoted text-format submenu.
     commands.push(...annotate);

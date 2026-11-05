@@ -33,6 +33,8 @@ export function createSelectionCommands(ed) {
     ed.verticalGoal.clear();
     if (typeof caret.free === "function") caret.free();
     ed.selection = extend ? { anchor: ed.selection.anchor, focus: to } : { anchor: to, focus: to };
+    // A jump (Ctrl+Home/End, Go to) brings the caret into view; only the
+    // viewport step below keeps the caret's screen height.
     ed.drawSelection();
     ed.focusEditorSurface();
     ed.scrollCaretIntoView();
@@ -48,12 +50,16 @@ export function createSelectionCommands(ed) {
     const flat = ed.doc.caretRect(ed.selection.focus.node, ed.selection.focus.offset);
     if (flat.length < 5) return;
 
-    const [pageNumber, x, y, w] = flat;
+    const [pageNumber, x, y, w, h] = flat;
     const caretPage = ed.pages[pageNumber - 1];
     if (!caretPage) return;
     const { rect: pageRect, sx, sy } = ed.scaleOf(caretPage);
     const viewportRect = ed.viewportEl.getBoundingClientRect();
-    const distance = Math.max(48, viewportRect.height - 48);
+    // One screen less one line, Word's and Docs' page step (audit CANVAS-10:
+    // the first PageDown moved the view 146px of a 612px viewport).
+    const line = Math.max(16, (h || 0) * sy);
+    const distance = Math.max(48, ed.viewportEl.clientHeight - line);
+    const caretClientY = pageRect.top + y * sy;
     const column = ed.verticalGoal.columnFor(dir, ed.selection.focus, () => x) ?? x;
     const targetX = pageRect.left + column * sx + Math.max(1, (w * sx) / 2);
     const targetY = pageRect.top + y * sy + (dir === "pageUp" ? -distance : distance);
@@ -64,6 +70,15 @@ export function createSelectionCommands(ed) {
     ed.verticalGoal.keep(column, to);
 
     ed.selection = extend ? { anchor: ed.selection.anchor, focus: to } : { anchor: to, focus: to };
+    // The VIEW moves by the same step, so the caret keeps its place on screen
+    // (Word and Docs). Scrolling only until the caret showed moved the view by
+    // whatever was left below the caret, a fraction of a screen.
+    const moved = ed.doc.caretRect(to.node, to.offset);
+    const movedPage = moved.length >= 5 ? ed.pages[moved[0] - 1] : null;
+    if (movedPage) {
+      const now = ed.scaleOf(movedPage);
+      ed.viewportEl.scrollTop += now.rect.top + moved[2] * now.sy - caretClientY;
+    }
     ed.drawSelection();
     ed.focusEditorSurface();
     ed.scrollCaretIntoView();

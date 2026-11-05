@@ -1,4 +1,4 @@
-import { clickIntoFirstPage, expect, expectEditorFocused, gotoEditor, moveCaretToDocStart, setReviewMode, stableBox, test } from "./fixtures.mjs";
+import { clickIntoFirstPage, expect, expectEditorFocused, gotoEditor, moveCaretToDocStart, setReviewMode, stableBox, test, commentOnSelection } from "./fixtures.mjs";
 
 async function selectTypedMarker(page, marker) {
   await clickIntoFirstPage(page);
@@ -24,6 +24,8 @@ async function focusEditor(page) {
   // lost.
   await page.waitForFunction(() => document.activeElement?.id === "editorTextInput");
 }
+
+const menu = (page) => page.locator(".editor-context-menu");
 
 async function insertTwoByTwoTable(page) {
   await gotoEditor(page);
@@ -115,9 +117,10 @@ test("Shift+F10 supports menu keyboard navigation and theme-aware surfaces", asy
     document.activeElement?.dataset.commandId);
   expect(focusedAfter).not.toBe(focusedBefore);
   await page.keyboard.press("End");
+  // The approved menu ends on Paragraph… and Format painter (docs/184 D-12).
   await expect(menu.locator(".menu-item.active")).toHaveAttribute(
     "data-command-id",
-    "paragraph.properties",
+    "format.painter",
   );
   await page.keyboard.press("Escape");
   await expectEditorFocused(page);
@@ -148,7 +151,7 @@ test("link and comment ranges receive their exact contextual actions", async ({
   await menu.locator('[data-command-id="link.remove"]').click();
   await expect(menu).toBeHidden();
 
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
   const composer = page.locator('[data-testid="review-comment-composer"]');
   await expect(composer).toBeVisible();
   await composer.fill("Context menu comment");
@@ -203,14 +206,12 @@ test("table and suggestion contexts expose exact commands and mode-safe reasons"
   await setReviewMode(page, "suggesting");
   await focusEditor(page);
   await page.keyboard.press("Shift+F10");
-  await menu.locator('[data-command-id="table.insert"]').click();
-  // Disabled rows are greyed in place with no reason text (Google Docs style):
-  // the menu no longer widens to explain why; the reason lives in the title.
-  const blockedRow = submenu.locator('[data-command-id="table.insert.rowAbove"]');
-  await expect(blockedRow).toBeDisabled();
-  await expect(blockedRow.locator(".menu-item-hint")).toHaveCount(0);
-  await expect(blockedRow).toHaveAttribute("title", /cannot be tracked/);
-  await page.keyboard.press("Escape");
+  // Suggesting cannot track a structural table change. The short-menu policy
+  // (docs/184 D-12) hides the refused rows rather than greying them, and the
+  // reason they share leads the menu as a note, so the refusal still speaks.
+  await expect(menu.locator('[data-command-id="table.insert"]')).toHaveCount(0);
+  await expect(menu.locator('[data-command-id="context.refusedNote"]')).toContainText("cannot be tracked");
+  await expect(menu.locator(".menu-item:disabled")).toHaveCount(0);
   await page.keyboard.press("Escape");
 
   await setReviewMode(page, "editing");
@@ -271,5 +272,77 @@ test("the menu is contextual — a table cell exposes table tools a text selecti
   const formatSubmenu = page.locator(".editor-submenu");
   await expect(formatSubmenu.locator('[data-command-id="format.bold"]')).toBeVisible();
   await expect(formatSubmenu.locator('[data-command-id="paragraph.properties"]')).toBeVisible();
+  expect(consoleErrors).toEqual([]);
+});
+
+// ---- The short-menu budget (docs/184 D-12, audit CANVAS-07) -------------------
+//
+// Measured before: 36 rows and 784px of an 800px window on a table cell, with
+// Undo/Redo greyed at the top. The guarantee, on every kind of target: at most
+// 16 rows and 480px, no Undo/Redo, and no disabled top-level row.
+
+async function expectShortMenu(page, what) {
+  const menu = page.locator(".editor-context-menu");
+  await expect(menu).toBeVisible();
+  const shape = await menu.evaluate((element) => ({
+    rows: element.querySelectorAll(":scope > .menu-item, :scope > .menu-note").length,
+    height: element.getBoundingClientRect().height,
+    ids: [...element.querySelectorAll(":scope > .menu-item")].map((row) => row.dataset.commandId),
+    disabled: [...element.querySelectorAll(":scope > .menu-item")].filter((row) => row.disabled).map((row) => row.dataset.commandId),
+  }));
+  expect(shape.rows, `${what}: ${shape.ids.join(", ")}`).toBeLessThanOrEqual(16);
+  expect(shape.height, `${what}: menu height`).toBeLessThanOrEqual(480);
+  expect(shape.ids, `${what}: history is not a context command`).not.toContain("edit.undo");
+  expect(shape.ids, `${what}: history is not a context command`).not.toContain("edit.redo");
+  expect(shape.disabled, `${what}: a refused row is hidden, not greyed`).toEqual([]);
+  return shape;
+}
+
+test("every context menu is short: at most 16 rows and 480px, no history, no disabled rows", async ({
+  page,
+  consoleErrors,
+}) => {
+  // Prose, with a selection.
+  await gotoEditor(page);
+  await selectTypedMarker(page, "SHORT_MENU");
+  let box = await stableBox(page.locator(".overlay .highlight").first());
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: "right" });
+  const prose = await expectShortMenu(page, "text selection");
+  expect(prose.ids.slice(0, 4)).toEqual(["edit.cut", "edit.copy", "edit.paste", "edit.pasteText"]);
+  await page.keyboard.press("Escape");
+
+  // A table cell, caret and then a selected row (Merge applies).
+  await insertTwoByTwoTable(page);
+  await focusEditor(page);
+  await page.keyboard.press("Shift+F10");
+  const cell = await expectShortMenu(page, "table cell");
+  expect(cell.ids).toContain("table.more");
+  expect(cell.ids).not.toContain("table.merge");
+  await menu(page).locator('[data-command-id="table.select"]').click();
+  await page.locator('.editor-submenu [data-command-id="table.select.row"]').click();
+  await focusEditor(page);
+  await page.keyboard.press("Shift+F10");
+  const row = await expectShortMenu(page, "table row selection");
+  expect(row.ids).toContain("table.merge");
+  await page.keyboard.press("Escape");
+  expect(consoleErrors).toEqual([]);
+});
+
+test("a picture's context menu is short, with one Crop and one Arrange submenu", async ({
+  page,
+  consoleErrors,
+}) => {
+  await page.goto("/editor.html?fixture=float");
+  await page.waitForFunction(() => document.querySelectorAll(".page-wrap").length > 0, null, { timeout: 45_000 });
+  const sheet = await stableBox(page.locator(".page-wrap .page").first());
+  await page.mouse.click(sheet.x + sheet.width * 0.14, sheet.y + sheet.height * 0.11, { button: "right" });
+  await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
+  const picture = await expectShortMenu(page, "picture");
+  expect(picture.ids).toContain("object.cropMenu");
+  expect(picture.ids).toContain("object.arrange");
+  for (const id of ["object.cropFill", "object.cropFit", "object.resetCrop", "object.rotate", "object.position"]) {
+    expect(picture.ids, `${id} folds into its family submenu`).not.toContain(id);
+  }
+  await page.keyboard.press("Escape");
   expect(consoleErrors).toEqual([]);
 });

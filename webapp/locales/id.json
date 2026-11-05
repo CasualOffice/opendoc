@@ -1628,12 +1628,9 @@
   "autocorrect.statusOn": "{name} aktif",
   "autocorrect.statusOff": "{name} nonaktif",
   "pasteBtn.paste": "Tempel",
-  "pasteOptions.dismiss.title": "Tutup",
-  "pasteOptions.dismissPasteOptions.label": "Tutup opsi tempel",
   "pasteOptions.keepPastedEmphasisBut.title": "Pertahankan penekanan yang ditempel tetapi gunakan pemformatan dokumen ini",
   "pasteOptions.keepTextOnly": "Pertahankan teks saja",
   "pasteOptions.keepTextOnlyV.title": "Pertahankan teks saja (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "Gabungkan pemformatan",
   "proofDocument.disposed": "Pemeriksaan telah dihentikan untuk dokumen ini.",
   "proofDocument.notAvailable": "Memeriksa seluruh dokumen sekaligus belum tersedia. Pemeriksaan memeriksa halaman yang sedang Anda lihat, jadi gulir dokumen untuk memeriksa semuanya.",
   "proofDocument.notConfigured": "Pemeriksaan belum disiapkan untuk dokumen ini.",
@@ -3652,5 +3649,13 @@
   "reviewBar.previous": "Sebelumnya",
   "reviewBar.next": "Berikutnya",
   "reviewBar.close": "Tutup komentar",
-  "propertiesTabs.panelTitle": "Properti"
+  "propertiesTabs.panelTitle": "Properti",
+  "table.tools.typeSubmenu": "Tabel",
+  "object.cropSubmenu": "Pangkas",
+  "context.more": "Lainnya",
+  "link.followHint": "{key}+Klik untuk membuka tautan",
+  "pasteOptions.toggle.title": "Opsi tempel (Ctrl)",
+  "pasteOptions.keepSource": "Pertahankan format sumber",
+  "pasteOptions.keepSource.title": "Pertahankan format saat teks disalin",
+  "pasteOptions.matchDestination": "Cocokkan format tujuan"
 }

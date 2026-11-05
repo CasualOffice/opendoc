@@ -7,7 +7,7 @@
 // points (the ✦ item in the selection toolbar, the panel in the side-panel slot,
 // palette rows); every change waits in the preview and lands as a suggestion;
 // streaming happens in the panel; Stop stops.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD, pointerSelectHighlight } from "./fixtures.mjs";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -66,7 +66,8 @@ async function selectWord(page) {
   await page.keyboard.press("Enter");
   await page.keyboard.type(WORD);
   for (let i = 0; i < WORD.length; i += 1) await page.keyboard.press("Shift+ArrowLeft");
-  await expect(page.locator("#selToolbar")).toBeVisible();
+  // The mini-toolbar is earned by a pointer selection (docs/184 D-12).
+  await pointerSelectHighlight(page);
 }
 
 const assistant = (page) => page.frameLocator(ASSISTANT);
@@ -207,14 +208,51 @@ test("the review pass applies comments and suggestions in one live turn", async 
   await expect(page.locator("#aiPreviewPanel")).toHaveCount(0);
 });
 
-test("⌘/ opens the ✦ actions on a selection", async ({ page }) => {
-  await withProvider(page);
-  await mockModel(page, {});
-  await gotoEditor(page);
-  await waitForAssistant(page);
-  await selectWord(page);
-  await page.keyboard.press(`${MOD}+/`);
-  await expect(page.locator("#selAiMenu")).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(page.locator("#selAiMenu")).toBeHidden();
-});
+/** How far the ✦ menu is from the painted selection, client px (0 = touching). */
+const menuGap = (page) =>
+  page.evaluate(() => {
+    const m = document.getElementById("selAiMenu").getBoundingClientRect();
+    const marks = [...document.querySelectorAll("#pages .overlay .highlight")].map((el) => el.getBoundingClientRect());
+    if (!marks.length) return -1;
+    const s = {
+      left: Math.min(...marks.map((r) => r.left)),
+      top: Math.min(...marks.map((r) => r.top)),
+      right: Math.max(...marks.map((r) => r.right)),
+      bottom: Math.max(...marks.map((r) => r.bottom)),
+    };
+    const dx = Math.max(s.left - m.right, 0, m.left - s.right);
+    const dy = Math.max(s.top - m.bottom, 0, m.top - s.bottom);
+    return Math.round(Math.hypot(dx, dy));
+  });
+
+// The menu hangs off the selection, whichever way the selection was made. The
+// ⌘/ keydown itself retires the pointer-earned mini-toolbar (docs/184 D-12), so
+// a menu anchored to the bar's hidden ✦ button was placed from an empty rect,
+// in the window's top-left corner.
+for (const how of ["pointer", "keyboard"]) {
+  test(`⌘/ opens the ✦ actions at a ${how} selection`, async ({ page, consoleErrors }) => {
+    await withProvider(page);
+    await mockModel(page, {});
+    await gotoEditor(page);
+    await waitForAssistant(page);
+    if (how === "pointer") {
+      await selectWord(page);
+    } else {
+      await clickIntoFirstPage(page);
+      await moveCaretToDocStart(page);
+      await page.keyboard.press("End");
+      await page.keyboard.press("Enter");
+      await page.keyboard.type(WORD);
+      for (let i = 0; i < WORD.length; i += 1) await page.keyboard.press("Shift+ArrowLeft");
+      await expect(page.locator("#selToolbar")).toBeHidden();
+    }
+    await page.keyboard.press(`${MOD}+/`);
+    await expect(page.locator("#selAiMenu")).toBeVisible();
+    const gap = await menuGap(page);
+    expect(gap, "the menu is beside the selection").toBeGreaterThanOrEqual(0);
+    expect(gap, "the menu is beside the selection").toBeLessThanOrEqual(80);
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#selAiMenu")).toBeHidden();
+    expect(consoleErrors).toEqual([]);
+  });
+}

@@ -1633,12 +1633,9 @@
   "autocorrect.statusOn": "تم تفعيل {name}",
   "autocorrect.statusOff": "تم تعطيل {name}",
   "pasteBtn.paste": "لصق",
-  "pasteOptions.dismiss.title": "تجاهل",
-  "pasteOptions.dismissPasteOptions.label": "تجاهل خيارات اللصق",
   "pasteOptions.keepPastedEmphasisBut.title": "الاحتفاظ بالتأكيد المنسوخ مع اعتماد تنسيق هذا المستند",
   "pasteOptions.keepTextOnly": "الاحتفاظ بالنص فقط",
   "pasteOptions.keepTextOnlyV.title": "الاحتفاظ بالنص فقط (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "دمج التنسيق",
   "proofDocument.disposed": "تم إيقاف التدقيق لهذا المستند.",
   "proofDocument.notAvailable": "تدقيق المستند بأكمله مرة واحدة غير متاح بعد. يدقّق البرنامج الصفحات التي تعرضها، لذا مرّر في المستند لتدقيقه بالكامل.",
   "proofDocument.notConfigured": "لم يتم إعداد التدقيق لهذا المستند.",
@@ -3707,5 +3704,13 @@
   "reviewBar.previous": "السابق",
   "reviewBar.next": "التالي",
   "reviewBar.close": "إغلاق التعليقات",
-  "propertiesTabs.panelTitle": "الخصائص"
+  "propertiesTabs.panelTitle": "الخصائص",
+  "table.tools.typeSubmenu": "جدول",
+  "object.cropSubmenu": "اقتصاص",
+  "context.more": "المزيد",
+  "link.followHint": "{key}+نقر لفتح الرابط",
+  "pasteOptions.toggle.title": "خيارات اللصق (Ctrl)",
+  "pasteOptions.keepSource": "الاحتفاظ بتنسيق المصدر",
+  "pasteOptions.keepSource.title": "الاحتفاظ بالتنسيق الذي نُسخ به النص",
+  "pasteOptions.matchDestination": "مطابقة تنسيق الوجهة"
 }

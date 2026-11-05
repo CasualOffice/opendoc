@@ -1631,12 +1631,9 @@
   "autocorrect.statusOn": "{name}: вкл.",
   "autocorrect.statusOff": "{name}: выкл.",
   "pasteBtn.paste": "Вставить",
-  "pasteOptions.dismiss.title": "Скрыть",
-  "pasteOptions.dismissPasteOptions.label": "Скрыть параметры вставки",
   "pasteOptions.keepPastedEmphasisBut.title": "Сохранить выделение вставленного текста, применив форматирование этого документа",
   "pasteOptions.keepTextOnly": "Сохранить только текст",
   "pasteOptions.keepTextOnlyV.title": "Сохранить только текст (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "Объединить форматирование",
   "proofDocument.disposed": "Проверка для этого документа остановлена.",
   "proofDocument.notAvailable": "Проверка всего документа сразу пока недоступна. Проверяются страницы, которые вы просматриваете, поэтому прокрутите документ, чтобы проверить его полностью.",
   "proofDocument.notConfigured": "Проверка для этого документа не настроена.",
@@ -3685,5 +3682,13 @@
   "reviewBar.previous": "Назад",
   "reviewBar.next": "Далее",
   "reviewBar.close": "Закрыть комментарии",
-  "propertiesTabs.panelTitle": "Свойства"
+  "propertiesTabs.panelTitle": "Свойства",
+  "table.tools.typeSubmenu": "Таблица",
+  "object.cropSubmenu": "Обрезка",
+  "context.more": "Ещё",
+  "link.followHint": "{key}+щелчок — перейти по ссылке",
+  "pasteOptions.toggle.title": "Параметры вставки (Ctrl)",
+  "pasteOptions.keepSource": "Сохранить исходное форматирование",
+  "pasteOptions.keepSource.title": "Сохранить форматирование, с которым текст был скопирован",
+  "pasteOptions.matchDestination": "Использовать форматирование назначения"
 }

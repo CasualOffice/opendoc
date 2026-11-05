@@ -1,4 +1,5 @@
 import {
+  commentOnSelection,
   test,
   expect,
   gotoEditor,
@@ -37,7 +38,7 @@ test("focusing a suggestion nested in a commented range activates the suggestion
   // to resolve the active item lands inside the comment's range.
   await page.keyboard.type("ABCDEFGH");
   for (let i = 0; i < 8; i++) await page.keyboard.press("Shift+ArrowLeft");
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
   const sidebar = page.locator("#reviewSidebar");
   await sidebar.locator('[data-testid="review-comment-composer"]').fill("a note");
   await sidebar.locator('[data-testid="review-comment-submit"]').click();

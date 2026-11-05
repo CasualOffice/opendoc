@@ -1,4 +1,5 @@
 import {
+  commentOnSelection,
   test,
   expect,
   gotoEditor,
@@ -24,7 +25,7 @@ async function addCommentAtDocStart(page, text) {
   for (let i = 0; i < "ANCHORED_COMMENT".length; i++) {
     await page.keyboard.press("Shift+ArrowLeft");
   }
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
   const composer = page
     .locator("#reviewSidebar")
     .locator('[data-testid="review-comment-composer"]');

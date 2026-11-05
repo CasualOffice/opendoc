@@ -31,6 +31,7 @@ import {
   parseDictionary,
   skipReason,
   suggestionsFor,
+  weightedEditDistance,
   tokenizeWords,
   unsupportedLanguageMessage,
 } from "../src/spelling.mjs";
@@ -196,6 +197,27 @@ test("the named cases from the design come first, not fourth", () => {
     "accommodate",
     "two edits away — this one only works because the second stage exists",
   );
+});
+
+// Audit CRITIC-09: `mispeled` offered misdeed, misled, misspelled — all two
+// plain edits away, so the intended word came third. Two missed doublings are
+// the commonest slip there is; the weighted metric says so.
+test("a missed doubling outranks other two-edit words (mispeled → misspelled first)", () => {
+  assert.equal(suggestionsFor("mispeled", enUS)[0], "misspelled");
+  assert.equal(suggestionsFor("embarased", enUS)[0], "embarrassed");
+  assert.equal(suggestionsFor("tomorow", enUS)[0], "tomorrow");
+});
+
+test("the weighted distance prices the common slips below a plain edit", () => {
+  assert.equal(weightedEditDistance("teh", "the"), 0.5, "a swap");
+  assert.equal(weightedEditDistance("ocurence", "occurrence"), 1, "two doublings");
+  assert.equal(weightedEditDistance("ytpo", "typo"), 0.5, "a swap");
+  assert.equal(weightedEditDistance("tyoe", "type"), 0.6, "o is p's keyboard neighbour");
+  assert.equal(weightedEditDistance("seperate", "separate"), 0.7, "a vowel for a vowel");
+  assert.equal(weightedEditDistance("cat", "cut"), 0.7);
+  assert.equal(weightedEditDistance("cat", "cot"), 0.7);
+  assert.equal(weightedEditDistance("cat", "cab"), 1, "an unrelated substitution is a full edit");
+  assert.ok(weightedEditDistance("mispeled", "misspelled") < weightedEditDistance("mispeled", "misled"));
 });
 
 test("a suggestion is offered in the case the typist used", () => {

@@ -14,7 +14,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { buildObjectContextCommands } = await import("../src/object_context_menu.mjs");
+const { buildObjectContextCommands, compactObjectMenu } = await import("../src/object_context_menu.mjs");
 
 const CAPTION_ROW = {
   id: "reference.caption",
@@ -503,4 +503,41 @@ test("a shape offers Edit points when the host wires it, gated like every object
   assert.equal(ran, 1);
   assert.equal(row(picture, "object.editPoints", io), undefined, "a picture has no outline to edit");
   assert.equal(row(shape, "object.editPoints", { ...host({ reviewMode: "viewing" }), editPoints: () => {} }).enabled, false);
+});
+
+// ---- The right-click presentation (docs/184 D-12, audit CANVAS-07) ----------
+
+test("the right-click menu folds Position, Rotate and the crop presets under Arrange and Crop", () => {
+  // A picture with the crop presets the picture tools add (`picture_tools.mjs`).
+  const tree = [
+    ...buildObjectContextCommands(picture, host()),
+    { id: "object.cropFill", label: "Crop to fill", group: "picture", run: () => {} },
+    { id: "object.cropFit", label: "Crop to fit", group: "picture", run: () => {} },
+    { id: "object.resetCrop", label: "Reset crop", group: "picture", run: () => {} },
+  ];
+  const menu = compactObjectMenu(tree);
+  assert.deepEqual(menu.map((command) => command.id), [
+    "reference.caption",
+    "object.wrap",
+    "object.arrange",
+    "object.altText",
+    "object.cropMenu",
+    "object.properties",
+    "object.delete",
+  ]);
+  const arrange = menu.find((command) => command.id === "object.arrange").submenu.map((row) => row.id);
+  assert.ok(arrange.includes("object.position") && arrange.includes("object.rotate") && arrange.includes("object.ungroup"));
+  assert.deepEqual(
+    menu.find((command) => command.id === "object.cropMenu").submenu.map((row) => row.id),
+    ["object.crop", "object.cropFill", "object.cropFit", "object.resetCrop"],
+  );
+  // Presentation only: nothing is lost, every command id is still reachable.
+  const flat = (rows) => rows.flatMap((row) => (row.submenu ? [row.id, ...flat(row.submenu)] : [row.id]));
+  for (const command of tree) assert.ok(flat(menu).includes(command.id), command.id);
+});
+
+test("a lone crop row stays at the top level rather than becoming a one-row submenu", () => {
+  const menu = compactObjectMenu(buildObjectContextCommands(picture, host()));
+  assert.ok(menu.some((command) => command.id === "object.crop"));
+  assert.ok(!menu.some((command) => command.id === "object.cropMenu"));
 });

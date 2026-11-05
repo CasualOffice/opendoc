@@ -1629,12 +1629,9 @@
   "autocorrect.statusOn": "{name} aan",
   "autocorrect.statusOff": "{name} uit",
   "pasteBtn.paste": "Plakken",
-  "pasteOptions.dismiss.title": "Sluiten",
-  "pasteOptions.dismissPasteOptions.label": "Plakopties sluiten",
   "pasteOptions.keepPastedEmphasisBut.title": "Behoud de geplakte nadruk maar neem de opmaak van dit document over",
   "pasteOptions.keepTextOnly": "Alleen tekst behouden",
   "pasteOptions.keepTextOnlyV.title": "Alleen tekst behouden (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "Opmaak samenvoegen",
   "proofDocument.disposed": "De controle is voor dit document gestopt.",
   "proofDocument.notAvailable": "Het hele document in één keer controleren is nog niet mogelijk. De controle bekijkt de pagina's die je ziet — scroll dus door het document om alles te controleren.",
   "proofDocument.notConfigured": "De controle is niet ingesteld voor dit document.",
@@ -3663,5 +3660,13 @@
   "reviewBar.previous": "Vorige",
   "reviewBar.next": "Volgende",
   "reviewBar.close": "Opmerkingen sluiten",
-  "propertiesTabs.panelTitle": "Eigenschappen"
+  "propertiesTabs.panelTitle": "Eigenschappen",
+  "table.tools.typeSubmenu": "Tabel",
+  "object.cropSubmenu": "Bijsnijden",
+  "context.more": "Meer",
+  "link.followHint": "{key}+klik om de koppeling te volgen",
+  "pasteOptions.toggle.title": "Plakopties (Ctrl)",
+  "pasteOptions.keepSource": "Opmaak van bron behouden",
+  "pasteOptions.keepSource.title": "De opmaak behouden waarmee de tekst is gekopieerd",
+  "pasteOptions.matchDestination": "Opmaak van doel overnemen"
 }

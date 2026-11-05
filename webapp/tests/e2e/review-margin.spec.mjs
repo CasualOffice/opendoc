@@ -1,4 +1,4 @@
-import { MOD, clickIntoFirstPage, expect, gotoEditor, moveCaretToDocStart, setReviewMode, stableBox, test } from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, expect, gotoEditor, moveCaretToDocStart, setReviewMode, stableBox, test, commentOnSelection } from "./fixtures.mjs";
 
 const TRACKED_MOVE_DOCX = "UEsDBBQAAAAIABwY/1ydxYoq8gAAALkBAAATAAAAW0NvbnRlbnRfVHlwZXNdLnhtbH2QzU7DMBCE73kKy1eUOHBACCXpgZ8jcCgPsLI3iVV7bXnd0r49TgtFQpSjNfPNrKdb7b0TO0xsA/XyummlQNLBWJp6+b5+ru+k4AxkwAXCXh6Q5WqouvUhIosCE/dyzjneK8V6Rg/chIhUlDEkD7k806Qi6A1MqG7a9lbpQBkp13nJkEMlRPeII2xdFk/7opxuSehYioeTd6nrJcTorIZcdLUj86uo/ippCnn08GwjXxWDVJdKFvFyxw/6WiZK1qB4g5RfwBej+gjJKBP01he4+T/pj2vDOFqNZ35JiyloZC7be9ecFQ+Wvn/RqePwQ/UJUEsDBAoAAAAAABwY/1wAAAAAAAAAAAAAAAAGAAAAX3JlbHMvUEsDBBQAAAAIABwY/1xAoFMJsgAAAC8BAAALAAAAX3JlbHMvLnJlbHONz7sOgjAUBuCdp2jOLgUHYwyFxZiwGnyApj2URnpJWy+8vR0cxDg4ntt38jfd08zkjiFqZxnUZQUErXBSW8XgMpw2eyAxcSv57CwyWDBC1xbNGWee8k2ctI8kIzYymFLyB0qjmNDwWDqPNk9GFwxPuQyKei6uXCHdVtWOhk8D2oKQFUt6ySD0sgYyLB7/4d04aoFHJ24Gbfrx5WsjyzwoTAweLkgq3+0ys0BzSrqK2RYvUEsDBAoAAAAAABwY/1wAAAAAAAAAAAAAAAAFAAAAd29yZC9QSwMEFAAAAAgAHBj/XNCh0AF8AQAAzAMAABEAAAB3b3JkL2RvY3VtZW50LnhtbLVTPU/DMBDd+ysi7yGpKVBFTRADbEiIhoXNxNckUuyz7GtD+fU4aWhaaAeEkDzc8328u+fz4vZdNcEGrKtRp2x6EbMAdIGy1mXKXvKHcM4CR0JL0aCGlG3BsdtssmgTicVagabAV9AuaVNWEZkkilxRgRLuAg1o71uhVYI8tGXUopXGYgHOeQLVRDyOryMlas2ySRD4qm8ot53ZA7OzelvhBh4sqmehS1iSsBS0SS1T5jtuEy2Ub66LCS1samhDI2rbecSaKrQpu5Oig1KQD+Qxvw7jm/Bymsdx0p9XFp1gGzimv6v0VagvZbNOLGhyeKfMQoOFT5SLaLzsbLsnj0b2c+Pfa7kffui6SzNnhcvxh2z8v2TLcWC4/Kto3+Q6I1SOp4cdReKnRXJQ0JM9SDbl8sOn+E2ecj7r96ry9tV8Fh9NacpHYb2T0Hj3bBdp67KiEb4hEaoRN7A68FYgJHhVbngPV4h0AMs19fDoccduO7T7Jv0SDd8wm3wCUEsBAh4DFAAAAAgAHBj/XJ3FiiryAAAAuQEAABMAAAAAAAAAAQAAAKSBAAAAAFtDb250ZW50X1R5cGVzXS54bWxQSwECHgMKAAAAAAAcGP9cAAAAAAAAAAAAAAAABgAAAAAAAAAAABAA7UEjAQAAX3JlbHMvUEsBAh4DFAAAAAgAHBj/XECgUwmyAAAALwEAAAsAAAAAAAAAAQAAAKSBRwEAAF9yZWxzLy5yZWxzUEsBAh4DCgAAAAAAHBj/XAAAAAAAAAAAAAAAAAUAAAAAAAAAAAAQAO1BIgIAAHdvcmQvUEsBAh4DFAAAAAgAHBj/XNCh0AF8AQAAzAMAABEAAAAAAAAAAQAAAKSBRQIAAHdvcmQvZG9jdW1lbnQueG1sUEsFBgAAAAAFAAUAIAEAAPADAAAAAA==";
 
@@ -69,7 +69,7 @@ test("comments use the dedicated sidebar and an in-column composer", async ({
   for (let i = 0; i < "COMMENT_TARGET".length; i++) {
     await page.keyboard.press("Shift+ArrowLeft");
   }
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
 
   const sidebar = page.locator("#reviewSidebar");
   await expect(sidebar).toBeVisible();
@@ -122,7 +122,7 @@ test("a reply can be edited and individually deleted (REVIEW-GAP-011)", async ({
   for (let i = 0; i < "REPLY_TARGET".length; i++) {
     await page.keyboard.press("Shift+ArrowLeft");
   }
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
 
   const sidebar = page.locator("#reviewSidebar");
   const composer = sidebar.locator('[data-testid="review-comment-composer"]');
@@ -355,7 +355,7 @@ test("clicking inside a commented range places the caret at the click position",
   await page.keyboard.type(marker);
   await moveCaretToDocStart(page);
   for (let i = 0; i < marker.length; i++) await page.keyboard.press("Shift+ArrowRight");
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
 
   const sidebar = page.locator("#reviewSidebar");
   const composer = sidebar.locator('[data-testid="review-comment-composer"]');
@@ -470,7 +470,7 @@ test("replying to a comment far down the document does not jump to the top", asy
   await page.keyboard.press("Shift+ArrowLeft");
   await page.keyboard.press("Shift+ArrowLeft");
   await page.keyboard.press("Shift+ArrowLeft");
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
   const sidebar = page.locator("#reviewSidebar");
   const composer = sidebar.locator('[data-testid="review-comment-composer"]');
   await expect(composer).toBeVisible();

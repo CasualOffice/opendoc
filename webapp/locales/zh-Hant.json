@@ -1628,12 +1628,9 @@
   "autocorrect.statusOn": "已開啟{name}",
   "autocorrect.statusOff": "已關閉{name}",
   "pasteBtn.paste": "貼上",
-  "pasteOptions.dismiss.title": "關閉",
-  "pasteOptions.dismissPasteOptions.label": "關閉貼上選項",
   "pasteOptions.keepPastedEmphasisBut.title": "保留貼上內容的強調格式，但採用本文件的格式",
   "pasteOptions.keepTextOnly": "只保留文字",
   "pasteOptions.keepTextOnlyV.title": "只保留文字 (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "合併格式",
   "proofDocument.disposed": "此文件的校訂已關閉。",
   "proofDocument.notAvailable": "尚不支援一次檢查整份文件。校訂只檢查你正在檢視的頁面，因此請捲動文件以檢查全部內容。",
   "proofDocument.notConfigured": "此文件尚未設定校訂。",
@@ -3652,5 +3649,13 @@
   "reviewBar.previous": "上一個",
   "reviewBar.next": "下一個",
   "reviewBar.close": "關閉註解",
-  "propertiesTabs.panelTitle": "屬性"
+  "propertiesTabs.panelTitle": "屬性",
+  "table.tools.typeSubmenu": "表格",
+  "object.cropSubmenu": "裁剪",
+  "context.more": "更多",
+  "link.followHint": "按住 {key} 並按一下以追蹤連結",
+  "pasteOptions.toggle.title": "貼上選項 (Ctrl)",
+  "pasteOptions.keepSource": "保留來源格式設定",
+  "pasteOptions.keepSource.title": "保留複製文字時的格式設定",
+  "pasteOptions.matchDestination": "符合目的格式設定"
 }

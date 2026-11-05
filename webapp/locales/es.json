@@ -1630,12 +1630,9 @@
   "autocorrect.statusOn": "{name}: activado",
   "autocorrect.statusOff": "{name}: desactivado",
   "pasteBtn.paste": "Pegar",
-  "pasteOptions.dismiss.title": "Descartar",
-  "pasteOptions.dismissPasteOptions.label": "Descartar las opciones de pegado",
   "pasteOptions.keepPastedEmphasisBut.title": "Conservar el énfasis pegado pero adoptar el formato de este documento",
   "pasteOptions.keepTextOnly": "Mantener solo texto",
   "pasteOptions.keepTextOnlyV.title": "Mantener solo texto (⌘⇧V)",
-  "pasteOptions.mergeFormatting": "Combinar formato",
   "proofDocument.disposed": "La revisión se ha cerrado para este documento.",
   "proofDocument.notAvailable": "Revisar todo el documento a la vez aún no está disponible. La revisión comprueba las páginas que estás viendo, así que desplázate por el documento para comprobarlo todo.",
   "proofDocument.notConfigured": "La revisión no está configurada para este documento.",
@@ -3674,5 +3671,13 @@
   "reviewBar.previous": "Anterior",
   "reviewBar.next": "Siguiente",
   "reviewBar.close": "Cerrar comentarios",
-  "propertiesTabs.panelTitle": "Propiedades"
+  "propertiesTabs.panelTitle": "Propiedades",
+  "table.tools.typeSubmenu": "Tabla",
+  "object.cropSubmenu": "Recortar",
+  "context.more": "Más",
+  "link.followHint": "{key}+clic para seguir el vínculo",
+  "pasteOptions.toggle.title": "Opciones de pegado (Ctrl)",
+  "pasteOptions.keepSource": "Mantener formato de origen",
+  "pasteOptions.keepSource.title": "Mantener el formato con el que se copió el texto",
+  "pasteOptions.matchDestination": "Coincidir con formato de destino"
 }

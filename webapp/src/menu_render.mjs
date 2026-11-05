@@ -58,6 +58,7 @@ export function focusMenuIndex(level, index, focus = true) {
 
 export function renderMenuLevel(el, entries, depth, hooks) {
   el.replaceChildren();
+  el.removeAttribute("aria-describedby");
   entries.forEach((entry, index) => {
     if (entry.separator) {
       const sep = document.createElement("div");
@@ -66,11 +67,27 @@ export function renderMenuLevel(el, entries, depth, hooks) {
       el.appendChild(sep);
       return;
     }
+    // A NOTE is what the menu says, not a command: why rows are missing (the
+    // review mode, a read-only container), a grammar rule's explanation, "no
+    // suggestions". It is text, never a disabled button, so the short-menu
+    // policy's "no disabled rows" (docs/184 D-12) does not cost the reader the
+    // reason, and the menu names it as its description for a screen reader.
+    if (entry.note) {
+      const note = document.createElement("div");
+      note.className = "menu-note";
+      note.id = `menu-note-${depth}-${index}`;
+      note.dataset.commandId = entry.id;
+      note.setAttribute("role", "none");
+      note.textContent = entry.label;
+      el.setAttribute("aria-describedby", note.id);
+      el.appendChild(note);
+      return;
+    }
     const hasSub = Array.isArray(entry.submenu);
     const button = document.createElement("button");
     button.type = "button";
     button.className =
-      `menu-item${entry.danger ? " danger" : ""}${hasSub ? " has-submenu" : ""}`;
+      `menu-item${entry.danger ? " danger" : ""}${hasSub ? " has-submenu" : ""}${entry.emphasis ? " emphasis" : ""}`;
     button.dataset.menuIndex = String(index);
     button.dataset.commandId = entry.id;
     button.setAttribute("role", "menuitem");
