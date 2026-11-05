@@ -20,21 +20,68 @@ use casual_doc_model::v1::{
     NumberingRef, ParagraphProperties,
 };
 
-/// One level of the bullet (`numbered == false`) or decimal list the editor
-/// creates: `1.`, `1.1.`, … or `•`, `◦`, `▪`, `–`, indented 0.5" per level
-/// with a 0.25" hanging indent. O(level).
+/// One level of the bullet (`numbered == false`) or numbered list the editor
+/// creates (`docs/109` HF-227). O(1).
+///
+/// Numbered levels cycle `1.` / `a.` / `i.` (decimal, lower letter, lower
+/// roman, then decimal again at level 3), each marker carrying ONE placeholder
+/// (`%N.`), which is Word's and Google Docs' default multilevel list. Bullets
+/// cycle `•` / `◦` / `▪` / `–`. Every level is indented 0.5" more than the one
+/// above it (720 twips, Word's step) with a 0.25" hanging indent.
+///
+/// This used to join every placeholder (`1.`, `1.1.`, `1.1.1.`) and step 360
+/// twips: the first Tab in a numbered list rendered `1.1.two`, the
+/// multi-part marker overrunning the 360-twip hanging indent into the text.
+/// The joined decimal scheme is still offered, as the gallery's legal outline
+/// ([`legal_level`]), with the wider hanging indents it needs.
 #[must_use]
 pub fn level(numbered: bool, level: u8) -> NumberingLevel {
     let (num_fmt, lvl_text) = if numbered {
-        let placeholders = (1..=level + 1)
-            .map(|part| format!("%{part}"))
-            .collect::<Vec<_>>()
-            .join(".");
-        (NumberFormat::Decimal, format!("{placeholders}."))
+        let format = match level % 3 {
+            0 => NumberFormat::Decimal,
+            1 => NumberFormat::LowerLetter,
+            _ => NumberFormat::LowerRoman,
+        };
+        (format, format!("%{}.", u16::from(level) + 1))
     } else {
         let glyph = ["\u{2022}", "\u{25e6}", "\u{25aa}", "\u{2013}"][usize::from(level) % 4];
         (NumberFormat::Bullet, glyph.to_string())
     };
+    with_marker(level, num_fmt, lvl_text, 720 + i32::from(level) * 720, 360)
+}
+
+/// One level of the legal-style decimal outline (`1.`, `1.1.`, `1.1.1.`, …),
+/// the gallery's "decimal" multilevel scheme. O(level).
+///
+/// Word's own preset geometry: the marker grows by one part per level, so the
+/// hanging indent grows with it (360, 432, 504, 648, … twips) and the text
+/// never collides with a long marker such as `1.1.1.1.`.
+#[must_use]
+pub fn legal_level(level: u8) -> NumberingLevel {
+    const START: [i32; 9] = [360, 792, 1224, 1728, 2232, 2736, 3240, 3744, 4320];
+    const HANGING: [i32; 9] = [360, 432, 504, 648, 792, 936, 1080, 1224, 1440];
+    let index = usize::from(level).min(8);
+    let placeholders = (1..=u16::from(level) + 1)
+        .map(|part| format!("%{part}"))
+        .collect::<Vec<_>>()
+        .join(".");
+    with_marker(
+        level,
+        NumberFormat::Decimal,
+        format!("{placeholders}."),
+        START[index],
+        HANGING[index],
+    )
+}
+
+/// The level record every editor-made list shares, around its marker. O(1).
+fn with_marker(
+    level: u8,
+    num_fmt: NumberFormat,
+    lvl_text: String,
+    start_twips: i32,
+    hanging_twips: i32,
+) -> NumberingLevel {
     NumberingLevel {
         picture_bullet: None,
         level,
@@ -46,10 +93,10 @@ pub fn level(numbered: bool, level: u8) -> NumberingLevel {
         is_lgl: false,
         paragraph_properties: Some(ParagraphProperties {
             indentation: Some(Indentation {
-                start_twips: Some(720 + i32::from(level) * 360),
+                start_twips: Some(start_twips),
                 end_twips: None,
                 first_line_twips: None,
-                hanging_twips: Some(360),
+                hanging_twips: Some(hanging_twips),
             }),
             ..ParagraphProperties::default()
         }),
@@ -316,4 +363,84 @@ pub fn continue_numbering(
         .to_owned());
     }
     Ok(operations)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{legal_level, level};
+    use casual_doc_model::v1::NumberFormat;
+
+    fn shape(numbered: bool, at: u8) -> (NumberFormat, String, i32, i32) {
+        let built = level(numbered, at);
+        let indentation = built
+            .paragraph_properties
+            .and_then(|properties| properties.indentation)
+            .expect("an editor list level carries its indentation");
+        (
+            built.num_fmt.expect("a format"),
+            built.lvl_text.expect("a marker"),
+            indentation.start_twips.expect("a start indent"),
+            indentation.hanging_twips.expect("a hanging indent"),
+        )
+    }
+
+    /// HF-227: the default numbered list is Word's and Docs' `1.` / `a.` / `i.`,
+    /// one placeholder per marker, stepping 720 twips. Mutation proof: restoring
+    /// the joined `%1.%2.` decimal makes level 1 `(Decimal, "%1.%2.", 1080, 360)`.
+    #[test]
+    fn numbered_levels_cycle_decimal_letter_roman_one_placeholder_each() {
+        let expected = [
+            (NumberFormat::Decimal, "%1.", 720),
+            (NumberFormat::LowerLetter, "%2.", 1440),
+            (NumberFormat::LowerRoman, "%3.", 2160),
+            (NumberFormat::Decimal, "%4.", 2880),
+            (NumberFormat::LowerLetter, "%5.", 3600),
+            (NumberFormat::LowerRoman, "%6.", 4320),
+            (NumberFormat::Decimal, "%7.", 5040),
+            (NumberFormat::LowerLetter, "%8.", 5760),
+            (NumberFormat::LowerRoman, "%9.", 6480),
+        ];
+        for (at, (format, marker, start)) in (0u8..).zip(expected) {
+            assert_eq!(
+                shape(true, at),
+                (format, marker.to_owned(), start, 360),
+                "level {at}"
+            );
+        }
+    }
+
+    #[test]
+    fn bullet_levels_keep_their_glyphs_and_step_720() {
+        for at in 0u8..9 {
+            let (format, marker, start, hanging) = shape(false, at);
+            assert_eq!(format, NumberFormat::Bullet);
+            assert_eq!(
+                marker,
+                ["\u{2022}", "\u{25e6}", "\u{25aa}", "\u{2013}"][usize::from(at) % 4]
+            );
+            assert_eq!((start, hanging), (720 + i32::from(at) * 720, 360));
+        }
+    }
+
+    /// The gallery's legal outline keeps the joined decimal marker, with a hanging
+    /// indent that grows with it so `1.1.1.` never runs into its text.
+    #[test]
+    fn the_legal_outline_joins_every_level_and_widens_its_hanging_indent() {
+        let third = legal_level(2);
+        assert_eq!(third.num_fmt, Some(NumberFormat::Decimal));
+        assert_eq!(third.lvl_text.as_deref(), Some("%1.%2.%3."));
+        let hanging: Vec<i32> = (0u8..9)
+            .map(|at| {
+                legal_level(at)
+                    .paragraph_properties
+                    .and_then(|p| p.indentation)
+                    .and_then(|i| i.hanging_twips)
+                    .expect("hanging")
+            })
+            .collect();
+        assert!(
+            hanging.windows(2).all(|pair| pair[0] < pair[1]),
+            "{hanging:?}"
+        );
+    }
 }

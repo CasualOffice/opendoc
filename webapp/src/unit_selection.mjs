@@ -24,10 +24,26 @@
 export const MULTI_CLICK_MS = 500;
 export const MULTI_CLICK_PX = 4;
 
-/** Counts clicks on PRESS. `pointerdown`'s `detail` is 0 in Chromium (only the
- *  mouse events carry the click count), so the press that starts a double-click
- *  drag has to be counted here. `press(x, y, time)` returns 1, 2 or 3, wrapping
- *  back to 1 after a triple, as Word does. O(1). */
+/** Counts clicks on PRESS, as a stand-in for the browser's own count.
+ *
+ *  The browser's count (`MouseEvent.detail`, which follows the OS: its
+ *  interval, its distance and whatever the input device reported) is the truth,
+ *  but nothing on the press carries it here. `pointerdown`'s `detail` is 0 in
+ *  Chromium, and the `mousedown` that would carry it is never dispatched,
+ *  because the editor cancels `pointerdown` (a cancelled `pointerdown`
+ *  suppresses the compatibility mouse events; measured in Chromium:
+ *  `pointerdown:0 click:1 pointerdown:0 click:2 dblclick:2`). The first event
+ *  that carries the browser's count is the `click` after the release. So:
+ *
+ *  - `press(x, y, time)` guesses 1, 2 or 3 for the press, wrapping back to 1
+ *    after a triple, as Word does, so a double-click-drag can grow by word
+ *    from the press on;
+ *  - `settle(detail)` takes the browser's count from that `click`, so the next
+ *    press continues from the browser's count, not from the guess;
+ *  - `pressUnitStands` (below) decides whether the press's unit survives once
+ *    the browser's count is known.
+ *
+ *  O(1). */
 export function createClickCounter() {
   let last = null;
   return {
@@ -37,7 +53,25 @@ export function createClickCounter() {
       last = { x, y, time, count };
       return count;
     },
+    settle(detail) {
+      if (last && Number.isInteger(detail) && detail > 0) last.count = ((detail - 1) % 3) + 1;
+    },
   };
+}
+
+/** Whether the unit a press selected on its guessed count (`pressUnit`) stands
+ *  once the `click` brings the browser's count (`detail`).
+ *
+ *  It stands when the browser agrees, and when a drag has already grown the
+ *  selection beyond the press's unit (the gesture was the person's, whatever
+ *  the count). Otherwise the browser wins: a press the guess took for the
+ *  third of a triple, which the browser counts as a single click, is a caret,
+ *  not a paragraph (a click straight after a double-click, with a device or an
+ *  OS that does not count it on). A browser count of 2 or 3 is handed to the
+ *  `dblclick` / triple-`click` routes, which select the word or paragraph. */
+export function pressUnitStands(pressUnit, detail, grown) {
+  if (!pressUnit || grown) return true;
+  return unitForClickCount(detail) === pressUnit;
 }
 
 /** The selection unit a press with this click count starts, or null. */
@@ -83,4 +117,14 @@ export function extendByUnit(doc, origin, at, unit) {
   const here = unitRange(doc, at, unit);
   if (isBefore(doc, here.start, origin.start)) return { anchor: origin.end, focus: here.start };
   return { anchor: origin.start, focus: here.end };
+}
+
+/** Whether `selection` is still the range a unit gesture left, so Shift+click
+ *  extends THAT selection by its unit (`docs/109` UX-076). A caret the keyboard
+ *  has since collapsed onto the origin's edge is not: it extends by character. O(1). */
+export function extendsUnitSelection(selection, origin) {
+  if (!selection) return false;
+  const { anchor, focus } = selection;
+  if (anchor.node === focus.node && anchor.offset === focus.offset) return false;
+  return [origin.start, origin.end].some((edge) => edge.node === anchor.node && edge.offset === anchor.offset);
 }

@@ -1484,18 +1484,24 @@ fn monospace() -> RunProperties {
     }
 }
 
-/// One level of the bullet or decimal list the editor creates — the same
+/// One level of the bullet or numbered list the editor creates — the same
 /// shape as `casual_doc_command::lists::level`, so an imported list and one
-/// made with the ribbon's list button indent and number identically. Copied,
-/// not depended on: `casual-doc-io` is linked by the read-only viewer, which
-/// must not carry the editing crates. O(level).
-fn list_level(numbered: bool, level: u8) -> NumberingLevel {
+/// made with the ribbon's list button indent and number identically: `1.` /
+/// `a.` / `i.` (one placeholder per marker) or `•` / `◦` / `▪` / `–`, stepping
+/// 720 twips with a 360-twip hanging indent (`docs/109` HF-227). Copied, not
+/// depended on: `casual-doc-io` is linked by the read-only viewer, which must
+/// not carry the editing crates. `casual-doc-wasm`'s
+/// `the_imported_list_level_is_the_editor_list_level` holds the two copies
+/// equal for every level. O(1).
+#[must_use]
+pub fn list_level(numbered: bool, level: u8) -> NumberingLevel {
     let (num_fmt, lvl_text) = if numbered {
-        let placeholders = (1..=level + 1)
-            .map(|part| format!("%{part}"))
-            .collect::<Vec<_>>()
-            .join(".");
-        (NumberFormat::Decimal, format!("{placeholders}."))
+        let format = match level % 3 {
+            0 => NumberFormat::Decimal,
+            1 => NumberFormat::LowerLetter,
+            _ => NumberFormat::LowerRoman,
+        };
+        (format, format!("%{}.", u16::from(level) + 1))
     } else {
         let glyph = ["\u{2022}", "\u{25e6}", "\u{25aa}", "\u{2013}"][usize::from(level) % 4];
         (NumberFormat::Bullet, glyph.to_string())
@@ -1511,7 +1517,7 @@ fn list_level(numbered: bool, level: u8) -> NumberingLevel {
         is_lgl: false,
         paragraph_properties: Some(ParagraphProperties {
             indentation: Some(Indentation {
-                start_twips: Some(720 + i32::from(level) * 360),
+                start_twips: Some(720 + i32::from(level) * 720),
                 end_twips: None,
                 first_line_twips: None,
                 hanging_twips: Some(360),

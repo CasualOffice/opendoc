@@ -15,7 +15,7 @@ import { createTableChrome } from "./table_chrome.mjs";
 import { createTableGutter } from "./table_gutter.mjs";
 import { tableDrawMode } from "./table_draw_mode.mjs";
 import { installViewportFocusGuard } from "./viewport_focus.mjs";
-import { createClickCounter, extendByUnit, unitForClickCount, unitRange } from "./unit_selection.mjs";
+import { createClickCounter, extendByUnit, extendsUnitSelection, pressUnitStands, unitForClickCount, unitRange } from "./unit_selection.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -220,6 +220,13 @@ export function createPointer(ed) {
   /** The unit ("word" / "paragraph") the latest press selected, so the `dblclick`
    *  and triple `click` that follow its release do not select again. */
   let unitClick = null;
+  /** The `{ unit, origin }` of the latest double or triple press, which outlives the
+   *  gesture so a later Shift+click extends by that unit (UX-076). Cleared by a plain
+   *  press. */
+  let unitExtension = null;
+  /** The press that selected `unitClick`: its caret position and the unit range
+   *  it selected, so the `click` can undo a unit the browser did not count. */
+  let unitPress = null;
   const clickCounter = createClickCounter();
   const touchSelection = createTouchSelection({
     view: window,
@@ -242,6 +249,7 @@ export function createPointer(ed) {
   function onPointerDown(page, event) {
     if (event.button !== 0) return;
     unitClick = null; // every press decides afresh whether it started a unit selection
+    unitPress = null;
     const clicks = event.detail || clickCounter.press(event.clientX, event.clientY, event.timeStamp);
     // No caret region: a press neither places an insertion point nor starts a
     // drag-selection. Scrolling and zooming are not gestures on the document.
@@ -447,6 +455,7 @@ export function createPointer(ed) {
     // never got the same rule. Crossing stories with Shift is treated as a plain
     // click, which is what both Word and Docs do.
     const crossedStory = ed.currentStoryKey() !== storyBefore;
+    const selectionBefore = ed.selection;
     ed.selection =
       event.shiftKey && ed.selection && !crossedStory
         ? { anchor: ed.selection.anchor, focus: anchor }
@@ -465,6 +474,16 @@ export function createPointer(ed) {
       ed.pointerGesture.unit = unitClick;
       ed.pointerGesture.unitOrigin = origin;
       ed.selection = { anchor: origin.start, focus: origin.end };
+      unitExtension = { unit: unitClick, origin };
+      unitPress = { anchor, origin };
+    } else if (event.shiftKey && unitExtension && !crossedStory && extendsUnitSelection(selectionBefore, unitExtension.origin)) {
+      // Shift+click after a double or triple click extends by the same unit, and
+      // a drag from that press keeps doing so (UX-076), as Word and Docs do.
+      ed.pointerGesture.unit = unitExtension.unit;
+      ed.pointerGesture.unitOrigin = unitExtension.origin;
+      ed.selection = extendByUnit(ed.doc, unitExtension.origin, anchor, unitExtension.unit);
+    } else {
+      unitExtension = null;
     }
     // Non-blocking secondary effect (REVIEW-GAP-005): surface the sidebar card
     // for a comment the click landed inside, without altering the caret/range
@@ -930,6 +949,24 @@ export function createPointer(ed) {
     // the word under the RELEASE point here is what collapsed a double-click-drag.
     if (unitClick === "word") return;
     touchSelection.selectWord(page, e); // the SAME routine the long press uses
+  });
+  // The browser's click count arrives here first (see `createClickCounter`).
+  // A unit the press selected on a guessed count that the browser does not
+  // confirm is undone, unless a drag has already grown it: a single click
+  // straight after a double-click is a caret, as the OS counts it. Registered
+  // before the triple-click route below, which handles a count of 3.
+  ed.pagesEl.addEventListener("click", (e) => {
+    clickCounter.settle(e.detail);
+    if (!unitClick || !unitPress) return;
+    const { anchor, origin } = unitPress;
+    const sel = ed.selection;
+    const same = (a, b) => !!a && !!b && a.node === b.node && a.offset === b.offset;
+    const grown = !(sel && same(sel.anchor, origin.start) && same(sel.focus, origin.end));
+    if (pressUnitStands(unitClick, e.detail, grown)) return;
+    unitClick = null;
+    unitPress = null;
+    ed.selection = { anchor: { ...anchor }, focus: { ...anchor } };
+    ed.drawSelection();
   });
   // Triple-click selects the paragraph (the click's `detail` is the click count).
   ed.pagesEl.addEventListener("click", (e) => {

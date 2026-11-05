@@ -446,6 +446,11 @@ struct Block<'a> {
     /// The tab boundary preceding each segment after the first.
     /// `tabs.len() + 1 == segments.len()`.
     tabs: Vec<TabKind>,
+    /// The node byte offset each segment starts at — for a segment after a tab,
+    /// just past that tab. `segment_starts.len() == segments.len()`. An EMPTY
+    /// segment owns no run, so this is the only record of where it is, and a
+    /// line that ends in a tab ends here (`segment_end`).
+    segment_starts: Vec<u32>,
     /// Node byte offset at which the block starts (for line ranges).
     start_offset: u32,
     /// Node byte offset at which the block ends.
@@ -477,6 +482,7 @@ fn split_blocks<'a>(items: &'a [FlowItem<'a>], base: u32) -> Vec<Block<'a>> {
     let mut start_offset = base;
     let mut segments: Vec<Vec<(&StyledRun<'_>, u32)>> = vec![Vec::new()];
     let mut tabs = Vec::new();
+    let mut segment_starts = vec![base];
 
     for item in items {
         match item {
@@ -491,6 +497,7 @@ fn split_blocks<'a>(items: &'a [FlowItem<'a>], base: u32) -> Vec<Block<'a>> {
                 tabs.push(TabKind::Ordinary);
                 segments.push(Vec::new());
                 byte += item.model_bytes();
+                segment_starts.push(byte);
             }
             FlowItem::PositionalTab {
                 alignment,
@@ -503,11 +510,14 @@ fn split_blocks<'a>(items: &'a [FlowItem<'a>], base: u32) -> Vec<Block<'a>> {
                     leader: *leader,
                 });
                 segments.push(Vec::new());
+                byte += item.model_bytes();
+                segment_starts.push(byte);
             }
             FlowItem::Break(kind) => {
                 blocks.push(Block {
                     segments: std::mem::replace(&mut segments, vec![Vec::new()]),
                     tabs: std::mem::take(&mut tabs),
+                    segment_starts: std::mem::take(&mut segment_starts),
                     start_offset,
                     end_offset: byte,
                     trailing: Some(*kind),
@@ -516,6 +526,7 @@ fn split_blocks<'a>(items: &'a [FlowItem<'a>], base: u32) -> Vec<Block<'a>> {
                 // starts after it, not where this one ended.
                 byte += item.model_bytes();
                 start_offset = byte;
+                segment_starts.push(byte);
             }
             // Inline images, fields, text boxes, and float barriers are handled by their own
             // layout paths before the stream reaches the tab/break layer, so none
@@ -534,6 +545,7 @@ fn split_blocks<'a>(items: &'a [FlowItem<'a>], base: u32) -> Vec<Block<'a>> {
     blocks.push(Block {
         segments,
         tabs,
+        segment_starts,
         start_offset,
         end_offset: byte,
         trailing: None,
@@ -840,12 +852,24 @@ fn append_wrapped_tab_segment(out: &mut Vec<TabLine>, mut shaped: Vec<Line>, mer
     }
 }
 
+///
+/// An empty segment ends where it starts: just past the tab before it (or at the
+/// block start, for an empty first segment). It used to answer the BLOCK start,
+/// so a line ending in a tab ("Name:" then Tab, nothing typed yet) ended before
+/// that tab, the position after it belonged to no line, and the caret there had
+/// no rectangle — the editor recovered it to the start of the document, and the
+/// next keystroke landed there (`docs/109` UX-073). O(1).
 fn segment_end(block: &Block<'_>, segment_index: usize) -> u32 {
-    block.segments[segment_index]
-        .last()
-        .map_or(block.start_offset, |(run, offset)| {
-            offset.saturating_add(run.text.len() as u32)
-        })
+    block.segments[segment_index].last().map_or_else(
+        || {
+            block
+                .segment_starts
+                .get(segment_index)
+                .copied()
+                .unwrap_or(block.start_offset)
+        },
+        |(run, offset)| offset.saturating_add(run.text.len() as u32),
+    )
 }
 
 /// Resolves the authored line rule for a line assembled outside the base shaper.

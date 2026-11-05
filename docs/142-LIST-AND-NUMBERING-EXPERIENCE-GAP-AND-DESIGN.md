@@ -356,6 +356,16 @@ one function — the highest value-per-line row in the document.
 
 ### 1.3 Tab / Shift+Tab to demote and promote
 
+> **Status, 2026-11-06 (`docs/109` UX-073, on `edit/editing-ux-batch-1`):** the
+> start-of-item divergence below is closed, and LST-24 with it. Tab demotes only when the
+> selection starts at offset 0 of a list item (or spans several paragraphs, which indents
+> them); anywhere else it types a real tab (`InlineNode::Tab`, `<w:tab/>` on save) through
+> the `insertTab` facade. Shift+Tab keeps promote/outdent everywhere. The same change fixes
+> body text, where Tab used to indent the paragraph and so no keystroke typed a tab at all.
+> The level a demote lands on is now Word's `a.` (LST-01, `docs/109` HF-227), not `1.1.`.
+> Guarded by `webapp/tests/e2e/tab-key.spec.mjs`. The table below is kept as the evidence
+> of what was measured.
+
 **The single most-used list gesture there is.** Our implementation is real and mostly
 right, which makes the divergences worth stating precisely.
 

@@ -6986,17 +6986,34 @@ fn write_inline(
             w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
             write_run_properties(w, &run.properties)?;
             let tag = if in_deletion { "w:delText" } else { "w:t" };
-            let mut t = start(tag);
-            t.push_attribute(("xml:space", "preserve"));
-            w.write_event(Event::Start(t)).map_err(pkg)?;
             // Defence in depth. The edit path strips XML-forbidden characters at
             // the choke point, but a model can also arrive through snapshot load
             // or any future importer, and one such character makes the whole
             // package unreadable — a failure whose blast radius is the entire
             // document, not the run. Cheap to check, catastrophic to miss.
-            w.write_event(Event::Text(BytesText::new(&strip_xml_forbidden(&run.text))))
-                .map_err(pkg)?;
-            w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
+            let text = strip_xml_forbidden(&run.text);
+            // A U+0009 inside run text (a legacy model, a snapshot, a pasted tab
+            // from before the editor mapped it to `InlineNode::Tab`) is written
+            // as Word writes a tab: `<w:tab/>` between the text pieces, in the
+            // same run so it keeps the run's formatting. Inside `<w:t>` Word
+            // reads it as whitespace, not as a tab to the next stop (`docs/174`
+            // TA-17). O(text).
+            for (index, piece) in text.split('\t').enumerate() {
+                if index > 0 {
+                    w.write_event(Event::Empty(start("w:tab"))).map_err(pkg)?;
+                }
+                // An empty run still writes its one empty `<w:t>`, as it always
+                // has; an empty piece beside a tab writes nothing.
+                if piece.is_empty() && !text.is_empty() {
+                    continue;
+                }
+                let mut t = start(tag);
+                t.push_attribute(("xml:space", "preserve"));
+                w.write_event(Event::Start(t)).map_err(pkg)?;
+                w.write_event(Event::Text(BytesText::new(piece)))
+                    .map_err(pkg)?;
+                w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
+            }
             w.write_event(Event::End(BytesEnd::new("w:r")))
                 .map_err(pkg)?;
         }

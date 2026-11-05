@@ -202,11 +202,29 @@ export function createKeyboard(ed) {
         } else if (target) ed.navToPosition(target, false);
         return;
       }
+      // Tab TYPES A TAB (UX-073), as in Word (sdkjs Document.js:8810/8829, docs/142
+      // §1.3), Google Docs and ONLYOFFICE. It keeps a structural meaning only where
+      // those editors give it one: at the start of a list item it demotes the item,
+      // and over a selection spanning several paragraphs it indents them. Shift+Tab
+      // keeps outdent / promote everywhere. It used to indent the whole paragraph
+      // (or demote the item) wherever the caret was, so no keystroke typed a tab.
+      const [start] = orderedSelectionEnds(ed.selection, ed.doc);
+      const listKind = ed.doc.listStyleAt(ed.selection.focus.node);
+      const manyParagraphs = ed.selection.anchor.node !== ed.selection.focus.node;
+      const atItemStart = !!listKind && start.offset === 0;
+      if (!e.shiftKey && !manyParagraphs && !atItemStart) {
+        if (ed.reviewMode === "suggesting") {
+          ed.setStatus(t("editing.tabNotTrackable"), "error");
+          return;
+        }
+        const { anchor, focus } = ed.selection;
+        await ed.runEdit(() => ed.doc.insertTab(anchor.node, anchor.offset, focus.node, focus.offset), { text: true });
+        return;
+      }
       if (ed.reviewMode === "suggesting") {
         ed.setStatus("Indent and list structure changes cannot be tracked yet; switch to Editing", "error");
         return;
       }
-      const listKind = ed.doc.listStyleAt(ed.selection.focus.node);
       if (listKind) {
         await ed.runEdit(() =>
           ed.doc.adjustListLevel(

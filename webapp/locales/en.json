@@ -841,6 +841,7 @@
   "dropCap.removed": "Drop cap removed",
   "edit.pasteImage": "Paste as picture",
   "edit.pasteImage.keywords": "paste special image snapshot screenshot picture rasterize",
+  "editing.tabNotTrackable": "A tab character cannot be tracked as a suggestion yet; switch to Editing to insert one",
   "emojiDialog.chooseGlyphInsertAt": "Choose a glyph to insert at the caret.",
   "emojiDialog.close.title": "Close",
   "emojiDialog.closeInsertEmoji.label": "Close insert emoji",
