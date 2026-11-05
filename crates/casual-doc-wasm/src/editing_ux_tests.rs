@@ -137,6 +137,34 @@ fn insert_tab_puts_a_tab_inline_at_the_caret_and_one_undo_removes_it() {
     );
 }
 
+/// The caret after a tab that ENDS its paragraph has somewhere to be drawn.
+/// It had none: `caretRect` answered empty there, so the host's recovery put the
+/// caret at the document start, and "Alpha", Tab, "beta" typed "betaAlpha"
+/// (measured in `tab-key.spec.mjs`). Every offset of the paragraph, including
+/// the one after the tab, must have a caret rect, and the rect after the tab
+/// must sit to the right of the one before it.
+#[test]
+fn the_caret_after_a_trailing_tab_has_a_rect_beyond_the_tab() {
+    let mut d = open_document(b"Alpha").expect("open");
+    let (node, _) = first(&d);
+    d.insert_tab_inner(&node, 5, &node, 5).expect("tab");
+    let start = d.caret_rect(&node, 0);
+    let before = d.caret_rect(&node, 5);
+    let after = d.caret_rect(&node, 6);
+    assert_eq!(before.len(), 5, "a caret before the tab");
+    assert_eq!(after.len(), 5, "a caret after the trailing tab: {after:?}");
+    // [page, x, y, w, h]: before the tab is the end of "Alpha", and after it is
+    // the tab stop, further right — not the end of the text again.
+    assert!(
+        before[1] > start[1],
+        "before the tab is the end of the text: {start:?} {before:?}"
+    );
+    assert!(
+        after[1] > before[1],
+        "after the tab is right of before it: {before:?} {after:?}"
+    );
+}
+
 /// Over a selection the tab REPLACES it, as one undoable step.
 #[test]
 fn insert_tab_replaces_the_selection_in_one_step() {

@@ -2152,6 +2152,40 @@ fn stops_for(line: &Line, left: Twip) -> Vec<CaretStop> {
         }
     }
 
+    // A line that ENDS in a tab — "Name:", Tab, nothing typed yet, the moment
+    // right after the Tab key (`docs/109` UX-057) — has no glyph after the tab,
+    // so nothing above made a stop past it: the run's trailing stop claimed the
+    // line's end offset at the end of the TEXT, and the caret after the tab was
+    // drawn before it. The tab resolver recorded where the tab's advance ends
+    // (`Line::tab_extents`), so the end offset's stop goes there, and the text's
+    // trailing stop becomes the slot before that tab — unless a glyph already
+    // owns that offset (a zero-byte `w:ptab`). Left-to-right lines only; the
+    // general glyphless-tab slot is still the KNOWN DEFECT above. O(stops).
+    if let Some(last_tab) = line.tab_extents.last()
+        && line.runs.iter().all(|run| run.bidi_level % 2 == 0)
+    {
+        let tab_end = left + last_tab.end;
+        let end = line.range.end.offset;
+        if end > line.range.start.offset && stops.iter().all(|stop| stop.x < tab_end) {
+            let before = end - 1;
+            if !offsets.contains(&before) {
+                for stop in stops.iter_mut().filter(|stop| stop.offset == end) {
+                    stop.offset = before;
+                }
+            }
+            if stops.is_empty() {
+                stops.push(CaretStop {
+                    x: empty_line_x(line, left),
+                    offset: line.range.start.offset,
+                });
+            }
+            stops.push(CaretStop {
+                x: tab_end,
+                offset: end,
+            });
+        }
+    }
+
     if stops.is_empty() {
         // An empty line (e.g. an empty paragraph) still has one caret slot.
         //
