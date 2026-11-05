@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 
 const webapp = fileURLToPath(new URL("..", import.meta.url));
 const BUILD = "0123abcd4567";
+const WASM_BYTES = 4321;
 
 /** A throwaway copy of the deployable pages and modules, stamped. */
 function stampedCopy() {
@@ -31,6 +32,8 @@ function stampedCopy() {
     join(dir, "pkg", "casual_doc_wasm.js"),
     "module_or_path = new URL('casual_doc_wasm_bg.wasm', import.meta.url);\n",
   );
+  // A stand-in binary of a known size: the boot progress bar divides by it.
+  writeFileSync(join(dir, "pkg", "casual_doc_wasm_bg.wasm"), new Uint8Array(WASM_BYTES));
   const run = () => execFileSync("python3", [join(webapp, "stamp-assets.py"), dir, BUILD]);
   run();
   return { dir, run };
@@ -151,6 +154,20 @@ test("the wasm binary the glue fetches is versioned, and re-stamping is idempote
   const html = readFileSync(join(dir, "editor.html"), "utf8");
   assert.equal((html.match(/type="importmap"/g) ?? []).length, 1, "one import map, not one per run");
   assert.ok(!html.includes(`?v=${BUILD}?v=`), "a page asset was stamped twice");
+});
+
+test("the editor's wasm preload carries the binary's raw size, once, for the boot progress bar (UX-064)", () => {
+  // Pages gzips the wasm, so `Content-Length` counts compressed bytes while the
+  // stream the bar counts yields decompressed ones: without the raw size the bar
+  // would reach 100% at about 45% and sit there.
+  const { dir, run } = stampedCopy();
+  run(); // idempotent: a second pass must not add a second attribute
+  const html = readFileSync(join(dir, "editor.html"), "utf8");
+  const link = html.match(/<link rel="preload"[^>]*casual_doc_wasm_bg\.wasm[^>]*>/);
+  assert.ok(link, "editor.html preloads the wasm");
+  assert.equal((link[0].match(/data-bytes=/g) ?? []).length, 1, link[0]);
+  assert.match(link[0], new RegExp(`data-bytes="${WASM_BYTES}"`));
+  assert.match(link[0], /\/>$/, "the tag is still well formed");
 });
 
 test("the Pages workflow stamps the artifact after building and before uploading it", () => {

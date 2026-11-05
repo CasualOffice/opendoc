@@ -656,6 +656,32 @@ test("the static server does not rewrite the self-hosted fonts away", () => {
   );
 });
 
+test("the container serves a stamped wasm immutable, and an unstamped one for an hour only (UX-064)", () => {
+  // The guarantee has two halves, and both are asserted. `immutable` is only true
+  // of a URL that names one binary for ever, so (a) the image must actually stamp
+  // its pages with a version, and (b) nginx must reserve `immutable` for requests
+  // that carry it. Either half alone is a year-long stale engine after a redeploy.
+  const wasmLocation = NGINX.match(/location[^{]*\\\.wasm\$[^{]*\{([\s\S]*?)\n {8}\}/);
+  assert.ok(wasmLocation, "deploy/editor-nginx.conf must carry a location for .wasm");
+  const header = wasmLocation[1].match(/add_header Cache-Control (\$\w+);/);
+  assert.ok(header, "the .wasm Cache-Control must come from the `$arg_v` map, not a constant");
+  const mapAt = NGINX.indexOf(`map $arg_v ${header[1]} {`);
+  const map = mapAt < 0 ? null : [null, NGINX.slice(mapAt, NGINX.indexOf("}", mapAt))];
+  assert.ok(map, `no \`map $arg_v ${header[1]}\` at http level`);
+  const unstamped = map[1].match(/^\s*""\s+"([^"]+)";/m);
+  const stamped = map[1].match(/^\s*default\s+"([^"]+)";/m);
+  assert.ok(unstamped && stamped, "the map must answer both a stamped and an unstamped request");
+  assert.doesNotMatch(unstamped[1], /immutable/, "an unstamped wasm URL must never be immutable");
+  assert.match(stamped[1], /immutable/, "a ?v=-stamped wasm URL is served immutable");
+  assert.match(stamped[1], /max-age=31536000/);
+
+  const stampAt = EDITOR_DOCKERFILE.search(/^\s*python3 \.\/stamp-assets\.py \/stage /m);
+  const stageAt = EDITOR_DOCKERFILE.indexOf("mkdir -p /stage");
+  const runtimeAt = EDITOR_DOCKERFILE.indexOf("AS runtime");
+  assert.ok(stampAt > stageAt && stageAt > 0, "Dockerfile.editor must stamp the staged site after staging it");
+  assert.ok(stampAt < runtimeAt, "the stamp runs in the build stage, before the runtime image copies /stage");
+});
+
 test("the pinned toolchain versions are the ones their sources name", () => {
   const channel = TOOLCHAIN.match(/channel\s*=\s*"([^"]+)"/);
   assert.ok(channel, "rust-toolchain.toml must pin a channel");

@@ -6,6 +6,7 @@ import { localizeShortcutText } from "./shortcut_labels.mjs";
 import { bindRadioGroup } from "./radio_group.mjs";
 import { onButton, registerPopover } from "./popover_manager.mjs";
 import { readPref, writePref } from "./prefs.mjs";
+import { CHROME_MODE_PREF, resolveChrome } from "./chrome_boot.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -16,7 +17,6 @@ export function createChromeModes(ed) {
   // compact is the Docs-shaped single dense bar. The bar's layout table, its
   // grouping and its fold live in `compact_toolbar.mjs` (HF-085: new logic goes
   // in a module); what stays here is the mode switch and the dependency bag.
-  const CHROME_MODE_PREF = "opendoc.chromeMode";
   let chromeMode = readPref(CHROME_MODE_PREF, "ribbon") === "compact" ? "compact" : "ribbon";
 
   ed.compactToolbarUi = createCompactToolbar({
@@ -49,6 +49,9 @@ export function createChromeModes(ed) {
     if (compact) ed.closeFilePage();
     document.body.classList.toggle("compact-mode", compact);
     document.body.classList.toggle("ribbon-mode", !compact);
+    // The same answer the <head> script painted the first frame with (UX-064),
+    // kept current so a rule keyed on it never reads a stale chrome.
+    document.documentElement.dataset.chrome = resolveChrome({ pref: chromeMode, phone: ed.phoneChrome.isPhone() });
     // The toolbar IS the chrome — the wrapper it used to sit in was a second
     // nested box, which is what read as a doubled outline on both sides and the
     // bottom.

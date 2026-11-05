@@ -250,3 +250,36 @@ off-scale lengths the guard does not refuse.
   (see the `.rgroup-label` comment in `style.css`), so the audit's "captions off"
   is not taken.
 - The paper layer (`--paper-*`): the document is white in both themes.
+
+## 8. Boot (2026-11-03, `109` UX-064, redesign PROPOSAL D-16)
+
+What a person sees between the first frame and an editable document is designed, not
+left to whatever the modules happen to paint while they load.
+
+- **One chrome from the first frame.** An inline script in `editor.html`'s `<head>`
+  sets `html[data-chrome]` to `ribbon`, `compact` or `phone` (the saved preference, and
+  the phone rung as an em media query), and the first lines of `<body>` set the matching
+  `ribbon-mode` / `compact-mode` / `phone-mode` body classes, before any chrome is
+  parsed. `chrome_boot.mjs` holds the same rule; `chrome_boot.test.mjs` runs the inline
+  script against it at every preference and width.
+- **Final geometry, then paint.** The header, the band and the desk take their final size
+  at once; the two chrome faces are preloaded. A skeleton sheet and a progress bar sit
+  over the desk, absolutely positioned, so taking them away moves nothing (CLS < 0.01).
+- **A real progress bar.** `engine_boot.mjs` counts the wasm stream on its way into
+  `instantiateStreaming`. The denominator is the raw size the deploy stamps on the
+  preload (`data-bytes`), since a gzipped response's `Content-Length` counts the wrong
+  bytes; with no honest total the bar is indeterminate rather than wrong.
+- **Nothing clickable that cannot run.** Every chrome region is `inert` (and drawn
+  dimmed) in the markup until the engine is instantiated.
+- **A failure says so, and offers a way out.** A failed engine download shows a card
+  with Try again, which re-instantiates in place, and the technical message behind
+  Details. Not a toast and not the status bar. A startup document that fails to open
+  gives way to the upload card.
+- **Caching.** The container (`Dockerfile.editor`) stamps its staged site with a content
+  hash, and `deploy/editor-nginx.conf` serves a `?v=`-stamped wasm
+  `public, max-age=31536000, immutable`, an unstamped one for an hour. GitHub Pages sets
+  its own response headers and cannot send `immutable`; the `?v=` stamp still keeps a
+  cached engine from outliving its page there. A host serving `webapp/` itself should
+  send `immutable` for any `?v=`-stamped asset.
+
+Guard: `tests/e2e/boot.spec.mjs`, which samples the page every 50 ms from commit.

@@ -9965,7 +9965,12 @@ body.ribbon-mode #appMenuBar { display: none; }
  * because the band it would compete with is not there. ONLYOFFICE does the same
  * thing from the other side: their read-only viewport declares the File tab and
  * nothing else (`Toolbar.js:1885`). */
-body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
+/* Only on the bare upload screen (`?blank=1`, no `doc-expected`), where the
+ * band really is hidden. While a document is on its way the tab strip is drawn
+ * from the first frame (UX-064), so revealing the bar there painted BOTH axes,
+ * one over the other, through every cold load and for ever when the engine
+ * failed (audit FILE-01, SYSTEM-01). */
+html:not(.doc-expected) body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
 
 /* The File tab: a page, not a band. Set apart from the command tabs the way
  * ONLYOFFICE sets theirs apart (`x-lone`) and Word tints its File tab, so it
@@ -10719,6 +10724,207 @@ body:not(.doc-loaded) #propertiesBtn {
 
 body:not(.doc-loaded) .drop {
   min-height: calc(100vh - var(--h-header));
+}
+
+/* ---- Designed boot (docs/109 UX-064, PROPOSAL D-16) ------------------------
+ * The chrome mode, the phone rung and "a document is coming" are all decided in
+ * <head> before the first frame, so the header, the band and the desk are drawn
+ * at their final geometry at once and nothing moves when the modules arrive.
+ * What changes on arrival is paint, never layout:
+ *   - the chrome is inert (`data-boot-inert`, markup) and drawn dimmed until the
+ *     engine is instantiated, because nothing in it can run before then
+ *     (audit FILE-03: the ribbon looked usable at 800 ms and answered nothing);
+ *   - a skeleton sheet and a progress bar sit OVER the desk, absolutely
+ *     positioned, so taking them away shifts nothing;
+ *   - a failed download replaces them with a card that offers Try again. */
+:is(.ribbon, .compact-toolbar, .rail, .footer)[data-boot-inert],
+.controls[data-boot-inert] > *,
+.document-chrome[data-boot-inert] :is(.ribbon-nav, .app-menu-bar) {
+  opacity: 0.5;
+}
+
+.boot-splash {
+  display: none;
+}
+
+html.doc-expected body:not(.doc-loaded) .boot-splash:not([hidden]) {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+  padding: var(--space-3) var(--space-4) 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.boot-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  width: min(51rem, 100%);
+  aspect-ratio: 8.5 / 11;
+  align-self: flex-start;
+  padding: 4.5rem 4rem;
+  background: var(--paper);
+  box-shadow: var(--shadow-page);
+}
+
+.boot-line {
+  display: block;
+  height: 0.625rem;
+  border-radius: var(--r-pill);
+  background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--paper-ink) 7%, transparent) 0%,
+      color-mix(in srgb, var(--paper-ink) 13%, transparent) 50%,
+      color-mix(in srgb, var(--paper-ink) 7%, transparent) 100%
+    )
+    0 0 / 200% 100%;
+  animation: boot-shimmer 1.6s linear infinite;
+}
+
+.boot-line-title {
+  width: 45%;
+  height: 1.125rem;
+  margin-bottom: 0.75rem;
+}
+
+.boot-line-short {
+  width: 62%;
+  margin-bottom: 0.75rem;
+}
+
+@keyframes boot-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.boot-status {
+  position: absolute;
+  top: 14rem;
+  left: 50%;
+  width: min(18rem, calc(100% - 4rem));
+  transform: translateX(-50%);
+  text-align: center;
+}
+
+.boot-progress {
+  height: 0.25rem;
+  border-radius: var(--r-pill);
+  background: var(--line);
+  overflow: hidden;
+}
+
+.boot-progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left center;
+  transform: scaleX(var(--boot-progress, 0));
+  transition: transform 0.2s linear;
+}
+
+[dir="rtl"] .boot-progress-fill {
+  transform-origin: right center;
+}
+
+.boot-progress[data-state="indeterminate"] .boot-progress-fill {
+  width: 30%;
+  transform: none;
+  animation: boot-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes boot-indeterminate {
+  from {
+    translate: -100% 0;
+  }
+  to {
+    translate: 340% 0;
+  }
+}
+
+/* The engine is in and the document is being opened: the bar is full and the
+   caption says what it is waiting for now. */
+html.engine-ready .boot-progress .boot-progress-fill {
+  width: 100%;
+  transform: none;
+  animation: none;
+}
+
+.boot-caption {
+  margin: var(--space-2) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.boot-caption-document,
+html.engine-ready .boot-caption-engine,
+html.engine-ready .boot-percent {
+  display: none;
+}
+
+html.engine-ready .boot-caption-document {
+  display: inline;
+}
+
+.boot-percent {
+  margin-inline-start: 0.25em;
+  font-variant-numeric: tabular-nums;
+}
+
+.boot-failure:not([hidden]) {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: start center;
+  padding: 12vh var(--space-4) 0;
+  background: var(--bg);
+}
+
+.boot-failure-card {
+  width: min(26rem, 100%);
+  padding: 2rem 2.25rem 1.5rem;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--e2);
+  text-align: center;
+}
+
+.boot-failure-icon {
+  color: var(--muted);
+  font-size: var(--icon-lg);
+}
+
+.boot-failure-title {
+  margin: var(--space-2) 0 var(--space-2);
+  font-size: var(--fs-xl);
+  font-weight: 600;
+}
+
+.boot-failure-body {
+  margin: 0 0 var(--space-5);
+  color: var(--muted);
+}
+
+.boot-failure-details {
+  margin-top: var(--space-5);
+  text-align: start;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.boot-failure-details summary {
+  cursor: pointer;
+}
+
+.boot-failure-detail {
+  display: block;
+  margin-top: var(--space-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* A document is on its way (anything but `?blank=1`, decided in <head> before

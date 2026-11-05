@@ -103,9 +103,37 @@
         ]
       }
     </script>
-    <!-- Before the first paint: a document is about to open unless this is the
-         bare upload screen, so the chrome takes its final layout at once (CLS). -->
-    <script>if (!/[?&]blank=1(&|$)/.test(location.search)) document.documentElement.classList.add("doc-expected");</script>
+    <!-- Before the first paint (docs/109 UX-064, PROPOSAL D-16). Three decisions
+         the chrome used to take seconds later, in a module, which is why the menu
+         bar and the ribbon tab strip painted on top of each other through every
+         cold load and for ever when the engine failed (audit FILE-01, SYSTEM-01):
+           1. `data-chrome`: ribbon | compact | phone, from the same preference
+              key and the same em breakpoint `chrome_boot.mjs` resolves later
+              (`chrome_boot.test.mjs` holds the two in step);
+           2. `doc-expected`: a document is about to open unless this is the bare
+              upload screen, so the chrome takes its final layout at once (CLS);
+           3. `engine-pending`: the engine is not instantiated yet, so the chrome
+              is drawn dimmed and inert until `engine_boot.mjs` clears it.
+         Parse-blocking on purpose and a few hundred bytes: it must run before
+         the first frame, and it reads nothing but storage, the URL and a media
+         query. A throw here (storage blocked) leaves the default, ribbon. -->
+    <script>(function (h) {
+      var mode = "ribbon";
+      try { if (localStorage.getItem("opendoc.chromeMode") === "compact") mode = "compact"; } catch (e) {}
+      if (window.matchMedia && matchMedia("(max-width: 38.75em)").matches) mode = "phone";
+      h.setAttribute("data-chrome", mode);
+      h.classList.add("engine-pending");
+      if (!/[?&]blank=1(&|$)/.test(location.search)) h.classList.add("doc-expected");
+    })(document.documentElement);</script>
+    <!-- The two chrome faces, fetched at parse time rather than when the first
+         rule that uses them is matched. Material Symbols is `font-display: block`,
+         so until it lands every icon is laid out as its ligature NAME in a
+         fallback face ("content_paste" is a word, not a glyph) and the ribbon's
+         groups moved when it arrived; Inter's swap moved the labels. Both shifts
+         landed in the first 100 ms of every load (UX-064, CLS). `crossorigin`
+         because fonts are always fetched in CORS mode, or the preload is wasted. -->
+    <link rel="preload" as="font" type="font/woff2" crossorigin href="./assets/fonts/inter-latin-400-700.woff2" />
+    <link rel="preload" as="font" type="font/woff2" crossorigin href="./assets/fonts/material-symbols-outlined.woff2" />
     <link rel="stylesheet" href="./src/fonts.css" />
     <script src="./src/analytics.js"></script>
     <link rel="stylesheet" href="./src/style.css" />
@@ -126,6 +154,15 @@
       <link rel="stylesheet" href="./src/font_advanced.css" />
 </head>
   <body>
+    <!-- The body's chrome classes, from the decision above, before a single body
+         element is parsed: every rule in style.css keyed on `body.ribbon-mode`,
+         `body.compact-mode` or `body.phone-mode` (well over a hundred) then holds
+         from the first frame instead of from module evaluation. `setChromeMode`
+         and `phone_chrome.mjs` own these classes from then on. -->
+    <script>(function (b, mode) {
+      b.classList.add(mode === "ribbon" ? "ribbon-mode" : "compact-mode");
+      if (mode === "phone") b.classList.add("phone-mode");
+    })(document.body, document.documentElement.getAttribute("data-chrome"));</script>
     <a data-i18n="ui.skipDocument" class="skip-link" href="#pages">Skip to the document</a>
     <header class="bar">
       <div class="brand">
@@ -133,7 +170,13 @@
       <span class="brand-logo" aria-hidden="true"></span>
         <!-- @end brand-mark -->
       </div>
-      <div id="documentChrome" class="document-chrome" hidden>
+      <!-- `inert data-boot-inert` on the six chrome regions: nothing in them can run
+           before the engine is instantiated, so nothing in them can be focused or
+           clicked until it is (audit FILE-03: the ribbon looked usable at 800 ms
+           and answered nothing). `engine_boot.mjs` lifts exactly these; a failed
+           boot keeps them inert behind the failure card. Drawn, not hidden: the
+           header keeps its final geometry from the first frame (UX-064). -->
+      <div id="documentChrome" class="document-chrome" inert data-boot-inert>
         <div class="document-title-row">
           <input data-i18n-title="documentChrome.renameDocument.title" data-i18n-label="documentChrome.documentName.label"
             class="doc-title"
@@ -264,7 +307,7 @@
            `.controls` is `display: contents` so these two clusters place
            directly into `.bar`'s grid rows; it stays in the DOM because
            `chrome_regions.mjs` and the embedding classes address it. -->
-      <div class="controls">
+      <div class="controls" inert data-boot-inert>
         <!-- Row 1, with the title: what STATE this document is in. -->
         <div class="controls-doc">
           <span id="documentState" class="document-state" data-state="opened" aria-live="polite">
@@ -618,10 +661,10 @@
          Hand-binding a control here would recreate the drift docs/105 UX-004/005
          records, and `compact-parity.spec.mjs` fails the build if any compact
          control resolves to something the registry does not have. -->
-    <div data-i18n-label="ui.formattingToolbar.label" class="compact-toolbar" id="compactToolbar" role="toolbar"
+    <div data-i18n-label="ui.formattingToolbar.label" class="compact-toolbar" id="compactToolbar" role="toolbar" inert data-boot-inert
          aria-label="Formatting toolbar" aria-controls="pages" hidden></div>
 
-    <div class="ribbon">
+    <div class="ribbon" inert data-boot-inert>
       <div class="ribbon-body">
         <!-- Home band rebuilt to mirror template.png (docs/64): a single no-wrap
              row of divider-separated groups with centered labels underneath.
@@ -4267,7 +4310,7 @@
     </div>
 
     <div class="workarea">
-      <nav data-i18n-label="ui.documentNavigation.label" class="rail" aria-label="Document navigation">
+      <nav data-i18n-label="ui.documentNavigation.label" class="rail" aria-label="Document navigation" inert data-boot-inert>
         <button data-i18n-title="ui.outline.title" data-i18n-label="ui.outline.label" id="railOutline" type="button" class="rail-btn" title="Outline" aria-label="Outline" aria-pressed="false" disabled><span class="ms" aria-hidden="true">toc</span></button>
         <button data-i18n-title="ui.pages.title" data-i18n-label="ui.pages.label" id="railPages" type="button" class="rail-btn" title="Pages" aria-label="Pages" aria-pressed="false" disabled><span class="ms" aria-hidden="true">auto_stories</span></button>
         <button data-i18n-title="ui.commentsSuggestions.title" data-i18n-label="ui.toggleCommentsSuggestions.label" id="railReview" type="button" class="rail-btn" title="Comments and suggestions" aria-label="Toggle comments and suggestions" aria-pressed="false" disabled><span class="ms" aria-hidden="true">rate_review</span></button>
@@ -4321,6 +4364,48 @@
         <input id="compareFile" type="file" accept=".docx,.odt,.rtf,.json,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/rtf,text/rtf,application/json,text/plain" hidden />
       </aside>
       <main id="viewport" class="viewport">
+        <!-- The boot splash (docs/109 UX-064, PROPOSAL D-16): a skeleton sheet where
+             the first page will land, and a progress bar fed by the engine's bytes
+             (`engine_boot.mjs`). Shown while a document is expected and not yet in
+             (`html.doc-expected body:not(.doc-loaded)`), so the bare `?blank=1`
+             upload screen never shows it. Absolutely positioned over the desk: it
+             takes no space, so removing it shifts nothing (CLS). -->
+        <div id="bootSplash" class="boot-splash">
+          <div class="boot-sheet" aria-hidden="true">
+            <span class="boot-line boot-line-title"></span>
+            <span class="boot-line"></span>
+            <span class="boot-line"></span>
+            <span class="boot-line boot-line-short"></span>
+            <span class="boot-line"></span>
+            <span class="boot-line"></span>
+            <span class="boot-line boot-line-short"></span>
+          </div>
+          <div class="boot-status">
+            <div data-i18n-label="bootSplash.loadingEditor.label" id="bootProgress" class="boot-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-label="Loading the editor" data-state="indeterminate"><span class="boot-progress-fill"></span></div>
+            <p class="boot-caption" aria-hidden="true">
+              <span data-i18n="bootSplash.loadingEditor" class="boot-caption-engine">Loading the editor…</span>
+              <span data-i18n="bootSplash.openingDocument" class="boot-caption-document">Opening the document…</span>
+              <span id="bootPercent" class="boot-percent"></span>
+            </p>
+          </div>
+        </div>
+        <!-- The engine failed to load (audit FILE-02). It used to be one red line
+             in the status bar, with a ribbon that still looked usable and no way to
+             retry. Google Docs shows a full-page "Try again" card and Word web an
+             error page with Reload. Try again re-fetches the engine in place
+             (`engine_boot.mjs` `loadEngine`); the chrome stays inert behind it. -->
+        <div id="bootFailure" class="boot-failure" role="alert" hidden>
+          <section class="boot-failure-card">
+            <span class="ms boot-failure-icon" aria-hidden="true">cloud_off</span>
+            <h2 data-i18n="bootFailure.title" class="boot-failure-title">The editor could not start</h2>
+            <p data-i18n="bootFailure.body" class="boot-failure-body">Its editing engine did not finish downloading. Check your connection, then try again.</p>
+            <button data-i18n="bootFailure.tryAgain" id="bootRetry" type="button" class="dialog-button dialog-button-primary">Try again</button>
+            <details class="boot-failure-details">
+              <summary data-i18n="bootFailure.details">Details</summary>
+              <code id="bootFailureDetail" class="boot-failure-detail"></code>
+            </details>
+          </section>
+        </div>
         <div id="drop" class="drop">
           <div class="drop-card">
             <span class="ms drop-icon" aria-hidden="true">upload_file</span>
@@ -4756,7 +4841,7 @@
       </aside>
     </div>
 
-    <footer class="footer">
+    <footer class="footer" inert data-boot-inert>
       <span class="foot-left">
         <!-- NOT routed through the seam, deliberately. This element's content is
              transient status the shell owns and clears; a `data-i18n` key made

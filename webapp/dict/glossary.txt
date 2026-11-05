@@ -540,6 +540,7 @@ nav
 ness
 newline
 newtype
+nginx
 nonmodal
 npm
 nspell
@@ -575,6 +576,7 @@ polyline
 postMessage
 pre
 preedit
+preload
 premultiplied
 preprocessing
 prev
@@ -729,6 +731,7 @@ unresolvable
 unrotated
 unrouted
 unsourced
+unstamped
 unstyled
 untrackable
 untracked
