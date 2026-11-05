@@ -130,6 +130,46 @@ export async function loadPdfModule(io = {}) {
   return pending;
 }
 
+const PDF_FORMAT = "application.pdf";
+
+/**
+ * Whether saving a `sourceFormat` document as `targetFormat` needs the PDF
+ * module on THIS thread first: a PDF session saved as PDF, before the module
+ * has registered its save planner here.
+ *
+ * Since HF-423 a PDF is read in the OCR worker, which loads its own copy of
+ * the PDF module, so opening a PDF no longer loads one on the main thread —
+ * and with it went the `setPdfSavePlanner` registration `loadPdfModule`
+ * makes. The main module's PDF save asks the planner synchronously and, with
+ * none registered, fell back to the semantic writer: an edited PDF saved as a
+ * brand-new file instead of an incremental update appended to the original
+ * (`docs/182` §17a). The module is now loaded at the first save that needs
+ * it, not at open, so an open still fetches it once.
+ *
+ * Complexity: O(1).
+ */
+export function needsPdfSavePlanner(sourceFormat, targetFormat) {
+  return loaded === null && sourceFormat === PDF_FORMAT && targetFormat === PDF_FORMAT;
+}
+
+/**
+ * Loads the PDF module on this thread so its save planner is registered.
+ * Resolves `false` when it cannot be loaded (offline, a failed fetch): the save
+ * then goes ahead on the semantic writer, which reports itself, rather than
+ * not saving at all.
+ *
+ * @returns {Promise<boolean>}
+ */
+export async function ensurePdfSavePlanner() {
+  if (loaded) return true;
+  try {
+    await loadPdfModule();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** For the e2e and diagnostics: how many times the wasm was fetched. */
 export function pdfModuleFetches() {
   return fetches;
