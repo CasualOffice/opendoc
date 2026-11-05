@@ -1,10 +1,12 @@
 import {
+  commentOnSelection,
   test,
   expect,
   gotoEditor,
   clickIntoFirstPage,
   moveCaretToDocStart,
   setReviewMode,
+  reviewBarAction,
 } from "./fixtures.mjs";
 
 // Regression: when a paragraph carries a comment AND a suggestion whose range
@@ -36,7 +38,7 @@ test("focusing a suggestion nested in a commented range activates the suggestion
   // to resolve the active item lands inside the comment's range.
   await page.keyboard.type("ABCDEFGH");
   for (let i = 0; i < 8; i++) await page.keyboard.press("Shift+ArrowLeft");
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
   const sidebar = page.locator("#reviewSidebar");
   await sidebar.locator('[data-testid="review-comment-composer"]').fill("a note");
   await sidebar.locator('[data-testid="review-comment-submit"]').click();
@@ -55,8 +57,8 @@ test("focusing a suggestion nested in a commented range activates the suggestion
   // suggestion (further right in the same paragraph). Landing on the suggestion
   // is the focusReviewTarget path the bug lived in.
   await moveCaretToDocStart(page);
-  await page.locator("#reviewNext").click();
-  await page.locator("#reviewNext").click();
+  await reviewBarAction(page, "#reviewNext");
+  await reviewBarAction(page, "#reviewNext");
 
   // The suggestion is the active item: its marker carries the active class and
   // its sidebar card is the expanded one; the comment is NOT active.

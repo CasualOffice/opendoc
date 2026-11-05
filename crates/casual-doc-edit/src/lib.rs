@@ -4714,7 +4714,7 @@ fn group_picture_mut(children: &mut [GroupChild], object: NodeId) -> Option<&mut
 /// and column breaks travel the same operation, so the same hole would have
 /// swallowed their undo too.
 ///
-/// The typed or pasted **tab** (`InlineNode::Tab`, `docs/109` UX-057) is the
+/// The typed or pasted **tab** (`InlineNode::Tab`, `docs/109` UX-073) is the
 /// third member, for the same reason: the Tab key and `plain_text_ops` insert
 /// one through this operation, and without it here a typed tab could not be
 /// undone (`undo failed: NodeNotFound`, measured before this line existed).

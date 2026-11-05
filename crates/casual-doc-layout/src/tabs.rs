@@ -858,7 +858,7 @@ fn append_wrapped_tab_segment(out: &mut Vec<TabLine>, mut shaped: Vec<Line>, mer
 /// so a line ending in a tab ("Name:" then Tab, nothing typed yet) ended before
 /// that tab, the position after it belonged to no line, and the caret there had
 /// no rectangle — the editor recovered it to the start of the document, and the
-/// next keystroke landed there (`docs/109` UX-057). O(1).
+/// next keystroke landed there (`docs/109` UX-073). O(1).
 fn segment_end(block: &Block<'_>, segment_index: usize) -> u32 {
     block.segments[segment_index].last().map_or_else(
         || {

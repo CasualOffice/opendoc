@@ -31,7 +31,7 @@ export function createEditPipeline(ed) {
 
   /** The selection an edit result hands back: a range when its anchor differs from
    *  its caret and both ends are placeable (Undo re-selecting what it restored,
-   *  UX-058), otherwise the collapsed caret `adoptEditPosition` resolves. */
+   *  UX-074), otherwise the collapsed caret `adoptEditPosition` resolves. */
   function adoptEditSelection(anchorNode, anchorOffset, node, offset) {
     const caret = adoptEditPosition(node, offset);
     if (anchorNode === node && anchorOffset === offset) return caret;
@@ -58,7 +58,7 @@ export function createEditPipeline(ed) {
   async function applyEditResult(res, { keepView = false, keepSelection = false } = {}) {
     const node = res.node;
     const offset = res.offset;
-    // Undo and Redo hand back the selection they restored (UX-058); every other
+    // Undo and Redo hand back the selection they restored (UX-074); every other
     // edit's anchor is its caret. Read before `free()`, like every other field.
     const anchorNode = res.anchorNode ?? node;
     const anchorOffset = res.anchorOffset ?? offset;

@@ -158,12 +158,8 @@ export function createVersions(ed) {
     publish: (text, kind) => ed.statusChannel.publish(text, kind),
     confirm: (options) => ed.confirmModal(options),
     promptName: (current) => versionNamePrompt.prompt(current),
-    onOpenChange: (isOpen) => {
-      // The timeline and the comments sidebar are both on the right, so they are
-      // mutually exclusive for the reason Outline and Pages are: the canvas is
-      // never squeezed from both sides at once.
-      if (isOpen && !ed.reviewSidebar.hidden) ed.toggleReview(false);
-    },
+    // The timeline takes the right slot from the comment column through the
+    // dock manager (`dock_manager.mjs`), the one statement of that rule.
     redline: ed.redlineOf,
     navigateTo: ed.showChange,
     beforePreview: () => ed.comparePanel.closeView(),

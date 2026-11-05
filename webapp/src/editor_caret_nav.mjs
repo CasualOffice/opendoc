@@ -1,7 +1,12 @@
 // Caret navigation: the vertical goal column and `navCaret`, the arrow-key
 // movement every caret key goes through. Moved out of `main.js` unchanged
 // (docs/177); it reaches the rest of the editor only through the context `ed`.
-import { createVerticalGoal, recoverVerticalMove } from "./caret_navigation.mjs";
+import {
+  caretInRtl, charsAroundByteOffset, createVerticalGoal, recoverVerticalMove, strongDirection, visualDirection,
+} from "./caret_navigation.mjs";
+
+/** The arrow intents that move along a line, and so follow the text direction. */
+const HORIZONTAL = new Set(["left", "right", "wordLeft", "wordRight"]);
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -9,8 +14,10 @@ export function createCaretNav(ed) {
   const verticalGoal = createVerticalGoal();
 
   /** Move the caret by arrow key. Shift extends (moves the focus); plain collapses. */
-  function navCaret(dir, extend) {
+  function navCaret(key, extend) {
     if (!ed.selection) return;
+    // ArrowLeft/ArrowRight move the way the arrow points ON SCREEN (UX-061).
+    const dir = HORIZONTAL.has(key) ? visualDirection(key, focusInRtl()) : key;
     if (ed.objectCropSession) ed.cancelCrop(); // arrow-navigating away discards the crop preview
     ed.objectSelection = null; // moving the caret leaves any object selection
     // ...and so does it leave a row/column/table selection. These two were written
@@ -49,6 +56,28 @@ export function createCaretNav(ed) {
     ed.selection = extend ? { anchor: ed.selection.anchor, focus: next } : { anchor: next, focus: next };
     ed.drawSelection();
     ed.scrollCaretIntoView();
+  }
+
+  /** Whether the caret's focus sits in right-to-left text — its neighbours'
+   *  strong direction, else the paragraph's base direction. O(paragraph); the
+   *  base direction (a document walk) is read only for a paragraph that holds
+   *  right-to-left text at all and only when the neighbours do not decide. */
+  function focusInRtl() {
+    const { node, offset } = ed.selection.focus;
+    const text = ed.doc.copyText(node, 0, node, ed.doc.paragraphLength(node));
+    if (![...text].some((ch) => strongDirection(ch) === "rtl")) return false;
+    const around = charsAroundByteOffset(text, offset);
+    if (strongDirection(around.before) || strongDirection(around.after)) {
+      const decided = caretInRtl({ ...around, baseRtl: null });
+      if (decided !== null) return decided;
+    }
+    let baseRtl = false;
+    try {
+      baseRtl = JSON.parse(ed.doc.paragraphAdvanced(node)).rtl === true;
+    } catch {
+      baseRtl = false;
+    }
+    return caretInRtl({ ...around, baseRtl });
   }
 
   /** The caret's own column at `position` — page-local twips, the units the goal

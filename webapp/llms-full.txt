@@ -2235,6 +2235,11 @@ empty to get past it is the one thing that loses the room.
 Upgrading the **editor** has no durable state to lose at all: rebuild the image and replace
 the container. The HTML is served `no-cache` (`deploy/editor-nginx.conf`) precisely so a
 reader does not keep a stale page pointing at a module that no longer matches it.
+The image stamps every script, stylesheet and the wasm with a hash of the staged files
+(`?v=<hash>`, `webapp/stamp-assets.py`), so the stamped wasm is served
+`public, max-age=31536000, immutable`: a returning reader skips the engine download and
+its revalidation, and a new image is a new URL. An unstamped `.wasm` request gets one hour
+(`docs/109` UX-064).
 
 ---
 

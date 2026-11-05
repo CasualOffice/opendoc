@@ -8,6 +8,7 @@ import { paintMovePad, paintResizeHandles } from "./object_guides.mjs";
 import { activeLocale, t } from "./i18n.mjs";
 import { openWordStore } from "./drafts.mjs";
 import { paintAiLive } from "./ai_live.mjs";
+import { noteFloatingChange } from "./floating_arbiter.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
  *  of the editor calls. Runs once, from `main.js`, at the point this code used to sit. */
@@ -96,6 +97,9 @@ export function createProofing(ed) {
     ed.remotePresence.paint(ed.place);
     // Casual AI, a co-editor that is not a room member (`ai_coeditor.mjs`).
     paintAiLive(ed.place);
+    // The overlay is where the table insert markers and the selection live:
+    // the floating-chrome arbiter settles against what was just painted.
+    noteFloatingChange();
   }
 
   function drawSelection() {

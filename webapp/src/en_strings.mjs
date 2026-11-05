@@ -480,6 +480,15 @@ export const EN_STRINGS = Object.freeze({
   // the Section dropdown's options are one per section, and the preview's label
   // reads out whatever the size fields currently say.
   "pageSetup.sectionNumber": "Section {number}",
+  // Page setup's Apply to (docs/184 D2) and its page-colour name.
+  "pageSetup.wholeDocument": "Whole document",
+  "pageSetup.thisSection": "This section ({number})",
+  "pageSetup.colorWhite": "White",
+  // The link popover's one field (docs/184 D-13; link_popover_model.mjs).
+  "linkPopover.empty": "Enter a web address, an email address or a #bookmark.",
+  "linkPopover.invalid": "That is not a web address, an email address or a #bookmark.",
+  "linkPopover.scheme": "A link can open a web page or an email only.",
+  "linkPopover.noBookmark": "There is no bookmark with that name.",
   // The unit is a PARAMETER now, not the English word "in" baked into the
   // sentence. Every locale translated that word — "po" in French, "\u30a4\u30f3\u30c1" in
   // Japanese — which was correct while the only unit was inches and became a
@@ -1607,7 +1616,7 @@ export const EN_STRINGS = Object.freeze({
   // the live region is the only channel a reader who cannot see it has.
   "table.rowAppended": "Row added at the end of the table",
   "table.atFirstCell": "The caret is already in the first cell of the table",
-  // Tab types a tab character in body text (UX-057). Suggesting mode cannot record
+  // Tab types a tab character in body text (UX-073). Suggesting mode cannot record
   // an inserted tab as a suggestion yet, so it refuses and says how to proceed.
   "editing.tabNotTrackable": "A tab character cannot be tracked as a suggestion yet; switch to Editing to insert one",
   // A table's size, COLUMNS first — Word's own convention ("4x3 Table" over its
@@ -1822,6 +1831,13 @@ export const EN_STRINGS = Object.freeze({
   "object.addedToSelection": "Added to the selection",
   // Rotation and flips — Word's Rotate menu, the same four rows.
   "object.rotate": "Rotate",
+  // The right-click menu's one Crop submenu for a picture's crop family (docs/184 D-12).
+  "object.cropSubmenu": "Crop",
+  // Where an over-budget context menu folds its trailing groups (docs/184 D-12).
+  "context.more": "More",
+  // A hovered link's tooltip line under its target (audit CANVAS-16). {key} is
+  // the platform's modifier, Ctrl or ⌘.
+  "link.followHint": "{key}+Click to follow the link",
   "object.rotate.right90": "Rotate right 90°",
   "object.rotate.left90": "Rotate left 90°",
   "object.rotate.flipVertical": "Flip vertical",
@@ -1974,6 +1990,8 @@ export const EN_STRINGS = Object.freeze({
   "table.tools.convertToTextCommand": "Convert to text…",
   "table.tools.lookSubmenu": "Style options",
   "table.tools.directionSubmenu": "Text direction",
+  // The right-click menu's one type submenu for a table's long tail (docs/184 D-12).
+  "table.tools.typeSubmenu": "Table",
   "table.tools.insertDialogCommand": "Insert table by size…",
   "table.tools.textToTableCommand": "Convert text to table…",
   "table.look.headerRow": "Header row",
@@ -2384,7 +2402,7 @@ export const EN_STRINGS = Object.freeze({
   "chart.element.axes": "Axes",
   "chart.element.gridlines": "Gridlines",
   "chart.style": "Chart style",
-  "chart.settings": "Chart settings…",
+  "chart.settings": "Chart settings",
   "chart.dataTitle": "Chart data",
   "chart.closeData": "Close chart data",
   "chart.dataUndoNote": "Changes apply to the chart as you make them. Each change can be undone.",
@@ -2758,8 +2776,6 @@ export const EN_STRINGS = Object.freeze({
   "plugins.source.installed": "Installed by you · {origin} · version {version}",
   "plugins.state.onByHost": "On, set by your application",
   "plugins.state.offByHost": "Off, set by your application",
-  "plugins.turnOn": "Turn on",
-  "plugins.turnOff": "Turn off",
   "plugins.remove": "Remove",
   "plugins.forgetGrant": "Forget permissions",
   "plugins.empty": "No add-ins are available yet.",
@@ -2860,4 +2876,16 @@ export const EN_STRINGS = Object.freeze({
   "propertiesTabs.paragraph": "Paragraph",
   "propertiesTabs.picture": "Picture",
   "propertiesTabs.table": "Table",
+  "reviewBar.openCount": "{count} open",
+  "reviewBar.noOpen": "No open comments",
+  "reviewBar.showResolved": "Show {count} resolved",
+  "reviewBar.noResolved": "No resolved comments",
+  "reviewBar.empty": "No comments or suggestions yet",
+  "reviewBar.emptyHint": "Select text and choose Add comment.",
+  "reviewBar.allAccepted": "All changes accepted",
+  "reviewBar.allRejected": "All changes rejected",
+  "reviewBar.resolved": "Comment resolved",
+  "reviewCard.showMore": "Show more",
+  "reviewCard.draft": "Draft",
+  "reviewCard.draftKept": "Comment kept as a draft",
 });

@@ -10,6 +10,8 @@
 // that directly) but the reflected ribbon bar after the selection is re-queried:
 // `updateToolbar` reads the run's actual style back out of the engine.
 import {
+  pointerSelectHighlight,
+  stableBox,
   test,
   expect,
   gotoEditor,
@@ -43,6 +45,8 @@ test("floating toolbar text-color picker opens the ribbon swatch menu and applie
   await clickIntoFirstPage(page);
   await moveCaretToDocStart(page);
   await selectForward(page, 6);
+  // The mini-toolbar is earned by a pointer selection (docs/184 D-12).
+  await pointerSelectHighlight(page);
 
   // Selecting text reveals the floating bar; its text-color control is now a
   // button (the old raw `<input type=color>` is gone).
@@ -56,6 +60,8 @@ test("floating toolbar text-color picker opens the ribbon swatch menu and applie
   await expect(textCtl).not.toHaveClass(/is-mixed/);
 
   await reselectFromStart(page, 6);
+  // The keys retire the bar (docs/184 D-12); the pointer earns it back.
+  await pointerSelectHighlight(page);
   await page.locator("#selTextColorBtn").click();
   const menu = page.locator("#selTextColorMenu");
   await expect(menu).toBeVisible();
@@ -91,6 +97,7 @@ test("floating toolbar highlight picker applies a named highlight and clears it 
   await clickIntoFirstPage(page);
   await moveCaretToDocStart(page);
   await selectForward(page, 6);
+  await pointerSelectHighlight(page);
 
   await expect(page.locator("#selToolbar")).toBeVisible();
   // The old bare <select> (and its duplicate value="none") is gone.
@@ -108,7 +115,9 @@ test("floating toolbar highlight picker applies a named highlight and clears it 
   await reselectFromStart(page, 6);
   await expect.poll(() => barColor(page, "#highlightBar")).toBe("rgb(0, 255, 0)");
 
-  // Clearing the highlight (No color) removes it from the run.
+  // Clearing the highlight (No color) removes it from the run. The keys of the
+  // reselect retired the bar (docs/184 D-12); the pointer earns it back.
+  await pointerSelectHighlight(page);
   await page.locator("#selHighlightBtn").click();
   await menu.locator('[data-highlight="none"]').click();
   await expect(menu).toBeHidden();
@@ -133,6 +142,16 @@ test("the color pickers are blocked in Viewing mode, where the floating bar is g
   await clickIntoFirstPage(page);
   await moveCaretToDocStart(page);
   await selectForward(page, 6);
+  // With the POINTER, the gesture that earns the bar in Editing (docs/184
+  // D-12), so its absence here is Viewing's doing and not the selection's.
+  const word = page.locator("#pages .overlay .highlight").first();
+  const box = await stableBox(word);
+  await page.keyboard.press("ArrowLeft");
+  await page.mouse.move(box.x + 1, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 1, box.y + box.height / 2, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.locator("#pages .overlay .highlight").first()).toBeVisible();
   await expect(page.locator("#selToolbar")).toBeHidden();
 
   // The pickers themselves are still REACHABLE, from the palette, and refuse at

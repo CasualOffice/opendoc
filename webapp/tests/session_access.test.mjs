@@ -319,7 +319,13 @@ test("the mode control disables a mode the room withheld, with the room's reason
   // container withheld, and the mode this participant was not granted. Driven on
   // plain objects, which is what makes the precedence answerable without a
   // browser.
-  const button = (mode) => ({ dataset: { reviewMode: mode }, disabled: false, title: "", removeAttribute() { this.title = ""; }, setAttribute() {} });
+  const button = (mode) => ({
+    dataset: { reviewMode: mode }, attrs: {},
+    setAttribute(name, value) { this.attrs[name] = String(value); },
+    removeAttribute(name) { delete this.attrs[name]; },
+    get disabled() { return this.attrs["aria-disabled"] === "true"; },
+    get title() { return this.attrs.title ?? ""; },
+  });
   const buttons = [button("editing"), button("suggesting"), button("viewing")];
   const bannerEdit = { hidden: false };
   reflectReviewModeAccess({

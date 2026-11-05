@@ -158,7 +158,7 @@ export function createCollaborationShell({ root, getDocument, getTransport, setT
     },
   });
   const shareChrome = createShareChrome({ root, parent: headerEnd,
-    share: () => shareDocument(), available: () => share.available(), t });
+    share: () => shareDocument(), available: () => share.available(), configured: () => share.configured(), t });
   // `main.js` calls `chrome.reflect()` whenever the toolbar reflects, which is also
   // when a language arrives; the strip's labels ride the same call.
   const shareReflect = shareChrome.reflect;

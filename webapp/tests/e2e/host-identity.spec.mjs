@@ -1,4 +1,4 @@
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD, commentOnSelection } from "./fixtures.mjs";
 
 // Clicking into the editor surface is also how tests recover keyboard focus
 // after interacting with unrelated chrome (like the Settings popover), so
@@ -29,7 +29,7 @@ async function addComment(page, marker, text) {
   for (let i = 0; i < marker.length; i++) {
     await page.keyboard.press("Shift+ArrowLeft");
   }
-  await page.locator("#selComment").click();
+  await commentOnSelection(page);
   const sidebar = page.locator("#reviewSidebar");
   const composer = sidebar.locator('[data-testid="review-comment-composer"]');
   await expect(composer).toBeVisible();

@@ -272,12 +272,17 @@ test("a cross-reference to a caption inserts, and ONE undo removes it", async ({
   await expect(target).toHaveText(/Wiring diagram/);
   await target.click();
   await expect(page.locator("#crossRefInsert")).toBeEnabled();
+  // Word's secondary reads Cancel until something is inserted, then Close
+  // (audit DIALOGS-13). Mutation: dropping `reflectDone(true)` from the insert
+  // path leaves "Cancel" after an insert, and the second assertion goes red.
+  await expect(page.locator("#crossRefDone")).toHaveText("Cancel");
   await page.locator("#crossRefInsert").click();
 
   // Insert does NOT close the dialog — Word's does not, and ONLYOFFICE's
   // `insertReference()` never calls `close()` — because a document being
   // cross-referenced usually needs several in a row.
   await expect(page.locator("#crossRefDialog")).toBeVisible();
+  await expect(page.locator("#crossRefDone")).toHaveText("Close");
   await page.locator("#crossRefDone").click();
   await expect(page.locator("#crossRefDialog")).toBeHidden();
 

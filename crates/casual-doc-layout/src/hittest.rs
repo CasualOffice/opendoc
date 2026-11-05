@@ -2153,7 +2153,7 @@ fn stops_for(line: &Line, left: Twip) -> Vec<CaretStop> {
     }
 
     // A line that ENDS in a tab — "Name:", Tab, nothing typed yet, the moment
-    // right after the Tab key (`docs/109` UX-057) — has no glyph after the tab,
+    // right after the Tab key (`docs/109` UX-073) — has no glyph after the tab,
     // so nothing above made a stop past it: the run's trailing stop claimed the
     // line's end offset at the end of the TEXT, and the caret after the tab was
     // drawn before it. The tab resolver recorded where the tab's advance ends

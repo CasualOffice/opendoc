@@ -14,14 +14,14 @@ const TYPO = "Zorbly";
 
 async function openManager(page) {
   await page.locator("#settingsBtn").click();
-  // Manage add-ins sits on Settings' "AI and add-ins" page (approved design D3).
+  // The add-in list is ON Settings' "AI and add-ins" page (`docs/184` D3, audit
+  // DIALOGS-08): rows with a switch, not a second dialog.
   await page.locator('#settingsPanel [data-settings-tab="ai"]').click();
-  await page.locator("#settingsAddinsBtn").click();
-  await expect(page.locator("#pluginsDialog")).toBeVisible();
+  await expect(page.locator("#settingsAddinsList")).toBeVisible();
 }
 
 function row(page, name) {
-  return page.locator("#pluginsList .plugins-row", { has: page.locator("strong", { hasText: name }) });
+  return page.locator("#settingsAddinsList .plugins-row", { has: page.locator("strong", { hasText: name }) });
 }
 
 /** The mock server: every "Zorbly" is a misspelling (autocorrect leaves it alone). */
@@ -46,16 +46,16 @@ async function mockLanguageTool(page) {
 
 async function turnOn(page, name, { prompt }) {
   await openManager(page);
-  await row(page, name).locator("button", { hasText: "Turn on" }).click();
+  await row(page, name).locator('[role="switch"]').click();
   if (prompt) {
     await expect(page.locator("#pluginGrantDialog")).toBeVisible();
     await page.locator("#pluginGrantAllow").click();
   } else {
     await expect(page.locator("#pluginGrantDialog")).toBeHidden();
   }
-  await page.locator("#pluginsDone").click();
-  // Settings is still open behind Manage add-ins.
-  await page.keyboard.press("Escape");
+  await expect(row(page, name).locator('[role="switch"]')).toBeChecked();
+  // Settings took the permission dialog's place and is back; close it.
+  await page.locator("#settingsDone").click();
 }
 
 /** Types `text` as a new paragraph after the first one. */
@@ -81,8 +81,8 @@ test("both first-party add-ins are listed, off, and change nothing until turned 
   await expect(page.locator("#reviewAddinsBtn")).toBeHidden();
   await expect(page.locator("#addinIssuesStatus")).toBeHidden();
   await openManager(page);
-  await expect(row(page, "LanguageTool")).toContainText("Turn on");
-  await expect(row(page, "Readability")).toContainText("Turn on");
+  await expect(row(page, "LanguageTool").locator('[role="switch"]')).not.toBeChecked();
+  await expect(row(page, "Readability").locator('[role="switch"]')).not.toBeChecked();
   await expect(page.locator("iframe[data-plugin]")).toHaveCount(0);
 });
 
@@ -201,4 +201,23 @@ test("Readability highlights in the text, Hemingway-style, runs on the device, a
   await expect(page.locator(`.overlay .addin-highlight-passive[data-addin="${RD}"]`)).toHaveCount(0);
   const origin = new URL(page.url()).origin;
   expect(requested.filter((u) => /^https?:/.test(u) && new URL(u).origin !== origin)).toEqual([]);
+});
+
+// The add-in rows are built in script, so a language chosen on Settings' own
+// General page has to reach them without another click on the gear: Settings
+// announces a relabel (`settings_refresh.mjs`) and the list re-renders in the
+// new language. Mutation: dropping `announceSettings("relabel")` from the
+// Settings relabel hook leaves the row reading "By Casual Office", and this
+// goes red.
+test("the add-in rows follow a language chosen on the same Settings frame", async ({ page, consoleErrors }) => {
+  await gotoEditor(page);
+  await openManager(page);
+  const meta = page.locator(`#settingsAddinsList .plugins-row[data-plugin="${LT}"] .plugins-meta`).first();
+  await expect(meta).toContainText("By Casual Office");
+  await page.locator('#settingsPanel [data-settings-tab="general"]').click();
+  await page.locator("#languageSelect").selectOption("de");
+  await expect(page.locator("html")).toHaveAttribute("lang", "de");
+  await page.locator('#settingsPanel [data-settings-tab="ai"]').click();
+  await expect(meta).toContainText("Von Casual Office");
+  expect(consoleErrors).toEqual([]);
 });

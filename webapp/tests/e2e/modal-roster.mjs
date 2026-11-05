@@ -864,7 +864,9 @@ export const MODALS = [
       await clickIntoFirstPage(page);
       await page.keyboard.press(`${MOD}+Home`);
       for (let i = 0; i < 4; i += 1) await page.keyboard.press("Shift+ArrowRight");
+      // ⌘K opens the link POPOVER (docs/184 D-13); the dialog is its "More options…".
       await page.keyboard.press(`${MOD}+k`);
+      await page.locator("#linkPopoverMore").click();
     },
   },
   {

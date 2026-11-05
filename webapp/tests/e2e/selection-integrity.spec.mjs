@@ -30,7 +30,7 @@
 //   (7925). Measured: Select Table paints 4 rects / 25,020 px² of accent
 //   fill; a Backspace then removes exactly ONE character and the 25,020 px²
 //   "whole table is selected" paint stays on screen over a collapsed caret.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD, setReviewMode, reviewBarAction } from "./fixtures.mjs";
 
 // ---- measurement helpers ---------------------------------------------------
 
@@ -103,18 +103,18 @@ async function insertTwoByTwoTable(page) {
 }
 
 async function setSuggesting(page) {
-  await page.locator('#reviewModeControl [data-review-mode="suggesting"]').click();
-  await expect(page.locator('#reviewModeControl [data-review-mode="suggesting"]')).toHaveAttribute(
-    "aria-pressed",
+  await setReviewMode(page, "suggesting");
+  await expect(page.locator('#headerModeMenu [data-review-mode="suggesting"]')).toHaveAttribute(
+    "aria-checked",
     "true",
   );
   await page.locator("#pages").focus();
 }
 
 async function setEditing(page) {
-  await page.locator('#reviewModeControl [data-review-mode="editing"]').click();
-  await expect(page.locator('#reviewModeControl [data-review-mode="editing"]')).toHaveAttribute(
-    "aria-pressed",
+  await setReviewMode(page, "editing");
+  await expect(page.locator('#headerModeMenu [data-review-mode="editing"]')).toHaveAttribute(
+    "aria-checked",
     "true",
   );
 }
@@ -225,7 +225,7 @@ test("Reject all changes leaves a live caret and keeps accepting typing", async 
   await page.waitForTimeout(400);
   await setEditing(page);
 
-  await page.locator("#reviewRejectAll").click();
+  await reviewBarAction(page, "#reviewRejectAll");
   await page.waitForTimeout(500);
 
   expect(await paint(page)).toMatchObject({ carets: 1 });
@@ -253,7 +253,7 @@ test("Accept all changes leaves a live caret and keeps accepting typing", async 
   await page.waitForTimeout(300);
   await setEditing(page);
 
-  await page.locator("#reviewAcceptAll").click();
+  await reviewBarAction(page, "#reviewAcceptAll");
   await page.waitForTimeout(500);
 
   expect(await paint(page)).toMatchObject({ carets: 1 });
@@ -352,11 +352,11 @@ test("arrow-navigating away from a selected table row drops the row paint", asyn
 
 // GREEN today. The reported "highlight painted over everything" does not happen
 // for ordinary text selections: every mutation kind collapses the highlight to
-// exactly one caret, and undo never smears it — since UX-058 an Undo re-selects
+// exactly one caret, and undo never smears it — since UX-074 an Undo re-selects
 // exactly the text it restored, as Word and Docs do, so its highlight is the
 // original selection's, no more. Pinned so a fix for A/B cannot silently break
 // what already works.
-/** After an Undo the highlight is the restored selection's (UX-058): the same
+/** After an Undo the highlight is the restored selection's (UX-074): the same
  *  rectangles over the same area as before the edit, and no caret beside it. */
 function expectRestoredSelection(after, before) {
   expect(after.highlight.rects).toBe(before.highlight.rects);

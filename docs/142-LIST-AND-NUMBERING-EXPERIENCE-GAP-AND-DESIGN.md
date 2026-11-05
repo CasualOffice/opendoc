@@ -356,7 +356,7 @@ one function — the highest value-per-line row in the document.
 
 ### 1.3 Tab / Shift+Tab to demote and promote
 
-> **Status, 2026-11-06 (`docs/109` UX-057, on `edit/editing-ux-batch-1`):** the
+> **Status, 2026-11-06 (`docs/109` UX-073, on `edit/editing-ux-batch-1`):** the
 > start-of-item divergence below is closed, and LST-24 with it. Tab demotes only when the
 > selection starts at offset 0 of a list item (or spans several paragraphs, which indents
 > them); anywhere else it types a real tab (`InlineNode::Tab`, `<w:tab/>` on save) through

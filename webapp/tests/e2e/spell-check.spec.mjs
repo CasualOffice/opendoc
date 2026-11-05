@@ -161,6 +161,9 @@ test("right-click offers suggestions, and picking one is a single undoable edit"
   const first = menu.locator("[data-command-id]").first();
   await expect(first).toHaveAttribute("data-command-id", "spell.suggestion.0");
   await expect(first).toHaveText("sentence");
+  // The approved spelling menu (docs/184 D-12): the suggestions in bold, then
+  // Ignore, Ignore all and Add to dictionary.
+  await expect(first).toHaveClass(/emphasis/);
   for (const id of ["spell.ignoreOnce", "spell.ignoreAll", "spell.addToDictionary"]) {
     await expect(menu.locator(`[data-command-id="${id}"]`)).toBeEnabled();
   }
@@ -332,9 +335,10 @@ test("in Viewing mode the corrections refuse with a reason instead of silently f
   await expect(squiggle).toHaveCount(1, "reading a document still shows its spelling");
 
   const menu = await rightClickSquiggle(page, squiggle.first());
-  const suggestion = menu.locator('[data-command-id="spell.suggestion.0"]');
-  await expect(suggestion).toBeVisible();
-  await expect(suggestion).toBeDisabled();
+  // The corrections cannot apply, so the menu says why once (a note) instead of
+  // listing greyed rows (docs/184 D-12: no disabled rows on a context menu).
+  await expect(menu.locator('[data-command-id="spell.suggestion.0"]')).toHaveCount(0);
+  await expect(menu.locator('[data-command-id="spell.blocked"]')).toContainText("Editing");
   // Ignoring is a host-side decision, not a document mutation, so it stays
   // available: a reader looking at a false positive can still dismiss it.
   await expect(menu.locator('[data-command-id="spell.ignoreAll"]')).toBeEnabled();
@@ -385,7 +389,7 @@ test("right-clicking a grammar mark explains the rule, fixes it, and can silence
   const menu = await rightClickSquiggle(page, doubled.first());
   const explain = menu.locator('[data-command-id="grammar.explain"]');
   await expect(explain).toBeVisible();
-  await expect(explain).toBeDisabled();
+  await expect(explain).toHaveClass(/menu-note/);
   await expect(explain).toContainText("repeated");
 
   await menu.locator('[data-command-id="grammar.suggestion.0"]').click();

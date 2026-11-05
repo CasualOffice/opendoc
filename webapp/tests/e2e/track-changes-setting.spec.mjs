@@ -58,7 +58,7 @@ function trackedDocx() {
   };
 }
 
-const modeButton = (page, mode) => page.locator(`#reviewModeControl [data-review-mode="${mode}"]`);
+const modeButton = (page, mode) => page.locator(`#headerModeMenu [data-review-mode="${mode}"]`);
 
 /** Saves with the keyboard and returns the bytes the browser downloaded. */
 async function saveBytes(page) {
@@ -72,12 +72,12 @@ test("a document saved with Track Changes on opens in Suggesting, and what is ty
   consoleErrors,
 }) => {
   await gotoEditor(page);
-  await expect(modeButton(page, "editing")).toHaveAttribute("aria-pressed", "true");
+  await expect(modeButton(page, "editing")).toHaveAttribute("aria-checked", "true");
   await page.locator("#file").setInputFiles(trackedDocx());
   await expect(page.locator("#a11yDocument")).toContainText("A contract under review.");
 
   await expect(modeButton(page, "suggesting"), "the file's setting is honoured").toHaveAttribute(
-    "aria-pressed",
+    "aria-checked",
     "true",
   );
   await clickIntoFirstPage(page);
@@ -108,10 +108,10 @@ test("switching to Suggesting is saved with the document, and the saved file ope
   // in Suggesting. (Not by switching back to Editing first — that switch is an
   // edit of its own, and the unsaved-work guard would rightly stop the open.)
   await gotoEditor(page);
-  await expect(modeButton(page, "editing")).toHaveAttribute("aria-pressed", "true");
+  await expect(modeButton(page, "editing")).toHaveAttribute("aria-checked", "true");
   await page.locator("#file").setInputFiles({ name: "saved.docx", mimeType: DOCX_MIME, buffer: tracked });
   await expect(page.locator("#docTitle")).toHaveValue("saved.docx");
-  await expect(modeButton(page, "suggesting")).toHaveAttribute("aria-pressed", "true");
+  await expect(modeButton(page, "suggesting")).toHaveAttribute("aria-checked", "true");
   expect(consoleErrors).toEqual([]);
 });
 
@@ -123,7 +123,7 @@ test("the switch is one Undo, and undoing it puts the mode back", async ({ page,
 
   await page.keyboard.press(`${MOD}+z`);
   await expect(modeButton(page, "editing"), "the mode follows the setting back").toHaveAttribute(
-    "aria-pressed",
+    "aria-checked",
     "true",
   );
   const saved = await saveBytes(page);

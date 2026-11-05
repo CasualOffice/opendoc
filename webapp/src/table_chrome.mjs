@@ -287,13 +287,16 @@ export function createTableChrome(host) {
         const height = Math.max(MIN_BAND_TWIPS, gesture.startExtent + gesture.delta);
         host.runEdit(() => doc.setTableRowHeight(gesture.anchor, height, "atLeast"), {
           gate: true,
+          // A border drag changes geometry, not where the reader is: the caret and
+          // its cell stay put, as in Word and Docs (UX-062, CANVAS-V-01).
+          keepSelection: true,
         });
         host.status(host.t("table.rowHeightSet", { size: inches(height) }));
       } else {
         const mode = gesture.outer ? "table" : "border";
         host.runEdit(
           () => doc.moveTableColumnBoundary(gesture.anchor, gesture.index, gesture.delta, mode),
-          { gate: true },
+          { gate: true, keepSelection: true },
         );
         host.status(
           host.t("table.columnWidthSet", { size: inches(gesture.startExtent + gesture.delta) }),
@@ -356,12 +359,13 @@ export function createTableChrome(host) {
       const step = KEYBOARD_STEP_TWIPS * sign;
       if (axis === "row") {
         const height = Math.max(MIN_BAND_TWIPS, band.edge.height + step);
-        host.runEdit(() => doc.setTableRowHeight(caretNode, height, "atLeast"), { gate: true });
+        host.runEdit(() => doc.setTableRowHeight(caretNode, height, "atLeast"), { gate: true, keepSelection: true });
         host.status(host.t("table.rowHeightSet", { size: inches(height) }));
       } else {
         const mode = band.edge.outer ? "table" : "border";
         host.runEdit(() => doc.moveTableColumnBoundary(caretNode, band.edge.i, step, mode), {
           gate: true,
+          keepSelection: true,
         });
         host.status(host.t("table.columnWidthSet", { size: inches(band.edge.width + step) }));
       }

@@ -82,8 +82,6 @@ metaverse
 microservice
 microservices
 middleware
-mockup
-mockups
 monorepo
 multifactor
 nearshoring
@@ -101,7 +99,6 @@ plaintext
 pluggable
 prefetch
 prefetching
-preload
 preloading
 productise
 productize

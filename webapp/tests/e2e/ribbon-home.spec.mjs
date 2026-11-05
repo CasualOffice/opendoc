@@ -1,4 +1,4 @@
-import { MOD, clickIntoFirstPage, definedParagraphStyles, expect, gotoEditor, reflectedParagraphStyle, stableBox, test } from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, definedParagraphStyles, expect, gotoEditor, reflectedParagraphStyle, stableBox, test, setReviewMode } from "./fixtures.mjs";
 
 // docs/64 — the Home ribbon mirrors template.png: a single no-wrap band of
 // labeled groups. Two hard rules this suite guards:
@@ -25,15 +25,14 @@ test("the Home ribbon never horizontally scrolls; narrow widths collapse groups 
   // overflow control, and — crucially — no horizontal scrollbar.
   await expect(page.locator("#ribbonOverflowBtn")).toBeHidden();
   expect(await ribbonHasNoHScroll(page)).toBe(true);
-  // ONE editing-mode control, in the status bar. The Home band carried a second
-  // copy of the same three-state control — `109` UX-016, closed in docs/123 §4.5
-  // — and neither ONLYOFFICE, Google Docs nor Word ships two. Asserted from the
-  // whole document rather than from the footer, so a third copy anywhere would
-  // fail this as loudly as the second did.
-  await expect(
-    page.locator('#reviewModeControl [data-review-mode="suggesting"]'),
-  ).toBeVisible();
-  expect(await page.locator(".review-mode-segmented").count()).toBe(1);
+  // ONE editing-mode control, the header's selector. The Home band carried a
+  // second copy of the same three-state control — `109` UX-016, closed in docs/123
+  // §4.5 — and the status bar a third until `docs/184` D6; neither ONLYOFFICE,
+  // Google Docs nor Word ships two. Asserted from the whole document, so another
+  // copy anywhere would fail this as loudly as the second did.
+  await expect(page.locator("#headerModeBtn")).toBeVisible();
+  expect(await page.locator("[data-review-mode]").count()).toBe(3);
+  expect(await page.locator('#headerModeMenu [data-review-mode]').count()).toBe(3);
 
   // Undo/Redo occupy distinct rows; Clipboard and Editing expose their authored
   // icons rather than appearing as text-only/empty commands.
@@ -85,9 +84,9 @@ test("the Home ribbon never horizontally scrolls; narrow widths collapse groups 
   // The survivor still drives the engine, which is the guarantee the two-control
   // mirror was standing in for: Suggesting mode IS track-changes, so the Review
   // band's toggle is the independent read-back.
-  await page.locator('#reviewModeControl [data-review-mode="suggesting"]').click();
+  await setReviewMode(page, "suggesting");
   await expect(page.locator("#reviewTrackBtn")).toHaveAttribute("aria-pressed", "true");
-  await page.locator('#reviewModeControl [data-review-mode="editing"]').click();
+  await setReviewMode(page, "editing");
   await expect(page.locator("#reviewTrackBtn")).toHaveAttribute("aria-pressed", "false");
 
   // Narrow: groups that don't fit move into the "⋯" menu — still no scrollbar.

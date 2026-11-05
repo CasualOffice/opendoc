@@ -1271,6 +1271,12 @@ export function createSpellChecker(io) {
  * Viewing mode, which is where a reader is most likely to be annoyed by a
  * false positive.
  */
+/** How many suggestions the menu shows. Word and Docs show three to five, in
+ *  bold; three keeps the approved spelling menu inside the context-menu budget
+ *  (docs/184 D-12) and the ranking (`spelling.mjs` `suggestionsFor`) is what
+ *  makes three enough. */
+export const SPELLING_MENU_SUGGESTIONS = 3;
+
 export function spellingContextCommands(flagged, suggestions, actions, blockedReason = "") {
   if (flagged.kind === "grammar")
     return grammarContextCommands(flagged, suggestions, actions, blockedReason);
@@ -1280,34 +1286,41 @@ export function spellingContextCommands(flagged, suggestions, actions, blockedRe
     // of them is "there is nothing to offer". A finding whose deep search was
     // over the per-check budget has NOT established that there are no
     // suggestions, and saying so would be the kind of confidently wrong empty
-    // state this repository keeps finding in its own UI.
+    // state this repository keeps finding in its own UI. A NOTE, not a disabled
+    // row: it is something the menu says, not a command (docs/184 D-12).
     const searched = flagged.suggestionsComplete !== false;
     rows.push({
       id: "spell.noSuggestions",
       label: searched ? "No spelling suggestions" : "Suggestions are not ready yet",
       group: "spelling",
-      enabled: false,
+      note: true,
       disabledReason: searched
         ? `“${flagged.word}” is not in the dictionary and nothing close to it is`
         : `“${flagged.word}” is not in the dictionary; the search for alternatives has not finished`,
       run: () => {},
     });
+  } else if (blockedReason) {
+    // The document cannot change (Viewing, read-only): the menu says so once,
+    // rather than listing corrections that cannot be applied.
+    rows.push({ id: "spell.blocked", label: blockedReason, group: "spelling", note: true, run: () => {} });
   } else {
-    suggestions.forEach((word, index) => {
+    suggestions.slice(0, SPELLING_MENU_SUGGESTIONS).forEach((word, index) => {
       rows.push({
         id: `spell.suggestion.${index}`,
         label: word,
         group: "spelling",
-        enabled: !blockedReason,
-        disabledReason: blockedReason,
+        emphasis: true,
         run: () => actions.replace(flagged, word),
       });
     });
   }
+  // The approved spelling menu (docs/184 D-12, audit CRITIC-09) draws Ignore and
+  // Add to dictionary. Ignore all stays beside them because ONLYOFFICE offers
+  // both ignores and `docs/153` grades each at parity (`spell.ignoreOnce`).
   rows.push(
     {
       id: "spell.ignoreOnce",
-      label: "Ignore once",
+      label: "Ignore",
       group: "spellingDismiss",
       run: () => actions.ignoreOnce(flagged),
     },
@@ -1346,7 +1359,7 @@ export function grammarContextCommands(flagged, replacements, actions, blockedRe
       id: "grammar.explain",
       label: flagged.message,
       group: "spelling",
-      enabled: false,
+      note: true,
       disabledReason: flagged.message,
       run: () => {},
     },

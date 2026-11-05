@@ -147,6 +147,7 @@ import { createCommandSurfaces } from "./editor_command_surfaces.mjs";
 import { createScroll } from "./editor_scroll.mjs";
 import { createDocumentSettings } from "./editor_document_settings.mjs";
 import { createChromeModes } from "./editor_chrome_modes.mjs";
+import { followPropertiesTab, startDockManager } from "./dock_manager.mjs";
 // editor-context:begin
 /** The editor context (docs/177): the one object every extracted module is handed.
  *  Each entry is a live view of a binding this file still owns, read lazily, so a
@@ -684,7 +685,7 @@ const ed = {
   get selectionAutoScrollFrame() { return selectionAutoScrollFrame; }, set selectionAutoScrollFrame(v) { selectionAutoScrollFrame = v; },
   get selectionContainsClientPoint() { return selectionContainsClientPoint; },
   get selectionModelRect() { return selectionModelRect; },
-  get setDocumentState() { return setDocumentState; },
+  get setDocumentState() { return setDocumentState; }, get refreshDocumentTitle() { return refreshDocumentTitle; },
   get setDraftStatus() { return setDraftStatus; },
   get setGrammarCheckEnabled() { return setGrammarCheckEnabled; },
   get setObjectWrap() { return setObjectWrap; },
@@ -787,7 +788,7 @@ const ed = {
   get toggleObjectInspector() { return toggleObjectInspector; },
   get toggleOutline() { return toggleOutline; },
   get toggleParagraphProperties() { return toggleParagraphProperties; },
-  get toggleReview() { return toggleReview; },
+  get toggleReview() { return toggleReview; }, get displaceReview() { return displaceReview; }, get restoreReview() { return restoreReview; },
   get toggleShortcutsReference() { return toggleShortcutsReference; },
   get toggleShowChanges() { return toggleShowChanges; },
   get toggleSplitCellDialog() { return toggleSplitCellDialog; },
@@ -2597,6 +2598,7 @@ function updateToolbar() { fontAdvanced.reflect();
   const activeTableStyle = inTable && tableInfo?.found ? (doc.tableStyleAt?.(selection.focus.node) || "") : "";
   if (activeTableStyle) tableStyleBtn.title = t("table.styleNamed", { name: activeTableStyle });
   tableContext.textContent = tableInfo?.found ? tableContextLabel(tableInfo) : "";
+  followPropertiesTab(ed, !!tableInfo?.found, hasSel); // the tab follows the caret (D5)
   if (!tablePropertiesPanel.hidden) {
     if (!tableInfo?.found) toggleTableProperties(false);
     else reflectTableProperties(selection.focus.node);
@@ -2823,11 +2825,8 @@ const pagesPanelView = createPagesPanel({
   getBandModel: () => pageBandModel,
   pageInView,
   bandTop: () => bandTopInScroller,
-  // Left panel: replaces the Outline only (one panel per side, design P1).
-  onExclusive: () => {
-    closeFlankingPanel(outlinePanel, railOutline);
-    reanchorPageOverlays();
-  },
+  // One panel per side is the dock manager's rule (`dock_manager.mjs`).
+  onExclusive: () => reanchorPageOverlays(),
   onJumped: () => {
     updatePageWindow();
     paintPagesInView();
@@ -2865,14 +2864,14 @@ function focusReviewComment(comment, expand = true) {
 function closeReviewPopover() {
   reviewPopover?.remove();
   reviewPopover = null;
-  reviewComposerState = null;
+  reviewComposerState = reviewComposerState?.draft?.trim() ? { ...reviewComposerState, isDraft: true } : null; // a draft survives Escape (REVIEW-05)
   scheduleReviewMarginRender();
 }
 
 const {
   closeReviewInlineCard, decideAllReviewChanges, decideReviewAndAdvance, decideReviewAtCaret,
   focusReviewRevision, navigateReview, openReviewComposer, reviewMoveEndButton,
-  scheduleReviewInlineCardHide, showReviewInlineCard, toggleReview,
+  scheduleReviewInlineCardHide, showReviewInlineCard, toggleReview, displaceReview, restoreReview,
 } = createReviewDecisions(ed);
 // Hovering (or clicking) a tracked-change marker on the canvas surfaces a
 // compact card — author, one-line change summary, ✔ Accept / ✗ Reject — the
@@ -2977,6 +2976,7 @@ updateToolbar();
 boot();
 
 createChromeModes(ed);
+startDockManager(ed);
 // ---- The host contract: one session, two transports (`docs/126` phase 2) ----
 // `window.opendoc` is the in-process transport, and `attachHostBridge` puts THAT SAME OBJECT
 // behind `postMessage`, so the two can never answer differently. Commands, events, refusals

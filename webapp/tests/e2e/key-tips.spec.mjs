@@ -49,8 +49,8 @@ test("Alt, R, then the Track changes tip turns tracking on, and no letter reache
   for (const key of letter.toLowerCase()) await page.keyboard.press(key);
   await expect(page.locator("#reviewTrackBtn")).toHaveAttribute("aria-pressed", "true");
   await expect(
-    page.locator('#reviewModeControl [data-review-mode="suggesting"]'),
-  ).toHaveAttribute("aria-pressed", "true");
+    page.locator('#headerModeMenu [data-review-mode="suggesting"]'),
+  ).toHaveAttribute("aria-checked", "true");
   await expect(layer(page)).toBeHidden();
   // Neither the "r" nor the tip's letter was typed into the document.
   expect(await mirrorText(page)).toBe(before);
@@ -94,8 +94,8 @@ test("Alt held as a modifier never enters key tips, and a chord while they are u
   await page.keyboard.press(`${MOD}+Shift+E`);
   await expect(layer(page)).toBeHidden();
   await expect(
-    page.locator('#reviewModeControl [data-review-mode="suggesting"]'),
-  ).toHaveAttribute("aria-pressed", "true");
+    page.locator('#headerModeMenu [data-review-mode="suggesting"]'),
+  ).toHaveAttribute("aria-checked", "true");
 });
 
 test("Alt in a text field belongs to the field: no key tips", async ({ page }) => {

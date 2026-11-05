@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Editing-feel guards for the batch `docs/109` UX-057 to UX-059: Tab types a
+//! Editing-feel guards for the batch `docs/109` UX-073 to UX-075: Tab types a
 //! tab, Undo and Redo hand back the selection they restored, and a range delete
 //! removes the tables it covers. Each test names the mutation that turns it red.
 
@@ -108,7 +108,7 @@ fn ordered(d: &WasmDocument) -> Vec<(String, u32)> {
         .collect()
 }
 
-// --- UX-057: Tab types a tab ---------------------------------------------------
+// --- UX-073: Tab types a tab ---------------------------------------------------
 
 /// Tab in body text is a real `InlineNode::Tab` at the caret, the caret lands
 /// after it, and one Undo removes it. Mutation: lower `insert_tab` to an
@@ -213,7 +213,7 @@ fn plain_text_with_a_tab_lowers_to_run_tab_run_and_saves_as_w_tab() {
     assert_eq!(d.paragraph_text(id), "x");
 }
 
-// --- UX-058: Undo and Redo restore the selection --------------------------------
+// --- UX-074: Undo and Redo restore the selection --------------------------------
 
 /// Undoing a format change re-selects the formatted range; it used to land the
 /// caret at the start of the paragraph. Redo selects it again. Mutation: make
@@ -265,7 +265,7 @@ fn undoing_typing_collapses_where_it_was_typed() {
     assert_eq!(ends(&undone), ((node.clone(), 3), (node.clone(), 3)));
 }
 
-// --- UX-059: a range delete removes the tables it covers ------------------------
+// --- UX-075: a range delete removes the tables it covers ------------------------
 
 /// [table, "tail"]: select from the first cell's start to the end of "tail" and
 /// delete — Word's Ctrl+A, Delete in a document that opens with a table. The

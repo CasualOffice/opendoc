@@ -65,9 +65,13 @@ test("an internal copy of a table pastes back as a real table, not flattened tex
   await expect(page.locator("#tabTable")).toBeDisabled(); // caret is in prose now
   await clipboardEvent(page, "paste", { "text/html": clip.html, "text/plain": clip.text });
 
-  // The paste reconstructed a real table: the caret landed inside it, so the
-  // contextual Table ribbon activates. A flattened text paste would leave the
-  // caret in a paragraph with the Table tab disabled.
+  // The caret lands AFTER the pasted content, as in Word and Docs (`109` UX-063):
+  // the paragraph the paste went in front of, not the table's first cell.
+  await expect(page.locator("#tabTable")).toBeDisabled();
+  // The paste reconstructed a real table: one ArrowUp steps into it, so the
+  // contextual Table ribbon activates. A flattened text paste would leave only
+  // paragraphs above the caret, and the Table tab disabled.
+  await page.keyboard.press("ArrowUp");
   await expect(page.locator("#tabTable")).toBeEnabled();
 
   // The cell content survived and now exists twice (original + pasted).
@@ -221,8 +225,13 @@ test("an internal copy of a table carries the picture in its cell", async ({
   await expect(page.locator("#tabTable")).toBeDisabled();
   await clipboardEvent(page, "paste", { "text/html": clip.html, "text/plain": clip.text });
 
-  // A real table arrived (the contextual Table tab activates) and the caret is in
-  // it, so copying from here copies the PASTED table rather than the original.
+  // The caret lands after the paste (`109` UX-063); two ArrowUps reach the pasted
+  // table's first row, so the Table tab activates and copying from here copies the
+  // PASTED table rather than the original.
+  await expect(page.locator("#tabTable")).toBeDisabled();
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("Home");
   await expect(page.locator("#tabTable")).toBeEnabled();
   await page.keyboard.press("Shift+End");
   const again = await clipboardEvent(page, "copy");
@@ -292,7 +301,9 @@ test("a structured paste that cannot carry a comment anchor says so", async ({ p
 
   // The table came across, and the loss was reported rather than swallowed —
   // through the status channel, which also means the assertive region and the
-  // toast (`status_policy.mjs`: only `"error"` escalates).
+  // toast (`status_policy.mjs`: only `"error"` escalates). The caret lands after
+  // the paste (`109` UX-063), so one ArrowUp steps into the pasted table.
+  await page.keyboard.press("ArrowUp");
   await expect(page.locator("#tabTable")).toBeEnabled();
   await expect(page.locator("#status")).toContainText("comments");
   await expect(page.locator("#status")).toContainText("cannot be duplicated");

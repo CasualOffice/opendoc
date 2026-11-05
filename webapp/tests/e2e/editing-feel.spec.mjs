@@ -1,4 +1,4 @@
-// Editing feel against Word and Google Docs (`docs/109` UX-058, UX-059, UX-060,
+// Editing feel against Word and Google Docs (`docs/109` UX-074, UX-075, UX-076,
 // HF-103): Undo re-selects what it restored, a select-all delete removes a table
 // instead of leaving its empty grid, a double- or triple-click drag extends by
 // whole words or paragraphs, and macOS Option+Up/Down move by paragraph.
@@ -45,7 +45,7 @@ async function charsCentre(page, from, count) {
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 
-test.describe("Undo re-selects what it restored (UX-058)", () => {
+test.describe("Undo re-selects what it restored (UX-074)", () => {
   async function fresh(page) {
     await gotoEditor(page);
     await clickIntoFirstPage(page);
@@ -82,7 +82,7 @@ test.describe("Undo re-selects what it restored (UX-058)", () => {
   });
 });
 
-test("select-all and Delete removes a table instead of leaving its empty grid (UX-059)", async ({ page, consoleErrors }) => {
+test("select-all and Delete removes a table instead of leaving its empty grid (UX-075)", async ({ page, consoleErrors }) => {
   await blankDocumentWithText(page, "Results");
   await page.keyboard.press("Enter");
   await page.locator('[data-tab="insert"]').click();
@@ -105,7 +105,7 @@ test("select-all and Delete removes a table instead of leaving its empty grid (U
   expect(consoleErrors).toEqual([]);
 });
 
-test.describe("selection by unit (UX-060)", () => {
+test.describe("selection by unit (UX-076)", () => {
   test("a double-click drag extends by whole words and keeps the first word", async ({ page, consoleErrors }) => {
     await blankDocumentWithText(page, "Quick brown fox jumps");
     const quick = await charsCentre(page, 0, 5);
