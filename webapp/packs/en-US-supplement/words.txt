@@ -83,7 +83,6 @@ microservice
 microservices
 middleware
 mockup
-mockups
 monorepo
 multifactor
 nearshoring

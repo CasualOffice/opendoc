@@ -788,7 +788,7 @@ const ed = {
   get toggleObjectInspector() { return toggleObjectInspector; },
   get toggleOutline() { return toggleOutline; },
   get toggleParagraphProperties() { return toggleParagraphProperties; },
-  get toggleReview() { return toggleReview; },
+  get toggleReview() { return toggleReview; }, get displaceReview() { return displaceReview; }, get restoreReview() { return restoreReview; },
   get toggleShortcutsReference() { return toggleShortcutsReference; },
   get toggleShowChanges() { return toggleShowChanges; },
   get toggleSplitCellDialog() { return toggleSplitCellDialog; },
@@ -2871,7 +2871,7 @@ function closeReviewPopover() {
 const {
   closeReviewInlineCard, decideAllReviewChanges, decideReviewAndAdvance, decideReviewAtCaret,
   focusReviewRevision, navigateReview, openReviewComposer, reviewMoveEndButton,
-  scheduleReviewInlineCardHide, showReviewInlineCard, toggleReview,
+  scheduleReviewInlineCardHide, showReviewInlineCard, toggleReview, displaceReview, restoreReview,
 } = createReviewDecisions(ed);
 // Hovering (or clicking) a tracked-change marker on the canvas surfaces a
 // compact card — author, one-line change summary, ✔ Accept / ✗ Reject — the

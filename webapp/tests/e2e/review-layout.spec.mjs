@@ -9,7 +9,10 @@
 //   (`elementFromPoint` across the bar finds the bar, not a card);
 // * Accept all / Reject all are absent with nothing to decide, and present (in
 //   the bar's ⋯) once a suggestion exists;
-// * typed text in a new comment survives Escape as a Draft;
+// * typed text in a new comment survives Escape as a Draft, and survives the
+//   column closing;
+// * typing after Accept all withdraws its blind Undo, and Undo leaves focus in
+//   the document;
 // * Escape on an open card collapses it and keeps focus on that card; the next
 //   Escape closes the column and focus goes to its rail button — never <body>;
 // * a comment is shown in its own direction, with its web address as a link.
@@ -19,6 +22,7 @@ import {
   gotoEditor,
   clickIntoFirstPage,
   setReviewMode,
+  expectEditorFocused,
   MOD,
 } from "./fixtures.mjs";
 
@@ -61,15 +65,19 @@ test("cards sit beside their anchors, clear of the text column and of each other
   });
   for (const card of rects.cards) expect(intersects(card, rects.page), `a card covers the page: ${JSON.stringify(card)}`).toBe(false);
   expect(intersects(rects.cards[0], rects.cards[1]), "two cards overlap").toBe(false);
-  // Beside its anchor: select each card, and its top is level with its own
-  // highlight on the page (the review-scroll-sync tolerance).
+  // Beside its anchor: select each card, and its top is level with ITS OWN
+  // comment's marker on the page (the review-scroll-sync tolerance). The marker
+  // is found by the card's comment id, so a card level with the other comment's
+  // anchor fails.
   for (let i = 0; i < 2; i++) {
     await cards.nth(i).click();
     await settle(page);
     const gap = await page.evaluate((index) => {
       const card = document.querySelectorAll("#reviewSidebar .review-margin-card.review-margin-comment")[index];
-      const marks = [...document.querySelectorAll(".overlay .highlight")];
-      if (!card || !marks.length) return null;
+      const id = card?.dataset.reviewItemId?.replace(/^comment:/, "");
+      if (!id) return null;
+      const marks = [...document.querySelectorAll(`.overlay .review-comment-marker[data-review-comment-id="${CSS.escape(id)}"]`)];
+      if (!marks.length) return null;
       return Math.abs(card.getBoundingClientRect().top - Math.min(...marks.map((m) => m.getBoundingClientRect().top)));
     }, i);
     expect(gap, `card ${i} has no anchor highlight`).not.toBeNull();
@@ -159,6 +167,32 @@ test("Accept all and Reject all are absent with nothing to decide, and in the �
   expect(onBody, "focus fell to <body> after Accept all").toBe(false);
   await page.locator("#undoSnackbarUndo").click();
   await expect(page.locator("#reviewSidebar .review-margin-revision").first()).toBeVisible();
+  // Undo pressed from its button leaves focus in the document, not on <body>.
+  await expect(page.locator("#undoSnackbar")).toBeHidden();
+  await expectEditorFocused(page);
+  expect(consoleErrors).toEqual([]);
+});
+
+test("typing after Accept all withdraws its Undo, so it can never undo the typing instead", async ({ page, consoleErrors }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await gotoEditor(page);
+  await setReviewMode(page, "suggesting");
+  await clickIntoFirstPage(page);
+  await page.keyboard.press(`${MOD}+End`);
+  await page.keyboard.insertText(" SUGGESTED");
+  await expect(page.locator("#reviewSidebar .review-margin-revision").first()).toBeVisible();
+  await setReviewMode(page, "editing");
+  await page.locator("#reviewMoreBtn").click();
+  await page.locator("#reviewAcceptAll").click();
+  await expect(page.locator("#undoSnackbar")).toBeVisible();
+  // The person keeps writing inside the snackbar's six seconds.
+  await clickIntoFirstPage(page);
+  await page.keyboard.press(`${MOD}+End`);
+  await page.keyboard.insertText(" TYPED");
+  // The offer is gone: its Undo was the editor's last step, now the typing.
+  // Well inside its own 6s timeout, so the timeout cannot be what hid it.
+  await expect(page.locator("#undoSnackbar")).toBeHidden({ timeout: 1500 });
+  await expect(page.locator("#reviewSidebar .review-margin-revision")).toHaveCount(0);
   expect(consoleErrors).toEqual([]);
 });
 
@@ -199,7 +233,14 @@ test("typed text in a new comment survives Escape as a Draft", async ({ page }) 
   await settle(page);
   await expect(composer).toHaveValue("half a thought");
   await expect(page.locator(".review-margin-composer.is-draft")).toBeVisible();
-  // An empty composer still closes on Escape.
+  // Closing the column is not Cancel: the Draft is there when it comes back,
+  // whether the column was closed by its second Escape or by the rail button.
+  await page.locator("#railReview").click();
+  await expect(page.locator("#reviewSidebar")).toBeHidden();
+  await page.locator("#railReview").click();
+  await expect(page.locator("#reviewSidebar")).toBeVisible();
+  await expect(composer, "closing the column threw the draft away").toHaveValue("half a thought");
+  // Cancel is the one way to discard it.
   await page.getByTestId("review-comment-cancel").click();
   await expect(composer).toHaveCount(0);
 });

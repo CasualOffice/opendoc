@@ -20,6 +20,20 @@ export function createParagraphInspector(ed) {
     input.checked = state === 1;
   }
 
+  /** `paragraphSpacing(node)` as plain numbers, cached for one document version
+   *  and one paragraph. O(1) on a hit; one engine call on a miss. */
+  let spacingKey = null;
+  let spacingValue = null;
+  function effectiveSpacing(node) {
+    const key = `${ed.revisionUnreadable ? "?" : ed.documentVersion()}|${node}`;
+    if (key === spacingKey && !ed.revisionUnreadable) return spacingValue;
+    const spacing = ed.doc.paragraphSpacing(node);
+    spacingValue = { lineRule: spacing.lineRule, linePercent: spacing.linePercent, beforeTwip: spacing.beforeTwip, afterTwip: spacing.afterTwip };
+    spacing.free?.();
+    spacingKey = key;
+    return spacingValue;
+  }
+
   function reflectParagraphProperties() {
     if (!ed.doc || !ed.selection) return;
     const [startNode, startOffset, endNode, endOffset] = ed.selEndpoints();
@@ -30,10 +44,15 @@ export function createParagraphInspector(ed) {
     // The EFFECTIVE values, as Word's Paragraph dialog shows them (audit
     // DIALOGS-07): a Heading 1 paragraph is 0" from the margin, not a blank box,
     // and its spacing is what its style resolves to, not "Mixed or inherited".
-    // `paragraphSpacing` resolves the style cascade; it is one O(document) call
-    // per selection change, and only for a single paragraph (a range keeps its
-    // honest Mixed).
-    const effective = state.count === 1 ? ed.doc.paragraphSpacing(startNode) : null;
+    // `paragraphSpacing` resolves the style cascade. It is O(document) in the
+    // engine (resolving the node is a block walk), so it is asked only when a
+    // value is missing from the paragraph's own properties, only for a single
+    // paragraph (a range keeps its honest Mixed), and at most once per
+    // (document version, paragraph): caret moves inside a paragraph reuse it.
+    // The residue — one call per edit while Properties is open — is recorded in
+    // `docs/109` UX-055 against a by-node resolver in the engine.
+    const needsEffective = state.count === 1 && (!state.linePercent || state.beforeTwip < 0 || state.afterTwip < 0);
+    const effective = needsEffective ? effectiveSpacing(startNode) : null;
     const inches = (twips) => (twips === 0 ? "0" : twipsToInchText(twips));
     ed.paragraphPropertiesContext.textContent =
       state.count === 1 ? "1 paragraph" : `${state.count} paragraphs`;
@@ -119,7 +138,6 @@ export function createParagraphInspector(ed) {
     // (audit DIALOGS-V-01): an unshaded paragraph reads "no fill" (a slashed
     // swatch, Word's "No Color"); the picker keeps the last colour to apply.
     ed.paraShade.closest(".shade-pick")?.classList.toggle("is-none", !state.shadingMixed && state.shading < 0);
-    effective?.free?.();
     ed.paraBordersMixed.hidden = !state.bordersMixed;
     const bit = { top: 1, bottom: 2, left: 4, right: 8 };
     for (const b of ed.paragraphPropertiesPanel.querySelectorAll(".border-btn")) {
@@ -142,8 +160,10 @@ export function createParagraphInspector(ed) {
   function toggleParagraphProperties(open, focusTarget = null, { follow = false } = {}) {
     const show = open ?? ed.paragraphPropertiesPanel.hidden;
     if (show && (!ed.doc || !ed.selection)) return;
-    const returnFocus =
-      !show && ed.paragraphPropertiesPanel.contains(document.activeElement);
+    // Where focus goes on close is the dock's to decide (`dock_manager.mjs`,
+    // audit DIALOGS-05): back to the invoker it recorded, or to the document
+    // when the panel came from the palette, a menu or a shortcut. This used to
+    // send it to the ribbon's Paragraph button whatever had opened the panel.
     ed.paragraphPropertiesPanel.hidden = !show;
     ed.paraOptsBtn.setAttribute("aria-expanded", String(show));
     if (show) {
@@ -165,8 +185,6 @@ export function createParagraphInspector(ed) {
         if (target) target.focus();
         else ed.paraPanelStyle.focus({ preventScroll: true });
       });
-    } else if (returnFocus) {
-      ed.paraOptsBtn.focus({ preventScroll: true });
     }
   }
 
@@ -180,12 +198,15 @@ export function createParagraphInspector(ed) {
   document.getElementById("paragraphPropertiesClose").addEventListener("click", () =>
     toggleParagraphProperties(false),
   );
+  // Escape on the ribbon button that opened the panel closes it, focus staying
+  // on the button. Escape from INSIDE the panel is the dock's, like every
+  // panel's: it closes the panel and returns focus to the invoker.
   document.addEventListener("keydown", (event) => {
     if (
       event.key === "Escape" &&
+      !event.defaultPrevented &&
       !ed.paragraphPropertiesPanel.hidden &&
-      (document.activeElement === ed.paraOptsBtn ||
-        ed.paragraphPropertiesPanel.contains(document.activeElement))
+      document.activeElement === ed.paraOptsBtn
     ) {
       event.preventDefault();
       toggleParagraphProperties(false);

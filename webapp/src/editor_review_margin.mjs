@@ -692,7 +692,11 @@ export function createReviewMargin(ed) {
             // with the way back beside it (audit REVIEW-12).
             if (resolving) {
               const id = item.data.id;
-              showUndoSnackbar(t("reviewBar.resolved"), () => void ed.runEdit(() => ed.doc.setCommentResolved(id, false), { keepView: true }));
+              // BOUND to this comment, so a later edit does not make it wrong.
+              showUndoSnackbar(t("reviewBar.resolved"), () => void ed.runEdit(() => ed.doc.setCommentResolved(id, false), { keepView: true }), {
+                survivesEdits: true,
+                focusBack: () => ed.focusEditorSurface(),
+              });
             }
             if (resolving) {
               ed.activeReviewItemId = null;

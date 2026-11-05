@@ -1,7 +1,7 @@
 // The Outline panel: the heading tree, scroll-to, and the flanking-panel
 // toggles it shares. Moved out of `main.js` unchanged (docs/177); it reaches
 // the rest of the editor only through the context `ed`.
-import { renderOutline, reflectOutlineActive, outlineSectionAt } from "./outline_panel.mjs";
+import { renderOutline, reflectOutlineActive, outlineSectionAtBy } from "./outline_panel.mjs";
 import { t } from "./i18n.mjs";
 
 /** Installs this domain on the editor context `ed` (docs/177) and returns what the rest
@@ -13,7 +13,6 @@ export function createOutline(ed) {
   /** Rebuilds the outline list from the document's headings (no-op when hidden). */
   function buildOutline() {
     if (!ed.doc || ed.outlinePanel.hidden) return;
-    places = null;
     ed.foldView.sync();
     renderOutline(ed.outlineBody, ed.doc.documentOutline(), {
       emptyText: t("outline.noHeadings"),
@@ -21,37 +20,46 @@ export function createOutline(ed) {
       activeNode: ed.selection?.focus?.node ?? "",
       ...ed.foldView.outlineOptions(),
     });
+    // The rows are new: read their nodes once, in document order.
+    headings = [...ed.outlineBody.querySelectorAll(".outline-item")].map((row) => row.dataset.node);
+    headingSet = new Set(headings);
+    shown = undefined;
     reflectOutlineSelection();
   }
 
-  /** Where each heading row sits on the pages, `{ node, page, y }` in outline
-   *  (document) order, read once per layout revision: one `caretRect` per
-   *  heading, then reused for every caret move until the document changes. */
-  let places = null;
-  let placesRevision = null;
-  function headingPlaces() {
-    if (places && placesRevision === ed.currentRevision) return places;
-    places = [];
-    for (const row of ed.outlineBody.querySelectorAll(".outline-item")) {
-      const box = ed.doc.caretRect(row.dataset.node, 0);
-      if (box.length >= 3) places.push({ node: row.dataset.node, page: box[0], y: box[2] });
-    }
-    placesRevision = ed.currentRevision;
-    return places;
-  }
+  /** The outline's heading nodes in document order, and the same as a set, read
+   *  once per rebuild of the rows (never per caret move). */
+  let headings = [];
+  let headingSet = new Set();
+  /** The node the current row was last set to; `undefined` = rows rebuilt. */
+  let shown;
 
   /** Keeps the outline's current row on the heading whose SECTION holds the
    *  caret (audit CRITIC-08): Word's Navigation pane and the Docs outline both
    *  highlight the heading you are under, not only a heading you are on. The
    *  row carries `aria-current="location"` and is kept in view.
-   *  O(log headings) per caret move after the first read of a revision. */
+   *
+   *  Runs on every toolbar pass while the outline is open, so it is kept off the
+   *  document's size: one `caretRect` for the caret, then a binary search that
+   *  reads O(log headings) heading positions on demand (`outlineSectionAtBy`),
+   *  each one engine `caretRect` read LIVE, so no cache can go stale under an
+   *  edit. The rows are touched, and scrolled, only when the current heading
+   *  CHANGES — typing inside one section touches none of them. */
   function reflectOutlineSelection() {
     const focus = ed.selection?.focus;
     let node = focus?.node ?? "";
-    if (focus && ed.doc && !ed.outlineBody.querySelector(`.outline-item[data-node="${CSS.escape(node)}"]`)) {
+    if (focus && ed.doc && !headingSet.has(node)) {
       const caret = ed.doc.caretRect(focus.node, focus.offset ?? 0);
-      if (caret.length >= 3) node = outlineSectionAt(headingPlaces(), caret[0], caret[2]) ?? "";
+      node = "";
+      if (caret.length >= 3) {
+        node = outlineSectionAtBy(headings.length, (i) => {
+          const box = ed.doc.caretRect(headings[i], 0);
+          return box.length >= 3 ? { node: headings[i], page: box[0], y: box[2] } : null;
+        }, caret[0], caret[2]) ?? "";
+      }
     }
+    if (node === shown) return;
+    shown = node;
     reflectOutlineActive(ed.outlineBody, node);
     const current = ed.outlineBody.querySelector('.outline-item[aria-current="location"]');
     current?.scrollIntoView?.({ block: "nearest" });

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // The dock manager (`docs/184` D4 as amended 2026-11-06, PROPOSAL D-10;
-// `docs/109` UX-064, audit DIALOGS-01/02/04/05).
+// `docs/109` UX-055, audit DIALOGS-01/02/04/05).
 //
 // ONE SLOT PER SIDE. Word's task panes share one dock, ONLYOFFICE's RightMenu is
 // one panel whose content changes, and Google Docs shows one panel per edge: in
@@ -110,8 +110,9 @@ function saveWidth(side, width, view) {
 
 /**
  * Starts the manager. `ed` is the editor context (docs/177); the manager needs
- * `reviewSidebar`, `toggleReview`, `reviewSidebarPreference`,
- * `reanchorPageOverlays` and `focusEditorSurface` from it.
+ * `reviewSidebar`, `toggleReview`, `displaceReview`, `restoreReview`,
+ * `reviewSidebarPreference`, `reanchorPageOverlays` and `focusEditorSurface`
+ * from it.
  *
  * @returns {{ panels: () => HTMLElement[], visible: (side?: string) => HTMLElement[], close: (panel: HTMLElement) => void, width: (side: string) => number, setWidth: (side: string, rem: number) => void }}
  */
@@ -139,17 +140,27 @@ export function startDockManager(ed, { doc = document, view = window } = {}) {
       .filter((b) => !b.hasAttribute("aria-haspopup") && b.closest(".side-panel") === panel)
       .pop() ?? null;
 
-  /** Review displaced by a right panel, with the preference it had, so it comes
-   *  back as it was when that panel closes. `undefined` = not displaced. */
+  /** The comment column as a right panel found it — its preference, the open
+   *  card and the composer with its typed text (`displaceReview`) — so it comes
+   *  back exactly as it was when that panel closes. `undefined` = not displaced. */
   let displacedReview;
 
   function close(panel, { displaced = false } = {}) {
     if (!isShown(panel)) return;
     if (panel === ed.reviewSidebar) {
-      if (displaced) displacedReview = ed.reviewSidebarPreference ?? null;
-      ed.toggleReview?.(false);
-      // `toggleReview` hides the column on its next render; hide it now so the
-      // slot is free in this tick, not one frame later.
+      // Displacement is NOT the person closing the column: `toggleReview(false)`
+      // would end the composer and send focus to the rail's Comments button.
+      // A displaced column keeps everything, and focus stays where it was.
+      if (displaced && ed.displaceReview) {
+        // A second displacement (one right panel replacing another) keeps the
+        // state saved by the first: the column was already hidden then.
+        const saved = ed.displaceReview();
+        if (displacedReview === undefined) displacedReview = saved;
+      } else {
+        ed.toggleReview?.(false);
+      }
+      // The column hides on its next render; hide it now so the slot is free in
+      // this tick, not one frame later.
       panel.hidden = true;
       ed.viewportEl?.classList.remove("has-review-sidebar");
       return;
@@ -222,9 +233,10 @@ export function startDockManager(ed, { doc = document, view = window } = {}) {
       }
       // The comment column comes back when the right panel that displaced it goes.
       if (displacedReview !== undefined && closed.some((p) => dockSide(p) === "right") && visible("right").length === 0) {
-        const preference = displacedReview;
+        const saved = displacedReview;
         displacedReview = undefined;
-        ed.reviewSidebarPreference = preference;
+        if (ed.restoreReview) ed.restoreReview(saved);
+        else ed.reviewSidebarPreference = saved?.preference ?? null;
         ed.reanchorPageOverlays?.();
       } else if (opened.has(ed.reviewSidebar) && isShown(ed.reviewSidebar)) {
         // The column took the slot itself; nothing is waiting to come back.

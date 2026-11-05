@@ -122,7 +122,7 @@ automatically on insert. Share is hidden without a host that can share; the head
 only mode switch, at every width including the phone; contextual tabs are hidden until their
 object is selected and drawn in the accent. `e2e/shell-sparse.spec.mjs` exists and holds it.
 
-*Status (2026-11-06, lane L5, `109` UX-064):* Suggesting has no banner any more: the header chip
+*Status (2026-11-06, lane L5, `109` UX-065):* Suggesting has no banner any more: the header chip
 is green and a 2px green rule runs along the top of the canvas, so the page moves 0px on entering
 it (`e2e/review-layout.spec.mjs`). Viewing still swaps the ribbon for the menu bar (audit
 REVIEW-02); keeping the chosen chrome with commands disabled in place is not built.
