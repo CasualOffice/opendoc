@@ -8282,6 +8282,10 @@ body.is-format-painting .page-wrap * {
   overflow: auto;
   position: relative;
   padding: 12px 0 48px;
+  /* The ruler sticks at the scroller's top edge and takes the pointer (audit
+     SHELL-V-01), so anything scrolled into view with block "start" (Go to page,
+     a find match, a page the caret moves to) must stop below it, not under it. */
+  scroll-padding-top: 1.75rem;
   background: var(--bg);
 }
 
