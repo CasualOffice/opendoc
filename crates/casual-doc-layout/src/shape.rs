@@ -1185,8 +1185,14 @@ impl ParleyShaper {
                 // shaper's on-by-default `kern` feature is switched off
                 // explicitly; leaving it on narrowed every line of unkerned
                 // documents (FID-L-15, FID-L-26, FID-L-27(b)).
+                //
+                // `w:kern w:val="0"` is kerning OFF, not "kern from 0pt": it is
+                // how a style or run switches off kerning inherited from
+                // docDefaults (Word writes it when "Kerning for fonts" is
+                // unchecked; LibreOffice's writerfilter maps it to
+                // auto-kerning = val != 0), and RTF `\kerning0` lands here too.
                 let kern = run.decoration.kerning_half_points.is_some_and(|threshold| {
-                    i64::from(run.size.raw()) >= i64::from(threshold) * 10
+                    threshold > 0 && i64::from(run.size.raw()) >= i64::from(threshold) * 10
                 });
                 settings.push(format!("'kern' {}", u8::from(kern)));
                 if let Some(groups) = run.decoration.ligatures {
@@ -1945,14 +1951,16 @@ mod tests {
                 .map(|g| g.advance.raw())
                 .sum::<i32>()
         };
-        let kern = shape("AVAV", None, Some(0), 100);
+        // A 1pt threshold (`w:kern w:val="2"`) kerns every practical size;
+        // `w:val="0"` is kerning off (see the shaping-feature comment).
+        let kern = shape("AVAV", None, Some(2), 100);
         let no_kern = shape("AVAV", None, Some(65534), 100);
         assert!(
             width(&kern) < width(&no_kern),
             "the threshold must enable font kerning"
         );
         let below = shape("AVAV", None, Some(65534), 200);
-        let above = shape("AVAV", None, Some(0), 200);
+        let above = shape("AVAV", None, Some(2), 200);
         assert!(
             width(&above) < width(&below),
             "horizontal scale must not change threshold units"
@@ -1980,10 +1988,16 @@ mod tests {
         };
         let absent = width(None);
         let unreachable = width(Some(65534));
+        let switched_off = width(Some(0));
         let kerned = width(Some(2));
         assert_eq!(
             absent, unreachable,
             "no w:kern means no kerning (unkerned sum of advances)"
+        );
+        assert_eq!(
+            switched_off, absent,
+            "w:kern w:val=0 switches kerning off (a style overriding docDefaults); \
+             it is not a 0pt threshold that kerns every size"
         );
         assert!(kerned < absent, "w:kern=2 at 11pt kerns the AV/To pairs");
     }

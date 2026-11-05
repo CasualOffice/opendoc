@@ -34,6 +34,8 @@ use casual_doc_model::v1::{
     PageSize, Paragraph, ParagraphProperties, Run, RunProperties, SectionBoundary, SectionColumns,
     SectionId,
 };
+// Own line (anti-conflict): the contextual-spacing endnote case.
+use casual_doc_model::v1::Spacing;
 
 fn node(id: u64) -> NodeId {
     NodeId::from_parts(id, 1).unwrap()
@@ -611,16 +613,24 @@ fn endnote_num_fmt_applies_to_the_reference_marker() {
 /// had no label) and had no separator above it. With no `w:numFmt` anywhere the
 /// endnote is numbered in Word's default lower-case Roman.
 fn one_endnote_document() -> Document {
+    one_endnote_document_with(ParagraphProperties::default())
+}
+
+/// [`one_endnote_document`] with `properties` on BOTH the last body paragraph
+/// and the endnote's paragraph.
+fn one_endnote_document_with(properties: ParagraphProperties) -> Document {
     let endnote = NoteId::new(node(580));
+    let mut body = note_body(730, NoteKind::Endnote, "endnote text");
+    if let BlockNode::Paragraph(paragraph) = &mut body.blocks[0] {
+        paragraph.properties = properties.clone().into();
+    }
     let mut definitions = Definitions::default();
-    definitions
-        .endnotes
-        .insert(endnote, note_body(730, NoteKind::Endnote, "endnote text"));
+    definitions.endnotes.insert(endnote, body);
     definitions.sections.push(section(480));
     document(
         vec![
             reference(270, endnote, NoteKind::Endnote),
-            paragraph(280, "last body paragraph"),
+            paragraph_with(280, vec![run(281, "last body paragraph")], properties),
         ],
         definitions,
     )
@@ -643,10 +653,32 @@ fn an_appended_endnote_body_prints_its_own_number_in_the_default_roman() {
 
 #[test]
 fn the_endnote_block_is_preceded_by_a_separator_rule() {
+    assert_separator_between_body_and_endnote(&one_endnote_document());
+}
+
+/// The separator stands between the body and the endnotes, so the last body
+/// paragraph and the first endnote paragraph are not contextual neighbours,
+/// even with the same style and `w:contextualSpacing` on both. Collapsing
+/// across it zeroed the endnote's space before, which carries the separator
+/// band, and the rule then painted over the last body paragraph.
+#[test]
+fn contextual_spacing_does_not_collapse_the_endnote_separator() {
+    assert_separator_between_body_and_endnote(&one_endnote_document_with(ParagraphProperties {
+        contextual_spacing: Some(true),
+        spacing: Some(Spacing {
+            before_twips: Some(240),
+            after_twips: Some(240),
+            ..Spacing::default()
+        }),
+        ..ParagraphProperties::default()
+    }));
+}
+
+fn assert_separator_between_body_and_endnote(document: &Document) {
     use casual_doc_layout::compose::compose_page;
     use casual_doc_layout::display::PaintItem;
     let shaper = ParleyShaper::new();
-    let layout = paginate_document(&one_endnote_document(), &shaper);
+    let layout = paginate_document(document, &shaper);
     let page = &layout.pages[0];
     let top_of = |id: u64| {
         page.placed

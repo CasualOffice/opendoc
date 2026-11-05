@@ -1893,6 +1893,15 @@ fn flow_blocks_into<S: GalleySink + ?Sized>(
             endnote_separator_due = !in_endnotes;
             in_endnotes = true;
         }
+        if endnote_separator_due {
+            // The separator stands between the body and the endnotes, so the two
+            // are not contextual neighbours: `w:contextualSpacing` must not
+            // collapse across it. It would also zero the first endnote's space
+            // before, which is where `add_endnote_separator` puts the separator
+            // band, and the rule (placed relative to that band) would then paint
+            // over the last body paragraph.
+            prev_para = None;
+        }
         if marks == BlockMarks::Record {
             galley.mark_block();
             // See `FlowCtx::resume_snapshot`. `len - 2` and not `len - 1`

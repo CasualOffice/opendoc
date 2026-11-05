@@ -584,10 +584,24 @@ impl ColPaginator {
 
             let allow_split = !is_keep_group || !group_fits_col;
             let last = group.len() - 1;
+            let chained_tail = last > 0;
+            // The chain's last member was counted by its head lines only, so it
+            // splits like any paragraph. But in an unequal-width section a
+            // paragraph that does not fit is moved WHOLE to the next column
+            // (`would_advance_whole`); for the tail that would leave the chain
+            // (the heading) alone at this column's foot. So decide it for the
+            // group: when the tail would move whole, the whole group moves
+            // first, as it did before keep-with-next counted head lines.
+            if chained_tail && group_fits_col && !self.at_column_start() {
+                let chain_h: i32 = group[..last].iter().map(|f| f.height().raw()).sum();
+                let tail_top = self.y + Twip(chain_h);
+                if self.would_advance_whole(run, i + last, &group[last], tail_top) {
+                    self.advance();
+                }
+            }
             for offset in 0..group.len() {
-                // The chain's last member was counted by its head lines only, so
-                // it splits like any paragraph (`place` still honours keepLines).
-                self.place(run, i + offset, allow_split || (offset == last && last > 0));
+                let tail = chained_tail && offset == last;
+                self.place(run, i + offset, allow_split || tail, !tail);
             }
             i = j;
         }
@@ -680,19 +694,25 @@ impl ColPaginator {
         self.flush_page();
     }
 
-    /// Places fragment `idx`, splitting a paragraph or table row across columns
-    /// when `allow_split` and it does not fit whole.
-    fn place(&mut self, run: &SectionRun, idx: usize, allow_split: bool) {
-        let gidx = self.base + idx as u32;
-        self.at = FlowPos::at(gidx);
-        let mut fragment = run.fragment_for_column(self.col, idx).clone();
-
-        // A soft split can otherwise carry lines shaped for a wide column into the
-        // following narrow column. Until ordinary split continuations have a
-        // resumable shaping cursor, keep a paragraph whole when the next
-        // different-width column can contain its width-specific layout. This
-        // preserves every model byte while keeping placement and shaping widths
-        // identical.
+    /// Whether placing paragraph `fragment` (entry `idx`) with its top at `y` in
+    /// the current column would move it whole to the next column rather than
+    /// split it: a multi-line, splittable paragraph that does not fit below `y`,
+    /// whose next column has a different width and holds its width-specific
+    /// layout whole.
+    ///
+    /// A soft split can otherwise carry lines shaped for a wide column into the
+    /// following narrow column. Until ordinary split continuations have a
+    /// resumable shaping cursor, a paragraph is kept whole when the next
+    /// different-width column can contain its width-specific layout. This
+    /// preserves every model byte while keeping placement and shaping widths
+    /// identical. The caller checks that the paragraph may split at all.
+    fn would_advance_whole(
+        &self,
+        run: &SectionRun,
+        idx: usize,
+        fragment: &BlockFragment,
+        y: Twip,
+    ) -> bool {
         let next_col = if self.col + 1 < self.columns.len() {
             self.col + 1
         } else {
@@ -703,21 +723,34 @@ impl ColPaginator {
         } else {
             self.content.size.height
         };
-        let advance_whole = matches!(
-            &fragment,
+        matches!(
+            fragment,
             BlockFragment::Paragraph {
                 lines,
                 break_control,
                 ..
-            } if !self.at_column_start()
-                && allow_split
+            } if y.raw() != self.band_top.raw()
                 && !break_control.keep_lines
                 && lines.lines.len() > 1
                 && !lines.lines.iter().any(|line| line.page_break_after)
-                && fragment.height().raw() > self.remaining()
+                && fragment.height().raw() > self.content.bottom().raw() - y.raw()
                 && self.columns[next_col].width != self.column().width
                 && run.fragment_for_column(next_col, idx).height() <= next_capacity
-        );
+        )
+    }
+
+    /// Places fragment `idx`, splitting a paragraph or table row across columns
+    /// when `allow_split` and it does not fit whole. `may_advance_whole` is false
+    /// for the last member of a keep-with-next chain: its group has already been
+    /// moved if it had to be, and moving it alone would strand the chain.
+    fn place(&mut self, run: &SectionRun, idx: usize, allow_split: bool, may_advance_whole: bool) {
+        let gidx = self.base + idx as u32;
+        self.at = FlowPos::at(gidx);
+        let mut fragment = run.fragment_for_column(self.col, idx).clone();
+
+        let advance_whole = allow_split
+            && may_advance_whole
+            && self.would_advance_whole(run, idx, &fragment, self.y);
         if advance_whole {
             self.advance();
             fragment = run.fragment_for_column(self.col, idx).clone();

@@ -24,6 +24,8 @@ use casual_doc_model::v1::{
     BlockNode, Definitions, Document, InlineNode, PageMargins, PageSize, Paragraph,
     ParagraphProperties, Run, RunProperties, SectionBoundary, SectionColumns, SectionId,
 };
+// Own line (anti-conflict): unequal-width columns.
+use casual_doc_model::v1::ColumnDef;
 
 const HEADING: u64 = 9_000;
 const BODY: u64 = 9_010;
@@ -195,4 +197,109 @@ fn keep_with_next_keeps_the_heading_with_the_first_lines_of_its_paragraph() {
 #[test]
 fn keep_with_next_keeps_the_heading_with_the_first_lines_in_a_sectioned_document() {
     check(true);
+}
+
+/// Two unequal columns, narrow then wide (Word's "Left" preset shape).
+fn unequal_columns() -> SectionColumns {
+    SectionColumns {
+        count: 2,
+        space_twips: None,
+        separator: None,
+        equal_width: Some(false),
+        columns: vec![
+            ColumnDef {
+                width_twips: 3_163,
+                space_twips: Some(720),
+            },
+            ColumnDef {
+                width_twips: 5_477,
+                space_twips: None,
+            },
+        ],
+    }
+}
+
+/// `fillers` one-line paragraphs, a keepNext heading and a short multi-line
+/// paragraph, in a section of two unequal columns.
+fn unequal_column_document(fillers: u64) -> Document {
+    let mut body: Vec<BlockNode> = (0..fillers)
+        .map(|i| paragraph(10 + i * 2, "Filler.", ParagraphProperties::default()))
+        .collect();
+    body.push(paragraph(
+        HEADING,
+        "Terms",
+        ParagraphProperties {
+            keep_next: Some(true),
+            ..ParagraphProperties::default()
+        },
+    ));
+    body.push(paragraph(
+        BODY,
+        &"Payment is due within thirty days of the invoice. ".repeat(8),
+        ParagraphProperties::default(),
+    ));
+    let mut definitions = Definitions::default();
+    let mut section = section();
+    section.columns = unequal_columns();
+    definitions.sections.push(section);
+    Document::new(node(2), body, definitions).expect("valid document")
+}
+
+/// (page index, x) of `placed` fragment `id`'s first placement.
+fn first_column_of(layout: &PaginatedLayout, id: u64) -> (usize, i32) {
+    layout
+        .pages
+        .iter()
+        .enumerate()
+        .find_map(|(index, page)| {
+            page.placed
+                .iter()
+                .find(|placed| placed.fragment.node_id() == node(id))
+                .map(|placed| (index, placed.rect.origin.x.raw()))
+        })
+        .expect("the fragment is placed")
+}
+
+/// `109` FID-L-29 in a section whose columns differ in width. A paragraph that
+/// does not fit the space left is moved WHOLE to a next column of a different
+/// width (its lines are shaped per column width), so counting only the
+/// paragraph's head lines for the keep group must not let the paragraph move
+/// on alone: the heading would be stranded at the narrow column's foot. The
+/// guarantee: wherever the paragraph starts, its keepNext heading is in the
+/// same column, and the paragraph (short enough for the wide column) is not
+/// split across the two widths. Swept over every filler length that keeps the fillers in the
+/// first column, so it holds at every position in it.
+#[test]
+fn keep_with_next_keeps_the_heading_in_its_paragraphs_column_across_unequal_columns() {
+    let shaper = ParleyShaper::new();
+    let mut group_moved_together = false;
+    for fillers in 20..44 {
+        let layout = paginate_document(&unequal_column_document(fillers), &shaper);
+        let heading = first_column_of(&layout, HEADING);
+        let body = first_column_of(&layout, BODY);
+        assert_eq!(
+            heading, body,
+            "{fillers} fillers: the heading (page {}, x {}) is not in the column where \
+             its paragraph starts (page {}, x {})",
+            heading.0, heading.1, body.0, body.1
+        );
+        // And the paragraph is not soft-split into the other-width column: it
+        // fits the wide column whole, and a split there would carry lines
+        // shaped for the narrow width.
+        let pieces = placements(&layout, BODY).len();
+        assert_eq!(
+            pieces, 1,
+            "{fillers} fillers: the paragraph is split into {pieces} pieces across \
+             columns of different widths, though the wide column holds it whole"
+        );
+        let first_filler = first_column_of(&layout, 10);
+        if heading.0 == first_filler.0 && heading.1 != first_filler.1 {
+            group_moved_together = true;
+        }
+    }
+    assert!(
+        group_moved_together,
+        "precondition: some filler length leaves too little of the narrow column for \
+         the paragraph, so the heading and paragraph move to the wide column"
+    );
 }

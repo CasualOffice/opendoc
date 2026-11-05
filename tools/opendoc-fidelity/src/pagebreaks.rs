@@ -35,7 +35,7 @@ use casual_doc_layout::model::ModelPos;
 use casual_doc_layout::page::PaginatedLayout;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_model::NodeId;
-use casual_doc_model::v1::{BlockNode, Document, InlineNode};
+use casual_doc_model::v1::{BlockNode, Document, InlineNode, Paragraph};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
 use quick_xml::Reader;
 use quick_xml::events::Event;
@@ -140,7 +140,7 @@ pub fn compare_parts(
         .skip(1)
         .filter_map(|page| page.placed.first())
         .filter_map(|placed| first_position(&placed.fragment))
-        .filter_map(|pos| our_start(document, &index, pos))
+        .filter_map(|pos| our_start(&index, pos))
         .collect();
     Ok(Comparison {
         producer,
@@ -226,15 +226,17 @@ fn app_properties(xml: &[u8]) -> Result<(Option<String>, Option<usize>), Box<dyn
     Ok((application, pages))
 }
 
-/// Every flow paragraph's document-order index, walking tables and content
-/// controls in the order `document.xml` lists them.
-fn paragraph_index(document: &Document) -> HashMap<NodeId, usize> {
-    fn walk(blocks: &[BlockNode], out: &mut HashMap<NodeId, usize>) {
+/// Every flow paragraph's document-order index and the paragraph itself, walking
+/// tables and content controls in the order `document.xml` lists them. Built
+/// once per comparison, so each page start is an O(1) lookup (plus its own
+/// paragraph's text), not a walk of the body per page. O(document size).
+fn paragraph_index(document: &Document) -> HashMap<NodeId, (usize, &Paragraph)> {
+    fn walk<'a>(blocks: &'a [BlockNode], out: &mut HashMap<NodeId, (usize, &'a Paragraph)>) {
         for block in blocks {
             match block {
                 BlockNode::Paragraph(paragraph) => {
                     let next = out.len();
-                    out.insert(paragraph.id, next);
+                    out.insert(paragraph.id, (next, paragraph));
                 }
                 BlockNode::Table(table) => {
                     for row in &table.rows {
@@ -265,14 +267,11 @@ fn first_position(fragment: &BlockFragment) -> Option<ModelPos> {
 }
 
 /// `pos` as a page start, its byte offset turned into characters of the
-/// paragraph's run text.
-fn our_start(
-    document: &Document,
-    index: &HashMap<NodeId, usize>,
-    pos: ModelPos,
-) -> Option<PageStart> {
-    let paragraph = *index.get(&pos.node)?;
-    let text = paragraph_text(document, pos.node).unwrap_or_default();
+/// paragraph's run text. O(1) lookup plus O(that paragraph).
+fn our_start(index: &HashMap<NodeId, (usize, &Paragraph)>, pos: ModelPos) -> Option<PageStart> {
+    let &(paragraph, node) = index.get(&pos.node)?;
+    let mut text = String::new();
+    inline_text(&node.inlines, &mut text);
     let bytes = usize::try_from(pos.offset)
         .unwrap_or(usize::MAX)
         .min(text.len());
@@ -281,38 +280,6 @@ fn our_start(
         .take_while(|(at, _)| *at < bytes)
         .count();
     Some(PageStart { paragraph, offset })
-}
-
-/// The concatenated run text of paragraph `id`, wherever it sits.
-fn paragraph_text(document: &Document, id: NodeId) -> Option<String> {
-    fn find(blocks: &[BlockNode], id: NodeId) -> Option<String> {
-        for block in blocks {
-            match block {
-                BlockNode::Paragraph(paragraph) if paragraph.id == id => {
-                    let mut text = String::new();
-                    inline_text(&paragraph.inlines, &mut text);
-                    return Some(text);
-                }
-                BlockNode::Table(table) => {
-                    for row in &table.rows {
-                        for cell in &row.cells {
-                            if let Some(text) = find(&cell.blocks, id) {
-                                return Some(text);
-                            }
-                        }
-                    }
-                }
-                BlockNode::Sdt(sdt) => {
-                    if let Some(text) = find(&sdt.blocks, id) {
-                        return Some(text);
-                    }
-                }
-                _ => {}
-            }
-        }
-        None
-    }
-    find(document.body(), id)
 }
 
 /// The run text of `inlines`, hyperlinks included, as layout addresses it.
