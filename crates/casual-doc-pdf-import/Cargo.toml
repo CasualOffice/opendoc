@@ -21,7 +21,7 @@ skrifa = "0.43"
 # only to enable `agl`: the Adobe Glyph List, which builds the Unicode cmap of
 # a wrapped CFF or converted Type1 program from its glyph names (`fonts.rs`).
 # No new crate or version enters the tree.
-read-fonts = { version = "0.40", default-features = false, features = ["std", "agl"] }
+read-fonts = { version = "0.43", default-features = false, features = ["std", "agl"] }
 # What a finished import becomes for the editor's main module (`wire`,
 # `docs/182` §17a). No dependencies.
 casual-doc-pdf-wire.workspace = true

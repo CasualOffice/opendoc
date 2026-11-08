@@ -15,8 +15,8 @@ publish = false
 # Writer-produced corpus: fixture DOCX -> registry import -> the PDF exporter.
 casual-doc-io.workspace = true
 # The candidate native-evidence provider (docs/182 §3.1). Apache-2.0 OR MIT.
-hayro-syntax = "0.8.0"
-hayro-interpret = { version = "0.8.0", default-features = false }
+hayro-syntax = "0.9.0"
+hayro-interpret = { version = "0.9.0", default-features = false }
 # The reader's face and CMap resolvers (`docs/182` §17a), with the native
 # fallbacks a headless host uses.
 casual-doc-pdf-read = { workspace = true, features = ["liberation-faces", "embedded-cmaps"] }
