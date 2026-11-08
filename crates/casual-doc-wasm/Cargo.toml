@@ -87,7 +87,7 @@ serde_json.workspace = true
 wasm-bindgen = "0.2"
 # Word's protection-password verifier is SHA-512 (`review_protection.rs`). Already in the
 # lock through `casual-doc-ocr`; no default features, so nothing but the hashes is linked.
-sha2 = { version = "0.10.9", default-features = false }
+sha2 = { version = "0.11.1", default-features = false }
 
 [dev-dependencies]
 casual-doc-pdf.workspace = true
