@@ -14,12 +14,12 @@ publish = false
 [dependencies]
 # The native-evidence provider chosen in docs/182 §3.1 and measured in P0
 # (fixtures/pdf/measurement.json). Apache-2.0 OR MIT, pure Rust, WASM-clean.
-hayro-syntax = "0.8.0"
+hayro-syntax = "0.9.0"
 # Default features OFF (`docs/182` §17a): they bundle Foxit's standard-14
 # faces (320 KB) and Adobe's predefined CMaps (256 KB plus a Brotli decoder).
 # `provision` supplies both from the host instead; the two features below turn
 # the in-tree fallbacks on for native hosts.
-hayro-interpret = { version = "0.8.0", default-features = false }
+hayro-interpret = { version = "0.9.0", default-features = false }
 kurbo = "0.13"
 # Bounded inflate for the decompression-bomb pre-pass (docs/21 PDF limits).
 flate2 = "1.1"
