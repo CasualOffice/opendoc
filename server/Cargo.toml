@@ -31,7 +31,7 @@ serde.workspace = true
 # asymmetric key so the relay holds only the public half. EdDSA over Ed25519 (RFC 8037): one
 # algorithm, no parameters to negotiate, and no RSA padding or ECDSA nonce to get wrong. Only the
 # relay links these; nothing under `crates/` does, so no embedder's bundle carries them.
-base64 = { version = "0.22.1", default-features = false, features = ["alloc"] }
+base64 = { version = "0.23.1", default-features = false, features = ["alloc"] }
 ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std"] }
 serde_json.workspace = true
 
