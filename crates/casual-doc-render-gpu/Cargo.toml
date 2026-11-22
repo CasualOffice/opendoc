@@ -38,7 +38,7 @@ sparse-cpu = ["dep:vello_cpu"]
 casual-doc-layout.workspace = true
 casual-doc-render.workspace = true
 casual-doc-model.workspace = true
-skrifa = "0.43"
+skrifa = "0.46"
 vello_common = { version = "0.2", default-features = false, features = ["std"] }
 vello_cpu = { version = "0.2", optional = true, default-features = false, features = ["std", "u8_pipeline"] }
 vello_hybrid = { version = "0.2", optional = true, default-features = false, features = ["wgpu", "wgpu_default"] }

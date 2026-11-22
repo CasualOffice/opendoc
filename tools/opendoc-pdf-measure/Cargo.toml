@@ -27,7 +27,7 @@ peak_alloc = "0.3.0"
 serde_json.workspace = true
 # Used only to ask whether an embedded program is an sfnt with a Unicode cmap
 # (docs/182 G-1); already in the tree for the renderer.
-skrifa = "0.43"
+skrifa = "0.46"
 # Synthetic corpus: Flate streams and one baseline JPEG.
 flate2 = "1.1"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
