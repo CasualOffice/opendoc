@@ -85,7 +85,12 @@ const highlight = (page) =>
  *  every assertion below is written against. A click places a caret where the
  *  pointer already is, so nothing moves. */
 async function clearSelection(page, at) {
-  await page.mouse.click(at.x, at.y);
+  // Not EXACTLY where it is: a press within 500 ms and 4 px of a double click
+  // is the third press of a triple click (`unit_selection.mjs`
+  // MULTI_CLICK_MS / MULTI_CLICK_PX, the platform rule, UX-059), which selects
+  // the paragraph instead of collapsing. Ten pixels along the same line is a
+  // fresh single click and still moves nothing.
+  await page.mouse.click(at.x + 10, at.y);
   await expect.poll(() => highlight(page)).toBeNull();
 }
 

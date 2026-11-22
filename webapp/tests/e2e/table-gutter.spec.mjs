@@ -406,8 +406,13 @@ test.describe("touch", () => {
     await page.touchscreen.tap(box.x + cell.x + cell.w / 2, box.y + cell.y + cell.h * 1.5);
     const strip = page.locator(".overlay .table-row-strip");
     await expect(strip).toHaveCount(1);
-    const width = await strip.evaluate((el) => el.getBoundingClientRect().width);
-    expect(width, "a strip a finger can hit is at least 24 CSS px").toBeGreaterThanOrEqual(24);
+    // Polled, not read once: the strip can exist for a frame before the arming
+    // tap's re-layout gives it its finger width (CI read 0 once, then passed).
+    await expect
+      .poll(() => strip.evaluate((el) => el.getBoundingClientRect().width), {
+        message: "a strip a finger can hit is at least 24 CSS px",
+      })
+      .toBeGreaterThanOrEqual(24);
 
     // …and a second tap ON the strip selects that row.
     await page.touchscreen.tap(box.x + cell.x - 12, box.y + cell.y + cell.h * 1.5);

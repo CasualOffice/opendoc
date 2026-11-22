@@ -404,12 +404,22 @@ test("the object right-click menu carries wrap, position, arrange and rotate", a
   await page.mouse.click(box.x + box.width * 0.14, box.y + box.height * 0.11, { button: "right" });
   await expect(page.locator(".editor-context-menu")).toBeVisible();
 
+  // docs/184 D-12 (audit CANVAS-07): the right-click menu is short, as Word's
+  // picture menu is. Wrap text stays at the top level; Position, Align and
+  // Rotate fold under ONE Arrange ▸ with the order-and-group rows. The
+  // guarantee is that every one of them is still reachable from this menu.
   const labels = await page.locator(".editor-context-menu .menu-item").allTextContents();
-  for (const expected of ["Wrap text", "Position", "Arrange", "Rotate"]) {
+  for (const expected of ["Wrap text", "Arrange"]) {
     expect(
       labels.some((text) => text.includes(expected)),
       `no object-menu row for "${expected}" — found: ${labels.join(" | ")}`,
     ).toBe(true);
+  }
+  await page.locator('.editor-context-menu [data-command-id="object.arrange"]').hover();
+  const arrange = page.locator(".editor-submenu").last();
+  await expect(arrange).toBeVisible();
+  for (const id of ["object.position", "object.align", "object.rotate"]) {
+    await expect(arrange.locator(`[data-command-id="${id}"]`), `Arrange ▸ carries ${id}`).toBeVisible();
   }
 
   expect(consoleErrors).toEqual([]);

@@ -170,6 +170,13 @@ test("Casual AI writes into a shared room as its own participant: its caret move
     expect(await visibleText(b)).toBe(await visibleText(a));
 
     // The suggestion is the agent principal's, on Ada's screen and on Bob's.
+    // One panel per side (`dock_manager.mjs`, docs/184 D-10): on Ada's screen
+    // the assistant holds the right slot, so her comment column is displaced
+    // while it is open. She brings it back as a person would, from the rail,
+    // which takes the slot from the add-in panel.
+    await expect(a.locator("#reviewSidebar")).toBeHidden();
+    await a.locator("#railReview").click();
+    await expect(a.locator("#reviewSidebar")).toBeVisible();
     for (const page of [a, b]) {
       const card = page.locator("#reviewSidebar .review-margin-card.review-margin-insertion").filter({ hasText: "ALPHA" });
       await expect(card).toBeVisible({ timeout: 20_000 });

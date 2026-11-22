@@ -37,7 +37,10 @@ async function commentNewLine(page, line, note) {
   await page.keyboard.press("Enter");
   await page.keyboard.insertText(line);
   await page.keyboard.press("Shift+Home");
-  await page.locator("#selComment").click();
+  // A keyboard selection does not earn the floating mini toolbar (Word's rule,
+  // audit CANVAS-06, editor_selection_toolbar.mjs), so its "Add comment" button
+  // is not the route here; the keyboard's own Add comment chord is.
+  await page.keyboard.press(`${MOD}+Alt+m`);
   const composer = page.getByTestId("review-comment-composer");
   await expect(composer).toBeVisible();
   await composer.fill(note);
@@ -226,7 +229,10 @@ test("typed text in a new comment survives Escape as a Draft", async ({ page }) 
   await page.keyboard.press("Enter");
   await page.keyboard.insertText("Draft anchor line");
   await page.keyboard.press("Shift+Home");
-  await page.locator("#selComment").click();
+  // A keyboard selection does not earn the floating mini toolbar (Word's rule,
+  // audit CANVAS-06, editor_selection_toolbar.mjs), so its "Add comment" button
+  // is not the route here; the keyboard's own Add comment chord is.
+  await page.keyboard.press(`${MOD}+Alt+m`);
   const composer = page.getByTestId("review-comment-composer");
   await composer.fill("half a thought");
   await composer.press("Escape");

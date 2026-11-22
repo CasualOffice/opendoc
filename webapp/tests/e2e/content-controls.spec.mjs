@@ -135,7 +135,9 @@ test("a form role fills only its own fields while the form is protected", async 
   await runControlsMenu(page, "forms.roles");
   const roles = page.locator("#formRolesDialog");
   await expect(roles).toBeVisible();
-  await expect(roles).toContainText("not saved inside the .docx");
+  // The dialog still says roles are not part of the file (#935 shortened the
+  // sentence to `formRoles.descriptionShort`).
+  await expect(roles).toContainText("Not saved in the .docx.");
   await page.locator("#formRolesAdd").click();
   await page.locator("#formRolesList .form-role-name").last().fill("Employee");
   await page.locator("#formRolesAdd").click();

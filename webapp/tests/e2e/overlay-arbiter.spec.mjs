@@ -57,17 +57,19 @@ async function makeLink(page, marker) {
   for (let i = 0; i < marker.length; i += 1) await page.keyboard.press("Shift+ArrowRight");
   const box = await stableBox(page.locator(".overlay .highlight").first());
   await page.keyboard.press(`${process.platform === "darwin" ? "Meta" : "Control"}+k`);
-  await expect(page.locator("#linkDialog")).toBeVisible();
-  await page.locator("#linkUrlInput").fill("https://example.com/arbiter");
-  await page.locator("#linkUrlInput").press("Enter");
-  await expect(page.locator("#linkDialog")).toBeHidden();
+  // ⌘K opens the link popover at the selection, not the modal dialog, which
+  // is now its "More options…" (docs/184 D-13, audit DIALOGS-11).
+  await expect(page.locator("#linkPopover")).toBeVisible();
+  await page.locator("#linkPopoverUrl").fill("https://example.com/arbiter");
+  await page.locator("#linkPopoverUrl").press("Enter");
+  await expect(page.locator("#linkPopover")).toBeHidden();
   return box;
 }
 
 test("a click on a link places the caret and shows only the link card", async ({ page, consoleErrors }) => {
   await gotoEditor(page);
   const link = await makeLink(page, "ARBITERLINK");
-  await page.keyboard.press("ArrowRight"); // collapse the selection the dialog left
+  await page.keyboard.press("ArrowRight"); // collapse the selection the popover left
   await page.mouse.click(link.x + link.width * 0.4, link.y + link.height / 2);
   await expect(page.locator("#linkChip")).toBeVisible();
   // A caret, not a selection of the whole link (CANVAS-06/16).
