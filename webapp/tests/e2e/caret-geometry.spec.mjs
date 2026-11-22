@@ -17,13 +17,14 @@
 //
 // What is asserted below is measured against what is actually painted rather than
 // against constants: a caret is only right relative to the glyphs it sits among.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, overlayBox } from "./fixtures.mjs";
 
-const caretBox = (page) =>
-  page.locator(".overlay .caret").evaluate((el) => {
-    const r = el.getBoundingClientRect();
-    return { x: r.x, y: r.y, height: r.height };
-  });
+// `overlayBox`, not `locator.evaluate`: the caret is redrawn by every overlay
+// paint, and a read that lands on the removed one measures zeros.
+const caretBox = async (page) => {
+  const r = await overlayBox(page, ".overlay .caret");
+  return { x: r.x, y: r.y, height: r.height };
+};
 
 async function caretInBody(page) {
   await clickIntoFirstPage(page);

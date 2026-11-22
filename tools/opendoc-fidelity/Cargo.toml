@@ -31,5 +31,10 @@ serde_json.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 casual-doc-layout = { workspace = true, features = ["system-fonts"] }
 
+[dev-dependencies]
+# The `pagebreaks` tests build a small `.docx` in memory; the same pinned
+# version the package reader uses, so no new crate enters the tree.
+zip.workspace = true
+
 [lints]
 workspace = true

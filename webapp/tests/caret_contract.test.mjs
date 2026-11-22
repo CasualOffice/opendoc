@@ -14,7 +14,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { storyBoundary } from "../src/editor_selection_commands.mjs";
-import { createClickCounter, extendByUnit, isBefore, unitForClickCount, unitRange } from "../src/unit_selection.mjs";
+import { createClickCounter, extendByUnit, isBefore, pressUnitStands, unitForClickCount, unitRange } from "../src/unit_selection.mjs";
 import { shouldFocusOnOpen } from "../src/open_focus.mjs";
 import {
   caretInRtl,
@@ -87,6 +87,37 @@ test("presses are counted on PRESS, because pointerdown carries no click count",
   assert.equal(counter.press(11, 11, 500), 1, "after a triple, Word starts again");
   assert.equal(counter.press(11, 11, 1200), 1, "too slow");
   assert.equal(counter.press(40, 11, 1300), 1, "too far");
+});
+
+test("the browser's click count, once the click brings it, is what the next press counts from", () => {
+  const counter = createClickCounter();
+  counter.press(10, 10, 0);
+  counter.settle(1);
+  assert.equal(counter.press(10, 10, 150), 2);
+  // The browser counted that second press as a new single click (its OS
+  // interval is shorter, or the device said so): the next press is a double,
+  // not a triple.
+  counter.settle(1);
+  assert.equal(counter.press(10, 10, 300), 2);
+  counter.settle(2);
+  assert.equal(counter.press(10, 10, 450), 3);
+});
+
+test("a unit the press guessed is undone when the browser counts fewer clicks, unless a drag grew it", () => {
+  // A click straight after a double-click: the guess says triple, the browser
+  // says 1 (Playwright, and an OS that does not count it on). A caret.
+  assert.equal(pressUnitStands("paragraph", 1, false), false);
+  assert.equal(pressUnitStands("word", 1, false), false);
+  // The browser agrees: the press's unit stands.
+  assert.equal(pressUnitStands("word", 2, false), true);
+  assert.equal(pressUnitStands("paragraph", 3, false), true);
+  // A different count is handed to the dblclick / triple-click routes.
+  assert.equal(pressUnitStands("paragraph", 2, false), false);
+  assert.equal(pressUnitStands("word", 3, false), false);
+  // A drag already grew it by whole units: the gesture stands (UX-059).
+  assert.equal(pressUnitStands("word", 1, true), true);
+  // No unit, nothing to undo.
+  assert.equal(pressUnitStands(null, 1, false), true);
 });
 
 test("a double press selects by word and a triple press by paragraph", () => {

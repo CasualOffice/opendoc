@@ -3254,6 +3254,7 @@
   "insert.imageFromUrl.keywords": "صورة صور عبر الإنترنت ويب عنوان رابط url تنزيل إنترنت",
   "edit.pasteImage": "لصق كصورة",
   "edit.pasteImage.keywords": "لصق خاص صورة لقطة لقطة شاشة",
+  "editing.tabNotTrackable": "لا يمكن تتبّع حرف الجدولة كاقتراح بعد؛ انتقل إلى التحرير لإدراجه",
   "pictureUrl.downloading": "جارٍ تنزيل الصورة…",
   "pictureUrl.received": "تم تنزيل {size}…",
   "pictureUrl.sizeMb": "{size} م.ب",

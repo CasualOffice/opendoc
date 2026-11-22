@@ -159,6 +159,7 @@ fn text_watermark(state: &PdfSourceState, stamp: &Joined) -> Watermark {
             },
             bold,
             italic,
+            shape_box: None,
         }),
         layout: if record::diagonal(stamp.rotation) {
             WatermarkLayout::Diagonal

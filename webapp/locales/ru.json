@@ -3232,6 +3232,7 @@
   "insert.imageFromUrl.keywords": "рисунок изображение фото онлайн веб адрес ссылка url загрузить интернет",
   "edit.pasteImage": "Вставить как рисунок",
   "edit.pasteImage.keywords": "специальная вставка рисунок снимок скриншот",
+  "editing.tabNotTrackable": "Символ табуляции пока нельзя отслеживать как предложение; переключитесь в режим редактирования, чтобы вставить его",
   "pictureUrl.downloading": "Загрузка рисунка…",
   "pictureUrl.received": "Загружено {size}…",
   "pictureUrl.sizeMb": "{size} МБ",

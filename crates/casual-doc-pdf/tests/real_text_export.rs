@@ -427,6 +427,7 @@ fn a_watermarked_document_exports_a_multiplied_stamp() {
                 },
                 bold: false,
                 italic: false,
+                shape_box: None,
             }),
             layout: WatermarkLayout::Diagonal,
             semi_transparent: true,
@@ -895,6 +896,74 @@ fn display_lists_without_a_document_still_export_a_text_layer() {
     )
     .expect("export");
     assert_eq!(extracted_text(&export).trim(), "plain words");
+}
+
+/// Issues #947/#950: a run whose face has no bold (or no italic) carries the
+/// shaper's synthesis verdict, and the PDF draws it emboldened (fill-then-stroke
+/// text, `2 Tr`) and sheared (a skewed text matrix) while staying ONE copy of
+/// real, extractable text. A run without the verdict keeps plain fill text.
+#[test]
+fn synthetic_bold_and_italic_draw_as_stroked_and_sheared_real_text() {
+    let document = document_in_font("Carlito", "faux bold");
+    let shaper = ParleyShaper::new();
+    let laid_out = paginate_document(&document, &shaper);
+    let export_with = |bold: bool, oblique: bool| {
+        let lists: Vec<_> = laid_out
+            .pages
+            .iter()
+            .map(|page| {
+                let mut list = compose_page(page);
+                for item in &mut list.items {
+                    if let PaintItem::Glyphs { run } = item {
+                        run.decoration.effects.synthetic_bold = bold;
+                        run.decoration.effects.synthetic_oblique = oblique;
+                    }
+                }
+                (page.page_size, list)
+            })
+            .collect();
+        let pages: Vec<PdfPage<'_>> = lists
+            .iter()
+            .map(|(size, list)| PdfPage {
+                width: size.width,
+                height: size.height,
+                list,
+            })
+            .collect();
+        let export = write_pdf(
+            &pages,
+            &casual_doc_pdf::BundledFontSource,
+            &NoMediaSource,
+            &PdfExportOptions::default(),
+        )
+        .expect("export");
+        let pdf = inspect::parse(&export.bytes).unwrap();
+        let page = &pdf.pages()[0];
+        let stream_bytes = pdf.stream_data(pdf.get(page, "Contents").unwrap()).unwrap();
+        (
+            String::from_utf8_lossy(&stream_bytes).into_owned(),
+            extracted_text(&export),
+        )
+    };
+    let (plain, plain_text) = export_with(false, false);
+    assert!(!plain.contains("2 Tr"), "plain text is fill-only");
+    assert!(plain.contains("1 0 0 1 "), "plain text is upright");
+    let (bold, bold_text) = export_with(true, false);
+    assert!(
+        bold.contains("2 Tr"),
+        "synthetic bold strokes the text:\n{bold}"
+    );
+    assert!(
+        bold.contains("0 Tr"),
+        "the render mode is restored after the run"
+    );
+    let (oblique, _) = export_with(false, true);
+    assert!(
+        oblique.contains("1 0 0.25 1 "),
+        "synthetic italic shears the text matrix:\n{oblique}"
+    );
+    assert_eq!(plain_text.trim(), "faux bold");
+    assert_eq!(bold_text.trim(), "faux bold", "one extractable copy");
 }
 
 /// Every glyph id the document draws, in its only face.

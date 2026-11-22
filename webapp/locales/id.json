@@ -3199,6 +3199,7 @@
   "insert.imageFromUrl.keywords": "gambar foto online web alamat tautan url unduh internet",
   "edit.pasteImage": "Tempel sebagai gambar",
   "edit.pasteImage.keywords": "tempel khusus gambar cuplikan tangkapan layar",
+  "editing.tabNotTrackable": "Karakter tab belum dapat dilacak sebagai saran; beralihlah ke Mengedit untuk menyisipkannya",
   "pictureUrl.downloading": "Mengunduh gambar…",
   "pictureUrl.received": "{size} terunduh…",
   "pictureUrl.sizeMb": "{size} MB",

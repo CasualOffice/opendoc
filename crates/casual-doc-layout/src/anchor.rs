@@ -1057,12 +1057,23 @@ fn place_group_children(
                 let placed_size = rect.size;
                 let (rotation, flip_h, flip_v) =
                     pose.compose_child(text_box.rotation, text_box.flip_h, text_box.flip_v);
+                // The text runs in the geometry's own text rectangle (`a:rect`),
+                // inset further by `bodyPr`'s insets, as Word lays it out: an
+                // ellipse keeps its text off the curve (`109` FID-SH-01).
+                let body_properties = TextBoxBodyProperties {
+                    insets: text_rect_insets(
+                        GeometryRef::of_text_box(text_box, text_box.extent),
+                        rect.size,
+                        text_box.body_properties.insets,
+                    ),
+                    ..text_box.body_properties
+                };
                 let (flowed, size, orientation) = flow_turned_text_box(
                     ctx.document,
                     &text_box.blocks,
                     ctx.shaper,
                     rect.size,
-                    &text_box.body_properties,
+                    &body_properties,
                     rotation.unwrap_or(0),
                 );
                 rect.size = size;
@@ -1309,6 +1320,76 @@ pub(crate) fn geometry_content(
         stroke: shape_stroke(stroke),
         head_end: stroke.and_then(|s| s.head_end),
         tail_end: stroke.and_then(|s| s.tail_end),
+    }
+}
+
+/// `insets` grown by the margin between the shape's box and its geometry's text
+/// rectangle (`a:rect`, ECMA-376 §20.1.9.22), for a frame painted at `frame`.
+///
+/// The rectangle is evaluated in the shape's own space, so each side is taken as
+/// a fraction of the extent and applied to the painted frame, which is what a
+/// group's scale does to the outline as well. A rectangle, a geometry with no
+/// answer at this box, or an extent of zero leaves the insets as authored.
+///
+/// Complexity: one evaluation of the geometry, O(g) in its guides.
+fn text_rect_insets(
+    geometry: GeometryRef<'_>,
+    frame: Size,
+    insets: TextBoxInsets,
+) -> TextBoxInsets {
+    if geometry.is_plain_box() {
+        return insets;
+    }
+    #[allow(clippy::cast_precision_loss)] // see `geometry_content`
+    let (width, height) = (
+        geometry.extent.width_emu as f64,
+        geometry.extent.height_emu as f64,
+    );
+    if width <= 0.0 || height <= 0.0 {
+        return insets;
+    }
+    let resolved = match geometry.custom {
+        Some(custom) => GeometryProgram::compile(geometry.adjustments, custom)
+            .ok()
+            .and_then(|program| program.evaluate(width, height, &[])),
+        None => geometry
+            .geometry
+            .preset_token()
+            .or(geometry.preset)
+            .and_then(preset_shape)
+            .and_then(|preset| {
+                preset
+                    .program()
+                    .evaluate(width, height, geometry.adjustments)
+            }),
+    };
+    let Some(text) = resolved.map(|resolved| resolved.text_rect) else {
+        return insets;
+    };
+    // A side's margin as EMU of the painted frame. Clamped to the box so a text
+    // rectangle authored outside it cannot produce a negative margin.
+    #[allow(clippy::cast_possible_truncation)]
+    let margin = |own: f64, extent: f64, painted: Twip| -> i32 {
+        let fraction = (own / extent).clamp(0.0, 1.0);
+        (fraction * f64::from(painted.raw()) * crate::units::EMU_PER_TWIP as f64)
+            .round()
+            .clamp(0.0, f64::from(i32::MAX)) as i32
+    };
+    TextBoxInsets {
+        left_emu: insets
+            .left_emu
+            .saturating_add(margin(text.left, width, frame.width)),
+        top_emu: insets
+            .top_emu
+            .saturating_add(margin(text.top, height, frame.height)),
+        right_emu: insets
+            .right_emu
+            .saturating_add(margin(width - text.right, width, frame.width)),
+        bottom_emu: insets.bottom_emu.saturating_add(margin(
+            height - text.bottom,
+            height,
+            frame.height,
+        )),
     }
 }
 

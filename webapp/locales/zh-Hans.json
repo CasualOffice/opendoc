@@ -3199,6 +3199,7 @@
   "insert.imageFromUrl.keywords": "图片 照片 在线 网页 地址 链接 url 下载 互联网",
   "edit.pasteImage": "粘贴为图片",
   "edit.pasteImage.keywords": "选择性粘贴 图片 快照 截图",
+  "editing.tabNotTrackable": "制表符暂时无法作为建议跟踪；请切换到编辑模式以插入",
   "pictureUrl.downloading": "正在下载图片…",
   "pictureUrl.received": "已下载 {size}…",
   "pictureUrl.sizeMb": "{size} MB",

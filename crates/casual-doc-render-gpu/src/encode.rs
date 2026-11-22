@@ -30,6 +30,7 @@ use casual_doc_layout::display::{
     PathCommand, ShapeGeometry, ShapeOutline, ShapeTransform,
 };
 use casual_doc_layout::text::{Glyph, GlyphRun};
+use casual_doc_layout::text::{SYNTHETIC_BOLD_STROKE_EM, SYNTHETIC_OBLIQUE_SHEAR};
 use casual_doc_layout::units::{Point, Rect, Twip};
 use casual_doc_model::v1::FillRule;
 use casual_doc_model::v1::{DashStyle, UnderlineStyle};
@@ -479,6 +480,11 @@ impl Encoder<'_> {
                     origin_x: pen_x,
                     baseline_y,
                     scale_x,
+                    shear: if run.decoration.effects.synthetic_oblique {
+                        f64::from(SYNTHETIC_OBLIQUE_SHEAR)
+                    } else {
+                        0.0
+                    },
                 };
                 let settings = DrawSettings::unhinted(Size::new(size_px), LocationRef::default());
                 let _ = outline.draw(settings, &mut pen);
@@ -516,12 +522,24 @@ impl Encoder<'_> {
                 self.canvas.set_transform(self.transform);
             }
             self.canvas.set_paint(Color::from_rgba8(r, g, b, a).into());
+            // Synthetic bold (issues #947/#950), as the CPU raster draws it.
+            let embolden = if effects.synthetic_bold {
+                f64::from(size_px * SYNTHETIC_BOLD_STROKE_EM)
+            } else {
+                0.0
+            };
             if effects.outline {
                 self.canvas
-                    .set_stroke(Stroke::new(f64::from((size_px / 32.0).max(0.5))));
+                    .set_stroke(Stroke::new(f64::from((size_px / 32.0).max(0.5)) + embolden));
                 self.canvas.stroke_path(&path);
             } else {
                 self.canvas.fill_path(&path);
+                if embolden > 0.0 {
+                    self.canvas.set_stroke(
+                        Stroke::new(embolden).with_join(vello_common::kurbo::Join::Round),
+                    );
+                    self.canvas.stroke_path(&path);
+                }
             }
         }
 
@@ -892,13 +910,16 @@ struct KurboPen<'a> {
     origin_x: f64,
     baseline_y: f64,
     scale_x: f64,
+    /// Synthetic-italic shear in font space (y up); `0.0` for an upright run.
+    shear: f64,
 }
 
 impl KurboPen<'_> {
     fn map(&self, x: f32, y: f32) -> (f64, f64) {
+        let (x, y) = (f64::from(x), f64::from(y));
         (
-            self.origin_x + f64::from(x) * self.scale_x,
-            self.baseline_y - f64::from(y),
+            self.origin_x + (x + y * self.shear) * self.scale_x,
+            self.baseline_y - y,
         )
     }
 }

@@ -67,6 +67,36 @@ test("macOS maps Option by word and Command by line, paragraph, and document", (
   );
 });
 
+// HF-103: Option+Up/Down is the macOS paragraph motion and was dead (null).
+// Mutation proof: restoring `|| event.altKey) return null` on the ArrowUp/ArrowDown
+// arms turns every Apple assertion below red with `null`.
+test("macOS Option+Up/Down move by paragraph, and Shift keeps the same intent", () => {
+  for (const shiftKey of [false, true]) {
+    assert.equal(
+      navigationDirection(key("ArrowUp", { altKey: true, shiftKey }), APPLE_PLATFORM),
+      "paragraphUp",
+    );
+    assert.equal(
+      navigationDirection(key("ArrowDown", { altKey: true, shiftKey }), APPLE_PLATFORM),
+      "paragraphDown",
+    );
+  }
+  // Option+Cmd is not a navigation chord, and Alt+Up/Down off Apple stays the
+  // browser's (Alt+Down also opens a content control's chooser, handled earlier).
+  assert.equal(
+    navigationDirection(key("ArrowDown", { altKey: true, metaKey: true }), APPLE_PLATFORM),
+    null,
+  );
+  assert.equal(
+    navigationDirection(key("ArrowDown", { altKey: true }), STANDARD_PLATFORM),
+    null,
+  );
+  assert.equal(
+    navigationDirection(key("ArrowUp", { altKey: true }), STANDARD_PLATFORM),
+    null,
+  );
+});
+
 test("Windows and Linux map Ctrl by word, paragraph, and document", () => {
   assert.equal(
     navigationDirection(key("ArrowLeft", { ctrlKey: true }), STANDARD_PLATFORM),

@@ -77,6 +77,7 @@ use casual_doc_model::v1::{
     FontName, HeaderFooterId, HeaderFooterKind, MAX_WATERMARK_TEXT_BYTES, MediaId, Rgba,
     SectionBoundary, Watermark, WatermarkContent, WatermarkLayout, WatermarkPicture, WatermarkText,
 };
+use casual_doc_model::v1::{MAX_WATERMARK_BOX_TWIPS, WatermarkBox};
 
 use crate::vml::{VmlColor, VmlDrawing};
 
@@ -314,6 +315,23 @@ fn watermark_text(drawing: &VmlDrawing) -> Option<WatermarkText> {
         color: ink(drawing.fill.color),
         bold: textpath.bold,
         italic: textpath.italic,
+        shape_box: shape_box(drawing),
+    })
+}
+
+/// The shape's authored box (`@style` `width`/`height`), which `fitshape`
+/// stretches the text into, or `None` when either side is missing, zero,
+/// negative or beyond the model's bound ([`MAX_WATERMARK_BOX_TWIPS`]), so a
+/// malformed box degrades to Auto-fit-the-page instead of failing the open.
+fn shape_box(drawing: &VmlDrawing) -> Option<WatermarkBox> {
+    let side = |value: Option<i64>| {
+        value
+            .and_then(|twips| u32::try_from(twips).ok())
+            .filter(|twips| (1..=MAX_WATERMARK_BOX_TWIPS).contains(twips))
+    };
+    Some(WatermarkBox {
+        width_twips: side(drawing.position.width)?,
+        height_twips: side(drawing.position.height)?,
     })
 }
 

@@ -569,6 +569,55 @@ Each is reproducible with one command; none is a judgement by eye.
 5. ~~**Left and right cell borders take no horizontal space either**~~ —
    **fixed**, see below.
 
+## H2d — Word's own page breaks (`opendoc-fidelity pagebreaks`, FID-P-05)
+
+Every instrument above measures us against LibreOffice, a proxy, because no
+Word-produced reference can be committed until Q2 is decided (FID-P-02). But a
+Word-saved file already carries a Word reference for one quantity: **where Word
+broke the pages.** Word writes `w:lastRenderedPageBreak` (ECMA-376 §17.3.3.13) at
+the first run of every page it last rendered, and the import keeps it out of the
+model on purpose (`casual-doc-import/src/noop.rs`: it is a rendering hint, not
+content). So the comparison reads it from `document.xml` directly:
+
+```text
+cargo run -p opendoc-fidelity -- pagebreaks file.docx [--any-producer]
+```
+
+- **Coordinates.** Both sides become (paragraph index in document order, character
+  offset in that paragraph). Paragraphs are counted the way `document.xml` lists
+  them: body, table cells and content controls, not text-box content. The tool
+  prints both paragraph counts and warns when they differ, because then the two
+  coordinate systems do not line up and agreement means nothing.
+- **Agreement is per paragraph.** A page that starts on the right paragraph but a
+  different line still counts as agreeing; the offsets are printed beside it. The
+  report names the first page that diverges, which is where to look.
+- **Only Word's markers are Word's pagination.** `docProps/app.xml` must name
+  Microsoft Word. python-docx copies its template's markers verbatim and
+  LibreOffice writes none, so another producer is refused unless
+  `--any-producer` is given.
+- **What it does not do.** It compares page starts, not positions on the page. A
+  Word marker is only as current as Word's last render of the file, so a document
+  edited and saved by another tool can carry stale markers; that is why the
+  producer check exists. The corpus run stays local (the documents are
+  sensitive); the committed tests use a synthetic package
+  (`tools/opendoc-fidelity/src/pagebreaks.rs`).
+
+Both evaluation tools now register the package's embedded (`.odttf`) faces
+exactly as the editor does at open (`casual-doc-wasm`'s
+`register_embedded_fonts` call). Before, `opendoc-render` and
+`opendoc-fidelity compare` rendered a document that embeds its faces in
+substitutes the editor never uses, so they measured a different engine on those
+documents.
+
+**What it measured first** (2026-11-06, local corpus, three Word-saved files
+carrying markers): keep-with-next carried the whole following paragraph rather
+than its first lines (FID-L-29), which moved the page-2 break of a 14-page
+contract from inside a clause to the clause's heading. With that fixed, the page
+starts reproduced on Word's own paragraph went from 0 of 13 to 4 of 13; from page
+5 the two sides differ by two short paragraphs of line-wrap drift, and the page
+count is still 15 against 14. The other two Word files agree on every recorded
+break (4 of 4, 3 of 3).
+
 ## Open questions
 
 1. ~~Geometry extraction from the oracle~~ — **resolved:** auto-extract from the LibreOffice PDF via `pdftotext -bbox` (see §H2). Per-*block* correspondence between the two renderers is unstable, so H2 compares **page-level** geometry (size + content bbox); per-block diffing is deferred unless a stable correspondence is found.

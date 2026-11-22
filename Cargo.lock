@@ -2034,6 +2034,7 @@ dependencies = [
  "casual-doc-ooxml",
  "quick-xml",
  "serde_json",
+ "zip",
 ]
 
 [[package]]
@@ -2101,6 +2102,7 @@ version = "0.0.1"
 dependencies = [
  "casual-doc-import",
  "casual-doc-layout",
+ "casual-doc-model",
  "casual-doc-ooxml",
  "casual-doc-render",
 ]

@@ -6,7 +6,7 @@
 // reports the angle; a rotated object still shows its eight grips and can still
 // be resized; Shift lands on 15-degree steps. The pure arithmetic — the snap
 // rule, the object-space mapping — is `tests/object_rotate.test.mjs`.
-import { MOD, expect, gotoEditor, stableBox, test } from "./fixtures.mjs";
+import { MOD, expect, gotoEditor, overlayBox, stableBox, test } from "./fixtures.mjs";
 
 const IMAGE_POS = { fx: 0.32, fy: 0.1 };
 
@@ -39,11 +39,12 @@ async function modelAngle(page) {
 }
 
 /** The object outline's own transform, i.e. what the user can SEE. */
+/** Read through `overlayBox`: a repaint between resolving the outline and reading
+ *  it would hand back the removed node, whose transform is empty — angle 0. */
 async function paintedAngle(page) {
-  return page.locator(".overlay .object-outline").first().evaluate((el) => {
-    const matrix = new DOMMatrixReadOnly(getComputedStyle(el).transform);
-    return Math.round(((Math.atan2(matrix.b, matrix.a) * 180) / Math.PI + 360) % 360);
-  });
+  const { transform } = await overlayBox(page, ".overlay .object-outline");
+  const matrix = new DOMMatrixReadOnly(transform);
+  return Math.round(((Math.atan2(matrix.b, matrix.a) * 180) / Math.PI + 360) % 360);
 }
 
 async function dragRotationGrip(page, degrees, { shift = false } = {}) {

@@ -977,6 +977,7 @@ impl WasmDocument {
                         dirty: Vec::new(),
                         paste_loss: loss.into_iter().map(str::to_owned).collect(),
                         placed_object: String::new(),
+                        anchor: None,
                     });
                 }
             };

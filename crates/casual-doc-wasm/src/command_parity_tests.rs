@@ -1161,6 +1161,26 @@ fn production_lines() -> Vec<(String, usize, String)> {
     out
 }
 
+/// HF-227: `casual-doc-io` holds a copy of the editor's list level (the viewer
+/// must not link the editing crates), so an imported Markdown or plain-text
+/// list and a list made with the ribbon number and indent identically only if
+/// the two copies agree. Every level of both kinds is compared. Mutation proof:
+/// change only the command crate's numbered step to 360 and this goes red at
+/// `numbered level 1`.
+#[test]
+fn the_imported_list_level_is_the_editor_list_level() {
+    for numbered in [true, false] {
+        for level in 0u8..9 {
+            assert_eq!(
+                casual_doc_io::default_list_level(numbered, level),
+                lists::level(numbered, level),
+                "{} level {level}",
+                if numbered { "numbered" } else { "bullet" }
+            );
+        }
+    }
+}
+
 /// `docs/181` G7, the source half (the precedent is
 /// `casual-doc-review/tests/one_lowering.rs`): the lowerings moved into
 /// `casual_doc_command` are not rebuilt inside a wasm method. A call to a

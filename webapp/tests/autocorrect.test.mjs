@@ -15,8 +15,8 @@ function harness(text, { prefs = {}, editing = true, doc: extra = {} } = {}) {
     copyText: (node, start, _n, end) => new TextDecoder().decode(new TextEncoder().encode(text).slice(start, end)),
     listStyleAt: () => "",
     autoFormatList: (...args) => calls.push(["autoFormatList", ...args]),
-    replaceSelection: (...args) => calls.push(["replaceSelection", ...args]),
-    setHyperlink: (...args) => calls.push(["setHyperlink", ...args]),
+    autoCorrect: (...args) => calls.push(["autoCorrect", ...args]),
+    autoFormatHyperlink: (...args) => calls.push(["autoFormatHyperlink", ...args]),
     ...extra,
   };
   const toggle = () => {
@@ -53,14 +53,14 @@ test("a correction replaces from the word to the CARET, carrying the typed space
   const { autoCorrect, calls } = harness("so teh ");
   await autoCorrect.afterTyped(" ");
   // Only the word just finished is touched; "so" was decided when it was typed.
-  assert.deepEqual(calls, [["replaceSelection", "p1", 3, "p1", 7, "the "]]);
+  assert.deepEqual(calls, [["autoCorrect", "p1", 3, "p1", 7, "the "]]);
 });
 
 test("byte offsets, not string indices, reach the engine", async () => {
   const { autoCorrect, calls } = harness("Café teh ");
   await autoCorrect.afterTyped(" ");
   // "Café " is 6 bytes (é is two), so "teh " starts at byte 6 and the caret is at 10.
-  assert.deepEqual(calls, [["replaceSelection", "p1", 6, "p1", 10, "the "]]);
+  assert.deepEqual(calls, [["autoCorrect", "p1", 6, "p1", 10, "the "]]);
 });
 
 test("nothing happens off Editing, on a non-trigger key, or when the rule is off", async () => {
@@ -95,31 +95,31 @@ test("a typed address is linked over its own bytes, as its own step, and the car
   const { autoCorrect, calls, runs } = harness("café https://x.org ");
   assert.equal(await autoCorrect.afterTyped(" "), true);
   // "café " is 6 bytes, the address 13: the link covers [6, 19), not the space.
-  assert.deepEqual(calls, [["setHyperlink", "p1", 6, 19, "https://x.org", undefined]]);
+  assert.deepEqual(calls, [["autoFormatHyperlink", "p1", 6, 19, "https://x.org"]]);
   assert.deepEqual(runs, [{ keepSelection: true }]);
 });
 
 test("an address typed inside an existing link is left alone", async () => {
   const { autoCorrect, calls } = harness("https://x.org ", { doc: { hyperlinkTouches: () => true } });
   await autoCorrect.afterTyped(" ");
-  assert.equal(calls.some(([name]) => name === "setHyperlink"), false);
+  assert.equal(calls.some(([name]) => name === "autoFormatHyperlink"), false);
   const off = harness("https://x.org ", { prefs: { "opendoc.autoFormatHyperlink": "off" } });
   await off.autoCorrect.afterTyped(" ");
-  assert.equal(off.calls.some(([name]) => name === "setHyperlink"), false);
+  assert.equal(off.calls.some(([name]) => name === "autoFormatHyperlink"), false);
 });
 
 test("Enter corrects the word it finished, without the break, and keeps the caret in the new paragraph", async () => {
   // The break is not in the paragraph's text: the old paragraph ends at "teh".
   const { autoCorrect, calls, runs } = harness("so teh");
   assert.equal(await autoCorrect.afterBreak("p1", 6), true);
-  assert.deepEqual(calls, [["replaceSelection", "p1", 3, "p1", 6, "the"]]);
+  assert.deepEqual(calls, [["autoCorrect", "p1", 3, "p1", 6, "the"]]);
   assert.deepEqual(runs, [{ keepSelection: true }]);
 });
 
 test("a pasted lone address is linked; a pasted sentence is not", async () => {
   const linked = harness("see www.example.com");
   assert.equal(await linked.autoCorrect.afterPaste("www.example.com"), true);
-  assert.deepEqual(linked.calls, [["setHyperlink", "p1", 4, 19, "http://www.example.com", undefined]]);
+  assert.deepEqual(linked.calls, [["autoFormatHyperlink", "p1", 4, 19, "http://www.example.com"]]);
   const prose = harness("see www.example.com now");
   assert.equal(await prose.autoCorrect.afterPaste("www.example.com now"), false);
   assert.deepEqual(prose.calls, []);
@@ -132,12 +132,12 @@ test("the replace table is the one for the language at the caret", async () => {
   assert.equal(await typo.autoCorrect.afterTyped(" "), false);
   const symbol = harness("so (c)", { doc: french });
   await symbol.autoCorrect.afterTyped(")");
-  assert.deepEqual(symbol.calls, [["replaceSelection", "p1", 3, "p1", 6, "©"]]);
+  assert.deepEqual(symbol.calls, [["autoCorrect", "p1", 3, "p1", 6, "©"]]);
   // The user's own entry for English fires.
   const custom = harness("so omw ");
   custom.autoCorrect.tables.setReplacement("en-GB", "omw", "on my way");
   await custom.autoCorrect.afterTyped(" ");
-  assert.deepEqual(custom.calls, [["replaceSelection", "p1", 3, "p1", 7, "on my way "]]);
+  assert.deepEqual(custom.calls, [["autoCorrect", "p1", 3, "p1", 7, "on my way "]]);
 });
 
 test("a table cell's first word follows the cell switch, not the sentence switch", async () => {
@@ -146,7 +146,7 @@ test("a table cell's first word follows the cell switch, not the sentence switch
   assert.equal(await off.autoCorrect.afterTyped(" "), false);
   const on = harness("hello ", { doc: inCell, prefs: { "opendoc.autoCapitalise": "off", "opendoc.autoCapitaliseCells": "on" } });
   await on.autoCorrect.afterTyped(" ");
-  assert.deepEqual(on.calls, [["replaceSelection", "p1", 0, "p1", 6, "Hello "]]);
+  assert.deepEqual(on.calls, [["autoCorrect", "p1", 0, "p1", 6, "Hello "]]);
   // Outside a table the same first word follows the sentence switch, which is off.
   const body = harness("hello ", { prefs: { "opendoc.autoCapitalise": "off", "opendoc.autoCapitaliseCells": "on" } });
   assert.equal(await body.autoCorrect.afterTyped(" "), false);

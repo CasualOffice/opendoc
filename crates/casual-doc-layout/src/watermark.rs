@@ -26,7 +26,16 @@
 //!   fitted to 0.85 of the 20,622-twip diagonal is 12,395 twips across a
 //!   11,906-twip page and runs off both side edges by 0.17in each. It fit on US
 //!   Letter by 208 twips, which is why the first test of it passed. So the bound
-//!   is on the box: `L ≤ f · min(width/cosθ, height/sinθ)`.
+//!   is on the box, and the box has a height as well as a length: a stamp `L`
+//!   long and `k·L` tall needs `L ≤ f · min(width/(cosθ + k·sinθ),
+//!   height/(sinθ + k·cosθ))`. Counting the length alone still let the glyphs
+//!   of a tall stamp run off the page.
+//! - **An authored box wins over the page.** Word's Auto is not a formula: it is
+//!   the VML shape box Word measured from the text (`width:527.85pt;
+//!   height:131.95pt` for DRAFT), the text stretched along it by
+//!   `v:textpath@fitshape`. An imported stamp keeps that box
+//!   (`WatermarkText::shape_box`) and its text is fitted to the box's length,
+//!   capped by the page fit. A stamp made here has no box and fits the page.
 //!
 //!   An explicit size is used as given and never scaled — the author's
 //!   instruction outranks the fit.
@@ -145,39 +154,31 @@ fn page_centre(page_size: Size) -> Point {
     )
 }
 
-/// The longest an auto-sized stamp may be so that its ROTATED BOUNDING BOX still
-/// fits the page.
+/// The longest stamp whose rotated box, glyph height included, fits the page,
+/// for a stamp `aspect` times as tall as it is long.
 ///
-/// For a stamp of length `L` at angle θ the box is `L·cosθ` by `L·sinθ`, so
-/// fitting the box means `L ≤ min(width/cosθ, height/sinθ)` — the caller then
-/// takes its fraction of that. Returning the raw diagonal instead is the mistake
-/// the module header records: it overflows the width of any page taller than it is
-/// wide by more than the diagonal's own ratio allows.
-fn available_span(layout: WatermarkLayout, page_size: Size) -> f32 {
+/// A box `L` long and `k·L` tall at angle θ projects `L·(cosθ + k·sinθ)` across
+/// and `L·(sinθ + k·cosθ)` down. Fitting only the length (`k = 0`) is what let
+/// a 130pt-tall DRAFT run off both side edges of the page (`109` FID-L-10).
+fn fitted_length(layout: WatermarkLayout, page_size: Size, aspect: f32) -> f32 {
     let w = page_size.width.raw() as f32;
     let h = page_size.height.raw() as f32;
-    match layout {
+    let (sin, cos) = match layout {
         WatermarkLayout::Diagonal => {
-            // The magnitude of the fixed 315° angle. Written from the constant
-            // rather than as a literal 45 so the two cannot drift apart.
             let theta = (f64::from(DIAGONAL_ROTATION) / 60_000.0).to_radians();
-            let (sin, cos) = (theta.sin().abs() as f32, theta.cos().abs() as f32);
-            // A stamp at 0° or 90° has one projection of zero; guard the divide so
-            // an angle change cannot turn this into an infinity.
-            let by_width = if cos > f32::EPSILON {
-                w / cos
-            } else {
-                f32::MAX
-            };
-            let by_height = if sin > f32::EPSILON {
-                h / sin
-            } else {
-                f32::MAX
-            };
-            by_width.min(by_height)
+            (theta.sin().abs() as f32, theta.cos().abs() as f32)
         }
-        WatermarkLayout::Horizontal => w,
-    }
+        WatermarkLayout::Horizontal => (0.0, 1.0),
+    };
+    let bound = |extent: f32, along: f32, across: f32| {
+        let per_unit = along + aspect * across;
+        if per_unit > f32::EPSILON {
+            extent / per_unit
+        } else {
+            f32::MAX
+        }
+    };
+    bound(w, cos, sin).min(bound(h, sin, cos))
 }
 
 /// Shapes the watermark's words and positions them centred on the page,
@@ -208,12 +209,28 @@ fn resolve_text(
             if advance <= 0.0 {
                 return None;
             }
-            let target = available_span(watermark.layout, page_size) * AUTO_FIT_FRACTION;
+            // Glyph height per unit of advance: a stamp is a box, and its height
+            // turns into width and height on the page as much as its length does.
+            let aspect = reference.3.raw().max(0) as f32 / advance;
+            let page_fit = fitted_length(watermark.layout, page_size, aspect) * AUTO_FIT_FRACTION;
+            // Word's Auto is the shape box it measured from the text; the text
+            // is stretched along it (`fitshape`). The page bound still applies,
+            // so a box authored for a larger page cannot run off this one.
+            //
+            // The box's own height is Word's glyph height (`fitshape` stretches
+            // the ink, not the line box, into it), so the box is bounded by the
+            // page with ITS aspect and no margin: a box that lies inside the
+            // page is used as authored. The line box would overstate it.
+            let target = text.shape_box.map_or(page_fit, |shape_box| {
+                let width = shape_box.width_twips as f32;
+                let box_aspect = shape_box.height_twips as f32 / width;
+                width.min(fitted_length(watermark.layout, page_size, box_aspect))
+            });
             Twip(((AUTO_FIT_REFERENCE.raw() as f32) * (target / advance)).round() as i32)
         }
     };
     let (mut runs, advance, ascent) = {
-        let (runs, advance, ascent) = shape_once(text, color, size, shaper)?;
+        let (runs, advance, ascent, _) = shape_once(text, color, size, shaper)?;
         (runs, advance, ascent)
     };
     if runs.is_empty() {
@@ -235,14 +252,14 @@ fn resolve_text(
     Some(runs)
 }
 
-/// Shapes the watermark text at `size`, returning its runs, total advance, and
-/// the line's ascent.
+/// Shapes the watermark text at `size`, returning its runs, total advance, the
+/// line's ascent, and its glyph height (ascent plus descent).
 fn shape_once(
     text: &WatermarkText,
     color: [u8; 4],
     size: Twip,
     shaper: &dyn LineShaper,
-) -> Option<(Vec<GlyphRun>, Twip, Twip)> {
+) -> Option<(Vec<GlyphRun>, Twip, Twip, Twip)> {
     let styled = StyledRun {
         text: text.text.as_str().into(),
         // The authored family, handed to the shaper so it resolves the face — and
@@ -272,7 +289,7 @@ fn shape_once(
         .iter()
         .flat_map(|run| run.glyphs.iter())
         .fold(Twip::ZERO, |sum, glyph| sum + glyph.advance);
-    Some((runs, advance, line.ascent))
+    Some((runs, advance, line.ascent, line.ascent + line.descent))
 }
 
 /// The destination box for a picture watermark, centred on the page.

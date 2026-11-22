@@ -16,6 +16,7 @@ use casual_doc_layout::document_layout::paginate_document;
 use casual_doc_layout::page::PlacedWatermarkContent;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_model::NodeId;
+use casual_doc_model::v1::WatermarkBox;
 use casual_doc_model::v1::{
     BlockNode, Definitions, Document, InlineNode, PageMargins, PageSize, Paragraph,
     ParagraphProperties, Rgba, Run, RunProperties, SectionBoundary, SectionColumns, SectionId,
@@ -100,6 +101,7 @@ fn draft(layout: WatermarkLayout, semi_transparent: bool) -> Watermark {
             },
             bold: false,
             italic: false,
+            shape_box: None,
         }),
         layout,
         semi_transparent,
@@ -428,4 +430,89 @@ fn the_pass_is_idempotent_so_repagination_matches_pagination() {
     let first = paginate(&doc);
     let second = paginate(&doc);
     assert_eq!(first.pages[0].watermark, second.pages[0].watermark);
+}
+
+/// The auto-sized diagonal stamp `watermark` places on a page of the given size:
+/// its unrotated advance and its glyph height (the tallest run's ascent plus
+/// descent), in twips.
+fn stamp_extent(watermark: Watermark, width_twips: i32, height_twips: i32) -> (i32, i32) {
+    let mut definitions = Definitions::default();
+    let mut boundary = section(900, Some(watermark));
+    boundary.page_size = PageSize {
+        width_twips,
+        height_twips,
+    };
+    definitions.sections.push(boundary);
+    let doc = Document::new(
+        node(1000),
+        vec![paragraph(1, "page one", false)],
+        definitions,
+    )
+    .expect("valid document");
+    let layout = paginate(&doc);
+    let PlacedWatermarkContent::Text { runs } =
+        &layout.pages[0].watermark.as_ref().expect("a stamp").content
+    else {
+        panic!("text");
+    };
+    let advance = runs
+        .iter()
+        .flat_map(|run| run.glyphs.iter())
+        .map(|glyph| glyph.advance.raw())
+        .sum();
+    let height = runs
+        .iter()
+        .map(|run| run.ascent.raw() + run.descent.raw())
+        .max()
+        .unwrap_or(0);
+    (advance, height)
+}
+
+/// Whether a stamp `advance` long and `height` tall, turned 45 degrees about the
+/// page centre, lies inside a `w` by `h` page.
+fn rotated_box_fits(advance: i32, height: i32, w: i32, h: i32) -> bool {
+    let cos45 = std::f32::consts::FRAC_1_SQRT_2;
+    let across = (advance + height) as f32 * cos45;
+    across <= w as f32 && across <= h as f32
+}
+
+/// FID-L-10: Word's Auto is the VML box it measured from the text
+/// (`width:527.85pt;height:131.95pt` in `fixtures/generated/watermark.docx`),
+/// not a fraction of the page. Fitting the page instead made the stamp about 40%
+/// too large, and its glyphs ran off both side edges.
+#[test]
+fn an_auto_sized_stamp_fills_its_authored_box() {
+    let mut watermark = draft(WatermarkLayout::Diagonal, true);
+    let WatermarkContent::Text(text) = &mut watermark.content else {
+        panic!("text");
+    };
+    text.shape_box = Some(WatermarkBox {
+        width_twips: 10_557,
+        height_twips: 2_639,
+    });
+    let (advance, height) = stamp_extent(watermark, 12_240, 15_840);
+    let error = (advance - 10_557).abs() as f32 / 10_557.0;
+    assert!(
+        error < 0.005,
+        "the stamp is {advance} twips long; its authored box is 10,557 ({:.1}% off)",
+        error * 100.0
+    );
+    assert!(
+        rotated_box_fits(advance, height, 12_240, 15_840),
+        "the turned stamp, glyph height included, stays on the page"
+    );
+}
+
+/// The page fit counts the glyph height as well as the length: a stamp whose
+/// length fits the page can still run off it by its own height.
+#[test]
+fn an_auto_sized_stamp_without_a_box_stays_inside_the_page_with_its_height() {
+    for (name, w, h) in [("US Letter", 12_240, 15_840), ("A4", 11_906, 16_838)] {
+        let (advance, height) = stamp_extent(draft(WatermarkLayout::Diagonal, true), w, h);
+        assert!(height > 0, "{name}: the stamp has glyph height");
+        assert!(
+            rotated_box_fits(advance, height, w, h),
+            "{name}: a {advance}x{height}-twip stamp turned 45 degrees runs off a {w}x{h} page"
+        );
+    }
 }

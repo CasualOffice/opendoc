@@ -75,7 +75,20 @@ const DPI: f32 = 96.0;
 /// The repagination of one word across the page-4/5 boundary is the point, not a
 /// side effect: a cell that flows too wide fits text no other renderer fits.
 /// Still five pages, and every containment and split-row assertion unchanged.
-const EXPECTED_RGBA_FNV1A64: u64 = 0x8d37_2258_8bef_564f;
+///
+/// # Re-blessed for kerning, and for cell edges painted once (FID-L-15, FID-L-30)
+///
+/// Was `0x8d37_2258_8bef_564f`. Two causes; every containment and split-row
+/// assertion below passed unchanged while only the hash moved:
+///
+/// - The fixture's runs carry no `w:kern`, and are now shaped unkerned, as Word
+///   sets them, so glyphs move by the kerning pairs' amounts and a line can wrap
+///   a word differently.
+/// - The table's `w:sz="8"` side borders are now painted as one 20-twip band
+///   centred on the grid line (where layout already reserved half of each in the
+///   cell) instead of inside the cell box, and an interior horizontal edge is
+///   painted once, by the row below, instead of once in each row.
+const EXPECTED_RGBA_FNV1A64: u64 = 0x7454_c333_42ca_966c;
 
 #[derive(Clone, Copy, Debug)]
 struct InkLine {

@@ -3210,6 +3210,7 @@
   "insert.imageFromUrl.keywords": "resim fotoğraf çevrimiçi web adres bağlantı url indir internet",
   "edit.pasteImage": "Resim olarak yapıştır",
   "edit.pasteImage.keywords": "özel yapıştır resim anlık görüntü ekran görüntüsü",
+  "editing.tabNotTrackable": "Sekme karakteri henüz öneri olarak izlenemiyor; eklemek için Düzenleme moduna geçin",
   "pictureUrl.downloading": "Resim indiriliyor…",
   "pictureUrl.received": "{size} indirildi…",
   "pictureUrl.sizeMb": "{size} MB",

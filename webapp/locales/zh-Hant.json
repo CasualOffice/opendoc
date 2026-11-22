@@ -3199,6 +3199,7 @@
   "insert.imageFromUrl.keywords": "圖片 相片 線上 網頁 位址 連結 url 下載 網際網路",
   "edit.pasteImage": "貼上為圖片",
   "edit.pasteImage.keywords": "選擇性貼上 圖片 快照 螢幕擷取畫面",
+  "editing.tabNotTrackable": "定位字元暫時無法以建議方式追蹤；請切換到編輯模式以插入",
   "pictureUrl.downloading": "正在下載圖片…",
   "pictureUrl.received": "已下載 {size}…",
   "pictureUrl.sizeMb": "{size} MB",

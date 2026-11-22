@@ -67,8 +67,14 @@ fn blocks(blocks_in: &[BlockNode], definitions: &Definitions, out: &mut String) 
                     .unwrap_or_default();
                 let list = properties.numbering.map(|reference| {
                     let level = definitions.numbering_resolver().level(reference);
-                    let ordered =
-                        level.is_some_and(|level| level.num_fmt == Some(NumberFormat::Decimal));
+                    // Ordered is "numbered", not "decimal": a nested ordered level
+                    // is `a.` / `i.` like the editor's own lists (`docs/109` HF-227).
+                    let ordered = level.is_some_and(|level| {
+                        level
+                            .num_fmt
+                            .as_ref()
+                            .is_some_and(|format| *format != NumberFormat::Bullet)
+                    });
                     format!("{}{}", if ordered { "ol" } else { "ul" }, reference.level)
                 });
                 let _ = write!(

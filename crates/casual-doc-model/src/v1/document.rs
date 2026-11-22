@@ -2994,6 +2994,14 @@ fn check_section_domains(section: &SectionBoundary) -> Result<(), ModelError> {
                 if let Some(font) = &text.font {
                     check_domain(!font.name.is_empty(), "section.watermark.font")?;
                 }
+                if let Some(shape_box) = text.shape_box {
+                    let side = 1..=MAX_WATERMARK_BOX_TWIPS;
+                    check_domain(
+                        side.contains(&shape_box.width_twips)
+                            && side.contains(&shape_box.height_twips),
+                        "section.watermark.box",
+                    )?;
+                }
             }
             WatermarkContent::Picture(picture) => {
                 if let Some(scale) = picture.scale_percent {

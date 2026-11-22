@@ -127,7 +127,9 @@ impl WasmDocument {
         self.apply_action_caret_as(
             ops,
             Pos::new(nid, caret_offset - marker_bytes),
-            HistoryKind::ListFormatting,
+            // Word's "AutoFormat" step: its Undo keeps the caret after the
+            // restored marker instead of selecting it (`docs/109` UX-074).
+            HistoryKind::AutoFormat,
         )
     }
 }
@@ -224,6 +226,12 @@ mod tests {
         let undone = document.undo().expect("undo the conversion");
         assert_eq!(text_of(&document, &id), "1. ");
         assert_eq!((undone.node(), undone.offset()), (id.clone(), 3));
+        // Collapsed, not "1. " selected: the next keystroke continues the text
+        // rather than replacing the marker (`docs/109` UX-074).
+        assert_eq!(
+            (undone.anchor_node(), undone.anchor_offset()),
+            (id.clone(), 3)
+        );
     }
 
     #[test]

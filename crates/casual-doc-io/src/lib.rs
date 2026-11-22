@@ -47,6 +47,7 @@ pub use docx::{
 };
 pub use dotx::{DOTX_MIME, DotxAdapter};
 pub use error::{AdapterError, IoError};
+pub use flow_builder::list_level as default_list_level;
 pub use format::{FormatDescriptor, FormatId, FormatIdError, formats};
 pub use html::{HTML_MIME, HtmlAdapter, HtmlLimits};
 pub use markdown::{MARKDOWN_MIME, MarkdownAdapter, MarkdownLimits};

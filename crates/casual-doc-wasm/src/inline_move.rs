@@ -202,6 +202,7 @@ impl WasmDocument {
                 dirty: Vec::new(),
                 paste_loss: Vec::new(),
                 placed_object: String::new(),
+                anchor: None,
             });
         }
         // The drop must be a paragraph — in the body, a table cell or a text

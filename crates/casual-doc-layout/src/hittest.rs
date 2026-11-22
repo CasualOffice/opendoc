@@ -902,8 +902,31 @@ impl<'a> LayoutSnapshot<'a> {
                 Direction::Up => there < here || (level && index < cur),
             }
         };
-        let in_column =
-            |lb: &LineBox<'_>| lb.cell.is_none_or(|cell| cell.contains_x(affinity.raw()));
+        // The column preference is decided PER TABLE ROW, not over the whole
+        // document (`docs/109` HF-165). A row band — the cells on one page that
+        // share a top edge — in which some cell contains the affinity keeps the
+        // strict rule, so a taller neighbouring cell still cannot capture the
+        // caret (#504). A row in which NO cell contains it (an indented or narrow
+        // table beside the caret's column) is in column as a whole, and the
+        // horizontal tie-break below picks its nearest cell. Deciding it
+        // globally put every in-column line in the document ahead of such a
+        // row, so Down from the body jumped clean over the table (14382 to 9643
+        // in one press, #556) and its cells were unreachable by keyboard.
+        // O(lines), once per move.
+        let covered_rows: std::collections::HashSet<(u32, i32)> = lines
+            .iter()
+            .filter_map(|lb| {
+                let cell = lb.cell?;
+                cell.contains_x(affinity.raw())
+                    .then_some((lb.page, cell.top.raw()))
+            })
+            .collect();
+        let in_column = |lb: &LineBox<'_>| {
+            lb.cell.is_none_or(|cell| {
+                cell.contains_x(affinity.raw())
+                    || !covered_rows.contains(&(lb.page, cell.top.raw()))
+            })
+        };
         // Distance in visual order, so the nearest band wins; ties inside a band
         // are broken by horizontal distance from the affinity.
         let rank = |lb: &LineBox<'_>| {
@@ -2126,6 +2149,40 @@ fn stops_for(line: &Line, left: Twip) -> Vec<CaretStop> {
                     offset: next_after(first.cluster),
                 });
             }
+        }
+    }
+
+    // A line that ENDS in a tab — "Name:", Tab, nothing typed yet, the moment
+    // right after the Tab key (`docs/109` UX-073) — has no glyph after the tab,
+    // so nothing above made a stop past it: the run's trailing stop claimed the
+    // line's end offset at the end of the TEXT, and the caret after the tab was
+    // drawn before it. The tab resolver recorded where the tab's advance ends
+    // (`Line::tab_extents`), so the end offset's stop goes there, and the text's
+    // trailing stop becomes the slot before that tab — unless a glyph already
+    // owns that offset (a zero-byte `w:ptab`). Left-to-right lines only; the
+    // general glyphless-tab slot is still the KNOWN DEFECT above. O(stops).
+    if let Some(last_tab) = line.tab_extents.last()
+        && line.runs.iter().all(|run| run.bidi_level % 2 == 0)
+    {
+        let tab_end = left + last_tab.end;
+        let end = line.range.end.offset;
+        if end > line.range.start.offset && stops.iter().all(|stop| stop.x < tab_end) {
+            let before = end - 1;
+            if !offsets.contains(&before) {
+                for stop in stops.iter_mut().filter(|stop| stop.offset == end) {
+                    stop.offset = before;
+                }
+            }
+            if stops.is_empty() {
+                stops.push(CaretStop {
+                    x: empty_line_x(line, left),
+                    offset: line.range.start.offset,
+                });
+            }
+            stops.push(CaretStop {
+                x: tab_end,
+                offset: end,
+            });
         }
     }
 
@@ -3859,6 +3916,71 @@ mod tests {
             node(400),
             "the right column moves down too"
         );
+    }
+
+    /// `docs/109` HF-165: Down and Up step INTO a table whose cells all lie
+    /// outside the caret's column, rather than jumping clean over it.
+    ///
+    /// Body paragraph 100, then an indented one-row table (cells 300 and 400,
+    /// both starting well right of the caret at the left margin), then body
+    /// paragraph 500. Mutation proof: deciding the column preference globally
+    /// again (`in_column` = the cell contains the affinity, nothing else) makes
+    /// Down from 100 land in 500 — the 14382 to 9643 jump of the #556 report.
+    #[test]
+    fn vertical_motion_enters_a_table_beside_the_caret_column() {
+        use crate::block::{
+            CellBorders, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
+        };
+        let cell = |id: u64, x: i32, width: i32, para: u64| CellFragment {
+            rotation: None,
+            id: node(id),
+            grid_span: 1,
+            x: Twip(x),
+            width: Twip(width),
+            cell_spacing: Default::default(),
+            blocks: vec![ltr_para(para, &[1])],
+            margins: CellContentMargins::default(),
+            vertical_alignment: CellVAlign::Top,
+            vertical_merge: CellVerticalMerge::None,
+            borders: CellBorders::default(),
+            border_reserve: crate::block::CellBorderReserve::default(),
+            table_borders: CellBorders::default(),
+            shading: None,
+        };
+        let row = BlockFragment::TableRow {
+            id: node(10),
+            table: node(20),
+            cells: vec![cell(11, 2000, 2000, 300), cell(12, 4000, 2000, 400)],
+            height: Twip(500),
+            can_split: false,
+            header: false,
+            merge_keep_next: false,
+            clip: false,
+        };
+        let paginated = layout(&[ltr_para(100, &[1]), row, ltr_para(500, &[1])]);
+        let snap = LayoutSnapshot::new(&paginated);
+
+        let down = snap
+            .move_vertical(ModelPos::new(node(100), 0), Direction::Down, None)
+            .expect("there is a line below");
+        assert_eq!(
+            down.node,
+            node(300),
+            "Down enters the table's row, at the cell nearest the caret's column"
+        );
+        let up = snap
+            .move_vertical(ModelPos::new(node(500), 0), Direction::Up, None)
+            .expect("there is a line above");
+        assert_eq!(
+            up.node,
+            node(300),
+            "Up from below enters the table's row too"
+        );
+        // And out the other side: the table is a step, not a wall.
+        let through = snap
+            .move_vertical(down, Direction::Down, Some(Twip(MARGIN)))
+            .expect("there is a line below the table");
+        assert_eq!(through.node, node(500));
     }
 
     /// Hit-testing one page must walk one page.

@@ -68,7 +68,7 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | --- | ---: | ---: |
 | P0 | 7 | 0 |
 | P1 | 33 | 2 |
-| P2 | 52 | 13 |
+| P2 | 52 | 12 |
 | P3 | 22 | 12 |
 | Behavioural audit — 2026-09-04 | 18 | 2 |
 | Layout-space audit — 2026-09-09 | 14 | 0 |
@@ -76,7 +76,7 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | Ribbon keyboard reachability — 2026-09-10 | 2 | 0 |
 | Paragraph-level revision mapping — 2026-09-17 | 4 | 0 |
 | Large-document admission — 2026-09-18 | 1 | 0 |
-| **Total** | **158** | **29** |
+| **Total** | **158** | **28** |
 
 "Still open" counts any status *beginning* `Open`, `Partly fixed`, or `In progress` —
 the prefix matters, because real statuses qualify themselves (`Open (owner decision)`,
@@ -96,7 +96,7 @@ by re-reading the code they cite: **HF-016**, **HF-022** and **HF-034**.)
 
 ### Progress
 
-**29 of 158 rows remain open. Every P0 is closed.** HF-030 closed with #559. (Re-derive these counts, do not edit them by hand.)
+**28 of 158 rows remain open. Every P0 is closed.** HF-030 closed with #559. (Re-derive these counts, do not edit them by hand.)
 
 **Staleness sweep, 2026-09-20.** Every P1 row of this tracker and of `105` was re-read
 against the code it cites, because `109` is now the only queue and a stale `Open` there is
@@ -218,7 +218,7 @@ Still waiting on an owner decision, not on engineering:
 | HF-036 | Printing a mixed-orientation document silently clips the landscape pages | import-export | M | Internal audit | Fixed (`lane/parity-pipeline`; docs/tracker/completed.md) |
 | HF-037 | ODT to DOCX conversion writes every image as a zero-byte file | import-export | M | Internal audit | Fixed |
 | HF-038 | Copying or format-painting dark-highlighted text silently repaints it yellow | wasm | S | Internal audit | Fixed |
-| HF-039 | Find highlights only the current match, so "7 of 23" cannot be answered by looking at the page | find-replace | M | Sibling gap (opencalc) | Open |
+| HF-039 | Find highlights only the current match, so "7 of 23" cannot be answered by looking at the page | find-replace | M | Sibling gap (opencalc) | Fixed — superseded by HF-317 (#854), closed 2026-11-06 |
 | HF-040 | Pasting a table from the web silently drops the sentences around it | import-export | S | Internal audit | Fixed |
 | HF-041 | Multi-valued custom document properties collapse to their last value and change type | import-export | M | Internal audit | Fixed |
 | HF-042 | Charts and ink are dropped even when the file carries a fallback the model supports | import-export | L | Internal audit | Fixed |

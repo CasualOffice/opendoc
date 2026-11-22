@@ -46,12 +46,21 @@ export function navigationDirection(event, platform = keyboardPlatform()) {
       if (!apple && event.ctrlKey) return "wordRight";
       return "right";
     case "ArrowUp":
-      if (hasUnsupportedModifier(event, platform) || event.altKey) return null;
+      if (hasUnsupportedModifier(event, platform)) return null;
+      // macOS Option+Up/Down move by paragraph (the macOS text system, Pages and
+      // Google Docs on Mac); with Shift the caller extends by paragraph (HF-103).
+      if (apple && event.altKey && !event.metaKey) return "paragraphUp";
+      if (event.altKey) return null;
+      // Cmd+Up/Down stay paragraph motion, Word for Mac's binding. The macOS text
+      // system and Docs bind them to document start/end instead; that divergence
+      // is an open owner decision (docs/109 HF-103), deliberately not changed here.
       if ((apple && event.metaKey) || (!apple && event.ctrlKey))
         return "paragraphUp";
       return "up";
     case "ArrowDown":
-      if (hasUnsupportedModifier(event, platform) || event.altKey) return null;
+      if (hasUnsupportedModifier(event, platform)) return null;
+      if (apple && event.altKey && !event.metaKey) return "paragraphDown";
+      if (event.altKey) return null;
       if ((apple && event.metaKey) || (!apple && event.ctrlKey))
         return "paragraphDown";
       return "down";
@@ -278,7 +287,7 @@ export const NAVIGATION_SHORTCUTS = [
   { apple: "←  →", standard: "←  →", label: "Move by character", direction: ["left", "right"], event: { key: "ArrowLeft" }, second: { key: "ArrowRight" } },
   { apple: "⌥←  ⌥→", standard: "Ctrl+←  Ctrl+→", label: "Move by word", direction: ["wordLeft", "wordRight"], event: { key: "ArrowLeft", altKey: true }, second: { key: "ArrowRight", altKey: true }, standardEvent: { key: "ArrowLeft", ctrlKey: true }, standardSecond: { key: "ArrowRight", ctrlKey: true } },
   { apple: "↑  ↓", standard: "↑  ↓", label: "Move by line", direction: ["up", "down"], event: { key: "ArrowUp" }, second: { key: "ArrowDown" } },
-  { apple: "⌘↑  ⌘↓", standard: "Ctrl+↑  Ctrl+↓", label: "Move by paragraph", direction: ["paragraphUp", "paragraphDown"], event: { key: "ArrowUp", metaKey: true }, second: { key: "ArrowDown", metaKey: true }, standardEvent: { key: "ArrowUp", ctrlKey: true }, standardSecond: { key: "ArrowDown", ctrlKey: true } },
+  { apple: "⌥↑  ⌥↓", standard: "Ctrl+↑  Ctrl+↓", label: "Move by paragraph", direction: ["paragraphUp", "paragraphDown"], event: { key: "ArrowUp", altKey: true }, second: { key: "ArrowDown", altKey: true }, standardEvent: { key: "ArrowUp", ctrlKey: true }, standardSecond: { key: "ArrowDown", ctrlKey: true } },
   { apple: "⌘←  ⌘→", standard: "Home  End", label: "Start or end of line", direction: ["lineStart", "lineEnd"], event: { key: "ArrowLeft", metaKey: true }, second: { key: "ArrowRight", metaKey: true }, standardEvent: { key: "Home" }, standardSecond: { key: "End" } },
   { apple: "⌘↖  ⌘↘", standard: "Ctrl+Home  Ctrl+End", label: "Start or end of document", direction: ["docStart", "docEnd"], event: { key: "Home", metaKey: true }, second: { key: "End", metaKey: true }, standardEvent: { key: "Home", ctrlKey: true }, standardSecond: { key: "End", ctrlKey: true } },
   { apple: "⇞  ⇟", standard: "PgUp  PgDn", label: "Move by screen", direction: ["pageUp", "pageDown"], event: { key: "PageUp" }, second: { key: "PageDown" } },
