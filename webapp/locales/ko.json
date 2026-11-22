@@ -3199,6 +3199,7 @@
   "insert.imageFromUrl.keywords": "그림 사진 온라인 웹 주소 링크 url 다운로드 인터넷",
   "edit.pasteImage": "그림으로 붙여넣기",
   "edit.pasteImage.keywords": "선택하여 붙여넣기 그림 스냅샷 스크린샷",
+  "editing.tabNotTrackable": "탭 문자는 아직 제안으로 추적할 수 없습니다. 삽입하려면 편집 모드로 전환하세요",
   "pictureUrl.downloading": "그림을 다운로드하는 중…",
   "pictureUrl.received": "{size} 다운로드됨…",
   "pictureUrl.sizeMb": "{size} MB",

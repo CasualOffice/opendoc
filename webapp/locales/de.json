@@ -3210,6 +3210,7 @@
   "insert.imageFromUrl.keywords": "bild foto online web adresse link url herunterladen internet",
   "edit.pasteImage": "Als Bild einfügen",
   "edit.pasteImage.keywords": "inhalte einfügen bild schnappschuss screenshot grafik",
+  "editing.tabNotTrackable": "Ein Tabulatorzeichen kann noch nicht als Vorschlag nachverfolgt werden; wechseln Sie zu Bearbeiten, um es einzufügen",
   "pictureUrl.downloading": "Bild wird heruntergeladen…",
   "pictureUrl.received": "{size} heruntergeladen…",
   "pictureUrl.sizeMb": "{size} MB",

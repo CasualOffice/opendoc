@@ -3232,6 +3232,7 @@
   "insert.imageFromUrl.keywords": "obraz zdjęcie online sieć adres link url pobierz internet",
   "edit.pasteImage": "Wklej jako obraz",
   "edit.pasteImage.keywords": "wklej specjalnie obraz migawka zrzut ekranu",
+  "editing.tabNotTrackable": "Znaku tabulacji nie można jeszcze śledzić jako sugestii; przełącz na Edytowanie, aby go wstawić",
   "pictureUrl.downloading": "Pobieranie obrazu…",
   "pictureUrl.received": "Pobrano {size}…",
   "pictureUrl.sizeMb": "{size} MB",

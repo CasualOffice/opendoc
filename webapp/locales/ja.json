@@ -3199,6 +3199,7 @@
   "insert.imageFromUrl.keywords": "画像 写真 オンライン ウェブ アドレス リンク url ダウンロード インターネット",
   "edit.pasteImage": "画像として貼り付け",
   "edit.pasteImage.keywords": "形式を選択して貼り付け 画像 スナップショット スクリーンショット",
+  "editing.tabNotTrackable": "タブ文字はまだ提案として記録できません。挿入するには編集モードに切り替えてください",
   "pictureUrl.downloading": "画像をダウンロードしています…",
   "pictureUrl.received": "{size} ダウンロードしました…",
   "pictureUrl.sizeMb": "{size} MB",

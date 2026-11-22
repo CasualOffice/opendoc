@@ -3221,6 +3221,7 @@
   "insert.imageFromUrl.keywords": "image photo en ligne web adresse lien url télécharger internet",
   "edit.pasteImage": "Coller comme image",
   "edit.pasteImage.keywords": "collage spécial image capture instantané",
+  "editing.tabNotTrackable": "Un caractère de tabulation ne peut pas encore être suivi comme suggestion ; passez en mode Modification pour l’insérer",
   "pictureUrl.downloading": "Téléchargement de l’image…",
   "pictureUrl.received": "{size} téléchargés…",
   "pictureUrl.sizeMb": "{size} Mo",

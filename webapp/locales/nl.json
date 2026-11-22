@@ -3210,6 +3210,7 @@
   "insert.imageFromUrl.keywords": "afbeelding foto online web adres link url downloaden internet",
   "edit.pasteImage": "Plakken als afbeelding",
   "edit.pasteImage.keywords": "plakken speciaal afbeelding momentopname screenshot",
+  "editing.tabNotTrackable": "Een tabteken kan nog niet als suggestie worden bijgehouden; schakel over naar Bewerken om het in te voegen",
   "pictureUrl.downloading": "Afbeelding wordt gedownload…",
   "pictureUrl.received": "{size} gedownload…",
   "pictureUrl.sizeMb": "{size} MB",

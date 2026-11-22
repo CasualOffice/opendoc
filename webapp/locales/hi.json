@@ -3210,6 +3210,7 @@
   "insert.imageFromUrl.keywords": "चित्र फ़ोटो ऑनलाइन वेब पता लिंक url डाउनलोड इंटरनेट",
   "edit.pasteImage": "चित्र के रूप में चिपकाएँ",
   "edit.pasteImage.keywords": "विशेष चिपकाएँ चित्र स्नैपशॉट स्क्रीनशॉट",
+  "editing.tabNotTrackable": "टैब वर्ण को अभी सुझाव के रूप में ट्रैक नहीं किया जा सकता; इसे डालने के लिए संपादन पर जाएँ",
   "pictureUrl.downloading": "चित्र डाउनलोड हो रहा है…",
   "pictureUrl.received": "{size} डाउनलोड हुआ…",
   "pictureUrl.sizeMb": "{size} MB",

@@ -3199,6 +3199,7 @@
   "insert.imageFromUrl.keywords": "ảnh hình trực tuyến web địa chỉ liên kết url tải xuống internet",
   "edit.pasteImage": "Dán dưới dạng ảnh",
   "edit.pasteImage.keywords": "dán đặc biệt ảnh chụp nhanh ảnh chụp màn hình",
+  "editing.tabNotTrackable": "Chưa thể theo dõi ký tự tab dưới dạng đề xuất; hãy chuyển sang Chỉnh sửa để chèn",
   "pictureUrl.downloading": "Đang tải ảnh xuống…",
   "pictureUrl.received": "Đã tải {size}…",
   "pictureUrl.sizeMb": "{size} MB",

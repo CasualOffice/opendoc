@@ -3221,6 +3221,7 @@
   "insert.imageFromUrl.keywords": "immagine foto online web indirizzo link url scaricare internet",
   "edit.pasteImage": "Incolla come immagine",
   "edit.pasteImage.keywords": "incolla speciale immagine istantanea screenshot",
+  "editing.tabNotTrackable": "Un carattere di tabulazione non può ancora essere registrato come suggerimento; passa a Modifica per inserirlo",
   "pictureUrl.downloading": "Download dell’immagine…",
   "pictureUrl.received": "Scaricati {size}…",
   "pictureUrl.sizeMb": "{size} MB",
