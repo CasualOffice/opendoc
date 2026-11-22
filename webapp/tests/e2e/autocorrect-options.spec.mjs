@@ -31,8 +31,9 @@ test("a typed address becomes a link on the space, as its own undo step", async 
   await freshParagraph(page);
   const undo = page.locator("#undoBtn");
   await page.keyboard.type("QZlink https://example.org/qz ");
-  // The newest step is the link, not the typing.
-  await expect(undo).toHaveAttribute("aria-label", "Undo Link change");
+  // The newest step is the link, not the typing. An automatic link is Word's
+  // "AutoFormat" step (UX-074): its undo leaves the caret, not a selection.
+  await expect(undo).toHaveAttribute("aria-label", "Undo AutoFormat");
   await page.keyboard.press(`${MOD}+z`);
   // One Cmd+Z removes only the link: the address and the space are still there,
   // and the step before it is the typing.

@@ -43,8 +43,11 @@ async function modelAngle(page) {
  *  it would hand back the removed node, whose transform is empty — angle 0. */
 async function paintedAngle(page) {
   const { transform } = await overlayBox(page, ".overlay .object-outline");
-  const matrix = new DOMMatrixReadOnly(transform);
-  return Math.round(((Math.atan2(matrix.b, matrix.a) * 180) / Math.PI + 360) % 360);
+  // `transform` is the computed CSS string, read in the page; this runs in Node,
+  // which has no DOMMatrix, so take a and b from "matrix(a, b, c, d, e, f)"
+  // ("none" is the identity).
+  const [a, b] = transform === "none" ? [1, 0] : transform.match(/-?[\d.e+-]+/g).map(Number);
+  return Math.round(((Math.atan2(b, a) * 180) / Math.PI + 360) % 360);
 }
 
 async function dragRotationGrip(page, degrees, { shift = false } = {}) {

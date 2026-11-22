@@ -182,8 +182,12 @@ test("a readonly container reads the document but cannot reach an object", async
   await clickTheImage(page);
   expect(await observed(page)).toMatchObject({ objectMode: "", handles: 0, objectBar: 0 });
 
-  // And the right-click menu offers READING commands only — Copy and Find — with
-  // no structure commands for the table the caret is in and no object rows.
+  // And the right-click menu offers READING commands only, with no structure
+  // commands for the table the caret is in and no object rows. The right-click
+  // on the image leaves a caret, not a selection, so Copy has nothing to copy;
+  // since #935 a context menu hides a row it would refuse, so Copy is absent
+  // here (copying a selection is asserted above through the clipboard). Every
+  // row must be a reading command, and Find must be among them.
   const { canvas, at } = await clickTheImage(page);
   await canvas.click({ button: "right", position: at });
   const menu = page.locator(".editor-context-menu");
@@ -191,7 +195,9 @@ test("a readonly container reads the document but cannot reach an object", async
   const rows = await menu.locator(".menu-item").evaluateAll((els) =>
     els.map((el) => el.dataset.commandId ?? ""),
   );
-  expect(rows).toContain("edit.copy");
+  const reading = new Set(["edit.copy", "edit.selectAll", "edit.find"]);
+  expect(rows).toContain("edit.find");
+  expect(rows.filter((id) => !reading.has(id)), "only reading commands in a readonly menu").toEqual([]);
   expect(rows.filter((id) => id.startsWith("table.") || id.startsWith("object."))).toEqual([]);
   expect(rows).not.toContain("paragraph.properties");
   expect(rows).not.toContain("format.menu");

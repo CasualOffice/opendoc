@@ -746,7 +746,7 @@
   "crossRefDialog.insertAsHyperlink": "Insert as hyperlink",
   "crossRefDialog.insertReferenceTo": "Insert reference to",
   "crossRefDialog.nothingOfThisType": "Nothing of this type in the document yet.",
-  "crossRefDialog.pointSomethingElse": "Point at a caption, heading, bookmark or note elsewhere in this document.",
+  "crossRefDialog.pointSomethingElse": "Point at a caption, heading, bookmark or note in this document.",
   "crossRefDialog.refTo.aboveBelow": "Above/below",
   "crossRefDialog.refTo.bookmarkText": "Bookmark text",
   "crossRefDialog.refTo.captionText": "Only caption text",
