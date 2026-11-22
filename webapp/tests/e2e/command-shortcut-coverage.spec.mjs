@@ -33,8 +33,16 @@ test("⌘K authors a link on the selection and no longer opens the command palet
   const box = await stableBox(page.locator(".overlay .highlight").first());
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: "right" });
   const menu = page.locator(".editor-context-menu");
-  await expect(menu.locator('[data-command-id="link.edit"]')).toBeVisible();
-  await expect(menu.locator('[data-command-id="link.add"]')).toHaveCount(0);
+  await expect(menu).toBeVisible();
+  // The right-click menu is budgeted (context_menu.mjs rule 3, docs/184 D-12):
+  // a made-up marker is a spelling error, its suggestions lead, and the
+  // trailing groups (the link's rows among them) can fold into "More ›". The
+  // guarantee is about the MENU, so read its whole tree, one level down too.
+  const more = menu.locator('[data-command-id="context.more"]');
+  if (await more.count()) await more.hover();
+  const tree = page.locator(".editor-context-menu, .editor-submenu");
+  await expect(tree.locator('[data-command-id="link.edit"]')).toBeVisible();
+  await expect(tree.locator('[data-command-id="link.add"]')).toHaveCount(0);
   await page.keyboard.press("Escape");
 
   expect(consoleErrors).toEqual([]);

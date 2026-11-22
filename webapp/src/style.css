@@ -12071,13 +12071,14 @@ body.phone-mode .toast {
    ~105-141. The other two candidates are deliberately NOT here, and both were
    tried and measured:
 
-     `.side-panel`  — at this rung `.version-panel` is a top-anchored DRAWER,
-                      not a bottom sheet: measured 123→587 at 390px. There is no
-                      band above it, and moving the toast up put it across the
-                      drawer's head. That collision is already solved the other
-                      way — `109` HF-233 reserves `--h-toast-band` at the
-                      drawer's foot — and `editor-narrow-chrome.spec.mjs`
-                      measures it.
+     `.side-panel`  — WAS a top-anchored drawer at this rung (measured 123→587
+                      at 390px), with `109` HF-233's `--h-toast-band` reserved
+                      at its foot. Audit DIALOGS-06 made the docked panel a
+                      bottom SHEET (`.workarea > .side-panel` below, capped at
+                      55vh), and the band went with the drawer: the toast then
+                      lay across the version sheet's Clear button (HF-424). It
+                      is a sheet now, so it joins this list;
+                      `editor-narrow-chrome.spec.mjs` measures it.
    A modal is in the list through `body.modal-open`, which `modal.mjs` already
    sets, rather than through a `:has()` of its own. It was excluded on a first
    pass on the theory that a dialog card capped at `max-height: 86vh` leaves
@@ -12088,6 +12089,7 @@ body.phone-mode .toast {
    on the card's HEAD rather than on its pinned actions, and `109` HF-233's rule
    is that the pinned action stays readable. */
 body.phone-mode.modal-open .toast,
+body.phone-mode:has(.workarea > .side-panel:not([hidden])) .toast,
 body.phone-mode:has(.app-menu-popover:not([hidden])) .toast,
 body.phone-mode:has(.compact-command-menu:not([hidden])) .toast,
 body.phone-mode:has(.compact-align-menu:not([hidden])) .toast,
@@ -15531,7 +15533,10 @@ body[data-editing-mode="suggesting"] .viewport { box-shadow: inset 0 2px 0 var(-
 @media (max-width: 40rem) {
   #settingsPanel .settings-dialog { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; block-size: 86vh; }
   #settingsPanel .settings-head { grid-row: 1; border: 0; }
-  #settingsPanel .settings-nav { grid-column: 1; grid-row: 2; grid-auto-flow: column; justify-content: start; padding: 0 var(--space-3) var(--space-2); overflow-x: auto; border: 0; }
+  /* The tabs WRAP rather than scroll: six icon-and-label tabs are ~635px, and
+     nothing in the chrome scrolls sideways on a phone
+     (phone-no-horizontal-scroll.spec.mjs). */
+  #settingsPanel .settings-nav { grid-column: 1; grid-row: 2; display: flex; flex-wrap: wrap; gap: var(--space-1); justify-content: start; padding: 0 var(--space-3) var(--space-2); overflow: visible; border: 0; }
   #settingsPanel .settings-main { grid-column: 1; grid-row: 3; min-width: 0; }
   #settingsPanel .settings-foot { grid-row: 4; }
   #settingsPanel .settings-body { padding-inline: var(--space-4); }

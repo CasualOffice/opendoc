@@ -434,8 +434,15 @@ test("Insert caption is on the right-click menu of a table cell and of a picture
   await page.locator("#pages").focus();
   await page.waitForFunction(() => document.activeElement?.id === "editorTextInput");
   await page.keyboard.press("Shift+F10");
-  await expect(row).toBeVisible();
-  await row.click();
+  // The cell menu is Word-short (docs/184 D-12, audit CANVAS-07): Insert
+  // caption sits in its "Table ▸" submenu with the table's long tail, which
+  // renders as its own flyout.
+  const tableMore = menu.locator('[data-command-id="table.more"]');
+  await expect(tableMore).toBeVisible();
+  await tableMore.hover();
+  const cellCaption = page.locator('.editor-submenu [data-command-id="reference.caption"]');
+  await expect(cellCaption).toBeVisible();
+  await cellCaption.click();
   await expect(page.locator("#captionDialog")).toBeVisible();
   await page.keyboard.press("Escape");
 

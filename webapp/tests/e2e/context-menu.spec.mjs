@@ -58,11 +58,19 @@ test("right-click preserves a text selection and exposes context-aware commands"
 
   const menu = page.locator(".editor-context-menu");
   await expect(menu).toBeVisible();
-  await expect(menu.locator('[data-command-id="edit.copy"]')).toBeEnabled();
-  await expect(menu.locator('[data-command-id="edit.cut"]')).toBeEnabled();
-  await expect(menu.locator('[data-command-id="comment.add"]')).toBeEnabled();
-  await expect(menu.locator('[data-command-id="link.add"]')).toBeEnabled();
-  await expect(menu.locator('[data-command-id="paragraph.properties"]')).toBeVisible();
+  // The menu is budgeted (context_menu.mjs rule 3, docs/184 D-12): the marker
+  // is a spelling error, its suggestions lead, and trailing groups fold into
+  // "More ›". The guarantee is that the menu OFFERS these commands, so read its
+  // whole tree, one level down too. The flyout is measured, then closed below.
+  const more = menu.locator('[data-command-id="context.more"]');
+  const folded = (await more.count()) > 0;
+  if (folded) await more.hover();
+  const tree = page.locator(".editor-context-menu, .editor-submenu");
+  await expect(tree.locator('[data-command-id="edit.copy"]')).toBeEnabled();
+  await expect(tree.locator('[data-command-id="edit.cut"]')).toBeEnabled();
+  await expect(tree.locator('[data-command-id="comment.add"]')).toBeEnabled();
+  await expect(tree.locator('[data-command-id="link.add"]')).toBeEnabled();
+  await expect(tree.locator('[data-command-id="paragraph.properties"]')).toBeVisible();
   await expect(page.locator(".overlay .highlight")).toHaveCount(highlightsBefore);
 
   const bounds = await stableBox(menu);
@@ -72,7 +80,10 @@ test("right-click preserves a text selection and exposes context-aware commands"
   expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width - 8);
   expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height - 8);
 
+  // Escape closes one level at a time (the open "More ›" flyout first, when
+  // the keyboard is in it), then the menu.
   await page.keyboard.press("Escape");
+  if (folded && (await menu.isVisible())) await page.keyboard.press("Escape");
   await expect(menu).toBeHidden();
   await expectEditorFocused(page);
   await expect(page.locator(".overlay .highlight")).toHaveCount(highlightsBefore);

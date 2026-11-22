@@ -85,7 +85,12 @@ const highlight = (page) =>
  *  every assertion below is written against. A click places a caret where the
  *  pointer already is, so nothing moves. */
 async function clearSelection(page, at) {
-  await page.mouse.click(at.x, at.y);
+  // Not EXACTLY where it is: a press within 500 ms and 4 px of a double click
+  // is the third press of a triple click (`unit_selection.mjs`
+  // MULTI_CLICK_MS / MULTI_CLICK_PX, the platform rule, UX-059), which selects
+  // the paragraph instead of collapsing. Ten pixels along the same line is a
+  // fresh single click and still moves nothing.
+  await page.mouse.click(at.x + 10, at.y);
   await expect.poll(() => highlight(page)).toBeNull();
 }
 
@@ -182,6 +187,12 @@ test("the two handles are hittable targets, and they bracket the selection", asy
   // bar takes the touch and the handle under it cannot be grabbed at all.
   // FOUND BY LOOKING at a screenshot — the bar cut the start dot in half, and
   // nothing clickable could fail.
+  //
+  // The bar is earned when the gesture ENDS (audit CANVAS-06,
+  // `editor_selection_toolbar.mjs`), as a phone's selection bar appears once
+  // the finger lifts, so the finger lifts first; the handles stay put.
+  await touch.up(at.x, at.y);
+  await expect(handles).toHaveCount(2);
   const bar = await stableBox(page.locator("#selToolbar"));
   for (const box of [start, end]) {
     const overlaps =
@@ -192,7 +203,6 @@ test("the two handles are hittable targets, and they bracket the selection", asy
     expect(overlaps, "the floating format bar covers part of a selection handle").toBe(false);
   }
 
-  await touch.up(at.x, at.y);
   expect(consoleErrors).toEqual([]);
 });
 

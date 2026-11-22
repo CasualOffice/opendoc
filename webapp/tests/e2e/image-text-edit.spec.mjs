@@ -136,12 +136,23 @@ test.describe("editing the text in a scanned page", () => {
     const pictureCommands = await page.locator(".editor-context-menu [data-command-id]")
       .evaluateAll((rows) => rows.map((row) => row.dataset.commandId));
     expect(pictureCommands).toEqual(expect.arrayContaining([
-      "imageText.fill", "imageText.blur", "imageText.pixelate", "imageText.restore",
+      "imageText.fill", "imageText.blur", "imageText.pixelate",
     ]));
+    // A right-click menu HIDES a top-level row that cannot run here
+    // (context_menu.mjs rule 2, docs/184 D-12): an unedited line has nothing
+    // to restore, so Restore original is not offered until there is an edit.
+    expect(pictureCommands, "Restore offered on an unedited line").not.toContain("imageText.restore");
     await page.keyboard.press("Escape");
     await page.keyboard.press("Shift+End");
     await page.keyboard.press("Backspace");
     await shot(page, "1b-line-deleted");
+    await page.keyboard.press("Shift+F10");
+    await expect(page.locator(".editor-context-menu")).toBeVisible();
+    await expect(
+      page.locator('.editor-context-menu [data-command-id="imageText.restore"]'),
+      "an edited line offers Restore original",
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
     await expect
       .poll(() => darkPixels(page, band(2)), { message: "the deleted line's original glyphs are still painted", timeout: 15_000 })
       .toBeLessThan(edited * 0.03);

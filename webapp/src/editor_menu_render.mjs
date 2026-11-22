@@ -135,8 +135,16 @@ export function createMenuRender(ed) {
       document.activeElement instanceof HTMLElement ? document.activeElement : ed.pagesEl;
     // The short-menu policy (`context_menu.mjs`, docs/184 D-12): no history rows,
     // no refused top-level rows (one shared reason becomes a note), and the
-    // row and pixel budget, at this one choke point so no builder can opt out.
-    const commands = pruneContextMenu(context.commands ?? ed.buildContextCommands(context));
+    // row and pixel budget, at this one choke point so no RIGHT-CLICK builder
+    // can opt out. A ribbon button's dropdown (the Chart tab's Type and
+    // Elements, Insert ▸ Chart) renders through this same engine but is not a
+    // right-click menu: it is the full command list the button names, as Word's
+    // Change Chart Type is, so a refused row stays greyed with its reason and
+    // nothing folds into "More" (that hid the combo presets, HF-424).
+    const ribbon = context.surface === "ribbon";
+    const commands = ribbon
+      ? (context.commands ?? []).filter((command) => command && command.visible !== false)
+      : pruneContextMenu(context.commands ?? ed.buildContextCommands(context));
     if (commands.every((command) => command.note)) {
       ed.contextMenuReturnFocus = null;
       if (context.surface === "object") {
@@ -146,13 +154,13 @@ export function createMenuRender(ed) {
       return false;
     }
     const moreLabel = t("context.more");
-    let folds = foldsForRowBudget(commands);
+    let folds = ribbon ? 0 : foldsForRowBudget(commands);
     let entries = normalizeMenuEntries(foldContextMenu(commands, folds, moreLabel));
     ed.editorContextMenu.hidden = false;
     renderMenuLevel(ed.editorContextMenu, entries, 0);
     // The pixel half of the budget needs the rendered menu: fold one more
     // trailing group while it is still taller than the ceiling.
-    while (ed.editorContextMenu.offsetHeight > CONTEXT_MENU_BUDGET.heightPx && folds < commands.length) {
+    while (!ribbon && ed.editorContextMenu.offsetHeight > CONTEXT_MENU_BUDGET.heightPx && folds < commands.length) {
       folds += 1;
       const next = normalizeMenuEntries(foldContextMenu(commands, folds, moreLabel));
       if (next.length >= entries.length) break;
