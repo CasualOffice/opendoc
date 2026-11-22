@@ -56,6 +56,7 @@ use casual_doc_layout::display::{
     ShapeOutline, ShapeTransform, Stroke,
 };
 use casual_doc_layout::text::GlyphRun;
+use casual_doc_layout::text::{SYNTHETIC_BOLD_STROKE_EM, SYNTHETIC_OBLIQUE_SHEAR};
 use casual_doc_layout::units::{Point, Rect, Twip};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
@@ -455,11 +456,20 @@ impl Writer<'_> {
         let mut uses = String::new();
         for glyph in &run.glyphs {
             if let Some(id) = self.glyph_def(&font, run.font.0, glyph.id, run.size) {
-                let scale = if (scale_x - 1.0).abs() > f32::EPSILON {
+                let mut scale = if (scale_x - 1.0).abs() > f32::EPSILON {
                     format!(" scale({scale_x:.3} 1)")
                 } else {
                     String::new()
                 };
+                // Synthetic italic: the font-space shear (y up) is a negative
+                // `skewX` in SVG's y-down space, applied before the `w:w` scale.
+                if run.decoration.effects.synthetic_oblique {
+                    let _ = write!(
+                        scale,
+                        " skewX({:.3})",
+                        -SYNTHETIC_OBLIQUE_SHEAR.atan().to_degrees()
+                    );
+                }
                 let _ = write!(
                     uses,
                     "<use xlink:href=\"#{id}\" transform=\"translate({} {}){scale}\"/>",
@@ -471,7 +481,22 @@ impl Writer<'_> {
         }
         let advance = pen - start;
         if !uses.is_empty() {
-            let _ = writeln!(self.body, "<g{}>{uses}</g>", fill_attr(Some(fill)));
+            // Synthetic bold: stroke the filled outline as the raster backend
+            // does (units are twips, so the em is the run size).
+            let embolden = if run.decoration.effects.synthetic_bold {
+                let stroke = fill_attr(Some(fill)).replace("fill", "stroke");
+                format!(
+                    "{stroke} stroke-width=\"{}\" stroke-linejoin=\"round\"",
+                    num(run.size.raw() as f32 * SYNTHETIC_BOLD_STROKE_EM)
+                )
+            } else {
+                String::new()
+            };
+            let _ = writeln!(
+                self.body,
+                "<g{}{embolden}>{uses}</g>",
+                fill_attr(Some(fill))
+            );
         }
         // Decorations from the face's own metrics, as the raster backend draws them.
         let size = run.size.raw() as f32;
