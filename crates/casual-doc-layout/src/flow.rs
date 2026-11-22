@@ -8033,6 +8033,9 @@ fn run_decoration(properties: &RunProperties, palette: Option<&ResolvedPalette>)
             shadow: properties.shadow.unwrap_or(false),
             emboss: properties.emboss.unwrap_or(false),
             imprint: properties.imprint.unwrap_or(false),
+            // Synthesis is a font-resolution verdict the shaper stamps on the
+            // shaped run (`shape.rs`), not a property of the model run.
+            ..crate::text::GlyphEffects::default()
         },
         kerning_half_points: properties.kerning_half_points,
         ligatures: properties.ligatures,

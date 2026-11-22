@@ -482,6 +482,29 @@ impl Default for ParleyShaper {
 /// Whether two bundled [`FontId`]s address faces in the same bundled family.
 ///
 /// Complexity: O(bundled families) — a fixed eight-entry table.
+/// Folds the font matcher's synthesis verdict for one shaped run into the run's
+/// model-derived glyph effects.
+///
+/// `fontique` compares the requested weight and style with the face it matched
+/// and asks for emboldening when the face is lighter and has no weight axis, and
+/// for a skew when an italic was requested from an upright face with no italic
+/// or slant axis. A bundled family ships all four slots, so this is a no-op on
+/// the bundled path; it fires for host faces such as SimSun or SimHei, which have
+/// no bold face (issues #947/#950).
+///
+/// Deliberately not handled here: a face WITH a weight or italic axis reports a
+/// variation setting instead, and the paint backends draw the default instance,
+/// because the PDF backend embeds glyph outlines without instancing (recorded on
+/// the `docs/109` row).
+fn synthesized_effects(
+    mut effects: crate::text::GlyphEffects,
+    synthesis: &fontique::Synthesis,
+) -> crate::text::GlyphEffects {
+    effects.synthetic_bold = synthesis.embolden();
+    effects.synthetic_oblique = synthesis.skew().is_some();
+    effects
+}
+
 fn same_bundled_family(a: FontId, b: FontId) -> bool {
     crate::fonts::FAMILIES
         .iter()
@@ -1638,7 +1661,7 @@ impl ParleyShaper {
                         underline_style: style.brush.underline_style,
                         emphasis: style.brush.emphasis,
                         border: style.brush.border,
-                        effects: style.brush.effects,
+                        effects: synthesized_effects(style.brush.effects, &run.synthesis()),
                         kerning_half_points: style.brush.kerning_half_points,
                         ligatures: style.brush.ligatures,
                     },
@@ -2977,6 +3000,56 @@ mod tests {
         // Whether or not a system Arial resolved, no Latin glyph was clamped to a CJK
         // cell (the run carries no full-width CJK scalars).
         let _ = latin_dyn;
+    }
+
+    /// Issues #947/#950: a family that ships a regular face only (SimSun,
+    /// SimHei) asked for bold or italic is synthesized, as Word and browsers do —
+    /// the run carries the verdict so every paint backend can embolden or shear
+    /// it. A family with real bold and italic faces is never synthesized.
+    #[test]
+    fn a_regular_only_family_asked_for_bold_or_italic_is_synthesized() {
+        let shaper = ParleyShaper::new();
+        let ids = shaper.register_embedded_face(
+            crate::fonts::CALADEA_REGULAR.to_vec(),
+            "Regular Only Serif",
+            false,
+            false,
+        );
+        assert!(!ids.is_empty());
+        let shaped = |bold: bool, italic: bool, family: Option<&'static str>| {
+            let layout = shaper.shape_paragraph(
+                &[StyledRun {
+                    bold,
+                    italic,
+                    requested_family: family.map(Into::into),
+                    ..run("Heading")
+                }],
+                constraints(500),
+                para_range(),
+            );
+            layout.lines[0].runs[0].decoration.effects
+        };
+        let family = Some("Regular Only Serif");
+        let regular = shaped(false, false, family);
+        assert!(!regular.synthetic_bold && !regular.synthetic_oblique);
+        let bold = shaped(true, false, family);
+        assert!(
+            bold.synthetic_bold && !bold.synthetic_oblique,
+            "bold from a regular-only face is emboldened: {bold:?}"
+        );
+        let italic = shaped(false, true, family);
+        assert!(
+            italic.synthetic_oblique && !italic.synthetic_bold,
+            "italic from an upright-only face is sheared: {italic:?}"
+        );
+        let both = shaped(true, true, family);
+        assert!(both.synthetic_bold && both.synthetic_oblique, "{both:?}");
+        // The bundled default family has real bold and italic faces.
+        let real = shaped(true, true, None);
+        assert!(
+            !real.synthetic_bold && !real.synthetic_oblique,
+            "a family with real bold/italic faces is not synthesized: {real:?}"
+        );
     }
 
     #[test]

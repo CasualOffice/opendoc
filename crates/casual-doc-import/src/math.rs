@@ -42,15 +42,22 @@ fn parse_tree(xml: &str) -> Option<Element> {
     let mut stack = Vec::new();
     let mut root = None;
     let mut element_count = 0usize;
+    // Depth inside a skipped foreign property subtree (`skippable_foreign`);
+    // zero when not skipping.
+    let mut skip_depth = 0usize;
 
     loop {
         match reader.read_event().ok()? {
             Event::Start(start) => {
                 element_count = element_count.checked_add(1)?;
                 if element_count > MAX_MATH_NODES.saturating_mul(8)
-                    || stack.len() >= MAX_MATH_DEPTH.saturating_mul(4)
+                    || stack.len().saturating_add(skip_depth) >= MAX_MATH_DEPTH.saturating_mul(4)
                 {
                     return None;
+                }
+                if skip_depth > 0 || skippable_foreign(start.name().as_ref(), stack.last()) {
+                    skip_depth += 1;
+                    continue;
                 }
                 stack.push(element(&reader, &start)?);
             }
@@ -59,12 +66,17 @@ fn parse_tree(xml: &str) -> Option<Element> {
                 if element_count > MAX_MATH_NODES.saturating_mul(8) {
                     return None;
                 }
+                if skip_depth > 0 || skippable_foreign(start.name().as_ref(), stack.last()) {
+                    continue;
+                }
                 append_element(&mut stack, &mut root, element(&reader, &start)?)?;
             }
+            Event::End(_) if skip_depth > 0 => skip_depth -= 1,
             Event::End(_) => {
                 let closed = stack.pop()?;
                 append_element(&mut stack, &mut root, closed)?;
             }
+            Event::Text(_) | Event::GeneralRef(_) if skip_depth > 0 => {}
             Event::Text(text) => {
                 let decoded = text.decode().ok()?;
                 let decoded = quick_xml::escape::unescape(&decoded).ok()?;
@@ -136,6 +148,29 @@ fn append_element(
 /// prefix here prevents WordprocessingML lookalikes from becoming semantics.
 fn omml_local_name(name: &[u8]) -> Option<&[u8]> {
     name.strip_prefix(b"m:").filter(|local| !local.is_empty())
+}
+
+/// Whether a non-`m:` element is formatting this projection may step over.
+///
+/// Word writes WordprocessingML run properties into every math run
+/// (`<m:r><w:rPr><w:rFonts w:ascii="Cambria Math" …/></w:rPr><m:t>x</m:t></m:r>`)
+/// and into every control-properties container (`<m:ctrlPr><w:rPr>…`). Failing
+/// the whole projection on them turned every Word-authored equation into its
+/// bracketed linear fallback text (issues #945/#948). They carry fonts and
+/// emphasis only — never math structure or text — so the subtree is skipped.
+/// The retained OMML still carries them verbatim for export.
+///
+/// Any other foreign element still fails the projection (a `w:oMath`
+/// lookalike, a revision wrapper whose meaning is not modelled here): an
+/// unsupported equation stays an honest fallback, never wrong semantics.
+fn skippable_foreign(name: &[u8], parent: Option<&Element>) -> bool {
+    if omml_local_name(name).is_some() {
+        return false;
+    }
+    let local = name.rsplit(|byte| *byte == b':').next().unwrap_or(name);
+    // A run-properties element, or anything inside an OMML property container
+    // (`m:ctrlPr`, `m:naryPr`, …), whose contents this projection ignores.
+    parent.is_some_and(|parent| local == b"rPr" || parent.name.ends_with(b"Pr"))
 }
 
 fn expression_from_root(root: &Element) -> Option<MathExpression> {
@@ -475,6 +510,67 @@ mod tests {
         assert!(matches!(
             parse_math_expression(xml),
             Some(MathExpression::Fraction { .. })
+        ));
+    }
+
+    /// Issues #945/#948: the equation exactly as Word writes it — a
+    /// `w:rPr` (Cambria Math) inside every `m:r` and a `w:rPr` inside each
+    /// `m:ctrlPr` — projects to its 2-D structure instead of failing into the
+    /// bracketed linear fallback `[i=0nxi=a+b2]`.
+    #[test]
+    fn word_run_properties_inside_math_runs_do_not_defeat_the_projection() {
+        let rpr =
+            r#"<w:rPr><w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math"/><w:i/></w:rPr>"#;
+        let run = |text: &str| format!("<m:r>{rpr}<m:t>{text}</m:t></m:r>");
+        let xml = format!(
+            concat!(
+                "<m:oMathPara><m:oMath>",
+                "<m:nary><m:naryPr><m:chr m:val=\"∑\"/><m:limLoc m:val=\"undOvr\"/>",
+                "<m:ctrlPr>{rpr}</m:ctrlPr></m:naryPr>",
+                "<m:sub>{i0}</m:sub><m:sup>{n}</m:sup>",
+                "<m:e><m:sSub><m:e>{x}</m:e><m:sub>{i}</m:sub></m:sSub></m:e></m:nary>",
+                "{eq}",
+                "<m:f><m:num>{ab}</m:num><m:den>{two}</m:den></m:f>",
+                "</m:oMath></m:oMathPara>"
+            ),
+            rpr = rpr,
+            i0 = run("i=0"),
+            n = run("n"),
+            x = run("x"),
+            i = run("i"),
+            eq = run("="),
+            ab = run("a+b"),
+            two = run("2"),
+        );
+        let Some(MathExpression::Row { children }) = parse_math_expression(&xml) else {
+            panic!("a Word-shaped display equation must project");
+        };
+        assert!(
+            matches!(
+                children.as_slice(),
+                [
+                    MathExpression::Nary {
+                        lower: Some(_),
+                        upper: Some(_),
+                        ..
+                    },
+                    MathExpression::Text { .. },
+                    MathExpression::Fraction { .. },
+                ]
+            ),
+            "{children:?}"
+        );
+        // The inline `x²` of the same report.
+        assert!(matches!(
+            parse_math_expression(&format!(
+                "<m:oMath><m:sSup><m:e>{}</m:e><m:sup>{}</m:sup></m:sSup></m:oMath>",
+                run("x"),
+                run("2")
+            )),
+            Some(MathExpression::Script {
+                superscript: Some(_),
+                ..
+            })
         ));
     }
 

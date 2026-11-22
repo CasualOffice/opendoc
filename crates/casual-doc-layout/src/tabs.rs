@@ -616,6 +616,9 @@ fn layout_tabbed_line(
     for (i, seg) in segments.iter().enumerate() {
         let mut left = pen;
         let mut leader = None;
+        // Set when the tab before this segment resolved to an authored stop
+        // past the paragraph's trailing indent (see `line_limit` below).
+        let mut stop_past_end_indent = false;
         if i > 0 {
             // A tab precedes segment `i`: resolve the stop it advances to.
             let stop = resolve_stop(block.tabs[i - 1], pen, tab_stops, default_tab, constraints);
@@ -633,6 +636,7 @@ fn layout_tabbed_line(
                 left = pen;
             }
             leader = stop.leader;
+            stop_past_end_indent = stop.explicit && stop.position > constraints.max_width.raw();
             // Record the advance this tab covered, on the line it covered it on,
             // BEFORE the overflow branch below can start a continuation line.
             // Geometry only: nothing downstream measures from it, and it is
@@ -660,17 +664,34 @@ fn layout_tabbed_line(
         }
 
         // A margin-relative positional tab is explicitly allowed to target the
-        // text-margin box beyond a paragraph's trailing indent. Ordinary tabs and
-        // indent-relative positional tabs remain bounded by the paragraph measure.
-        let line_limit = if i > 0
+        // text-margin box beyond a paragraph's trailing indent.
+        //
+        // So is an authored tab stop that lies past the trailing indent (Word's
+        // rule; LibreOffice models it as the `TabOverMargin` compatibility flag):
+        // Word honours the stop, and the text aligned on it may run into the
+        // right-indent area. This is the generated-TOC shape — `w:ind w:right`
+        // with a right dot-leader stop beyond it — and wrapping the page number
+        // instead doubles a TOC's length (issues #946/#949). The extension is
+        // bounded by the text-margin box; deliberate difference from Word: a stop
+        // past the text margin itself is not honoured into the page margin, so
+        // its text still wraps rather than painting off the measure. A default-
+        // grid stop and an indent-relative positional tab remain bounded by the
+        // paragraph measure.
+        let margin_box = if constraints.margin_width > Twip::ZERO {
+            constraints.margin_width - constraints.indent_start
+        } else {
+            constraints.max_width
+        };
+        let margin_positional = i > 0
             && matches!(
                 block.tabs[i - 1],
                 TabKind::Positional {
                     relative_to: PositionalTabRelativeTo::Margin,
                     ..
                 }
-            ) {
-            (constraints.margin_width - constraints.indent_start).max(constraints.max_width)
+            );
+        let line_limit = if margin_positional || stop_past_end_indent {
+            margin_box.max(constraints.max_width)
         } else {
             constraints.max_width
         };
@@ -976,6 +997,10 @@ pub(crate) struct ResolvedStop {
     pub(crate) position: i32,
     pub(crate) alignment: TabAlignment,
     pub(crate) leader: Option<TabLeader>,
+    /// `true` when the stop is an authored `w:tabs/w:tab` stop, `false` for a
+    /// default-grid stop or a positional tab. Only an explicit stop may carry its
+    /// text past the paragraph's trailing indent (see `layout_tabbed_line`).
+    pub(crate) explicit: bool,
 }
 
 /// Resolves either an ordinary or absolute positional tab into the local
@@ -1040,6 +1065,7 @@ pub(crate) fn resolve_stop(
         position,
         alignment,
         leader,
+        explicit: false,
     }
 }
 
@@ -1066,6 +1092,7 @@ pub(crate) fn resolve_next_stop(
             position: stop.position_twips,
             alignment: stop.alignment,
             leader: stop.leader,
+            explicit: true,
         };
     }
     // Default tab: the next multiple of the interval strictly greater than `pen`.
@@ -1075,6 +1102,7 @@ pub(crate) fn resolve_next_stop(
         position: next,
         alignment: TabAlignment::Start,
         leader: None,
+        explicit: false,
     }
 }
 
@@ -1318,6 +1346,83 @@ mod tests {
             (right_edge - 2000).abs() <= 20,
             "the text's right edge aligns to the stop (2000), got {right_edge}"
         );
+    }
+
+    /// Issues #946/#949: a generated-TOC row — `w:ind w:right="720"` on an A4
+    /// 1-inch-margin page (text margin 9026, so the line ends at 8306) with a
+    /// right dot-leader stop at 8800 — keeps its page number on the line,
+    /// right-aligned at the stop inside the right-indent area, as Word does.
+    #[test]
+    fn a_right_tab_stop_inside_the_right_indent_keeps_its_text_on_the_line() {
+        let shaper = ParleyShaper::new();
+        let items = vec![
+            FlowItem::Run(styled("1 Introduction")),
+            FlowItem::Tab,
+            FlowItem::Run(styled("1")),
+        ];
+        let stops = vec![stop(8800, TabAlignment::End, Some(TabLeader::Dot))];
+        let toc_row = |indent_end: i32| LineConstraints {
+            max_width: Twip(9026 - indent_end),
+            margin_width: Twip(9026),
+            ..LineConstraints::default()
+        };
+        for (label, indent_end) in [("right indent 720", 720), ("control, no indent", 0)] {
+            let layout = shape_with_flow(
+                &shaper,
+                &items,
+                &stops,
+                DEFAULT_TAB_STOP,
+                toc_row(indent_end),
+                para_range(),
+            );
+            assert_eq!(
+                layout.lines.len(),
+                1,
+                "{label}: the page number must stay on the TOC row"
+            );
+            let number = layout.lines[0].runs.last().unwrap();
+            let right_edge = number.origin.x.raw() + run_width(number);
+            assert!(
+                (right_edge - 8800).abs() <= 20,
+                "{label}: the number right-aligns at the stop (8800), got {right_edge}"
+            );
+        }
+    }
+
+    /// The extension past the trailing indent is bounded: a default-grid tab is
+    /// not an authored stop, and an authored stop beyond the text margin itself
+    /// is not honoured into the page margin, so text that does not fit wraps.
+    #[test]
+    fn only_an_authored_stop_within_the_text_margin_extends_past_the_right_indent() {
+        let shaper = ParleyShaper::new();
+        let items = vec![
+            FlowItem::Run(styled("Label")),
+            FlowItem::Tab,
+            FlowItem::Run(styled("value that is wide")),
+        ];
+        let narrow = LineConstraints {
+            max_width: Twip(3000),
+            margin_width: Twip(4000),
+            ..LineConstraints::default()
+        };
+        // An authored right stop past the text margin box (4000): wraps.
+        let beyond = vec![stop(6000, TabAlignment::End, None)];
+        let layout = shape_with_flow(
+            &shaper,
+            &items,
+            &beyond,
+            DEFAULT_TAB_STOP,
+            narrow,
+            para_range(),
+        );
+        for line in &layout.lines {
+            for run in &line.runs {
+                assert!(
+                    run.origin.x.raw() + run_width(run) <= 4000 + 20,
+                    "text escaped the text-margin box"
+                );
+            }
+        }
     }
 
     #[test]

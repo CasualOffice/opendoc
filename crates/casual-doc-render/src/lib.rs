@@ -39,6 +39,7 @@ use casual_doc_layout::display::{
 use casual_doc_layout::display::ShapeTransform;
 use casual_doc_layout::font_registry::{DynFace, FontRegistry};
 use casual_doc_layout::text::{FontId, GlyphRun};
+use casual_doc_layout::text::{SYNTHETIC_BOLD_STROKE_EM, SYNTHETIC_OBLIQUE_SHEAR};
 use casual_doc_layout::units::{Point, Rect, Twip};
 use casual_doc_model::v1::{CROP_FULL, CropRect, OPACITY_FULL};
 // Kept on a separate `use` line (anti-conflict): the dash/line-end model types the
@@ -1036,7 +1037,7 @@ fn render_glyph_run(
                 origin_x: pen_x,
                 baseline_y,
                 scale_x,
-                transform: None,
+                transform: synthetic_oblique_transform(run),
             };
             let settings = DrawSettings::unhinted(Size::new(size_px), LocationRef::default());
             if outline.draw(settings, &mut pen).is_ok() {
@@ -1083,9 +1084,17 @@ fn render_glyph_run(
                 clip,
             );
         }
+        // Synthetic bold (issues #947/#950): the face has no bold, so the
+        // filled outline is also stroked, growing every stem by half the
+        // stroke on each side.
+        let embolden = if effects.synthetic_bold {
+            size_px * SYNTHETIC_BOLD_STROKE_EM
+        } else {
+            0.0
+        };
         if effects.outline {
             let stroke = tiny_skia::Stroke {
-                width: (size_px / 32.0).max(0.5),
+                width: (size_px / 32.0).max(0.5) + embolden,
                 ..Default::default()
             };
             surface
@@ -1099,6 +1108,16 @@ fn render_glyph_run(
                 Transform::identity(),
                 clip,
             );
+            if embolden > 0.0 {
+                let stroke = tiny_skia::Stroke {
+                    width: embolden,
+                    line_join: tiny_skia::LineJoin::Round,
+                    ..Default::default()
+                };
+                surface
+                    .pixmap
+                    .stroke_path(&path, &paint, &stroke, Transform::identity(), clip);
+            }
         }
     }
 
@@ -1900,6 +1919,22 @@ fn visit_word_underline_segments(
     {
         visit(start, cursor - start);
     }
+}
+
+/// The font-space shear a run's synthetic italic applies to its outlines
+/// (issues #947/#950 family: an upright-only face asked for italic), or `None`.
+fn synthetic_oblique_transform(run: &GlyphRun) -> Option<skrifa::color::Transform> {
+    run.decoration
+        .effects
+        .synthetic_oblique
+        .then_some(skrifa::color::Transform {
+            xx: 1.0,
+            yx: 0.0,
+            xy: SYNTHETIC_OBLIQUE_SHEAR,
+            yy: 1.0,
+            dx: 0.0,
+            dy: 0.0,
+        })
 }
 
 /// A `skrifa` outline pen that appends glyph contours to a `tiny-skia` path,
@@ -3093,6 +3128,106 @@ mod tests {
     /// Renders "Hello" (no descenders below the baseline) with the given
     /// decoration and returns the surface together with the glyph baseline row (in
     /// device pixels — parley's baseline sits an ascent below the paragraph top).
+    /// Renders "Hello" with the shaper's synthesis verdict overridden to
+    /// `effects` (the shaper only sets it for a face that lacks the style, which
+    /// the bundled single-face source here cannot exhibit).
+    fn render_synthesized(bold: bool, oblique: bool) -> Surface {
+        let shaper = ParleyShaper::new();
+        let node = NodeId::from_parts(1, 1).unwrap();
+        let layout = shaper.shape_paragraph(
+            &[StyledRun {
+                text: "Hello".into(),
+                requested_family: None,
+                requested_family_kind: None,
+                font: FontId(0),
+                size: Twip::from_points(24),
+                character_scale_percent: 100,
+                bold: false,
+                italic: false,
+                letter_spacing: Twip::ZERO,
+                color: [0, 0, 0, 255],
+                decoration: Decoration::default(),
+                highlight: None,
+                shading: None,
+                baseline_shift: Twip::ZERO,
+            }],
+            LineConstraints {
+                max_width: Twip::from_points(500),
+                ..LineConstraints::default()
+            },
+            ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0)),
+        );
+        let mut list = compose_paragraph(
+            &layout,
+            Point::new(Twip::from_points(6), Twip::from_points(20)),
+        );
+        for item in &mut list.items {
+            if let PaintItem::Glyphs { run } = item {
+                run.decoration.effects.synthetic_bold = bold;
+                run.decoration.effects.synthetic_oblique = oblique;
+            }
+        }
+        let mut surface = Surface::new(DECO_W, DECO_H).unwrap();
+        render(
+            &list,
+            &mut surface,
+            96.0,
+            &SingleFontSource::new(ROBOTO_REGULAR),
+            &NoMediaSource,
+        );
+        surface
+    }
+
+    /// Issues #947/#950: synthetic bold puts visibly more ink on the same
+    /// glyphs (Word, FreeType and browsers embolden a face with no bold), and
+    /// synthetic italic leans the tops of the glyphs right of the baseline.
+    #[test]
+    fn synthetic_bold_adds_ink_and_synthetic_italic_leans_the_glyphs() {
+        let ink = |surface: &Surface| {
+            surface
+                .data()
+                .chunks_exact(4)
+                .filter(|p| p[0] < 128 && p[3] > 128)
+                .count()
+        };
+        let plain = render_synthesized(false, false);
+        let bold = render_synthesized(true, false);
+        let (plain_ink, bold_ink) = (ink(&plain), ink(&bold));
+        assert!(
+            bold_ink * 100 >= plain_ink * 115,
+            "synthetic bold must add at least 15% ink ({plain_ink} -> {bold_ink})"
+        );
+        // The leftmost ink column at cap height moves right under the shear:
+        // the "H" stem leans.
+        let leftmost = |surface: &Surface, rows: std::ops::Range<usize>| {
+            let w = DECO_W as usize;
+            rows.flat_map(|y| (0..w).map(move |x| (x, y)))
+                .filter(|&(x, y)| {
+                    let p = &surface.data()[(y * w + x) * 4..(y * w + x) * 4 + 4];
+                    p[0] < 128 && p[3] > 128
+                })
+                .map(|(x, _)| x)
+                .min()
+                .expect("ink in the band")
+        };
+        let rows: Vec<usize> = (0..DECO_H as usize)
+            .filter(|&y| {
+                (0..DECO_W as usize).any(|x| {
+                    let i = (y * DECO_W as usize + x) * 4;
+                    plain.data()[i] < 128 && plain.data()[i + 3] > 128
+                })
+            })
+            .collect();
+        let top = rows[0];
+        let oblique = render_synthesized(false, true);
+        let top_band = top..top + 4;
+        let lean = leftmost(&oblique, top_band.clone()) as i64 - leftmost(&plain, top_band) as i64;
+        assert!(
+            lean >= 3,
+            "synthetic italic leans the cap height right (moved {lean}px)"
+        );
+    }
+
     fn render_decorated(decoration: Decoration) -> (Surface, usize) {
         let (surface, baseline, _) = render_decorated_text("Hello", decoration);
         (surface, baseline)

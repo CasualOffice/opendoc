@@ -1172,7 +1172,33 @@ pub struct GlyphEffects {
     pub emboss: bool,
     /// Inset relief (`w:imprint`).
     pub imprint: bool,
+    /// Synthetic (faux) bold. The run asked for bold, but the face that shaped
+    /// it is lighter and has no weight axis — SimSun, SimHei, KaiTi and FangSong
+    /// ship a regular face only (issues #947/#950). Word, FreeType
+    /// (`FT_GlyphSlot_Embolden`) and browsers embolden the regular outlines in
+    /// that case, so every backend strokes the filled outline at
+    /// [`SYNTHETIC_BOLD_STROKE_EM`] of the em. Set by the shaper from the font
+    /// matcher's synthesis verdict, never from the model.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub synthetic_bold: bool,
+    /// Synthetic (faux) italic: the run asked for italic, but the face that
+    /// shaped it is upright with no italic or slant axis. Backends shear the
+    /// outlines by [`SYNTHETIC_OBLIQUE_SHEAR`], as Word and browsers do.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub synthetic_oblique: bool,
 }
+
+/// Stroke width, as a fraction of the em, that synthetic bold adds around a
+/// glyph's filled outline (half of it on each side). One twenty-fourth of the
+/// em is FreeType's `FT_GlyphSlot_Embolden` strength and Skia's small-size fake
+/// bold. Advances are unchanged: the shaper already placed the glyphs.
+pub const SYNTHETIC_BOLD_STROKE_EM: f32 = 1.0 / 24.0;
+
+/// Horizontal shear synthetic italic applies in font space (y up): `x += y *
+/// SYNTHETIC_OBLIQUE_SHEAR`, about 14 degrees — Skia's fake-italic skew and
+/// `fontique`'s default oblique angle.
+pub const SYNTHETIC_OBLIQUE_SHEAR: f32 = 0.25;
+
 impl GlyphEffects {
     /// Whether no extra ink pass is needed.
     pub fn is_empty(&self) -> bool {

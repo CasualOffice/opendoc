@@ -33,6 +33,7 @@ use casual_doc_layout::display::ShapeOutline;
 use casual_doc_layout::display::ShapeTransform;
 use casual_doc_layout::display::Stroke;
 use casual_doc_layout::text::GlyphRun;
+use casual_doc_layout::text::{SYNTHETIC_BOLD_STROKE_EM, SYNTHETIC_OBLIQUE_SHEAR};
 use casual_doc_layout::units::Point;
 use casual_doc_layout::units::Rect;
 use casual_doc_layout::units::Twip;
@@ -578,9 +579,16 @@ impl<'a> Transcriber<'a> {
             out.bytes
                 .extend_from_slice(format!("{} Tz\n", num(scale * 100.0)).as_bytes());
         }
+        // Synthetic italic (issues #947/#950 family): shear the text matrix,
+        // `x' = x + c*y` in PDF's y-up text space.
+        let shear = if effects.synthetic_oblique {
+            num(SYNTHETIC_OBLIQUE_SHEAR)
+        } else {
+            "0".to_owned()
+        };
         out.bytes.extend_from_slice(
             format!(
-                "{} {} {} rg\n1 0 0 1 {} {} Tm\n",
+                "{} {} {} rg\n1 0 {shear} 1 {} {} Tm\n",
                 channel(run.color[0]),
                 channel(run.color[1]),
                 channel(run.color[2]),
@@ -590,11 +598,26 @@ impl<'a> Transcriber<'a> {
             .as_bytes(),
         );
 
-        if effects.outline {
+        // Synthetic bold (issues #947/#950): fill-then-stroke text (`2 Tr`)
+        // grows each stem by half the line width on each side, as the raster
+        // backends' extra stroke does. The text stays real, selectable text.
+        let embolden = if effects.synthetic_bold {
+            size * SYNTHETIC_BOLD_STROKE_EM
+        } else {
+            0.0
+        };
+        let render_mode = if effects.outline {
+            Some(("1", (size / 32.0).max(0.375) + embolden))
+        } else if embolden > 0.0 {
+            Some(("2", embolden))
+        } else {
+            None
+        };
+        if let Some((mode, width)) = render_mode {
             out.bytes.extend_from_slice(
                 format!(
-                    "1 Tr\n{} w\n{} {} {} RG\n",
-                    num((size / 32.0).max(0.375)),
+                    "{mode} Tr\n{} w\n{} {} {} RG\n",
+                    num(width),
                     channel(run.color[0]),
                     channel(run.color[1]),
                     channel(run.color[2])
@@ -604,7 +627,7 @@ impl<'a> Transcriber<'a> {
         }
         out.bytes.extend_from_slice(array.as_bytes());
 
-        if effects.outline {
+        if render_mode.is_some() {
             out.bytes.extend_from_slice(b"0 Tr\n");
         }
         self.decorations(out, run, face.as_ref(), size);
