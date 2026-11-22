@@ -13,7 +13,7 @@
 // The two spaces are relatable: markup space is editing space plus the deleted
 // spans, so `view_pos`/`edit_pos` map between them and every screen-to-model
 // boundary now uses the layout that produced the pixels.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, stableBox, setReviewMode } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, overlayBox, stableBox, setReviewMode } from "./fixtures.mjs";
 
 const mirrorText = (page) =>
   page.locator("#a11yDocument").evaluate((el) => el.textContent.trim());
@@ -102,10 +102,8 @@ test("clicking a word puts the caret in that word", async ({ page, consoleErrors
   // silently leaves the caret where it already was — which passes for the wrong
   // reason. An earlier draft of this test did exactly that.
   const box = await stableBox(page.locator(".page-wrap .page").first());
-  const midY = await page.locator(".overlay .caret").evaluate((el) => {
-    const rect = el.getBoundingClientRect();
-    return rect.y + rect.height / 2;
-  });
+  const caret = await overlayBox(page, ".overlay .caret");
+  const midY = caret.y + caret.height / 2;
   await page.mouse.click(box.x + painted.left + painted.width + 2, midY);
   await page.keyboard.type("#");
 

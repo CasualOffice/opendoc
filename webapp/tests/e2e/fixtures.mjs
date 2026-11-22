@@ -35,6 +35,44 @@ export async function stableBox(locator) {
   return box;
 }
 
+/** The painted box of the first element matching `selector` (overlay chrome such
+ *  as `.overlay .object-outline` or `.overlay .caret`), read in ONE task inside
+ *  the page, waiting until such an element exists.
+ *
+ *  Overlay chrome is torn down and redrawn on every overlay paint, and paints
+ *  arrive on their own schedule after a click: proofing results, a font landing,
+ *  a relayout (one click on the demo picture paints its outline five times).
+ *  `locator(...).evaluate(...)` resolves the element and then evaluates against
+ *  it in a separate step, so a repaint in between hands it the REMOVED node,
+ *  whose rect is all zeros and whose computed transform is empty. That is the
+ *  "object resizes by 16px in Suggesting mode, CI only" failure: the 16x16 demo
+ *  picture never moved; one of the two reads measured a detached outline as 0.
+ *  Measured locally under a forced repaint loop: 60/60 locator reads came back
+ *  0, 0/60 reads through this helper did. `overlay_reads.test.mjs` keeps specs
+ *  on this path.
+ *
+ *  @returns {Promise<{x: number, y: number, width: number, height: number,
+ *    left: number, top: number, right: number, bottom: number, transform: string}>} */
+export async function overlayBox(page, selector) {
+  const handle = await page.waitForFunction((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return {
+      x: r.x,
+      y: r.y,
+      width: r.width,
+      height: r.height,
+      left: r.left,
+      top: r.top,
+      right: r.right,
+      bottom: r.bottom,
+      transform: getComputedStyle(el).transform,
+    };
+  }, selector);
+  return handle.jsonValue();
+}
+
 // Navigates to the demo document and waits for the WASM engine to boot, the
 // sample to open, and every page to finish its first render (mirrors the
 // manual "headless browser smoke" checks previously narrated in
