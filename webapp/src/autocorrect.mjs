@@ -29,7 +29,12 @@
  *  (`runEdit` without `typing`, which breaks the typing session), so an
  *  immediate Undo gives back exactly what was typed ("1. ", "teh ", the address
  *  without its link). The list conversion is one engine action
- *  (`autoFormatList`) for the same reason.
+ *  (`autoFormatList`) for the same reason. Every conversion goes through an
+ *  engine entry of its own (`autoFormatList`, `autoCorrect`,
+ *  `autoFormatHyperlink`), never the generic `replaceSelection`/`setHyperlink`,
+ *  so its undo step is Word's "AutoCorrect" or "AutoFormat": that Undo leaves
+ *  the caret after what was typed, where an Undo of a person's own type-over or
+ *  link re-selects the text (`docs/109` UX-074).
  *
  *  Only in Editing mode and at a collapsed caret: a tracked conversion would
  *  need its deletion and its property change tracked together, which the
@@ -154,7 +159,7 @@ export function createAutoCorrect(io) {
         if (!doc.hyperlinkTouches?.(node, start, end)) {
           return {
             kind: "hyperlink",
-            run: () => doc.setHyperlink(node, start, end, link.target, undefined),
+            run: () => doc.autoFormatHyperlink(node, start, end, link.target),
             // The link wraps text that is already there, so the caret stays put.
             keepSelection: true,
           };
@@ -182,7 +187,7 @@ export function createAutoCorrect(io) {
     const start = stringIndexToByteOffset(prefix, fix.start);
     let replacement = fix.replacement + prefix.slice(fix.end);
     if (virtual) replacement = replacement.slice(0, -1);
-    return { kind: "autocorrect", run: () => doc.replaceSelection(node, start, node, offset, replacement), keepSelection: virtual };
+    return { kind: "autocorrect", run: () => doc.autoCorrect(node, start, node, offset, replacement), keepSelection: virtual };
   }
 
   /** The edit `typed` should turn into at the caret, or null. Exported through
@@ -247,7 +252,7 @@ export function createAutoCorrect(io) {
       if (!link || link.end !== prefix.length || link.start !== prefix.length - pasted.length) return false;
       const start = stringIndexToByteOffset(prefix, link.start);
       if (doc.hyperlinkTouches?.(focus.node, start, focus.offset)) return false;
-      return apply({ run: () => doc.setHyperlink(focus.node, start, focus.offset, link.target, undefined), keepSelection: true });
+      return apply({ run: () => doc.autoFormatHyperlink(focus.node, start, focus.offset, link.target), keepSelection: true });
     },
   };
 }

@@ -987,6 +987,12 @@ enum HistoryKind {
     ReviewTyping,
     /// The document's Track Changes setting (`SetTrackRevisions`).
     TrackChanges,
+    /// A word AutoCorrect rewrote as it was typed ("teh " to "the ", a dash, a
+    /// symbol, a capital). Word names this undo step "AutoCorrect".
+    AutoCorrect,
+    /// A paragraph or an address AutoFormat converted as it was typed ("1. " to a
+    /// list item, a typed or pasted address to a link). Word's "AutoFormat".
+    AutoFormat,
 }
 
 impl HistoryKind {
@@ -1031,7 +1037,18 @@ impl HistoryKind {
             Self::Review => "Review",
             Self::ReviewTyping => "Review typing",
             Self::TrackChanges => "Track changes",
+            Self::AutoCorrect => "AutoCorrect",
+            Self::AutoFormat => "AutoFormat",
         }
+    }
+
+    /// Whether `label` names a conversion the editor made by itself as the user
+    /// typed (AutoCorrect, AutoFormat). Undoing one gives back exactly what was
+    /// typed with the caret after it, ready to keep typing, as Word, Google Docs
+    /// and ONLYOFFICE do; it never selects the restored text, which the next
+    /// keystroke would replace (`docs/109` UX-074). O(1).
+    fn is_automatic_label(label: &str) -> bool {
+        label == Self::AutoCorrect.label() || label == Self::AutoFormat.label()
     }
 }
 
@@ -5784,19 +5801,60 @@ impl WasmDocument {
         end_offset: u32,
         text: String,
     ) -> Result<EditResult, JsValue> {
-        let (start, end) = self
-            .order_endpoints(start_node, start_offset, end_node, end_offset)
+        self.replace_selection_as(
+            start_node,
+            start_offset,
+            end_node,
+            end_offset,
+            text,
+            HistoryKind::Replace,
+        )
+        .map_err(to_js)
+    }
+
+    /// AutoCorrect's rewrite of the text just typed: [`Self::replace_selection`]
+    /// under Word's "AutoCorrect" undo step, whose Undo gives back what was typed
+    /// with the caret after it rather than selecting it (`docs/109` UX-074).
+    #[wasm_bindgen(js_name = autoCorrect)]
+    pub fn auto_correct(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        text: String,
+    ) -> Result<EditResult, JsValue> {
+        self.replace_selection_as(
+            start_node,
+            start_offset,
+            end_node,
+            end_offset,
+            text,
+            HistoryKind::AutoCorrect,
+        )
+        .map_err(to_js)
+    }
+
+    /// AutoFormat's link over an address just typed or pasted:
+    /// [`Self::set_hyperlink`] under Word's "AutoFormat" undo step, whose Undo
+    /// leaves the caret where it was rather than selecting the address
+    /// (`docs/109` UX-074).
+    #[wasm_bindgen(js_name = autoFormatHyperlink)]
+    pub fn auto_format_hyperlink(
+        &mut self,
+        node: &str,
+        start: u32,
+        end: u32,
+        target: String,
+    ) -> Result<EditResult, JsValue> {
+        let node = node_id(node)?;
+        let ids = &mut self.edit_ids;
+        let ops =
+            casual_doc_command::links::set_hyperlink(node, start, end, &target, None, &mut || {
+                ids.next_id().ok()
+            })
             .map_err(to_js)?;
-        // The plan's start, not the selection's: a covered table that held the
-        // start is removed, and the edit collapses to the paragraph after it.
-        let (mut ops, start) = self.selection_delete_plan(start, end).map_err(to_js)?;
-        if !text.is_empty() {
-            ops.push(Operation::InsertText { at: start, text });
-        }
-        if ops.is_empty() {
-            return Err(to_js("nothing to do".into()));
-        }
-        self.apply_action_as(ops, HistoryKind::Replace)
+        self.apply_action_as(ops, HistoryKind::AutoFormat)
             .map_err(to_js)
     }
 
@@ -14028,6 +14086,7 @@ impl WasmDocument {
     /// | Formatting over a range | the range | the range |
     /// | A delete, or typing over a selection | the restored text | the natural caret |
     /// | Typing, a tab, a break | collapsed where it was typed | the natural caret |
+    /// | AutoCorrect or AutoFormat | the natural caret, after what was typed | the natural caret |
     /// | Anything else | the natural caret | the natural caret |
     ///
     /// Positions are in the coordinates of the document the replay produced:
@@ -14055,6 +14114,15 @@ impl WasmDocument {
                 .origin();
             match origin {
                 Origin::Edit => {
+                    // An automatic conversion keeps the replay's natural caret:
+                    // after the restored text on Undo, where it was on Redo.
+                    if self
+                        .log
+                        .label_of(target)
+                        .is_some_and(HistoryKind::is_automatic_label)
+                    {
+                        return None;
+                    }
                     let forward: Vec<&Operation> = self
                         .log
                         .commits()
@@ -15227,6 +15295,30 @@ impl WasmDocument {
     /// typing stays clone-free.
     fn apply_action(&mut self, ops: Vec<Operation>) -> Result<EditResult, String> {
         let kind = history_kind_for_ops(&ops);
+        self.apply_action_as(ops, kind)
+    }
+
+    /// The body of [`Self::replace_selection`] and [`Self::auto_correct`]: the
+    /// selection's delete plan, then `text` at its start, as one `kind` action.
+    fn replace_selection_as(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        text: String,
+        kind: HistoryKind,
+    ) -> Result<EditResult, String> {
+        let (start, end) = self.order_endpoints(start_node, start_offset, end_node, end_offset)?;
+        // The plan's start, not the selection's: a covered table that held the
+        // start is removed, and the edit collapses to the paragraph after it.
+        let (mut ops, start) = self.selection_delete_plan(start, end)?;
+        if !text.is_empty() {
+            ops.push(Operation::InsertText { at: start, text });
+        }
+        if ops.is_empty() {
+            return Err("nothing to do".into());
+        }
         self.apply_action_as(ops, kind)
     }
 

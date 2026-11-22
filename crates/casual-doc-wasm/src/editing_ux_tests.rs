@@ -265,6 +265,56 @@ fn undoing_typing_collapses_where_it_was_typed() {
     assert_eq!(ends(&undone), ((node.clone(), 3), (node.clone(), 3)));
 }
 
+/// Undoing an AutoCorrect gives back exactly what was typed with the caret
+/// AFTER it, collapsed, as Word, Docs and ONLYOFFICE do, so the next keystroke
+/// continues the text. Re-selecting "teh " (the rule for a typed-over
+/// selection) made the next keystroke replace it. Mutation: drop the
+/// automatic-label check in `replayed_selection` and the anchor comes back at 4.
+#[test]
+fn undoing_an_autocorrect_leaves_the_caret_after_what_was_typed() {
+    let mut d = open_document(b"one teh ").expect("open");
+    let (node, id) = first(&d);
+    d.auto_correct(&node, 4, &node, 8, "the ".to_owned())
+        .expect("autocorrect");
+    assert_eq!(d.paragraph_text(id), "one the ");
+    let undone = d.undo_inner().expect("undo");
+    assert_eq!(d.paragraph_text(id), "one teh ");
+    assert_eq!(ends(&undone), ((node.clone(), 8), (node.clone(), 8)));
+    let redone = d.redo_inner().expect("redo");
+    assert_eq!(ends(&redone), ((node.clone(), 8), (node.clone(), 8)));
+    // The same edit made by a person (type-over) still re-selects what came back.
+    let mut typed = open_document(b"one teh ").expect("open");
+    let (node, _) = first(&typed);
+    typed
+        .replace_selection(&node, 4, &node, 8, "the ".to_owned())
+        .expect("type over");
+    let undone = typed.undo_inner().expect("undo");
+    assert_eq!(ends(&undone), ((node.clone(), 4), (node.clone(), 8)));
+}
+
+/// Undoing an AutoFormat link selects nothing: the link was not a format the
+/// user applied to a selection, so the address is not selected for the next
+/// keystroke to replace. The same link set from the Link dialog still
+/// re-selects its range. Mutation: as above, the undo hands back 4..17.
+#[test]
+fn undoing_an_autoformat_link_selects_nothing() {
+    let mut d = open_document(b"see https://x.org ").expect("open");
+    let (node, _) = first(&d);
+    d.auto_format_hyperlink(&node, 4, 17, "https://x.org".to_owned())
+        .expect("link");
+    let undone = d.undo_inner().expect("undo");
+    let (anchor, focus) = ends(&undone);
+    assert_eq!(anchor, focus, "Undo of an AutoFormat link selects nothing");
+
+    let mut dialog = open_document(b"see https://x.org ").expect("open");
+    let (node, _) = first(&dialog);
+    dialog
+        .set_hyperlink(&node, 4, 17, "https://x.org".to_owned(), None)
+        .expect("link");
+    let undone = dialog.undo_inner().expect("undo");
+    assert_eq!(ends(&undone), ((node.clone(), 4), (node.clone(), 17)));
+}
+
 // --- UX-075: a range delete removes the tables it covers ------------------------
 
 /// [table, "tail"]: select from the first cell's start to the end of "tail" and

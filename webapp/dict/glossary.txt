@@ -17,6 +17,7 @@ ArrowUp
 Aspose
 AutoCorrect
 AutoFit
+AutoFormat
 AutoText
 Autofit
 Autosave
