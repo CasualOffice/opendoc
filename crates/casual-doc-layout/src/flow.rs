@@ -1874,7 +1874,34 @@ fn flow_blocks_into<S: GalleySink + ?Sized>(
     // `MeasureResume`. A nested call's own end state is overwritten by it, which
     // is correct: it belongs to a sequence that has finished.
     let mut suppress = ctx.suppress_above_level.take();
+    // Endnote bodies arrive as blocks appended to this sequence (see
+    // `document_layout::blocks_with_endnotes`). Each one's first block switches
+    // the note label on, so its `w:endnoteRef` prints the note's number exactly
+    // as a footnote body flowed through `build_galley_for_note_blocks` does.
+    // The sequence's own label is restored on exit.
+    let outer_note_label = ctx.note_label;
+    let note_labels = ctx.note_labels;
+    // Whether the previous block began or continued an appended endnote body:
+    // the first endnote block after body content carries the endnote separator.
+    let mut in_endnotes = false;
     while index < blocks.len() {
+        let mut endnote_separator_due = false;
+        if let Some(label) =
+            note_labels.and_then(|labels| labels.endnote_body_label(block_node_id(&blocks[index])))
+        {
+            ctx.note_label = Some(label);
+            endnote_separator_due = !in_endnotes;
+            in_endnotes = true;
+        }
+        if endnote_separator_due {
+            // The separator stands between the body and the endnotes, so the two
+            // are not contextual neighbours: `w:contextualSpacing` must not
+            // collapse across it. It would also zero the first endnote's space
+            // before, which is where `add_endnote_separator` puts the separator
+            // band, and the rule (placed relative to that band) would then paint
+            // over the last body paragraph.
+            prev_para = None;
+        }
         if marks == BlockMarks::Record {
             galley.mark_block();
             // See `FlowCtx::resume_snapshot`. `len - 2` and not `len - 1`
@@ -1993,13 +2020,12 @@ fn flow_blocks_into<S: GalleySink + ?Sized>(
                     let anchor_top = galley.stacked_height() - base_height;
                     float_floor = float_floor.max(anchor_top + clearance);
                 }
-                galley.push(flow_paragraph_with_carries(
-                    paragraph,
-                    shaper,
-                    width,
-                    ctx,
-                    &mut active_carries,
-                ));
+                let mut fragment =
+                    flow_paragraph_with_carries(paragraph, shaper, width, ctx, &mut active_carries);
+                if endnote_separator_due {
+                    add_endnote_separator(&mut fragment, width);
+                }
+                galley.push(fragment);
                 let current = ContextualNeighbor {
                     galley_index,
                     style,
@@ -2043,7 +2069,54 @@ fn flow_blocks_into<S: GalleySink + ?Sized>(
     // suppression state, which `flow_body_into` turns into the chunk's
     // `MeasureResume` when the pass never reached a snapshot point.
     ctx.suppress_above_level = suppress;
+    ctx.note_label = outer_note_label;
     float_floor
+}
+
+/// Puts Word's endnote separator above the first endnote body paragraph: a
+/// separator paragraph one line tall (the note's own first line height) holding
+/// the short hairline footnotes use (`compose::FOOTNOTE_SEPARATOR_LENGTH`),
+/// starting at the text column's leading edge. Word stores it as the
+/// `w:separator` endnote (id -1); the import keeps that part verbatim, and this
+/// draws its default appearance. The band is added to the paragraph's space
+/// before, so pagination, caret geometry and painting all see it.
+fn add_endnote_separator(fragment: &mut BlockFragment, width: Twip) {
+    let BlockFragment::Paragraph {
+        lines, box_metrics, ..
+    } = fragment
+    else {
+        return;
+    };
+    let Some(first) = lines.lines.first_mut() else {
+        return;
+    };
+    let band = first.height.max(Twip(1));
+    let thickness = crate::compose::FOOTNOTE_SEPARATOR_WIDTH;
+    first.rules.push(InlineRule {
+        origin: Point::new(
+            Twip(-box_metrics.indent_start.raw()),
+            // Relative to the content origin, which moves down by `band`: the
+            // separator band is the fragment's top `band` twips, ahead of the
+            // paragraph's own space before, and the rule is centred in it.
+            Twip(-(2 * box_metrics.space_before.raw() + band.raw() + thickness.raw()) / 2),
+        ),
+        size: Size::new(
+            crate::compose::FOOTNOTE_SEPARATOR_LENGTH.min(width),
+            thickness,
+        ),
+        color: [0, 0, 0, 255],
+    });
+    box_metrics.space_before = box_metrics.space_before + band;
+}
+
+/// The identity of a block in a flowed sequence.
+fn block_node_id(block: &BlockNode) -> NodeId {
+    match block {
+        BlockNode::Paragraph(paragraph) => paragraph.id,
+        BlockNode::Table(table) => table.id,
+        BlockNode::Sdt(sdt) => sdt.id,
+        BlockNode::AltChunk(chunk) => chunk.id,
+    }
 }
 
 /// Applies the document-structure side effects of a block the fold filter hid

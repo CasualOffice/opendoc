@@ -10957,6 +10957,7 @@ mod tests {
                     },
                     bold: false,
                     italic: false,
+                    shape_box: None,
                 },
             ),
             layout: casual_doc_model::v1::WatermarkLayout::Diagonal,

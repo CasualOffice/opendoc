@@ -81,11 +81,10 @@ impl ResolvedEdge {
     /// authored width for `single` at `w:sz` 2/4/8/16/24, and by *six* times it
     /// for `double` at 2/4/8 — i.e. 3× per edge in both directions.
     ///
-    /// Note that composition currently paints a `double` edge as two bands
-    /// *inside* the authored width ([`BorderPattern::Double`]), so the painted
-    /// thickness and this reserved thickness disagree for that one pattern. The
-    /// reserve is the measured quantity and is what moves text and pagination;
-    /// bringing the paint up to it is a separate change.
+    /// Composition paints a cell edge across this whole band, so a `double`
+    /// cell border shows as line-gap-line with each part the authored width
+    /// (`109` RM-40). Paragraph borders (`w:pBdr`) do not reserve this band yet
+    /// and still paint a `double` inside the authored width.
     #[must_use]
     pub fn total_thickness(self) -> Twip {
         match self.pattern {

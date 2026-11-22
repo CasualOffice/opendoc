@@ -3,7 +3,7 @@
 // SetExtent op on release (one undo step), with a live preview during the drag
 // and fail-closed gating in Suggesting/Viewing mode. Move + wrap are floating-
 // object ops (deferred with anchored-float selection); resize is the inline op.
-import { MOD, expect, gotoEditor, stableBox, test, setReviewMode } from "./fixtures.mjs";
+import { MOD, expect, gotoEditor, overlayBox, stableBox, test, setReviewMode } from "./fixtures.mjs";
 
 const IMAGE_POS = { fx: 0.32, fy: 0.1 };
 
@@ -14,20 +14,18 @@ async function selectImage(page) {
   await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
 }
 
+/** Read through `overlayBox`, never `locator.evaluate`: the outline is redrawn by
+ *  every overlay paint, and a read that lands on the removed one measures 0. */
 async function outlineSize(page) {
-  return page.locator(".overlay .object-outline").first().evaluate((el) => {
-    const r = el.getBoundingClientRect();
-    return { w: Math.round(r.width), h: Math.round(r.height) };
-  });
+  const r = await overlayBox(page, ".overlay .object-outline");
+  return { w: Math.round(r.width), h: Math.round(r.height) };
 }
 
 /** The selected object's outline in viewport coordinates — for the grips whose
  *  whole point is WHICH edge moved, not by how much. */
 async function outlineBox(page) {
-  return page.locator(".overlay .object-outline").first().evaluate((el) => {
-    const r = el.getBoundingClientRect();
-    return { x: r.x, y: r.y, width: r.width, height: r.height };
-  });
+  const r = await overlayBox(page, ".overlay .object-outline");
+  return { x: r.x, y: r.y, width: r.width, height: r.height };
 }
 
 async function dragHandle(page, handleIndex, dx, dy, { shift = false } = {}) {

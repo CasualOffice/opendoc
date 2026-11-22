@@ -9,18 +9,18 @@ ORACLE_REPORT_BLESS=1 cargo test -p casual-doc-render --test oracle_geometry \
 
 Oracle: LibreOffice 26.2.4.2 (see `.toolchain`). Quantity: each page's text region (docs/94 §H2). Band: ±40 twips. Every Δ is `ours − oracle`, in twips.
 
-**12 fixtures referenced:** 4 gated and within the band, 5 gated with a registered divergence, 3 held out, 0 failing or unreferenced.
+**12 fixtures referenced:** 7 gated and within the band, 2 gated with a registered divergence, 3 held out, 0 failing or unreferenced.
 
 | fixture | role | pages ours/oracle | verdict | worst abs Δ |
 | --- | --- | --- | --- | --- |
 | `docx-real-producer-hyperlinks` | gated | 1/1 | pass | 2 |
 | `docx-real-producer-rich` | gated | 1/1 | deviates, registered in `KNOWN_DIVERGENCES` (FID-L-21 (residual; the shared cause is fixed)) | 318 |
-| `docx-real-producer-table-merges` | gated | 1/1 | pass | 35 |
-| `docx-oracle-alignment-indent` | gated | 1/1 | pass | 6 |
-| `docx-oracle-line-spacing` | gated | 1/1 | deviates, registered in `KNOWN_DIVERGENCES` (FID-L-26) | 952 |
-| `docx-oracle-font-families` | gated | 2/2 | deviates, registered in `KNOWN_DIVERGENCES` (FID-L-27) | 80 |
+| `docx-real-producer-table-merges` | gated | 1/1 | pass | 2 |
+| `docx-oracle-alignment-indent` | gated | 1/1 | pass | 19 |
+| `docx-oracle-line-spacing` | gated | 1/1 | pass | 17 |
+| `docx-oracle-font-families` | gated | 2/2 | pass | 3 |
 | `docx-oracle-multipage-flow` | gated | 3/3 | pass | 17 |
-| `docx-oracle-sections-tabs` | gated | 2/2 | deviates, registered in `KNOWN_DIVERGENCES` (FID-L-27) | 249 |
+| `docx-oracle-sections-tabs` | gated | 2/2 | pass | 12 |
 | `docx-oracle-plain-table` | gated | 1/1 | deviates, registered in `KNOWN_DIVERGENCES` (FID-L-27) | 44 |
 | `docx-real-producer-footnotes` | held out | – | held out: the font-parity exclusion is platform-dependent (`ORACLE_HELD_OUT`) | – |
 | `docx-real-producer-header-footer` | held out | – | held out: the font-parity exclusion is platform-dependent (`ORACLE_HELD_OUT`) | – |
@@ -32,14 +32,14 @@ Oracle: LibreOffice 26.2.4.2 (see `.toolchain`). Quantity: each page's text regi
 | --- | --- | --- | --- | --- | --- | --- |
 | `docx-real-producer-hyperlinks` | 1 | -2 | -1 | +2 | +0 | +0 |
 | `docx-real-producer-rich` | 1 | -2 | -1 | +1 | +318 | +0 |
-| `docx-real-producer-table-merges` | 1 | -2 | -1 | -35 | +0 | +0 |
-| `docx-oracle-alignment-indent` | 1 | -2 | +0 | +6 | +0 | +0 |
-| `docx-oracle-line-spacing` | 1 | -2 | +0 | +100 | -952 | +0 |
-| `docx-oracle-font-families` | 1 | -2 | +0 | +80 | +0 | +0 |
-| `docx-oracle-font-families` | 2 | -2 | +0 | -26 | +0 | +0 |
-| `docx-oracle-multipage-flow` | 1 | -2 | +0 | -3 | +1 | +0 |
+| `docx-real-producer-table-merges` | 1 | -2 | -1 | +0 | +0 | +0 |
+| `docx-oracle-alignment-indent` | 1 | -2 | +0 | +19 | +0 | +0 |
+| `docx-oracle-line-spacing` | 1 | -2 | +0 | +17 | +0 | +0 |
+| `docx-oracle-font-families` | 1 | -2 | +0 | +3 | +0 | +0 |
+| `docx-oracle-font-families` | 2 | -2 | +0 | +2 | +0 | +0 |
+| `docx-oracle-multipage-flow` | 1 | -2 | +0 | -6 | +1 | +0 |
 | `docx-oracle-multipage-flow` | 2 | -2 | +0 | -3 | +1 | +0 |
 | `docx-oracle-multipage-flow` | 3 | -2 | +0 | -17 | +1 | +0 |
 | `docx-oracle-sections-tabs` | 1 | -2 | +0 | -2 | +0 | +0 |
-| `docx-oracle-sections-tabs` | 2 | -2 | +0 | +249 | +0 | +0 |
-| `docx-oracle-plain-table` | 1 | -2 | +44 | +8 | +44 | +0 |
+| `docx-oracle-sections-tabs` | 2 | -2 | +0 | -12 | +0 | +0 |
+| `docx-oracle-plain-table` | 1 | -2 | +44 | +15 | +44 | +0 |

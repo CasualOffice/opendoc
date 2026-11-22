@@ -35,7 +35,9 @@ use std::path::{Path, PathBuf};
 use casual_doc_import::{ImportConfig, ImportMode, ModelOutcome, import_package};
 use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::document_layout::paginate_document;
+use casual_doc_layout::font_registry::{EmbeddedFontOutcome, register_embedded_fonts};
 use casual_doc_layout::shape::ParleyShaper;
+use casual_doc_model::v1::Document;
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
 use casual_doc_render::{MapMediaSource, RegistryFontSource, Surface, render};
 
@@ -207,7 +209,11 @@ fn render_file(
         }
     }
 
+    // The document's own faces first, as the editor registers them at open:
+    // without this the tool rendered a document that embeds its fonts in
+    // substitutes the editor never uses (`109` FID-P-02 instrument row).
     let shaper = ParleyShaper::new();
+    register_package_fonts(&shaper, &document, |part| package.read_part(part).ok());
     let pages = paginate_document(&document, &shaper);
     let page_count = pages.page_count();
 
@@ -237,6 +243,27 @@ fn render_file(
         pages: page_count,
         disposition: disposition_summary(&imported.report.entries),
     })
+}
+
+/// Registers every embedded (`.odttf`) face `document`'s font table names on
+/// `shaper`, reading each part through `read_part`: the same call the editor
+/// makes at open (`casual-doc-wasm`, `register_embedded_fonts`), so this tool
+/// renders the faces the editor renders. A face that cannot be read or decoded
+/// degrades to substitution and is counted in the outcome, as in the editor.
+fn register_package_fonts(
+    shaper: &ParleyShaper,
+    document: &Document,
+    mut read_part: impl FnMut(&str) -> Option<Vec<u8>>,
+) -> EmbeddedFontOutcome {
+    let mut parts = BTreeMap::new();
+    for font in &document.definitions().font_table {
+        for (_, face) in font.embedded.faces() {
+            if let Some(bytes) = read_part(&face.part_name) {
+                parts.insert(face.part_name.clone(), bytes);
+            }
+        }
+    }
+    register_embedded_fonts(shaper, document, |part| parts.get(part).map(Vec::as_slice))
 }
 
 /// A compact summary of the report entries that did not map cleanly:
@@ -324,5 +351,118 @@ fn panic_message(payload: &Box<dyn Any + Send>) -> String {
         message.clone()
     } else {
         "panicked".to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use casual_doc_layout::block::BlockFragment;
+    use casual_doc_layout::font_registry::FontRegistry;
+    use casual_doc_layout::fonts::LIBERATION_MONO_REGULAR;
+    use casual_doc_model::NodeId;
+    use casual_doc_model::v1::{
+        BlockNode, Definitions, EmbeddedFace, EmbeddedFontSet, FontDescriptor, FontName, FontRef,
+        FontSig, InlineNode, Paragraph, ParagraphProperties, Run, RunProperties,
+    };
+
+    use super::*;
+
+    const FAMILY: &str = "Opendoc Render Probe";
+    const PART: &str = "word/fonts/font1.odttf";
+    const KEY: &str = "{3EEE3167-E5B8-4798-AE48-EA6B71E31D4D}";
+
+    fn node(id: u64) -> NodeId {
+        NodeId::from_parts(id, 1).unwrap()
+    }
+
+    /// ECMA-376 Part 1 §17.8.1 obfuscation, written independently of the code
+    /// under test (the first 32 bytes XORed with the key's bytes reversed).
+    fn obfuscate(plain: &[u8]) -> Vec<u8> {
+        let digits: Vec<u32> = KEY.chars().filter_map(|c| c.to_digit(16)).collect();
+        let key: Vec<u8> = digits
+            .chunks(2)
+            .map(|pair| (pair[0] * 16 + pair[1]) as u8)
+            .rev()
+            .collect();
+        let mut out = plain.to_vec();
+        for (index, byte) in out.iter_mut().take(32).enumerate() {
+            *byte ^= key[index % 16];
+        }
+        out
+    }
+
+    /// A document whose font table embeds `FAMILY` and whose one run names it.
+    fn document() -> Document {
+        let properties = RunProperties {
+            font_ref: Some(FontRef::Named(FontName {
+                name: FAMILY.to_owned(),
+            })),
+            ..RunProperties::default()
+        };
+        Document::new(
+            node(1),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: node(10),
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![InlineNode::Run(Run {
+                    id: node(11),
+                    properties: properties.into(),
+                    text: "iiiWWW".to_owned(),
+                })],
+            })],
+            Definitions {
+                font_table: vec![FontDescriptor {
+                    name: FAMILY.to_owned(),
+                    alt_name: None,
+                    panose1: None,
+                    charset: None,
+                    family: None,
+                    pitch: None,
+                    sig: FontSig::default(),
+                    not_true_type: false,
+                    embedded: EmbeddedFontSet {
+                        regular: Some(EmbeddedFace {
+                            font_key: KEY.to_owned(),
+                            subsetted: false,
+                            relationship_id: "rId1".to_owned(),
+                            part_name: PART.to_owned(),
+                        }),
+                        ..EmbeddedFontSet::default()
+                    },
+                }],
+                ..Definitions::default()
+            },
+        )
+        .expect("the probe document is valid")
+    }
+
+    /// The face the first glyph run on page 1 was shaped with.
+    fn first_face(shaper: &ParleyShaper, document: &Document) -> casual_doc_layout::text::FontId {
+        let pages = paginate_document(document, shaper);
+        let BlockFragment::Paragraph { lines, .. } = &pages.pages[0].placed[0].fragment else {
+            panic!("a paragraph");
+        };
+        lines.lines[0].runs[0].font
+    }
+
+    /// The tool renders a document that embeds its fonts in THOSE fonts, as the
+    /// editor does; it used to skip registration and paint substitutes.
+    #[test]
+    fn the_tool_renders_a_documents_embedded_face() {
+        let document = document();
+        let odttf = obfuscate(LIBERATION_MONO_REGULAR);
+        let shaper = ParleyShaper::new();
+        let outcome = register_package_fonts(&shaper, &document, |part| {
+            (part == PART).then(|| odttf.clone())
+        });
+        assert_eq!(outcome.faces, 1, "{:?}", outcome.failures);
+        assert!(
+            FontRegistry::is_dynamic(first_face(&shaper, &document)),
+            "the run is shaped with the document's own face, not a bundled substitute"
+        );
+        assert!(
+            !FontRegistry::is_dynamic(first_face(&ParleyShaper::new(), &document)),
+            "precondition: without registration the same run falls to a substitute"
+        );
     }
 }

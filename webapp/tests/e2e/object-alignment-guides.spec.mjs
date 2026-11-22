@@ -7,7 +7,7 @@
 //
 // Each test CREATES its condition: it drags the image somewhere off-centre
 // first, so a pass cannot come from an image that happened to start aligned.
-import { expect, gotoEditor, sizeReadoutPattern, stableBox, test } from "./fixtures.mjs";
+import { expect, gotoEditor, overlayBox, sizeReadoutPattern, stableBox, test } from "./fixtures.mjs";
 
 const FLOAT_POS = { fx: 0.14, fy: 0.11 };
 const IMAGE_POS = { fx: 0.32, fy: 0.1 };
@@ -33,10 +33,9 @@ async function selectAt(page, pos) {
 
 /** The selected object's outline, in viewport pixels. */
 async function outline(page) {
-  return page.locator(".overlay .object-outline").first().evaluate((el) => {
-    const r = el.getBoundingClientRect();
-    return { x: r.left, y: r.top, w: r.width, h: r.height, cx: r.left + r.width / 2 };
-  });
+  // `overlayBox`: the outline is redrawn by every overlay paint.
+  const r = await overlayBox(page, ".overlay .object-outline");
+  return { x: r.left, y: r.top, w: r.width, h: r.height, cx: r.left + r.width / 2 };
 }
 
 /** Double-clicks the middle of the selected object, clear of every grip. */

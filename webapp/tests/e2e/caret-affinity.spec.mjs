@@ -14,13 +14,14 @@
 // The fix needs no affinity threaded through the API: Word and Docs answer these
 // gestures with the position after the last non-space character, which is
 // strictly inside the line and so has no tie to resolve.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, stableBox } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, overlayBox, stableBox } from "./fixtures.mjs";
 
-const caretBox = (page) =>
-  page.locator(".overlay .caret").evaluate((el) => {
-    const rect = el.getBoundingClientRect();
-    return { x: rect.x, y: rect.y, height: rect.height };
-  });
+// `overlayBox`, not `locator.evaluate`: the caret is redrawn by every overlay
+// paint, and a read that lands on the removed one measures zeros.
+const caretBox = async (page) => {
+  const r = await overlayBox(page, ".overlay .caret");
+  return { x: r.x, y: r.y, height: r.height };
+};
 
 /** A paragraph long enough to wrap several times, with the caret mid-line. */
 async function wrappedParagraph(page) {

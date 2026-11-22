@@ -214,6 +214,7 @@ fn text_watermark(text: &str) -> Watermark {
             },
             bold: false,
             italic: false,
+            shape_box: None,
         }),
         layout: WatermarkLayout::Diagonal,
         semi_transparent: true,

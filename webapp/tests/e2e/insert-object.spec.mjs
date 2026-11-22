@@ -4,7 +4,7 @@
 // footnote and a header — but not a text box and not a shape. It could SELECT,
 // move, resize, edit and delete both; it just had no way to create one. A
 // document that did not already contain a drawing could never gain one.
-import { MOD, clickIntoFirstPage, expect, expectTypedIntoOneBlock, gotoEditor, mirrorBlocks, moveCaretToDocStart, stableBox, test } from "./fixtures.mjs";
+import { MOD, clickIntoFirstPage, expect, expectTypedIntoOneBlock, gotoEditor, mirrorBlocks, moveCaretToDocStart, overlayBox, stableBox, test } from "./fixtures.mjs";
 
 async function open(page) {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -144,54 +144,29 @@ test("an inserted group-child shape routes root commands and subject formatting"
   await expect(bar.getByRole("button", { name: "Delete object" })).toBeVisible();
   await expect(page.locator(".object-wrap-btn")).toHaveCount(7);
 
-  const beforeResize = await page
-    .locator(".overlay .object-outline")
-    .first()
-    .evaluate((element) => {
-      const rect = element.getBoundingClientRect();
-      return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
-    });
+  const beforeResize = await overlayBox(page, ".overlay .object-outline");
   const nw = page.locator('.overlay .object-handle[data-handle="0"]').first();
   const nwBox = await stableBox(nw);
   await page.mouse.move(nwBox.x + nwBox.width / 2, nwBox.y + nwBox.height / 2);
   await page.mouse.down();
   await page.mouse.move(nwBox.x - 50, nwBox.y - 30, { steps: 6 });
   await page.mouse.up();
-  const resized = await page
-    .locator(".overlay .object-outline")
-    .first()
-    .evaluate((element) => {
-      const rect = element.getBoundingClientRect();
-      return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
-    });
+  const resized = await overlayBox(page, ".overlay .object-outline");
   expect(resized.left).toBeLessThan(beforeResize.left - 10);
   expect(resized.top).toBeLessThan(beforeResize.top - 10);
   expect(Math.abs(resized.right - beforeResize.right)).toBeLessThanOrEqual(3);
   expect(Math.abs(resized.bottom - beforeResize.bottom)).toBeLessThanOrEqual(3);
   await page.keyboard.press(`${MOD}+z`);
   await expect
-    .poll(() =>
-      page
-        .locator(".overlay .object-outline")
-        .first()
-        .evaluate((element) => Math.round(element.getBoundingClientRect().left)),
-    )
+    .poll(async () => Math.round((await overlayBox(page, ".overlay .object-outline")).left))
     .toBe(Math.round(beforeResize.left));
 
   // Keyboard geometry reads the subject rectangle and commits SetAnchor to the
   // root. This used to invoke a command against the incompatible child id.
-  const beforeX = await page
-    .locator(".overlay .object-outline")
-    .first()
-    .evaluate((element) => element.getBoundingClientRect().left);
+  const beforeX = (await overlayBox(page, ".overlay .object-outline")).left;
   await page.keyboard.press("ArrowRight");
   await expect
-    .poll(() =>
-      page
-        .locator(".overlay .object-outline")
-        .first()
-        .evaluate((element) => element.getBoundingClientRect().left),
-    )
+    .poll(async () => (await overlayBox(page, ".overlay .object-outline")).left)
     .toBeGreaterThan(beforeX);
 
   const behind = bar.getByRole("button", { name: "Behind text" });

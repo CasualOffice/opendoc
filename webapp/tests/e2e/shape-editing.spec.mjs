@@ -9,7 +9,7 @@
 // is built for these tests: a lone autoshape (which imports as a group-of-one,
 // exactly as Word's Insert > Shapes does) and an ellipse inside a real group
 // beside a text box.
-import { test, expect, gotoEditor, stableBox, MOD } from "./fixtures.mjs";
+import { test, expect, gotoEditor, overlayBox, stableBox, MOD } from "./fixtures.mjs";
 
 const SHAPES = "../fixtures/generated/shapes.docx";
 
@@ -276,30 +276,20 @@ test("a multi-child group selects as a unit and Enter descends with a stable ref
   // layout honours its transform.
   await expect(page.locator(".overlay .object-rotate-handle")).toHaveCount(0);
 
-  const before = await page.locator(".overlay .object-outline").evaluate((element) => {
-    const rect = element.getBoundingClientRect();
-    return { left: rect.left, right: rect.right, width: rect.width };
-  });
+  const before = await overlayBox(page, ".overlay .object-outline");
   const west = page.locator('.overlay .object-handle[data-handle="7"]').first();
   const westBox = await stableBox(west);
   await page.mouse.move(westBox.x + westBox.width / 2, westBox.y + westBox.height / 2);
   await page.mouse.down();
   await page.mouse.move(westBox.x - 45, westBox.y + westBox.height / 2, { steps: 6 });
   await page.mouse.up();
-  const resized = await page.locator(".overlay .object-outline").evaluate((element) => {
-    const rect = element.getBoundingClientRect();
-    return { left: rect.left, right: rect.right, width: rect.width };
-  });
+  const resized = await overlayBox(page, ".overlay .object-outline");
   expect(resized.left).toBeLessThan(before.left - 10);
   expect(resized.width).toBeGreaterThan(before.width + 10);
   expect(Math.abs(resized.right - before.right)).toBeLessThanOrEqual(3);
   await page.keyboard.press(`${MOD}+z`);
   await expect
-    .poll(() =>
-      page
-        .locator(".overlay .object-outline")
-        .evaluate((element) => Math.round(element.getBoundingClientRect().left)),
-    )
+    .poll(async () => Math.round((await overlayBox(page, ".overlay .object-outline")).left))
     .toBe(Math.round(before.left));
 
   await page.keyboard.press("Enter");

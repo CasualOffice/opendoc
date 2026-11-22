@@ -2,7 +2,7 @@
 // (anchored) objects are now selectable, movable (SetAnchor), wrappable
 // (SetWrap), and resizable (SetExtent). The `?fixture=float` document holds one
 // top-level floating image; the shipped sample docs contain none.
-import { MOD, expect, gotoEditor, stableBox, test } from "./fixtures.mjs";
+import { MOD, expect, gotoEditor, overlayBox, stableBox, test } from "./fixtures.mjs";
 
 // The floating image sits near the top-left of page 1 in the float fixture.
 const FLOAT_POS = { fx: 0.14, fy: 0.11 };
@@ -26,11 +26,10 @@ async function selectFloat(page) {
   await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
 }
 
+/** Through `overlayBox`: the outline is redrawn by every overlay paint. */
 async function outlineBox(page) {
-  return page.locator(".overlay .object-outline").first().evaluate((el) => {
-    const r = el.getBoundingClientRect();
-    return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
-  });
+  const r = await overlayBox(page, ".overlay .object-outline");
+  return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
 }
 
 test("a floating image is selectable and exposes move/resize/wrap controls", async ({
