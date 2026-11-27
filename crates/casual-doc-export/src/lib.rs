@@ -9963,8 +9963,15 @@ mod watermark_tests {
     }
 
     /// The overwhelming majority of documents declare no watermark, and for them
-    /// nothing about the output may change: no VML prefix on the header root, no
-    /// `w:pict`, no extra header part, and an empty compatibility report.
+    /// nothing is stamped: no `w:pict` shape, no extra header part, no watermark
+    /// relationship, and an empty compatibility report.
+    ///
+    /// The header root binds the VML prefixes (`v`, `o`) whether or not a watermark
+    /// is present, because every story root declares everything the shared body
+    /// writer can emit (`declare_story_namespaces`). An unused `xmlns:v` is
+    /// harmless, and this test used to forbid it only because the declaration
+    /// then travelled with the watermark; what it must keep saying is that no
+    /// watermark is written.
     #[test]
     fn a_document_without_a_watermark_gains_nothing() {
         let document = reopen(&package_with_headers(&[("default", 1)]));
@@ -9973,8 +9980,8 @@ mod watermark_tests {
 
         let header = part(&export.bytes, "word/header1.xml");
         assert!(
-            !header.contains("xmlns:v") && !header.contains("w:pict"),
-            "an unwatermarked header must be exactly as before: {header}"
+            !header.contains("w:pict") && !header.contains("v:shape"),
+            "an unwatermarked header must carry no watermark shape: {header}"
         );
         assert!(
             !has_part(&export.bytes, "word/header2.xml"),
