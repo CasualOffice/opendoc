@@ -45,13 +45,16 @@
 //! `O(package bytes)` per test: one import and one export of one small fixture.
 //! Test-time only; nothing here is on an edit path.
 
+mod common;
+
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{Cursor, Read};
 
 use casual_doc_export::export_document;
 use casual_doc_import::{CompatibilityEntry, ImportConfig, ImportMode, import_package};
 use casual_doc_model::v1::{BlockNode, Document};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
+
+use common::xml_parts;
 
 const COLLAPSED_HEADINGS_DOCX: &[u8] =
     include_bytes!("../../../fixtures/generated/collapsed-headings.docx");
@@ -109,29 +112,6 @@ fn heading_states(document: &Document) -> (Vec<Option<u8>>, Vec<Option<bool>>) {
         }
     }
     (levels, folds)
-}
-
-/// The `.xml` and `.rels` parts of a package, keyed by name.
-fn xml_parts(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
-    let mut archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).expect("a zip package");
-    let names: Vec<String> = archive
-        .file_names()
-        .map(|name| name.expect("a valid ZIP entry name").into_owned())
-        .collect();
-    let mut parts = BTreeMap::new();
-    for name in names {
-        if !(name.ends_with(".xml") || name.ends_with(".rels")) {
-            continue;
-        }
-        let mut buffer = Vec::new();
-        archive
-            .by_name(&name)
-            .expect("a listed entry")
-            .read_to_end(&mut buffer)
-            .expect("a readable entry");
-        parts.insert(name, buffer);
-    }
-    parts
 }
 
 /// Every XML part concatenated as raw text, for questions about a package's literal
@@ -328,37 +308,24 @@ fn the_fold_state_is_a_fixed_point_across_a_save() {
 ///
 /// Stated over prefixes in general rather than over `w15` in particular, because the
 /// next instance of this bug will be some other prefix.
+///
+/// Run over two packages: the folded-heading fixture, and a package that carries a
+/// picture, a text box, a footnote, an endnote and a comment on every surface that
+/// writes a story (`common::story_pictures::write_story_pictures_package`). The second is the case this
+/// guard missed when it was written: a header or footer holding a picture came out
+/// with `wp`, `a` and `pic` unbound, because the running-part root declared only the
+/// prefixes the fold state needed.
 #[test]
 fn no_written_part_uses_an_undeclared_prefix() {
     let (document, _) = import(COLLAPSED_HEADINGS_DOCX);
     let written = export_document(&document, &BTreeMap::new()).expect("the model is writable");
+    let mut checked =
+        common::assert_no_part_uses_an_undeclared_prefix("collapsed-headings", &written.bytes);
 
-    let mut checked = 0usize;
-    for (part, bytes) in xml_parts(&written.bytes) {
-        let mut reader = quick_xml::NsReader::from_reader(bytes.as_slice());
-        let mut buffer = Vec::new();
-        loop {
-            match reader.read_resolved_event_into(&mut buffer) {
-                Ok((_, quick_xml::events::Event::Eof)) => break,
-                Ok((resolved, event)) => {
-                    if matches!(
-                        event,
-                        quick_xml::events::Event::Start(_) | quick_xml::events::Event::Empty(_)
-                    ) {
-                        assert!(
-                            !matches!(resolved, quick_xml::name::ResolveResult::Unknown(_)),
-                            "part `{part}` uses an XML prefix its root does not \
-                             declare — Word refuses such a part, and nothing else in \
-                             this suite would notice"
-                        );
-                        checked += 1;
-                    }
-                }
-                Err(error) => panic!("part `{part}` must be well-formed XML: {error}"),
-            }
-            buffer.clear();
-        }
-    }
+    checked += common::assert_no_part_uses_an_undeclared_prefix(
+        "story-pictures",
+        &common::story_pictures::write_story_pictures_package(),
+    );
     assert!(
         checked > 0,
         "the walk found no elements at all, so it proved nothing — the written \

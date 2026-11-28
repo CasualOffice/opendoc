@@ -1685,6 +1685,60 @@ fn declare_fold_namespaces(element: &mut BytesStart<'_>) {
     element.push_attribute(("mc:Ignorable", "w15"));
 }
 
+/// Declares, on the root of a part that holds a story, every prefix `write_block`
+/// can emit into it.
+///
+/// A story is a sequence of blocks: the main document, a header or footer, a
+/// footnote or endnote body, a comment body. All of them go through the same
+/// `write_block`, so all of them can carry whatever it writes: a picture or a text
+/// box (`wp`, `a`, `pic`, `wps`, `wpg`), a content-control checkbox (`w14`), an
+/// equation (`m`), a chart or diagram reference (`c`, `dgm`), a legacy OLE preview
+/// or a watermark (`v`, `o`), a relationship id (`r`), a folded heading (`w15`,
+/// `mc`; [`declare_fold_namespaces`]).
+///
+/// The captured markup a retained subtree is written from carries no namespace
+/// declaration of its own, so a prefix the root does not bind makes the part
+/// malformed XML: Word answers with its "unreadable content" recovery, dropping
+/// the construct, and LibreOffice refuses the file. The header, footer, note and
+/// comment roots used to declare only the few prefixes their authors had needed,
+/// so a header holding a logo came out with `wp`, `a` and `pic` unbound.
+///
+/// One function for all four roots, because a prefix declared next to the rule that
+/// needs it cannot be forgotten by the next part writer, and because the two lists
+/// drifting apart is exactly how that happened. The unused declarations are
+/// harmless (Word writes the same wide root), and
+/// `casual-doc-export/tests/story_part_namespaces.rs` fails the build if a root
+/// binds anything other than this set or a written part uses a prefix it does not
+/// bind.
+///
+/// The attribute order is the order `document.xml` has always been written in, so
+/// that part's bytes are unchanged.
+fn declare_story_namespaces(element: &mut BytesStart<'_>) {
+    element.push_attribute(("xmlns:w", W_NS));
+    // `xmlns:r` is required so a hyperlink's/drawing's `r:id`/`r:embed` is
+    // well-formed; the DrawingML prefixes are declared for inline drawings.
+    element.push_attribute(("xmlns:r", R_NS));
+    element.push_attribute(("xmlns:wp", WP_NS));
+    element.push_attribute(("xmlns:a", A_NS));
+    element.push_attribute(("xmlns:pic", PIC_NS));
+    element.push_attribute(("xmlns:wps", WPS_NS));
+    element.push_attribute(("xmlns:wpg", WPG_NS));
+    // `xmlns:w14` binds the Office 2010 prefix so a content-control checkbox's
+    // `w14:checkbox` detail is well-formed.
+    element.push_attribute(("xmlns:w14", W14_NS));
+    // `xmlns:m` binds the OMML prefix so a retained `m:oMath` subtree is
+    // well-formed (the captured markup carries no local namespace declaration).
+    element.push_attribute(("xmlns:m", M_NS));
+    // Embedded-object prefixes: `c`/`dgm` for chart/diagram graphic references,
+    // `v`/`o` for a legacy `w:object` OLE preview shape and its `o:OLEObject`, and
+    // for a header's watermark shape.
+    element.push_attribute(("xmlns:c", C_NS));
+    element.push_attribute(("xmlns:dgm", DGM_NS));
+    element.push_attribute(("xmlns:v", V_NS));
+    element.push_attribute(("xmlns:o", O_NS));
+    declare_fold_namespaces(element);
+}
+
 /// Emits `[Content_Types].xml` with the standard defaults plus the main-document
 /// override.
 fn content_types_xml(
@@ -2360,9 +2414,7 @@ fn notes_xml(
         legacy,
     };
     let mut r = start(root);
-    r.push_attribute(("xmlns:w", W_NS));
-    r.push_attribute(("xmlns:r", R_NS));
-    declare_fold_namespaces(&mut r);
+    declare_story_namespaces(&mut r);
     w.write_event(Event::Start(r)).map_err(pkg)?;
     for (id, note) in notes.iter() {
         let mut el = start(item);
@@ -2411,10 +2463,7 @@ fn comments_xml(
         legacy,
     };
     let mut r = start("w:comments");
-    r.push_attribute(("xmlns:w", W_NS));
-    r.push_attribute(("xmlns:r", R_NS));
-    r.push_attribute(("xmlns:w14", W14_NS));
-    declare_fold_namespaces(&mut r);
+    declare_story_namespaces(&mut r);
     w.write_event(Event::Start(r)).map_err(pkg)?;
     for (id, comment) in comments.iter() {
         let mut el = start("w:comment");
@@ -2603,19 +2652,10 @@ fn header_footer_xml(
         legacy,
     };
     let mut r = start(root);
-    r.push_attribute(("xmlns:w", W_NS));
-    r.push_attribute(("xmlns:r", R_NS));
-    // `xmlns:w14` so a content-control checkbox's `w14:checkbox` detail is
-    // well-formed when a block sdt lives in a header/footer.
-    r.push_attribute(("xmlns:w14", W14_NS));
-    declare_fold_namespaces(&mut r);
-    if watermark.is_some() {
-        // `v`/`o` carry the watermark's VML shape. Declared only when a watermark
-        // is present so a header without one serializes byte-identically to
-        // before this slice — the property the golden baselines rest on.
-        r.push_attribute(("xmlns:v", V_NS));
-        r.push_attribute(("xmlns:o", O_NS));
-    }
+    // Every prefix `write_block` can emit is bound by the shared story root, `v`/`o`
+    // for the watermark's VML shape included: a header's picture, text box or
+    // content control must be well-formed whether or not a watermark is present.
+    declare_story_namespaces(&mut r);
     w.write_event(Event::Start(r)).map_err(pkg)?;
     // Word puts the watermark's run at the START of the header's FIRST paragraph
     // rather than in a paragraph of its own. Two reasons to match it: the shape is
@@ -4778,28 +4818,7 @@ fn document_xml(
 ) -> Result<(Vec<u8>, Vec<RelEntry>), ExportError> {
     let mut w = new_writer();
     let mut doc = start("w:document");
-    doc.push_attribute(("xmlns:w", W_NS));
-    // `xmlns:r` is required so a hyperlink's/drawing's `r:id`/`r:embed` is
-    // well-formed; the DrawingML prefixes are declared for inline drawings.
-    doc.push_attribute(("xmlns:r", R_NS));
-    doc.push_attribute(("xmlns:wp", WP_NS));
-    doc.push_attribute(("xmlns:a", A_NS));
-    doc.push_attribute(("xmlns:pic", PIC_NS));
-    doc.push_attribute(("xmlns:wps", WPS_NS));
-    doc.push_attribute(("xmlns:wpg", WPG_NS));
-    // `xmlns:w14` binds the Office 2010 prefix so a content-control checkbox's
-    // `w14:checkbox` detail is well-formed.
-    doc.push_attribute(("xmlns:w14", W14_NS));
-    // `xmlns:m` binds the OMML prefix so a retained `m:oMath` subtree is
-    // well-formed (the captured markup carries no local namespace declaration).
-    doc.push_attribute(("xmlns:m", M_NS));
-    // Embedded-object prefixes: `c`/`dgm` for chart/diagram graphic references,
-    // `v`/`o` for a legacy `w:object` OLE preview shape and its `o:OLEObject`.
-    doc.push_attribute(("xmlns:c", C_NS));
-    doc.push_attribute(("xmlns:dgm", DGM_NS));
-    doc.push_attribute(("xmlns:v", V_NS));
-    doc.push_attribute(("xmlns:o", O_NS));
-    declare_fold_namespaces(&mut doc);
+    declare_story_namespaces(&mut doc);
     w.write_event(Event::Start(doc)).map_err(pkg)?;
     // The page background (`w:background`), which ECMA-376 puts BEFORE `w:body` as
     // the first child of `w:document` — a `w:background` after the body is
